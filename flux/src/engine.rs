@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Persistent, Value, context::EvalOptions, promise::PromiseState};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Persistent, Value, promise::PromiseState};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::timer::{self, Timers};
@@ -89,10 +89,7 @@ impl JsEngine {
                         Some(JsCommand::Eval { code, responder }) => {
                             context
                                 .with(|ctx| {
-                                    let mut options = EvalOptions::default();
-                                    options.global = false;
-                                    options.promise = true;
-                                    if let Err(e) = ctx.eval_with_options::<Value, _>(code, options).catch(&ctx) {
+                                    if let Err(e) = Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
                                         eprintln!("module error: {e:?}");
                                     }
                                 })
