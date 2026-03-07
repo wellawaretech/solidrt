@@ -27,4 +27,4 @@ cargo build
 cargo test
 ```
 
-Requires Rust 2024 edition.
+Requires Rust 2021 edition.
