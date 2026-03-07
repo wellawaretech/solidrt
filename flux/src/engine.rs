@@ -58,32 +58,35 @@ impl JsEngine {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(JsCommand::EvalScript { code, responder }) => {
-                            context
+                        Some(JsCommand::EvalScript { code, timeout, responder }) => {
+                            let persistent = context
                                 .with(|ctx| {
-                                    let result = ctx
-                                        .eval::<Value, _>(code)
-                                        .catch(&ctx);
-                                    match result {
-                                        Ok(val) => {
-                                            ctx.globals().set("__last", val).unwrap();
-                                            let _ = responder.send(String::new());
-                                        }
-                                        Err(e) => {
-                                            let _ = responder.send(format!("error: {e:?}"));
-                                        }
+                                    match ctx.eval::<Value, _>(code).catch(&ctx) {
+                                        Ok(val) => Ok(Persistent::save(&ctx, val)),
+                                        Err(e) => Err(format!("error: {e:?}")),
                                     }
                                 })
                                 .await;
-                        }
-                        Some(JsCommand::Stringify { responder }) => {
-                            context
-                                .with(|ctx| {
-                                    let val: Value = ctx.globals().get("__last").unwrap();
-                                    let result = stringify_value(&ctx, val);
-                                    let _ = responder.send(result);
-                                })
-                                .await;
+                            match persistent {
+                                Ok(persistent) => {
+                                    let timers = timers.clone();
+                                    let context = context.clone();
+                                    tokio::task::spawn_local(async move {
+                                        match timeout {
+                                            Some(d) => { let _ = tokio::time::timeout(d, timers.wait_idle()).await; }
+                                            None => timers.wait_idle().await,
+                                        }
+                                        let result = context.with(|ctx| {
+                                            let val = persistent.restore(&ctx).unwrap();
+                                            stringify_value(&ctx, val)
+                                        }).await;
+                                        let _ = responder.send(Ok(result));
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = responder.send(Err(e));
+                                }
+                            }
                         }
                         Some(JsCommand::Eval { code }) => {
                             context
@@ -122,26 +125,17 @@ impl JsEngine {
             .await;
     }
 
-    pub async fn eval_script(&self, code: &str) -> Result<(), String> {
+    pub async fn eval_script(&self, code: &str, timeout: Option<Duration>) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .tx
             .send(JsCommand::EvalScript {
                 code: code.to_string(),
+                timeout,
                 responder: tx,
             })
             .await;
-        let result = rx.await.unwrap_or_else(|_| "engine dropped".into());
-        if result.is_empty() { Ok(()) } else { Err(result) }
-    }
-
-    pub async fn stringify_last(&self) -> String {
-        let (tx, rx) = oneshot::channel();
-        let _ = self
-            .tx
-            .send(JsCommand::Stringify { responder: tx })
-            .await;
-        rx.await.unwrap_or_else(|_| "engine dropped".into())
+        rx.await.unwrap_or_else(|_| Err("engine dropped".into()))
     }
 
     pub async fn wait_idle(&self) {
@@ -171,30 +165,30 @@ impl Drop for JsEngine {
 }
 
 fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
+    if let Some(promise) = val.as_promise() {
+        let (tag, inner) = match promise.state() {
+            PromiseState::Pending => return "Promise { <pending> }".to_string(),
+            PromiseState::Resolved => ("", promise.result::<Value>()),
+            PromiseState::Rejected => ("<rejected> ", promise.result::<Value>()),
+        };
+        let inner = inner.and_then(Result::ok).unwrap_or_else(|| ctx.catch());
+        return format!("Promise {{ {tag}{} }}", stringify_value(ctx, inner));
+    }
     if val.is_undefined() {
         "undefined".to_string()
     } else if val.is_null() {
         "null".to_string()
-    } else if let Some(promise) = val.as_promise() {
-        match promise.state() {
-            PromiseState::Pending => "Promise { <pending> }".to_string(),
-            PromiseState::Resolved => {
-                let inner: Value = promise.result().unwrap().unwrap();
-                format!("Promise {{ {} }}", stringify_value(ctx, inner))
-            }
-            PromiseState::Rejected => {
-                match promise.result::<Value>() {
-                    Some(Ok(inner)) => format!("Promise {{ <rejected> {} }}", stringify_value(ctx, inner)),
-                    Some(Err(_)) => {
-                        let caught = ctx.catch();
-                        format!("Promise {{ <rejected> {} }}", stringify_value(ctx, caught))
-                    }
-                    None => "Promise { <rejected> }".to_string(),
-                }
-            }
-        }
     } else if let Some(s) = val.as_string() {
-        s.to_string().unwrap_or_default()
+        format!("'{}'", s.to_string().unwrap_or_default())
+    } else if val.is_array() {
+        let arr = val.as_array().unwrap();
+        let items: Vec<String> = (0..arr.len())
+            .map(|i| {
+                let item: Value = arr.get(i).unwrap();
+                stringify_value(ctx, item)
+            })
+            .collect();
+        format!("[ {} ]", items.join(", "))
     } else {
         ctx.json_stringify(val)
             .ok()
@@ -215,7 +209,7 @@ async fn init_globals(context: &AsyncContext, timers: Timers) {
                 .set(
                     "print",
                     Function::new(ctx.clone(), |msg: String| {
-                        println!("[js] {msg}");
+                        println!("{msg}");
                     })
                     .unwrap(),
                 )

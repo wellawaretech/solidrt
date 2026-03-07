@@ -22,7 +22,7 @@ fn clear_timeout_on_not_yet_fired_cancels() {
         "#,
         TIMEOUT,
     );
-    assert_eq!(result, "cancelled");
+    assert_eq!(result, "'cancelled'");
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn clear_timeout_on_unknown_id_caught() {
         TIMEOUT,
     );
     assert!(
-        result.starts_with("caught:"),
+        result.starts_with("'caught:"),
         "expected caught error, got: {result}"
     );
 }
@@ -42,11 +42,11 @@ fn clear_timeout_on_unknown_id_caught() {
 #[test]
 fn set_timeout_returns_numeric_id() {
     let result = run_script("typeof setTimeout(() => {}, 1)", TIMEOUT);
-    assert_eq!(result, "number");
+    assert_eq!(result, "'number'");
 }
 
 #[test]
 fn set_interval_returns_numeric_id() {
     let result = run_script("typeof setInterval(() => {}, 1)", TIMEOUT);
-    assert_eq!(result, "number");
+    assert_eq!(result, "'number'");
 }

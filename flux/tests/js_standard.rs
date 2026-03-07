@@ -11,7 +11,7 @@ fn promise_resolve() {
         "#,
         TIMEOUT,
     );
-    assert_eq!(result, "Promise { resolved }");
+    assert_eq!(result, "Promise { 'resolved' }");
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn promise_catch() {
         "#,
         TIMEOUT,
     );
-    assert_eq!(result, "Promise { boom }");
+    assert_eq!(result, "Promise { 'boom' }");
 }
 
 #[test]
@@ -47,11 +47,11 @@ fn promise_all() {
             Promise.resolve('a'),
             Promise.resolve('b'),
             Promise.resolve('c'),
-        ]).then(arr => arr.join(','))
+        ])
         "#,
         TIMEOUT,
     );
-    assert_eq!(result, "Promise { a,b,c }");
+    assert_eq!(result, "Promise { [ 'a', 'b', 'c' ] }");
 }
 
 #[test]
@@ -66,5 +66,5 @@ fn async_function() {
         "#,
         TIMEOUT,
     );
-    assert_eq!(result, "Promise { hello world }");
+    assert_eq!(result, "Promise { 'hello world' }");
 }

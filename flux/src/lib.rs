@@ -30,15 +30,10 @@ pub fn run_script(code: &str, timeout: Option<Duration>) -> String {
 
     let engine = JsEngine::new();
     rt.block_on(async {
-        if let Err(e) = engine.eval_script(code).await {
-            engine.shutdown().await;
-            return e;
-        }
-        match timeout {
-            Some(d) => { let _ = tokio::time::timeout(d, engine.wait_idle()).await; }
-            None => engine.wait_idle().await,
-        }
-        let result = engine.stringify_last().await;
+        let result = match engine.eval_script(code, timeout).await {
+            Ok(val) => val,
+            Err(e) => e,
+        };
         engine.shutdown().await;
         result
     })
