@@ -31,5 +31,5 @@ fn main() {
         }
     };
 
-    run(&code, None);
+    run(&code);
 }

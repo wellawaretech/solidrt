@@ -5,7 +5,7 @@ pub use engine::JsEngine;
 
 use std::time::Duration;
 
-pub fn run(code: &str, timeout: Option<Duration>) {
+pub fn run(code: &str) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -14,10 +14,7 @@ pub fn run(code: &str, timeout: Option<Duration>) {
     let engine = JsEngine::new();
     rt.block_on(async {
         engine.eval(code).await;
-        match timeout {
-            Some(d) => { let _ = tokio::time::timeout(d, engine.wait_idle()).await; }
-            None => engine.wait_idle().await,
-        }
+        engine.wait_idle().await;
         engine.shutdown().await;
     })
 }
