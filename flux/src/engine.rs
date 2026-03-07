@@ -1,4 +1,6 @@
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Persistent, TypedArray, Value, function::Async, promise::PromiseState};
+#[cfg(feature = "script")]
+use rquickjs::{Persistent, promise::PromiseState};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, TypedArray, Value, function::Async};
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
@@ -44,6 +46,7 @@ impl PendingOps {
 }
 
 enum JsCommand {
+    #[cfg(feature = "script")]
     EvalScript {
         code: String,
         responder: oneshot::Sender<Result<String, String>>,
@@ -97,7 +100,7 @@ impl JsEngine {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
-                        // script mode only
+                        #[cfg(feature = "script")]
                         Some(JsCommand::EvalScript { code, responder }) => {
                             let persistent = context
                                 .with(|ctx| {
@@ -163,7 +166,7 @@ impl JsEngine {
         let _ = rx.await;
     }
 
-    // script mode only
+    #[cfg(feature = "script")]
     pub async fn eval_script(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
         let _ = self
@@ -192,7 +195,7 @@ impl Drop for JsEngine {
         }
     }
 }
-// script mode only
+#[cfg(feature = "script")]
 fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     if let Some(promise) = val.as_promise() {
         let (tag, inner) = match promise.state() {

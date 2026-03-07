@@ -1,8 +1,11 @@
-use qjsrt::{run, run_script};
+#[cfg(feature = "script")]
+use qjsrt::run_script;
+use qjsrt::run;
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let code = match args.next().as_deref() {
+        #[cfg(feature = "script")]
         Some("-e") => {
             let expr = args.next().unwrap_or_else(|| {
                 eprintln!("error: -e requires a JavaScript expression");
@@ -11,6 +14,7 @@ fn main() {
             run_script(&expr, None);
             return;
         }
+        #[cfg(feature = "script")]
         Some("-p") => {
             let expr = args.next().unwrap_or_else(|| {
                 eprintln!("error: -p requires a JavaScript expression");

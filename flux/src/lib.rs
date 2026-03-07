@@ -3,6 +3,7 @@ mod timer;
 
 pub use engine::JsEngine;
 
+#[cfg(feature = "script")]
 use std::time::Duration;
 
 pub fn run(code: &str) {
@@ -18,6 +19,7 @@ pub fn run(code: &str) {
     })
 }
 
+#[cfg(feature = "script")]
 pub fn run_script(code: &str, timeout: Option<Duration>) -> String {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
