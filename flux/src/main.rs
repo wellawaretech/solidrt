@@ -1,12 +1,19 @@
-use qjsrt::run;
+use qjsrt::{run, run_script};
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let code = match args.next().as_deref() {
-        Some("-e") => args.next().unwrap_or_else(|| {
-            eprintln!("error: -e requires a JavaScript expression");
-            std::process::exit(1);
-        }),
+        Some("-e") => {
+            let expr = args.next().unwrap_or_else(|| {
+                eprintln!("error: -e requires a JavaScript expression");
+                std::process::exit(1);
+            });
+            let result = run_script(&expr, None);
+            if !result.is_empty() {
+                println!("{result}");
+            }
+            return;
+        }
         Some(path) if !path.starts_with('-') => {
             std::fs::read_to_string(path).unwrap_or_else(|e| {
                 eprintln!("error: cannot read '{path}': {e}");
@@ -24,8 +31,5 @@ fn main() {
         }
     };
 
-    let result = run(&code, None);
-    if !result.is_empty() {
-        println!("{result}");
-    }
+    run(&code, None);
 }
