@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::timer::{self, Timers};
+use crate::timer;
 
 /// Tracks pending async operations that should keep the engine alive.
 #[derive(Clone)]
@@ -86,8 +86,9 @@ impl JsEngine {
             .expect("failed to create JS context");
 
         let pending = PendingOps::new();
-        let timers = Timers::new(pending.clone());
-        init_globals(&context, timers, pending.clone()).await;
+
+        timer::init_timers(&context, pending.clone()).await;
+        init_globals(&context, pending.clone()).await;
 
         loop {
             tokio::select! {
@@ -223,9 +224,7 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-async fn init_globals(context: &AsyncContext, timers: Timers, pending: PendingOps) {
-    timer::init_timers(context, timers).await;
-
+async fn init_globals(context: &AsyncContext, pending: PendingOps) {
     context
         .with(|ctx| {
             let globals = ctx.globals();

@@ -92,7 +92,8 @@ impl Timers {
     }
 }
 
-pub(crate) async fn init_timers(context: &AsyncContext, timers: Timers) {
+pub(crate) async fn init_timers(context: &AsyncContext, pending: PendingOps) {
+    let timers = Timers::new(pending.clone());
     context
         .with(|ctx| {
             let globals = ctx.globals();
