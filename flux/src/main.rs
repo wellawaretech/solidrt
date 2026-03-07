@@ -8,6 +8,14 @@ fn main() {
                 eprintln!("error: -e requires a JavaScript expression");
                 std::process::exit(1);
             });
+            run_script(&expr, None);
+            return;
+        }
+        Some("-p") => {
+            let expr = args.next().unwrap_or_else(|| {
+                eprintln!("error: -p requires a JavaScript expression");
+                std::process::exit(1);
+            });
             let result = run_script(&expr, None);
             if !result.is_empty() {
                 println!("{result}");
@@ -22,11 +30,11 @@ fn main() {
         }
         Some(flag) => {
             eprintln!("error: unknown flag '{flag}'");
-            eprintln!("usage: qjsrt [-e '<javascript>' | <file.js>]");
+            eprintln!("usage: qjsrt [-e|-p '<javascript>' | <file.js>]");
             std::process::exit(1);
         }
         None => {
-            eprintln!("usage: qjsrt [-e '<javascript>' | <file.js>]");
+            eprintln!("usage: qjsrt [-e|-p '<javascript>' | <file.js>]");
             std::process::exit(1);
         }
     };
