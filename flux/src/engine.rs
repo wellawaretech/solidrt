@@ -229,52 +229,45 @@ async fn init_globals(context: &AsyncContext, pending: PendingOps) {
         .with(|ctx| {
             let globals = ctx.globals();
 
-            globals
-                .set(
-                    "print",
-                    Function::new(ctx.clone(), |msg: String| {
-                        println!("{msg}");
-                    })
-                    .unwrap(),
-                )
-                .unwrap();
+            let print = Function::new(ctx.clone(), |msg: String| {
+                println!("{msg}");
+            })
+            .unwrap();
 
-            // _load(path, cb) — cb(err, data). Called by the JS `load` wrapper.
-            globals
-                .set(
-                    "_load",
-                    Function::new(
-                        ctx.clone(),
-                        MutFn::from({
-                            move |cb: Function<'_>, path: String| {
-                                let ctx = cb.ctx().clone();
-                                let pending = pending.clone();
-                                pending.hold();
-                                ctx.spawn(async move {
-                                    match tokio::fs::read(&path).await {
-                                        Ok(data) => {
-                                            let ctx = cb.ctx().clone();
-                                            let ta = rquickjs::TypedArray::<u8>::new(ctx, data)
-                                                .unwrap();
-                                            let _ = cb.call::<_, ()>((
-                                                Value::new_null(cb.ctx().clone()),
-                                                ta.into_value(),
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            let _ = cb.call::<_, ()>((format!(
-                                                "load: {path}: {e}"
-                                            ),));
-                                        }
-                                    }
-                                    pending.release();
-                                });
+            // _load(cb, path) — cb(err, data). Called by the JS `load` wrapper.
+            let load = Function::new(
+                ctx.clone(),
+                MutFn::from({
+                    move |cb: Function<'_>, path: String| {
+                        let ctx = cb.ctx().clone();
+                        let pending = pending.clone();
+                        pending.hold();
+                        ctx.spawn(async move {
+                            match tokio::fs::read(&path).await {
+                                Ok(data) => {
+                                    let ctx = cb.ctx().clone();
+                                    let ta = rquickjs::TypedArray::<u8>::new(ctx, data)
+                                        .unwrap();
+                                    let _ = cb.call::<_, ()>((
+                                        Value::new_null(cb.ctx().clone()),
+                                        ta.into_value(),
+                                    ));
+                                }
+                                Err(e) => {
+                                    let _ = cb.call::<_, ()>((format!(
+                                        "load: {path}: {e}"
+                                    ),));
+                                }
                             }
-                        }),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+                            pending.release();
+                        });
+                    }
+                }),
+            )
+            .unwrap();
+
+            globals.set("print", print).unwrap();
+            globals.set("_load", load).unwrap();
 
             ctx.eval::<(), _>(
                 "globalThis.load = (path) => new Promise((resolve, reject) => _load((err, data) => err ? reject(err) : resolve(data), path));",

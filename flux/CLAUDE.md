@@ -31,6 +31,10 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - **Timer cleanup gates completion.** Both flows wait on `Timers::wait_idle()` before responding. If you add a new async primitive that should keep the process alive, it needs to integrate with this mechanism (or a similar one).
 - **Module flow vs script flow use different eval paths.** Module flow uses `Module::evaluate` (supports `import`/`export`). Script flow uses `ctx.eval` (returns a value). Don't mix them up.
 
+## Code style
+
+- **Global registration pattern:** When registering JS functions on `globals`, define each `Function::new(...)` in its own `let` binding first, then group all `globals.set(...)` calls together at the end. Do not inline `Function::new` inside `globals.set`. See `timer.rs` `init_timers` for the reference pattern.
+
 ## Modules
 
 - `main.rs` — CLI arg parsing, dispatches to `run` or `run_script`.

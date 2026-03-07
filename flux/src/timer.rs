@@ -98,64 +98,49 @@ pub(crate) async fn init_timers(context: &AsyncContext, pending: PendingOps) {
         .with(|ctx| {
             let globals = ctx.globals();
 
-            globals
-                .set(
-                    "setTimeout",
-                    Function::new(
-                        ctx.clone(),
-                        MutFn::from({
-                            let timers = timers.clone();
-                            move |cb: Function<'_>, ms: u64| -> u32 {
-                                let ctx = cb.ctx().clone();
-                                timers.set_timeout(&ctx, cb, ms)
-                            }
-                        }),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+            let set_timeout = Function::new(
+                ctx.clone(),
+                MutFn::from({
+                    let timers = timers.clone();
+                    move |cb: Function<'_>, ms: u64| -> u32 {
+                        let ctx = cb.ctx().clone();
+                        timers.set_timeout(&ctx, cb, ms)
+                    }
+                }),
+            )
+            .unwrap();
 
-            globals
-                .set(
-                    "clearTimeout",
-                    Function::new(
-                        ctx.clone(),
-                        MutFn::from({
-                            let timers = timers.clone();
-                            move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)
-                        }),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+            let clear_timeout = Function::new(
+                ctx.clone(),
+                MutFn::from({
+                    let timers = timers.clone();
+                    move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)
+                }),
+            )
+            .unwrap();
 
-            globals
-                .set(
-                    "setInterval",
-                    Function::new(
-                        ctx.clone(),
-                        MutFn::from({
-                            let timers = timers.clone();
-                            move |cb: Function<'_>, ms: u64| -> u32 {
-                                let ctx = cb.ctx().clone();
-                                timers.set_interval(&ctx, cb, ms)
-                            }
-                        }),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+            let set_interval = Function::new(
+                ctx.clone(),
+                MutFn::from({
+                    let timers = timers.clone();
+                    move |cb: Function<'_>, ms: u64| -> u32 {
+                        let ctx = cb.ctx().clone();
+                        timers.set_interval(&ctx, cb, ms)
+                    }
+                }),
+            )
+            .unwrap();
 
-            globals
-                .set(
-                    "clearInterval",
-                    Function::new(
-                        ctx.clone(),
-                        MutFn::from(move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+            let clear_interval = Function::new(
+                ctx.clone(),
+                MutFn::from(move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)),
+            )
+            .unwrap();
+
+            globals.set("setTimeout", set_timeout).unwrap();
+            globals.set("clearTimeout", clear_timeout).unwrap();
+            globals.set("setInterval", set_interval).unwrap();
+            globals.set("clearInterval", clear_interval).unwrap();
         })
         .await;
 }
