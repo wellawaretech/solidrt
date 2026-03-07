@@ -15,11 +15,8 @@ impl Default for RunOptions {
     }
 }
 
-pub fn run(code: &str) -> String {
-    run_with_options(code, RunOptions::default())
-}
-
-pub fn run_with_options(code: &str, opts: RunOptions) -> String {
+pub fn run(code: &str, opts: Option<RunOptions>) -> String {
+    let opts = opts.unwrap_or_default();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

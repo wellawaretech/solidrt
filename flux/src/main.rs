@@ -24,7 +24,7 @@ fn main() {
         }
     };
 
-    let result = run(&code);
+    let result = run(&code, None);
     if !result.is_empty() {
         println!("{result}");
     }
