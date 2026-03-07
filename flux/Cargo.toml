@@ -1,7 +1,8 @@
 [package]
 name = "qjsrt"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+license = "MIT"
 
 [dependencies]
 rquickjs = { version = "0.11.0", features = ["rust-alloc", "futures", "macro"] }
