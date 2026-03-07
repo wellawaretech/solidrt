@@ -23,9 +23,13 @@ impl Timers {
         }
     }
 
+    pub fn is_idle(&self) -> bool {
+        self.active.borrow().is_empty()
+    }
+
     pub async fn wait_idle(&self) {
         loop {
-            if self.active.borrow().is_empty() {
+            if self.is_idle() {
                 return;
             }
             self.idle_notify.notified().await;

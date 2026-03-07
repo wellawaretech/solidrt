@@ -1,7 +1,61 @@
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Persistent, Value, promise::PromiseState};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Persistent, Value, function::MutFn, promise::PromiseState};
+use std::cell::Cell;
+use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::timer::{self, Timers};
+
+/// Tracks pending async operations (beyond timers) that should keep the engine alive.
+#[derive(Clone)]
+struct PendingOps {
+    count: Rc<Cell<u32>>,
+    notify: Rc<tokio::sync::Notify>,
+}
+
+impl PendingOps {
+    fn new() -> Self {
+        Self {
+            count: Rc::new(Cell::new(0)),
+            notify: Rc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn hold(&self) {
+        self.count.set(self.count.get() + 1);
+    }
+
+    fn release(&self) {
+        let n = self.count.get() - 1;
+        self.count.set(n);
+        if n == 0 {
+            self.notify.notify_waiters();
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.count.get() == 0
+    }
+
+    async fn wait_idle(&self) {
+        loop {
+            if self.is_idle() {
+                return;
+            }
+            self.notify.notified().await;
+        }
+    }
+}
+
+//make a generic fn out of this? 
+async fn wait_all_idle(timers: &Timers, pending: &PendingOps) {
+    loop {
+        timers.wait_idle().await;
+        pending.wait_idle().await;
+        if timers.is_idle() && pending.is_idle() {
+            return;
+        }
+    }
+}
 
 enum JsCommand {
     EvalScript {
@@ -47,12 +101,14 @@ impl JsEngine {
             .expect("failed to create JS context");
 
         let timers = Timers::new();
-        init_globals(&context, timers.clone()).await;
+        let pending = PendingOps::new();
+        init_globals(&context, timers.clone(), pending.clone()).await;
 
         loop {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
+                        // script mode only
                         Some(JsCommand::EvalScript { code, responder }) => {
                             let persistent = context
                                 .with(|ctx| {
@@ -65,9 +121,10 @@ impl JsEngine {
                             match persistent {
                                 Ok(persistent) => {
                                     let timers = timers.clone();
+                                    let pending = pending.clone();
                                     let context = context.clone();
                                     tokio::task::spawn_local(async move {
-                                        timers.wait_idle().await;
+                                        wait_all_idle(&timers, &pending).await;
                                         let result = context.with(|ctx| {
                                             let val = persistent.restore(&ctx).unwrap();
                                             stringify_value(&ctx, val)
@@ -89,8 +146,9 @@ impl JsEngine {
                                 })
                                 .await;
                             let timers = timers.clone();
+                            let pending = pending.clone();
                             tokio::task::spawn_local(async move {
-                                timers.wait_idle().await;
+                                wait_all_idle(&timers, &pending).await;
                                 let _ = responder.send(());
                             });
                         }
@@ -118,6 +176,7 @@ impl JsEngine {
         let _ = rx.await;
     }
 
+    // script mode only
     pub async fn eval_script(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
         let _ = self
@@ -146,7 +205,7 @@ impl Drop for JsEngine {
         }
     }
 }
-
+// script mode only
 fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     if let Some(promise) = val.as_promise() {
         let (tag, inner) = match promise.state() {
@@ -181,7 +240,7 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-async fn init_globals(context: &AsyncContext, timers: Timers) {
+async fn init_globals(context: &AsyncContext, timers: Timers, pending: PendingOps) {
     timer::init_timers(context, timers).await;
 
     context
@@ -197,6 +256,48 @@ async fn init_globals(context: &AsyncContext, timers: Timers) {
                     .unwrap(),
                 )
                 .unwrap();
+
+            // _load(path, cb) — cb(err, data). Called by the JS `load` wrapper.
+            globals
+                .set(
+                    "_load",
+                    Function::new(
+                        ctx.clone(),
+                        MutFn::from({
+                            move |cb: Function<'_>, path: String| {
+                                let ctx = cb.ctx().clone();
+                                let pending = pending.clone();
+                                pending.hold();
+                                ctx.spawn(async move {
+                                    match tokio::fs::read(&path).await {
+                                        Ok(data) => {
+                                            let ctx = cb.ctx().clone();
+                                            let ta = rquickjs::TypedArray::<u8>::new(ctx, data)
+                                                .unwrap();
+                                            let _ = cb.call::<_, ()>((
+                                                Value::new_null(cb.ctx().clone()),
+                                                ta.into_value(),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            let _ = cb.call::<_, ()>((format!(
+                                                "load: {path}: {e}"
+                                            ),));
+                                        }
+                                    }
+                                    pending.release();
+                                });
+                            }
+                        }),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+
+            ctx.eval::<(), _>(
+                "globalThis.load = (path) => new Promise((resolve, reject) => _load((err, data) => err ? reject(err) : resolve(data), path));",
+            )
+            .unwrap();
         })
         .await;
 }
