@@ -13,7 +13,7 @@ pub fn run(code: &str, timeout: Option<Duration>) {
 
     let engine = JsEngine::new();
     rt.block_on(async {
-        engine.eval_module(code).await;
+        engine.eval(code).await;
         match timeout {
             Some(d) => { let _ = tokio::time::timeout(d, engine.wait_idle()).await; }
             None => engine.wait_idle().await,
@@ -30,7 +30,7 @@ pub fn run_script(code: &str, timeout: Option<Duration>) -> String {
 
     let engine = JsEngine::new();
     rt.block_on(async {
-        if let Err(e) = engine.eval(code).await {
+        if let Err(e) = engine.eval_script(code).await {
             engine.shutdown().await;
             return e;
         }
