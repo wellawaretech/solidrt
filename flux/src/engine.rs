@@ -5,9 +5,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::timer::{self, Timers};
 
-/// Tracks pending async operations (beyond timers) that should keep the engine alive.
+/// Tracks pending async operations that should keep the engine alive.
 #[derive(Clone)]
-struct PendingOps {
+pub(crate) struct PendingOps {
     count: Rc<Cell<u32>>,
     notify: Rc<tokio::sync::Notify>,
 }
@@ -20,11 +20,11 @@ impl PendingOps {
         }
     }
 
-    fn hold(&self) {
+    pub(crate) fn hold(&self) {
         self.count.set(self.count.get() + 1);
     }
 
-    fn release(&self) {
+    pub(crate) fn release(&self) {
         let n = self.count.get() - 1;
         self.count.set(n);
         if n == 0 {
@@ -32,27 +32,12 @@ impl PendingOps {
         }
     }
 
-    fn is_idle(&self) -> bool {
-        self.count.get() == 0
-    }
-
     async fn wait_idle(&self) {
         loop {
-            if self.is_idle() {
+            if self.count.get() == 0 {
                 return;
             }
             self.notify.notified().await;
-        }
-    }
-}
-
-//make a generic fn out of this? 
-async fn wait_all_idle(timers: &Timers, pending: &PendingOps) {
-    loop {
-        timers.wait_idle().await;
-        pending.wait_idle().await;
-        if timers.is_idle() && pending.is_idle() {
-            return;
         }
     }
 }
@@ -100,9 +85,9 @@ impl JsEngine {
             .await
             .expect("failed to create JS context");
 
-        let timers = Timers::new();
         let pending = PendingOps::new();
-        init_globals(&context, timers.clone(), pending.clone()).await;
+        let timers = Timers::new(pending.clone());
+        init_globals(&context, timers, pending.clone()).await;
 
         loop {
             tokio::select! {
@@ -120,11 +105,10 @@ impl JsEngine {
                                 .await;
                             match persistent {
                                 Ok(persistent) => {
-                                    let timers = timers.clone();
                                     let pending = pending.clone();
                                     let context = context.clone();
                                     tokio::task::spawn_local(async move {
-                                        wait_all_idle(&timers, &pending).await;
+                                        pending.wait_idle().await;
                                         let result = context.with(|ctx| {
                                             let val = persistent.restore(&ctx).unwrap();
                                             stringify_value(&ctx, val)
@@ -145,10 +129,9 @@ impl JsEngine {
                                     }
                                 })
                                 .await;
-                            let timers = timers.clone();
                             let pending = pending.clone();
                             tokio::task::spawn_local(async move {
-                                wait_all_idle(&timers, &pending).await;
+                                pending.wait_idle().await;
                                 let _ = responder.send(());
                             });
                         }

@@ -5,34 +5,23 @@ use std::rc::Rc;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
+use crate::engine::PendingOps;
+
 type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
 
 #[derive(Clone)]
 pub(crate) struct Timers {
     next_id: Rc<Cell<u32>>,
     active: ActiveMap,
-    idle_notify: Rc<tokio::sync::Notify>,
+    pending: PendingOps,
 }
 
 impl Timers {
-    pub fn new() -> Self {
+    pub fn new(pending: PendingOps) -> Self {
         Self {
             next_id: Rc::new(Cell::new(1)),
             active: Rc::new(std::cell::RefCell::new(HashMap::new())),
-            idle_notify: Rc::new(tokio::sync::Notify::new()),
-        }
-    }
-
-    pub fn is_idle(&self) -> bool {
-        self.active.borrow().is_empty()
-    }
-
-    pub async fn wait_idle(&self) {
-        loop {
-            if self.is_idle() {
-                return;
-            }
-            self.idle_notify.notified().await;
+            pending,
         }
     }
 
@@ -44,9 +33,7 @@ impl Timers {
 
     fn remove(&self, id: u32) {
         self.active.borrow_mut().remove(&id);
-        if self.active.borrow().is_empty() {
-            self.idle_notify.notify_waiters();
-        }
+        self.pending.release();
     }
 
     fn cancel<'js>(&self, ctx: &Ctx<'js>, id: u32) -> rquickjs::Result<()> {
@@ -54,9 +41,7 @@ impl Timers {
         match tx {
             Some(tx) => {
                 let _ = tx.send(());
-                if self.active.borrow().is_empty() {
-                    self.idle_notify.notify_waiters();
-                }
+                self.pending.release();
                 Ok(())
             }
             None => Err(ctx.throw(
@@ -71,6 +56,7 @@ impl Timers {
         let id = self.alloc_id();
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         self.active.borrow_mut().insert(id, cancel_tx);
+        self.pending.hold();
         let timers = self.clone();
         ctx.spawn(async move {
             tokio::select! {
@@ -88,6 +74,7 @@ impl Timers {
         let id = self.alloc_id();
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         self.active.borrow_mut().insert(id, cancel_tx);
+        self.pending.hold();
         ctx.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(ms));
             interval.tick().await; // skip immediate first tick
