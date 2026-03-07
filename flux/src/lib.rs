@@ -26,9 +26,16 @@ pub fn run_script(code: &str, timeout: Option<Duration>) -> String {
 
     let engine = JsEngine::new();
     rt.block_on(async {
-        let result = match engine.eval_script(code, timeout).await {
-            Ok(val) => val,
-            Err(e) => e,
+        let result = match timeout {
+            Some(d) => match tokio::time::timeout(d, engine.eval_script(code)).await {
+                Ok(Ok(val)) => val,
+                Ok(Err(e)) => e,
+                Err(_) => "error: timed out".into(),
+            },
+            None => match engine.eval_script(code).await {
+                Ok(val) => val,
+                Err(e) => e,
+            },
         };
         engine.shutdown().await;
         result

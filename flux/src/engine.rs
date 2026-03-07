@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Persistent, Value, promise::PromiseState};
 use tokio::sync::{mpsc, oneshot};
 
@@ -8,7 +6,6 @@ use crate::timer::{self, Timers};
 enum JsCommand {
     EvalScript {
         code: String,
-        timeout: Option<Duration>,
         responder: oneshot::Sender<Result<String, String>>,
     },
     Eval {
@@ -49,14 +46,14 @@ impl JsEngine {
             .await
             .expect("failed to create JS context");
 
-        let timers = Timers::new(&context);
+        let timers = Timers::new();
         init_globals(&context, timers.clone()).await;
 
         loop {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(JsCommand::EvalScript { code, timeout, responder }) => {
+                        Some(JsCommand::EvalScript { code, responder }) => {
                             let persistent = context
                                 .with(|ctx| {
                                     match ctx.eval::<Value, _>(code).catch(&ctx) {
@@ -70,10 +67,7 @@ impl JsEngine {
                                     let timers = timers.clone();
                                     let context = context.clone();
                                     tokio::task::spawn_local(async move {
-                                        match timeout {
-                                            Some(d) => { let _ = tokio::time::timeout(d, timers.wait_idle()).await; }
-                                            None => timers.wait_idle().await,
-                                        }
+                                        timers.wait_idle().await;
                                         let result = context.with(|ctx| {
                                             let val = persistent.restore(&ctx).unwrap();
                                             stringify_value(&ctx, val)
@@ -124,13 +118,12 @@ impl JsEngine {
         let _ = rx.await;
     }
 
-    pub async fn eval_script(&self, code: &str, timeout: Option<Duration>) -> Result<String, String> {
+    pub async fn eval_script(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
         let _ = self
             .tx
             .send(JsCommand::EvalScript {
                 code: code.to_string(),
-                timeout,
                 responder: tx,
             })
             .await;

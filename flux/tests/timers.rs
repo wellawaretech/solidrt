@@ -47,6 +47,6 @@ fn set_timeout_returns_numeric_id() {
 
 #[test]
 fn set_interval_returns_numeric_id() {
-    let result = run_script("typeof setInterval(() => {}, 1)", TIMEOUT);
+    let result = run_script("const id = setInterval(() => {}, 1); clearInterval(id); typeof id", TIMEOUT);
     assert_eq!(result, "'number'");
 }

@@ -1,31 +1,31 @@
-use rquickjs::{function::MutFn, AsyncContext, Ctx, Function, Persistent};
-use std::cell::{Cell, RefCell};
+use rquickjs::{function::MutFn, AsyncContext, Ctx, Function};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
-use tokio::task::AbortHandle;
+use tokio::sync::oneshot;
+
+type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
 
 #[derive(Clone)]
 pub(crate) struct Timers {
     next_id: Rc<Cell<u32>>,
-    handles: Rc<RefCell<HashMap<u32, AbortHandle>>>,
-    context: AsyncContext,
+    active: ActiveMap,
     idle_notify: Rc<tokio::sync::Notify>,
 }
 
 impl Timers {
-    pub fn new(context: &AsyncContext) -> Self {
+    pub fn new() -> Self {
         Self {
             next_id: Rc::new(Cell::new(1)),
-            handles: Rc::new(RefCell::new(HashMap::new())),
-            context: context.clone(),
+            active: Rc::new(std::cell::RefCell::new(HashMap::new())),
             idle_notify: Rc::new(tokio::sync::Notify::new()),
         }
     }
 
     pub async fn wait_idle(&self) {
         loop {
-            if self.handles.borrow().is_empty() {
+            if self.active.borrow().is_empty() {
                 return;
             }
             self.idle_notify.notified().await;
@@ -38,23 +38,19 @@ impl Timers {
         id
     }
 
-    fn track(&self, id: u32, handle: AbortHandle) {
-        self.handles.borrow_mut().insert(id, handle);
-    }
-
-    fn remove_handle(&self, id: u32) {
-        self.handles.borrow_mut().remove(&id);
-        if self.handles.borrow().is_empty() {
+    fn remove(&self, id: u32) {
+        self.active.borrow_mut().remove(&id);
+        if self.active.borrow().is_empty() {
             self.idle_notify.notify_waiters();
         }
     }
 
     fn cancel<'js>(&self, ctx: &Ctx<'js>, id: u32) -> rquickjs::Result<()> {
-        let removed = self.handles.borrow_mut().remove(&id);
-        match removed {
-            Some(h) => {
-                h.abort();
-                if self.handles.borrow().is_empty() {
+        let tx = self.active.borrow_mut().remove(&id);
+        match tx {
+            Some(tx) => {
+                let _ = tx.send(());
+                if self.active.borrow().is_empty() {
                     self.idle_notify.notify_waiters();
                 }
                 Ok(())
@@ -69,51 +65,38 @@ impl Timers {
 
     fn set_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
         let id = self.alloc_id();
-        let cb = Persistent::save(ctx, cb);
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        self.active.borrow_mut().insert(id, cancel_tx);
         let timers = self.clone();
-        let jh = tokio::task::spawn_local(async move {
-            tokio::time::sleep(Duration::from_millis(ms)).await;
-            timers.remove_handle(id);
-            timers
-                .context
-                .with(|ctx| {
-                    if let Ok(cb) = cb.restore(&ctx) {
-                        let _ = cb.call::<(), ()>(());
-                    }
-                })
-                .await;
+        ctx.spawn(async move {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(ms)) => {
+                    timers.remove(id);
+                    let _ = cb.call::<(), ()>(());
+                }
+                _ = cancel_rx => {}
+            }
         });
-        self.track(id, jh.abort_handle());
         id
     }
 
     fn set_interval<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
         let id = self.alloc_id();
-        let mut cb = Persistent::save(ctx, cb);
-        let timers = self.clone();
-        let jh = tokio::task::spawn_local(async move {
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        self.active.borrow_mut().insert(id, cancel_tx);
+        ctx.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(ms));
             interval.tick().await; // skip immediate first tick
-            loop {
-                interval.tick().await;
-                let next = timers
-                    .context
-                    .with(|ctx| {
-                        let f = cb.restore(&ctx).ok()?;
-                        let _ = f.call::<(), ()>(());
-                        Some(Persistent::save(&ctx, f))
-                    })
-                    .await;
-                match next {
-                    Some(p) => cb = p,
-                    None => {
-                        timers.remove_handle(id);
-                        break;
+            tokio::select! {
+                _ = async {
+                    loop {
+                        interval.tick().await;
+                        let _ = cb.call::<(), ()>(());
                     }
-                }
+                } => {}
+                _ = cancel_rx => {}
             }
         });
-        self.track(id, jh.abort_handle());
         id
     }
 }
