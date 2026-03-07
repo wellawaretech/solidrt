@@ -1,6 +1,6 @@
 # qjsrt
 
-A small JavaScript runtime built on [QuickJS-NG](https://github.com/aspect-build/rules_quickjs) (via [rquickjs](https://github.com/aspect-build/rules_quickjs)) with a Tokio-based async event loop.
+A cross-platform JavaScript runtime in Rust built on [QuickJS-NG](https://github.com/quickjs-ng/quickjs) with a Tokio-based async event loop.
 
 ## Usage
 
