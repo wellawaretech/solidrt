@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Persistent, Value, promise::PromiseState};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Persistent, Value, context::EvalOptions, promise::PromiseState};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::timer::{self, Timers};
@@ -13,8 +13,6 @@ enum JsCommand {
     },
     Eval {
         code: String,
-    },
-    WaitIdle {
         responder: oneshot::Sender<()>,
     },
     Shutdown,
@@ -88,16 +86,17 @@ impl JsEngine {
                                 }
                             }
                         }
-                        Some(JsCommand::Eval { code }) => {
+                        Some(JsCommand::Eval { code, responder }) => {
                             context
                                 .with(|ctx| {
-                                    if let Err(e) = ctx.eval::<Value, _>(code).catch(&ctx) {
+                                    let mut options = EvalOptions::default();
+                                    options.global = false;
+                                    options.promise = true;
+                                    if let Err(e) = ctx.eval_with_options::<Value, _>(code, options).catch(&ctx) {
                                         eprintln!("module error: {e:?}");
                                     }
                                 })
                                 .await;
-                        }
-                        Some(JsCommand::WaitIdle { responder }) => {
                             let timers = timers.clone();
                             tokio::task::spawn_local(async move {
                                 timers.wait_idle().await;
@@ -117,12 +116,15 @@ impl JsEngine {
     }
 
     pub async fn eval(&self, code: &str) {
+        let (tx, rx) = oneshot::channel();
         let _ = self
             .tx
             .send(JsCommand::Eval {
                 code: code.to_string(),
+                responder: tx,
             })
             .await;
+        let _ = rx.await;
     }
 
     pub async fn eval_script(&self, code: &str, timeout: Option<Duration>) -> Result<String, String> {
@@ -136,15 +138,6 @@ impl JsEngine {
             })
             .await;
         rx.await.unwrap_or_else(|_| Err("engine dropped".into()))
-    }
-
-    pub async fn wait_idle(&self) {
-        let (tx, rx) = oneshot::channel();
-        let _ = self
-            .tx
-            .send(JsCommand::WaitIdle { responder: tx })
-            .await;
-        let _ = rx.await;
     }
 
     pub async fn shutdown(mut self) {

@@ -14,7 +14,6 @@ pub fn run(code: &str) {
     let engine = JsEngine::new();
     rt.block_on(async {
         engine.eval(code).await;
-        engine.wait_idle().await;
         engine.shutdown().await;
     })
 }
