@@ -28,12 +28,14 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - **JS values are `!Send`.** All JS execution must happen on the engine thread. Never move a `Value`, `Function`, or `Ctx` across threads.
 - **Use `ctx.spawn()` for JS-touching async work**, not `tokio::spawn`. `ctx.spawn()` produces QuickJS-managed futures driven by `runtime.idle()`. `tokio::spawn` would require `Send` and break.
 - **The engine thread runs a single-threaded Tokio runtime + `LocalSet`.** `spawn_local` is fine; `tokio::spawn` inside the engine thread would panic (no multi-thread runtime there).
-- **Timer cleanup gates completion.** Both flows wait on `Timers::wait_idle()` before responding. If you add a new async primitive that should keep the process alive, it needs to integrate with this mechanism (or a similar one).
+- **PendingOps gates completion.** Both flows wait on `PendingOps::wait_idle()` before responding. Any async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps` (retrieved via `ctx.userdata()`).
 - **Module flow vs script flow use different eval paths.** Module flow uses `Module::evaluate` (supports `import`/`export`). Script flow uses `ctx.eval` (returns a value). Don't mix them up.
 
 ## Code style
 
 - **Global registration pattern:** When registering JS functions on `globals`, define each `Function::new(...)` in its own `let` binding first, then group all `globals.set(...)` calls together at the end. Do not inline `Function::new` inside `globals.set`. See `timer.rs` `init_timers` for the reference pattern.
+- **Async JS functions — named fn vs closure:** Use `Async(named_fn)` (named `async fn`) when the function returns a JS value (`Value<'js>`, `TypedArray`, etc.), because closures can't relate input/output lifetimes on `Ctx<'js>`. Use `MutFn` closures with `ctx.spawn()` when the function returns simple Rust types (`u32`, `()`) and manages JS values internally — no lifetime issue arises. See `load` (named async fn) vs timer functions (closures) for examples.
+- **`PendingOps` via userdata:** `PendingOps` is stored in the context via `ctx.store_userdata()` at engine startup. Retrieve it with `ctx.userdata::<PendingOps>()` instead of passing it as a parameter. Any new async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps`.
 
 ## Modules
 

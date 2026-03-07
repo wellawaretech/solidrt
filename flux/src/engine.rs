@@ -1,4 +1,4 @@
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Module, Persistent, Value, function::MutFn, promise::PromiseState};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Persistent, TypedArray, Value, function::Async, promise::PromiseState};
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
@@ -6,11 +6,12 @@ use tokio::sync::{mpsc, oneshot};
 use crate::timer;
 
 /// Tracks pending async operations that should keep the engine alive.
-#[derive(Clone)]
+#[derive(Clone, JsLifetime)]
 pub(crate) struct PendingOps {
     count: Rc<Cell<u32>>,
     notify: Rc<tokio::sync::Notify>,
 }
+
 
 impl PendingOps {
     fn new() -> Self {
@@ -87,8 +88,10 @@ impl JsEngine {
 
         let pending = PendingOps::new();
 
-        timer::init_timers(&context, pending.clone()).await;
-        init_globals(&context, pending.clone()).await;
+        context.with(|ctx| ctx.store_userdata(pending.clone()).unwrap()).await;
+
+        timer::init_timers(&context).await;
+        init_globals(&context).await;
 
         loop {
             tokio::select! {
@@ -224,7 +227,17 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-async fn init_globals(context: &AsyncContext, pending: PendingOps) {
+// Named fn required: closures can't relate Ctx<'_> input lifetime to Value<'_> output lifetime.
+async fn load(ctx: Ctx<'_>, path: String) -> rquickjs::Result<Value<'_>> {
+    let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+    pending.hold();
+    let result = tokio::fs::read(&path).await;
+    pending.release();
+    let data = result.map_err(rquickjs::Error::Io)?;
+    Ok(TypedArray::<u8>::new(ctx, data)?.into_value())
+}
+
+async fn init_globals(context: &AsyncContext) {
     context
         .with(|ctx| {
             let globals = ctx.globals();
@@ -234,45 +247,10 @@ async fn init_globals(context: &AsyncContext, pending: PendingOps) {
             })
             .unwrap();
 
-            // _load(cb, path) — cb(err, data). Called by the JS `load` wrapper.
-            let load = Function::new(
-                ctx.clone(),
-                MutFn::from({
-                    move |cb: Function<'_>, path: String| {
-                        let ctx = cb.ctx().clone();
-                        let pending = pending.clone();
-                        pending.hold();
-                        ctx.spawn(async move {
-                            match tokio::fs::read(&path).await {
-                                Ok(data) => {
-                                    let ctx = cb.ctx().clone();
-                                    let ta = rquickjs::TypedArray::<u8>::new(ctx, data)
-                                        .unwrap();
-                                    let _ = cb.call::<_, ()>((
-                                        Value::new_null(cb.ctx().clone()),
-                                        ta.into_value(),
-                                    ));
-                                }
-                                Err(e) => {
-                                    let _ = cb.call::<_, ()>((format!(
-                                        "load: {path}: {e}"
-                                    ),));
-                                }
-                            }
-                            pending.release();
-                        });
-                    }
-                }),
-            )
-            .unwrap();
+            let load_fn = Function::new(ctx.clone(), Async(load)).unwrap();
 
             globals.set("print", print).unwrap();
-            globals.set("_load", load).unwrap();
-
-            ctx.eval::<(), _>(
-                "globalThis.load = (path) => new Promise((resolve, reject) => _load((err, data) => err ? reject(err) : resolve(data), path));",
-            )
-            .unwrap();
+            globals.set("load", load_fn).unwrap();
         })
         .await;
 }

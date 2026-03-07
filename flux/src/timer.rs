@@ -17,11 +17,11 @@ pub(crate) struct Timers {
 }
 
 impl Timers {
-    pub fn new(pending: PendingOps) -> Self {
+    pub fn new(ctx: &Ctx<'_>) -> Self {
         Self {
             next_id: Rc::new(Cell::new(1)),
             active: Rc::new(std::cell::RefCell::new(HashMap::new())),
-            pending,
+            pending: ctx.userdata::<PendingOps>().unwrap().clone(),
         }
     }
 
@@ -92,10 +92,10 @@ impl Timers {
     }
 }
 
-pub(crate) async fn init_timers(context: &AsyncContext, pending: PendingOps) {
-    let timers = Timers::new(pending.clone());
+pub(crate) async fn init_timers(context: &AsyncContext) {
     context
         .with(|ctx| {
+            let timers = Timers::new(&ctx);
             let globals = ctx.globals();
 
             let set_timeout = Function::new(
