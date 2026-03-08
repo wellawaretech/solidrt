@@ -38,6 +38,7 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - **Sync named fns returning JS values:** The same closure lifetime limitation applies to sync functions returning `Value<'js>`. Use a named `fn` when the return type contains a JS lifetime. See `io_source` (named sync fn returning `Value<'js>`) for the pattern.
 - **`Promised<T>` for async methods on objects:** When a closure-based JS function needs to return a Promise, use `MutFn` closure returning `rquickjs::Result<Promised<impl Future>>`. Extract everything needed from `Ctx` synchronously (PendingOps, etc.), then wrap the async work in `Promised(async move { ... })`. This avoids lifetime issues since the future doesn't capture `Ctx`. Use `IntoJs` newtypes (e.g. `JsBytes`, `JsonValue`) to convert Rust types to JS values inside the promise resolution. See `io.rs` body methods for the reference pattern.
 - **`PendingOps` via userdata:** `PendingOps` is stored in the context via `ctx.store_userdata()` at engine startup. Retrieve it with `ctx.userdata::<PendingOps>()` instead of passing it as a parameter. Any new async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps`.
+- **Storing non-JS types in userdata:** `ctx.store_userdata()` requires `JsLifetime`. For external types (e.g. `reqwest::Client`), create a newtype wrapper with `#[derive(Clone, JsLifetime)]` and `#[qjs(skip_trace)]` on the inner field. See `HttpClient` in `io.rs`.
 
 ## Modules
 
@@ -45,4 +46,4 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - `lib.rs` — Public API. Creates multi-thread Tokio runtime, instantiates `JsEngine`, drives eval + shutdown.
 - `engine.rs` — Core engine. Dedicated thread, `tokio::select!` event loop (recv commands vs `runtime.idle()`), global setup, result stringification.
 - `timer.rs` — `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval` via `ctx.spawn()`. `Notify`-based `wait_idle`.
-- `io.rs` — `io.source(target)` returns a source object synchronously (no Promise). Body methods `.text()`, `.bytes()`, `.json()` return Promises and are single-consume (web-style). HTTP support planned via URL detection.
+- `io.rs` — `io.source(target)` returns a source object synchronously (no Promise). Detects `http://`/`https://` URLs for HTTP (via reqwest with `qjsrt/<version>` user agent), otherwise treats as file path. A shared `reqwest::Client` is stored in ctx userdata via `HttpClient` wrapper. Body methods `.text()`, `.bytes()`, `.json()` return Promises and are single-consume (web-style).
