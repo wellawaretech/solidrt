@@ -12,38 +12,38 @@ qjsrt -e '<expr>'          # evaluate silently
 
 Files are evaluated as ES modules with `import`/`export` support. Expressions (`-e`/`-p`) are evaluated as scripts.
 
-## API
-
-### Timers
-
-```js
-const id = setTimeout(cb, ms);
-clearTimeout(id);
-
-const id = setInterval(cb, ms);
-clearInterval(id);
-```
+## Platform bindings
 
 ### I/O
 
 `io.source(target)` creates a source object from a file path or HTTP URL.
 
 ```js
-const src = io.source("data.json");   // file
-const src = io.source("https://api.example.com/data");  // HTTP GET
+let src = io.source("data.json");   // file
+let src = io.source("https://api.example.com/data");  // HTTP GET
 ```
 
 The source object has three body methods, each returning a Promise. The body can only be consumed once (web `Response`-style):
 
 ```js
-const text = await src.text();    // string
-const bytes = await src.bytes();  // Uint8Array
-const obj = await src.json();     // parsed JSON
+let text = await src.text();    // string
+let bytes = await src.bytes();  // Uint8Array
+let obj = await src.json();     // parsed JSON
 ```
 
 The source also exposes its target as a `path` (file) or `url` (HTTP) property.
 
-### Other globals
+### Timers
+
+```js
+let id = setTimeout(cb, ms);
+clearTimeout(id);
+
+let id = setInterval(cb, ms);
+clearInterval(id);
+```
+
+### Other 
 
 - `print(msg)` — print to stdout
 
