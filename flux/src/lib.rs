@@ -1,4 +1,5 @@
 mod engine;
+mod io;
 mod timer;
 
 pub use engine::JsEngine;

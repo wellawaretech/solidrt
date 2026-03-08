@@ -1,10 +1,11 @@
 #[cfg(feature = "script")]
 use rquickjs::{Persistent, promise::PromiseState};
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, TypedArray, Value, function::Async};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::io;
 use crate::timer;
 
 /// Tracks pending async operations that should keep the engine alive.
@@ -94,6 +95,7 @@ impl JsEngine {
         context.with(|ctx| ctx.store_userdata(pending.clone()).unwrap()).await;
 
         timer::init_timers(&context).await;
+        io::init_io(&context).await;
         init_globals(&context).await;
 
         loop {
@@ -230,16 +232,6 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-// Named fn required: closures can't relate Ctx<'_> input lifetime to Value<'_> output lifetime.
-async fn load(ctx: Ctx<'_>, path: String) -> rquickjs::Result<Value<'_>> {
-    let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-    pending.hold();
-    let result = tokio::fs::read(&path).await;
-    pending.release();
-    let data = result.map_err(rquickjs::Error::Io)?;
-    Ok(TypedArray::<u8>::new(ctx, data)?.into_value())
-}
-
 async fn init_globals(context: &AsyncContext) {
     context
         .with(|ctx| {
@@ -250,10 +242,7 @@ async fn init_globals(context: &AsyncContext) {
             })
             .unwrap();
 
-            let load_fn = Function::new(ctx.clone(), Async(load)).unwrap();
-
             globals.set("print", print).unwrap();
-            globals.set("load", load_fn).unwrap();
         })
         .await;
 }
