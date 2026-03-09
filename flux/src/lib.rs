@@ -3,7 +3,7 @@ mod io;
 mod timer;
 
 pub use engine::{JsEngine, JsEngineBuilder};
-pub use rquickjs::{Ctx, Function, Object};
+pub use rquickjs;
 
 #[cfg(feature = "script")]
 use std::time::Duration;
