@@ -59,8 +59,8 @@ fn async_function() {
     let result = run_script(
         r#"
         (async () => {
-            const a = await Promise.resolve('hello');
-            const b = await Promise.resolve(' world');
+            let a = await Promise.resolve('hello');
+            let b = await Promise.resolve(' world');
             return a + b;
         })()
         "#,

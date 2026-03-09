@@ -16,7 +16,7 @@ fn clear_timeout_on_unknown_id_throws() {
 fn clear_timeout_on_not_yet_fired_cancels() {
     let result = run_script(
         r#"
-        const id = setTimeout(() => {}, 100000);
+        let id = setTimeout(() => {}, 100000);
         clearTimeout(id);
         'cancelled'
         "#,
@@ -47,6 +47,6 @@ fn set_timeout_returns_numeric_id() {
 
 #[test]
 fn set_interval_returns_numeric_id() {
-    let result = run_script("const id = setInterval(() => {}, 1); clearInterval(id); typeof id", TIMEOUT);
+    let result = run_script("let id = setInterval(() => {}, 1); clearInterval(id); typeof id", TIMEOUT);
     assert_eq!(result, "'number'");
 }

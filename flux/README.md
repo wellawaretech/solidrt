@@ -2,6 +2,20 @@
 
 A cross-platform JavaScript runtime in Rust built on [QuickJS-NG](https://github.com/quickjs-ng/quickjs) with a Tokio-based async event loop.
 
+## Usage
+
+```rs
+use qjsrt::run;
+
+fn main() {
+    let code = r#"
+        print('hello, world!')
+    "#;
+
+    run(&code);
+}
+```
+
 ## CLI usage
 
 ```
