@@ -112,7 +112,7 @@ impl JsEngine {
         }
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<SetupFn>) {
+    async fn init_context(setups: Vec<SetupFn>) -> (AsyncRuntime, AsyncContext, PendingOps) {
         let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
         let context = AsyncContext::full(&runtime)
             .await
@@ -120,15 +120,23 @@ impl JsEngine {
 
         let pending = PendingOps::new();
 
-        context.with(|ctx| ctx.store_userdata(pending.clone()).unwrap()).await;
+        context
+            .with(|ctx| {
+                ctx.store_userdata(pending.clone()).unwrap();
+                timer::init_timers(&ctx);
+                io::init_io(&ctx);
+                init_globals(&ctx);
+                for setup in setups {
+                    setup(ctx.clone());
+                }
+            })
+            .await;
 
-        timer::init_timers(&context).await;
-        io::init_io(&context).await;
-        init_globals(&context).await;
+        (runtime, context, pending)
+    }
 
-        for setup in setups {
-            context.with(|ctx| setup(ctx)).await;
-        }
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<SetupFn>) {
+        let (runtime, context, pending) = Self::init_context(setups).await;
 
         loop {
             tokio::select! {
@@ -273,17 +281,13 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-async fn init_globals(context: &AsyncContext) {
-    context
-        .with(|ctx| {
-            let globals = ctx.globals();
+fn init_globals(ctx: &Ctx<'_>) {
+    let globals = ctx.globals();
 
-            let print = Function::new(ctx.clone(), |msg: String| {
-                println!("{msg}");
-            })
-            .unwrap();
+    let print = Function::new(ctx.clone(), |msg: String| {
+        println!("{msg}");
+    })
+    .unwrap();
 
-            globals.set("print", print).unwrap();
-        })
-        .await;
+    globals.set("print", print).unwrap();
 }

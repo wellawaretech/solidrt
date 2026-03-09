@@ -1,7 +1,7 @@
 use rquickjs::{
     function::MutFn,
     promise::Promised,
-    AsyncContext, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
+    Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
 };
 use std::cell::Cell;
 use std::io;
@@ -265,19 +265,15 @@ fn create_http_source<'js>(
     Ok(obj.into_value())
 }
 
-pub(crate) async fn init_io(context: &AsyncContext) {
-    context
-        .with(|ctx| {
-            ctx.store_userdata(http_client()).unwrap();
+pub(crate) fn init_io(ctx: &Ctx<'_>) {
+    ctx.store_userdata(http_client()).unwrap();
 
-            let globals = ctx.globals();
+    let globals = ctx.globals();
 
-            let source_fn = Function::new(ctx.clone(), io_source).unwrap();
+    let source_fn = Function::new(ctx.clone(), io_source).unwrap();
 
-            let io = Object::new(ctx.clone()).unwrap();
-            io.set("source", source_fn).unwrap();
+    let io = Object::new(ctx.clone()).unwrap();
+    io.set("source", source_fn).unwrap();
 
-            globals.set("io", io).unwrap();
-        })
-        .await;
+    globals.set("io", io).unwrap();
 }
