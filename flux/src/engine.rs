@@ -59,23 +59,51 @@ enum JsCommand {
     Shutdown,
 }
 
+type SetupFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
+
+pub struct JsEngineBuilder {
+    setups: Vec<SetupFn>,
+}
+
+impl JsEngineBuilder {
+    pub fn setup<F>(mut self, f: F) -> Self
+    where
+        F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
+    {
+        self.setups.push(Box::new(f));
+        self
+    }
+
+    pub fn build(self) -> JsEngine {
+        JsEngine::start(self.setups)
+    }
+}
+
 pub struct JsEngine {
     tx: mpsc::Sender<JsCommand>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl JsEngine {
+    pub fn builder() -> JsEngineBuilder {
+        JsEngineBuilder { setups: Vec::new() }
+    }
+
     pub fn new() -> Self {
+        Self::start(Vec::new())
+    }
+
+    fn start(setups: Vec<SetupFn>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
 
-        let handle = std::thread::spawn(|| {
+        let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("failed to create tokio runtime");
 
             let local = tokio::task::LocalSet::new();
-            local.block_on(&rt, Self::event_loop(rx));
+            local.block_on(&rt, Self::event_loop(rx, setups));
         });
 
         Self {
@@ -84,7 +112,7 @@ impl JsEngine {
         }
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>) {
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<SetupFn>) {
         let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
         let context = AsyncContext::full(&runtime)
             .await
@@ -97,6 +125,10 @@ impl JsEngine {
         timer::init_timers(&context).await;
         io::init_io(&context).await;
         init_globals(&context).await;
+
+        for setup in setups {
+            context.with(|ctx| setup(ctx)).await;
+        }
 
         loop {
             tokio::select! {
