@@ -168,6 +168,15 @@ impl JsEngine {
         let _ = rx.await;
     }
 
+    pub fn eval_detached(&self, code: &str) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.tx.try_send(JsCommand::Eval {
+            code: code.to_string(),
+            responder: tx,
+        });
+        rx
+    }
+
     #[cfg(feature = "script")]
     pub async fn eval_script(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();
