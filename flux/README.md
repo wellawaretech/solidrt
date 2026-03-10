@@ -24,7 +24,11 @@ Use the builder to extend the runtime with custom globals backed by Rust state:
 let engine = JsEngine::builder()
     .plugin(move |ctx| {
         ctx.store_userdata(MyState::new()).unwrap();
+
         // register JS functions that read from ctx.userdata::<MyState>()
+        let cmd_fn = Function::new(/* */).unwrap(); 
+
+        ctx.globals().set("cmd", cmd_fn).unwrap();
     })
     .build();
 ```
