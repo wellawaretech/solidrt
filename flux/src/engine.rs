@@ -59,23 +59,23 @@ enum JsCommand {
     Shutdown,
 }
 
-type SetupFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
+type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
 pub struct JsEngineBuilder {
-    setups: Vec<SetupFn>,
+    plugins: Vec<PluginFn>,
 }
 
 impl JsEngineBuilder {
-    pub fn setup<F>(mut self, f: F) -> Self
+    pub fn plugin<F>(mut self, f: F) -> Self
     where
         F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
     {
-        self.setups.push(Box::new(f));
+        self.plugins.push(Box::new(f));
         self
     }
 
     pub fn build(self) -> JsEngine {
-        JsEngine::start(self.setups)
+        JsEngine::start(self.plugins)
     }
 }
 
@@ -86,14 +86,14 @@ pub struct JsEngine {
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { setups: Vec::new() }
+        JsEngineBuilder { plugins: Vec::new() }
     }
 
     pub fn new() -> Self {
         Self::start(Vec::new())
     }
 
-    fn start(setups: Vec<SetupFn>) -> Self {
+    fn start(setups: Vec<PluginFn>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
 
         let handle = std::thread::spawn(move || {
@@ -112,7 +112,7 @@ impl JsEngine {
         }
     }
 
-    async fn init_context(setups: Vec<SetupFn>) -> (AsyncRuntime, AsyncContext, PendingOps) {
+    async fn init_context(setups: Vec<PluginFn>) -> (AsyncRuntime, AsyncContext, PendingOps) {
         let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
         let context = AsyncContext::full(&runtime)
             .await
@@ -135,7 +135,7 @@ impl JsEngine {
         (runtime, context, pending)
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<SetupFn>) {
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>) {
         let (runtime, context, pending) = Self::init_context(setups).await;
 
         loop {

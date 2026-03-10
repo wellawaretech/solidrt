@@ -1,6 +1,6 @@
 # qjsrt
 
-A cross-platform JavaScript runtime in Rust built on [QuickJS-NG](https://github.com/quickjs-ng/quickjs) with a Tokio-based async event loop.
+An embeddable, extensible cross-platform JavaScript runtime in Rust built on [QuickJS-NG](https://github.com/quickjs-ng/quickjs) with a Tokio-based async event loop.
 
 ## Usage
 
@@ -14,6 +14,40 @@ fn main() {
 
     run(&code);
 }
+```
+
+## Advanced usage
+
+Use the builder to extend the runtime with custom globals backed by Rust state:
+
+```rs
+let engine = JsEngine::builder()
+    .plugin(move |ctx| {
+        ctx.store_userdata(MyState::new()).unwrap();
+        // register JS functions that read from ctx.userdata::<MyState>()
+    })
+    .build();
+```
+
+See [examples/plugin.rs](examples/plugin.rs) for a complete example.
+
+### Evaluation methods
+
+`JsEngine` provides three ways to evaluate code:
+
+- **`eval(code).await`** — evaluates as an ES module (supports `import`/`export`). Waits for all async work to complete. No return value.
+- **`eval_script(code).await`** — evaluates as a script. Waits for async work, then returns the stringified last expression as `Result<String, String>`.
+- **`eval_detached(code)`** — same as `eval` but returns immediately with a `oneshot::Receiver<()>` that signals completion. Useful when you want to keep doing work on the calling thread.
+
+```rs
+// blocking eval
+engine.eval(r#"print("hello")"#).await;
+
+// get a result back
+let result = engine.eval_script("1 + 2").await; // Ok("3")
+
+// non-blocking — poll or await the receiver
+let done_rx = engine.eval_detached(r#"print("background")"#);
 ```
 
 ## CLI usage
@@ -59,7 +93,7 @@ clearInterval(id);
 
 ### Other 
 
-- `print(msg)` — print to stdout
+- `print(msg)`    // print to stdout
 
 ## Building
 
