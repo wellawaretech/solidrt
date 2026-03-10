@@ -44,10 +44,17 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - **`PendingOps` via userdata:** `PendingOps` is stored in the context via `ctx.store_userdata()` at engine startup. Retrieve it with `ctx.userdata::<PendingOps>()` instead of passing it as a parameter. Any new async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps`.
 - **Storing non-JS types in userdata:** `ctx.store_userdata()` requires `JsLifetime`. For external types (e.g. `reqwest::Client`), create a newtype wrapper with `#[derive(Clone, JsLifetime)]` and `#[qjs(skip_trace)]` on the inner field. See `HttpClient` in `io.rs`.
 
+## Plugin system
+
+`JsEngine::builder().plugin(fn)` accepts closures that receive `Ctx<'js>` and run during context initialization (after built-in globals). Plugins can store Rust state via `ctx.store_userdata()` and register custom JS globals. See `examples/plugin.rs` for the reference pattern.
+
+**`eval_detached`** returns a `oneshot::Receiver<()>` immediately, allowing the calling thread to poll for completion instead of blocking. Useful when embedding the engine in a non-async context.
+
 ## Modules
 
 - `main.rs` — CLI arg parsing, dispatches to `run` or `run_script`.
 - `lib.rs` — Public API. Creates multi-thread Tokio runtime, instantiates `JsEngine`, drives eval + shutdown.
-- `engine.rs` — Core engine. Dedicated thread, `tokio::select!` event loop (recv commands vs `runtime.idle()`), global setup, result stringification.
+- `engine.rs` — Core engine. Dedicated thread, `tokio::select!` event loop (recv commands vs `runtime.idle()`), global setup, result stringification. `JsEngineBuilder` with `.plugin()` for extensibility.
 - `timer.rs` — `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval` via `ctx.spawn()`. `Notify`-based `wait_idle`.
 - `io.rs` — `io.source(target)` returns a source object synchronously (no Promise). Detects `http://`/`https://` URLs for HTTP (via reqwest with `qjsrt/<version>` user agent), otherwise treats as file path. A shared `reqwest::Client` is stored in ctx userdata via `HttpClient` wrapper. Body methods `.text()`, `.bytes()`, `.json()` return Promises and are single-consume (web-style).
+- `examples/plugin.rs` — Example: extending the runtime with a custom `whoami()` global backed by userdata.
