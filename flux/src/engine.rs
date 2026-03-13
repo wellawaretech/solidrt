@@ -220,9 +220,10 @@ impl JsEngine {
     }
 
     /// Emit an event to JS listeners registered via `on(event, callback)`.
-    /// `data` is a JSON-encoded string that gets parsed into a JS value on the engine thread.
+    /// `data` is serialized to JSON and parsed into a JS value on the engine thread.
     /// Non-blocking: drops the event if the channel is full.
-    pub fn emit(&self, event: &str, data: String) {
+    pub fn emit(&self, event: &str, data: impl serde::Serialize) {
+        let data = serde_json::to_string(&data).expect("failed to serialize emit data");
         let _ = self.tx.try_send(JsCommand::Emit {
             event: event.to_string(),
             data,
