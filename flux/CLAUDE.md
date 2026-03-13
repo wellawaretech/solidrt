@@ -46,9 +46,9 @@ qjsrt -p '<expr>'          # script evaluation — print result
 
 ## Event emitter
 
-`on(event, callback)` registers a JS listener and returns a numeric ID. `off(event, id)` removes it. From Rust, `engine.emit(event, data)` accepts any `impl serde::Serialize`, serializes it to JSON, and parses it into a JS value on the engine thread.
+`on(event, callback)` registers a JS listener and returns a numeric ID. `off(event, id)` removes it. From Rust, `engine.emit(event, data)` takes a JSON string that is parsed into a JS value on the engine thread.
 
-- **`emit()` data is `impl Serialize`.** The data is serialized via `serde_json` on the calling thread, sent as a JSON string through the channel, and parsed via `ctx.json_parse` on the engine thread.
+- **`emit()` data is a JSON string.** The caller is responsible for producing valid JSON. It is parsed via `ctx.json_parse` on the engine thread; malformed JSON delivers `undefined` to listeners.
 - **Command channel is bounded (32).** `emit()` uses `try_send` and silently drops the event if the channel is full. This means high-frequency emits from Rust can lose events. Callers that need delivery guarantees should not rely on `emit()` alone.
 - **`PendingOps` lifecycle.** `on()` calls `hold()` when the first listener for an event name is registered. `off()` calls `release()` when the last listener for that event name is removed. Removing all listeners for all events allows the process to exit naturally.
 - **Listener exceptions are swallowed.** JS errors thrown inside listener callbacks are currently silently discarded. Listeners should not rely on exceptions for control flow.

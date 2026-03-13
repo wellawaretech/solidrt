@@ -199,9 +199,9 @@ impl JsEngine {
                     }
                 }
                 _ = runtime.idle() => {
-                    // idle() resolves immediately when no JS jobs are pending;
-                    // yield to let spawn_local tasks (timers) make progress.
+                    // yield to let spawn_local tasks (timers) make progress
                     tokio::task::yield_now().await;
+                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
                 }
             }
         }
@@ -220,10 +220,9 @@ impl JsEngine {
     }
 
     /// Emit an event to JS listeners registered via `on(event, callback)`.
-    /// `data` is serialized to JSON and parsed into a JS value on the engine thread.
+    /// `data` must be a valid JSON string; it is parsed into a JS value on the engine thread.
     /// Non-blocking: drops the event if the channel is full.
-    pub fn emit(&self, event: &str, data: impl serde::Serialize) {
-        let data = serde_json::to_string(&data).expect("failed to serialize emit data");
+    pub fn emit(&self, event: &str, data: String) {
         let _ = self.tx.try_send(JsCommand::Emit {
             event: event.to_string(),
             data,
