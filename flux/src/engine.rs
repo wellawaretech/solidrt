@@ -1,10 +1,11 @@
 #[cfg(feature = "script")]
-use rquickjs::{Persistent, promise::PromiseState};
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Value};
+use rquickjs::promise::PromiseState;
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Persistent, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::events;
 use crate::io;
 use crate::timer;
 
@@ -55,6 +56,10 @@ enum JsCommand {
     Eval {
         code: String,
         responder: oneshot::Sender<()>,
+    },
+    Emit {
+        event: String,
+        data: String,
     },
     Shutdown,
 }
@@ -126,6 +131,7 @@ impl JsEngine {
                 timer::init_timers(&ctx);
                 io::init_io(&ctx);
                 init_globals(&ctx);
+                events::init_events(&ctx);
                 for setup in setups {
                     setup(ctx.clone());
                 }
@@ -142,6 +148,11 @@ impl JsEngine {
             tokio::select! {
                 cmd = rx.recv() => {
                     match cmd {
+                        Some(JsCommand::Emit { event, data }) => {
+                            context.with(|ctx| {
+                                events::emit_event(&ctx, &event, data);
+                            }).await;
+                        }
                         #[cfg(feature = "script")]
                         Some(JsCommand::EvalScript { code, responder }) => {
                             let persistent = context
@@ -206,6 +217,16 @@ impl JsEngine {
             })
             .await;
         let _ = rx.await;
+    }
+
+    /// Emit an event to JS listeners registered via `on(event, callback)`.
+    /// `data` is a JSON-encoded string that gets parsed into a JS value on the engine thread.
+    /// Non-blocking: drops the event if the channel is full.
+    pub fn emit(&self, event: &str, data: String) {
+        let _ = self.tx.try_send(JsCommand::Emit {
+            event: event.to_string(),
+            data,
+        });
     }
 
     pub fn eval_detached(&self, code: &str) -> oneshot::Receiver<()> {

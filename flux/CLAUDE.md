@@ -44,6 +44,16 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - **`PendingOps` via userdata:** `PendingOps` is stored in the context via `ctx.store_userdata()` at engine startup. Retrieve it with `ctx.userdata::<PendingOps>()` instead of passing it as a parameter. Any new async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps`.
 - **Storing non-JS types in userdata:** `ctx.store_userdata()` requires `JsLifetime`. For external types (e.g. `reqwest::Client`), create a newtype wrapper with `#[derive(Clone, JsLifetime)]` and `#[qjs(skip_trace)]` on the inner field. See `HttpClient` in `io.rs`.
 
+## Event emitter
+
+`on(event, callback)` registers a JS listener and returns a numeric ID. `off(event, id)` removes it. From Rust, `engine.emit(event, data)` sends a JSON-encoded string that gets parsed into a JS value on the engine thread.
+
+- **`emit()` data is JSON.** The `data` argument to `engine.emit()` is a `String` that must be valid JSON. It is parsed via `ctx.json_parse` on the engine thread; malformed JSON delivers `undefined` to listeners.
+- **Command channel is bounded (32).** `emit()` uses `try_send` and silently drops the event if the channel is full. This means high-frequency emits from Rust can lose events. Callers that need delivery guarantees should not rely on `emit()` alone.
+- **`PendingOps` lifecycle.** `on()` calls `hold()` when the first listener for an event name is registered. `off()` calls `release()` when the last listener for that event name is removed. Removing all listeners for all events allows the process to exit naturally.
+- **Listener exceptions are swallowed.** JS errors thrown inside listener callbacks are currently silently discarded. Listeners should not rely on exceptions for control flow.
+- **`emit()` returns nothing.** The caller has no way to detect whether an event was dropped due to a full channel. If delivery confirmation is needed, this API is not sufficient.
+
 ## Plugin system
 
 `JsEngine::builder().plugin(fn)` accepts closures that receive `Ctx<'js>` and run during context initialization (after built-in globals). Plugins can store Rust state via `ctx.store_userdata()` and register custom JS globals. See `examples/plugin.rs` for the reference pattern.
@@ -55,6 +65,7 @@ qjsrt -p '<expr>'          # script evaluation — print result
 - `main.rs` — CLI arg parsing, dispatches to `run` or `run_script`.
 - `lib.rs` — Public API. Creates multi-thread Tokio runtime, instantiates `JsEngine`, drives eval + shutdown.
 - `engine.rs` — Core engine. Dedicated thread, `tokio::select!` event loop (recv commands vs `runtime.idle()`), global setup, result stringification. `JsEngineBuilder` with `.plugin()` for extensibility.
+- `events.rs` — `on(event, callback)`/`off(event, id)` globals and `emit_event` helper. `ListenerMap` stored in ctx userdata.
 - `timer.rs` — `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval` via `ctx.spawn()`. `Notify`-based `wait_idle`.
 - `io.rs` — `io.source(target)` returns a source object synchronously (no Promise). Detects `http://`/`https://` URLs for HTTP (via reqwest with `qjsrt/<version>` user agent), otherwise treats as file path. A shared `reqwest::Client` is stored in ctx userdata via `HttpClient` wrapper. Body methods `.text()`, `.bytes()`, `.json()` return Promises and are single-consume (web-style).
 - `examples/plugin.rs` — Example: extending the runtime with a custom `whoami()` global backed by userdata.
