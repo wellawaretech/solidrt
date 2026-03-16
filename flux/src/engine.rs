@@ -1,10 +1,11 @@
 #[cfg(feature = "script")]
 use rquickjs::promise::PromiseState;
-use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, JsLifetime, Module, Persistent, Value};
+use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, JsLifetime, Module, Persistent, Value};
 use std::cell::Cell;
 use std::rc::Rc;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::console;
 use crate::events;
 use crate::io;
 use crate::timer;
@@ -130,6 +131,7 @@ impl JsEngine {
                 ctx.store_userdata(pending.clone()).unwrap();
                 timer::init_timers(&ctx);
                 io::init_io(&ctx);
+                console::init_console(&ctx);
                 init_globals(&ctx);
                 events::init_events(&ctx);
                 for setup in setups {
@@ -302,13 +304,5 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-fn init_globals(ctx: &Ctx<'_>) {
-    let globals = ctx.globals();
-
-    let print = Function::new(ctx.clone(), |msg: String| {
-        println!("{msg}");
-    })
-    .unwrap();
-
-    globals.set("print", print).unwrap();
+fn init_globals(_ctx: &Ctx<'_>) {
 }

@@ -1,3 +1,4 @@
+mod console;
 mod engine;
 mod events;
 mod io;

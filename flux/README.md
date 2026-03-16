@@ -9,7 +9,7 @@ use qjsrt::run;
 
 fn main() {
     let code = r#"
-        print('hello, world!')
+        console.log('hello, world!')
     "#;
 
     run(&code);
@@ -45,13 +45,13 @@ See [examples/plugin.rs](examples/plugin.rs) for a complete example.
 
 ```rs
 // blocking eval
-engine.eval(r#"print("hello")"#).await;
+engine.eval(r#"console.log("hello")"#).await;
 
 // get a result back
 let result = engine.eval_script("1 + 2").await; // Ok("3")
 
 // non-blocking — poll or await the receiver
-let done_rx = engine.eval_detached(r#"print("background")"#);
+let done_rx = engine.eval_detached(r#"console.log("background")"#);
 ```
 
 ## CLI usage
@@ -95,9 +95,13 @@ let id = setInterval(cb, ms);
 clearInterval(id);
 ```
 
-### Other 
+### Console
 
-- `print(msg)`    // print to stdout
+```js
+console.log("info");     // print to stdout
+console.warn("warning"); // print to stderr
+console.error("error");  // print to stderr
+```
 
 ## Building
 
