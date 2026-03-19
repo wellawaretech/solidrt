@@ -25,18 +25,13 @@ pub fn run(code: &str) {
     })
 }
 
-pub fn compile(input_path: &str, output_path: &str) {
-    let source = std::fs::read_to_string(input_path).unwrap_or_else(|e| {
-        eprintln!("error: cannot read '{input_path}': {e}");
-        std::process::exit(1);
-    });
-
+pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
     let rt = Runtime::new().expect("failed to create QuickJS runtime");
     let ctx = Context::full(&rt).expect("failed to create QuickJS context");
 
-    let bytecode = ctx.with(|ctx| {
-        let module = Module::declare(ctx.clone(), input_path, source).unwrap_or_else(|e| {
-            eprintln!("error: failed to compile '{input_path}': {e}");
+    ctx.with(|ctx| {
+        let module = Module::declare(ctx.clone(), module_name, source).unwrap_or_else(|e| {
+            eprintln!("error: failed to compile '{module_name}': {e}");
             std::process::exit(1);
         });
 
@@ -49,7 +44,16 @@ pub fn compile(input_path: &str, output_path: &str) {
                 eprintln!("error: failed to write bytecode: {e}");
                 std::process::exit(1);
             })
+    })
+}
+
+pub fn compile(input_path: &str, output_path: &str) {
+    let source = std::fs::read_to_string(input_path).unwrap_or_else(|e| {
+        eprintln!("error: cannot read '{input_path}': {e}");
+        std::process::exit(1);
     });
+
+    let bytecode = compile_source(&source, input_path);
 
     std::fs::write(output_path, &bytecode).unwrap_or_else(|e| {
         eprintln!("error: cannot write '{output_path}': {e}");

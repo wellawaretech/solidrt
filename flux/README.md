@@ -63,12 +63,14 @@ let done_rx = engine.eval_detached(r#"console.log("background")"#);
 ## CLI usage
 
 ```
-qjsrt <file.js>            # run a JS file
-qjsrt -c <file.js>         # compile a JS file to .bin
-qjsrt -b <file.bin>        # run a compiled binary
-qjsrt -p '<expr>'          # evaluate and print
-qjsrt -e '<expr>'          # evaluate silently
+qjsrt [file.js]              # run a JS file, or read from stdin
+qjsrt -c [file.js] [-o out]  # compile to bytecode, -o required for stdin
+qjsrt -b <file.bin>          # run a compiled binary
+qjsrt -p '<expr>'            # evaluate and print
+qjsrt -e '<expr>'            # evaluate silently
 ```
+
+When no input file is given, `qjsrt` and `qjsrt -c` read source from stdin. The `-o` flag specifies the output path for `-c` (required when compiling from stdin).
 
 Files are evaluated as ES modules with `import`/`export` support. Expressions (`-e`/`-p`) are evaluated as scripts.
 

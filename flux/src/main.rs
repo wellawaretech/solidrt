@@ -3,20 +3,44 @@ use qjsrt::run_script;
 use qjsrt::{run, run_bytecode};
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    let code = match args.next().as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let mut mode = None;
+    let mut output = None;
+    let mut input = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-c" | "-b" | "-e" | "-p" => mode = Some(args[i].clone()),
+            "-o" => {
+                i += 1;
+                output = Some(args.get(i).unwrap_or_else(|| {
+                    eprintln!("error: -o requires an output path");
+                    std::process::exit(1);
+                }).clone());
+            }
+            arg if !arg.starts_with('-') => input = Some(arg.to_string()),
+            flag => {
+                eprintln!("error: unknown flag '{flag}'");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    match mode.as_deref() {
         #[cfg(feature = "script")]
         Some("-e") => {
-            let expr = args.next().unwrap_or_else(|| {
+            let expr = input.unwrap_or_else(|| {
                 eprintln!("error: -e requires a JavaScript expression");
                 std::process::exit(1);
             });
             run_script(&expr, None);
-            return;
         }
         #[cfg(feature = "script")]
         Some("-p") => {
-            let expr = args.next().unwrap_or_else(|| {
+            let expr = input.unwrap_or_else(|| {
                 eprintln!("error: -p requires a JavaScript expression");
                 std::process::exit(1);
             });
@@ -24,10 +48,9 @@ fn main() {
             if !result.is_empty() {
                 println!("{result}");
             }
-            return;
         }
         Some("-b") => {
-            let path = args.next().unwrap_or_else(|| {
+            let path = input.unwrap_or_else(|| {
                 eprintln!("error: -b requires a bytecode file path");
                 std::process::exit(1);
             });
@@ -36,35 +59,56 @@ fn main() {
                 std::process::exit(1);
             });
             run_bytecode(bytecode);
-            return;
         }
         Some("-c") => {
-            let input = args.next().unwrap_or_else(|| {
-                eprintln!("error: -c requires a JavaScript file path");
+            let (source, name, default_out) = match &input {
+                Some(path) => {
+                    let s = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                        eprintln!("error: cannot read '{path}': {e}");
+                        std::process::exit(1);
+                    });
+                    (s, path.clone(), Some(path.replace(".js", ".bin")))
+                }
+                None => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                        .unwrap_or_else(|e| {
+                            eprintln!("error: failed to read stdin: {e}");
+                            std::process::exit(1);
+                        });
+                    let name = output.clone().unwrap_or_else(|| "stdin".into());
+                    (s, name, None)
+                }
+            };
+            let out = output.or(default_out).unwrap_or_else(|| {
+                eprintln!("error: -o required when compiling from stdin");
                 std::process::exit(1);
             });
-            let output = args.next().unwrap_or_else(|| {
-                input.replace(".js", ".bin")
-            });
-            qjsrt::compile(&input, &output);
-            return;
-        }
-        Some(path) if !path.starts_with('-') => {
-            std::fs::read_to_string(path).unwrap_or_else(|e| {
-                eprintln!("error: cannot read '{path}': {e}");
+            let bytecode = qjsrt::compile_source(&source, &name);
+            std::fs::write(&out, &bytecode).unwrap_or_else(|e| {
+                eprintln!("error: cannot write '{out}': {e}");
                 std::process::exit(1);
-            })
+            });
+            println!("wrote {} bytes to {out}", bytecode.len());
         }
-        Some(flag) => {
-            eprintln!("error: unknown flag '{flag}'");
-            eprintln!("usage: qjsrt [-e|-p '<javascript>' | -b <file.bin> | -c <file.js> [output.bin] | <file.js>]");
-            std::process::exit(1);
-        }
+        Some(_) => unreachable!(),
         None => {
-            eprintln!("usage: qjsrt [-e|-p '<javascript>' | -b <file.bin> | -c <file.js> [output.bin] | <file.js>]");
-            std::process::exit(1);
+            let code = match &input {
+                Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
+                    eprintln!("error: cannot read '{path}': {e}");
+                    std::process::exit(1);
+                }),
+                None => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                        .unwrap_or_else(|e| {
+                            eprintln!("error: failed to read stdin: {e}");
+                            std::process::exit(1);
+                        });
+                    s
+                }
+            };
+            run(&code);
         }
-    };
-
-    run(&code);
+    }
 }
