@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+[lib]
+name = "qjsrt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qjsrt"
+path = "src/main.rs"
+
 [features]
 default = ["script"]
 script = []
