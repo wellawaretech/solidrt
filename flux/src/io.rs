@@ -56,7 +56,12 @@ fn io_source<'js>(ctx: Ctx<'js>, target: String) -> rquickjs::Result<Value<'js>>
         let client = ctx.userdata::<HttpClient>().unwrap().0.clone();
         create_http_source(ctx, target, client)
     } else {
-        create_file_source(ctx, target)
+        let path = std::path::Path::new(&target);
+        if path.is_dir() {
+            create_dir_source(ctx, target)
+        } else {
+            create_file_source(ctx, target)
+        }
     }
 }
 
@@ -148,6 +153,77 @@ fn create_file_source<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Valu
     obj.set("json", json_fn)?;
 
     Ok(obj.into_value())
+}
+
+fn dir_entry_type(ft: std::fs::FileType) -> &'static str {
+    if ft.is_file() {
+        "file"
+    } else if ft.is_dir() {
+        "directory"
+    } else if ft.is_symlink() {
+        "symlink"
+    } else {
+        "other"
+    }
+}
+
+fn create_dir_source<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Value<'js>> {
+    let consumed = Rc::new(Cell::new(false));
+    let path = Rc::new(path);
+
+    let json_fn = Function::new(
+        ctx.clone(),
+        MutFn::from({
+            let consumed = consumed.clone();
+            let path = path.clone();
+            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+                if consumed.get() {
+                    return Err(throw_consumed(&ctx));
+                }
+                consumed.set(true);
+                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+                let path = path.clone();
+                Ok(Promised(async move {
+                    pending.hold();
+                    let r = read_dir_json(&path).await.map(JsonValue);
+                    pending.release();
+                    r
+                }))
+            }
+        }),
+    )
+    .unwrap();
+
+    let obj = Object::new(ctx.clone())?;
+    obj.set("path", path.as_ref().clone())?;
+    obj.set("json", json_fn)?;
+
+    Ok(obj.into_value())
+}
+
+async fn read_dir_json(path: &str) -> rquickjs::Result<String> {
+    let mut entries = tokio::fs::read_dir(path)
+        .await
+        .map_err(rquickjs::Error::Io)?;
+
+    let mut items = Vec::new();
+    while let Some(entry) = entries.next_entry().await.map_err(rquickjs::Error::Io)? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let ft = entry.file_type().await.map_err(rquickjs::Error::Io)?;
+        let kind = dir_entry_type(ft);
+        let escaped_name = name
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
+        items.push(format!(
+            r#"{{"name":"{}","type":"{}"}}"#,
+            escaped_name, kind
+        ));
+    }
+
+    Ok(format!("[{}]", items.join(",")))
 }
 
 fn create_http_source<'js>(
