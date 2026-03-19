@@ -278,6 +278,15 @@ impl JsEngine {
         rx
     }
 
+    pub fn eval_bytecode_detached(&self, bytecode: Vec<u8>) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.tx.try_send(JsCommand::EvalBytecode {
+            bytecode,
+            responder: tx,
+        });
+        rx
+    }
+
     #[cfg(feature = "script")]
     pub async fn eval_script(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = oneshot::channel();

@@ -41,6 +41,8 @@ See [examples/plugin.rs](examples/plugin.rs) for a complete example.
 
 - **`eval(code).await`** — evaluates as an ES module (supports `import`/`export`). Waits for all async work to complete. No return value.
 - **`eval_script(code).await`** — evaluates as a script. Waits for async work, then returns the stringified last expression as `Result<String, String>`.
+- **`eval_bytecode(bytes).await`** — loads and evaluates precompiled bytecode (from `compile()`). Waits for all async work to complete.
+- **`eval_bytecode_detached(bytes)`** — same as `eval_bytecode` but returns immediately with a `oneshot::Receiver<()>`.
 - **`eval_detached(code)`** — same as `eval` but returns immediately with a `oneshot::Receiver<()>` that signals completion. Useful when you want to keep doing work on the calling thread.
 
 ```rs
@@ -49,6 +51,10 @@ engine.eval(r#"console.log("hello")"#).await;
 
 // get a result back
 let result = engine.eval_script("1 + 2").await; // Ok("3")
+
+// run precompiled bytecode
+let bytes = std::fs::read("app.bin").unwrap();
+engine.eval_bytecode(bytes).await;
 
 // non-blocking — poll or await the receiver
 let done_rx = engine.eval_detached(r#"console.log("background")"#);
