@@ -58,6 +58,10 @@ enum JsCommand {
         code: String,
         responder: oneshot::Sender<()>,
     },
+    EvalBytecode {
+        bytecode: Vec<u8>,
+        responder: oneshot::Sender<()>,
+    },
     Emit {
         event: String,
         data: String,
@@ -197,6 +201,28 @@ impl JsEngine {
                                 let _ = responder.send(());
                             });
                         }
+                        Some(JsCommand::EvalBytecode { bytecode, responder }) => {
+                            context
+                                .with(|ctx| {
+                                    let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
+                                    match loaded {
+                                        Ok(module) => {
+                                            if let Err(e) = module.eval().map(|(_, promise)| promise).catch(&ctx) {
+                                                eprintln!("module error: {e:?}");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("bytecode load error: {e}");
+                                        }
+                                    }
+                                })
+                                .await;
+                            let pending = pending.clone();
+                            tokio::task::spawn_local(async move {
+                                pending.wait_idle().await;
+                                let _ = responder.send(());
+                            });
+                        }
                         Some(JsCommand::Shutdown) | None => break,
                     }
                 }
@@ -215,6 +241,18 @@ impl JsEngine {
             .tx
             .send(JsCommand::Eval {
                 code: code.to_string(),
+                responder: tx,
+            })
+            .await;
+        let _ = rx.await;
+    }
+
+    pub async fn eval_bytecode(&self, bytecode: Vec<u8>) {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .tx
+            .send(JsCommand::EvalBytecode {
+                bytecode,
                 responder: tx,
             })
             .await;

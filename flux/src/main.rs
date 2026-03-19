@@ -1,6 +1,6 @@
 #[cfg(feature = "script")]
 use qjsrt::run_script;
-use qjsrt::run;
+use qjsrt::{run, run_bytecode};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -26,6 +26,29 @@ fn main() {
             }
             return;
         }
+        Some("-b") => {
+            let path = args.next().unwrap_or_else(|| {
+                eprintln!("error: -b requires a bytecode file path");
+                std::process::exit(1);
+            });
+            let bytecode = std::fs::read(&path).unwrap_or_else(|e| {
+                eprintln!("error: cannot read '{path}': {e}");
+                std::process::exit(1);
+            });
+            run_bytecode(bytecode);
+            return;
+        }
+        Some("-c") => {
+            let input = args.next().unwrap_or_else(|| {
+                eprintln!("error: -c requires a JavaScript file path");
+                std::process::exit(1);
+            });
+            let output = args.next().unwrap_or_else(|| {
+                input.replace(".js", ".bin")
+            });
+            qjsrt::compile(&input, &output);
+            return;
+        }
         Some(path) if !path.starts_with('-') => {
             std::fs::read_to_string(path).unwrap_or_else(|e| {
                 eprintln!("error: cannot read '{path}': {e}");
@@ -34,11 +57,11 @@ fn main() {
         }
         Some(flag) => {
             eprintln!("error: unknown flag '{flag}'");
-            eprintln!("usage: qjsrt [-e|-p '<javascript>' | <file.js>]");
+            eprintln!("usage: qjsrt [-e|-p '<javascript>' | -b <file.bin> | -c <file.js> [output.bin] | <file.js>]");
             std::process::exit(1);
         }
         None => {
-            eprintln!("usage: qjsrt [-e|-p '<javascript>' | <file.js>]");
+            eprintln!("usage: qjsrt [-e|-p '<javascript>' | -b <file.bin> | -c <file.js> [output.bin] | <file.js>]");
             std::process::exit(1);
         }
     };

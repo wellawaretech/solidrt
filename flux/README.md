@@ -57,7 +57,9 @@ let done_rx = engine.eval_detached(r#"console.log("background")"#);
 ## CLI usage
 
 ```
-qjsrt <file.js>            # run a JS file (ES module)
+qjsrt <file.js>            # run a JS file
+qjsrt -c <file.js>         # compile a JS file to .bin
+qjsrt -b <file.bin>        # run a compiled binary
 qjsrt -p '<expr>'          # evaluate and print
 qjsrt -e '<expr>'          # evaluate silently
 ```
