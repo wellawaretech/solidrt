@@ -50,3 +50,19 @@ fn set_interval_returns_numeric_id() {
     let result = run_script("let id = setInterval(() => {}, 1); clearInterval(id); typeof id", TIMEOUT);
     assert_eq!(result, "'number'");
 }
+
+#[test]
+fn queue_microtask_runs_before_timers() {
+    let result = run_script(
+        r#"
+        let order = [];
+        setTimeout(() => order.push('timeout'), 0);
+        queueMicrotask(() => order.push('microtask'));
+        new Promise(resolve => {
+            setTimeout(() => resolve(order.join(',')), 50);
+        })
+        "#,
+        TIMEOUT,
+    );
+    assert_eq!(result, "Promise { 'microtask,timeout' }");
+}

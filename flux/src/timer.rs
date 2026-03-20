@@ -135,8 +135,13 @@ pub(crate) fn init_timers(ctx: &Ctx<'_>) {
     )
     .unwrap();
 
+    let queue_microtask = ctx
+        .eval::<rquickjs::Value, _>("(function(cb) { Promise.resolve().then(cb) })")
+        .unwrap();
+
     globals.set("setTimeout", set_timeout).unwrap();
     globals.set("clearTimeout", clear_timeout).unwrap();
     globals.set("setInterval", set_interval).unwrap();
     globals.set("clearInterval", clear_interval).unwrap();
+    globals.set("queueMicrotask", queue_microtask).unwrap();
 }

@@ -13,7 +13,7 @@ Tests use `run_script` with a 3s timeout. No special setup needed.
 
 **Module flow** (`run` -> `JsEngine::eval`): evaluates as ES module via `Module::evaluate`. Errors go to stderr. Waits for all timers to drain, then exits.
 
-**Script flow** (`run_script` -> `JsEngine::eval_script`): evaluates as global script via `ctx.eval`. Returns the stringified last expression. Waits for timers to drain before stringifying (so promises settle). `run_script` accepts an optional `Duration` timeout; CLI passes `None`.
+**Script flow** (`run_script` -> `JsEngine::eval_script`): evaluates as global script via `ctx.eval`. Returns the stringified last expression. Waits for timers to drain before stringifying (so promises settle). `run_script` accepts an optional `Duration` timeout; CLI passes `None`. If the last expression is a Promise, the output is wrapped as `Promise { <value> }` (resolved), `Promise { <rejected> <value> }`, or `Promise { <pending> }` — tests must match this format.
 
 ## Constraints
 
