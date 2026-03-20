@@ -1,8 +1,5 @@
-mod console;
 mod engine;
-mod events;
-mod io;
-mod timer;
+mod plugins;
 
 pub use engine::{JsEngine, JsEngineBuilder, LogLevel};
 pub use rquickjs;

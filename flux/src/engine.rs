@@ -6,10 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::console;
-use crate::events;
-use crate::io;
-use crate::timer;
+use crate::plugins::{console, events, io, timer};
 
 /// Log level passed to the logger callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
