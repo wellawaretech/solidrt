@@ -35,6 +35,23 @@ let engine = JsEngine::builder()
 
 See [examples/plugin.rs](examples/plugin.rs) for a complete example.
 
+### Logger
+
+All console output flows through a `Logger`. By default, `console.log` writes to stdout and `console.warn`/`console.error` write to stderr. Use `.log()` on the builder to provide a custom handler that receives a `LogLevel` and message:
+
+```rs
+use qjsrt::LogLevel;
+
+let engine = JsEngine::builder()
+    .log(|level, msg| match level {
+        LogLevel::Debug => { /* silenced */ }
+        LogLevel::Log => println!("{msg}"),
+        LogLevel::Warn => eprintln!("[WARN] {msg}"),
+        LogLevel::Error => eprintln!("[ERROR] {msg}"),
+    })
+    .build();
+```
+
 ### Evaluation methods
 
 `JsEngine` provides three ways to evaluate code:

@@ -4,7 +4,7 @@ mod events;
 mod io;
 mod timer;
 
-pub use engine::{JsEngine, JsEngineBuilder};
+pub use engine::{JsEngine, JsEngineBuilder, LogLevel};
 pub use rquickjs;
 
 use rquickjs::{Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};

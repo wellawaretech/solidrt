@@ -3,12 +3,51 @@ use rquickjs::promise::PromiseState;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, JsLifetime, Module, Persistent, Value};
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::console;
 use crate::events;
 use crate::io;
 use crate::timer;
+
+/// Log level passed to the logger callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Debug,
+    Log,
+    Warn,
+    Error,
+}
+
+/// Shared log sink, stored as userdata in the JS context.
+#[derive(Clone, JsLifetime)]
+pub(crate) struct Logger(#[qjs(skip_trace)] pub(crate) Arc<dyn Fn(LogLevel, &str) + Send + Sync>);
+
+impl Logger {
+    pub(crate) fn debug(&self, msg: &str) {
+        (self.0)(LogLevel::Debug, msg);
+    }
+
+    pub(crate) fn log(&self, msg: &str) {
+        (self.0)(LogLevel::Log, msg);
+    }
+
+    pub(crate) fn warn(&self, msg: &str) {
+        (self.0)(LogLevel::Warn, msg);
+    }
+
+    pub(crate) fn error(&self, msg: &str) {
+        (self.0)(LogLevel::Error, msg);
+    }
+}
+
+fn default_logger() -> Logger {
+    Logger(Arc::new(|level, msg| match level {
+        LogLevel::Debug | LogLevel::Log => println!("{msg}"),
+        LogLevel::Warn | LogLevel::Error => eprintln!("{msg}"),
+    }))
+}
 
 /// Tracks pending async operations that should keep the engine alive.
 #[derive(Clone, JsLifetime)]
@@ -71,8 +110,12 @@ enum JsCommand {
 
 type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
+/// Logging function type: receives a log level and message string.
+pub type LogFn = Box<dyn Fn(LogLevel, &str) + Send + Sync>;
+
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
+    log_fn: Option<LogFn>,
 }
 
 impl JsEngineBuilder {
@@ -84,8 +127,13 @@ impl JsEngineBuilder {
         self
     }
 
+    pub fn log<F: Fn(LogLevel, &str) + Send + Sync + 'static>(mut self, f: F) -> Self {
+        self.log_fn = Some(Box::new(f));
+        self
+    }
+
     pub fn build(self) -> JsEngine {
-        JsEngine::start(self.plugins)
+        JsEngine::start(self.plugins, self.log_fn)
     }
 }
 
@@ -96,15 +144,19 @@ pub struct JsEngine {
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new() }
+        JsEngineBuilder { plugins: Vec::new(), log_fn: None }
     }
 
     pub fn new() -> Self {
-        Self::start(Vec::new())
+        Self::start(Vec::new(), None)
     }
 
-    fn start(setups: Vec<PluginFn>) -> Self {
+    fn start(setups: Vec<PluginFn>, log_fn: Option<LogFn>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
+        let logger = match log_fn {
+            Some(f) => Logger(Arc::from(f)),
+            None => default_logger(),
+        };
 
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -113,7 +165,7 @@ impl JsEngine {
                 .expect("failed to create tokio runtime");
 
             let local = tokio::task::LocalSet::new();
-            local.block_on(&rt, Self::event_loop(rx, setups));
+            local.block_on(&rt, Self::event_loop(rx, setups, logger));
         });
 
         Self {
@@ -122,7 +174,7 @@ impl JsEngine {
         }
     }
 
-    async fn init_context(setups: Vec<PluginFn>) -> (AsyncRuntime, AsyncContext, PendingOps) {
+    async fn init_context(setups: Vec<PluginFn>, logger: Logger) -> (AsyncRuntime, AsyncContext, PendingOps) {
         let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
         let context = AsyncContext::full(&runtime)
             .await
@@ -133,10 +185,11 @@ impl JsEngine {
         context
             .with(|ctx| {
                 ctx.store_userdata(pending.clone()).unwrap();
+                ctx.store_userdata(logger).unwrap();
                 timer::init_timers(&ctx);
                 io::init_io(&ctx);
                 console::init_console(&ctx);
-                init_globals(&ctx);
+
                 events::init_events(&ctx);
                 for setup in setups {
                     setup(ctx.clone());
@@ -147,8 +200,8 @@ impl JsEngine {
         (runtime, context, pending)
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>) {
-        let (runtime, context, pending) = Self::init_context(setups).await;
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger) {
+        let (runtime, context, pending) = Self::init_context(setups, logger).await;
 
         loop {
             tokio::select! {
@@ -191,7 +244,7 @@ impl JsEngine {
                             context
                                 .with(|ctx| {
                                     if let Err(e) = Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
-                                        eprintln!("module error: {e:?}");
+                                        if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("module error: {e:?}")); }
                                     }
                                 })
                                 .await;
@@ -208,11 +261,11 @@ impl JsEngine {
                                     match loaded {
                                         Ok(module) => {
                                             if let Err(e) = module.eval().map(|(_, promise)| promise).catch(&ctx) {
-                                                eprintln!("module error: {e:?}");
+                                                if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("module error: {e:?}")); }
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("bytecode load error: {e}");
+                                            if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("bytecode load error: {e}")); }
                                         }
                                     }
                                 })
@@ -351,5 +404,3 @@ fn stringify_value<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> String {
     }
 }
 
-fn init_globals(_ctx: &Ctx<'_>) {
-}

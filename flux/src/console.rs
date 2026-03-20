@@ -1,5 +1,7 @@
 use rquickjs::{Ctx, Function, Object, Value};
 
+use crate::engine::Logger;
+
 fn format_args<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> String {
     args.iter()
         .map(|v| format_value(ctx, v))
@@ -26,15 +28,21 @@ fn format_value<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
 }
 
 fn console_log<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {
-    println!("{}", format_args(&ctx, &args.0));
+    let msg = format_args(&ctx, &args.0);
+    let logger = ctx.userdata::<Logger>().unwrap();
+    logger.log(&msg);
 }
 
 fn console_warn<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {
-    eprintln!("{}", format_args(&ctx, &args.0));
+    let msg = format_args(&ctx, &args.0);
+    let logger = ctx.userdata::<Logger>().unwrap();
+    logger.warn(&msg);
 }
 
 fn console_error<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {
-    eprintln!("{}", format_args(&ctx, &args.0));
+    let msg = format_args(&ctx, &args.0);
+    let logger = ctx.userdata::<Logger>().unwrap();
+    logger.error(&msg);
 }
 
 pub(crate) fn init_console(ctx: &Ctx<'_>) {
