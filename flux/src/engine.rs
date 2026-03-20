@@ -25,6 +25,7 @@ pub enum LogLevel {
 pub(crate) struct Logger(#[qjs(skip_trace)] pub(crate) Arc<dyn Fn(LogLevel, &str) + Send + Sync>);
 
 impl Logger {
+    #[allow(dead_code)]
     pub(crate) fn debug(&self, msg: &str) {
         (self.0)(LogLevel::Debug, msg);
     }
@@ -140,6 +141,7 @@ impl JsEngineBuilder {
 pub struct JsEngine {
     tx: mpsc::Sender<JsCommand>,
     handle: Option<std::thread::JoinHandle<()>>,
+    logger: Logger,
 }
 
 impl JsEngine {
@@ -158,6 +160,7 @@ impl JsEngine {
             None => default_logger(),
         };
 
+        let engine_logger = logger.clone();
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -165,12 +168,13 @@ impl JsEngine {
                 .expect("failed to create tokio runtime");
 
             let local = tokio::task::LocalSet::new();
-            local.block_on(&rt, Self::event_loop(rx, setups, logger));
+            local.block_on(&rt, Self::event_loop(rx, setups, engine_logger));
         });
 
         Self {
             tx,
             handle: Some(handle),
+            logger,
         }
     }
 
@@ -316,10 +320,12 @@ impl JsEngine {
     /// `data` must be a valid JSON string; it is parsed into a JS value on the engine thread.
     /// Non-blocking: drops the event if the channel is full.
     pub fn emit(&self, event: &str, data: String) {
-        let _ = self.tx.try_send(JsCommand::Emit {
+        if let Err(_) = self.tx.try_send(JsCommand::Emit {
             event: event.to_string(),
             data,
-        });
+        }) {
+            self.logger.warn(&format!("event \"{event}\" dropped: channel full"));
+        }
     }
 
     pub fn eval_detached(&self, code: &str) -> oneshot::Receiver<()> {
