@@ -4,9 +4,10 @@ use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, JsLifetime, Modu
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::plugins::{console, events, io, timer};
+use crate::plugins::{console, events, io, timer, memory};
 
 /// Log level passed to the logger callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,10 +100,6 @@ enum JsCommand {
         bytecode: Vec<u8>,
         responder: oneshot::Sender<()>,
     },
-    Emit {
-        event: String,
-        data: String,
-    },
     Shutdown,
 }
 
@@ -114,6 +111,7 @@ pub type LogFn = Box<dyn Fn(LogLevel, &str) + Send + Sync>;
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
     log_fn: Option<LogFn>,
+    event_channels: Vec<(String, usize, bool)>,
 }
 
 impl JsEngineBuilder {
@@ -130,32 +128,125 @@ impl JsEngineBuilder {
         self
     }
 
+    pub fn event_channel(mut self, event: &str, capacity: usize) -> EventChannelConfig {
+        self.event_channels.push((event.to_string(), capacity, false));
+        EventChannelConfig { builder: self }
+    }
+
     pub fn build(self) -> JsEngine {
-        JsEngine::start(self.plugins, self.log_fn)
+        JsEngine::start(self.plugins, self.log_fn, self.event_channels)
+    }
+}
+
+pub struct EventChannelConfig {
+    builder: JsEngineBuilder,
+}
+
+impl EventChannelConfig {
+    pub fn trace(mut self) -> JsEngineBuilder {
+        self.builder.event_channels.last_mut().unwrap().2 = true;
+        self.builder
+    }
+
+    pub fn plugin<F>(self, f: F) -> JsEngineBuilder
+    where
+        F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
+    {
+        self.builder.plugin(f)
+    }
+
+    pub fn event_channel(self, event: &str, capacity: usize) -> EventChannelConfig {
+        self.builder.event_channel(event, capacity)
+    }
+
+    pub fn build(self) -> JsEngine {
+        self.builder.build()
+    }
+}
+
+struct EventSlot {
+    buf: std::sync::Mutex<VecDeque<String>>,
+    capacity: usize,
+    log: bool,
+}
+
+struct EventChannels {
+    slots: HashMap<String, EventSlot>,
+    notify: tokio::sync::Notify,
+}
+
+impl EventChannels {
+    fn new(events: Vec<(String, usize, bool)>) -> Self {
+        let mut slots = HashMap::new();
+        for (name, capacity, log) in events {
+            slots.insert(name, EventSlot {
+                buf: std::sync::Mutex::new(VecDeque::with_capacity(capacity)),
+                capacity,
+                log,
+            });
+        }
+        Self { slots, notify: tokio::sync::Notify::new() }
+    }
+
+    fn send(&self, event: &str, data: String, logger: &Logger) -> bool {
+        if let Some(slot) = self.slots.get(event) {
+            if slot.log {
+                logger.debug(&format!("emit \"{event}\""));
+            }
+            let mut buf = slot.buf.lock().unwrap();
+            if buf.len() >= slot.capacity {
+                buf.pop_front();
+            }
+            buf.push_back(data);
+            self.notify.notify_one();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn drain_all(&self) -> Vec<(String, String)> {
+        let mut events = Vec::new();
+        for (name, slot) in &self.slots {
+            let mut buf = slot.buf.lock().unwrap();
+            while let Some(data) = buf.pop_front() {
+                events.push((name.clone(), data));
+            }
+        }
+        events
+    }
+
+    async fn notified(&self) {
+        self.notify.notified().await;
     }
 }
 
 pub struct JsEngine {
     tx: mpsc::Sender<JsCommand>,
     handle: Option<std::thread::JoinHandle<()>>,
+    #[allow(dead_code)]
     logger: Logger,
+    event_channels: Arc<EventChannels>,
 }
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new(), log_fn: None }
+        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new() }
     }
 
     pub fn new() -> Self {
-        Self::start(Vec::new(), None)
+        Self::start(Vec::new(), None, Vec::new())
     }
 
-    fn start(setups: Vec<PluginFn>, log_fn: Option<LogFn>) -> Self {
+    fn start(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
             None => default_logger(),
         };
+
+        let event_channels = Arc::new(EventChannels::new(event_channel_defs));
+        let loop_channels = event_channels.clone();
 
         let engine_logger = logger.clone();
         let handle = std::thread::spawn(move || {
@@ -165,13 +256,14 @@ impl JsEngine {
                 .expect("failed to create tokio runtime");
 
             let local = tokio::task::LocalSet::new();
-            local.block_on(&rt, Self::event_loop(rx, setups, engine_logger));
+            local.block_on(&rt, Self::event_loop(rx, setups, engine_logger, loop_channels));
         });
 
         Self {
             tx,
             handle: Some(handle),
             logger,
+            event_channels,
         }
     }
 
@@ -189,6 +281,7 @@ impl JsEngine {
                 ctx.store_userdata(logger).unwrap();
                 timer::init_timers(&ctx);
                 io::init_io(&ctx);
+                memory::init_memory(&ctx);
                 console::init_console(&ctx);
 
                 events::init_events(&ctx);
@@ -201,18 +294,21 @@ impl JsEngine {
         (runtime, context, pending)
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger) {
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>) {
         let (runtime, context, pending) = Self::init_context(setups, logger).await;
 
         loop {
+            // Drain dedicated event channels first (handles race between notify and select)
+            for (event, data) in event_channels.drain_all() {
+                context.with(|ctx| {
+                    events::emit_event(&ctx, &event, data);
+                }).await;
+            }
+
             tokio::select! {
+                _ = event_channels.notified() => {}
                 cmd = rx.recv() => {
                     match cmd {
-                        Some(JsCommand::Emit { event, data }) => {
-                            context.with(|ctx| {
-                                events::emit_event(&ctx, &event, data);
-                            }).await;
-                        }
                         #[cfg(feature = "script")]
                         Some(JsCommand::EvalScript { code, responder }) => {
                             let persistent = context
@@ -313,15 +409,12 @@ impl JsEngine {
         let _ = rx.await;
     }
 
-    /// Emit an event to JS listeners registered via `on(event, callback)`.
-    /// `data` must be a valid JSON string; it is parsed into a JS value on the engine thread.
-    /// Non-blocking: drops the event if the channel is full.
+    /// Emit an event via a dedicated per-event channel registered with `event_channel()`.
+    /// When the channel is full, the oldest event is dropped.
+    /// Panics if `event` was not registered with `event_channel()`.
     pub fn emit(&self, event: &str, data: String) {
-        if let Err(_) = self.tx.try_send(JsCommand::Emit {
-            event: event.to_string(),
-            data,
-        }) {
-            self.logger.warn(&format!("event \"{event}\" dropped: channel full"));
+        if !self.event_channels.send(event, data, &self.logger) {
+            panic!("emit: event \"{event}\" not registered with event_channel()");
         }
     }
 
