@@ -243,24 +243,6 @@ fn log_rejected<'js>(ctx: &Ctx<'js>, val: Value<'js>) {
     }
 }
 
-fn spawn_post_eval<T: Send + 'static>(
-    context: &AsyncContext,
-    pending: &PendingOps,
-    persistent: Persistent<Value<'static>>,
-    responder: oneshot::Sender<T>,
-    finish: impl for<'js> FnOnce(&Ctx<'js>, Value<'js>) -> T + 'static,
-) {
-    let pending = pending.clone();
-    let context = context.clone();
-    tokio::task::spawn_local(async move {
-        pending.wait_idle().await;
-        let result = context.with(|ctx| {
-            let val = persistent.restore(&ctx).unwrap();
-            finish(&ctx, val)
-        }).await;
-        let _ = responder.send(result);
-    });
-}
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
@@ -354,8 +336,15 @@ impl JsEngine {
                                 .await;
                             match persistent {
                                 Ok(persistent) => {
-                                    spawn_post_eval(&context, &pending, persistent, responder, |ctx, val| {
-                                        Ok(stringify_value(ctx, val))
+                                    let pending = pending.clone();
+                                    let context = context.clone();
+                                    tokio::task::spawn_local(async move {
+                                        pending.wait_idle().await;
+                                        let result = context.with(|ctx| {
+                                            let val = persistent.restore(&ctx).unwrap();
+                                            stringify_value(&ctx, val)
+                                        }).await;
+                                        let _ = responder.send(Ok(result));
                                     });
                                 }
                                 Err(e) => {
@@ -364,53 +353,46 @@ impl JsEngine {
                             }
                         }
                         Some(JsCommand::Eval { code, responder }) => {
-                            let promise_persistent = context
+                            context
                                 .with(|ctx| {
                                     match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
-                                        Ok(promise) => Some(Persistent::save(&ctx, promise.into_value())),
+                                        Ok(promise) => log_rejected(&ctx, promise.into_value()),
                                         Err(e) => {
                                             if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("module error: {e:?}")); }
-                                            None
                                         }
                                     }
                                 })
                                 .await;
-                            if let Some(pp) = promise_persistent {
-                                spawn_post_eval(&context, &pending, pp, responder, |ctx, val| {
-                                    log_rejected(ctx, val);
-                                });
-                            } else {
+                            let pending = pending.clone();
+                            tokio::task::spawn_local(async move {
+                                pending.wait_idle().await;
                                 let _ = responder.send(());
-                            }
+                            });
                         }
                         Some(JsCommand::EvalBytecode { bytecode, responder }) => {
-                            let promise_persistent = context
+                            context
                                 .with(|ctx| {
                                     let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
                                     match loaded {
                                         Ok(module) => {
                                             match module.eval().map(|(_, promise)| promise).catch(&ctx) {
-                                                Ok(promise) => Some(Persistent::save(&ctx, promise.into_value())),
+                                                Ok(promise) => log_rejected(&ctx, promise.into_value()),
                                                 Err(e) => {
                                                     if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("module error: {e:?}")); }
-                                                    None
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             if let Some(l) = ctx.userdata::<Logger>() { l.error(&format!("bytecode load error: {e}")); }
-                                            None
                                         }
                                     }
                                 })
                                 .await;
-                            if let Some(pp) = promise_persistent {
-                                spawn_post_eval(&context, &pending, pp, responder, |ctx, val| {
-                                    log_rejected(ctx, val);
-                                });
-                            } else {
+                            let pending = pending.clone();
+                            tokio::task::spawn_local(async move {
+                                pending.wait_idle().await;
                                 let _ = responder.send(());
-                            }
+                            });
                         }
                         Some(JsCommand::Shutdown) | None => break,
                     }
