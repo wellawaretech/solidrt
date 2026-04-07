@@ -2,6 +2,7 @@ mod engine;
 mod plugins;
 
 pub use engine::{JsEngine, JsEngineBuilder, LogLevel};
+pub use plugins::events::emit_event;
 pub use rquickjs;
 
 use rquickjs::{Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};

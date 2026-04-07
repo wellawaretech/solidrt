@@ -63,7 +63,7 @@ pub(crate) fn init_events(ctx: &Ctx<'_>) {
     globals.set("off", off_fn).unwrap();
 }
 
-pub(crate) fn emit_event(ctx: &Ctx<'_>, event: &str, data: String) {
+pub fn emit_event(ctx: &Ctx<'_>, event: &str, data: String) {
     let listeners = ctx.userdata::<ListenerMap>().unwrap();
     let snapshot: Vec<_> = listeners
         .0

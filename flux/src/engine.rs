@@ -1,3 +1,4 @@
+use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::promise::PromiseState;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, JsLifetime, Module, Persistent, Value};
 use std::cell::Cell;
@@ -284,6 +285,15 @@ impl JsEngine {
 
     async fn init_context(setups: Vec<PluginFn>, logger: Logger) -> (AsyncRuntime, AsyncContext, PendingOps) {
         let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
+
+        let mut resolver = BuiltinResolver::default();
+        let mut loader = ModuleLoader::default();
+
+        resolver.add_module("q:memory");
+        loader.add_module("q:memory", memory::MemoryModule);
+
+        runtime.set_loader(resolver, loader).await;
+
         let context = AsyncContext::full(&runtime)
             .await
             .expect("failed to create JS context");
@@ -296,7 +306,6 @@ impl JsEngine {
                 ctx.store_userdata(logger).unwrap();
                 timer::init_timers(&ctx);
                 io::init_io(&ctx);
-                memory::init_memory(&ctx);
                 console::init_console(&ctx);
 
                 events::init_events(&ctx);
