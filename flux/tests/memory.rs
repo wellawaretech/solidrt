@@ -18,7 +18,7 @@ fn qjsrt_module(code: &str) -> std::process::Output {
 fn import_alloc() {
     let output = qjsrt_module(
         r#"
-        import { alloc } from "q:memory";
+        import { alloc } from "qjs:memory";
         let buf = alloc(16);
         console.log(buf.byteLength);
         "#,
@@ -31,7 +31,7 @@ fn import_alloc() {
 fn import_memset() {
     let output = qjsrt_module(
         r#"
-        import { alloc, memset } from "q:memory";
+        import { alloc, memset } from "qjs:memory";
         let buf = alloc(4);
         memset(buf, 0, 4, 0xAB);
         console.log(buf[0], buf[1], buf[2], buf[3]);
@@ -45,7 +45,7 @@ fn import_memset() {
 fn import_memset32() {
     let output = qjsrt_module(
         r#"
-        import { alloc, memset32 } from "q:memory";
+        import { alloc, memset32 } from "qjs:memory";
         let buf = alloc(8);
         memset32(buf, 0, 2, 0x01020304);
         console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
@@ -63,7 +63,7 @@ fn import_memset32() {
 fn memset_offset() {
     let output = qjsrt_module(
         r#"
-        import { alloc, memset } from "q:memory";
+        import { alloc, memset } from "qjs:memory";
         let buf = alloc(8);
         memset(buf, 2, 3, 0xFF);
         console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
@@ -80,7 +80,7 @@ fn memset_offset() {
 fn import_free() {
     let output = qjsrt_module(
         r#"
-        import { alloc, free, memset } from "q:memory";
+        import { alloc, free, memset } from "qjs:memory";
         let buf = alloc(4);
         memset(buf, 0, 4, 0x11);
         console.log(buf.byteLength);
@@ -99,7 +99,7 @@ fn import_free() {
 fn memset_out_of_bounds() {
     let output = qjsrt_module(
         r#"
-        import { alloc, memset } from "q:memory";
+        import { alloc, memset } from "qjs:memory";
         let buf = alloc(4);
         try {
             memset(buf, 2, 4, 0xFF);

@@ -289,8 +289,10 @@ impl JsEngine {
         let mut resolver = BuiltinResolver::default();
         let mut loader = ModuleLoader::default();
 
-        resolver.add_module("q:memory");
-        loader.add_module("q:memory", memory::MemoryModule);
+        resolver.add_module("qjs:memory").add_module("qjs:io");
+        loader
+            .add_module("qjs:memory", memory::MemoryModule)
+            .add_module("qjs:io", io::IoModule);
 
         runtime.set_loader(resolver, loader).await;
 

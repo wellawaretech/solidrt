@@ -1,3 +1,4 @@
+use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{
     function::MutFn,
     promise::Promised,
@@ -343,13 +344,19 @@ fn create_http_source<'js>(
 
 pub(crate) fn init_io(ctx: &Ctx<'_>) {
     ctx.store_userdata(http_client()).unwrap();
+}
 
-    let globals = ctx.globals();
+pub struct IoModule;
 
-    let source_fn = Function::new(ctx.clone(), io_source).unwrap();
+impl ModuleDef for IoModule {
+    fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+        decl.declare("source")?;
+        Ok(())
+    }
 
-    let io = Object::new(ctx.clone()).unwrap();
-    io.set("source", source_fn).unwrap();
-
-    globals.set("io", io).unwrap();
+    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+        let source_fn = Function::new(ctx.clone(), io_source)?;
+        exports.export("source", source_fn)?;
+        Ok(())
+    }
 }
