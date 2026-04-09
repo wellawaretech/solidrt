@@ -1,7 +1,9 @@
 mod engine;
+mod logger;
 mod plugins;
 
-pub use engine::{JsEngine, JsEngineBuilder, LogLevel};
+pub use engine::{JsEngine, JsEngineBuilder};
+pub use logger::LogLevel;
 pub use plugins::events::emit_event;
 pub use rquickjs;
 

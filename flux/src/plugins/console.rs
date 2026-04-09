@@ -1,6 +1,6 @@
 use rquickjs::{Ctx, Function, Object, Value};
 
-use crate::engine::Logger;
+use crate::logger::Logger;
 
 fn format_args<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> String {
     args.iter()
