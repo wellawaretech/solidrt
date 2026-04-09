@@ -12,9 +12,9 @@ path = "src/lib.rs"
 name = "qjsrt"
 path = "src/main.rs"
 
-[features]
-default = ["script"]
-script = []
+# [features]
+# default = ["script"]
+# script = []
 
 [dependencies]
 rquickjs = { version = "0.11.0", features = ["rust-alloc", "futures", "macro", "loader"] }

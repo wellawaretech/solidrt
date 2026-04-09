@@ -1,5 +1,3 @@
-#[cfg(feature = "script")]
-use qjsrt::run_script;
 use qjsrt::{run, run_bytecode};
 
 fn main() {
@@ -12,7 +10,8 @@ fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "-c" | "-b" | "-e" | "-p" => mode = Some(args[i].clone()),
+            "-c" | "-b" => mode = Some(args[i].clone()),
+            // "-e" | "-p" => mode = Some(args[i].clone()),
             "-o" => {
                 i += 1;
                 output = Some(args.get(i).unwrap_or_else(|| {
@@ -30,25 +29,25 @@ fn main() {
     }
 
     match mode.as_deref() {
-        #[cfg(feature = "script")]
-        Some("-e") => {
-            let expr = input.unwrap_or_else(|| {
-                eprintln!("error: -e requires a JavaScript expression");
-                std::process::exit(1);
-            });
-            run_script(&expr, None);
-        }
-        #[cfg(feature = "script")]
-        Some("-p") => {
-            let expr = input.unwrap_or_else(|| {
-                eprintln!("error: -p requires a JavaScript expression");
-                std::process::exit(1);
-            });
-            let result = run_script(&expr, None);
-            if !result.is_empty() {
-                println!("{result}");
-            }
-        }
+        // #[cfg(feature = "script")]
+        // Some("-e") => {
+        //     let expr = input.unwrap_or_else(|| {
+        //         eprintln!("error: -e requires a JavaScript expression");
+        //         std::process::exit(1);
+        //     });
+        //     run_script(&expr, None);
+        // }
+        // #[cfg(feature = "script")]
+        // Some("-p") => {
+        //     let expr = input.unwrap_or_else(|| {
+        //         eprintln!("error: -p requires a JavaScript expression");
+        //         std::process::exit(1);
+        //     });
+        //     let result = run_script(&expr, None);
+        //     if !result.is_empty() {
+        //         println!("{result}");
+        //     }
+        // }
         Some("-b") => {
             let path = input.unwrap_or_else(|| {
                 eprintln!("error: -b requires a bytecode file path");

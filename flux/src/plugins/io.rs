@@ -8,7 +8,7 @@ use std::cell::Cell;
 use std::io;
 use std::rc::Rc;
 
-use crate::engine::PendingOps;
+use crate::pending::PendingOps;
 
 const USER_AGENT: &str = concat!("qjsrt/", env!("CARGO_PKG_VERSION"));
 
@@ -351,12 +351,44 @@ pub struct IoModule;
 impl ModuleDef for IoModule {
     fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
         decl.declare("source")?;
+        decl.declare("write")?;
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
         let source_fn = Function::new(ctx.clone(), io_source)?;
+
+        let write_fn = Function::new(
+            ctx.clone(),
+            MutFn::from(
+                |ctx: Ctx<'_>, path: String, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+                    let bytes = if let Some(s) = data.as_string() {
+                        s.to_string()?.into_bytes()
+                    } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+                        ta.as_bytes().unwrap().to_vec()
+                    } else {
+                        return Err(ctx.throw(
+                            rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+                                .unwrap()
+                                .into(),
+                        ));
+                    };
+                    let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+                    Ok(Promised(async move {
+                        pending.hold();
+                        let r = tokio::fs::write(&path, &bytes)
+                            .await
+                            .map_err(rquickjs::Error::Io);
+                        pending.release();
+                        r
+                    }))
+                },
+            ),
+        )
+        .unwrap();
+
         exports.export("source", source_fn)?;
+        exports.export("write", write_fn)?;
         Ok(())
     }
 }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
-use crate::engine::PendingOps;
+use crate::pending::PendingOps;
 
 type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
 

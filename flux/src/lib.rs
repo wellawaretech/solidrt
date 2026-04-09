@@ -1,5 +1,6 @@
 mod engine;
 mod logger;
+pub(crate) mod pending;
 mod plugins;
 
 pub use engine::{JsEngine, JsEngineBuilder};
@@ -8,9 +9,6 @@ pub use plugins::events::emit_event;
 pub use rquickjs;
 
 use rquickjs::{Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
-
-#[cfg(feature = "script")]
-use std::time::Duration;
 
 pub fn run(code: &str) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -76,27 +74,27 @@ pub fn run_bytecode(bytecode: Vec<u8>) {
     })
 }
 
-#[cfg(feature = "script")]
-pub fn run_script(code: &str, timeout: Option<Duration>) -> String {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("failed to create tokio runtime");
-
-    let engine = JsEngine::new();
-    rt.block_on(async {
-        let result = match timeout {
-            Some(d) => match tokio::time::timeout(d, engine.eval_script(code)).await {
-                Ok(Ok(val)) => val,
-                Ok(Err(e)) => e,
-                Err(_) => "error: timed out".into(),
-            },
-            None => match engine.eval_script(code).await {
-                Ok(val) => val,
-                Err(e) => e,
-            },
-        };
-        engine.shutdown().await;
-        result
-    })
-}
+// #[cfg(feature = "script")]
+// pub fn run_script(code: &str, timeout: Option<std::time::Duration>) -> String {
+//     let rt = tokio::runtime::Builder::new_multi_thread()
+//         .enable_all()
+//         .build()
+//         .expect("failed to create tokio runtime");
+//
+//     let engine = JsEngine::new();
+//     rt.block_on(async {
+//         let result = match timeout {
+//             Some(d) => match tokio::time::timeout(d, engine.eval_script(code)).await {
+//                 Ok(Ok(val)) => val,
+//                 Ok(Err(e)) => e,
+//                 Err(_) => "error: timed out".into(),
+//             },
+//             None => match engine.eval_script(code).await {
+//                 Ok(val) => val,
+//                 Err(e) => e,
+//             },
+//         };
+//         engine.shutdown().await;
+//         result
+//     })
+// }
