@@ -21,7 +21,7 @@ fn main() {
 Use the builder to extend the runtime with custom globals backed by Rust state:
 
 ```rs
-let engine = JsEngine::builder()
+let engine = JsEngine::builder(runtime)
     .plugin(move |ctx| {
         ctx.store_userdata(MyState::new()).unwrap();
 
@@ -42,7 +42,7 @@ All console output flows through a `Logger`. By default, `console.log` writes to
 ```rs
 use qjsrt::LogLevel;
 
-let engine = JsEngine::builder()
+let engine = JsEngine::builder(runtime)
     .log(|level, msg| match level {
         LogLevel::Debug => { /* silenced */ }
         LogLevel::Log => println!("{msg}"),
@@ -54,20 +54,16 @@ let engine = JsEngine::builder()
 
 ### Evaluation methods
 
-`JsEngine` provides three ways to evaluate code:
+`JsEngine` provides several ways to evaluate code. All evaluation runs as ES modules.
 
-- **`eval(code).await`** — evaluates as an ES module (supports `import`/`export`). Waits for all async work to complete. No return value.
-- **`eval_script(code).await`** — evaluates as a script. Waits for async work, then returns the stringified last expression as `Result<String, String>`.
-- **`eval_bytecode(bytes).await`** — loads and evaluates precompiled bytecode (from `compile()`). Waits for all async work to complete.
+- **`eval(code).await`** — evaluates JS source as an ES module (supports `import`/`export`). Waits for all async work to complete.
+- **`eval_bytecode(bytes).await`** — loads and evaluates precompiled bytecode (from `compile_source()`). Waits for all async work to complete.
+- **`eval_detached(code)`** — same as `eval` but returns immediately with a `oneshot::Receiver<()>` that signals completion.
 - **`eval_bytecode_detached(bytes)`** — same as `eval_bytecode` but returns immediately with a `oneshot::Receiver<()>`.
-- **`eval_detached(code)`** — same as `eval` but returns immediately with a `oneshot::Receiver<()>` that signals completion. Useful when you want to keep doing work on the calling thread.
 
 ```rs
 // blocking eval
 engine.eval(r#"console.log("hello")"#).await;
-
-// get a result back
-let result = engine.eval_script("1 + 2").await; // Ok("3")
 
 // run precompiled bytecode
 let bytes = std::fs::read("app.bin").unwrap();
@@ -83,13 +79,11 @@ let done_rx = engine.eval_detached(r#"console.log("background")"#);
 qjsrt [file.js]              # run a JS file, or read from stdin
 qjsrt -c [file.js] [-o out]  # compile to bytecode, -o required for stdin
 qjsrt -b <file.bin>          # run a compiled binary
-qjsrt -p '<expr>'            # evaluate and print
-qjsrt -e '<expr>'            # evaluate silently
 ```
 
 When no input file is given, `qjsrt` and `qjsrt -c` read source from stdin. The `-o` flag specifies the output path for `-c` (required when compiling from stdin).
 
-Files are evaluated as ES modules with `import`/`export` support. Expressions (`-e`/`-p`) are evaluated as scripts.
+All code is evaluated as ES modules with `import`/`export` support.
 
 ## Platform bindings
 

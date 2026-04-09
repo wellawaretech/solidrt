@@ -8,15 +8,18 @@ pub use logger::LogLevel;
 pub use plugins::events::emit_event;
 pub use rquickjs;
 
+use std::sync::Arc;
 use rquickjs::{Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
 
 pub fn run(code: &str) {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("failed to create tokio runtime");
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime"),
+    );
 
-    let engine = JsEngine::new();
+    let engine = JsEngine::new(rt.clone());
     rt.block_on(async {
         engine.eval(code).await;
         engine.shutdown().await;
@@ -62,12 +65,14 @@ pub fn compile(input_path: &str, output_path: &str) {
 }
 
 pub fn run_bytecode(bytecode: Vec<u8>) {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("failed to create tokio runtime");
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime"),
+    );
 
-    let engine = JsEngine::new();
+    let engine = JsEngine::new(rt.clone());
     rt.block_on(async {
         engine.eval_bytecode(bytecode).await;
         engine.shutdown().await;

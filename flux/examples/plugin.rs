@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use qjsrt::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
 use qjsrt::JsEngine;
 
@@ -7,7 +8,14 @@ use qjsrt::JsEngine;
 struct Identity(#[qjs(skip_trace)] String);
 
 fn main() {
-    let engine = JsEngine::builder()
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime"),
+    );
+
+    let engine = JsEngine::builder(rt)
         .plugin(move |ctx| {
             // Store Rust state in the JS context — retrievable by type from any JS function
             ctx.store_userdata(Identity("qjsrt".into())).unwrap();

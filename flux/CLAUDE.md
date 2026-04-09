@@ -7,21 +7,28 @@ cargo build
 cargo test          # integration tests in tests/
 ```
 
-Tests use `run_script` with a 3s timeout. No special setup needed.
+Tests run the `qjsrt` binary via `Command` (module mode through stdin). No special setup needed.
 
-## Eval flows
+## Architecture
 
-**Module flow** (`run` -> `JsEngine::eval`): evaluates as ES module via `Module::evaluate`. Errors go to stderr. Waits for all timers to drain, then exits.
+The engine is a generic "run closures on a JS thread" executor. It has no knowledge of module loading, bytecode, or evaluation modes.
 
-**Script flow** (`run_script` -> `JsEngine::eval_script`): evaluates as global script via `ctx.eval`. Returns the stringified last expression. Waits for timers to drain before stringifying (so promises settle). `run_script` accepts an optional `Duration` timeout; CLI passes `None`. If the last expression is a Promise, the output is wrapped as `Promise { <value> }` (resolved), `Promise { <rejected> <value> }`, or `Promise { <pending> }` — tests must match this format.
+**Key files:**
+
+- `engine.rs` — `JsEngine`, `JsEngineBuilder`, generic event loop. Receives `JsCommand::Exec` (a boxed closure) and runs it on the JS context.
+- `pending.rs` — `PendingOps`. Reference-counted async operation tracker. `hold()`/`release()` gates process completion.
+- `plugins/mod.rs` — `init_context()` sets up the QuickJS runtime, module loaders, and all built-in plugins. Also defines the `PluginFn` type.
+- `plugins/events.rs` — Both cross-thread `EventChannels` (Send+Sync buffering) and JS-thread listener dispatch (`on`/`off`/`emit_event`).
+- `lib.rs` — Public API. Convenience functions (`run`, `run_bytecode`, `compile_source`) construct the engine and send the appropriate closure. Module-loading logic lives here, not in the engine.
+
+**Caller-side evaluation:** `eval()` and `eval_bytecode()` are convenience methods on `JsEngine` that construct a closure containing the module-loading logic and send it via `exec()`. The engine event loop just runs the closure and waits for `PendingOps` to drain. Adding new eval modes requires no engine changes.
 
 ## Constraints
 
 - **JS values are `!Send`.** All JS execution must happen on the engine thread. Never move a `Value`, `Function`, or `Ctx` across threads.
 - **Use `ctx.spawn()` for JS-touching async work**, not `tokio::spawn`. `ctx.spawn()` produces QuickJS-managed futures driven by `runtime.idle()`. `tokio::spawn` would require `Send` and break.
-- **The engine thread runs a single-threaded Tokio runtime + `LocalSet`.** `spawn_local` is fine; `tokio::spawn` inside the engine thread would panic (no multi-thread runtime there).
-- **PendingOps gates completion.** Both flows wait on `PendingOps::wait_idle()` before responding. Any async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps` (retrieved via `ctx.userdata()`).
-- **Module flow vs script flow use different eval paths.** Module flow uses `Module::evaluate` (supports `import`/`export`). Script flow uses `ctx.eval` (returns a value). Don't mix them up.
+- **The engine thread runs on the caller's Tokio runtime via `LocalSet`.** `spawn_local` is fine; `tokio::spawn` inside the engine thread would require `Send`.
+- **PendingOps gates completion.** The engine waits on `PendingOps::wait_idle()` after running each closure. Any async primitive that should keep the process alive must call `hold()`/`release()` on `PendingOps` (retrieved via `ctx.userdata()`).
 
 ## JS code style
 
@@ -41,7 +48,6 @@ Tests use `run_script` with a 3s timeout. No special setup needed.
 `on(event, callback)` registers a JS listener and returns a numeric ID. `off(event, id)` removes it. From Rust, `engine.emit(event, data)` takes a JSON string that is parsed into a JS value on the engine thread.
 
 - **`emit()` data is a JSON string.** The caller is responsible for producing valid JSON. It is parsed via `ctx.json_parse` on the engine thread; malformed JSON delivers `undefined` to listeners.
-- **Command channel is bounded (32).** `emit()` uses `try_send` and silently drops the event if the channel is full. Callers that need delivery guarantees should not rely on `emit()` alone.
+- **Event channels use per-event FIFO buffers.** Registered via `event_channel()` on the builder. When full, the oldest event is dropped.
 - **`PendingOps` lifecycle.** `on()` calls `hold()` when the first listener for an event name is registered. `off()` calls `release()` when the last listener for that event name is removed. Removing all listeners for all events allows the process to exit naturally.
 - **Listener exceptions are swallowed.** JS errors thrown inside listener callbacks are currently silently discarded.
-- **`emit()` returns nothing.** The caller has no way to detect whether an event was dropped due to a full channel.

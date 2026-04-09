@@ -6,6 +6,8 @@ use crate::logger::{Logger, LogLevel, LogFn, default_logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
+type TokioRuntime = Arc<tokio::runtime::Runtime>;
+
 type JsTask = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
 enum JsCommand {
@@ -17,6 +19,7 @@ enum JsCommand {
 }
 
 pub struct JsEngineBuilder {
+    runtime: TokioRuntime,
     plugins: Vec<PluginFn>,
     log_fn: Option<LogFn>,
     event_channels: Vec<(String, usize, bool)>,
@@ -42,7 +45,7 @@ impl JsEngineBuilder {
     }
 
     pub fn build(self) -> JsEngine {
-        JsEngine::start(self.plugins, self.log_fn, self.event_channels)
+        JsEngine::start(self.runtime, self.plugins, self.log_fn, self.event_channels)
     }
 }
 
@@ -81,15 +84,15 @@ pub struct JsEngine {
 }
 
 impl JsEngine {
-    pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new() }
+    pub fn builder(runtime: TokioRuntime) -> JsEngineBuilder {
+        JsEngineBuilder { runtime, plugins: Vec::new(), log_fn: None, event_channels: Vec::new() }
     }
 
-    pub fn new() -> Self {
-        Self::start(Vec::new(), None, Vec::new())
+    pub fn new(runtime: TokioRuntime) -> Self {
+        Self::start(runtime, Vec::new(), None, Vec::new())
     }
 
-    fn start(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>) -> Self {
+    fn start(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
@@ -101,13 +104,8 @@ impl JsEngine {
 
         let engine_logger = logger.clone();
         let handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create tokio runtime");
-
             let local = tokio::task::LocalSet::new();
-            local.block_on(&rt, Self::event_loop(rx, setups, engine_logger, loop_channels));
+            local.block_on(&*runtime, Self::event_loop(rx, setups, engine_logger, loop_channels));
         });
 
         Self {
