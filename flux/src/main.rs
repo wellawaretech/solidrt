@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 
 fn print_help() {
     println!(
-        "qjsrt {} — QuickJS-based JavaScript runtime
+        "qjsrt {} - QuickJS-based JavaScript runtime
 
 Usage:
     qjsrt [options] [file]
