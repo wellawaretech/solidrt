@@ -1,4 +1,26 @@
 use qjsrt::{run, run_bytecode};
+use std::io::IsTerminal;
+
+fn print_help() {
+    println!(
+        "qjsrt {} — QuickJS-based JavaScript runtime
+
+Usage:
+    qjsrt [options] [file]
+    qjsrt < file.js
+    cat file.js | qjsrt
+
+Options:
+    -c [file]       Compile JavaScript to bytecode (reads stdin if no file)
+    -b <file>       Run a bytecode file
+    -o <path>       Output path (used with -c)
+    -h, --help      Show this help message
+
+With no options and a file argument, runs the file as a JavaScript module.
+With no arguments, reads JavaScript from stdin.",
+        env!("CARGO_PKG_VERSION")
+    );
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -10,6 +32,10 @@ fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "-h" | "--help" => {
+                print_help();
+                return;
+            }
             "-c" | "-b" => mode = Some(args[i].clone()),
             // "-e" | "-p" => mode = Some(args[i].clone()),
             "-o" => {
@@ -26,6 +52,11 @@ fn main() {
             }
         }
         i += 1;
+    }
+
+    if mode.is_none() && input.is_none() && std::io::stdin().is_terminal() {
+        print_help();
+        return;
     }
 
     match mode.as_deref() {
