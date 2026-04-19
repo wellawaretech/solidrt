@@ -1,5 +1,6 @@
 pub mod console;
 pub mod events;
+pub mod fetch;
 pub mod io;
 pub mod timer;
 pub mod memory;
@@ -39,6 +40,7 @@ pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger) -> (Asyn
             ctx.store_userdata(logger).unwrap();
             timer::init_timers(&ctx);
             io::init_io(&ctx);
+            fetch::init_fetch(&ctx);
             console::init_console(&ctx);
 
             events::init_events(&ctx);
