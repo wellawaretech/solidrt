@@ -13,8 +13,12 @@ use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
-pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger) -> (AsyncRuntime, AsyncContext, PendingOps) {
+pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger, stack_size: Option<usize>) -> (AsyncRuntime, AsyncContext, PendingOps) {
     let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
+
+    if let Some(limit) = stack_size {
+        runtime.set_max_stack_size(limit).await;
+    }
 
     let mut resolver = BuiltinResolver::default();
     let mut loader = ModuleLoader::default();

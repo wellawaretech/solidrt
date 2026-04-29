@@ -18,11 +18,15 @@ enum JsCommand {
     Shutdown,
 }
 
+type ShutdownFn = Box<dyn FnOnce() + Send>;
+
 pub struct JsEngineBuilder {
     runtime: TokioRuntime,
     plugins: Vec<PluginFn>,
     log_fn: Option<LogFn>,
     event_channels: Vec<(String, usize, bool)>,
+    stack_size: Option<usize>,
+    shutdown_hooks: Vec<ShutdownFn>,
 }
 
 impl JsEngineBuilder {
@@ -44,8 +48,18 @@ impl JsEngineBuilder {
         EventChannelConfig { builder: self }
     }
 
+    pub fn stack_size(mut self, limit: usize) -> Self {
+        self.stack_size = Some(limit);
+        self
+    }
+
+    pub fn on_shutdown<F: FnOnce() + Send + 'static>(mut self, f: F) -> Self {
+        self.shutdown_hooks.push(Box::new(f));
+        self
+    }
+
     pub fn build(self) -> JsEngine {
-        JsEngine::start(self.runtime, self.plugins, self.log_fn, self.event_channels)
+        JsEngine::start(self.runtime, self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
     }
 }
 
@@ -85,14 +99,14 @@ pub struct JsEngine {
 
 impl JsEngine {
     pub fn builder(runtime: TokioRuntime) -> JsEngineBuilder {
-        JsEngineBuilder { runtime, plugins: Vec::new(), log_fn: None, event_channels: Vec::new() }
+        JsEngineBuilder { runtime, plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None, shutdown_hooks: Vec::new() }
     }
 
     pub fn new(runtime: TokioRuntime) -> Self {
-        Self::start(runtime, Vec::new(), None, Vec::new())
+        Self::start(runtime, Vec::new(), None, Vec::new(), None, Vec::new())
     }
 
-    fn start(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>) -> Self {
+    fn start(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> Self {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
@@ -105,7 +119,10 @@ impl JsEngine {
         let engine_logger = logger.clone();
         let handle = std::thread::spawn(move || {
             let local = tokio::task::LocalSet::new();
-            local.block_on(&*runtime, Self::event_loop(rx, setups, engine_logger, loop_channels));
+            local.block_on(&*runtime, Self::event_loop(rx, setups, engine_logger, loop_channels, stack_size));
+            for hook in shutdown_hooks {
+                hook();
+            }
         });
 
         Self {
@@ -116,8 +133,8 @@ impl JsEngine {
         }
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>) {
-        let (runtime, context, pending) = plugins::init_context(setups, logger).await;
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>, stack_size: Option<usize>) {
+        let (runtime, context, pending) = plugins::init_context(setups, logger, stack_size).await;
 
         loop {
             // Drain dedicated event channels first (handles race between notify and select)
