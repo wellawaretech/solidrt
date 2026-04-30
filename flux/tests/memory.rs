@@ -1,117 +1,158 @@
-use std::process::Command;
+#![cfg(feature = "compile")]
 
-fn qjsrt_module(code: &str) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_qjsrt"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(code.as_bytes())?;
-            child.wait_with_output()
-        })
-        .expect("failed to run qjsrt")
+use qjsrt::{JsEngine, LogLevel};
+use std::sync::{Arc, Mutex};
+
+fn capture_log() -> (
+    Arc<Mutex<Vec<(LogLevel, String)>>>,
+    impl Fn(LogLevel, &str) + Send + Sync + 'static,
+) {
+    let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
+    let log2 = log.clone();
+    let f = move |level: LogLevel, msg: &str| {
+        log2.lock().unwrap().push((level, msg.to_string()));
+    };
+    (log, f)
 }
 
-#[test]
-fn import_alloc() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc } from "qjs:memory";
-        let buf = alloc(16);
-        console.log(buf.byteLength);
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "16");
+fn log_output(log: &[(LogLevel, String)]) -> String {
+    log.iter()
+        .filter(|(l, _)| *l == LogLevel::Log)
+        .map(|(_, m)| m.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-#[test]
-fn import_memset() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc, memset } from "qjs:memory";
-        let buf = alloc(4);
-        memset(buf, 0, 4, 0xAB);
-        console.log(buf[0], buf[1], buf[2], buf[3]);
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "171 171 171 171");
+fn error_output(log: &[(LogLevel, String)]) -> String {
+    log.iter()
+        .filter(|(l, _)| *l == LogLevel::Error)
+        .map(|(_, m)| m.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-#[test]
-fn import_memset32() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc, memset32 } from "qjs:memory";
-        let buf = alloc(8);
-        memset32(buf, 0, 2, 0x01020304);
-        console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+#[tokio::test]
+async fn import_alloc() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc } from "qjs:memory";
+            let buf = alloc(16);
+            console.log(buf.byteLength);
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
+    assert_eq!(log_output(&log), "16");
+}
+
+#[tokio::test]
+async fn import_memset() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc, memset } from "qjs:memory";
+            let buf = alloc(4);
+            memset(buf, 0, 4, 0xAB);
+            console.log(buf[0], buf[1], buf[2], buf[3]);
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
+    assert_eq!(log_output(&log), "171 171 171 171");
+}
+
+#[tokio::test]
+async fn import_memset32() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc, memset32 } from "qjs:memory";
+            let buf = alloc(8);
+            memset32(buf, 0, 2, 0x01020304);
+            console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
     // 0x01020304 in little-endian bytes: 4, 3, 2, 1
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "4 3 2 1 4 3 2 1"
-    );
+    assert_eq!(log_output(&log), "4 3 2 1 4 3 2 1");
 }
 
-#[test]
-fn memset_offset() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc, memset } from "qjs:memory";
-        let buf = alloc(8);
-        memset(buf, 2, 3, 0xFF);
-        console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "0 0 255 255 255 0 0 0"
-    );
+#[tokio::test]
+async fn memset_offset() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc, memset } from "qjs:memory";
+            let buf = alloc(8);
+            memset(buf, 2, 3, 0xFF);
+            console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
+    assert_eq!(log_output(&log), "0 0 255 255 255 0 0 0");
 }
 
-#[test]
-fn import_free() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc, free, memset } from "qjs:memory";
-        let buf = alloc(4);
-        memset(buf, 0, 4, 0x11);
-        console.log(buf.byteLength);
-        free(buf);
-        console.log(buf.byteLength);
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "4\n0"
-    );
+#[tokio::test]
+async fn import_free() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc, free, memset } from "qjs:memory";
+            let buf = alloc(4);
+            memset(buf, 0, 4, 0x11);
+            console.log(buf.byteLength);
+            free(buf);
+            console.log(buf.byteLength);
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
+    assert_eq!(log_output(&log), "4\n0");
 }
 
-#[test]
-fn memset_out_of_bounds() {
-    let output = qjsrt_module(
-        r#"
-        import { alloc, memset } from "qjs:memory";
-        let buf = alloc(4);
-        try {
-            memset(buf, 2, 4, 0xFF);
-            console.log("no error");
-        } catch (e) {
-            console.log(String(e));
-        }
-        "#,
-    );
-    assert!(output.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "memset: offset + length out of bounds"
-    );
+#[tokio::test]
+async fn memset_out_of_bounds() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source(
+            r#"
+            import { alloc, memset } from "qjs:memory";
+            let buf = alloc(4);
+            try {
+                memset(buf, 2, 4, 0xFF);
+                console.log("no error");
+            } catch (e) {
+                console.log(String(e));
+            }
+            "#,
+        )
+        .await;
+
+    let log = log.lock().unwrap();
+    assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
+    assert_eq!(log_output(&log), "memset: offset + length out of bounds");
 }

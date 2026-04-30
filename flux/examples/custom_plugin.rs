@@ -25,7 +25,7 @@ fn whoami_plugin(ctx: Ctx<'_>) {
     });
 }
 
-#[tokio::main(flavor = "multi_thread")]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let engine = JsEngine::builder().plugin(whoami_plugin).build();
 

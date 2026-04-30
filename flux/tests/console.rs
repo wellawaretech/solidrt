@@ -1,51 +1,79 @@
-use std::process::Command;
+#![cfg(feature = "compile")]
 
-fn qjsrt_module(code: &str) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_qjsrt"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            child.stdin.take().unwrap().write_all(code.as_bytes())?;
-            child.wait_with_output()
-        })
-        .expect("failed to run qjsrt")
+use qjsrt::{JsEngine, LogLevel};
+use std::sync::{Arc, Mutex};
+
+fn capture_log() -> (
+    Arc<Mutex<Vec<(LogLevel, String)>>>,
+    impl Fn(LogLevel, &str) + Send + Sync + 'static,
+) {
+    let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
+    let log2 = log.clone();
+    let f = move |level: LogLevel, msg: &str| {
+        log2.lock().unwrap().push((level, msg.to_string()));
+    };
+    (log, f)
 }
 
-#[test]
-fn console_log_prints_to_stdout() {
-    let output = qjsrt_module("console.log('hello')");
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
-    assert!(output.stderr.is_empty());
+fn messages_at(log: &[(LogLevel, String)], level: LogLevel) -> Vec<&str> {
+    log.iter()
+        .filter(|(l, _)| *l == level)
+        .map(|(_, m)| m.as_str())
+        .collect()
 }
 
-#[test]
-fn console_warn_prints_to_stderr() {
-    let output = qjsrt_module("console.warn('warning')");
-    assert!(output.stdout.is_empty());
-    assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "warning");
+#[tokio::test]
+async fn console_log_prints_to_stdout() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine.eval_source("console.log('hello')").await;
+
+    let log = log.lock().unwrap();
+    let info = messages_at(&log, LogLevel::Log);
+    assert_eq!(info, vec!["hello"]);
+    assert!(messages_at(&log, LogLevel::Error).is_empty());
 }
 
-#[test]
-fn console_error_prints_to_stderr() {
-    let output = qjsrt_module("console.error('oops')");
-    assert!(output.stdout.is_empty());
-    assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "oops");
+#[tokio::test]
+async fn console_warn_prints_to_stderr() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine.eval_source("console.warn('warning')").await;
+
+    let log = log.lock().unwrap();
+    assert!(messages_at(&log, LogLevel::Log).is_empty());
+    assert_eq!(messages_at(&log, LogLevel::Warn), vec!["warning"]);
 }
 
-#[test]
-fn console_log_multiple_args() {
-    let output = qjsrt_module("console.log('a', 'b', 'c')");
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "a b c");
+#[tokio::test]
+async fn console_error_prints_to_stderr() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine.eval_source("console.error('oops')").await;
+
+    let log = log.lock().unwrap();
+    assert!(messages_at(&log, LogLevel::Log).is_empty());
+    assert_eq!(messages_at(&log, LogLevel::Error), vec!["oops"]);
 }
 
-#[test]
-fn console_log_mixed_types() {
-    let output = qjsrt_module("console.log('count:', 42, true, null)");
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "count: 42 true null"
-    );
+#[tokio::test]
+async fn console_log_multiple_args() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine.eval_source("console.log('a', 'b', 'c')").await;
+
+    let log = log.lock().unwrap();
+    assert_eq!(messages_at(&log, LogLevel::Log), vec!["a b c"]);
+}
+
+#[tokio::test]
+async fn console_log_mixed_types() {
+    let (log, log_fn) = capture_log();
+    let engine = JsEngine::builder().logger(log_fn).build();
+    engine
+        .eval_source("console.log('count:', 42, true, null)")
+        .await;
+
+    let log = log.lock().unwrap();
+    assert_eq!(messages_at(&log, LogLevel::Log), vec!["count: 42 true null"]);
 }
