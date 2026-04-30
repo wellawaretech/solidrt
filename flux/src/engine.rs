@@ -192,17 +192,15 @@ impl JsEngine {
                 crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
             }).await;
 
+            runtime.idle().await;
+
             if pending.is_idle() {
                 break;
             }
 
             tokio::select! {
                 _ = event_channels.notified() => {}
-                _ = pending.notified() => {
-                    if pending.is_idle() {
-                        break;
-                    }
-                }
+                _ = pending.notified() => {}
                 _ = runtime.idle() => {
                     tokio::task::yield_now().await;
                     tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
