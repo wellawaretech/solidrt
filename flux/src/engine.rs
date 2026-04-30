@@ -5,8 +5,6 @@ use crate::logger::{Logger, LogLevel, LogFn, default_logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
-type JsTask = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
-
 type ShutdownFn = Box<dyn FnOnce() + Send>;
 
 #[derive(Clone, JsLifetime)]
@@ -39,8 +37,8 @@ pub fn on_shutdown<F: FnOnce() + Send + 'static>(ctx: &Ctx<'_>, f: F) {
 
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
-    log_fn: Option<LogFn>,
     event_channels: Vec<(String, usize, bool)>,
+    logger: Option<LogFn>,
     stack_size: Option<usize>,
 }
 
@@ -53,8 +51,8 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn log<F: Fn(LogLevel, &str) + Send + Sync + 'static>(mut self, f: F) -> Self {
-        self.log_fn = Some(Box::new(f));
+    pub fn logger<F: Fn(LogLevel, &str) + Send + Sync + 'static>(mut self, f: F) -> Self {
+        self.logger = Some(Box::new(f));
         self
     }
 
@@ -69,7 +67,7 @@ impl JsEngineBuilder {
     }
 
     pub fn build(self) -> JsEngine {
-        let logger = match self.log_fn {
+        let logger = match self.logger {
             Some(f) => Logger(Arc::from(f)),
             None => default_logger(),
         };
@@ -77,9 +75,8 @@ impl JsEngineBuilder {
 
         JsEngine {
             setups: self.plugins,
-            evals: Vec::new(),
-            logger,
             event_channels,
+            logger,
             stack_size: self.stack_size,
         }
     }
@@ -127,15 +124,14 @@ impl EventHandle {
 
 pub struct JsEngine {
     setups: Vec<PluginFn>,
-    evals: Vec<JsTask>,
-    logger: Logger,
     event_channels: Arc<EventChannels>,
+    logger: Logger,
     stack_size: Option<usize>,
 }
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None }
+        JsEngineBuilder { plugins: Vec::new(), logger: None, event_channels: Vec::new(), stack_size: None }
     }
 
     pub fn new() -> Self {
@@ -150,10 +146,9 @@ impl JsEngine {
         }
     }
 
-    /// Evaluate pre-compiled bytecode as a module.
-    /// Queues the work to be executed when `run()` is called.
-    pub fn eval(&mut self, bytecode: Vec<u8>) {
-        self.evals.push(Box::new(move |ctx| {
+    /// Evaluate pre-compiled bytecode as a module and run the event loop.
+    pub async fn eval(self, bytecode: Vec<u8>) {
+        self.run(|ctx| {
             use rquickjs::{CatchResultExt, Module};
             let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
             match loaded {
@@ -173,15 +168,14 @@ impl JsEngine {
                     }
                 }
             }
-        }));
+        }).await;
     }
 
-    /// Evaluate JS source as a module.
-    /// Queues the work to be executed when `run()` is called.
+    /// Evaluate JS source as a module and run the event loop.
     #[cfg(feature = "compile")]
-    pub fn eval_source(&mut self, code: &str) {
+    pub async fn eval_source(self, code: &str) {
         let code = code.to_string();
-        self.evals.push(Box::new(move |ctx| {
+        self.run(move |ctx| {
             use rquickjs::{CatchResultExt, Module};
             match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
                 Ok(promise) => log_rejected(&ctx, promise.into_value()),
@@ -191,21 +185,19 @@ impl JsEngine {
                     }
                 }
             }
-        }));
+        }).await;
     }
 
-    /// Run the event loop until all pending operations complete.
-    pub async fn run(self) {
+    async fn run<F>(self, task: F)
+    where
+        F: for<'js> FnOnce(Ctx<'js>) + Send,
+    {
         let shutdown_hooks = ShutdownHooks::new();
         let (runtime, context, pending) = plugins::init_context(self.setups, self.logger, self.stack_size, shutdown_hooks.clone()).await;
         let event_channels = self.event_channels;
 
-        // Execute queued evals
-        for task in self.evals {
-            context.with(|ctx| task(ctx)).await;
-        }
+        context.with(|ctx| task(ctx)).await;
 
-        // Drive the event loop until all pending ops drain
         loop {
             context.with(|ctx| {
                 crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);

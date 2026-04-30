@@ -24,14 +24,12 @@ fn whoami_plugin(ctx: Ctx<'_>) {
 async fn main() {
     let local = tokio::task::LocalSet::new();
     local.run_until(async {
-        let mut engine = JsEngine::builder()
+        let engine = JsEngine::builder()
             .plugin(whoami_plugin)
             .build();
 
         engine.eval_source(r#"
             console.log(`Hello, ${whoami()}!`)
-        "#);
-
-        engine.run().await;
+        "#).await;
     }).await;
 }
