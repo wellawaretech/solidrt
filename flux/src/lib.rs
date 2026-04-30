@@ -8,26 +8,10 @@ pub use logger::LogLevel;
 pub use plugins::events::emit_event;
 pub use rquickjs;
 
-use std::sync::Arc;
+#[cfg(feature = "compile")]
 use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
 
-pub fn run(code: &str) {
-    let rt = Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to create tokio runtime"),
-    );
-
-    let (engine, session) = JsEngine::new(rt.clone());
-    let handle = std::thread::spawn(move || session.run());
-    rt.block_on(async {
-        engine.eval(code).await;
-        drop(engine);
-    });
-    let _ = handle.join();
-}
-
+#[cfg(feature = "compile")]
 pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
     let rt = Runtime::new().expect("failed to create QuickJS runtime");
     let ctx = Context::full(&rt).expect("failed to create QuickJS context");
@@ -51,61 +35,3 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
         std::process::exit(1);
     })
 }
-
-pub fn compile(input_path: &str, output_path: &str) {
-    let source = std::fs::read_to_string(input_path).unwrap_or_else(|e| {
-        eprintln!("error: cannot read '{input_path}': {e}");
-        std::process::exit(1);
-    });
-
-    let bytecode = compile_source(&source, input_path);
-
-    std::fs::write(output_path, &bytecode).unwrap_or_else(|e| {
-        eprintln!("error: cannot write '{output_path}': {e}");
-        std::process::exit(1);
-    });
-
-    println!("wrote {} bytes to {output_path}", bytecode.len());
-}
-
-pub fn run_bytecode(bytecode: Vec<u8>) {
-    let rt = Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to create tokio runtime"),
-    );
-
-    let (engine, session) = JsEngine::new(rt.clone());
-    let handle = std::thread::spawn(move || session.run());
-    rt.block_on(async {
-        engine.eval_bytecode(bytecode).await;
-        drop(engine);
-    });
-    let _ = handle.join();
-}
-
-// #[cfg(feature = "script")]
-// pub fn run_script(code: &str, timeout: Option<std::time::Duration>) -> String {
-//     let rt = tokio::runtime::Builder::new_multi_thread()
-//         .enable_all()
-//         .build()
-//         .expect("failed to create tokio runtime");
-//
-//     let engine = JsEngine::new();
-//     rt.block_on(async {
-//         let result = match timeout {
-//             Some(d) => match tokio::time::timeout(d, engine.eval_script(code)).await {
-//                 Ok(Ok(val)) => val,
-//                 Ok(Err(e)) => e,
-//                 Err(_) => "error: timed out".into(),
-//             },
-//             None => match engine.eval_script(code).await {
-//                 Ok(val) => val,
-//                 Err(e) => e,
-//             },
-//         };
-//         engine.shutdown().await;
-//         result
-//     })
-// }
