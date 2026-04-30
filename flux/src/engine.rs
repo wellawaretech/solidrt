@@ -1,11 +1,11 @@
 use rquickjs::{Ctx, JsLifetime};
 use std::sync::{Arc, Mutex};
 
-use crate::logger::{Logger, LogLevel, LogFn, default_logger};
+use crate::logger::{CtxLogger, Logger, LogLevel, LogFn, default_logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
-type ShutdownFn = Box<dyn FnOnce() + Send>;
+type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
 
 #[derive(Clone, JsLifetime)]
 pub struct ShutdownHooks {
@@ -20,18 +20,18 @@ impl ShutdownHooks {
         }
     }
 
-    pub fn add<F: FnOnce() + Send + 'static>(&self, f: F) {
+    pub fn add<F: FnOnce(&Logger) + Send + 'static>(&self, f: F) {
         self.inner.lock().unwrap().push(Box::new(f));
     }
 
-    fn run(self) {
+    fn run(self, logger: &Logger) {
         for hook in self.inner.lock().unwrap().drain(..) {
-            hook();
+            hook(logger);
         }
     }
 }
 
-pub fn on_shutdown<F: FnOnce() + Send + 'static>(ctx: &Ctx<'_>, f: F) {
+pub fn on_shutdown<F: FnOnce(&Logger) + Send + 'static>(ctx: &Ctx<'_>, f: F) {
     ctx.userdata::<ShutdownHooks>().unwrap().add(f);
 }
 
@@ -155,18 +155,10 @@ impl JsEngine {
                 Ok(module) => {
                     match module.eval().map(|(_, promise)| promise).catch(&ctx) {
                         Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                        Err(e) => {
-                            if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                                l.error(&format!("module error: {e:?}"));
-                            }
-                        }
+                        Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
                     }
                 }
-                Err(e) => {
-                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                        l.error(&format!("bytecode load error: {e}"));
-                    }
-                }
+                Err(e) => ctx.logger().error(&format!("bytecode load error: {e}")),
             }
         }).await;
     }
@@ -179,11 +171,7 @@ impl JsEngine {
             use rquickjs::{CatchResultExt, Module};
             match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
                 Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                Err(e) => {
-                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                        l.error(&format!("module error: {e:?}"));
-                    }
-                }
+                Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
             }
         }).await;
     }
@@ -193,6 +181,7 @@ impl JsEngine {
         F: for<'js> FnOnce(Ctx<'js>) + Send,
     {
         let shutdown_hooks = ShutdownHooks::new();
+        let logger = self.logger.clone();
         let (runtime, context, pending) = plugins::init_context(self.setups, self.logger, self.stack_size, shutdown_hooks.clone()).await;
         let event_channels = self.event_channels;
 
@@ -221,7 +210,7 @@ impl JsEngine {
             }
         }
 
-        shutdown_hooks.run();
+        shutdown_hooks.run(&logger);
     }
 }
 
@@ -231,12 +220,11 @@ fn log_rejected<'js>(ctx: &Ctx<'js>, val: rquickjs::Value<'js>) {
     if let Some(promise) = val.as_promise() {
         if let PromiseState::Rejected = promise.state() {
             let err: Value = promise.result().unwrap().unwrap_or_else(|_| ctx.catch());
-            if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                if let Some(exc) = err.as_exception() {
-                    l.error(&format!("{exc}"));
-                } else {
-                    l.error(&format!("{err:?}"));
-                }
+            let logger = ctx.logger();
+            if let Some(exc) = err.as_exception() {
+                logger.error(&format!("{exc}"));
+            } else {
+                logger.error(&format!("{err:?}"));
             }
         }
     }

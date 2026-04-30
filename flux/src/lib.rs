@@ -4,7 +4,7 @@ pub(crate) mod pending;
 mod plugins;
 
 pub use engine::{JsEngine, JsEngineBuilder, EventHandle, ShutdownHooks, on_shutdown};
-pub use logger::LogLevel;
+pub use logger::{CtxLogger, Logger, LogLevel};
 pub use plugins::events::emit_event;
 pub use rquickjs;
 
