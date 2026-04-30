@@ -1,5 +1,5 @@
 use qjsrt::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
-use qjsrt::JsEngine;
+use qjsrt::{JsEngine, on_shutdown};
 
 // Wrap Rust types with JsLifetime to store them in the JS context via userdata.
 // skip_trace tells rquickjs this field holds no JS values that need GC tracing.
@@ -26,13 +26,18 @@ async fn main() {
 
                 // Expose it as a global function callable from JS
                 ctx.globals().set("whoami", whoami_fn).unwrap();
+
+                on_shutdown(&ctx, || println!("shutdown: plugin cleanup complete"));
             })
             .build();
 
-        tokio::task::spawn_local(session.run());
+        let handle = tokio::task::spawn_local(session.run());
 
         engine.eval_source(r#"
             console.log(whoami())
         "#).await;
+
+        drop(engine);
+        let _ = handle.await;
     }).await;
 }

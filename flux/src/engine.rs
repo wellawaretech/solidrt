@@ -1,5 +1,5 @@
-use rquickjs::Ctx;
-use std::sync::Arc;
+use rquickjs::{Ctx, JsLifetime};
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::logger::{Logger, LogLevel, LogFn, default_logger};
@@ -18,12 +18,39 @@ enum JsCommand {
 
 type ShutdownFn = Box<dyn FnOnce() + Send>;
 
+#[derive(Clone, JsLifetime)]
+pub struct ShutdownHooks {
+    #[qjs(skip_trace)]
+    inner: Arc<Mutex<Vec<ShutdownFn>>>,
+}
+
+impl ShutdownHooks {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn add<F: FnOnce() + Send + 'static>(&self, f: F) {
+        self.inner.lock().unwrap().push(Box::new(f));
+    }
+
+    fn run(self) {
+        for hook in self.inner.lock().unwrap().drain(..) {
+            hook();
+        }
+    }
+}
+
+pub fn on_shutdown<F: FnOnce() + Send + 'static>(ctx: &Ctx<'_>, f: F) {
+    ctx.userdata::<ShutdownHooks>().unwrap().add(f);
+}
+
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
     log_fn: Option<LogFn>,
     event_channels: Vec<(String, usize, bool)>,
     stack_size: Option<usize>,
-    shutdown_hooks: Vec<ShutdownFn>,
 }
 
 impl JsEngineBuilder {
@@ -50,13 +77,8 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn on_shutdown<F: FnOnce() + Send + 'static>(mut self, f: F) -> Self {
-        self.shutdown_hooks.push(Box::new(f));
-        self
-    }
-
     pub fn build(self) -> (JsEngine, JsSession) {
-        JsEngine::create(self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
+        JsEngine::create(self.plugins, self.log_fn, self.event_channels, self.stack_size)
     }
 }
 
@@ -100,28 +122,25 @@ pub struct JsSession {
     logger: Logger,
     event_channels: Arc<EventChannels>,
     stack_size: Option<usize>,
-    shutdown_hooks: Vec<ShutdownFn>,
 }
 
 impl JsSession {
     pub async fn run(self) {
-        JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size).await;
-        for hook in self.shutdown_hooks {
-            hook();
-        }
+        let shutdown_hooks = JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size).await;
+        shutdown_hooks.run();
     }
 }
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None, shutdown_hooks: Vec::new() }
+        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None }
     }
 
     pub fn new() -> (Self, JsSession) {
-        Self::create(Vec::new(), None, Vec::new(), None, Vec::new())
+        Self::create(Vec::new(), None, Vec::new(), None)
     }
 
-    fn create(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> (Self, JsSession) {
+    fn create(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>) -> (Self, JsSession) {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
@@ -142,14 +161,14 @@ impl JsEngine {
             logger,
             event_channels,
             stack_size,
-            shutdown_hooks,
         };
 
         (engine, session)
     }
 
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>, stack_size: Option<usize>) {
-        let (runtime, context, pending) = plugins::init_context(setups, logger, stack_size).await;
+    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>, stack_size: Option<usize>) -> ShutdownHooks {
+        let shutdown_hooks = ShutdownHooks::new();
+        let (runtime, context, pending) = plugins::init_context(setups, logger, stack_size, shutdown_hooks.clone()).await;
 
         loop {
             // Drain dedicated event channels first (handles race between notify and select)
@@ -169,7 +188,7 @@ impl JsEngine {
                                 let _ = responder.send(());
                             });
                         }
-                        Some(JsCommand::Shutdown) | None => break,
+                        Some(JsCommand::Shutdown) | None => break shutdown_hooks,
                     }
                 }
                 _ = runtime.idle() => {

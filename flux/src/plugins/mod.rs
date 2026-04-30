@@ -8,12 +8,13 @@ pub mod memory;
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx};
 
+use crate::engine::ShutdownHooks;
 use crate::logger::Logger;
 use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
-pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger, stack_size: Option<usize>) -> (AsyncRuntime, AsyncContext, PendingOps) {
+pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger, stack_size: Option<usize>, shutdown_hooks: ShutdownHooks) -> (AsyncRuntime, AsyncContext, PendingOps) {
     let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
 
     if let Some(limit) = stack_size {
@@ -42,6 +43,7 @@ pub(crate) async fn init_context(setups: Vec<PluginFn>, logger: Logger, stack_si
         .with(|ctx| {
             ctx.store_userdata(pending.clone()).unwrap();
             ctx.store_userdata(logger).unwrap();
+            ctx.store_userdata(shutdown_hooks).unwrap();
             timer::init_timers(&ctx);
             io::init_io(&ctx);
             fetch::init_fetch(&ctx);
