@@ -58,8 +58,8 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn build(self) -> JsEngine {
-        JsEngine::start(self.runtime, self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
+    pub fn build(self) -> (JsEngine, JsSession) {
+        JsEngine::create(self.runtime, self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
     }
 }
 
@@ -84,17 +84,42 @@ impl EventChannelConfig {
         self.builder.event_channel(event, capacity)
     }
 
-    pub fn build(self) -> JsEngine {
+    pub fn build(self) -> (JsEngine, JsSession) {
         self.builder.build()
     }
 }
 
+/// Handle for sending commands to the JS engine from any thread.
 pub struct JsEngine {
     tx: mpsc::Sender<JsCommand>,
-    handle: Option<std::thread::JoinHandle<()>>,
     #[allow(dead_code)]
     logger: Logger,
     event_channels: Arc<EventChannels>,
+}
+
+/// Blocking session that runs the JS event loop on the calling thread.
+pub struct JsSession {
+    runtime: TokioRuntime,
+    rx: mpsc::Receiver<JsCommand>,
+    setups: Vec<PluginFn>,
+    logger: Logger,
+    event_channels: Arc<EventChannels>,
+    stack_size: Option<usize>,
+    shutdown_hooks: Vec<ShutdownFn>,
+}
+
+impl JsSession {
+    /// Run the JS event loop, blocking the calling thread until shutdown.
+    pub fn run(self) {
+        let local = tokio::task::LocalSet::new();
+        local.block_on(
+            &*self.runtime,
+            JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size),
+        );
+        for hook in self.shutdown_hooks {
+            hook();
+        }
+    }
 }
 
 impl JsEngine {
@@ -102,11 +127,11 @@ impl JsEngine {
         JsEngineBuilder { runtime, plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None, shutdown_hooks: Vec::new() }
     }
 
-    pub fn new(runtime: TokioRuntime) -> Self {
-        Self::start(runtime, Vec::new(), None, Vec::new(), None, Vec::new())
+    pub fn new(runtime: TokioRuntime) -> (Self, JsSession) {
+        Self::create(runtime, Vec::new(), None, Vec::new(), None, Vec::new())
     }
 
-    fn start(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> Self {
+    fn create(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> (Self, JsSession) {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
@@ -114,23 +139,24 @@ impl JsEngine {
         };
 
         let event_channels = Arc::new(EventChannels::new(event_channel_defs));
-        let loop_channels = event_channels.clone();
 
-        let engine_logger = logger.clone();
-        let handle = std::thread::spawn(move || {
-            let local = tokio::task::LocalSet::new();
-            local.block_on(&*runtime, Self::event_loop(rx, setups, engine_logger, loop_channels, stack_size));
-            for hook in shutdown_hooks {
-                hook();
-            }
-        });
-
-        Self {
+        let engine = Self {
             tx,
-            handle: Some(handle),
+            logger: logger.clone(),
+            event_channels: event_channels.clone(),
+        };
+
+        let session = JsSession {
+            runtime,
+            rx,
+            setups,
             logger,
             event_channels,
-        }
+            stack_size,
+            shutdown_hooks,
+        };
+
+        (engine, session)
     }
 
     async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>, stack_size: Option<usize>) {
@@ -160,7 +186,7 @@ impl JsEngine {
                 _ = runtime.idle() => {
                     // yield to let spawn_local tasks (timers) make progress
                     tokio::task::yield_now().await;
-                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
                 }
             }
         }
@@ -276,21 +302,11 @@ impl JsEngine {
             }
         })
     }
-
-    pub async fn shutdown(mut self) {
-        let _ = self.tx.send(JsCommand::Shutdown).await;
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
-    }
 }
 
 impl Drop for JsEngine {
     fn drop(&mut self) {
         let _ = self.tx.try_send(JsCommand::Shutdown);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
     }
 }
 

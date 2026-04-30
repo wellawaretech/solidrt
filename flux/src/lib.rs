@@ -3,7 +3,7 @@ mod logger;
 pub(crate) mod pending;
 mod plugins;
 
-pub use engine::{JsEngine, JsEngineBuilder};
+pub use engine::{JsEngine, JsEngineBuilder, JsSession};
 pub use logger::LogLevel;
 pub use plugins::events::emit_event;
 pub use rquickjs;
@@ -19,11 +19,13 @@ pub fn run(code: &str) {
             .expect("failed to create tokio runtime"),
     );
 
-    let engine = JsEngine::new(rt.clone());
+    let (engine, session) = JsEngine::new(rt.clone());
+    let handle = std::thread::spawn(move || session.run());
     rt.block_on(async {
         engine.eval(code).await;
-        engine.shutdown().await;
-    })
+        drop(engine);
+    });
+    let _ = handle.join();
 }
 
 pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
@@ -74,11 +76,13 @@ pub fn run_bytecode(bytecode: Vec<u8>) {
             .expect("failed to create tokio runtime"),
     );
 
-    let engine = JsEngine::new(rt.clone());
+    let (engine, session) = JsEngine::new(rt.clone());
+    let handle = std::thread::spawn(move || session.run());
     rt.block_on(async {
         engine.eval_bytecode(bytecode).await;
-        engine.shutdown().await;
-    })
+        drop(engine);
+    });
+    let _ = handle.join();
 }
 
 // #[cfg(feature = "script")]
