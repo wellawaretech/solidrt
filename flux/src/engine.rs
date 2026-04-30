@@ -1,7 +1,7 @@
 use rquickjs::{Ctx, JsLifetime};
 use std::sync::{Arc, Mutex};
 
-use crate::logger::{CtxLogger, Logger, LogLevel, LogFn, default_logger};
+use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
@@ -57,7 +57,8 @@ impl JsEngineBuilder {
     }
 
     pub fn event_channel(mut self, event: &str, capacity: usize) -> EventChannelConfig {
-        self.event_channels.push((event.to_string(), capacity, false));
+        self.event_channels
+            .push((event.to_string(), capacity, false));
         EventChannelConfig { builder: self }
     }
 
@@ -131,7 +132,12 @@ pub struct JsEngine {
 
 impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder { plugins: Vec::new(), logger: None, event_channels: Vec::new(), stack_size: None }
+        JsEngineBuilder {
+            plugins: Vec::new(),
+            logger: None,
+            event_channels: Vec::new(),
+            stack_size: None,
+        }
     }
 
     pub fn new() -> Self {
@@ -152,15 +158,14 @@ impl JsEngine {
             use rquickjs::{CatchResultExt, Module};
             let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
             match loaded {
-                Ok(module) => {
-                    match module.eval().map(|(_, promise)| promise).catch(&ctx) {
-                        Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                        Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
-                    }
-                }
+                Ok(module) => match module.eval().map(|(_, promise)| promise).catch(&ctx) {
+                    Ok(promise) => log_rejected(&ctx, promise.into_value()),
+                    Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
+                },
                 Err(e) => ctx.logger().error(&format!("bytecode load error: {e}")),
             }
-        }).await;
+        })
+        .await;
     }
 
     /// Evaluate JS source as a module and run the event loop.
@@ -173,7 +178,8 @@ impl JsEngine {
                 Ok(promise) => log_rejected(&ctx, promise.into_value()),
                 Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
             }
-        }).await;
+        })
+        .await;
     }
 
     async fn run<F>(self, task: F)
@@ -182,26 +188,31 @@ impl JsEngine {
     {
         let shutdown_hooks = ShutdownHooks::new();
         let logger = self.logger.clone();
-        let (runtime, context, pending) = plugins::init_context(self.setups, self.logger, self.stack_size, shutdown_hooks.clone()).await;
+        let (runtime, context, pending) = plugins::init_context(
+            self.setups,
+            self.logger,
+            self.stack_size,
+            shutdown_hooks.clone(),
+        )
+        .await;
         let event_channels = self.event_channels;
 
         context.with(|ctx| task(ctx)).await;
 
         loop {
-            context.with(|ctx| {
-                crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
-            }).await;
-
-            runtime.idle().await;
-
-            if pending.is_idle() {
-                break;
-            }
+            context
+                .with(|ctx| {
+                    crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
+                })
+                .await;
 
             tokio::select! {
                 _ = event_channels.notified() => {}
                 _ = pending.notified() => {}
                 _ = runtime.idle() => {
+                    if pending.is_idle() {
+                        break;
+                    }
                     tokio::task::yield_now().await;
                     tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
                 }
