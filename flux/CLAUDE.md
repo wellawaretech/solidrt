@@ -3,11 +3,15 @@
 ## Build & test
 
 ```
-cargo build
-cargo test          # integration tests in tests/
+cargo build                      # library only
+cargo build --features compile   # library + compiler binary
+cargo test
 ```
 
-Tests run the `qjsrt` binary via `Command` (module mode through stdin). No special setup needed.
+## Feature flags
+
+- **default** — library only, bytecode evaluation via `eval()`.
+- **`compile`** — enables `eval_source()` on `JsEngine`, `compile_source()` in the library, and the `qjsrt` compiler binary (stdin JS → stdout bytecode).
 
 ## Architecture
 
@@ -19,9 +23,9 @@ The engine is a generic "run closures on a JS thread" executor. It has no knowle
 - `pending.rs` — `PendingOps`. Reference-counted async operation tracker. `hold()`/`release()` gates process completion.
 - `plugins/mod.rs` — `init_context()` sets up the QuickJS runtime, module loaders, and all built-in plugins. Also defines the `PluginFn` type.
 - `plugins/events.rs` — Both cross-thread `EventChannels` (Send+Sync buffering) and JS-thread listener dispatch (`on`/`off`/`emit_event`).
-- `lib.rs` — Public API. Convenience functions (`run`, `run_bytecode`, `compile_source`) construct the engine and send the appropriate closure. Module-loading logic lives here, not in the engine.
+- `lib.rs` — Public API. Re-exports `JsEngine`, `JsEngineBuilder`, `JsSession`, `LogLevel`, `emit_event`, and `rquickjs`. Also exposes `compile_source()` behind the `compile` feature.
 
-**Caller-side evaluation:** `eval()` and `eval_bytecode()` are convenience methods on `JsEngine` that construct a closure containing the module-loading logic and send it via `exec()`. The engine event loop just runs the closure and waits for `PendingOps` to drain. Adding new eval modes requires no engine changes.
+**Caller-side evaluation:** `eval()` and `eval_source()` are methods on `JsEngine` that construct a closure containing the module-loading logic and send it via `exec()`. The engine event loop just runs the closure and waits for `PendingOps` to drain. Adding new eval modes requires no engine changes.
 
 ## Constraints
 

@@ -15,7 +15,7 @@ fn main() {
             .expect("failed to create tokio runtime"),
     );
 
-    let engine = JsEngine::builder(rt)
+    let (engine, session) = JsEngine::builder(rt.clone())
         .plugin(move |ctx| {
             // Store Rust state in the JS context — retrievable by type from any JS function
             ctx.store_userdata(Identity("qjsrt".into())).unwrap();
@@ -34,20 +34,14 @@ fn main() {
         })
         .build();
 
-    // eval_detached sends code to the engine thread and returns immediately
-    // with a oneshot receiver that signals when evaluation is complete
-    let mut done_rx = engine.eval_detached(r#"
-        print(whoami())
-    "#);
+    let handle = std::thread::spawn(move || session.run());
 
-    // Poll for completion — the engine runs on its own thread
-    loop {
-        match done_rx.try_recv() {
-            Ok(_) => break,
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(_) => break,
-        }
-    }
+    rt.block_on(async {
+        engine.eval_source(r#"
+            console.log(whoami())
+        "#).await;
+        drop(engine);
+    });
+
+    handle.join().unwrap();
 }

@@ -5,15 +5,25 @@ An embeddable, extensible cross-platform JavaScript runtime in Rust built on [Qu
 ## Usage
 
 ```rs
-use qjsrt::run;
+use std::sync::Arc;
+use qjsrt::JsEngine;
 
-fn main() {
-    let code = r#"
-        console.log('hello, world!')
-    "#;
+let rt = Arc::new(
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap(),
+);
 
-    run(&code);
-}
+let (engine, session) = JsEngine::new(rt.clone());
+let handle = std::thread::spawn(move || session.run());
+
+let bytecode = std::fs::read("app.bin").unwrap();
+rt.block_on(async {
+    engine.eval(bytecode).await;
+    drop(engine);
+});
+handle.join().unwrap();
 ```
 
 ## Advanced usage
@@ -54,36 +64,30 @@ let engine = JsEngine::builder(runtime)
 
 ### Evaluation methods
 
-`JsEngine` provides several ways to evaluate code. All evaluation runs as ES modules.
+`JsEngine` provides two ways to evaluate code. All evaluation runs as ES modules.
 
-- **`eval(code).await`** — evaluates JS source as an ES module (supports `import`/`export`). Waits for all async work to complete.
-- **`eval_bytecode(bytes).await`** — loads and evaluates precompiled bytecode (from `compile_source()`). Waits for all async work to complete.
-- **`eval_detached(code)`** — same as `eval` but returns immediately with a `oneshot::Receiver<()>` that signals completion.
-- **`eval_bytecode_detached(bytes)`** — same as `eval_bytecode` but returns immediately with a `oneshot::Receiver<()>`.
+- **`eval(bytecode).await`** - loads and evaluates precompiled bytecode. Waits for all async work to complete.
+- **`eval_source(code).await`** - evaluates JS source as an ES module (supports `import`/`export`). Requires the `compile` feature. Waits for all async work to complete.
 
 ```rs
-// blocking eval
-engine.eval(r#"console.log("hello")"#).await;
-
 // run precompiled bytecode
 let bytes = std::fs::read("app.bin").unwrap();
-engine.eval_bytecode(bytes).await;
+engine.eval(bytes).await;
 
-// non-blocking — poll or await the receiver
-let done_rx = engine.eval_detached(r#"console.log("background")"#);
+// run JS source (requires `compile` feature)
+engine.eval_source(r#"console.log("hello")"#).await;
 ```
 
-## CLI usage
+## Compiling to bytecode
+
+Enable the `compile` feature to build the `qjsrt` binary, which compiles JS source from stdin to bytecode on stdout:
 
 ```
-qjsrt [file.js]              # run a JS file, or read from stdin
-qjsrt -c [file.js] [-o out]  # compile to bytecode, -o required for stdin
-qjsrt -b <file.bin>          # run a compiled binary
+cargo build --features compile
+echo 'console.log("hello")' | ./target/debug/qjsrt > app.bin
 ```
 
-When no input file is given, `qjsrt` and `qjsrt -c` read source from stdin. The `-o` flag specifies the output path for `-c` (required when compiling from stdin).
-
-All code is evaluated as ES modules with `import`/`export` support.
+The `compile_source()` library function is also available behind this feature flag.
 
 ## Platform bindings
 
@@ -127,7 +131,8 @@ console.error("error");  // print to stderr
 ## Building
 
 ```
-cargo build
+cargo build              # library only
+cargo build --features compile   # library + compiler binary
 cargo test
 ```
 

@@ -202,18 +202,9 @@ impl JsEngine {
         let _ = rx.await;
     }
 
-    /// Execute a closure on the JS thread without waiting (fire-and-forget).
-    fn exec_detached(&self, task: impl for<'js> FnOnce(Ctx<'js>) + Send + 'static) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.tx.try_send(JsCommand::Exec {
-            task: Box::new(task),
-            responder: tx,
-        });
-        rx
-    }
-
     /// Evaluate JS source as a module and wait for completion.
-    pub async fn eval(&self, code: &str) {
+    #[cfg(feature = "compile")]
+    pub async fn eval_source(&self, code: &str) {
         let code = code.to_string();
         self.exec(move |ctx| {
             use rquickjs::{CatchResultExt, Module};
@@ -229,7 +220,7 @@ impl JsEngine {
     }
 
     /// Evaluate pre-compiled bytecode as a module and wait for completion.
-    pub async fn eval_bytecode(&self, bytecode: Vec<u8>) {
+    pub async fn eval(&self, bytecode: Vec<u8>) {
         self.exec(move |ctx| {
             use rquickjs::{CatchResultExt, Module};
             let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
@@ -262,46 +253,6 @@ impl JsEngine {
         }
     }
 
-    /// Evaluate JS source as a module without waiting (fire-and-forget).
-    pub fn eval_detached(&self, code: &str) -> oneshot::Receiver<()> {
-        let code = code.to_string();
-        self.exec_detached(move |ctx| {
-            use rquickjs::{CatchResultExt, Module};
-            match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
-                Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                Err(e) => {
-                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                        l.error(&format!("module error: {e:?}"));
-                    }
-                }
-            }
-        })
-    }
-
-    /// Evaluate pre-compiled bytecode without waiting (fire-and-forget).
-    pub fn eval_bytecode_detached(&self, bytecode: Vec<u8>) -> oneshot::Receiver<()> {
-        self.exec_detached(move |ctx| {
-            use rquickjs::{CatchResultExt, Module};
-            let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
-            match loaded {
-                Ok(module) => {
-                    match module.eval().map(|(_, promise)| promise).catch(&ctx) {
-                        Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                        Err(e) => {
-                            if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                                l.error(&format!("module error: {e:?}"));
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                        l.error(&format!("bytecode load error: {e}"));
-                    }
-                }
-            }
-        })
-    }
 }
 
 impl Drop for JsEngine {
