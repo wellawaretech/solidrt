@@ -220,11 +220,10 @@ fn log_rejected<'js>(ctx: &Ctx<'js>, val: rquickjs::Value<'js>) {
     if let Some(promise) = val.as_promise() {
         if let PromiseState::Rejected = promise.state() {
             let err: Value = promise.result().unwrap().unwrap_or_else(|_| ctx.catch());
-            let logger = ctx.logger();
             if let Some(exc) = err.as_exception() {
-                logger.error(&format!("{exc}"));
+                ctx.logger().error(&format!("{exc}"));
             } else {
-                logger.error(&format!("{err:?}"));
+                ctx.logger().error(&format!("{err:?}"));
             }
         }
     }

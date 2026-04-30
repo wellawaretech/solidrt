@@ -1,5 +1,5 @@
 use qjsrt::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
-use qjsrt::{JsEngine, CtxLogger, on_shutdown };
+use qjsrt::{on_shutdown, CtxLogger, JsEngine};
 
 #[derive(Clone, JsLifetime)]
 struct Identity(#[qjs(skip_trace)] String);
@@ -20,19 +20,16 @@ fn whoami_plugin(ctx: Ctx<'_>) {
 
     ctx.globals().set("whoami", whoami_fn).unwrap();
 
-    on_shutdown(&ctx, |logger| logger.log("shutdown: plugin cleanup complete"));
+    on_shutdown(&ctx, |logger| {
+        logger.log("shutdown: plugin cleanup complete")
+    });
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let local = tokio::task::LocalSet::new();
-    local.run_until(async {
-        let engine = JsEngine::builder()
-            .plugin(whoami_plugin)
-            .build();
+    let engine = JsEngine::builder().plugin(whoami_plugin).build();
 
-        engine.eval_source(r#"
-            console.log(`Hello, ${whoami()}!`)
-        "#).await;
-    }).await;
+    engine
+        .eval_source(r#"console.log(`Hello, ${whoami()}!`)"#)
+        .await;
 }
