@@ -1,20 +1,11 @@
 use rquickjs::{Ctx, JsLifetime};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
 
 use crate::logger::{Logger, LogLevel, LogFn, default_logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
 type JsTask = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
-
-enum JsCommand {
-    Exec {
-        task: JsTask,
-        responder: oneshot::Sender<()>,
-    },
-    Shutdown,
-}
 
 type ShutdownFn = Box<dyn FnOnce() + Send>;
 
@@ -77,8 +68,20 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn build(self) -> (JsEngine, JsSession) {
-        JsEngine::create(self.plugins, self.log_fn, self.event_channels, self.stack_size)
+    pub fn build(self) -> JsEngine {
+        let logger = match self.log_fn {
+            Some(f) => Logger(Arc::from(f)),
+            None => default_logger(),
+        };
+        let event_channels = Arc::new(EventChannels::new(self.event_channels));
+
+        JsEngine {
+            setups: self.plugins,
+            evals: Vec::new(),
+            logger,
+            event_channels,
+            stack_size: self.stack_size,
+        }
     }
 }
 
@@ -103,32 +106,31 @@ impl EventChannelConfig {
         self.builder.event_channel(event, capacity)
     }
 
-    pub fn build(self) -> (JsEngine, JsSession) {
+    pub fn build(self) -> JsEngine {
         self.builder.build()
     }
 }
 
-/// Handle for sending commands to the JS engine from any thread.
-pub struct JsEngine {
-    tx: mpsc::Sender<JsCommand>,
-    #[allow(dead_code)]
-    logger: Logger,
+/// Send-safe handle for emitting events into the engine from other threads.
+pub struct EventHandle {
     event_channels: Arc<EventChannels>,
+    logger: Logger,
 }
 
-pub struct JsSession {
-    rx: mpsc::Receiver<JsCommand>,
+impl EventHandle {
+    pub fn emit(&self, event: &str, data: String) {
+        if !self.event_channels.send(event, data, &self.logger) {
+            panic!("emit: event \"{event}\" not registered with event_channel()");
+        }
+    }
+}
+
+pub struct JsEngine {
     setups: Vec<PluginFn>,
+    evals: Vec<JsTask>,
     logger: Logger,
     event_channels: Arc<EventChannels>,
     stack_size: Option<usize>,
-}
-
-impl JsSession {
-    pub async fn run(self) {
-        let shutdown_hooks = JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size).await;
-        shutdown_hooks.run();
-    }
 }
 
 impl JsEngine {
@@ -136,100 +138,22 @@ impl JsEngine {
         JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None }
     }
 
-    pub fn new() -> (Self, JsSession) {
-        Self::create(Vec::new(), None, Vec::new(), None)
+    pub fn new() -> Self {
+        Self::builder().build()
     }
 
-    fn create(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>) -> (Self, JsSession) {
-        let (tx, rx) = mpsc::channel::<JsCommand>(32);
-        let logger = match log_fn {
-            Some(f) => Logger(Arc::from(f)),
-            None => default_logger(),
-        };
-
-        let event_channels = Arc::new(EventChannels::new(event_channel_defs));
-
-        let engine = Self {
-            tx,
-            logger: logger.clone(),
-            event_channels: event_channels.clone(),
-        };
-
-        let session = JsSession {
-            rx,
-            setups,
-            logger,
-            event_channels,
-            stack_size,
-        };
-
-        (engine, session)
-    }
-
-    async fn event_loop(mut rx: mpsc::Receiver<JsCommand>, setups: Vec<PluginFn>, logger: Logger, event_channels: Arc<EventChannels>, stack_size: Option<usize>) -> ShutdownHooks {
-        let shutdown_hooks = ShutdownHooks::new();
-        let (runtime, context, pending) = plugins::init_context(setups, logger, stack_size, shutdown_hooks.clone()).await;
-
-        loop {
-            // Drain dedicated event channels first (handles race between notify and select)
-            context.with(|ctx| {
-                crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
-            }).await;
-
-            tokio::select! {
-                _ = event_channels.notified() => {}
-                cmd = rx.recv() => {
-                    match cmd {
-                        Some(JsCommand::Exec { task, responder }) => {
-                            context.with(|ctx| task(ctx)).await;
-                            let pending = pending.clone();
-                            tokio::spawn(async move {
-                                pending.wait_idle().await;
-                                let _ = responder.send(());
-                            });
-                        }
-                        Some(JsCommand::Shutdown) | None => break shutdown_hooks,
-                    }
-                }
-                _ = runtime.idle() => {
-                    // yield to let spawned tasks make progress
-                    tokio::task::yield_now().await;
-                    tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
-                }
-            }
+    /// Returns a Send-safe handle for emitting events from other threads.
+    pub fn event_handle(&self) -> EventHandle {
+        EventHandle {
+            event_channels: self.event_channels.clone(),
+            logger: self.logger.clone(),
         }
     }
 
-    /// Execute a closure on the JS thread and wait for all pending ops to drain.
-    async fn exec(&self, task: impl for<'js> FnOnce(Ctx<'js>) + Send + 'static) {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.tx.send(JsCommand::Exec {
-            task: Box::new(task),
-            responder: tx,
-        }).await;
-        let _ = rx.await;
-    }
-
-    /// Evaluate JS source as a module and wait for completion.
-    #[cfg(feature = "compile")]
-    pub async fn eval_source(&self, code: &str) {
-        let code = code.to_string();
-        self.exec(move |ctx| {
-            use rquickjs::{CatchResultExt, Module};
-            match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
-                Ok(promise) => log_rejected(&ctx, promise.into_value()),
-                Err(e) => {
-                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
-                        l.error(&format!("module error: {e:?}"));
-                    }
-                }
-            }
-        }).await;
-    }
-
-    /// Evaluate pre-compiled bytecode as a module and wait for completion.
-    pub async fn eval(&self, bytecode: Vec<u8>) {
-        self.exec(move |ctx| {
+    /// Evaluate pre-compiled bytecode as a module.
+    /// Queues the work to be executed when `run()` is called.
+    pub fn eval(&mut self, bytecode: Vec<u8>) {
+        self.evals.push(Box::new(move |ctx| {
             use rquickjs::{CatchResultExt, Module};
             let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
             match loaded {
@@ -249,23 +173,63 @@ impl JsEngine {
                     }
                 }
             }
-        }).await;
+        }));
     }
 
-    /// Emit an event via a dedicated per-event channel registered with `event_channel()`.
-    /// When the channel is full, the oldest event is dropped.
-    /// Panics if `event` was not registered with `event_channel()`.
-    pub fn emit(&self, event: &str, data: String) {
-        if !self.event_channels.send(event, data, &self.logger) {
-            panic!("emit: event \"{event}\" not registered with event_channel()");
+    /// Evaluate JS source as a module.
+    /// Queues the work to be executed when `run()` is called.
+    #[cfg(feature = "compile")]
+    pub fn eval_source(&mut self, code: &str) {
+        let code = code.to_string();
+        self.evals.push(Box::new(move |ctx| {
+            use rquickjs::{CatchResultExt, Module};
+            match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
+                Ok(promise) => log_rejected(&ctx, promise.into_value()),
+                Err(e) => {
+                    if let Some(l) = ctx.userdata::<crate::logger::Logger>() {
+                        l.error(&format!("module error: {e:?}"));
+                    }
+                }
+            }
+        }));
+    }
+
+    /// Run the event loop until all pending operations complete.
+    pub async fn run(self) {
+        let shutdown_hooks = ShutdownHooks::new();
+        let (runtime, context, pending) = plugins::init_context(self.setups, self.logger, self.stack_size, shutdown_hooks.clone()).await;
+        let event_channels = self.event_channels;
+
+        // Execute queued evals
+        for task in self.evals {
+            context.with(|ctx| task(ctx)).await;
         }
-    }
 
-}
+        // Drive the event loop until all pending ops drain
+        loop {
+            context.with(|ctx| {
+                crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
+            }).await;
 
-impl Drop for JsEngine {
-    fn drop(&mut self) {
-        let _ = self.tx.try_send(JsCommand::Shutdown);
+            if pending.is_idle() {
+                break;
+            }
+
+            tokio::select! {
+                _ = event_channels.notified() => {}
+                _ = pending.notified() => {
+                    if pending.is_idle() {
+                        break;
+                    }
+                }
+                _ = runtime.idle() => {
+                    tokio::task::yield_now().await;
+                    tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
+                }
+            }
+        }
+
+        shutdown_hooks.run();
     }
 }
 

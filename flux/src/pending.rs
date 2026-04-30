@@ -35,12 +35,12 @@ impl PendingOps {
         }
     }
 
-    pub(crate) async fn wait_idle(&self) {
-        loop {
-            if self.inner.count.load(Ordering::SeqCst) == 0 {
-                return;
-            }
-            self.inner.notify.notified().await;
-        }
+    pub(crate) fn is_idle(&self) -> bool {
+        self.inner.count.load(Ordering::SeqCst) == 0
     }
+
+    pub(crate) async fn notified(&self) {
+        self.inner.notify.notified().await;
+    }
+
 }
