@@ -1,40 +1,46 @@
 use rquickjs::JsLifetime;
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 /// Tracks pending async operations that should keep the engine alive.
 #[derive(Clone, JsLifetime)]
 pub(crate) struct PendingOps {
-    count: Rc<Cell<u32>>,
-    notify: Rc<tokio::sync::Notify>,
+    #[qjs(skip_trace)]
+    inner: Arc<PendingOpsInner>,
+}
+
+struct PendingOpsInner {
+    count: AtomicU32,
+    notify: tokio::sync::Notify,
 }
 
 impl PendingOps {
     pub(crate) fn new() -> Self {
         Self {
-            count: Rc::new(Cell::new(0)),
-            notify: Rc::new(tokio::sync::Notify::new()),
+            inner: Arc::new(PendingOpsInner {
+                count: AtomicU32::new(0),
+                notify: tokio::sync::Notify::new(),
+            }),
         }
     }
 
     pub(crate) fn hold(&self) {
-        self.count.set(self.count.get() + 1);
+        self.inner.count.fetch_add(1, Ordering::SeqCst);
     }
 
     pub(crate) fn release(&self) {
-        let n = self.count.get() - 1;
-        self.count.set(n);
-        if n == 0 {
-            self.notify.notify_waiters();
+        let prev = self.inner.count.fetch_sub(1, Ordering::SeqCst);
+        if prev == 1 {
+            self.inner.notify.notify_waiters();
         }
     }
 
     pub(crate) async fn wait_idle(&self) {
         loop {
-            if self.count.get() == 0 {
+            if self.inner.count.load(Ordering::SeqCst) == 0 {
                 return;
             }
-            self.notify.notified().await;
+            self.inner.notify.notified().await;
         }
     }
 }

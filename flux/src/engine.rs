@@ -6,8 +6,6 @@ use crate::logger::{Logger, LogLevel, LogFn, default_logger};
 use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn};
 
-type TokioRuntime = Arc<tokio::runtime::Runtime>;
-
 type JsTask = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
 enum JsCommand {
@@ -21,7 +19,6 @@ enum JsCommand {
 type ShutdownFn = Box<dyn FnOnce() + Send>;
 
 pub struct JsEngineBuilder {
-    runtime: TokioRuntime,
     plugins: Vec<PluginFn>,
     log_fn: Option<LogFn>,
     event_channels: Vec<(String, usize, bool)>,
@@ -59,7 +56,7 @@ impl JsEngineBuilder {
     }
 
     pub fn build(self) -> (JsEngine, JsSession) {
-        JsEngine::create(self.runtime, self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
+        JsEngine::create(self.plugins, self.log_fn, self.event_channels, self.stack_size, self.shutdown_hooks)
     }
 }
 
@@ -97,9 +94,7 @@ pub struct JsEngine {
     event_channels: Arc<EventChannels>,
 }
 
-/// Blocking session that runs the JS event loop on the calling thread.
 pub struct JsSession {
-    runtime: TokioRuntime,
     rx: mpsc::Receiver<JsCommand>,
     setups: Vec<PluginFn>,
     logger: Logger,
@@ -109,13 +104,8 @@ pub struct JsSession {
 }
 
 impl JsSession {
-    /// Run the JS event loop, blocking the calling thread until shutdown.
-    pub fn run(self) {
-        let local = tokio::task::LocalSet::new();
-        local.block_on(
-            &*self.runtime,
-            JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size),
-        );
+    pub async fn run(self) {
+        JsEngine::event_loop(self.rx, self.setups, self.logger, self.event_channels, self.stack_size).await;
         for hook in self.shutdown_hooks {
             hook();
         }
@@ -123,15 +113,15 @@ impl JsSession {
 }
 
 impl JsEngine {
-    pub fn builder(runtime: TokioRuntime) -> JsEngineBuilder {
-        JsEngineBuilder { runtime, plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None, shutdown_hooks: Vec::new() }
+    pub fn builder() -> JsEngineBuilder {
+        JsEngineBuilder { plugins: Vec::new(), log_fn: None, event_channels: Vec::new(), stack_size: None, shutdown_hooks: Vec::new() }
     }
 
-    pub fn new(runtime: TokioRuntime) -> (Self, JsSession) {
-        Self::create(runtime, Vec::new(), None, Vec::new(), None, Vec::new())
+    pub fn new() -> (Self, JsSession) {
+        Self::create(Vec::new(), None, Vec::new(), None, Vec::new())
     }
 
-    fn create(runtime: TokioRuntime, setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> (Self, JsSession) {
+    fn create(setups: Vec<PluginFn>, log_fn: Option<LogFn>, event_channel_defs: Vec<(String, usize, bool)>, stack_size: Option<usize>, shutdown_hooks: Vec<ShutdownFn>) -> (Self, JsSession) {
         let (tx, rx) = mpsc::channel::<JsCommand>(32);
         let logger = match log_fn {
             Some(f) => Logger(Arc::from(f)),
@@ -147,7 +137,6 @@ impl JsEngine {
         };
 
         let session = JsSession {
-            runtime,
             rx,
             setups,
             logger,
@@ -175,7 +164,7 @@ impl JsEngine {
                         Some(JsCommand::Exec { task, responder }) => {
                             context.with(|ctx| task(ctx)).await;
                             let pending = pending.clone();
-                            tokio::task::spawn_local(async move {
+                            tokio::spawn(async move {
                                 pending.wait_idle().await;
                                 let _ = responder.send(());
                             });
@@ -184,7 +173,7 @@ impl JsEngine {
                     }
                 }
                 _ = runtime.idle() => {
-                    // yield to let spawn_local tasks (timers) make progress
+                    // yield to let spawned tasks make progress
                     tokio::task::yield_now().await;
                     tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
                 }
