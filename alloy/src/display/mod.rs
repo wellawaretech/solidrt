@@ -3,6 +3,18 @@ pub mod gl;
 use impellers::{Context, DisplayList, DisplayListBuilder};
 use wgpu::TextureFormat;
 
+// Generic wrapper to make non-Send types safe for thread boundaries
+// Safe because we ensure proper synchronization (GL context binding, etc.)
+#[repr(transparent)]
+pub struct SendableHandle<T>(pub T);
+unsafe impl<T> Send for SendableHandle<T> {}
+unsafe impl<T> Sync for SendableHandle<T> {}
+
+// Wrapper to make raw pointers sendable between threads (safe because they're opaque handles)
+pub struct SendablePtr(pub *mut std::ffi::c_void);
+unsafe impl Send for SendablePtr {}
+unsafe impl Sync for SendablePtr {}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Backend {
     Gl,

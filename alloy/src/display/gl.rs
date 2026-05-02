@@ -1,6 +1,72 @@
 use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Rect, Point, Size, TextureSampling, Paint};
 use crate::display::{GpuTexture, RenderSurface, DisplayContext};
 
+pub fn create_ui_pbuffer(
+    display: *mut std::ffi::c_void,
+    gl_context: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    const EGL_NONE: i32 = 0x3038;
+    const EGL_CONFIG_ID: i32 = 0x3028;
+    const EGL_WIDTH: i32 = 0x3057;
+    const EGL_HEIGHT: i32 = 0x3056;
+
+    type EglQueryContextFn = extern "C" fn(
+        *mut std::ffi::c_void, *mut std::ffi::c_void, i32, *mut i32,
+    ) -> u32;
+    type EglChooseConfigFn = extern "C" fn(
+        *mut std::ffi::c_void, *const i32, *mut *mut std::ffi::c_void, i32, *mut i32,
+    ) -> u32;
+    type EglCreatePbufferFn = extern "C" fn(
+        *mut std::ffi::c_void, *mut std::ffi::c_void, *const i32,
+    ) -> *mut std::ffi::c_void;
+
+    unsafe {
+        let egl_query_context: EglQueryContextFn = std::mem::transmute(
+            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglQueryContext".as_ptr()).unwrap()
+        );
+        let egl_choose_config: EglChooseConfigFn = std::mem::transmute(
+            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglChooseConfig".as_ptr()).unwrap()
+        );
+        let egl_create_pbuffer: EglCreatePbufferFn = std::mem::transmute(
+            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglCreatePbufferSurface".as_ptr()).unwrap()
+        );
+
+        let mut config_id: i32 = 0;
+        let r = egl_query_context(display, gl_context, EGL_CONFIG_ID, &mut config_id);
+        assert!(r != 0, "eglQueryContext(EGL_CONFIG_ID) failed");
+
+        let select = [EGL_CONFIG_ID, config_id, EGL_NONE];
+        let mut config: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mut num_configs: i32 = 0;
+        let r = egl_choose_config(display, select.as_ptr(), &mut config, 1, &mut num_configs);
+        assert!(r != 0 && num_configs > 0 && !config.is_null(), "eglChooseConfig failed");
+
+        let pb_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
+        let pbuffer = egl_create_pbuffer(display, config, pb_attribs.as_ptr());
+        assert!(!pbuffer.is_null(), "eglCreatePbufferSurface failed");
+        pbuffer
+    }
+}
+
+pub fn make_current(
+    display: *mut std::ffi::c_void,
+    surface: *mut std::ffi::c_void,
+    gl_context: *mut std::ffi::c_void,
+) {
+    let egl_make_current: extern "C" fn(
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_void,
+    ) -> u32 = unsafe {
+        std::mem::transmute(
+            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglMakeCurrent".as_ptr()).unwrap()
+        )
+    };
+    let result = egl_make_current(display, surface, surface, gl_context);
+    assert!(result != 0, "eglMakeCurrent failed on UI thread");
+}
+
 /// Extract the GL texture name from a wgpu texture (GL backend only).
 fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
     let hal_texture = unsafe { texture.as_hal::<wgpu::hal::gles::Api>() }

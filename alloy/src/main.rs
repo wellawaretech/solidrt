@@ -5,18 +5,7 @@ use sdl3::event::Event;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-
-// Generic wrapper to make non-Send types safe for thread boundaries
-// Safe because we ensure proper synchronization (GL context binding, etc.)
-#[repr(transparent)]
-struct SendableHandle<T>(T);
-unsafe impl<T> Send for SendableHandle<T> {}
-unsafe impl<T> Sync for SendableHandle<T> {}
-
-// Wrapper to make raw pointers sendable between threads (safe because they're opaque handles)
-struct SendablePtr(*mut std::ffi::c_void);
-unsafe impl Send for SendablePtr {}
-unsafe impl Sync for SendablePtr {}
+use display::SendablePtr;
 
 // Static texture created once and reused across frames
 static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
@@ -44,71 +33,6 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
     builder.build().expect("Failed to build display list")
 }
 
-fn create_ui_pbuffer(
-    display: *mut std::ffi::c_void,
-    gl_context: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
-    const EGL_NONE: i32 = 0x3038;
-    const EGL_CONFIG_ID: i32 = 0x3028;
-    const EGL_WIDTH: i32 = 0x3057;
-    const EGL_HEIGHT: i32 = 0x3056;
-
-    type EglQueryContextFn = extern "C" fn(
-        *mut std::ffi::c_void, *mut std::ffi::c_void, i32, *mut i32,
-    ) -> u32;
-    type EglChooseConfigFn = extern "C" fn(
-        *mut std::ffi::c_void, *const i32, *mut *mut std::ffi::c_void, i32, *mut i32,
-    ) -> u32;
-    type EglCreatePbufferFn = extern "C" fn(
-        *mut std::ffi::c_void, *mut std::ffi::c_void, *const i32,
-    ) -> *mut std::ffi::c_void;
-
-    unsafe {
-        let egl_query_context: EglQueryContextFn = std::mem::transmute(
-            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglQueryContext".as_ptr()).unwrap()
-        );
-        let egl_choose_config: EglChooseConfigFn = std::mem::transmute(
-            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglChooseConfig".as_ptr()).unwrap()
-        );
-        let egl_create_pbuffer: EglCreatePbufferFn = std::mem::transmute(
-            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglCreatePbufferSurface".as_ptr()).unwrap()
-        );
-
-        let mut config_id: i32 = 0;
-        let r = egl_query_context(display, gl_context, EGL_CONFIG_ID, &mut config_id);
-        assert!(r != 0, "eglQueryContext(EGL_CONFIG_ID) failed");
-
-        let select = [EGL_CONFIG_ID, config_id, EGL_NONE];
-        let mut config: *mut std::ffi::c_void = std::ptr::null_mut();
-        let mut num_configs: i32 = 0;
-        let r = egl_choose_config(display, select.as_ptr(), &mut config, 1, &mut num_configs);
-        assert!(r != 0 && num_configs > 0 && !config.is_null(), "eglChooseConfig failed");
-
-        let pb_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
-        let pbuffer = egl_create_pbuffer(display, config, pb_attribs.as_ptr());
-        assert!(!pbuffer.is_null(), "eglCreatePbufferSurface failed");
-        pbuffer
-    }
-}
-
-fn make_current(
-    display: *mut std::ffi::c_void,
-    surface: *mut std::ffi::c_void,
-    gl_context: *mut std::ffi::c_void,
-) {
-    let egl_make_current: extern "C" fn(
-        *mut std::ffi::c_void,
-        *mut std::ffi::c_void,
-        *mut std::ffi::c_void,
-        *mut std::ffi::c_void,
-    ) -> u32 = unsafe {
-        std::mem::transmute(
-            sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglMakeCurrent".as_ptr()).unwrap()
-        )
-    };
-    let result = egl_make_current(display, surface, surface, gl_context);
-    assert!(result != 0, "eglMakeCurrent failed on UI thread");
-}
 
 fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
     let gl_context_ptr = gl_context_ptr.0;
@@ -117,8 +41,8 @@ fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
     assert!(!egl_display.is_null(), "no EGL display");
     eprintln!("[UI thread] EGL display obtained");
 
-    let ui_pbuffer = create_ui_pbuffer(egl_display, gl_context_ptr);
-    make_current(egl_display, ui_pbuffer, gl_context_ptr);
+    let ui_pbuffer = display::gl::create_ui_pbuffer(egl_display, gl_context_ptr);
+    display::gl::make_current(egl_display, ui_pbuffer, gl_context_ptr);
     eprintln!("[UI thread] GL context made current on pbuffer");
 
     // Create wGPU using the existing GL context
