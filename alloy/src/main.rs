@@ -2,7 +2,6 @@ mod display;
 
 use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
-use std::thread;
 use std::time::Duration;
 
 // Static texture created once and reused across frames
@@ -59,20 +58,17 @@ fn main() {
 
     // Spawn UI thread (creates wGPU device and queue there)
     let rx = display::setup_ui_thread(&platform, |gpu_ctx, tx| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(async {
-            eprintln!("[UI thread] Starting display list generation loop");
-            loop {
-                let builder = DisplayListBuilder::new(None);
-                let dl = draw(builder, Some(gpu_ctx));
+        eprintln!("[UI thread] Starting display list generation loop");
+        loop {
+            let builder = DisplayListBuilder::new(None);
+            let dl = draw(builder, Some(gpu_ctx));
 
-                if tx.send(dl).is_err() {
-                    break;
-                }
-
-                tokio::time::sleep(Duration::from_millis(16)).await;
+            if tx.send(dl).is_err() {
+                break;
             }
-        });
+
+            std::thread::sleep(Duration::from_millis(16));
+        }
     });
 
     // ----- main --------------------
@@ -81,8 +77,8 @@ fn main() {
     let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");
 
     'running: loop {
-        // Try to get latest display list (non-blocking)
-        if let Ok(new_dl) = rx.try_recv() {
+        // Drain all pending display lists, keep the latest
+        while let Ok(new_dl) = rx.try_recv() {
             current_dl = new_dl;
         }
 
@@ -92,15 +88,15 @@ fn main() {
 
         render_surface.present();
 
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => {
-                    break 'running;
-                }
-                _ => {}
+        // Wait for events with timeout — properly yields to the OS so the
+        // system can detect idle and enter sleep mode.
+        // The timeout ensures we still pick up new display lists from the channel.
+        loop {
+            match event_pump.wait_event_timeout(Duration::from_millis(100)) {
+                Some(Event::Quit { .. }) => break 'running,
+                Some(_) => continue,
+                None => break,
             }
         }
-
-        thread::sleep(Duration::from_millis(10));
     }
 }
