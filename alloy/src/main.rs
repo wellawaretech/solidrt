@@ -1,6 +1,6 @@
 mod display;
 
-use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
+use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size, TextureSampling};
 use sdl3::event::Event;
 use std::time::Duration;
 
@@ -22,9 +22,13 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
             tex
         });
 
-        // Update texture data each frame (in case we want to animate it later)
         ctx.render_to_texture(texture, 256, 256);
-        ctx.texture_to_display_list(texture, &mut builder, 256, 256);
+
+        if let Some(tex) = ctx.adopt_texture(texture, 256, 256) {
+            let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(256.0, 256.0));
+            let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(256.0, 256.0));
+            builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
+        }
     }
 
     builder.build().expect("Failed to build display list")

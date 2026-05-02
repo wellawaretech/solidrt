@@ -1,4 +1,4 @@
-use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Rect, Point, Size, TextureSampling, Paint};
+use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
 use crate::display::{GpuTexture, RenderSurface, DisplayContext};
 
 pub fn create_ui_pbuffer(
@@ -126,26 +126,17 @@ fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
     }
 }
 
-/// Adopt a wGPU GL texture into Impeller's display list (zero-copy).
-pub fn texture_to_display_list(
+/// Adopt a wGPU GL texture into Impeller (zero-copy).
+pub fn adopt_texture(
     gpu_texture: &GpuTexture,
     impeller_ctx: &ImpellerContext,
-    builder: &mut DisplayListBuilder,
     width: u32,
     height: u32,
-) {
+) -> Option<Texture> {
     let gl_handle = wgpu_texture_gl_handle(&gpu_texture.wgpu_texture);
 
-    // Adopt the GL texture into Impeller (zero-copy)
-    // Format code 1 = BGRA8888 (or RGBA8888 on little-endian systems)
-    let impeller_texture = unsafe {
+    unsafe {
         impeller_ctx.adopt_opengl_texture(width, height, 1, gl_handle as u64)
-    };
-
-    if let Some(tex) = impeller_texture {
-        let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(width as f32, height as f32));
-        let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(256.0, 256.0));
-        builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
     }
 }
 

@@ -1,6 +1,6 @@
 pub mod gl;
 
-use impellers::{Context, DisplayList, DisplayListBuilder};
+use impellers::{Context, DisplayList, Texture};
 use wgpu::TextureFormat;
 use std::sync::mpsc;
 
@@ -201,31 +201,18 @@ impl GpuContext {
         let _ = self.wgpu_device.poll(wgpu::PollType::Poll);
     }
 
-    /// Convert a wGPU texture to an Impeller-compatible texture and add it to the display list.
-    /// This is backend-specific: GL uses zero-copy adoption, Vulkan will use GPU copy.
-    pub fn texture_to_display_list(
+    /// Adopt a wGPU texture into Impeller (zero-copy for GL, GPU copy for Vulkan).
+    pub fn adopt_texture(
         &self,
         gpu_texture: &GpuTexture,
-        builder: &mut DisplayListBuilder,
         width: u32,
         height: u32,
-    ) {
-        texture_to_display_list(gpu_texture, &self.impeller_ctx, builder, width, height);
-    }
-}
-
-fn texture_to_display_list(
-    gpu_texture: &GpuTexture,
-    impeller_ctx: &Context,
-    builder: &mut DisplayListBuilder,
-    width: u32,
-    height: u32,
-) {
-    match gpu_texture.backend {
-        Backend::Gl => gl::texture_to_display_list(gpu_texture, impeller_ctx, builder, width, height),
-        Backend::Vulkan => {
-            // TODO: Implement Vulkan GPU copy path
-            panic!("Vulkan backend not yet implemented");
+    ) -> Option<Texture> {
+        match gpu_texture.backend {
+            Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, width, height),
+            Backend::Vulkan => {
+                panic!("Vulkan backend not yet implemented");
+            }
         }
     }
 }
