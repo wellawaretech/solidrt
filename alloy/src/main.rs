@@ -7,6 +7,17 @@ use std::time::Duration;
 // Static texture created once and reused across frames
 static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
 
+fn make_blue_pixels(width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    for i in (0..pixels.len()).step_by(4) {
+        pixels[i] = 51;
+        pixels[i + 1] = 77;
+        pixels[i + 2] = 128;
+        pixels[i + 3] = 255;
+    }
+    pixels
+}
+
 fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) -> DisplayList {
     // Draw a red rectangle
     let rect = Rect::new(Point::new(100.0, 100.0), Size::new(200.0, 200.0));
@@ -14,19 +25,18 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
     paint.set_color(Color::new_srgba(1.0, 0.0, 0.0, 1.0));
     builder.draw_rect(&rect, &paint);
 
-    // Create texture once and reuse it, updating pixel data each frame
     if let Some(ctx) = gpu_ctx {
+        let (w, h) = (256u32, 256u32);
+        let pixels = make_blue_pixels(w, h);
+
         let texture = GPU_TEXTURE.get_or_init(|| {
-            let tex = ctx.create_texture(256, 256);
-            ctx.render_to_texture(&tex, 256, 256);
-            tex
+            display::GpuTexture::new(&ctx.wgpu_device, ctx.backend, w, h)
         });
+        texture.upload(&ctx.wgpu_device, &ctx.wgpu_queue, &pixels, w, h);
 
-        ctx.render_to_texture(texture, 256, 256);
-
-        if let Some(tex) = ctx.adopt_texture(texture, 256, 256) {
-            let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(256.0, 256.0));
-            let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(256.0, 256.0));
+        if let Some(tex) = ctx.adopt_texture(texture, w, h) {
+            let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
+            let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
             builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
         }
     }
