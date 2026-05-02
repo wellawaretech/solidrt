@@ -19,5 +19,8 @@ compile = []
 
 [dependencies]
 rquickjs = { version = "0.11.0", features = ["rust-alloc", "futures", "macro", "loader"] }
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.50.0", features = ["sync", "time", "fs", "rt", "io-util"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tokio = { version = "1.50.0", features = ["full"] }
