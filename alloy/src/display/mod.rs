@@ -2,6 +2,7 @@ pub mod gl;
 
 use impellers::{Context, DisplayList, DisplayListBuilder};
 use wgpu::TextureFormat;
+use std::sync::mpsc;
 
 // Generic wrapper to make non-Send types safe for thread boundaries
 // Safe because we ensure proper synchronization (GL context binding, etc.)
@@ -235,4 +236,41 @@ fn texture_to_display_list(
             panic!("Vulkan backend not yet implemented");
         }
     }
+}
+
+pub fn setup_ui_thread(
+    platform: &DisplayContext,
+    closure: impl FnOnce(&GpuContext, mpsc::Sender<DisplayList>) + Send + 'static,
+) -> mpsc::Receiver<DisplayList> {
+    let (tx, rx) = mpsc::channel();
+
+    // Extract GL context before moving into thread (platform has raw pointers not Send)
+    let gl_context = platform.ui_context();
+    let gl_context_ptr = Box::new(SendablePtr(unsafe {
+        std::mem::transmute_copy::<_, *mut std::ffi::c_void>(gl_context)
+    }));
+
+    std::thread::spawn(move || {
+        // Infrastructure setup
+        let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
+        assert!(!egl_display.is_null(), "no EGL display");
+        eprintln!("[UI thread] EGL display obtained");
+
+        let ui_pbuffer = gl::create_ui_pbuffer(egl_display, gl_context_ptr.0);
+        gl::make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
+        eprintln!("[UI thread] GL context made current on pbuffer");
+
+        let (device, queue) = gl::create_wgpu_device();
+        eprintln!("[UI thread] wGPU device created");
+
+        let impeller_ctx = gl::create_impeller_context();
+        eprintln!("[UI thread] Impeller context created");
+
+        let gpu_ctx = GpuContext::new(Backend::Gl, device, queue, impeller_ctx);
+
+        // Run user's closure with GPU context and sender
+        closure(&gpu_ctx, tx);
+    });
+
+    rx
 }

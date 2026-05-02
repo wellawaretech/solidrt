@@ -2,10 +2,8 @@ mod display;
 
 use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use display::SendablePtr;
 
 // Static texture created once and reused across frames
 static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
@@ -34,58 +32,6 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
 }
 
 
-fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
-    let gl_context_ptr = gl_context_ptr.0;
-    // Setup EGL on UI thread
-    let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
-    assert!(!egl_display.is_null(), "no EGL display");
-    eprintln!("[UI thread] EGL display obtained");
-
-    let ui_pbuffer = display::gl::create_ui_pbuffer(egl_display, gl_context_ptr);
-    display::gl::make_current(egl_display, ui_pbuffer, gl_context_ptr);
-    eprintln!("[UI thread] GL context made current on pbuffer");
-
-    let (device, queue) = display::gl::create_wgpu_device();
-    eprintln!("[UI thread] wGPU device created");
-
-    let impeller_ctx = display::gl::create_impeller_context();
-    eprintln!("[UI thread] Impeller context created");
-
-    let gpu_ctx = display::GpuContext::new(display::Backend::Gl, device, queue, impeller_ctx);
-
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    rt.block_on(async {
-        eprintln!("[UI thread] Starting display list generation loop");
-        loop {
-            let builder = DisplayListBuilder::new(None);
-            let dl = draw(builder, Some(&gpu_ctx));
-
-            // Send display list to main thread (exit if receiver hung up)
-            if tx.send(dl).is_err() {
-                break;
-            }
-
-            // Rebuild at ~60 FPS
-            tokio::time::sleep(Duration::from_millis(16)).await;
-        }
-    });
-}
-
-fn spawn_ui_thread(
-    _w: u32,
-    _h: u32,
-    ui_gl_context: &sdl3::video::GLContext,
-) -> mpsc::Receiver<DisplayList> {
-    let (tx, rx) = mpsc::channel();
-
-    // Store the raw pointer before moving into the thread
-    let gl_context_ptr = SendablePtr(unsafe { std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_gl_context) });
-    let _builder_thread = thread::spawn(move || {
-        ui_thread_main(gl_context_ptr, tx);
-    });
-
-    rx
-}
 
 fn main() {
     // ----- setup --------------------
@@ -112,7 +58,22 @@ fn main() {
         .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)
-    let rx = spawn_ui_thread(w, h, platform.ui_context());
+    let rx = display::setup_ui_thread(&platform, |gpu_ctx, tx| {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            eprintln!("[UI thread] Starting display list generation loop");
+            loop {
+                let builder = DisplayListBuilder::new(None);
+                let dl = draw(builder, Some(gpu_ctx));
+
+                if tx.send(dl).is_err() {
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_millis(16)).await;
+            }
+        });
+    });
 
     // ----- main --------------------
 
