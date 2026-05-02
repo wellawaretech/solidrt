@@ -1,7 +1,8 @@
 use impellers::{Color, Context, DisplayList, DisplayListBuilder, ISize, Paint, PixelFormat, Point, Rect, Size};
 use sdl3::event::Event;
 use sdl3::video::GLProfile;
-use std::thread::sleep;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 fn draw(mut builder: DisplayListBuilder, _w: u32, _h: u32) -> DisplayList {
@@ -12,8 +13,32 @@ fn draw(mut builder: DisplayListBuilder, _w: u32, _h: u32) -> DisplayList {
     builder.build().expect("Failed to build display list")
 }
 
+fn spawn_ui_thread(w: u32, h: u32) -> mpsc::Receiver<DisplayList> {
+    let (tx, rx) = mpsc::channel();
+
+    let _builder_thread = thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            loop {
+                let builder = DisplayListBuilder::new(None);
+                let dl = draw(builder, w, h);
+
+                // Send display list (exit if receiver hung up)
+                if tx.send(dl).is_err() {
+                    break;
+                }
+
+                // Rebuild at ~60 FPS
+                tokio::time::sleep(Duration::from_millis(16)).await;
+            }
+        });
+    });
+
+    rx
+}
+
 fn main() {
-    //setup
+    // ----- setup --------------------
     let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
 
     sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
@@ -52,20 +77,27 @@ fn main() {
     }
     .expect("Failed to create Impeller context");
 
-    //main
     let (w, h) = window.size_in_pixels();
-    let builder = DisplayListBuilder::new(None);
-    let dl = draw(builder, w, h);
 
     let mut surface =
         unsafe { itx.wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(w as i64, h as i64)) }
             .expect("Failed to wrap framebuffer");
 
+    let rx = spawn_ui_thread(w, h);
+
+    // ----- main --------------------
+
+    let mut current_dl = rx.recv().expect("Failed to receive initial display list");
     let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");
 
     'running: loop {
+        // Try to get latest display list (non-blocking)
+        if let Ok(new_dl) = rx.try_recv() {
+            current_dl = new_dl;
+        }
+
         surface
-            .draw_display_list(&dl)
+            .draw_display_list(&current_dl)
             .expect("Failed to draw display list");
 
         window.gl_swap_window();
@@ -78,7 +110,7 @@ fn main() {
                 _ => {}
             }
         }
-        //TODO a short sleep should allow the pc to go to sleep mode, according to Claude - test
-        sleep(Duration::from_millis(10));
+
+        thread::sleep(Duration::from_millis(10));
     }
 }

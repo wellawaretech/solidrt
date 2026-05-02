@@ -7,3 +7,4 @@ edition = "2021"
 impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys", "static_link"] }
 sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
 wgpu = { version = "29", features = ["gles"] }
+tokio = { version = "1.50.0", features = ["full"] }
