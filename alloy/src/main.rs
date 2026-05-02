@@ -214,8 +214,8 @@ fn main() {
 
     let window = video
         .window("wgpu test", 1200, 800)
-        .position_centered()
         .opengl()
+        .position_centered()
         .resizable()
         .high_pixel_density()
         .build()
@@ -223,11 +223,11 @@ fn main() {
 
     // Platform setup handles all GL context creation and configuration
     let platform =
-        gpu::PlatformContext::new_opengl(&video, &window).expect("Failed to set up platform");
+        gpu::DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
     let (w, h) = window.size_in_pixels();
 
-    let mut render_surface = gpu::create_render_surface(&platform, &window, w, h)
+    let mut render_surface = gpu::create_render_surface(&platform, w, h)
         .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)

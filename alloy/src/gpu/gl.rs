@@ -1,5 +1,5 @@
 use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Rect, Point, Size, TextureSampling, Paint};
-use crate::gpu::{GpuTexture, RenderSurface, PlatformContext};
+use crate::gpu::{GpuTexture, RenderSurface, DisplayContext};
 
 /// Extract the GL texture name from a wgpu texture (GL backend only).
 fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
@@ -42,7 +42,6 @@ pub struct GlSurface {
 
 impl GlSurface {
     pub fn create(
-        _video_opaque: *const std::ffi::c_void,
         window: &sdl3::video::Window,
         width: u32,
         height: u32,
@@ -96,7 +95,7 @@ impl RenderSurface for GlSurface {
 pub(crate) fn setup_opengl_platform<T>(
     video: &T,
     window: &sdl3::video::Window,
-) -> Result<PlatformContext, Box<dyn std::error::Error>> {
+) -> Result<DisplayContext, Box<dyn std::error::Error>> {
     // SAFETY: T is sdl3::VideoSubsystem at the call site; casting is sound
     // since we're just reinterpreting and using the reference in this same scope.
     let video = unsafe { &*(video as *const T as *const sdl3::VideoSubsystem) };
@@ -132,8 +131,9 @@ pub(crate) fn setup_opengl_platform<T>(
         sdl3::sys::video::SDL_GL_SetSwapInterval(1);
     }
 
-    Ok(PlatformContext::Gl {
-        video_opaque: std::ptr::null(),  // Not needed for this simplified setup
+    Ok(DisplayContext::Gl {
+        video_opaque: std::ptr::null(),
+        window_opaque: window as *const _ as *const std::ffi::c_void,
         main_context,
         ui_context,
     })
