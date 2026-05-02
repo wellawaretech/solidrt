@@ -1,10 +1,40 @@
 pub mod backend;
 pub mod gl;
 
-use impellers::{Context, DisplayListBuilder};
+use impellers::{Context, DisplayList, DisplayListBuilder};
 use wgpu::TextureFormat;
 
 pub use backend::Backend;
+
+pub enum PlatformContext {
+    Gl {
+        video_opaque: *const std::ffi::c_void,
+    },
+    Vulkan {
+        // Vulkan-specific fields when added
+    },
+}
+
+impl PlatformContext {
+    pub fn new_opengl<T>(video: &T) -> Self {
+        PlatformContext::Gl {
+            video_opaque: video as *const _ as *const std::ffi::c_void,
+        }
+    }
+
+    pub fn backend(&self) -> Backend {
+        match self {
+            PlatformContext::Gl { .. } => Backend::Gl,
+            PlatformContext::Vulkan { .. } => Backend::Vulkan,
+        }
+    }
+}
+
+pub trait RenderSurface {
+    fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>>;
+    fn present(&mut self);
+    fn resize(&mut self, width: u32, height: u32);
+}
 
 pub struct GpuContext {
     pub backend: Backend,
@@ -24,6 +54,23 @@ unsafe impl Sync for GpuContext {}
 pub struct GpuTexture {
     pub wgpu_texture: wgpu::Texture,
     pub backend: Backend,
+}
+
+pub fn create_render_surface(
+    platform: &PlatformContext,
+    window: &sdl3::video::Window,
+    width: u32,
+    height: u32,
+) -> Result<Box<dyn RenderSurface>, Box<dyn std::error::Error>> {
+    match platform {
+        PlatformContext::Gl { video_opaque } => {
+            gl::GlSurface::create(*video_opaque, window, width, height)
+                .map(|s| Box::new(s) as Box<dyn RenderSurface>)
+        }
+        PlatformContext::Vulkan { .. } => {
+            Err("Vulkan backend not yet implemented".into())
+        }
+    }
 }
 
 impl GpuContext {

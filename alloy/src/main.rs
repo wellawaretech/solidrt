@@ -1,6 +1,6 @@
 mod gpu;
 
-use impellers::{Color, Context, DisplayList, DisplayListBuilder, ISize, Paint, PixelFormat, Point, Rect, Size};
+use impellers::{Color, Context, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
 use sdl3::video::GLProfile;
 use std::sync::mpsc;
@@ -244,20 +244,9 @@ fn main() {
 
     let (w, h) = window.size_in_pixels();
 
-    // Create Impeller context on main thread
-    let mut itx = unsafe {
-        Context::new_opengl_es(|name| {
-            video
-                .gl_get_proc_address(name)
-                .map(|f| f as *mut _)
-                .unwrap_or(std::ptr::null_mut())
-        })
-    }
-    .expect("Failed to create Impeller context");
-
-    let mut surface =
-        unsafe { itx.wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(w as i64, h as i64)) }
-            .expect("Failed to wrap framebuffer");
+    let platform = gpu::PlatformContext::new_opengl(&video);
+    let mut render_surface = gpu::create_render_surface(&platform, &window, w, h)
+        .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)
     let rx = spawn_ui_thread(w, h, ui_gl_context);
@@ -273,11 +262,11 @@ fn main() {
             current_dl = new_dl;
         }
 
-        surface
+        render_surface
             .draw_display_list(&current_dl)
             .expect("Failed to draw display list");
 
-        window.gl_swap_window();
+        render_surface.present();
 
         for event in event_pump.poll_iter() {
             match event {
