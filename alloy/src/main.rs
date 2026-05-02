@@ -1,6 +1,6 @@
 mod display;
 
-use impellers::{Color, Context, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
+use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
 use std::sync::mpsc;
 use std::thread;
@@ -45,56 +45,7 @@ fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
     display::gl::make_current(egl_display, ui_pbuffer, gl_context_ptr);
     eprintln!("[UI thread] GL context made current on pbuffer");
 
-    // Create wGPU using the existing GL context
-    let (device, queue) = unsafe {
-        use wgpu::hal::gles;
-
-        let hal_exposed = gles::Adapter::new_external(
-            |name| {
-                let cname = std::ffi::CString::new(name).unwrap();
-                sdl3::sys::video::SDL_GL_GetProcAddress(cname.as_ptr())
-                    .map(|f| f as *const std::ffi::c_void)
-                    .unwrap_or(std::ptr::null())
-            },
-            wgpu::GlBackendOptions::default(),
-        )
-        .expect("Failed to create wgpu GL adapter on UI thread");
-
-        let wgpu_instance = wgpu::Instance::new({
-            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-            desc.backends = wgpu::Backends::GL;
-            desc
-        });
-
-        let adapter = wgpu_instance.create_adapter_from_hal(hal_exposed);
-
-        pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("ui-thread"),
-                required_features: wgpu::Features::empty(),
-                required_limits: adapter.limits(),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                ..Default::default()
-            },
-        ))
-        .expect("Failed to create wgpu device on UI thread")
-    };
-    eprintln!("[UI thread] wGPU device created");
-
-    // Create Impeller context on UI thread
-    let impeller_ctx = unsafe {
-        Context::new_opengl_es(|name| {
-            sdl3::sys::video::SDL_GL_GetProcAddress(
-                name.as_ptr() as *const _,
-            )
-            .map(|f| f as *mut _)
-            .unwrap_or(std::ptr::null_mut())
-        })
-    }
-    .expect("Failed to create Impeller context on UI thread");
-    eprintln!("[UI thread] Impeller context created");
-
-    let gpu_ctx = display::GpuContext::new(display::Backend::Gl, device, queue, impeller_ctx);
+    let gpu_ctx = display::gl::create_gpu_context();
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     rt.block_on(async {
