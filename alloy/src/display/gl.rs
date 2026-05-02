@@ -149,6 +149,7 @@ pub fn texture_to_display_list(
     }
 }
 
+#[allow(dead_code)]
 pub struct GlSurface {
     ctx: ImpellerContext,
     surface: impellers::Surface,
@@ -247,7 +248,6 @@ pub(crate) fn setup_opengl_platform<T>(
     }
 
     Ok(DisplayContext::Gl {
-        video_opaque: std::ptr::null(),
         window_opaque: window as *const _ as *const std::ffi::c_void,
         main_context,
         ui_context,
