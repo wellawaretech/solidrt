@@ -2,7 +2,6 @@ mod gpu;
 
 use impellers::{Color, Context, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
-use sdl3::video::GLProfile;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -194,12 +193,12 @@ fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
 fn spawn_ui_thread(
     _w: u32,
     _h: u32,
-    ui_gl_context: sdl3::video::GLContext,
+    ui_gl_context: &sdl3::video::GLContext,
 ) -> mpsc::Receiver<DisplayList> {
     let (tx, rx) = mpsc::channel();
 
     // Store the raw pointer before moving into the thread
-    let gl_context_ptr = SendablePtr(unsafe { std::mem::transmute::<_, *mut std::ffi::c_void>(ui_gl_context) });
+    let gl_context_ptr = SendablePtr(unsafe { std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_gl_context) });
     let _builder_thread = thread::spawn(move || {
         ui_thread_main(gl_context_ptr, tx);
     });
@@ -211,12 +210,7 @@ fn main() {
     // ----- setup --------------------
     let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
 
-    sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
-
     let video = sdl_context.video().expect("Failed to get video subsystem");
-    let gl_attr = video.gl_attr();
-    gl_attr.set_context_profile(GLProfile::GLES);
-    gl_attr.set_context_version(3, 0);
 
     let window = video
         .window("wgpu test", 1200, 800)
@@ -227,29 +221,17 @@ fn main() {
         .build()
         .expect("Failed to create window");
 
-    let ui_gl_context = window
-        .gl_create_context()
-        .expect("Failed to create UI GL context");
-
-    gl_attr.set_share_with_current_context(true);
-    let main_gl_context = window
-        .gl_create_context()
-        .expect("Failed to create main GL context");
-    window
-        .gl_make_current(&main_gl_context)
-        .expect("Failed to make main GL context current");
-    video
-        .gl_set_swap_interval(sdl3::video::SwapInterval::VSync)
-        .expect("Failed to set swap interval");
+    // Platform setup handles all GL context creation and configuration
+    let platform =
+        gpu::PlatformContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
     let (w, h) = window.size_in_pixels();
 
-    let platform = gpu::PlatformContext::new_opengl(&video);
     let mut render_surface = gpu::create_render_surface(&platform, &window, w, h)
         .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)
-    let rx = spawn_ui_thread(w, h, ui_gl_context);
+    let rx = spawn_ui_thread(w, h, platform.ui_context());
 
     // ----- main --------------------
 

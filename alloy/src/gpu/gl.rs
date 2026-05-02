@@ -1,5 +1,5 @@
 use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Rect, Point, Size, TextureSampling, Paint};
-use crate::gpu::{GpuTexture, RenderSurface};
+use crate::gpu::{GpuTexture, RenderSurface, PlatformContext};
 
 /// Extract the GL texture name from a wgpu texture (GL backend only).
 fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
@@ -91,4 +91,50 @@ impl RenderSurface for GlSurface {
         }
         .expect("Failed to resize GL surface");
     }
+}
+
+pub(crate) fn setup_opengl_platform<T>(
+    video: &T,
+    window: &sdl3::video::Window,
+) -> Result<PlatformContext, Box<dyn std::error::Error>> {
+    // SAFETY: T is sdl3::VideoSubsystem at the call site; casting is sound
+    // since we're just reinterpreting and using the reference in this same scope.
+    let video = unsafe { &*(video as *const T as *const sdl3::VideoSubsystem) };
+
+    // Set SDL hints for OpenGL ES via FFI
+    sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
+
+    // Configure GL attributes BEFORE creating contexts
+    let gl_attr = video.gl_attr();
+    gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
+    gl_attr.set_context_version(3, 0);
+
+    // Create UI GL context
+    let ui_context = window
+        .gl_create_context()
+        .map_err(|e| format!("Failed to create UI GL context: {}", e))?;
+
+    // Enable context sharing for main GL context
+    gl_attr.set_share_with_current_context(true);
+
+    // Create main GL context
+    let main_context = window
+        .gl_create_context()
+        .map_err(|e| format!("Failed to create main GL context: {}", e))?;
+
+    // Make main context current on the render thread
+    window
+        .gl_make_current(&main_context)
+        .map_err(|e| format!("Failed to make main GL context current: {}", e))?;
+
+    // Set swap interval (vsync) via FFI
+    unsafe {
+        sdl3::sys::video::SDL_GL_SetSwapInterval(1);
+    }
+
+    Ok(PlatformContext::Gl {
+        video_opaque: std::ptr::null(),  // Not needed for this simplified setup
+        main_context,
+        ui_context,
+    })
 }

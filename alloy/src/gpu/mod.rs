@@ -9,6 +9,8 @@ pub use backend::Backend;
 pub enum PlatformContext {
     Gl {
         video_opaque: *const std::ffi::c_void,
+        main_context: sdl3::video::GLContext,
+        ui_context: sdl3::video::GLContext,
     },
     Vulkan {
         // Vulkan-specific fields when added
@@ -16,9 +18,24 @@ pub enum PlatformContext {
 }
 
 impl PlatformContext {
-    pub fn new_opengl<T>(video: &T) -> Self {
-        PlatformContext::Gl {
-            video_opaque: video as *const _ as *const std::ffi::c_void,
+    pub fn new_opengl<T>(
+        video: &T,
+        window: &sdl3::video::Window,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        gl::setup_opengl_platform(video, window)
+    }
+
+    pub fn main_context(&self) -> &sdl3::video::GLContext {
+        match self {
+            PlatformContext::Gl { main_context, .. } => main_context,
+            PlatformContext::Vulkan { .. } => panic!("No context in Vulkan platform"),
+        }
+    }
+
+    pub fn ui_context(&self) -> &sdl3::video::GLContext {
+        match self {
+            PlatformContext::Gl { ui_context, .. } => ui_context,
+            PlatformContext::Vulkan { .. } => panic!("No context in Vulkan platform"),
         }
     }
 
@@ -63,7 +80,11 @@ pub fn create_render_surface(
     height: u32,
 ) -> Result<Box<dyn RenderSurface>, Box<dyn std::error::Error>> {
     match platform {
-        PlatformContext::Gl { video_opaque } => {
+        PlatformContext::Gl {
+            video_opaque,
+            main_context: _,
+            ui_context: _,
+        } => {
             gl::GlSurface::create(*video_opaque, window, width, height)
                 .map(|s| Box::new(s) as Box<dyn RenderSurface>)
         }
