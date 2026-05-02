@@ -208,13 +208,10 @@ impl RenderSurface for GlSurface {
     }
 }
 
-pub(crate) fn setup_opengl_platform<T>(
-    video: &T,
+pub(crate) fn setup_opengl_platform(
+    video: &sdl3::VideoSubsystem,
     window: &sdl3::video::Window,
 ) -> Result<DisplayContext, Box<dyn std::error::Error>> {
-    // SAFETY: T is sdl3::VideoSubsystem at the call site; casting is sound
-    // since we're just reinterpreting and using the reference in this same scope.
-    let video = unsafe { &*(video as *const T as *const sdl3::VideoSubsystem) };
 
     // Set SDL hints for OpenGL ES via FFI
     sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");

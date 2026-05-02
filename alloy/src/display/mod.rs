@@ -27,8 +27,8 @@ pub enum DisplayContext {
 
 #[allow(dead_code)]
 impl DisplayContext {
-    pub fn new_opengl<T>(
-        video: &T,
+    pub fn new_opengl(
+        video: &sdl3::VideoSubsystem,
         window: &sdl3::video::Window,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         gl::setup_opengl_platform(video, window)
