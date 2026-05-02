@@ -1,0 +1,9 @@
+[package]
+name = "wgpu-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys", "static_link"] }
+sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
+wgpu = { version = "29", features = ["gles"] }
