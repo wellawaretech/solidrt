@@ -13,7 +13,7 @@ fn draw(mut builder: DisplayListBuilder, _w: u32, _h: u32) -> DisplayList {
     builder.build().expect("Failed to build display list")
 }
 
-fn spawn_ui_thread(w: u32, h: u32) -> mpsc::Receiver<DisplayList> {
+fn spawn_ui_thread(_ctx: sdl3::video::GLContext, w: u32, h: u32) -> mpsc::Receiver<DisplayList> {
     let (tx, rx) = mpsc::channel();
 
     let _builder_thread = thread::spawn(move || {
@@ -57,12 +57,17 @@ fn main() {
         .build()
         .expect("Failed to create window");
 
-    let gl_context = window
+    let ui_gl_context = window
         .gl_create_context()
-        .expect("Failed to create GL context");
+        .expect("Failed to create UI GL context");
+
+    gl_attr.set_share_with_current_context(true);
+    let main_gl_context = window
+        .gl_create_context()
+        .expect("Failed to create main GL context");
     window
-        .gl_make_current(&gl_context)
-        .expect("Failed to make GL context current");
+        .gl_make_current(&main_gl_context)
+        .expect("Failed to make main GL context current");
     video
         .gl_set_swap_interval(sdl3::video::SwapInterval::VSync)
         .expect("Failed to set swap interval");
@@ -83,7 +88,7 @@ fn main() {
         unsafe { itx.wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(w as i64, h as i64)) }
             .expect("Failed to wrap framebuffer");
 
-    let rx = spawn_ui_thread(w, h);
+    let rx = spawn_ui_thread(ui_gl_context, w, h);
 
     // ----- main --------------------
 
