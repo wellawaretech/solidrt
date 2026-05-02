@@ -1,4 +1,4 @@
-mod gpu;
+mod display;
 
 use impellers::{Color, Context, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size};
 use sdl3::event::Event;
@@ -19,9 +19,9 @@ unsafe impl Send for SendablePtr {}
 unsafe impl Sync for SendablePtr {}
 
 // Static texture created once and reused across frames
-static GPU_TEXTURE: std::sync::OnceLock<gpu::GpuTexture> = std::sync::OnceLock::new();
+static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
 
-fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&gpu::GpuContext>) -> DisplayList {
+fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) -> DisplayList {
     // Draw a red rectangle
     let rect = Rect::new(Point::new(100.0, 100.0), Size::new(200.0, 200.0));
     let mut paint = Paint::default();
@@ -170,7 +170,7 @@ fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
     .expect("Failed to create Impeller context on UI thread");
     eprintln!("[UI thread] Impeller context created");
 
-    let gpu_ctx = gpu::GpuContext::new(gpu::Backend::Gl, device, queue, impeller_ctx);
+    let gpu_ctx = display::GpuContext::new(display::Backend::Gl, device, queue, impeller_ctx);
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     rt.block_on(async {
@@ -223,11 +223,11 @@ fn main() {
 
     // Platform setup handles all GL context creation and configuration
     let platform =
-        gpu::DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
+        display::DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
     let (w, h) = window.size_in_pixels();
 
-    let mut render_surface = gpu::create_render_surface(&platform, w, h)
+    let mut render_surface = display::create_render_surface(&platform, w, h)
         .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)

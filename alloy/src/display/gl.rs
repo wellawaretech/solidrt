@@ -1,5 +1,5 @@
 use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Rect, Point, Size, TextureSampling, Paint};
-use crate::gpu::{GpuTexture, RenderSurface, DisplayContext};
+use crate::display::{GpuTexture, RenderSurface, DisplayContext};
 
 /// Extract the GL texture name from a wgpu texture (GL backend only).
 fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
