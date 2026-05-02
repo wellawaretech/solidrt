@@ -45,7 +45,13 @@ fn ui_thread_main(gl_context_ptr: SendablePtr, tx: mpsc::Sender<DisplayList>) {
     display::gl::make_current(egl_display, ui_pbuffer, gl_context_ptr);
     eprintln!("[UI thread] GL context made current on pbuffer");
 
-    let gpu_ctx = display::gl::create_gpu_context();
+    let (device, queue) = display::gl::create_wgpu_device();
+    eprintln!("[UI thread] wGPU device created");
+
+    let impeller_ctx = display::gl::create_impeller_context();
+    eprintln!("[UI thread] Impeller context created");
+
+    let gpu_ctx = display::GpuContext::new(display::Backend::Gl, device, queue, impeller_ctx);
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     rt.block_on(async {

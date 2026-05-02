@@ -67,12 +67,11 @@ pub fn make_current(
     assert!(result != 0, "eglMakeCurrent failed on UI thread");
 }
 
-pub fn create_gpu_context() -> crate::display::GpuContext {
-    // Create wGPU using the existing GL context
-    let (device, queue) = unsafe {
-        use wgpu::hal::gles;
+pub fn create_wgpu_device() -> (wgpu::Device, wgpu::Queue) {
+    use wgpu::hal::gles;
 
-        let hal_exposed = gles::Adapter::new_external(
+    let hal_exposed = unsafe {
+        gles::Adapter::new_external(
             |name| {
                 let cname = std::ffi::CString::new(name).unwrap();
                 sdl3::sys::video::SDL_GL_GetProcAddress(cname.as_ptr())
@@ -81,31 +80,31 @@ pub fn create_gpu_context() -> crate::display::GpuContext {
             },
             wgpu::GlBackendOptions::default(),
         )
-        .expect("Failed to create wgpu GL adapter on UI thread");
-
-        let wgpu_instance = wgpu::Instance::new({
-            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-            desc.backends = wgpu::Backends::GL;
-            desc
-        });
-
-        let adapter = wgpu_instance.create_adapter_from_hal(hal_exposed);
-
-        pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("ui-thread"),
-                required_features: wgpu::Features::empty(),
-                required_limits: adapter.limits(),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-                ..Default::default()
-            },
-        ))
-        .expect("Failed to create wgpu device on UI thread")
+        .expect("Failed to create wgpu GL adapter")
     };
-    eprintln!("[UI thread] wGPU device created");
 
-    // Create Impeller context on UI thread
-    let impeller_ctx = unsafe {
+    let wgpu_instance = wgpu::Instance::new({
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::GL;
+        desc
+    });
+
+    let adapter = unsafe { wgpu_instance.create_adapter_from_hal(hal_exposed) };
+
+    pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("ui-thread"),
+            required_features: wgpu::Features::empty(),
+            required_limits: adapter.limits(),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            ..Default::default()
+        },
+    ))
+    .expect("Failed to create wgpu device")
+}
+
+pub fn create_impeller_context() -> ImpellerContext {
+    unsafe {
         ImpellerContext::new_opengl_es(|name| {
             sdl3::sys::video::SDL_GL_GetProcAddress(
                 name.as_ptr() as *const _,
@@ -114,10 +113,7 @@ pub fn create_gpu_context() -> crate::display::GpuContext {
             .unwrap_or(std::ptr::null_mut())
         })
     }
-    .expect("Failed to create Impeller context on UI thread");
-    eprintln!("[UI thread] Impeller context created");
-
-    crate::display::GpuContext::new(crate::display::Backend::Gl, device, queue, impeller_ctx)
+    .expect("Failed to create Impeller context")
 }
 
 /// Extract the GL texture name from a wgpu texture (GL backend only).
