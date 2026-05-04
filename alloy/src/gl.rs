@@ -1,5 +1,5 @@
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
-use crate::display::{GpuTexture, RenderSurface, DisplayContext};
+use crate::{GpuTexture, RenderSurface, DisplayContext};
 
 pub fn create_ui_pbuffer(
     display: *mut std::ffi::c_void,

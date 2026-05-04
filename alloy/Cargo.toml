@@ -1,5 +1,5 @@
 [package]
-name = "wgpu-test"
+name = "alloy"
 version = "0.1.0"
 edition = "2021"
 

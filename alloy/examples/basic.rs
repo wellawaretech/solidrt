@@ -1,6 +1,6 @@
 use impellers::{Color, DisplayList, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TextureSampling};
 use std::time::Duration;
-use wgpu_test::GpuContext;
+use alloy::GpuContext;
 
 fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
     let bytes = color.to_be_bytes();
@@ -35,7 +35,7 @@ fn draw(mut builder: DisplayListBuilder, ctx: &GpuContext, t: f32) -> DisplayLis
 }
 
 fn main() {
-    wgpu_test::setup("wgpu test", ISize::new(1200, 800)).run(
+    alloy::setup("Alloy", ISize::new(1200, 800)).run(
         |ctx| {
             let mut t = 0.0f32;
             loop {

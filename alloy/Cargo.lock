@@ -9,6 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "alloy"
+version = "0.1.0"
+dependencies = [
+ "impellers",
+ "pollster",
+ "sdl3",
+ "wgpu",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1175,16 +1185,6 @@ checksum = "59c654c483f058800972c3645e95388a7eca31bf9fe1933bc20e036588a0be02"
 dependencies = [
  "naga",
  "wgpu-types",
-]
-
-[[package]]
-name = "wgpu-test"
-version = "0.1.0"
-dependencies = [
- "impellers",
- "pollster",
- "sdl3",
- "wgpu",
 ]
 
 [[package]]
