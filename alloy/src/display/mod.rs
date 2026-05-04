@@ -101,6 +101,7 @@ pub struct GpuContext {
     wgpu_queue: wgpu::Queue,
     impeller_ctx: Context,
     pub textures: TextureRegistry,
+    tx: mpsc::Sender<DisplayList>,
 }
 
 // Safety: GpuContext is thread-safe (Send + Sync) because:
@@ -200,6 +201,7 @@ impl GpuContext {
         wgpu_device: wgpu::Device,
         wgpu_queue: wgpu::Queue,
         impeller_ctx: Context,
+        tx: mpsc::Sender<DisplayList>,
     ) -> Self {
         GpuContext {
             backend,
@@ -207,7 +209,12 @@ impl GpuContext {
             wgpu_queue,
             impeller_ctx,
             textures: TextureRegistry::new(),
+            tx,
         }
+    }
+
+    pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
+        self.tx.send(dl).map_err(|_| ())
     }
 
     pub fn get_or_create_texture(
@@ -262,7 +269,7 @@ impl GpuContext {
 
 pub fn setup_ui_thread(
     platform: &DisplayContext,
-    closure: impl FnOnce(&GpuContext, mpsc::Sender<DisplayList>) + Send + 'static,
+    closure: impl FnOnce(&GpuContext) + Send + 'static,
 ) -> mpsc::Receiver<DisplayList> {
     let (tx, rx) = mpsc::channel();
 
@@ -288,10 +295,9 @@ pub fn setup_ui_thread(
         let impeller_ctx = gl::create_impeller_context();
         eprintln!("[UI thread] Impeller context created");
 
-        let gpu_ctx = GpuContext::new(Backend::Gl, device, queue, impeller_ctx);
+        let gpu_ctx = GpuContext::new(Backend::Gl, device, queue, impeller_ctx, tx);
 
-        // Run user's closure with GPU context and sender
-        closure(&gpu_ctx, tx);
+        closure(&gpu_ctx);
     });
 
     rx

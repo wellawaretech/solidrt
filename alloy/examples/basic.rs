@@ -1,4 +1,5 @@
 use impellers::{Color, DisplayList, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TextureSampling};
+use std::time::Duration;
 use wgpu_test::GpuContext;
 
 fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
@@ -34,16 +35,23 @@ fn draw(mut builder: DisplayListBuilder, ctx: &GpuContext, t: f32) -> DisplayLis
 }
 
 fn main() {
-    wgpu_test::setup("wgpu test", ISize::new(1200, 800)).run({ 
-            let mut t = 0.0f32; 
-            move |builder, ctx| { 
+    wgpu_test::setup("wgpu test", ISize::new(1200, 800)).run(
+        |ctx| {
+            let mut t = 0.0f32;
+            loop {
+                let builder = DisplayListBuilder::new(None);
+                let dl = draw(builder, ctx, t);
+                if ctx.submit(dl).is_err() {
+                    break;
+                }
+
                 t += 0.05;
-                draw(builder, ctx, t)
-            } 
+                std::thread::sleep(Duration::from_millis(16));
+            }
         },
-        |surface, dl| {
-            surface.draw_display_list(dl).expect("Failed to draw display list");
-            surface.present();
+        |display, dl| {
+            display.draw_display_list(dl).expect("Failed to draw display list");
+            display.present();
         },
     );
 }

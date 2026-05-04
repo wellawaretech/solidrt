@@ -2,7 +2,7 @@ pub mod display;
 
 pub use display::{GpuContext, RenderSurface, TextureEntry};
 
-use impellers::{DisplayList, DisplayListBuilder, ISize};
+use impellers::{DisplayList, ISize};
 use sdl3::event::Event;
 use std::time::Duration;
 
@@ -42,21 +42,12 @@ pub fn setup(title: &str, size: ISize) -> App {
 impl App {
     pub fn run(
         self,
-        mut build: impl FnMut(DisplayListBuilder, &GpuContext) -> DisplayList + Send + 'static,
+        ui: impl FnOnce(&GpuContext) + Send + 'static,
         mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
     ) {
         let App { sdl_context, _window, platform, mut render_surface } = self;
 
-        let rx = display::setup_ui_thread(&platform, move |gpu_ctx, tx| {
-            loop {
-                let builder = DisplayListBuilder::new(None);
-                let dl = build(builder, gpu_ctx);
-                if tx.send(dl).is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(16));
-            }
-        });
+        let rx = display::setup_ui_thread(&platform, ui);
 
         let mut current_dl = rx.recv().expect("Failed to receive initial display list");
         let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");
