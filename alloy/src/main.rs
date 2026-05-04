@@ -4,10 +4,6 @@ use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size
 use sdl3::event::Event;
 use std::time::Duration;
 
-static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
-// Adopted once; kept alive so Impeller never calls glDeleteTextures while wgpu still owns the GL object.
-static IMPELLER_TEXTURE: std::sync::OnceLock<impellers::Texture> = std::sync::OnceLock::new();
-
 fn make_blue_pixels(width: u32, height: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (width * height * 4) as usize];
     for i in (0..pixels.len()).step_by(4) {
@@ -28,19 +24,20 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
 
     if let Some(ctx) = gpu_ctx {
         let (w, h) = (256u32, 256u32);
-        let pixels = make_blue_pixels(w, h);
+        const BLUE_TEX: u64 = 1;
 
-        let texture = GPU_TEXTURE.get_or_init(|| {
-            display::GpuTexture::new(&ctx.wgpu_device, ctx.backend, w, h)
-        });
-        texture.upload(&ctx.wgpu_device, &ctx.wgpu_queue, &pixels, w, h);
+        if ctx.textures.get(BLUE_TEX).is_none() {
+            let pixels = make_blue_pixels(w, h);
+            let gpu = display::GpuTexture::new(&ctx.wgpu_device, ctx.backend, w, h);
+            gpu.upload(&ctx.wgpu_device, &ctx.wgpu_queue, &pixels, w, h);
+            let impeller = ctx.adopt_texture(&gpu, w, h).expect("adopt texture failed");
+            ctx.textures.insert(BLUE_TEX, display::TextureEntry { gpu, impeller });
+        }
 
-        let tex = IMPELLER_TEXTURE.get_or_init(|| {
-            ctx.adopt_texture(texture, w, h).expect("adopt texture failed")
-        });
+        let entry = ctx.textures.get(BLUE_TEX).unwrap();
         let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
         let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
-        builder.draw_texture_rect(tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
+        builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
     }
 
     builder.build().expect("Failed to build display list")

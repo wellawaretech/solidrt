@@ -1,6 +1,8 @@
 pub mod gl;
 
 use impellers::{Context, DisplayList, Texture};
+use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
 use std::sync::mpsc;
 
 pub struct SendablePtr(pub *mut std::ffi::c_void);
@@ -62,11 +64,40 @@ pub trait RenderSurface {
     fn resize(&mut self, width: u32, height: u32);
 }
 
+pub struct TextureEntry {
+    pub gpu: GpuTexture,
+    pub impeller: Texture,
+}
+
+pub struct TextureRegistry {
+    entries: RefCell<HashMap<u64, TextureEntry>>,
+}
+
+impl TextureRegistry {
+    fn new() -> Self {
+        TextureRegistry { entries: RefCell::new(HashMap::new()) }
+    }
+
+    pub fn get(&self, id: u64) -> Option<Ref<'_, TextureEntry>> {
+        let borrow = self.entries.borrow();
+        if borrow.contains_key(&id) {
+            Some(Ref::map(borrow, |m| m.get(&id).unwrap()))
+        } else {
+            None
+        }
+    }
+
+    pub fn insert(&self, id: u64, entry: TextureEntry) {
+        self.entries.borrow_mut().insert(id, entry);
+    }
+}
+
 pub struct GpuContext {
     pub backend: Backend,
     pub wgpu_device: wgpu::Device,
     pub wgpu_queue: wgpu::Queue,
     pub impeller_ctx: Context,
+    pub textures: TextureRegistry,
 }
 
 // Safety: GpuContext is thread-safe (Send + Sync) because:
@@ -172,6 +203,7 @@ impl GpuContext {
             wgpu_device,
             wgpu_queue,
             impeller_ctx,
+            textures: TextureRegistry::new(),
         }
     }
 
