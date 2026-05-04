@@ -11,6 +11,7 @@ use std::sync::mpsc;
 pub enum Backend {
     Gl,
     Vulkan,
+    Metal,
 }
 
 #[allow(dead_code)]
@@ -21,6 +22,7 @@ pub enum DisplayContext {
         ui_context: sdl3::video::GLContext,
     },
     Vulkan {},
+    Metal {},
 }
 
 #[allow(dead_code)]
@@ -36,6 +38,7 @@ impl DisplayContext {
         match self {
             DisplayContext::Gl { .. } => Backend::Gl,
             DisplayContext::Vulkan { .. } => Backend::Vulkan,
+            DisplayContext::Metal { .. } => Backend::Metal,
         }
     }
 }
@@ -168,6 +171,9 @@ pub fn create_render_surface(
         DisplayContext::Vulkan { .. } => {
             Err("Vulkan backend not yet implemented".into())
         }
+        DisplayContext::Metal { .. } => {
+            Err("Metal backend not yet implemented".into())
+        }
     }
 }
 
@@ -238,6 +244,9 @@ impl Context {
             Backend::Vulkan => {
                 panic!("Vulkan backend not yet implemented");
             }
+            Backend::Metal => {
+                panic!("Metal backend not yet implemented");
+            }
         }
     }
 }
@@ -250,6 +259,7 @@ impl DisplayContext {
         match self {
             DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure),
             DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
+            DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
         }
     }
 }

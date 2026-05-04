@@ -6,3 +6,4 @@ There are 2 threads:
 
 Ultimately, this project should run cross-platform: Linux, Android, Windows, MacOS, iOS and should support a wide range of GPU's (Opengl-ES 3.0 minimum). Order of priority: OpenGL first, Vulkan next, Metal last.
 
+Code style. No em-dashes or non-ASCII characters.

@@ -35,7 +35,7 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
 }
 
 fn main() {
-    alloy::setup("Alloy", ISize::new(1200, 800)).run(
+    alloy::setup("Alloy demo", ISize::new(1200, 800)).run(
         |ctx| {
             let mut t = 0.0f32;
             loop {
