@@ -4,8 +4,9 @@ use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size
 use sdl3::event::Event;
 use std::time::Duration;
 
-// Static texture created once and reused across frames
 static GPU_TEXTURE: std::sync::OnceLock<display::GpuTexture> = std::sync::OnceLock::new();
+// Adopted once; kept alive so Impeller never calls glDeleteTextures while wgpu still owns the GL object.
+static IMPELLER_TEXTURE: std::sync::OnceLock<impellers::Texture> = std::sync::OnceLock::new();
 
 fn make_blue_pixels(width: u32, height: u32) -> Vec<u8> {
     let mut pixels = vec![0u8; (width * height * 4) as usize];
@@ -34,11 +35,12 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
         });
         texture.upload(&ctx.wgpu_device, &ctx.wgpu_queue, &pixels, w, h);
 
-        if let Some(tex) = ctx.adopt_texture(texture, w, h) {
-            let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
-            let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
-            builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
-        }
+        let tex = IMPELLER_TEXTURE.get_or_init(|| {
+            ctx.adopt_texture(texture, w, h).expect("adopt texture failed")
+        });
+        let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
+        let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
+        builder.draw_texture_rect(tex, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
     }
 
     builder.build().expect("Failed to build display list")

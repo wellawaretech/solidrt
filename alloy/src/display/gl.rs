@@ -153,19 +153,7 @@ impl GlSurface {
         width: u32,
         height: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut ctx = unsafe {
-            // Use SDL's FFI directly to get GL proc addresses
-            ImpellerContext::new_opengl_es(|name| {
-                let cname = match std::ffi::CString::new(name) {
-                    Ok(s) => s,
-                    Err(_) => return std::ptr::null_mut(),
-                };
-                sdl3::sys::video::SDL_GL_GetProcAddress(cname.as_ptr())
-                    .map(|f| f as *mut std::ffi::c_void)
-                    .unwrap_or(std::ptr::null_mut())
-            })
-        }
-        .map_err(|_| Box::new(std::io::Error::other("Failed to create OpenGL ES context")) as Box<dyn std::error::Error>)?;
+        let mut ctx = create_impeller_context();
 
         let surface = unsafe {
             ctx.wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(width as i64, height as i64))
