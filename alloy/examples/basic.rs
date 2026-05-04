@@ -1,6 +1,6 @@
 use impellers::{Color, DisplayList, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TextureSampling};
 use std::time::Duration;
-use alloy::GpuContext;
+use alloy::Context;
 
 fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
     let bytes = color.to_be_bytes();
@@ -11,7 +11,7 @@ fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
     pixels
 }
 
-fn draw(mut builder: DisplayListBuilder, ctx: &GpuContext, t: f32) -> DisplayList {
+fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
     let size = ISize::new(256, 256);
     let src_rect = Rect::new(Point::new(0.0, 0.0), size.cast());
 

@@ -1,14 +1,10 @@
 mod gl;
 
-use impellers::{Context, DisplayList, ISize, Texture};
+use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
-
-pub struct SendablePtr(pub *mut std::ffi::c_void);
-unsafe impl Send for SendablePtr {}
-unsafe impl Sync for SendablePtr {}
 
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
@@ -34,20 +30,6 @@ impl DisplayContext {
         window: &sdl3::video::Window,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         gl::setup_opengl_platform(video, window)
-    }
-
-    pub fn main_context(&self) -> &sdl3::video::GLContext {
-        match self {
-            DisplayContext::Gl { main_context, .. } => main_context,
-            DisplayContext::Vulkan { .. } => panic!("No context in Vulkan platform"),
-        }
-    }
-
-    pub fn ui_context(&self) -> &sdl3::video::GLContext {
-        match self {
-            DisplayContext::Gl { ui_context, .. } => ui_context,
-            DisplayContext::Vulkan { .. } => panic!("No context in Vulkan platform"),
-        }
     }
 
     pub fn backend(&self) -> Backend {
@@ -95,22 +77,22 @@ impl TextureRegistry {
     }
 }
 
-pub struct GpuContext {
+pub struct Context {
     backend: Backend,
     wgpu_device: wgpu::Device,
     wgpu_queue: wgpu::Queue,
-    impeller_ctx: Context,
+    impeller_ctx: ImpellerContext,
     pub textures: TextureRegistry,
     tx: mpsc::Sender<DisplayList>,
 }
 
-// Safety: GpuContext is thread-safe (Send + Sync) because:
+// Safety: Context is thread-safe (Send + Sync) because:
 // - wgpu::Device and Queue are thread-safe (Send + Sync)
 // - Impeller::Context uses thread-local GL state, but we ensure proper synchronization
 //   by making the GL context current on the rendering thread before any GPU operations
 // - We never access the Impeller context concurrently; only the UI thread with its GL context current
-unsafe impl Send for GpuContext {}
-unsafe impl Sync for GpuContext {}
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
 
 pub struct GpuTexture {
     pub wgpu_texture: wgpu::Texture,
@@ -189,15 +171,15 @@ pub fn create_render_surface(
     }
 }
 
-impl GpuContext {
+impl Context {
     pub fn new(
         backend: Backend,
         wgpu_device: wgpu::Device,
         wgpu_queue: wgpu::Queue,
-        impeller_ctx: Context,
+        impeller_ctx: ImpellerContext,
         tx: mpsc::Sender<DisplayList>,
     ) -> Self {
-        GpuContext {
+        Context {
             backend,
             wgpu_device,
             wgpu_queue,
@@ -260,39 +242,16 @@ impl GpuContext {
     }
 }
 
-pub fn setup_ui_thread(
-    platform: &DisplayContext,
-    closure: impl FnOnce(&GpuContext) + Send + 'static,
-) -> mpsc::Receiver<DisplayList> {
-    let (tx, rx) = mpsc::channel();
-
-    // Extract GL context before moving into thread (platform has raw pointers not Send)
-    let gl_context = platform.ui_context();
-    let gl_context_ptr = Box::new(SendablePtr(unsafe {
-        std::mem::transmute_copy::<_, *mut std::ffi::c_void>(gl_context)
-    }));
-
-    std::thread::spawn(move || {
-        let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
-        assert!(!egl_display.is_null(), "no EGL display");
-        eprintln!("[UI thread] EGL display obtained");
-
-        let ui_pbuffer = gl::create_ui_pbuffer(egl_display, gl_context_ptr.0);
-        gl::make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
-        eprintln!("[UI thread] GL context made current on pbuffer");
-
-        let (device, queue) = gl::create_wgpu_device();
-        eprintln!("[UI thread] wGPU device created");
-
-        let impeller_ctx = gl::create_impeller_context();
-        eprintln!("[UI thread] Impeller context created");
-
-        let gpu_ctx = GpuContext::new(Backend::Gl, device, queue, impeller_ctx, tx);
-
-        closure(&gpu_ctx);
-    });
-
-    rx
+impl DisplayContext {
+    pub fn setup_ui_thread(
+        &self,
+        closure: impl FnOnce(&Context) + Send + 'static,
+    ) -> mpsc::Receiver<DisplayList> {
+        match self {
+            DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure),
+            DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
+        }
+    }
 }
 
 pub struct App {
@@ -331,12 +290,12 @@ pub fn setup(title: &str, size: ISize) -> App {
 impl App {
     pub fn run(
         self,
-        ui: impl FnOnce(&GpuContext) + Send + 'static,
+        ui: impl FnOnce(&Context) + Send + 'static,
         mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
     ) {
         let App { sdl_context, _window, platform, mut render_surface } = self;
 
-        let rx = setup_ui_thread(&platform, ui);
+        let rx = platform.setup_ui_thread(ui);
 
         let mut current_dl = rx.recv().expect("Failed to receive initial display list");
         let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");

@@ -1,5 +1,9 @@
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
-use crate::{GpuTexture, RenderSurface, DisplayContext};
+use std::sync::mpsc;
+use crate::{Backend, Context, GpuTexture, RenderSurface, DisplayContext};
+
+struct SendablePtr(*mut std::ffi::c_void);
+unsafe impl Send for SendablePtr {}
 
 pub fn create_ui_pbuffer(
     display: *mut std::ffi::c_void,
@@ -183,6 +187,38 @@ impl RenderSurface for GlSurface {
         }
         .expect("Failed to resize GL surface");
     }
+}
+
+pub fn setup_ui_thread(
+    ui_context: &sdl3::video::GLContext,
+    closure: impl FnOnce(&Context) + Send + 'static,
+) -> mpsc::Receiver<DisplayList> {
+    let (tx, rx) = mpsc::channel();
+
+    let gl_context_ptr = Box::new(SendablePtr(unsafe {
+        std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_context)
+    }));
+
+    std::thread::spawn(move || {
+        let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
+        assert!(!egl_display.is_null(), "no EGL display");
+        eprintln!("[UI thread] EGL display obtained");
+
+        let ui_pbuffer = create_ui_pbuffer(egl_display, gl_context_ptr.0);
+        make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
+        eprintln!("[UI thread] GL context made current on pbuffer");
+
+        let (device, queue) = create_wgpu_device();
+        eprintln!("[UI thread] wGPU device created");
+
+        let impeller_ctx = create_impeller_context();
+        eprintln!("[UI thread] Impeller context created");
+
+        let gpu_ctx = Context::new(Backend::Gl, device, queue, impeller_ctx, tx);
+        closure(&gpu_ctx);
+    });
+
+    rx
 }
 
 pub(crate) fn setup_opengl_platform(
