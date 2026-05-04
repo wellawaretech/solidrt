@@ -93,10 +93,10 @@ impl TextureRegistry {
 }
 
 pub struct GpuContext {
-    pub backend: Backend,
-    pub wgpu_device: wgpu::Device,
-    pub wgpu_queue: wgpu::Queue,
-    pub impeller_ctx: Context,
+    backend: Backend,
+    wgpu_device: wgpu::Device,
+    wgpu_queue: wgpu::Queue,
+    impeller_ctx: Context,
     pub textures: TextureRegistry,
 }
 
@@ -205,6 +205,23 @@ impl GpuContext {
             impeller_ctx,
             textures: TextureRegistry::new(),
         }
+    }
+
+    pub fn get_or_create_texture(
+        &self,
+        id: u64,
+        width: u32,
+        height: u32,
+        make_pixels: impl FnOnce() -> Vec<u8>,
+    ) -> Ref<'_, TextureEntry> {
+        if self.textures.get(id).is_none() {
+            let pixels = make_pixels();
+            let gpu = GpuTexture::new(&self.wgpu_device, self.backend, width, height);
+            gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, width, height);
+            let impeller = self.adopt_texture(&gpu, width, height).expect("adopt texture failed");
+            self.textures.insert(id, TextureEntry { gpu, impeller });
+        }
+        self.textures.get(id).unwrap()
     }
 
     /// Adopt a wGPU texture into Impeller (zero-copy for GL, GPU copy for Vulkan).

@@ -26,15 +26,7 @@ fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) 
         let (w, h) = (256u32, 256u32);
         const BLUE_TEX: u64 = 1;
 
-        if ctx.textures.get(BLUE_TEX).is_none() {
-            let pixels = make_blue_pixels(w, h);
-            let gpu = display::GpuTexture::new(&ctx.wgpu_device, ctx.backend, w, h);
-            gpu.upload(&ctx.wgpu_device, &ctx.wgpu_queue, &pixels, w, h);
-            let impeller = ctx.adopt_texture(&gpu, w, h).expect("adopt texture failed");
-            ctx.textures.insert(BLUE_TEX, display::TextureEntry { gpu, impeller });
-        }
-
-        let entry = ctx.textures.get(BLUE_TEX).unwrap();
+        let entry = ctx.get_or_create_texture(BLUE_TEX, w, h, || make_blue_pixels(w, h));
         let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
         let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
         builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
