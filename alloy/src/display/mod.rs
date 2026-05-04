@@ -226,6 +226,25 @@ impl GpuContext {
         self.textures.get(id).unwrap()
     }
 
+    pub fn get_or_update_texture(
+        &self,
+        id: u64,
+        size: ISize,
+        make_pixels: impl FnOnce() -> Vec<u8>,
+    ) -> Rc<TextureEntry> {
+        let pixels = make_pixels();
+        if self.textures.get(id).is_none() {
+            let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
+            gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+            let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
+            self.textures.insert(id, TextureEntry { gpu, impeller });
+        } else {
+            let entry = self.textures.get(id).unwrap();
+            entry.gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+        }
+        self.textures.get(id).unwrap()
+    }
+
     /// Adopt a wGPU texture into Impeller (zero-copy for GL, GPU copy for Vulkan).
     pub fn adopt_texture(
         &self,
