@@ -15,9 +15,9 @@ fn draw(mut builder: DisplayListBuilder, ctx: &GpuContext) -> DisplayList {
     let src_rect = Rect::new(Point::new(0.0, 0.0), size.cast());
 
     const BLUE_TEX: u64 = 1;
-    let entry = ctx.get_or_create_texture(BLUE_TEX, size, || make_pixels(size, 0x334D80FF));
+    let tex = ctx.get_or_create_texture(BLUE_TEX, size, || make_pixels(size, 0x334D80FF));
     let dst_rect = Rect::new(Point::new(10.0, 10.0), size.cast());
-    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
+    builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
     let rect = Rect::new(Point::new(100.0, 100.0), Size::new(200.0, 200.0));
     let mut paint = Paint::default();
@@ -25,17 +25,15 @@ fn draw(mut builder: DisplayListBuilder, ctx: &GpuContext) -> DisplayList {
     builder.draw_rect(&rect, &paint);
 
     const GREEN_TEX: u64 = 2;
-    let entry = ctx.get_or_create_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033FF));
+    let tex = ctx.get_or_create_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033FF));
     let dst_rect = Rect::new(Point::new(280.0, 10.0), size.cast());
-    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
+    builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
     builder.build().expect("Failed to build display list")
 }
 
 fn main() {
-    wgpu_test::run(
-        "wgpu test",
-        ISize::new(1200, 800),
+    wgpu_test::setup("wgpu test", ISize::new(1200, 800)).run(
         |builder, ctx| draw(builder, ctx),
         |surface, dl| {
             surface.draw_display_list(dl).expect("Failed to draw display list");

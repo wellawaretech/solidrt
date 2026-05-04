@@ -70,6 +70,13 @@ pub struct TextureEntry {
     pub impeller: Texture,
 }
 
+impl std::ops::Deref for TextureEntry {
+    type Target = Texture;
+    fn deref(&self) -> &Texture {
+        &self.impeller
+    }
+}
+
 pub struct TextureRegistry {
     entries: RefCell<HashMap<u64, Rc<TextureEntry>>>,
 }
