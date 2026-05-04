@@ -1,6 +1,6 @@
 pub mod gl;
 
-use impellers::{Context, DisplayList, Texture};
+use impellers::{Context, DisplayList, ISize, Texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -62,7 +62,7 @@ impl DisplayContext {
 pub trait RenderSurface {
     fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>>;
     fn present(&mut self);
-    fn resize(&mut self, width: u32, height: u32);
+    fn resize(&mut self, size: ISize);
 }
 
 pub struct TextureEntry {
@@ -110,10 +110,10 @@ pub struct GpuTexture {
 }
 
 impl GpuTexture {
-    pub fn new(device: &wgpu::Device, backend: Backend, width: u32, height: u32) -> Self {
+    pub fn new(device: &wgpu::Device, backend: Backend, size: ISize) -> Self {
         let wgpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gpu_render_texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: size.width as u32, height: size.height as u32, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -126,7 +126,8 @@ impl GpuTexture {
         GpuTexture { wgpu_texture, backend }
     }
 
-    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], width: u32, height: u32) {
+    pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], size: ISize) {
+        let (width, height) = (size.width as u32, size.height as u32);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("texture_upload_buffer"),
             size: data.len() as u64,
@@ -166,8 +167,7 @@ impl GpuTexture {
 
 pub fn create_render_surface(
     platform: &DisplayContext,
-    width: u32,
-    height: u32,
+    size: ISize,
 ) -> Result<Box<dyn RenderSurface>, Box<dyn std::error::Error>> {
     match platform {
         DisplayContext::Gl {
@@ -177,7 +177,7 @@ pub fn create_render_surface(
             ..
         } => {
             let window = unsafe { &*(*window_opaque as *const sdl3::video::Window) };
-            gl::GlSurface::create(window, width, height)
+            gl::GlSurface::create(window, size)
                 .map(|s| Box::new(s) as Box<dyn RenderSurface>)
         }
         DisplayContext::Vulkan { .. } => {
@@ -206,15 +206,14 @@ impl GpuContext {
     pub fn get_or_create_texture(
         &self,
         id: u64,
-        width: u32,
-        height: u32,
+        size: ISize,
         make_pixels: impl FnOnce() -> Vec<u8>,
     ) -> Rc<TextureEntry> {
         if self.textures.get(id).is_none() {
             let pixels = make_pixels();
-            let gpu = GpuTexture::new(&self.wgpu_device, self.backend, width, height);
-            gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, width, height);
-            let impeller = self.adopt_texture(&gpu, width, height).expect("adopt texture failed");
+            let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
+            gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+            let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
             self.textures.insert(id, TextureEntry { gpu, impeller });
         }
         self.textures.get(id).unwrap()
@@ -224,11 +223,10 @@ impl GpuContext {
     pub fn adopt_texture(
         &self,
         gpu_texture: &GpuTexture,
-        width: u32,
-        height: u32,
+        size: ISize,
     ) -> Option<Texture> {
         match gpu_texture.backend {
-            Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, width, height),
+            Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, size),
             Backend::Vulkan => {
                 panic!("Vulkan backend not yet implemented");
             }

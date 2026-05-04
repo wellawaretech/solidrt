@@ -130,9 +130,9 @@ fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
 pub fn adopt_texture(
     gpu_texture: &GpuTexture,
     impeller_ctx: &ImpellerContext,
-    width: u32,
-    height: u32,
+    size: ISize,
 ) -> Option<Texture> {
+    let (width, height) = (size.width as u32, size.height as u32);
     let gl_handle = wgpu_texture_gl_handle(&gpu_texture.wgpu_texture);
 
     unsafe {
@@ -150,13 +150,12 @@ pub struct GlSurface {
 impl GlSurface {
     pub fn create(
         window: &sdl3::video::Window,
-        width: u32,
-        height: u32,
+        size: ISize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut ctx = create_impeller_context();
 
         let surface = unsafe {
-            ctx.wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(width as i64, height as i64))
+            ctx.wrap_fbo(0, PixelFormat::RGBA8888, size)
         }
         .ok_or_else(|| Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>)?;
 
@@ -178,10 +177,9 @@ impl RenderSurface for GlSurface {
         unsafe { sdl3::sys::video::SDL_GL_SwapWindow(self.window_raw as *mut _); }
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, size: ISize) {
         self.surface = unsafe {
-            self.ctx
-                .wrap_fbo(0, PixelFormat::RGBA8888, ISize::new(width as i64, height as i64))
+            self.ctx.wrap_fbo(0, PixelFormat::RGBA8888, size)
         }
         .expect("Failed to resize GL surface");
     }

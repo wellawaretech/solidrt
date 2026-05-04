@@ -1,12 +1,12 @@
 mod display;
 
-use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size, TextureSampling};
+use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size, ISize, TextureSampling};
 use sdl3::event::Event;
 use std::time::Duration;
 
-fn make_pixels(width: u32, height: u32, color: u32) -> Vec<u8> {
+fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
     let bytes = color.to_be_bytes();
-    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    let mut pixels = vec![0u8; (size.width * size.height * 4) as usize];
     for chunk in pixels.chunks_exact_mut(4) {
         chunk.copy_from_slice(&bytes);
     }
@@ -14,12 +14,12 @@ fn make_pixels(width: u32, height: u32, color: u32) -> Vec<u8> {
 }
 
 fn draw(mut builder: DisplayListBuilder, ctx: &display::GpuContext) -> DisplayList {
-    let (w, h) = (256u32, 256u32);
-    let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
+    let size = ISize::new(256, 256);
+    let src_rect = Rect::new(Point::new(0.0, 0.0), size.cast());
 
     const BLUE_TEX: u64 = 1;
-    let entry = ctx.get_or_create_texture(BLUE_TEX, w, h, || make_pixels(w, h, 0x334D80FF));
-    let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
+    let entry = ctx.get_or_create_texture(BLUE_TEX, size, || make_pixels(size, 0x334D80FF));
+    let dst_rect = Rect::new(Point::new(10.0, 10.0), size.cast());
     builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
     let rect = Rect::new(Point::new(100.0, 100.0), Size::new(200.0, 200.0));
@@ -28,8 +28,8 @@ fn draw(mut builder: DisplayListBuilder, ctx: &display::GpuContext) -> DisplayLi
     builder.draw_rect(&rect, &paint);
 
     const GREEN_TEX: u64 = 2;
-    let entry = ctx.get_or_create_texture(GREEN_TEX, w, h, || make_pixels(w, h, 0x4D8033FF));
-    let dst_rect = Rect::new(Point::new(280.0, 10.0), Size::new(w as f32, h as f32));
+    let entry = ctx.get_or_create_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033FF));
+    let dst_rect = Rect::new(Point::new(280.0, 10.0), size.cast());
     builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
     builder.build().expect("Failed to build display list")
@@ -57,8 +57,9 @@ fn main() {
         display::DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
     let (w, h) = window.size_in_pixels();
+    let window_size = ISize::new(w as i64, h as i64);
 
-    let mut render_surface = display::create_render_surface(&platform, w, h)
+    let mut render_surface = display::create_render_surface(&platform, window_size)
         .expect("Failed to create render surface");
 
     // Spawn UI thread (creates wGPU device and queue there)
