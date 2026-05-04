@@ -4,33 +4,33 @@ use impellers::{Color, DisplayList, DisplayListBuilder, Paint, Point, Rect, Size
 use sdl3::event::Event;
 use std::time::Duration;
 
-fn make_blue_pixels(width: u32, height: u32) -> Vec<u8> {
+fn make_pixels(width: u32, height: u32, color: u32) -> Vec<u8> {
+    let bytes = color.to_be_bytes();
     let mut pixels = vec![0u8; (width * height * 4) as usize];
-    for i in (0..pixels.len()).step_by(4) {
-        pixels[i] = 51;
-        pixels[i + 1] = 77;
-        pixels[i + 2] = 128;
-        pixels[i + 3] = 255;
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&bytes);
     }
     pixels
 }
 
-fn draw(mut builder: DisplayListBuilder, gpu_ctx: Option<&display::GpuContext>) -> DisplayList {
-    // Draw a red rectangle
+fn draw(mut builder: DisplayListBuilder, ctx: &display::GpuContext) -> DisplayList {
+    let (w, h) = (256u32, 256u32);
+    let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
+
+    const BLUE_TEX: u64 = 1;
+    let entry = ctx.get_or_create_texture(BLUE_TEX, w, h, || make_pixels(w, h, 0x334D80FF));
+    let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
+    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
+
     let rect = Rect::new(Point::new(100.0, 100.0), Size::new(200.0, 200.0));
     let mut paint = Paint::default();
     paint.set_color(Color::new_srgba(1.0, 0.0, 0.0, 1.0));
     builder.draw_rect(&rect, &paint);
 
-    if let Some(ctx) = gpu_ctx {
-        let (w, h) = (256u32, 256u32);
-        const BLUE_TEX: u64 = 1;
-
-        let entry = ctx.get_or_create_texture(BLUE_TEX, w, h, || make_blue_pixels(w, h));
-        let src_rect = Rect::new(Point::new(0.0, 0.0), Size::new(w as f32, h as f32));
-        let dst_rect = Rect::new(Point::new(10.0, 10.0), Size::new(w as f32, h as f32));
-        builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&Paint::default()));
-    }
+    const GREEN_TEX: u64 = 2;
+    let entry = ctx.get_or_create_texture(GREEN_TEX, w, h, || make_pixels(w, h, 0x4D8033FF));
+    let dst_rect = Rect::new(Point::new(280.0, 10.0), Size::new(w as f32, h as f32));
+    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
     builder.build().expect("Failed to build display list")
 }
@@ -66,7 +66,7 @@ fn main() {
         eprintln!("[UI thread] Starting display list generation loop");
         loop {
             let builder = DisplayListBuilder::new(None);
-            let dl = draw(builder, Some(gpu_ctx));
+            let dl = draw(builder, gpu_ctx);
 
             if tx.send(dl).is_err() {
                 break;

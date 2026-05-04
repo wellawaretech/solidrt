@@ -1,8 +1,9 @@
 pub mod gl;
 
 use impellers::{Context, DisplayList, Texture};
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::mpsc;
 
 pub struct SendablePtr(pub *mut std::ffi::c_void);
@@ -70,7 +71,7 @@ pub struct TextureEntry {
 }
 
 pub struct TextureRegistry {
-    entries: RefCell<HashMap<u64, TextureEntry>>,
+    entries: RefCell<HashMap<u64, Rc<TextureEntry>>>,
 }
 
 impl TextureRegistry {
@@ -78,17 +79,12 @@ impl TextureRegistry {
         TextureRegistry { entries: RefCell::new(HashMap::new()) }
     }
 
-    pub fn get(&self, id: u64) -> Option<Ref<'_, TextureEntry>> {
-        let borrow = self.entries.borrow();
-        if borrow.contains_key(&id) {
-            Some(Ref::map(borrow, |m| m.get(&id).unwrap()))
-        } else {
-            None
-        }
+    pub fn get(&self, id: u64) -> Option<Rc<TextureEntry>> {
+        self.entries.borrow().get(&id).map(Rc::clone)
     }
 
     pub fn insert(&self, id: u64, entry: TextureEntry) {
-        self.entries.borrow_mut().insert(id, entry);
+        self.entries.borrow_mut().insert(id, Rc::new(entry));
     }
 }
 
@@ -213,7 +209,7 @@ impl GpuContext {
         width: u32,
         height: u32,
         make_pixels: impl FnOnce() -> Vec<u8>,
-    ) -> Ref<'_, TextureEntry> {
+    ) -> Rc<TextureEntry> {
         if self.textures.get(id).is_none() {
             let pixels = make_pixels();
             let gpu = GpuTexture::new(&self.wgpu_device, self.backend, width, height);
