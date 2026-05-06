@@ -1,15 +1,15 @@
 [package]
-name = "qjsrt"
+name = "flux"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "qjsrt"
+name = "flux"
 path = "src/lib.rs"
 
 [[bin]]
-name = "qjsrt"
+name = "flux"
 path = "src/main.rs"
 required-features = ["compile"]
 

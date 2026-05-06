@@ -1,0 +1,12 @@
+[package]
+name = "lattice"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "solid-rt-runner"
+path = "src/main.rs"

@@ -1,4 +1,4 @@
-use qjsrt::{JsEngine, LogLevel};
+use flux::{JsEngine, LogLevel};
 
 fn log_fn(_level: LogLevel, msg: &str) {
     println!("[log] {msg}");

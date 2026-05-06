@@ -2,19 +2,19 @@ SOURCES := Cargo.toml Cargo.lock $(shell find src -type f -name '*.rs')
 
 .PHONY: build release test clean
 
-build: bin/qjsrt-dev
+build: bin/flux-dev
 
-release: bin/qjsrt
+release: bin/flux
 
-bin/qjsrt-dev: $(SOURCES)
+bin/flux-dev: $(SOURCES)
 	cargo build
 	@mkdir -p bin
-	cp target/debug/qjsrt bin/qjsrt-dev
+	cp target/debug/flux bin/flux-dev
 
-bin/qjsrt: $(SOURCES)
+bin/flux: $(SOURCES)
 	cargo build --release
 	@mkdir -p bin
-	cp target/release/qjsrt bin/qjsrt
+	cp target/release/flux bin/flux
 
 test:
 	cargo test

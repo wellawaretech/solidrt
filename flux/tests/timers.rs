@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use qjsrt::{JsEngine, LogLevel};
+use flux::{JsEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (

@@ -8,7 +8,7 @@ fn main() {
             std::process::exit(1);
         });
 
-    let bytecode = qjsrt::compile_source(&source, "stdin");
+    let bytecode = flux::compile_source(&source, "stdin");
     std::io::Write::write_all(&mut std::io::stdout(), &bytecode)
         .unwrap_or_else(|e| {
             eprintln!("error: failed to write stdout: {e}");

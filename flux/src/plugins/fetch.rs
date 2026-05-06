@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use crate::pending::PendingOps;
 
-const USER_AGENT: &str = concat!("qjsrt/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("flux/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, JsLifetime)]
 struct HttpClient(#[qjs(skip_trace)] Rc<reqwest::Client>);

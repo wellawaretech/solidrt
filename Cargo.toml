@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "alloy",
+  "flux", 
+  "packages/core/lattice",
+]
+
+[workspace.dependencies]

@@ -1,5 +1,5 @@
-use qjsrt::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
-use qjsrt::{on_shutdown, CtxLogger, JsEngine};
+use flux::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
+use flux::{on_shutdown, CtxLogger, JsEngine};
 
 #[derive(Clone, JsLifetime)]
 struct Identity(#[qjs(skip_trace)] String);
