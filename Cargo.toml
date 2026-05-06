@@ -4,5 +4,6 @@ members = [
   "flux", 
   "packages/core/lattice",
 ]
+resolver = "2"
 
 [workspace.dependencies]

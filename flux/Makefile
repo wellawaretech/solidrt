@@ -1,4 +1,5 @@
 SOURCES := Cargo.toml Cargo.lock $(shell find src -type f -name '*.rs')
+WORKSPACE_ROOT := ..
 
 .PHONY: build release test clean
 
@@ -9,12 +10,12 @@ release: bin/flux
 bin/flux-dev: $(SOURCES)
 	cargo build
 	@mkdir -p bin
-	cp target/debug/flux bin/flux-dev
+	cp $(WORKSPACE_ROOT)/target/debug/flux bin/flux-dev
 
 bin/flux: $(SOURCES)
 	cargo build --release
 	@mkdir -p bin
-	cp target/release/flux bin/flux
+	cp $(WORKSPACE_ROOT)/target/release/flux bin/flux
 
 test:
 	cargo test
