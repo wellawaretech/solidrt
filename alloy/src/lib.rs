@@ -1,4 +1,5 @@
 mod gl;
+pub mod sdl_utils;
 
 pub use impellers;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
@@ -290,16 +291,6 @@ impl DisplayContext {
     }
 }
 
-fn sdl_user_event(type_: u32) -> sdl3::event::Event {
-    sdl3::event::Event::User {
-        timestamp: 0,
-        window_id: 0,
-        type_,
-        code: 0,
-        data1: std::ptr::null_mut(),
-        data2: std::ptr::null_mut(),
-    }
-}
 
 pub struct App {
     sdl_context: sdl3::Sdl,
@@ -345,41 +336,31 @@ impl App {
         mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
     ) {
         let App {
-            sdl_context,
+            sdl_context: _sdl_context,
             _window,
             platform,
             mut render_surface,
         } = self;
 
-        let event_subsystem = sdl_context.event().expect("Failed to get event subsystem");
-        let dl_ready_event = unsafe {
-            event_subsystem.register_event().expect("Failed to register dl-ready event")
-        };
-        let event_sender = event_subsystem.event_sender();
-        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-            let _ = event_sender.push_event(sdl_user_event(dl_ready_event));
-        });
-
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
         let rx = platform.setup_ui_thread(ui, notify);
 
         let mut current_dl = rx.recv().expect("Failed to receive initial display list");
-        let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");
 
         'running: loop {
-            // Drain display lists, only render the most recent one.
+            sdl_utils::pump_events();
+
+            while let Some(event) = sdl_utils::poll_event() {
+                if let sdl3::event::Event::Quit { .. } = event {
+                    break 'running;
+                }
+            }
+
             while let Ok(new_dl) = rx.try_recv() {
                 current_dl = new_dl;
             }
 
             render(render_surface.as_mut(), &current_dl);
-
-            loop {
-                match event_pump.wait_event() {
-                    sdl3::event::Event::Quit { .. } => break 'running,
-                    sdl3::event::Event::User { type_, .. } if type_ == dl_ready_event => break,
-                    _ => {}
-                }
-            }
         }
     }
 }
