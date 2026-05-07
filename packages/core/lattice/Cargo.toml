@@ -10,3 +10,9 @@ crate-type = ["cdylib", "lib"]
 [[bin]]
 name = "solid-rt-runner"
 path = "src/main.rs"
+
+[dependencies]
+alloy = { workspace = true }
+flux = { workspace = true }
+rquickjs = { workspace = true }
+tokio = { workspace = true }
