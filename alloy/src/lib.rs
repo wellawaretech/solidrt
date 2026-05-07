@@ -14,7 +14,7 @@ macro_rules! log {
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 #[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
@@ -274,7 +274,7 @@ impl Context {
 impl DisplayContext {
     pub fn setup_ui_thread(
         &self,
-        closure: impl FnOnce(&Context) + Send + 'static,
+        closure: impl FnOnce(Arc<Context>) + Send + 'static,
     ) -> mpsc::Receiver<DisplayList> {
         match self {
             DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure),
@@ -324,7 +324,7 @@ pub fn setup(title: &str, size: ISize) -> App {
 impl App {
     pub fn run(
         self,
-        ui: impl FnOnce(&Context) + Send + 'static,
+        ui: impl FnOnce(Arc<Context>) + Send + 'static,
         mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
     ) {
         let App {

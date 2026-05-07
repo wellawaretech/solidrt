@@ -40,7 +40,7 @@ fn main() {
             let mut t = 0.0f32;
             loop {
                 let builder = DisplayListBuilder::new(None);
-                let dl = draw(builder, ctx, t);
+                let dl = draw(builder, &ctx, t);
                 if ctx.submit(dl).is_err() {
                     break;
                 }

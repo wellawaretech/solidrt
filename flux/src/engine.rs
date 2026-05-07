@@ -1,9 +1,10 @@
 use rquickjs::{Ctx, JsLifetime};
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
 use crate::plugins::events::EventChannels;
-use crate::plugins::{self, PluginFn};
+use crate::plugins::{self, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
 
@@ -37,6 +38,7 @@ pub fn on_shutdown<F: FnOnce(&Logger) + Send + 'static>(ctx: &Ctx<'_>, f: F) {
 
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
+    userdata: Vec<UserdataFn>,
     event_channels: Vec<(String, usize, bool)>,
     logger: Option<LogFn>,
     stack_size: Option<usize>,
@@ -48,6 +50,20 @@ impl JsEngineBuilder {
         F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
     {
         self.plugins.push(Box::new(f));
+        self
+    }
+
+    /// Store a value in the JS context's userdata before any plugins run.
+    /// Plugins can then retrieve it with `ctx.userdata::<T>()`.
+    pub fn userdata<T>(mut self, value: T) -> Self
+    where
+        T: for<'js> JsLifetime<'js> + Send + 'static,
+        for<'js> <T as JsLifetime<'js>>::Changed<'static>: Any,
+    {
+        self.userdata.push(Box::new(move |ctx| {
+            ctx.store_userdata(value)
+                .expect("failed to store userdata");
+        }));
         self
     }
 
@@ -76,6 +92,7 @@ impl JsEngineBuilder {
 
         JsEngine {
             setups: self.plugins,
+            userdata: self.userdata,
             event_channels,
             logger,
             stack_size: self.stack_size,
@@ -125,6 +142,7 @@ impl EventHandle {
 
 pub struct JsEngine {
     setups: Vec<PluginFn>,
+    userdata: Vec<UserdataFn>,
     event_channels: Arc<EventChannels>,
     logger: Logger,
     stack_size: Option<usize>,
@@ -134,6 +152,7 @@ impl JsEngine {
     pub fn builder() -> JsEngineBuilder {
         JsEngineBuilder {
             plugins: Vec::new(),
+            userdata: Vec::new(),
             logger: None,
             event_channels: Vec::new(),
             stack_size: None,
@@ -190,6 +209,7 @@ impl JsEngine {
         let logger = self.logger.clone();
         let (runtime, context, pending) = plugins::init_context(
             self.setups,
+            self.userdata,
             self.logger,
             self.stack_size,
             shutdown_hooks.clone(),
