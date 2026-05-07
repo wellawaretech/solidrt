@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel};
+use flux::{JsEngine, LogLevel, emit_event};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -31,11 +31,11 @@ fn run_with_events(
     let (log, log_fn) = capture_log();
     let engine = JsEngine::builder()
         .logger(log_fn)
-        .event_channel(channel, 1)
         .build();
-    let handle = engine.event_handle();
+    let handle = engine.exec_handle();
 
     let code = code.to_string();
+    let channel = channel.to_string();
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -53,7 +53,9 @@ fn run_with_events(
         if delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
-        handle.emit(channel, data.to_string());
+        let event = channel.clone();
+        let payload = data.to_string();
+        handle.exec(move |ctx| emit_event(&ctx, &event, payload));
     }
 
     engine_thread.join().expect("engine thread panicked");

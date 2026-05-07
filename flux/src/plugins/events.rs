@@ -4,8 +4,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::channels::SharedEventChannels;
-use crate::engine::TickHooks;
 use crate::pending::PendingOps;
 
 type Listener = (u32, Persistent<Function<'static>>);
@@ -63,15 +61,6 @@ pub(crate) fn init_events(ctx: &Ctx<'_>) {
     let globals = ctx.globals();
     globals.set("on", on_fn).unwrap();
     globals.set("off", off_fn).unwrap();
-
-    if ctx.userdata::<SharedEventChannels>().is_some() {
-        ctx.userdata::<TickHooks>().unwrap().add(|ctx| {
-            let shared = ctx.userdata::<SharedEventChannels>().unwrap();
-            for (event, data) in shared.0.drain_all() {
-                emit_event(ctx, &event, data);
-            }
-        });
-    }
 }
 
 pub fn emit_event(ctx: &Ctx<'_>, event: &str, data: String) {

@@ -5,13 +5,10 @@ pub mod io;
 pub mod timer;
 pub mod memory;
 
-use std::sync::Arc;
-
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx};
 
-use crate::channels::{EventChannels, SharedEventChannels};
-use crate::engine::{ShutdownHooks, TickHooks};
+use crate::engine::ShutdownHooks;
 use crate::logger::Logger;
 use crate::pending::PendingOps;
 
@@ -24,8 +21,6 @@ pub(crate) async fn init_context(
     logger: Logger,
     stack_size: Option<usize>,
     shutdown_hooks: ShutdownHooks,
-    tick_hooks: TickHooks,
-    event_channels: Option<Arc<EventChannels>>,
 ) -> (AsyncRuntime, AsyncContext, PendingOps) {
     let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
 
@@ -56,10 +51,6 @@ pub(crate) async fn init_context(
             ctx.store_userdata(pending.clone()).unwrap();
             ctx.store_userdata(logger).unwrap();
             ctx.store_userdata(shutdown_hooks).unwrap();
-            ctx.store_userdata(tick_hooks).unwrap();
-            if let Some(ec) = event_channels {
-                ctx.store_userdata(SharedEventChannels(ec)).unwrap();
-            }
             for store in userdata {
                 store(&ctx);
             }

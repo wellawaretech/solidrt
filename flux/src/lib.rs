@@ -1,11 +1,9 @@
-mod channels;
 mod engine;
 mod logger;
 pub(crate) mod pending;
 mod plugins;
 
-pub use channels::EventHandle;
-pub use engine::{JsEngine, JsEngineBuilder, ShutdownHooks, on_shutdown};
+pub use engine::{ExecHandle, JsEngine, JsEngineBuilder, ShutdownHooks, on_shutdown};
 pub use logger::{CtxLogger, Logger, LogLevel};
 pub use plugins::events::emit_event;
 pub use rquickjs;

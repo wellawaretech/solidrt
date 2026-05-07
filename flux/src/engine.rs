@@ -2,11 +2,11 @@ use rquickjs::{Ctx, JsLifetime};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-use crate::channels::{EventChannels, EventHandle};
 use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
 use crate::plugins::{self, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
+pub(crate) type ExecFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 
 #[derive(Clone, JsLifetime)]
 pub struct ShutdownHooks {
@@ -32,42 +32,28 @@ impl ShutdownHooks {
     }
 }
 
-type TickFn = Box<dyn for<'js> Fn(&Ctx<'js>) + Send + Sync>;
-
-/// Callbacks invoked on every event-loop iteration before the select.
-/// Plugins register into this to perform per-tick work (e.g. draining event channels).
-#[derive(Clone, JsLifetime)]
-pub(crate) struct TickHooks {
-    #[qjs(skip_trace)]
-    inner: Arc<Mutex<Vec<TickFn>>>,
-}
-
-impl TickHooks {
-    pub(crate) fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub(crate) fn add<F: for<'js> Fn(&Ctx<'js>) + Send + Sync + 'static>(&self, f: F) {
-        self.inner.lock().unwrap().push(Box::new(f));
-    }
-
-    fn run<'js>(&self, ctx: &Ctx<'js>) {
-        for f in self.inner.lock().unwrap().iter() {
-            f(ctx);
-        }
-    }
-}
-
 pub fn on_shutdown<F: FnOnce(&Logger) + Send + 'static>(ctx: &Ctx<'_>, f: F) {
     ctx.userdata::<ShutdownHooks>().unwrap().add(f);
+}
+
+/// Send-safe handle for pushing closures into the engine from other threads.
+#[derive(Clone)]
+pub struct ExecHandle {
+    tx: tokio::sync::mpsc::UnboundedSender<ExecFn>,
+}
+
+impl ExecHandle {
+    pub fn exec<F>(&self, f: F)
+    where
+        F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
+    {
+        let _ = self.tx.send(Box::new(f));
+    }
 }
 
 pub struct JsEngineBuilder {
     plugins: Vec<PluginFn>,
     userdata: Vec<UserdataFn>,
-    event_channels: Vec<(String, usize, bool)>,
     logger: Option<LogFn>,
     stack_size: Option<usize>,
 }
@@ -100,12 +86,6 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn event_channel(mut self, event: &str, capacity: usize) -> EventChannelConfig {
-        self.event_channels
-            .push((event.to_string(), capacity, false));
-        EventChannelConfig { builder: self }
-    }
-
     pub fn stack_size(mut self, limit: usize) -> Self {
         self.stack_size = Some(limit);
         self
@@ -116,57 +96,23 @@ impl JsEngineBuilder {
             Some(f) => Logger(Arc::from(f)),
             None => default_logger(),
         };
-
-        let (event_channels, wakeup) = if !self.event_channels.is_empty() {
-            let ec = Arc::new(EventChannels::new(self.event_channels, logger.clone()));
-            let wakeup = ec.wakeup();
-            (Some(ec), wakeup)
-        } else {
-            (None, Arc::new(tokio::sync::Notify::new()))
-        };
-
+        let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
         JsEngine {
             setups: self.plugins,
             userdata: self.userdata,
-            event_channels,
-            wakeup,
+            exec_tx,
+            exec_rx,
             logger,
             stack_size: self.stack_size,
         }
     }
 }
 
-pub struct EventChannelConfig {
-    builder: JsEngineBuilder,
-}
-
-impl EventChannelConfig {
-    pub fn trace(mut self) -> JsEngineBuilder {
-        self.builder.event_channels.last_mut().unwrap().2 = true;
-        self.builder
-    }
-
-    pub fn plugin<F>(self, f: F) -> JsEngineBuilder
-    where
-        F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
-    {
-        self.builder.plugin(f)
-    }
-
-    pub fn event_channel(self, event: &str, capacity: usize) -> EventChannelConfig {
-        self.builder.event_channel(event, capacity)
-    }
-
-    pub fn build(self) -> JsEngine {
-        self.builder.build()
-    }
-}
-
 pub struct JsEngine {
     setups: Vec<PluginFn>,
     userdata: Vec<UserdataFn>,
-    event_channels: Option<Arc<EventChannels>>,
-    wakeup: Arc<tokio::sync::Notify>,
+    exec_tx: tokio::sync::mpsc::UnboundedSender<ExecFn>,
+    exec_rx: tokio::sync::mpsc::UnboundedReceiver<ExecFn>,
     logger: Logger,
     stack_size: Option<usize>,
 }
@@ -177,7 +123,6 @@ impl JsEngine {
             plugins: Vec::new(),
             userdata: Vec::new(),
             logger: None,
-            event_channels: Vec::new(),
             stack_size: None,
         }
     }
@@ -186,13 +131,9 @@ impl JsEngine {
         Self::builder().build()
     }
 
-    /// Returns a Send-safe handle for emitting events from other threads.
-    pub fn event_handle(&self) -> EventHandle {
-        EventHandle::new(
-            self.event_channels
-                .clone()
-                .expect("event_handle() requires at least one event_channel() to be configured"),
-        )
+    /// Returns a Send-safe handle for pushing closures into the engine from other threads.
+    pub fn exec_handle(&self) -> ExecHandle {
+        ExecHandle { tx: self.exec_tx.clone() }
     }
 
     /// Evaluate pre-compiled bytecode as a module and run the event loop.
@@ -230,9 +171,8 @@ impl JsEngine {
         F: for<'js> FnOnce(Ctx<'js>) + Send,
     {
         let shutdown_hooks = ShutdownHooks::new();
-        let tick_hooks = TickHooks::new();
         let logger = self.logger.clone();
-        let wakeup = self.wakeup;
+        let mut exec_rx = self.exec_rx;
 
         let (runtime, context, pending) = plugins::init_context(
             self.setups,
@@ -240,22 +180,16 @@ impl JsEngine {
             self.logger,
             self.stack_size,
             shutdown_hooks.clone(),
-            tick_hooks,
-            self.event_channels,
         )
         .await;
 
         context.with(|ctx| task(ctx)).await;
 
         loop {
-            context
-                .with(|ctx| {
-                    ctx.userdata::<TickHooks>().unwrap().run(&ctx);
-                })
-                .await;
-
             tokio::select! {
-                _ = wakeup.notified() => {}
+                Some(f) = exec_rx.recv() => {
+                    context.with(|ctx| f(ctx)).await;
+                }
                 _ = pending.notified() => {}
                 _ = runtime.idle() => {
                     if pending.is_idle() {
