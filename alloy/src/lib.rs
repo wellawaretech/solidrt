@@ -99,6 +99,7 @@ pub struct Context {
     impeller_ctx: ImpellerContext,
     pub textures: TextureRegistry,
     tx: mpsc::Sender<DisplayList>,
+    notify: Arc<dyn Fn() + Send + Sync>,
 }
 
 // Safety: Context is thread-safe (Send + Sync) because:
@@ -202,6 +203,7 @@ impl Context {
         wgpu_queue: wgpu::Queue,
         impeller_ctx: ImpellerContext,
         tx: mpsc::Sender<DisplayList>,
+        notify: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
         Context {
             backend,
@@ -210,11 +212,14 @@ impl Context {
             impeller_ctx,
             textures: TextureRegistry::new(),
             tx,
+            notify,
         }
     }
 
     pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-        self.tx.send(dl).map_err(|_| ())
+        self.tx.send(dl).map_err(|_| ())?;
+        (self.notify)();
+        Ok(())
     }
 
     pub fn get_or_create_texture(
@@ -275,12 +280,24 @@ impl DisplayContext {
     pub fn setup_ui_thread(
         &self,
         closure: impl FnOnce(Arc<Context>) + Send + 'static,
+        notify: Arc<dyn Fn() + Send + Sync>,
     ) -> mpsc::Receiver<DisplayList> {
         match self {
-            DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure),
+            DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure, notify),
             DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
             DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
         }
+    }
+}
+
+fn sdl_user_event(type_: u32) -> sdl3::event::Event {
+    sdl3::event::Event::User {
+        timestamp: 0,
+        window_id: 0,
+        type_,
+        code: 0,
+        data1: std::ptr::null_mut(),
+        data2: std::ptr::null_mut(),
     }
 }
 
@@ -334,12 +351,22 @@ impl App {
             mut render_surface,
         } = self;
 
-        let rx = platform.setup_ui_thread(ui);
+        let event_subsystem = sdl_context.event().expect("Failed to get event subsystem");
+        let dl_ready_event = unsafe {
+            event_subsystem.register_event().expect("Failed to register dl-ready event")
+        };
+        let event_sender = event_subsystem.event_sender();
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _ = event_sender.push_event(sdl_user_event(dl_ready_event));
+        });
+
+        let rx = platform.setup_ui_thread(ui, notify);
 
         let mut current_dl = rx.recv().expect("Failed to receive initial display list");
         let mut event_pump = sdl_context.event_pump().expect("Failed to get event pump");
 
         'running: loop {
+            // Drain display lists, only render the most recent one.
             while let Ok(new_dl) = rx.try_recv() {
                 current_dl = new_dl;
             }
@@ -347,10 +374,10 @@ impl App {
             render(render_surface.as_mut(), &current_dl);
 
             loop {
-                match event_pump.wait_event_timeout(std::time::Duration::from_millis(100)) {
-                    Some(sdl3::event::Event::Quit { .. }) => break 'running,
-                    Some(_) => continue,
-                    None => break,
+                match event_pump.wait_event() {
+                    sdl3::event::Event::Quit { .. } => break 'running,
+                    sdl3::event::Event::User { type_, .. } if type_ == dl_ready_event => break,
+                    _ => {}
                 }
             }
         }

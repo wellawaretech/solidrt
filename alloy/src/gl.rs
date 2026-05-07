@@ -192,6 +192,7 @@ impl RenderSurface for GlSurface {
 pub fn setup_ui_thread(
     ui_context: &sdl3::video::GLContext,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
+    notify: Arc<dyn Fn() + Send + Sync>,
 ) -> mpsc::Receiver<DisplayList> {
     let (tx, rx) = mpsc::channel();
 
@@ -214,7 +215,7 @@ pub fn setup_ui_thread(
         let impeller_ctx = create_impeller_context();
         eprintln!("[UI thread] Impeller context created");
 
-        let gpu_ctx = Arc::new(Context::new(Backend::Gl, device, queue, impeller_ctx, tx));
+        let gpu_ctx = Arc::new(Context::new(Backend::Gl, device, queue, impeller_ctx, tx, notify));
         closure(gpu_ctx);
     });
 
