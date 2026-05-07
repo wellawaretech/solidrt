@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel, emit_event};
+use flux::{emit_event, JsEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -23,15 +23,9 @@ fn log_output(log: &[(LogLevel, String)]) -> String {
         .join("\n")
 }
 
-fn run_with_events(
-    code: &str,
-    channel: &str,
-    events: Vec<(&str, u64)>,
-) -> String {
+fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> String {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder()
-        .logger(log_fn)
-        .build();
+    let engine = JsEngine::builder().logger(log_fn).build();
     let handle = engine.exec_handle();
 
     let code = code.to_string();
@@ -67,9 +61,9 @@ fn run_with_events(
 fn emit_triggers_listener() {
     let output = run_with_events(
         r#"
-        on("test", (data) => {
+        let unsub = on("test", (data) => {
             console.log("received:" + data.value);
-            off("test", 1);
+            unsub();
         });
         "#,
         "test",
@@ -85,11 +79,11 @@ fn event_delivery_with_set_interval() {
         let count = 0;
         let intervalId = setInterval(() => {}, 100);
 
-        let listenerId = on("render", () => {
+        let unsub = on("render", () => {
             count++;
             console.log("render:" + count);
             if (count >= 3) {
-                off("render", listenerId);
+                unsub();
                 clearInterval(intervalId);
             }
         });
@@ -106,15 +100,15 @@ fn microtask_registered_listener_with_set_interval() {
         r#"
         let count = 0;
         let intervalId = setInterval(() => {}, 100);
-        let listenerId;
+        let unsub;
 
         // Register the event listener inside a microtask, like Solid.js onSettled does
         queueMicrotask(() => {
-            listenerId = on("render", () => {
+            unsub = on("render", () => {
                 count++;
                 console.log("render:" + count);
                 if (count >= 3) {
-                    off("render", listenerId);
+                    unsub();
                     clearInterval(intervalId);
                 }
             });
