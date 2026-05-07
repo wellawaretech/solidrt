@@ -5,17 +5,28 @@ pub mod io;
 pub mod timer;
 pub mod memory;
 
+use std::sync::Arc;
+
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx};
 
-use crate::engine::ShutdownHooks;
+use crate::channels::{EventChannels, SharedEventChannels};
+use crate::engine::{ShutdownHooks, TickHooks};
 use crate::logger::Logger;
 use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 pub(crate) type UserdataFn = Box<dyn for<'js> FnOnce(&Ctx<'js>) + Send>;
 
-pub(crate) async fn init_context(setups: Vec<PluginFn>, userdata: Vec<UserdataFn>, logger: Logger, stack_size: Option<usize>, shutdown_hooks: ShutdownHooks) -> (AsyncRuntime, AsyncContext, PendingOps) {
+pub(crate) async fn init_context(
+    setups: Vec<PluginFn>,
+    userdata: Vec<UserdataFn>,
+    logger: Logger,
+    stack_size: Option<usize>,
+    shutdown_hooks: ShutdownHooks,
+    tick_hooks: TickHooks,
+    event_channels: Option<Arc<EventChannels>>,
+) -> (AsyncRuntime, AsyncContext, PendingOps) {
     let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
 
     if let Some(limit) = stack_size {
@@ -45,6 +56,10 @@ pub(crate) async fn init_context(setups: Vec<PluginFn>, userdata: Vec<UserdataFn
             ctx.store_userdata(pending.clone()).unwrap();
             ctx.store_userdata(logger).unwrap();
             ctx.store_userdata(shutdown_hooks).unwrap();
+            ctx.store_userdata(tick_hooks).unwrap();
+            if let Some(ec) = event_channels {
+                ctx.store_userdata(SharedEventChannels(ec)).unwrap();
+            }
             for store in userdata {
                 store(&ctx);
             }
@@ -52,7 +67,6 @@ pub(crate) async fn init_context(setups: Vec<PluginFn>, userdata: Vec<UserdataFn
             io::init_io(&ctx);
             fetch::init_fetch(&ctx);
             console::init_console(&ctx);
-
             events::init_events(&ctx);
             for setup in setups {
                 setup(ctx.clone());

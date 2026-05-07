@@ -2,8 +2,8 @@ use rquickjs::{Ctx, JsLifetime};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
+use crate::channels::{EventChannels, EventHandle};
 use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
-use crate::plugins::events::EventChannels;
 use crate::plugins::{self, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
@@ -28,6 +28,34 @@ impl ShutdownHooks {
     fn run(self, logger: &Logger) {
         for hook in self.inner.lock().unwrap().drain(..) {
             hook(logger);
+        }
+    }
+}
+
+type TickFn = Box<dyn for<'js> Fn(&Ctx<'js>) + Send + Sync>;
+
+/// Callbacks invoked on every event-loop iteration before the select.
+/// Plugins register into this to perform per-tick work (e.g. draining event channels).
+#[derive(Clone, JsLifetime)]
+pub(crate) struct TickHooks {
+    #[qjs(skip_trace)]
+    inner: Arc<Mutex<Vec<TickFn>>>,
+}
+
+impl TickHooks {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub(crate) fn add<F: for<'js> Fn(&Ctx<'js>) + Send + Sync + 'static>(&self, f: F) {
+        self.inner.lock().unwrap().push(Box::new(f));
+    }
+
+    fn run<'js>(&self, ctx: &Ctx<'js>) {
+        for f in self.inner.lock().unwrap().iter() {
+            f(ctx);
         }
     }
 }
@@ -88,12 +116,20 @@ impl JsEngineBuilder {
             Some(f) => Logger(Arc::from(f)),
             None => default_logger(),
         };
-        let event_channels = Arc::new(EventChannels::new(self.event_channels));
+
+        let (event_channels, wakeup) = if !self.event_channels.is_empty() {
+            let ec = Arc::new(EventChannels::new(self.event_channels, logger.clone()));
+            let wakeup = ec.wakeup();
+            (Some(ec), wakeup)
+        } else {
+            (None, Arc::new(tokio::sync::Notify::new()))
+        };
 
         JsEngine {
             setups: self.plugins,
             userdata: self.userdata,
             event_channels,
+            wakeup,
             logger,
             stack_size: self.stack_size,
         }
@@ -126,24 +162,11 @@ impl EventChannelConfig {
     }
 }
 
-/// Send-safe handle for emitting events into the engine from other threads.
-pub struct EventHandle {
-    event_channels: Arc<EventChannels>,
-    logger: Logger,
-}
-
-impl EventHandle {
-    pub fn emit(&self, event: &str, data: String) {
-        if !self.event_channels.send(event, data, &self.logger) {
-            panic!("emit: event \"{event}\" not registered with event_channel()");
-        }
-    }
-}
-
 pub struct JsEngine {
     setups: Vec<PluginFn>,
     userdata: Vec<UserdataFn>,
-    event_channels: Arc<EventChannels>,
+    event_channels: Option<Arc<EventChannels>>,
+    wakeup: Arc<tokio::sync::Notify>,
     logger: Logger,
     stack_size: Option<usize>,
 }
@@ -165,10 +188,11 @@ impl JsEngine {
 
     /// Returns a Send-safe handle for emitting events from other threads.
     pub fn event_handle(&self) -> EventHandle {
-        EventHandle {
-            event_channels: self.event_channels.clone(),
-            logger: self.logger.clone(),
-        }
+        EventHandle::new(
+            self.event_channels
+                .clone()
+                .expect("event_handle() requires at least one event_channel() to be configured"),
+        )
     }
 
     /// Evaluate pre-compiled bytecode as a module and run the event loop.
@@ -206,28 +230,32 @@ impl JsEngine {
         F: for<'js> FnOnce(Ctx<'js>) + Send,
     {
         let shutdown_hooks = ShutdownHooks::new();
+        let tick_hooks = TickHooks::new();
         let logger = self.logger.clone();
+        let wakeup = self.wakeup;
+
         let (runtime, context, pending) = plugins::init_context(
             self.setups,
             self.userdata,
             self.logger,
             self.stack_size,
             shutdown_hooks.clone(),
+            tick_hooks,
+            self.event_channels,
         )
         .await;
-        let event_channels = self.event_channels;
 
         context.with(|ctx| task(ctx)).await;
 
         loop {
             context
                 .with(|ctx| {
-                    crate::plugins::events::drain_and_dispatch(&ctx, &event_channels);
+                    ctx.userdata::<TickHooks>().unwrap().run(&ctx);
                 })
                 .await;
 
             tokio::select! {
-                _ = event_channels.notified() => {}
+                _ = wakeup.notified() => {}
                 _ = pending.notified() => {}
                 _ = runtime.idle() => {
                     if pending.is_idle() {

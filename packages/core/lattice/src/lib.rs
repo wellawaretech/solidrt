@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
-use flux::JsEngine;
+use flux::{EventHandle, JsEngine};
 
 #[derive(Clone, JsLifetime)]
 struct AlloyContext(#[qjs(skip_trace)] Arc<alloy::Context>);
@@ -33,9 +34,19 @@ pub fn plugin(qtx: QuickJsContext<'_>) {
     globals.set("draw", draw_fn).unwrap();
 }
 
+pub fn on_render_plugin(qtx: QuickJsContext<'_>) {
+    //TODO
+
+}
+
+const SOURCE: &str = "setInterval(draw, 100)";
+
 pub fn start(rt: &tokio::runtime::Runtime) {
     let handle = rt.handle().clone();
     let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
+    let start_time = std::time::Instant::now();
+    let event_handle: Arc<OnceLock<EventHandle>> = Arc::new(OnceLock::new());
+    let event_handle_for_setup = event_handle.clone();
 
     app.run(
         move |atx| {
@@ -43,7 +54,11 @@ pub fn start(rt: &tokio::runtime::Runtime) {
                 .logger(|_level, msg| log!("[js] {msg}"))
                 .userdata(AlloyContext(atx))
                 .plugin(plugin)
+                .event_channel("render", 1)
                 .build();
+
+            let eh = engine.event_handle();
+            event_handle_for_setup.set(eh).ok();
 
             handle.block_on(async {
                     let local = tokio::task::LocalSet::new();
@@ -63,14 +78,17 @@ pub fn start(rt: &tokio::runtime::Runtime) {
                             tokio::time::sleep(std::time::Duration::from_millis(8)).await;
                         }
                     });
-                    local.run_until(engine.eval_source("setInterval(draw, 100)")).await;
+                    local.run_until(engine.eval_source(SOURCE)).await;
                 });
         },
-        |display, dl| {
+        move |display, dl| {
             display
                 .draw_display_list(dl)
                 .expect("Failed to draw display list");
             display.present();
+            if let Some(eh) = event_handle.get() {
+                eh.emit("render", start_time.elapsed().as_secs_f64().to_string());
+            }
         },
     );
 }
