@@ -10,4 +10,4 @@ resolver = "2"
 alloy = { path = "alloy" }
 flux = { path = "flux" }
 rquickjs = { version = "0.11.0", features = ["rust-alloc", "futures", "macro", "loader"] }
-tokio = { version = "1.50.0", features = ["rt"] }
+tokio = { version = "1.50.0", features = ["rt", "rt-multi-thread", "time"] }

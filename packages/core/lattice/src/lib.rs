@@ -33,22 +33,19 @@ pub fn plugin(qtx: QuickJsContext<'_>) {
     globals.set("draw", draw_fn).unwrap();
 }
 
-pub fn start() {
-    let rt = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
+pub fn start(rt: &tokio::runtime::Runtime) {
+    let handle = rt.handle().clone();
+    let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
 
-    rt.run(
-        |atx| {
+    app.run(
+        move |atx| {
             let engine = JsEngine::builder()
                 .logger(|_level, msg| log!("[js] {msg}"))
                 .userdata(AlloyContext(atx))
                 .plugin(plugin)
                 .build();
 
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
+            handle.block_on(async {
                     let local = tokio::task::LocalSet::new();
                     local.spawn_local(async {
                         loop {
