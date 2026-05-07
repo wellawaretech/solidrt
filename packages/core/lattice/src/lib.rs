@@ -48,7 +48,26 @@ pub fn start() {
                 .enable_all()
                 .build()
                 .unwrap()
-                .block_on(engine.eval_source("draw()"));
+                .block_on(async {
+                    let local = tokio::task::LocalSet::new();
+                    local.spawn_local(async {
+                        loop {
+                            while let Some(event) = alloy::sdl_utils::poll_event() {
+                                match event {
+                                    alloy::sdl3::event::Event::Quit { .. } => {
+                                        std::process::exit(0);
+                                    }
+                                    alloy::sdl3::event::Event::KeyDown { keycode, .. } => {
+                                        log!("[key] {keycode:?}");
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+                        }
+                    });
+                    local.run_until(engine.eval_source("setInterval(draw, 100)")).await;
+                });
         },
         |display, dl| {
             display

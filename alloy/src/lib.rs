@@ -345,22 +345,18 @@ impl App {
         let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
         let rx = platform.setup_ui_thread(ui, notify);
 
-        let mut current_dl = rx.recv().expect("Failed to receive initial display list");
-
-        'running: loop {
-            sdl_utils::pump_events();
-
-            while let Some(event) = sdl_utils::poll_event() {
-                if let sdl3::event::Event::Quit { .. } = event {
-                    break 'running;
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(8)) {
+                Ok(mut dl) => {
+                    while let Ok(newer) = rx.try_recv() {
+                        dl = newer;
+                    }
+                    render(render_surface.as_mut(), &dl);
                 }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
-
-            while let Ok(new_dl) = rx.try_recv() {
-                current_dl = new_dl;
-            }
-
-            render(render_surface.as_mut(), &current_dl);
+            sdl_utils::pump_events();
         }
     }
 }
