@@ -1,6 +1,6 @@
 mod rendertree;
 
-use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TypographyContext};
+use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
 use flux::{emit_event, ExecHandle, FluxEngine};
@@ -66,11 +66,10 @@ pub fn start(rt: &tokio::runtime::Runtime) {
             }
 
             {
-                let typography_ctx = TypographyContext::default();
                 let mut builder = DisplayListBuilder::new(None);
                 let mut tree = render_tree.borrow_mut();
                 let root_id = tree.root.unwrap();
-                rendertree::frame::composite(&mut builder, &mut tree, root_id, &typography_ctx);
+                rendertree::frame::composite(&mut builder, &mut tree, root_id);
                 if let Some(dl) = builder.build() {
                     atx.submit(dl).expect("Failed to submit display list");
                 }

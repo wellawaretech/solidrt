@@ -1,4 +1,4 @@
-use alloy::impellers::{DisplayListBuilder, TypographyContext};
+use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
 use taffy::Point;
 
@@ -9,24 +9,26 @@ pub fn composite(
     builder: &mut DisplayListBuilder,
     scene: &mut RenderTree,
     root_id: NodeId,
-    typography_ctx: &TypographyContext,
 ) {
-    let mut ctx = BuildContext::new(typography_ctx);
-
-    let root_style = &scene.node(root_id).layout_data().style;
-    let width = root_style.size.width.into_option().unwrap_or(800.0);
-    let height = root_style.size.height.into_option().unwrap_or(600.0);
-    ctx.size = WH::new(width, height);
+    let (width, height) = {
+        let style = &scene.node(root_id).layout_data().style;
+        (
+            style.size.width.into_option().unwrap_or(800.0),
+            style.size.height.into_option().unwrap_or(600.0),
+        )
+    };
 
     if scene.node(root_id).layout_data().cache.is_empty() {
         let available_space = Size {
             width: AvailableSpace::Definite(width),
             height: AvailableSpace::Definite(height),
         };
-        let mut layout_ctx = LayoutContext { render_tree: scene, typography_ctx };
+        let mut layout_ctx = LayoutContext { render_tree: scene };
         taffy::compute_root_layout(&mut layout_ctx, root_id, available_space);
     }
 
+    let mut ctx = BuildContext::new(&scene.typography_ctx);
+    ctx.size = WH::new(width, height);
     build_recursive(scene, root_id, &mut ctx, builder);
 }
 

@@ -13,6 +13,7 @@ use alloy::impellers::TypographyContext;
 pub struct RenderTree {
     nodes: HashMap<NodeId, Node>,
     pub root: Option<NodeId>,
+    pub typography_ctx: TypographyContext,
 }
 
 impl RenderTree {
@@ -20,6 +21,7 @@ impl RenderTree {
         Self {
             nodes: HashMap::new(),
             root: None,
+            typography_ctx: TypographyContext::default(),
         }
     }
 
@@ -139,7 +141,6 @@ impl RenderTree {
 
 pub struct LayoutContext<'a> {
     pub render_tree: &'a mut RenderTree,
-    pub typography_ctx: &'a TypographyContext,
 }
 
 impl<'a> TraversePartialTree for LayoutContext<'a> {
@@ -223,7 +224,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
             let has_measurement = matches!(&node.node_type, Primitive::Text(_) | Primitive::Rect(_));
 
             if has_measurement {
-                let tc = tree.typography_ctx;
+                let tc = &tree.render_tree.typography_ctx;
                 let style = &tree.render_tree.node(node_id).layout_data().style;
                 let node_type = &tree.render_tree.node(node_id).node_type;
                 compute_leaf_layout(inputs, style, |_, _| 0.0, |known, available| {
