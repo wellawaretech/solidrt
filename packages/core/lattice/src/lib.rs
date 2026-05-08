@@ -69,7 +69,7 @@ pub fn start(rt: &tokio::runtime::Runtime) {
                 let mut builder = DisplayListBuilder::new(None);
                 let mut tree = render_tree.borrow_mut();
                 let root_id = tree.root.unwrap();
-                rendertree::frame::composite(&mut builder, &mut tree, root_id);
+                rendertree::composite::composite(&mut builder, &mut tree, root_id);
                 if let Some(dl) = builder.build() {
                     atx.submit(dl).expect("Failed to submit display list");
                 }

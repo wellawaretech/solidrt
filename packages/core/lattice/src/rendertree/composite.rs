@@ -2,34 +2,33 @@ use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
 use taffy::Point;
 
-use crate::rendertree::WH;
-use crate::rendertree::{BuildContext, LayoutContext, Primitive, RenderTree};
+use crate::rendertree::{WH, BuildContext, LayoutContext, Primitive, RenderTree};
 
 pub fn composite(
     builder: &mut DisplayListBuilder,
-    scene: &mut RenderTree,
+    tree: &mut RenderTree,
     root_id: NodeId,
 ) {
     let (width, height) = {
-        let style = &scene.node(root_id).layout_data().style;
+        let style = &tree.node(root_id).layout_data().style;
         (
             style.size.width.into_option().unwrap_or(800.0),
             style.size.height.into_option().unwrap_or(600.0),
         )
     };
 
-    if scene.node(root_id).layout_data().cache.is_empty() {
+    if tree.node(root_id).layout_data().cache.is_empty() {
         let available_space = Size {
             width: AvailableSpace::Definite(width),
             height: AvailableSpace::Definite(height),
         };
-        let mut layout_ctx = LayoutContext { render_tree: scene };
+        let mut layout_ctx = LayoutContext { render_tree: tree };
         taffy::compute_root_layout(&mut layout_ctx, root_id, available_space);
     }
 
-    let mut ctx = BuildContext::new(&scene.typography_ctx);
+    let mut ctx = BuildContext::new(&tree.typography_ctx);
     ctx.size = WH::new(width, height);
-    build_recursive(scene, root_id, &mut ctx, builder);
+    build_recursive(tree, root_id, &mut ctx, builder);
 }
 
 fn build_recursive<'a>(
@@ -46,7 +45,7 @@ fn build_recursive<'a>(
 
     node.build(ctx, builder);
 
-    // TextNode children are StringNodes — not visual, skip recursion
+    // TextNode children are StringNodes - not visual, skip recursion
     if let Primitive::Text(_) = &node.node_type {
         return;
     }

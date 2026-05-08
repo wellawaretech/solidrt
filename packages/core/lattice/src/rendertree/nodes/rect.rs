@@ -39,6 +39,32 @@ impl Buildable for RectNode {
     }
 }
 
+impl Measurable for RectNode {
+    fn measure(
+        &self,
+        known_dimensions: TaffySize<Option<f32>>,
+        _available_space: TaffySize<AvailableSpace>,
+        _typography_ctx: &TypographyContext,
+    ) -> TaffySize<f32> {
+        TaffySize {
+            width: known_dimensions.width.unwrap_or(self.w.unwrap_or(0.0)),
+            height: known_dimensions.height.unwrap_or(self.h.unwrap_or(0.0)),
+        }
+    }
+}
+
+impl From<RectNode> for Node {
+    fn from(rect: RectNode) -> Node {
+        Node::new(
+            Primitive::Rect(rect),
+            Some(taffy::Style {
+                display: taffy::Display::Block,
+                ..Default::default()
+            }),
+        )
+    }
+}
+
 impl Hittable for RectNode {
     fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
         let rx = self.x.unwrap_or(0.0);
@@ -100,30 +126,4 @@ fn in_rounded_rect(point: XY, rx: f32, ry: f32, rw: f32, rh: f32, r: f32) -> boo
         return true;
     }
     dx * dx + dy * dy <= r * r
-}
-
-impl Measurable for RectNode {
-    fn measure(
-        &self,
-        known_dimensions: TaffySize<Option<f32>>,
-        _available_space: TaffySize<AvailableSpace>,
-        _typography_ctx: &TypographyContext,
-    ) -> TaffySize<f32> {
-        TaffySize {
-            width: known_dimensions.width.unwrap_or(self.w.unwrap_or(0.0)),
-            height: known_dimensions.height.unwrap_or(self.h.unwrap_or(0.0)),
-        }
-    }
-}
-
-impl From<RectNode> for Node {
-    fn from(rect: RectNode) -> Node {
-        Node::new(
-            Primitive::Rect(rect),
-            Some(taffy::Style {
-                display: taffy::Display::Block,
-                ..Default::default()
-            }),
-        )
-    }
 }

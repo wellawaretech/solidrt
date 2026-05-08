@@ -1,4 +1,4 @@
-pub mod frame;
+pub mod composite;
 pub mod nodes;
 mod render_tree;
 
