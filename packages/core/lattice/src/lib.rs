@@ -1,10 +1,8 @@
-use std::sync::Arc;
-use std::sync::OnceLock;
-
 use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
 use flux::{emit_event, ExecHandle, JsEngine};
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, JsLifetime)]
 struct AlloyContext(#[qjs(skip_trace)] Arc<alloy::Context>);
@@ -35,7 +33,7 @@ pub fn plugin(qtx: QuickJsContext<'_>) {
 }
 
 // const SOURCE: &str = "setInterval(draw, 100)";
-const SOURCE: &str = "on('render', draw); draw()";
+const SOURCE: &str = "Flux.on('render', draw); draw()";
 
 pub fn start(rt: &tokio::runtime::Runtime) {
     let handle = rt.handle().clone();
@@ -52,8 +50,7 @@ pub fn start(rt: &tokio::runtime::Runtime) {
                 .plugin(plugin)
                 .build();
 
-            let eh = engine.exec_handle();
-            exec_handle_for_setup.set(eh).ok();
+            exec_handle_for_setup.set(engine.exec_handle()).ok();
 
             handle.block_on(async {
                     let local = tokio::task::LocalSet::new();

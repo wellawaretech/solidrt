@@ -6,7 +6,7 @@ pub mod timer;
 pub mod memory;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-use rquickjs::{AsyncContext, AsyncRuntime, Ctx};
+use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Object};
 
 use crate::engine::ShutdownHooks;
 use crate::logger::Logger;
@@ -54,11 +54,16 @@ pub(crate) async fn init_context(
             for store in userdata {
                 store(&ctx);
             }
+            let flux = Object::new(ctx.clone()).unwrap();
+
             timer::init_timers(&ctx);
             io::init_io(&ctx);
             fetch::init_fetch(&ctx);
             console::init_console(&ctx);
-            events::init_events(&ctx);
+            events::init_events(&ctx, &flux);
+
+            ctx.globals().set("Flux", flux).unwrap();
+
             for setup in setups {
                 setup(ctx.clone());
             }

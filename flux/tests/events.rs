@@ -61,7 +61,7 @@ fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> Strin
 fn emit_triggers_listener() {
     let output = run_with_events(
         r#"
-        let unsub = on("test", (data) => {
+        let unsub = Flux.on("test", (data) => {
             console.log("received:" + data.value);
             unsub();
         });
@@ -79,7 +79,7 @@ fn event_delivery_with_set_interval() {
         let count = 0;
         let intervalId = setInterval(() => {}, 100);
 
-        let unsub = on("render", () => {
+        let unsub = Flux.on("render", () => {
             count++;
             console.log("render:" + count);
             if (count >= 3) {
@@ -104,7 +104,7 @@ fn microtask_registered_listener_with_set_interval() {
 
         // Register the event listener inside a microtask, like Solid.js onSettled does
         queueMicrotask(() => {
-            unsub = on("render", () => {
+            unsub = Flux.on("render", () => {
                 count++;
                 console.log("render:" + count);
                 if (count >= 3) {

@@ -1,9 +1,8 @@
 use rquickjs::function::MutFn;
-use rquickjs::{Ctx, Function, Persistent, Value};
+use rquickjs::{Ctx, Function, Object, Persistent, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-
 use crate::pending::PendingOps;
 
 type Listener = (u32, Persistent<Function<'static>>);
@@ -30,13 +29,11 @@ impl Default for ListenerMap {
     }
 }
 
-pub(crate) fn init_events(ctx: &Ctx<'_>) {
+pub(crate) fn init_events<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
     ctx.store_userdata(ListenerMap::default()).unwrap();
 
     let on_fn = Function::new(ctx.clone(), on_impl).unwrap();
-
-    let globals = ctx.globals();
-    globals.set("on", on_fn).unwrap();
+    flux.set("on", on_fn).unwrap();
 }
 
 // on(event, callback) -> unsubscribe
