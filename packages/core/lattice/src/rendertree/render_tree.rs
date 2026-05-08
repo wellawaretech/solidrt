@@ -25,10 +25,6 @@ impl RenderTree {
         }
     }
 
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
     pub fn add_node(&mut self, id: u64, node: Node) -> NodeId {
         let node_id: NodeId = NodeId::from(id);
         if self.nodes.contains_key(&node_id) {
@@ -135,9 +131,7 @@ impl RenderTree {
     }
 }
 
-// ============================================================================
-// LayoutContext — wraps RenderTree + external context for Taffy layout computation
-// ============================================================================
+// --- Taffy layout integration ---------------------------------------------------
 
 pub struct LayoutContext<'a> {
     pub render_tree: &'a mut RenderTree,

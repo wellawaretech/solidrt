@@ -1,5 +1,4 @@
 pub mod frame;
-pub mod layout;
 pub mod nodes;
 mod render_tree;
 
@@ -10,8 +9,6 @@ pub use render_tree::{LayoutContext, RenderTree};
 use alloy::impellers::{DisplayListBuilder, TypographyContext};
 use taffy::prelude::*;
 use taffy::Cache;
-
-// use constants::element_type;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct XY {
@@ -225,24 +222,3 @@ impl Node {
         self.node_type.build(ctx, builder);
     }
 }
-
-// pub fn create_element_with_id(scene: &mut RenderTree, id: u64, elem_type: u8) -> NodeId {
-//     let node = match elem_type {
-//         element_type::WINDOW => WindowNode::default().into(),
-//         element_type::VIEW => ViewNode::default().into(),
-//         element_type::STRING => StringNode::default().into(),
-//         element_type::TEXT => TextNode::default().into(),
-//         element_type::RECTANGLE => RectNode::default().into(),
-//         element_type::RAW_RECTANGLE => Node::new(Primitive::Rect(RectNode::default()), None),
-//         // element_type::RAW_OVAL => Node::new(Primitive::Oval(OvalNode::default()), None),
-//         // element_type::RAW_PATH => Node::new(Primitive::Path(PathNode::default()), None),
-//         // element_type::RAW_TEXTURE => Node::new(Primitive::Texture(TextureNode::default()), None),
-//         element_type::RAW_TEXT => Node::new(Primitive::Text(TextNode::default()), None),
-//         // element_type::AUDIO => AudioNode::default().into(),
-//         // element_type::OVAL => OvalNode::default().into(),
-//         // element_type::PATH => PathNode::default().into(),
-//         // element_type::TEXTURE => TextureNode::default().into(),
-//         _ => panic!("element type {} not recognized", elem_type),
-//     };
-//     scene.add_node(id, node)
-// }
