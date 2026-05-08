@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel};
+use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -34,7 +34,7 @@ fn error_output(log: &[(LogLevel, String)]) -> String {
 #[tokio::test]
 async fn import_alloc() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -53,7 +53,7 @@ async fn import_alloc() {
 #[tokio::test]
 async fn import_memset() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -73,7 +73,7 @@ async fn import_memset() {
 #[tokio::test]
 async fn import_memset32() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -94,7 +94,7 @@ async fn import_memset32() {
 #[tokio::test]
 async fn memset_offset() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -114,7 +114,7 @@ async fn memset_offset() {
 #[tokio::test]
 async fn import_free() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -136,7 +136,7 @@ async fn import_free() {
 #[tokio::test]
 async fn memset_out_of_bounds() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"

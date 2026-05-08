@@ -51,14 +51,14 @@ impl ExecHandle {
     }
 }
 
-pub struct JsEngineBuilder {
+pub struct FluxEngineBuilder {
     plugins: Vec<PluginFn>,
     userdata: Vec<UserdataFn>,
     logger: Option<LogFn>,
     stack_size: Option<usize>,
 }
 
-impl JsEngineBuilder {
+impl FluxEngineBuilder {
     pub fn plugin<F>(mut self, f: F) -> Self
     where
         F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
@@ -91,13 +91,13 @@ impl JsEngineBuilder {
         self
     }
 
-    pub fn build(self) -> JsEngine {
+    pub fn build(self) -> FluxEngine {
         let logger = match self.logger {
             Some(f) => Logger(Arc::from(f)),
             None => default_logger(),
         };
         let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
-        JsEngine {
+        FluxEngine {
             setups: self.plugins,
             userdata: self.userdata,
             exec_tx,
@@ -108,7 +108,7 @@ impl JsEngineBuilder {
     }
 }
 
-pub struct JsEngine {
+pub struct FluxEngine {
     setups: Vec<PluginFn>,
     userdata: Vec<UserdataFn>,
     exec_tx: tokio::sync::mpsc::UnboundedSender<ExecFn>,
@@ -117,9 +117,9 @@ pub struct JsEngine {
     stack_size: Option<usize>,
 }
 
-impl JsEngine {
-    pub fn builder() -> JsEngineBuilder {
-        JsEngineBuilder {
+impl FluxEngine {
+    pub fn builder() -> FluxEngineBuilder {
+        FluxEngineBuilder {
             plugins: Vec::new(),
             userdata: Vec::new(),
             logger: None,

@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel};
+use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -30,7 +30,7 @@ fn has_error(log: &[(LogLevel, String)]) -> bool {
 #[tokio::test]
 async fn clear_timeout_on_unknown_id_throws() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine.eval_source("clearTimeout(999)").await;
 
     let log = log.lock().unwrap();
@@ -40,7 +40,7 @@ async fn clear_timeout_on_unknown_id_throws() {
 #[tokio::test]
 async fn clear_timeout_on_not_yet_fired_cancels() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -59,7 +59,7 @@ async fn clear_timeout_on_not_yet_fired_cancels() {
 #[tokio::test]
 async fn clear_timeout_on_unknown_id_caught() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -79,7 +79,7 @@ async fn clear_timeout_on_unknown_id_caught() {
 #[tokio::test]
 async fn set_timeout_returns_numeric_id() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -97,7 +97,7 @@ async fn set_timeout_returns_numeric_id() {
 #[tokio::test]
 async fn set_interval_returns_numeric_id() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -115,7 +115,7 @@ async fn set_interval_returns_numeric_id() {
 #[tokio::test]
 async fn queue_microtask_runs_before_timers() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -134,7 +134,7 @@ async fn queue_microtask_runs_before_timers() {
 #[tokio::test]
 async fn set_timeout_fires() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source("setTimeout(() => console.log('fired'), 10);")
         .await;
@@ -146,7 +146,7 @@ async fn set_timeout_fires() {
 #[tokio::test]
 async fn set_timeout_chained() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -164,7 +164,7 @@ async fn set_timeout_chained() {
 #[tokio::test]
 async fn promise_with_timer() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -181,7 +181,7 @@ async fn promise_with_timer() {
 #[tokio::test]
 async fn multiple_concurrent_timers() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -203,7 +203,7 @@ async fn multiple_concurrent_timers() {
 #[tokio::test]
 async fn microtask_after_timer() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -221,7 +221,7 @@ async fn microtask_after_timer() {
 #[tokio::test]
 async fn deep_promise_chain_after_timer() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -243,7 +243,7 @@ async fn deep_promise_chain_after_timer() {
 #[tokio::test]
 async fn queue_microtask_after_timer() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -265,7 +265,7 @@ async fn queue_microtask_after_timer() {
 #[tokio::test]
 async fn microtask_triggers_state_update() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -285,7 +285,7 @@ async fn microtask_triggers_state_update() {
 #[tokio::test]
 async fn async_await_after_timer() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"

@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel};
+use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -26,7 +26,7 @@ fn log_output(log: &[(LogLevel, String)]) -> String {
 #[tokio::test]
 async fn promise_resolve() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source("Promise.resolve('resolved').then(v => console.log(v))")
         .await;
@@ -38,7 +38,7 @@ async fn promise_resolve() {
 #[tokio::test]
 async fn promise_then_chain() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -57,7 +57,7 @@ async fn promise_then_chain() {
 #[tokio::test]
 async fn promise_catch() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -74,7 +74,7 @@ async fn promise_catch() {
 #[tokio::test]
 async fn promise_all() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"
@@ -94,7 +94,7 @@ async fn promise_all() {
 #[tokio::test]
 async fn async_function() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source(
             r#"

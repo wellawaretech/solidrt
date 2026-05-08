@@ -3,7 +3,7 @@ mod logger;
 pub(crate) mod pending;
 mod plugins;
 
-pub use engine::{ExecHandle, JsEngine, JsEngineBuilder, ShutdownHooks, on_shutdown};
+pub use engine::{ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks, on_shutdown};
 pub use logger::{CtxLogger, Logger, LogLevel};
 pub use plugins::flux::events::emit_event;
 pub use rquickjs;

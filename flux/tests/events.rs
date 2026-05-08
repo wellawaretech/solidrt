@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{emit_event, JsEngine, LogLevel};
+use flux::{emit_event, FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -25,7 +25,7 @@ fn log_output(log: &[(LogLevel, String)]) -> String {
 
 fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> String {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     let handle = engine.exec_handle();
 
     let code = code.to_string();

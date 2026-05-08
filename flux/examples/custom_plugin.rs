@@ -1,5 +1,5 @@
 use flux::rquickjs::{function::MutFn, Ctx, Function, JsLifetime};
-use flux::{on_shutdown, CtxLogger, JsEngine};
+use flux::{on_shutdown, CtxLogger, FluxEngine};
 
 #[derive(Clone, JsLifetime)]
 struct Identity(#[qjs(skip_trace)] String);
@@ -27,7 +27,7 @@ fn whoami_plugin(ctx: Ctx<'_>) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let engine = JsEngine::builder().plugin(whoami_plugin).build();
+    let engine = FluxEngine::builder().plugin(whoami_plugin).build();
 
     engine
         .eval_source(r#"console.log(`Hello, ${whoami()}!`)"#)

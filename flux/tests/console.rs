@@ -1,6 +1,6 @@
 #![cfg(feature = "compile")]
 
-use flux::{JsEngine, LogLevel};
+use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
 fn capture_log() -> (
@@ -25,7 +25,7 @@ fn messages_at(log: &[(LogLevel, String)], level: LogLevel) -> Vec<&str> {
 #[tokio::test]
 async fn console_log_prints_to_stdout() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine.eval_source("console.log('hello')").await;
 
     let log = log.lock().unwrap();
@@ -37,7 +37,7 @@ async fn console_log_prints_to_stdout() {
 #[tokio::test]
 async fn console_warn_prints_to_stderr() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine.eval_source("console.warn('warning')").await;
 
     let log = log.lock().unwrap();
@@ -48,7 +48,7 @@ async fn console_warn_prints_to_stderr() {
 #[tokio::test]
 async fn console_error_prints_to_stderr() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine.eval_source("console.error('oops')").await;
 
     let log = log.lock().unwrap();
@@ -59,7 +59,7 @@ async fn console_error_prints_to_stderr() {
 #[tokio::test]
 async fn console_log_multiple_args() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine.eval_source("console.log('a', 'b', 'c')").await;
 
     let log = log.lock().unwrap();
@@ -69,7 +69,7 @@ async fn console_log_multiple_args() {
 #[tokio::test]
 async fn console_log_mixed_types() {
     let (log, log_fn) = capture_log();
-    let engine = JsEngine::builder().logger(log_fn).build();
+    let engine = FluxEngine::builder().logger(log_fn).build();
     engine
         .eval_source("console.log('count:', 42, true, null)")
         .await;

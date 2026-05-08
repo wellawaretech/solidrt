@@ -1,7 +1,7 @@
 use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
-use flux::{emit_event, ExecHandle, JsEngine};
+use flux::{emit_event, ExecHandle, FluxEngine};
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, JsLifetime)]
@@ -44,7 +44,7 @@ pub fn start(rt: &tokio::runtime::Runtime) {
 
     app.run(
         move |atx| {
-            let engine = JsEngine::builder()
+            let engine = FluxEngine::builder()
                 .logger(|_level, msg| log!("[js] {msg}"))
                 .userdata(AlloyContext(atx))
                 .plugin(plugin)

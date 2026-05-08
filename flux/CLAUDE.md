@@ -11,7 +11,7 @@ cargo test
 ## Feature flags
 
 - **default** — library only, bytecode evaluation via `eval()`.
-- **`compile`** — enables `eval_source()` on `JsEngine`, `compile_source()` in the library, and the `qjsrt` compiler binary (stdin JS → stdout bytecode).
+- **`compile`** — enables `eval_source()` on `FluxEngine`, `compile_source()` in the library, and the `qjsrt` compiler binary (stdin JS → stdout bytecode).
 
 ## Architecture
 
@@ -19,13 +19,13 @@ The engine is a generic "run closures on a JS thread" executor. It has no knowle
 
 **Key files:**
 
-- `engine.rs` — `JsEngine`, `JsEngineBuilder`, generic event loop. Receives `JsCommand::Exec` (a boxed closure) and runs it on the JS context.
+- `engine.rs` — `FluxEngine`, `FluxEngineBuilder`, generic event loop. Receives `JsCommand::Exec` (a boxed closure) and runs it on the JS context.
 - `pending.rs` — `PendingOps`. Reference-counted async operation tracker. `hold()`/`release()` gates process completion.
 - `plugins/mod.rs` — `init_context()` sets up the QuickJS runtime, module loaders, and all built-in plugins. Also defines the `PluginFn` type.
 - `plugins/events.rs` — Both cross-thread `EventChannels` (Send+Sync buffering) and JS-thread listener dispatch (`on`/`off`/`emit_event`).
-- `lib.rs` — Public API. Re-exports `JsEngine`, `JsEngineBuilder`, `JsSession`, `LogLevel`, `emit_event`, and `rquickjs`. Also exposes `compile_source()` behind the `compile` feature.
+- `lib.rs` — Public API. Re-exports `FluxEngine`, `FluxEngineBuilder`, `JsSession`, `LogLevel`, `emit_event`, and `rquickjs`. Also exposes `compile_source()` behind the `compile` feature.
 
-**Caller-side evaluation:** `eval()` and `eval_source()` are methods on `JsEngine` that construct a closure containing the module-loading logic and send it via `exec()`. The engine event loop just runs the closure and waits for `PendingOps` to drain. Adding new eval modes requires no engine changes.
+**Caller-side evaluation:** `eval()` and `eval_source()` are methods on `FluxEngine` that construct a closure containing the module-loading logic and send it via `exec()`. The engine event loop just runs the closure and waits for `PendingOps` to drain. Adding new eval modes requires no engine changes.
 
 ## Constraints
 
