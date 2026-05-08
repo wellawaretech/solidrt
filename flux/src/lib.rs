@@ -5,7 +5,7 @@ mod plugins;
 
 pub use engine::{ExecHandle, JsEngine, JsEngineBuilder, ShutdownHooks, on_shutdown};
 pub use logger::{CtxLogger, Logger, LogLevel};
-pub use plugins::events::emit_event;
+pub use plugins::flux::events::emit_event;
 pub use rquickjs;
 
 #[cfg(feature = "compile")]
