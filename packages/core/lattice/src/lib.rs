@@ -1,7 +1,11 @@
-use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
+mod rendertree;
+
+use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TypographyContext};
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
 use flux::{emit_event, ExecHandle, FluxEngine};
+use rendertree::RenderTree;
+use std::cell::RefCell;
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, JsLifetime)]
@@ -16,15 +20,15 @@ impl std::ops::Deref for AlloyContext {
 
 pub fn plugin(qtx: QuickJsContext<'_>) {
     let draw_fn = Function::new(qtx.clone(), |qtx: QuickJsContext<'_>| {
-        let mut builder = DisplayListBuilder::new(None);
-        let rect = Rect::new(Point::new(200.0, 100.0), Size::new(200.0, 200.0));
-        let mut paint = Paint::default();
-        paint.set_color(Color::new_srgba(1.0, 0.0, 0.0, 1.0));
-        builder.draw_rect(&rect, &paint);
-        let dl = builder.build().unwrap();
+        // let mut builder = DisplayListBuilder::new(None);
+        // let rect = Rect::new(Point::new(200.0, 100.0), Size::new(200.0, 200.0));
+        // let mut paint = Paint::default();
+        // paint.set_color(Color::new_srgba(1.0, 0.0, 0.0, 1.0));
+        // builder.draw_rect(&rect, &paint);
+        // let dl = builder.build().unwrap();
 
-        let atx = qtx.userdata::<AlloyContext>().unwrap();
-        atx.submit(dl).expect("Failed to submit display list");
+        // let atx = qtx.userdata::<AlloyContext>().unwrap();
+        // atx.submit(dl).expect("Failed to submit display list");
     })
     .unwrap();
 
@@ -44,6 +48,34 @@ pub fn start(rt: &tokio::runtime::Runtime) {
 
     app.run(
         move |atx| {
+            let render_tree = RefCell::new(RenderTree::new());
+            {
+                let mut tree = render_tree.borrow_mut();
+                let window = rendertree::nodes::WindowNode::default();
+                let window_id = tree.add_node(1, window.into());
+                tree.root = Some(window_id);
+
+                let mut rect = rendertree::nodes::RectNode::default();
+                rect.x = Some(200.0);
+                rect.y = Some(100.0);
+                rect.w = Some(200.0);
+                rect.h = Some(200.0);
+                rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 1.0, 0.0, 1.0);
+                let rect_id = tree.add_node(2, rect.into());
+                tree.insert_node(window_id, rect_id, None);
+            }
+
+            {
+                let typography_ctx = TypographyContext::default();
+                let mut builder = DisplayListBuilder::new(None);
+                let mut tree = render_tree.borrow_mut();
+                let root_id = tree.root.unwrap();
+                rendertree::frame::composite(&mut builder, &mut tree, root_id, &typography_ctx);
+                if let Some(dl) = builder.build() {
+                    atx.submit(dl).expect("Failed to submit display list");
+                }
+            }
+
             let engine = FluxEngine::builder()
                 .logger(|_level, msg| log!("[js] {msg}"))
                 .userdata(AlloyContext(atx))
