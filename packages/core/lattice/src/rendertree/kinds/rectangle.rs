@@ -1,10 +1,10 @@
-use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Measurable, Node, Primitive, XY};
+use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Measurable, Element, ElementKind, XY};
 use super::PaintState;
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size, TypographyContext};
 use taffy::{AvailableSpace, Size as TaffySize};
 
 #[derive(Clone, Debug, Default)]
-pub struct RectNode {
+pub struct Rectangle {
     pub x: Option<f32>,
     pub y: Option<f32>,
     pub w: Option<f32>,
@@ -13,7 +13,7 @@ pub struct RectNode {
     pub paint: PaintState,
 }
 
-impl Buildable for RectNode {
+impl Buildable for Rectangle {
     fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
         let x = self.x.unwrap_or(0.0);
         let y = self.y.unwrap_or(0.0);
@@ -39,7 +39,7 @@ impl Buildable for RectNode {
     }
 }
 
-impl Measurable for RectNode {
+impl Measurable for Rectangle {
     fn measure(
         &self,
         known_dimensions: TaffySize<Option<f32>>,
@@ -53,19 +53,23 @@ impl Measurable for RectNode {
     }
 }
 
-impl From<RectNode> for Node {
-    fn from(rect: RectNode) -> Node {
-        Node::new(
-            Primitive::Rect(rect),
-            Some(taffy::Style {
+impl Rectangle {
+    pub fn with_layout(self) -> Element {
+        Element::with_layout(
+            ElementKind::Rectangle(self),
+            taffy::Style {
                 display: taffy::Display::Block,
                 ..Default::default()
-            }),
+            },
         )
+    }
+
+    pub fn no_layout(self) -> Element {
+        Element::no_layout(ElementKind::Rectangle(self))
     }
 }
 
-impl Hittable for RectNode {
+impl Hittable for Rectangle {
     fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
         let rx = self.x.unwrap_or(0.0);
         let ry = self.y.unwrap_or(0.0);

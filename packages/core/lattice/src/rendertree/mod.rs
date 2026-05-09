@@ -1,8 +1,8 @@
 pub mod composite;
-pub mod nodes;
+mod kinds;
 mod render_tree;
 
-pub use nodes::*;
+pub use kinds::{Rectangle, Span, Text, View, Window};
 pub use render_tree::{LayoutContext, RenderTree};
 
 
@@ -51,7 +51,7 @@ impl<'a> BuildContext<'a> {
     }
 }
 
-/// Trait for node type build behavior
+/// Trait for element type build behavior
 pub trait Buildable {
     fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder);
 }
@@ -61,15 +61,15 @@ pub struct HitContext {
     pub size: WH,
 }
 
-/// Trait for per-node hit testing behavior.
+/// Trait for per-element hit testing behavior.
 pub trait Hittable {
-    /// Transform a point from parent space into this node's local space.
+    /// Transform a point from parent space into this element's local space.
     /// Default: identity (no transform).
     fn transform_to_local(&self, point: XY, _ctx: &HitContext) -> XY {
         point
     }
 
-    /// Check if a point (already in local coordinates) is within this node's hit shape.
+    /// Check if a point (already in local coordinates) is within this element's hit shape.
     fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
         point.x >= 0.0 && point.x < ctx.size.w && point.y >= 0.0 && point.y < ctx.size.h
     }
@@ -85,57 +85,56 @@ pub trait Measurable {
     ) -> Size<f32>;
 }
 
-/// Enum wrapping all node types
-pub enum Primitive {
-    Window(WindowNode),
-    View(ViewNode),
-    Rect(RectNode),
-    // Oval(OvalNode),
-    // Path(PathNode),
-    Text(TextNode),
-    String(StringNode),
-    // Texture(TextureNode),
-    // Audio(AudioNode),
+pub enum ElementKind {
+    Window(Window),
+    View(View),
+    Rectangle(Rectangle),
+    // Oval(Oval),
+    // Path(Path),
+    Text(Text),
+    Span(Span),
+    // Texture(Texture),
+    // Audio(Audio),
 }
 
-impl Buildable for Primitive {
+impl Buildable for ElementKind {
     fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
         match self {
-            Primitive::Window(n) => n.build(ctx, builder),
-            Primitive::View(n) => n.build(ctx, builder),
-            Primitive::Rect(n) => n.build(ctx, builder),
-            // Primitive::Oval(n) => n.build(ctx, builder),
-            // Primitive::Path(n) => n.build(ctx, builder),
-            Primitive::Text(n) => n.build(ctx, builder),
-            // Primitive::Texture(n) => n.build(ctx, builder),
-            Primitive::String(_) => {}
-            // Primitive::Audio(_) => {}
+            ElementKind::Window(n) => n.build(ctx, builder),
+            ElementKind::View(n) => n.build(ctx, builder),
+            ElementKind::Rectangle(n) => n.build(ctx, builder),
+            // ElementKind::Oval(n) => n.build(ctx, builder),
+            // ElementKind::Path(n) => n.build(ctx, builder),
+            ElementKind::Text(n) => n.build(ctx, builder),
+            // ElementKind::Texture(n) => n.build(ctx, builder),
+            ElementKind::Span(_) => {}
+            // ElementKind::Audio(_) => {}
         }
     }
 }
 
-impl Hittable for Primitive {
+impl Hittable for ElementKind {
     fn transform_to_local(&self, point: XY, ctx: &HitContext) -> XY {
         match self {
-            Primitive::View(n) => n.transform_to_local(point, ctx),
+            ElementKind::View(n) => n.transform_to_local(point, ctx),
             _ => point,
         }
     }
 
     fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
         match self {
-            Primitive::Rect(n) => n.is_in_bounds(point, ctx),
-            // Primitive::Oval(n) => n.is_in_bounds(point, ctx),
-            // Primitive::Path(n) => n.is_in_bounds(point, ctx),
-            // Primitive::Texture(n) => n.is_in_bounds(point, ctx),
-            Primitive::String(_) => false,
-            // Primitive::Audio(_) => false,
+            ElementKind::Rectangle(n) => n.is_in_bounds(point, ctx),
+            // ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
+            // ElementKind::Path(n) => n.is_in_bounds(point, ctx),
+            // ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
+            ElementKind::Span(_) => false,
+            // ElementKind::Audio(_) => false,
             _ => point.x >= 0.0 && point.x < ctx.size.w && point.y >= 0.0 && point.y < ctx.size.h,
         }
     }
 }
 
-impl Measurable for Primitive {
+impl Measurable for ElementKind {
     fn measure(
         &self,
         known_dimensions: Size<Option<f32>>,
@@ -143,11 +142,11 @@ impl Measurable for Primitive {
         typography_ctx: &TypographyContext,
     ) -> Size<f32> {
         match self {
-            Primitive::Text(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // Primitive::Texture(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // Primitive::Path(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // Primitive::Oval(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            Primitive::Rect(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            ElementKind::Text(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            // ElementKind::Texture(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            // ElementKind::Path(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, typography_ctx),
             _ => Size::ZERO,
         }
     }
@@ -171,34 +170,43 @@ impl LayoutData {
     }
 }
 
-/// Controls whether a node participates in hit testing.
+/// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerEvents {
-    /// Default: node is hit-testable; miss clips children.
+    /// Default: element is hit-testable; miss clips children.
     Auto = 0,
-    /// Node is transparent to hit testing.
+    /// Element is transparent to hit testing.
     None = 1,
-    /// Node captures all pointer events within bounds, stopping propagation.
+    /// Element captures all pointer events within bounds, stopping propagation.
     All = 2,
 }
 
-pub struct Node {
-    pub node_type: Primitive,
+pub struct Element {
+    pub kind: ElementKind,
     pub children: Vec<NodeId>,
     pub parent: Option<NodeId>,
     pub layout: Option<LayoutData>,
     pub pointer_events: PointerEvents,
 }
 
-impl Node {
-    pub fn new(node_type: Primitive, style: Option<Style>) -> Self {
-        let pointer_events = PointerEvents::Auto;
+impl Element {
+    pub fn with_layout(kind: ElementKind, style: Style) -> Self {
         Self {
-            node_type,
+            kind,
             children: vec![],
             parent: None,
-            layout: style.map(LayoutData::new),
-            pointer_events,
+            layout: Some(LayoutData::new(style)),
+            pointer_events: PointerEvents::Auto,
+        }
+    }
+
+    pub fn no_layout(kind: ElementKind) -> Self {
+        Self {
+            kind,
+            children: vec![],
+            parent: None,
+            layout: None,
+            pointer_events: PointerEvents::Auto,
         }
     }
 
@@ -207,11 +215,11 @@ impl Node {
     }
 
     pub fn layout_data(&self) -> &LayoutData {
-        self.layout.as_ref().expect("node has no layout data")
+        self.layout.as_ref().expect("element has no layout data")
     }
 
     pub fn layout_data_mut(&mut self) -> &mut LayoutData {
-        self.layout.as_mut().expect("node has no layout data")
+        self.layout.as_mut().expect("element has no layout data")
     }
 
     pub fn style_mut(&mut self) -> Option<&mut Style> {
@@ -219,6 +227,6 @@ impl Node {
     }
 
     pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-        self.node_type.build(ctx, builder);
+        self.kind.build(ctx, builder);
     }
 }

@@ -2,7 +2,7 @@ use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
 use taffy::Point;
 
-use crate::rendertree::{WH, BuildContext, LayoutContext, Primitive, RenderTree};
+use crate::rendertree::{WH, BuildContext, LayoutContext, ElementKind, RenderTree};
 
 pub fn composite(
     builder: &mut DisplayListBuilder,
@@ -37,20 +37,20 @@ fn build_recursive<'a>(
     ctx: &mut BuildContext<'a>,
     builder: &mut DisplayListBuilder,
 ) {
-    let node = scene.node(node_id);
+    let element = scene.node(node_id);
 
-    if let Primitive::View(_) = &node.node_type {
+    if let ElementKind::View(_) = &element.kind {
         builder.save();
     }
 
-    node.build(ctx, builder);
+    element.build(ctx, builder);
 
-    // TextNode children are StringNodes - not visual, skip recursion
-    if let Primitive::Text(_) = &node.node_type {
+    // Text children are Spans — not visual, skip recursion
+    if let ElementKind::Text(_) = &element.kind {
         return;
     }
 
-    for &child_id in &node.children {
+    for &child_id in &element.children {
         let child = scene.node(child_id);
 
         let pos = child
@@ -80,7 +80,7 @@ fn build_recursive<'a>(
             ctx.origin.x -= pad_left;
             ctx.origin.y -= pad_top;
         } else {
-            if let Some(layout) = &node.layout {
+            if let Some(layout) = &element.layout {
                 ctx.size.w = layout.computed.size.width;
                 ctx.size.h = layout.computed.size.height;
             }
@@ -92,7 +92,7 @@ fn build_recursive<'a>(
         builder.translate(-pos.x, -pos.y);
     }
 
-    if let Primitive::View(_) = &node.node_type {
+    if let ElementKind::View(_) = &element.kind {
         builder.restore();
     }
 }

@@ -7,11 +7,11 @@ use taffy::{
     LayoutGridContainer, RunMode,
 };
 
-use crate::rendertree::{Measurable, Node, Primitive};
+use crate::rendertree::{Measurable, Element, ElementKind};
 use alloy::impellers::TypographyContext;
 
 pub struct RenderTree {
-    nodes: HashMap<NodeId, Node>,
+    nodes: HashMap<NodeId, Element>,
     pub root: Option<NodeId>,
     pub typography_ctx: TypographyContext,
 }
@@ -25,22 +25,22 @@ impl RenderTree {
         }
     }
 
-    pub fn add_node(&mut self, id: u64, node: Node) -> NodeId {
+    pub fn add_node(&mut self, id: u64, element: Element) -> NodeId {
         let node_id: NodeId = NodeId::from(id);
         if self.nodes.contains_key(&node_id) {
             panic!("duplicate node id {}", id);
         }
-        self.nodes.insert(node_id, node);
+        self.nodes.insert(node_id, element);
         node_id
     }
 
-    pub fn node(&self, id: NodeId) -> &Node {
+    pub fn node(&self, id: NodeId) -> &Element {
         self.nodes
             .get(&id)
             .expect(&format!("node {:?} not found", id))
     }
 
-    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
+    pub fn node_mut(&mut self, id: NodeId) -> &mut Element {
         self.nodes
             .get_mut(&id)
             .expect(&format!("node {:?} not found", id))
@@ -106,7 +106,7 @@ impl RenderTree {
 
     fn delete_recursive(&mut self, node_id: NodeId) {
         let child_ids: Vec<NodeId> = self.nodes.get(&node_id)
-            .map(|n| n.children.clone())
+            .map(|e| e.children.clone())
             .unwrap_or_default();
         for child_id in child_ids {
             self.delete_recursive(child_id);
@@ -117,16 +117,16 @@ impl RenderTree {
     pub fn invalidate_cache(&mut self, node_id: NodeId) {
         let mut current = Some(node_id);
         while let Some(id) = current {
-            let node = self.node_mut(id);
-            let Some(layout) = &mut node.layout else {
-                current = node.parent;
+            let element = self.node_mut(id);
+            let Some(layout) = &mut element.layout else {
+                current = element.parent;
                 continue;
             };
             if layout.cache.is_empty() {
                 break;
             }
             layout.cache.clear();
-            current = node.parent;
+            current = element.parent;
         }
     }
 }
@@ -198,34 +198,34 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         inputs: LayoutInput,
     ) -> taffy::LayoutOutput {
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
-            let node = tree.render_tree.node(node_id);
+            let element = tree.render_tree.node(node_id);
 
-            // Handle TextNode: concatenate strings from StringNode children
-            if let Primitive::Text(_) = &node.node_type {
-                let children = node.children.clone();
+            // Handle Text: concatenate text from Span children
+            if let ElementKind::Text(_) = &element.kind {
+                let children = element.children.clone();
                 let mut text = String::new();
                 for child_id in children {
-                    if let Primitive::String(string_node) = &tree.render_tree.node(child_id).node_type {
-                        text.push_str(&string_node.text);
+                    if let ElementKind::Span(span) = &tree.render_tree.node(child_id).kind {
+                        text.push_str(&span.text);
                     }
                 }
-                if let Primitive::Text(text_node) = &mut tree.render_tree.node_mut(node_id).node_type {
-                    text_node.text = text;
+                if let ElementKind::Text(text_el) = &mut tree.render_tree.node_mut(node_id).kind {
+                    text_el.text = text;
                 }
             }
 
-            let node = tree.render_tree.node(node_id);
-            let has_measurement = matches!(&node.node_type, Primitive::Text(_) | Primitive::Rect(_));
+            let element = tree.render_tree.node(node_id);
+            let has_measurement = matches!(&element.kind, ElementKind::Text(_) | ElementKind::Rectangle(_));
 
             if has_measurement {
                 let tc = &tree.render_tree.typography_ctx;
                 let style = &tree.render_tree.node(node_id).layout_data().style;
-                let node_type = &tree.render_tree.node(node_id).node_type;
+                let kind = &tree.render_tree.node(node_id).kind;
                 compute_leaf_layout(inputs, style, |_, _| 0.0, |known, available| {
-                    node_type.measure(known, available, tc)
+                    kind.measure(known, available, tc)
                 })
             } else {
-                match node.layout_data().style.display {
+                match element.layout_data().style.display {
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Block => compute_block_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),

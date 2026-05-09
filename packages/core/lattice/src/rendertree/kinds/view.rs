@@ -1,16 +1,16 @@
-use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Node, Primitive, WH, XY};
+use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Element, ElementKind, WH, XY};
 use alloy::impellers::DisplayListBuilder;
 use taffy::{FlexDirection, Style};
 
 #[derive(Clone, Debug, Default)]
-pub struct ViewNode {
+pub struct View {
     pub rotate: Option<f32>,
     pub scale: Option<f32>,
     pub pos: Option<XY>,
     pub center: Option<XY>,
 }
 
-impl ViewNode {
+impl View {
     fn resolve_pos(&self) -> XY {
         self.pos.unwrap_or_default()
     }
@@ -20,7 +20,7 @@ impl ViewNode {
     }
 }
 
-impl Buildable for ViewNode {
+impl Buildable for View {
     fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
         let p = self.resolve_pos();
         let c = self.resolve_center(ctx.size);
@@ -36,7 +36,7 @@ impl Buildable for ViewNode {
     }
 }
 
-impl Hittable for ViewNode {
+impl Hittable for View {
     fn transform_to_local(&self, point: XY, ctx: &HitContext) -> XY {
         let p = self.resolve_pos();
         let c = self.resolve_center(ctx.size);
@@ -73,11 +73,15 @@ impl Hittable for ViewNode {
     }
 }
 
-impl From<ViewNode> for Node {
-    fn from(view: ViewNode) -> Node {
-        Node::new(Primitive::View(view), Some(Style {
+impl View {
+    pub fn with_layout(self) -> Element {
+        Element::with_layout(ElementKind::View(self), Style {
             flex_direction: FlexDirection::Column,
             ..Style::default()
-        }))
+        })
+    }
+
+    pub fn no_layout(self) -> Element {
+        Element::no_layout(ElementKind::View(self))
     }
 }

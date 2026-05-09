@@ -1,4 +1,4 @@
-use crate::rendertree::{BuildContext, Buildable, Measurable, Node, Primitive};
+use crate::rendertree::{BuildContext, Buildable, Measurable, Element, ElementKind};
 use super::PaintState;
 use alloy::impellers::{
     DisplayListBuilder, FontStyle, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
@@ -7,7 +7,7 @@ use alloy::impellers::{
 use taffy::prelude::*;
 
 #[derive(Clone, Debug)]
-pub struct TextNode {
+pub struct Text {
     pub text: String,
     pub font_size: f32,
     pub font_style: FontStyle,
@@ -16,7 +16,7 @@ pub struct TextNode {
     pub paint: PaintState,
 }
 
-impl Default for TextNode {
+impl Default for Text {
     fn default() -> Self {
         Self {
             text: String::new(),
@@ -29,7 +29,7 @@ impl Default for TextNode {
     }
 }
 
-impl Buildable for TextNode {
+impl Buildable for Text {
     fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
         let mut style = ParagraphStyle::default();
         let paint = self.paint.to_paint();
@@ -52,7 +52,7 @@ impl Buildable for TextNode {
     }
 }
 
-impl Measurable for TextNode {
+impl Measurable for Text {
     fn measure(
         &self,
         known_dimensions: Size<Option<f32>>,
@@ -107,14 +107,18 @@ impl Measurable for TextNode {
     }
 }
 
-impl From<TextNode> for Node {
-    fn from(text: TextNode) -> Node {
-        Node::new(
-            Primitive::Text(text),
-            Some(Style {
+impl Text {
+    pub fn with_layout(self) -> Element {
+        Element::with_layout(
+            ElementKind::Text(self),
+            Style {
                 display: Display::Block,
                 ..Default::default()
-            }),
+            },
         )
+    }
+
+    pub fn no_layout(self) -> Element {
+        Element::no_layout(ElementKind::Text(self))
     }
 }

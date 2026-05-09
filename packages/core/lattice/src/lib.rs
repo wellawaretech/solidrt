@@ -51,18 +51,23 @@ pub fn start(rt: &tokio::runtime::Runtime) {
             let render_tree = RefCell::new(RenderTree::new());
             {
                 let mut tree = render_tree.borrow_mut();
-                let window = rendertree::nodes::WindowNode::default();
-                let window_id = tree.add_node(1, window.into());
+                let window_id = tree.add_node(1, rendertree::Window::default().with_layout());
                 tree.root = Some(window_id);
 
-                let mut rect = rendertree::nodes::RectNode::default();
-                rect.x = Some(200.0);
-                rect.y = Some(100.0);
-                rect.w = Some(200.0);
-                rect.h = Some(200.0);
-                rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 1.0, 0.0, 1.0);
-                let rect_id = tree.add_node(2, rect.into());
+                let mut rect = rendertree::Rectangle::default();
+                rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.8, 0.0, 1.0);
+                let mut rect_elem = rect.with_layout();
+                rect_elem.layout_data_mut().style.flex_grow = 1.0;
+                let rect_id = tree.add_node(2, rect_elem);
                 tree.insert_node(window_id, rect_id, None);
+
+                let mut rect2 = rendertree::Rectangle::default();
+                rect2.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.0, 0.8, 1.0);
+                let mut rect2_elem = rect2.with_layout();
+                rect2_elem.layout_data_mut().style.flex_grow = 1.0;
+                let rect2_id = tree.add_node(3, rect2_elem);
+                
+                tree.insert_node(window_id, rect2_id, None);
             }
 
             {

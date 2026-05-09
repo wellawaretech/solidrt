@@ -1,8 +1,8 @@
 // mod audio;
 // mod oval;
 // mod path;
-mod rect;
-mod string;
+mod rectangle;
+mod span;
 mod text;
 // pub mod texture;
 mod view;
@@ -11,12 +11,11 @@ mod window;
 // pub use audio::AudioNode;
 // pub use oval::OvalNode;
 // pub use path::PathNode;
-pub use rect::RectNode;
-pub use string::StringNode;
-pub use text::TextNode;
-// pub use texture::TextureNode;
-pub use view::ViewNode;
-pub use window::WindowNode;
+pub use rectangle::Rectangle;
+pub use span::Span;
+pub use text::Text;
+pub use view::View;
+pub use window::Window;
 
 use alloy::impellers::{BlendMode, Color, DrawStyle, Paint, StrokeCap, StrokeJoin};
 
