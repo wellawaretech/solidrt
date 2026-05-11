@@ -1,17 +1,18 @@
 pub mod composite;
 pub mod hit;
+pub mod layout;
 mod kinds;
 pub mod platform;
 mod render_tree;
 
 pub use hit::{HitConfig, HitTester};
 pub use kinds::{Rectangle, Span, Text, View, Window};
+pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
-pub use render_tree::{LayoutContext, RenderTree};
+pub use render_tree::RenderTree;
 
 use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
-use taffy::Cache;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct XY {
@@ -111,24 +112,6 @@ impl Measurable for ElementKind {
             // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, platform),
             ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, platform),
             _ => Size::ZERO,
-        }
-    }
-}
-
-pub struct LayoutData {
-    pub style: Style,
-    pub computed: Layout,
-    pub cache: Cache,
-    pub layout_children: Vec<NodeId>,
-}
-
-impl LayoutData {
-    pub fn new(style: Style) -> Self {
-        Self {
-            style,
-            computed: Layout::new(),
-            cache: Cache::new(),
-            layout_children: vec![],
         }
     }
 }
