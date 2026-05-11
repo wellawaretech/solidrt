@@ -1,4 +1,5 @@
-use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Measurable, Element, ElementKind, PlatformContext, XY};
+use crate::rendertree::{BuildContext, Buildable, Measurable, Element, ElementKind, PlatformContext, XY};
+use crate::rendertree::hit::{HitContext, Hittable};
 use super::PaintState;
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use taffy::{AvailableSpace, Size as TaffySize};

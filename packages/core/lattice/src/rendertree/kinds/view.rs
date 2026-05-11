@@ -1,4 +1,5 @@
-use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Element, ElementKind, WH, XY};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, WH, XY};
+use crate::rendertree::hit::{HitContext, Hittable};
 use alloy::impellers::DisplayListBuilder;
 use taffy::{FlexDirection, Style};
 
