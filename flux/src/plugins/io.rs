@@ -1,8 +1,6 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{
-    function::MutFn,
-    promise::Promised,
-    Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
+  function::MutFn, promise::Promised, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
 };
 use std::cell::Cell;
 use std::io;
@@ -16,379 +14,381 @@ const USER_AGENT: &str = concat!("flux/", env!("CARGO_PKG_VERSION"));
 struct HttpClient(#[qjs(skip_trace)] Rc<reqwest::Client>);
 
 fn reqwest_err(e: reqwest::Error) -> rquickjs::Error {
-    rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
+  rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
 fn http_client() -> HttpClient {
-    HttpClient(Rc::new(
-        reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .build()
-            .unwrap(),
-    ))
+  HttpClient(Rc::new(
+    reqwest::Client::builder()
+      .user_agent(USER_AGENT)
+      .build()
+      .unwrap(),
+  ))
 }
 
 struct JsBytes(Vec<u8>);
 
 impl<'js> IntoJs<'js> for JsBytes {
-    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        TypedArray::<u8>::new(ctx.clone(), self.0).map(|ta| ta.into_value())
-    }
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    TypedArray::<u8>::new(ctx.clone(), self.0).map(|ta| ta.into_value())
+  }
 }
 
 struct JsonValue(String);
 
 impl<'js> IntoJs<'js> for JsonValue {
-    fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        ctx.json_parse(self.0)
-    }
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    ctx.json_parse(self.0)
+  }
 }
 
 fn throw_consumed(ctx: &Ctx<'_>) -> rquickjs::Error {
-    ctx.throw(
-        rquickjs::String::from_str(ctx.clone(), "Body already consumed")
-            .unwrap()
-            .into(),
-    )
+  ctx.throw(
+    rquickjs::String::from_str(ctx.clone(), "Body already consumed")
+      .unwrap()
+      .into(),
+  )
 }
 
 fn io_source<'js>(ctx: Ctx<'js>, target: String) -> rquickjs::Result<Value<'js>> {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        let client = ctx.userdata::<HttpClient>().unwrap().0.clone();
-        create_http_source(ctx, target, client)
+  if target.starts_with("http://") || target.starts_with("https://") {
+    let client = ctx.userdata::<HttpClient>().unwrap().0.clone();
+    create_http_source(ctx, target, client)
+  } else {
+    let path = std::path::Path::new(&target);
+    if path.is_dir() {
+      create_dir_source(ctx, target)
     } else {
-        let path = std::path::Path::new(&target);
-        if path.is_dir() {
-            create_dir_source(ctx, target)
-        } else {
-            create_file_source(ctx, target)
-        }
+      create_file_source(ctx, target)
     }
+  }
 }
 
 fn create_file_source<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Value<'js>> {
-    let consumed = Rc::new(Cell::new(false));
-    let path = Rc::new(path);
+  let consumed = Rc::new(Cell::new(false));
+  let path = Rc::new(path);
 
-    let text_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let path = path.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let path = path.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = tokio::fs::read_to_string(&*path)
-                        .await
-                        .map_err(rquickjs::Error::Io);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let text_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let path = path.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = tokio::fs::read_to_string(&*path)
+            .await
+            .map_err(rquickjs::Error::Io);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let bytes_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let path = path.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let path = path.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = tokio::fs::read(&*path)
-                        .await
-                        .map(JsBytes)
-                        .map_err(rquickjs::Error::Io);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let bytes_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let path = path.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = tokio::fs::read(&*path)
+            .await
+            .map(JsBytes)
+            .map_err(rquickjs::Error::Io);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let json_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let path = path.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let path = path.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = tokio::fs::read_to_string(&*path)
-                        .await
-                        .map(JsonValue)
-                        .map_err(rquickjs::Error::Io);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let json_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let path = path.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = tokio::fs::read_to_string(&*path)
+            .await
+            .map(JsonValue)
+            .map_err(rquickjs::Error::Io);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let obj = Object::new(ctx.clone())?;
-    obj.set("path", path.as_ref().clone())?;
-    obj.set("text", text_fn)?;
-    obj.set("bytes", bytes_fn)?;
-    obj.set("json", json_fn)?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("path", path.as_ref().clone())?;
+  obj.set("text", text_fn)?;
+  obj.set("bytes", bytes_fn)?;
+  obj.set("json", json_fn)?;
 
-    Ok(obj.into_value())
+  Ok(obj.into_value())
 }
 
 fn dir_entry_type(ft: std::fs::FileType) -> &'static str {
-    if ft.is_file() {
-        "file"
-    } else if ft.is_dir() {
-        "directory"
-    } else if ft.is_symlink() {
-        "symlink"
-    } else {
-        "other"
-    }
+  if ft.is_file() {
+    "file"
+  } else if ft.is_dir() {
+    "directory"
+  } else if ft.is_symlink() {
+    "symlink"
+  } else {
+    "other"
+  }
 }
 
 fn create_dir_source<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Value<'js>> {
-    let consumed = Rc::new(Cell::new(false));
-    let path = Rc::new(path);
+  let consumed = Rc::new(Cell::new(false));
+  let path = Rc::new(path);
 
-    let json_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let path = path.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let path = path.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = read_dir_json(&path).await.map(JsonValue);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let json_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let path = path.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = read_dir_json(&path).await.map(JsonValue);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let obj = Object::new(ctx.clone())?;
-    obj.set("path", path.as_ref().clone())?;
-    obj.set("json", json_fn)?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("path", path.as_ref().clone())?;
+  obj.set("json", json_fn)?;
 
-    Ok(obj.into_value())
+  Ok(obj.into_value())
 }
 
 async fn read_dir_json(path: &str) -> rquickjs::Result<String> {
-    let mut entries = tokio::fs::read_dir(path)
-        .await
-        .map_err(rquickjs::Error::Io)?;
+  let mut entries = tokio::fs::read_dir(path)
+    .await
+    .map_err(rquickjs::Error::Io)?;
 
-    let mut items = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(rquickjs::Error::Io)? {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let ft = entry.file_type().await.map_err(rquickjs::Error::Io)?;
-        let kind = dir_entry_type(ft);
-        let escaped_name = name
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
-        items.push(format!(
-            r#"{{"name":"{}","type":"{}"}}"#,
-            escaped_name, kind
-        ));
-    }
+  let mut items = Vec::new();
+  while let Some(entry) = entries.next_entry().await.map_err(rquickjs::Error::Io)? {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let ft = entry.file_type().await.map_err(rquickjs::Error::Io)?;
+    let kind = dir_entry_type(ft);
+    let escaped_name = name
+      .replace('\\', "\\\\")
+      .replace('"', "\\\"")
+      .replace('\n', "\\n")
+      .replace('\r', "\\r")
+      .replace('\t', "\\t");
+    items.push(format!(
+      r#"{{"name":"{}","type":"{}"}}"#,
+      escaped_name, kind
+    ));
+  }
 
-    Ok(format!("[{}]", items.join(",")))
+  Ok(format!("[{}]", items.join(",")))
 }
 
 fn create_http_source<'js>(
-    ctx: Ctx<'js>,
-    url: String,
-    client: Rc<reqwest::Client>,
+  ctx: Ctx<'js>,
+  url: String,
+  client: Rc<reqwest::Client>,
 ) -> rquickjs::Result<Value<'js>> {
-    let consumed = Rc::new(Cell::new(false));
-    let url = Rc::new(url);
+  let consumed = Rc::new(Cell::new(false));
+  let url = Rc::new(url);
 
-    let text_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let url = url.clone();
-            let client = client.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let url = url.clone();
-                let client = client.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = client
-                        .get(url.as_ref())
-                        .send()
-                        .await
-                        .map_err(reqwest_err)?
-                        .text()
-                        .await
-                        .map_err(reqwest_err);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let text_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let url = url.clone();
+      let client = client.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let url = url.clone();
+        let client = client.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = client
+            .get(url.as_ref())
+            .send()
+            .await
+            .map_err(reqwest_err)?
+            .text()
+            .await
+            .map_err(reqwest_err);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let bytes_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let url = url.clone();
-            let client = client.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let url = url.clone();
-                let client = client.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = client
-                        .get(url.as_ref())
-                        .send()
-                        .await
-                        .map_err(reqwest_err)?
-                        .bytes()
-                        .await
-                        .map(|b| JsBytes(b.to_vec()))
-                        .map_err(reqwest_err);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let bytes_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let url = url.clone();
+      let client = client.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let url = url.clone();
+        let client = client.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = client
+            .get(url.as_ref())
+            .send()
+            .await
+            .map_err(reqwest_err)?
+            .bytes()
+            .await
+            .map(|b| JsBytes(b.to_vec()))
+            .map_err(reqwest_err);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let json_fn = Function::new(
-        ctx.clone(),
-        MutFn::from({
-            let consumed = consumed.clone();
-            let url = url.clone();
-            let client = client.clone();
-            move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-                if consumed.get() {
-                    return Err(throw_consumed(&ctx));
-                }
-                consumed.set(true);
-                let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                let url = url.clone();
-                let client = client.clone();
-                Ok(Promised(async move {
-                    pending.hold();
-                    let r = client
-                        .get(url.as_ref())
-                        .send()
-                        .await
-                        .map_err(reqwest_err)?
-                        .text()
-                        .await
-                        .map(JsonValue)
-                        .map_err(reqwest_err);
-                    pending.release();
-                    r
-                }))
-            }
-        }),
-    )
-    .unwrap();
+  let json_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let url = url.clone();
+      let client = client.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let url = url.clone();
+        let client = client.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = client
+            .get(url.as_ref())
+            .send()
+            .await
+            .map_err(reqwest_err)?
+            .text()
+            .await
+            .map(JsonValue)
+            .map_err(reqwest_err);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .unwrap();
 
-    let obj = Object::new(ctx.clone())?;
-    obj.set("url", url.as_ref().clone())?;
-    obj.set("text", text_fn)?;
-    obj.set("bytes", bytes_fn)?;
-    obj.set("json", json_fn)?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("url", url.as_ref().clone())?;
+  obj.set("text", text_fn)?;
+  obj.set("bytes", bytes_fn)?;
+  obj.set("json", json_fn)?;
 
-    Ok(obj.into_value())
+  Ok(obj.into_value())
 }
 
 pub(crate) fn init_io(ctx: &Ctx<'_>) {
-    ctx.store_userdata(http_client()).unwrap();
+  ctx.store_userdata(http_client()).unwrap();
 }
 
 pub struct IoModule;
 
 impl ModuleDef for IoModule {
-    fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
-        decl.declare("source")?;
-        decl.declare("write")?;
-        Ok(())
-    }
+  fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+    decl.declare("source")?;
+    decl.declare("write")?;
+    Ok(())
+  }
 
-    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-        let source_fn = Function::new(ctx.clone(), io_source)?;
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    let source_fn = Function::new(ctx.clone(), io_source)?;
 
-        let write_fn = Function::new(
-            ctx.clone(),
-            MutFn::from(
-                |ctx: Ctx<'_>, path: String, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
-                    let bytes = if let Some(s) = data.as_string() {
-                        s.to_string()?.into_bytes()
-                    } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
-                        ta.as_bytes().unwrap().to_vec()
-                    } else {
-                        return Err(ctx.throw(
-                            rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
-                                .unwrap()
-                                .into(),
-                        ));
-                    };
-                    let pending = ctx.userdata::<PendingOps>().unwrap().clone();
-                    Ok(Promised(async move {
-                        pending.hold();
-                        let r = tokio::fs::write(&path, &bytes)
-                            .await
-                            .map_err(rquickjs::Error::Io);
-                        pending.release();
-                        r
-                    }))
-                },
-            ),
-        )
-        .unwrap();
+    let write_fn = Function::new(
+      ctx.clone(),
+      MutFn::from(
+        |ctx: Ctx<'_>, path: String, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+          let bytes = if let Some(s) = data.as_string() {
+            s.to_string()?.into_bytes()
+          } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+            ta.as_bytes().unwrap().to_vec()
+          } else {
+            return Err(
+              ctx.throw(
+                rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+                  .unwrap()
+                  .into(),
+              ),
+            );
+          };
+          let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+          Ok(Promised(async move {
+            pending.hold();
+            let r = tokio::fs::write(&path, &bytes)
+              .await
+              .map_err(rquickjs::Error::Io);
+            pending.release();
+            r
+          }))
+        },
+      ),
+    )
+    .unwrap();
 
-        exports.export("source", source_fn)?;
-        exports.export("write", write_fn)?;
-        Ok(())
-    }
+    exports.export("source", source_fn)?;
+    exports.export("write", write_fn)?;
+    Ok(())
+  }
 }
