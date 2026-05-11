@@ -2,7 +2,7 @@
 members = [
   "alloy",
   "flux", 
-  "packages/core/lattice",
+  "lattice",
 ]
 resolver = "2"
 
