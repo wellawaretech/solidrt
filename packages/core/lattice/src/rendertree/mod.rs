@@ -1,12 +1,13 @@
 pub mod composite;
 mod kinds;
+pub mod platform;
 mod render_tree;
 
 pub use kinds::{Rectangle, Span, Text, View, Window};
+pub use platform::PlatformContext;
 pub use render_tree::{LayoutContext, RenderTree};
 
-
-use alloy::impellers::{DisplayListBuilder, TypographyContext};
+use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
 use taffy::Cache;
 
@@ -36,15 +37,15 @@ impl WH {
 
 /// Build context passed during display list tree traversal.
 pub struct BuildContext<'a> {
-    pub typography_ctx: &'a TypographyContext,
+    pub platform: &'a PlatformContext,
     pub size: WH,
     pub origin: XY,
 }
 
 impl<'a> BuildContext<'a> {
-    pub fn new(typography_ctx: &'a TypographyContext) -> Self {
+    pub fn new(platform: &'a PlatformContext) -> Self {
         Self {
-            typography_ctx,
+            platform,
             size: WH::default(),
             origin: XY::default(),
         }
@@ -81,7 +82,7 @@ pub trait Measurable {
         &self,
         known_dimensions: Size<Option<f32>>,
         available_space: Size<AvailableSpace>,
-        typography_ctx: &TypographyContext,
+        platform: &PlatformContext,
     ) -> Size<f32>;
 }
 
@@ -139,14 +140,14 @@ impl Measurable for ElementKind {
         &self,
         known_dimensions: Size<Option<f32>>,
         available_space: Size<AvailableSpace>,
-        typography_ctx: &TypographyContext,
+        platform: &PlatformContext,
     ) -> Size<f32> {
         match self {
-            ElementKind::Text(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // ElementKind::Texture(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // ElementKind::Path(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, typography_ctx),
-            ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, typography_ctx),
+            ElementKind::Text(n) => n.measure(known_dimensions, available_space, platform),
+            // ElementKind::Texture(n) => n.measure(known_dimensions, available_space, platform),
+            // ElementKind::Path(n) => n.measure(known_dimensions, available_space, platform),
+            // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, platform),
+            ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, platform),
             _ => Size::ZERO,
         }
     }

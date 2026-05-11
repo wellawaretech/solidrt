@@ -2,11 +2,12 @@ use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;
 use taffy::Point;
 
-use crate::rendertree::{WH, BuildContext, LayoutContext, ElementKind, RenderTree};
+use crate::rendertree::{WH, BuildContext, LayoutContext, ElementKind, PlatformContext, RenderTree};
 
 pub fn composite(
     builder: &mut DisplayListBuilder,
     tree: &mut RenderTree,
+    platform: &PlatformContext,
     root_id: u64,
 ) {
     let (width, height) = {
@@ -22,11 +23,11 @@ pub fn composite(
             width: AvailableSpace::Definite(width),
             height: AvailableSpace::Definite(height),
         };
-        let mut layout_ctx = LayoutContext { render_tree: tree };
+        let mut layout_ctx = LayoutContext { render_tree: tree, platform };
         taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
     }
 
-    let mut ctx = BuildContext::new(&tree.typography_ctx);
+    let mut ctx = BuildContext::new(platform);
     ctx.size = WH::new(width, height);
     build_recursive(tree, root_id, &mut ctx, builder);
 }

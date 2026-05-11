@@ -1,6 +1,6 @@
-use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Measurable, Element, ElementKind, XY};
+use crate::rendertree::{BuildContext, Buildable, HitContext, Hittable, Measurable, Element, ElementKind, PlatformContext, XY};
 use super::PaintState;
-use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size, TypographyContext};
+use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use taffy::{AvailableSpace, Size as TaffySize};
 
 #[derive(Clone, Debug, Default)]
@@ -44,7 +44,7 @@ impl Measurable for Rectangle {
         &self,
         known_dimensions: TaffySize<Option<f32>>,
         _available_space: TaffySize<AvailableSpace>,
-        _typography_ctx: &TypographyContext,
+        _platform: &PlatformContext,
     ) -> TaffySize<f32> {
         TaffySize {
             width: known_dimensions.width.unwrap_or(self.w.unwrap_or(0.0)),

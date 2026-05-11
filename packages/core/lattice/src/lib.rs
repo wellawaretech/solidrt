@@ -4,7 +4,7 @@ use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Siz
 use alloy::log;
 use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
 use flux::{emit_event, ExecHandle, FluxEngine};
-use rendertree::RenderTree;
+use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::sync::{Arc, OnceLock};
 
@@ -46,35 +46,36 @@ pub fn start(rt: &tokio::runtime::Runtime) {
     let exec_handle: Arc<OnceLock<ExecHandle>> = Arc::new(OnceLock::new());
     let exec_handle_for_setup = exec_handle.clone();
 
+    let render_tree = RefCell::new(RenderTree::new());
+    {
+        let mut tree = render_tree.borrow_mut();
+        let window_id = tree.add_node(1, rendertree::Window::default().with_layout());
+        tree.root = Some(window_id);
+
+        let mut rect = rendertree::Rectangle::default();
+        rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.8, 0.0, 1.0);
+        let mut rect_elem = rect.with_layout();
+        rect_elem.layout_data_mut().style.flex_grow = 1.0;
+        let rect_id = tree.add_node(2, rect_elem);
+        tree.insert_node(window_id, rect_id, None);
+
+        let mut rect2 = rendertree::Rectangle::default();
+        rect2.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.0, 0.8, 1.0);
+        let mut rect2_elem = rect2.with_layout();
+        rect2_elem.layout_data_mut().style.flex_grow = 1.0;
+        let rect2_id = tree.add_node(3, rect2_elem);
+
+        tree.insert_node(window_id, rect2_id, None);
+    }
+
     app.run(
         move |atx| {
-            let render_tree = RefCell::new(RenderTree::new());
-            {
-                let mut tree = render_tree.borrow_mut();
-                let window_id = tree.add_node(1, rendertree::Window::default().with_layout());
-                tree.root = Some(window_id);
-
-                let mut rect = rendertree::Rectangle::default();
-                rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.8, 0.0, 1.0);
-                let mut rect_elem = rect.with_layout();
-                rect_elem.layout_data_mut().style.flex_grow = 1.0;
-                let rect_id = tree.add_node(2, rect_elem);
-                tree.insert_node(window_id, rect_id, None);
-
-                let mut rect2 = rendertree::Rectangle::default();
-                rect2.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.0, 0.8, 1.0);
-                let mut rect2_elem = rect2.with_layout();
-                rect2_elem.layout_data_mut().style.flex_grow = 1.0;
-                let rect2_id = tree.add_node(3, rect2_elem);
-                
-                tree.insert_node(window_id, rect2_id, None);
-            }
-
+            let platform = PlatformContext::new();
             {
                 let mut builder = DisplayListBuilder::new(None);
                 let mut tree = render_tree.borrow_mut();
                 let root_id = tree.root.unwrap();
-                rendertree::composite::composite(&mut builder, &mut tree, root_id);
+                rendertree::composite::composite(&mut builder, &mut tree, &platform, root_id);
                 if let Some(dl) = builder.build() {
                     atx.submit(dl).expect("Failed to submit display list");
                 }

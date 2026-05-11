@@ -1,8 +1,7 @@
-use crate::rendertree::{BuildContext, Buildable, Measurable, Element, ElementKind};
+use crate::rendertree::{BuildContext, Buildable, Measurable, Element, ElementKind, PlatformContext};
 use super::PaintState;
 use alloy::impellers::{
     DisplayListBuilder, FontStyle, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
-    TypographyContext,
 };
 use taffy::prelude::*;
 
@@ -39,7 +38,7 @@ impl Buildable for Text {
         style.set_text_alignment(self.text_alignment);
         style.set_max_lines(self.max_lines);
 
-        let Some(mut para_builder) = ParagraphBuilder::new(ctx.typography_ctx) else {
+        let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
             return;
         };
         para_builder.push_style(&style);
@@ -57,13 +56,13 @@ impl Measurable for Text {
         &self,
         known_dimensions: Size<Option<f32>>,
         available_space: Size<AvailableSpace>,
-        typography_ctx: &TypographyContext,
+        platform: &PlatformContext,
     ) -> Size<f32> {
         if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
             return Size { width: w, height: h };
         }
 
-        let Some(mut para_builder) = ParagraphBuilder::new(typography_ctx) else {
+        let Some(mut para_builder) = ParagraphBuilder::new(&platform.typography) else {
             return Size::ZERO;
         };
 
@@ -89,7 +88,7 @@ impl Measurable for Text {
                 AvailableSpace::MinContent => min_intrinsic_width,
             });
 
-        let Some(mut para_builder) = ParagraphBuilder::new(typography_ctx) else {
+        let Some(mut para_builder) = ParagraphBuilder::new(&platform.typography) else {
             return Size::ZERO;
         };
         para_builder.push_style(&style);

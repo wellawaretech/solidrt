@@ -7,21 +7,23 @@ use taffy::{
     LayoutGridContainer, RunMode,
 };
 
-use crate::rendertree::{Measurable, Element, ElementKind};
-use alloy::impellers::TypographyContext;
+use crate::rendertree::{Measurable, Element, ElementKind, PlatformContext};
 
 pub struct RenderTree {
     nodes: HashMap<u64, Element>,
     pub root: Option<u64>,
-    pub typography_ctx: TypographyContext,
 }
+
+// Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
+// which prevents the auto Send impl. RenderTree is only moved once to the
+// UI thread and never shared across threads.
+unsafe impl Send for RenderTree {}
 
 impl RenderTree {
     pub fn new() -> Self {
         Self {
             nodes: HashMap::new(),
             root: None,
-            typography_ctx: TypographyContext::default(),
         }
     }
 
@@ -135,6 +137,7 @@ impl RenderTree {
 
 pub struct LayoutContext<'a> {
     pub render_tree: &'a mut RenderTree,
+    pub platform: &'a PlatformContext,
 }
 
 impl<'a> TraversePartialTree for LayoutContext<'a> {
@@ -219,11 +222,11 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
             let has_measurement = matches!(&element.kind, ElementKind::Text(_) | ElementKind::Rectangle(_));
 
             if has_measurement {
-                let tc = &tree.render_tree.typography_ctx;
+                let platform = tree.platform;
                 let style = &tree.render_tree.node(id).layout_data().style;
                 let kind = &tree.render_tree.node(id).kind;
                 compute_leaf_layout(inputs, style, |_, _| 0.0, |known, available| {
-                    kind.measure(known, available, tc)
+                    kind.measure(known, available, platform)
                 })
             } else {
                 match element.layout_data().style.display {
