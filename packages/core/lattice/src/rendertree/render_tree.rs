@@ -11,8 +11,8 @@ use crate::rendertree::{Measurable, Element, ElementKind};
 use alloy::impellers::TypographyContext;
 
 pub struct RenderTree {
-    nodes: HashMap<NodeId, Element>,
-    pub root: Option<NodeId>,
+    nodes: HashMap<u64, Element>,
+    pub root: Option<u64>,
     pub typography_ctx: TypographyContext,
 }
 
@@ -25,33 +25,15 @@ impl RenderTree {
         }
     }
 
-    pub fn add_node(&mut self, id: u64, element: Element) -> NodeId {
-        let node_id: NodeId = NodeId::from(id);
-        if self.nodes.contains_key(&node_id) {
+    pub fn add_node(&mut self, id: u64, element: Element) -> u64 {
+        if self.nodes.contains_key(&id) {
             panic!("duplicate node id {}", id);
         }
-        self.nodes.insert(node_id, element);
-        node_id
+        self.nodes.insert(id, element);
+        id
     }
 
-    pub fn node(&self, id: NodeId) -> &Element {
-        self.nodes
-            .get(&id)
-            .expect(&format!("node {:?} not found", id))
-    }
-
-    pub fn node_mut(&mut self, id: NodeId) -> &mut Element {
-        self.nodes
-            .get_mut(&id)
-            .expect(&format!("node {:?} not found", id))
-    }
-
-    pub fn insert_node(
-        &mut self,
-        parent_id: NodeId,
-        node_id: NodeId,
-        anchor_id: Option<NodeId>,
-    ) {
+    pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) {
         let child_has_layout = {
             let child = self.node_mut(node_id);
             child.parent = Some(parent_id);
@@ -61,7 +43,7 @@ impl RenderTree {
         let parent = self.node_mut(parent_id);
         parent.children.retain(|&id| id != node_id);
         if let Some(layout) = &mut parent.layout {
-            layout.layout_children.retain(|&id| id != node_id);
+            layout.layout_children.retain(|&id| id != NodeId::from(node_id));
         }
 
         match anchor_id {
@@ -73,10 +55,12 @@ impl RenderTree {
                 }
                 if child_has_layout {
                     if let Some(layout) = &mut parent.layout {
-                        if let Some(pos) = layout.layout_children.iter().position(|&id| id == anchor) {
-                            layout.layout_children.insert(pos, node_id);
+                        let anchor_nid = NodeId::from(anchor);
+                        let node_nid = NodeId::from(node_id);
+                        if let Some(pos) = layout.layout_children.iter().position(|&id| id == anchor_nid) {
+                            layout.layout_children.insert(pos, node_nid);
                         } else {
-                            layout.layout_children.push(node_id);
+                            layout.layout_children.push(node_nid);
                         }
                     }
                 }
@@ -85,7 +69,7 @@ impl RenderTree {
                 parent.children.push(node_id);
                 if child_has_layout {
                     if let Some(layout) = &mut parent.layout {
-                        layout.layout_children.push(node_id);
+                        layout.layout_children.push(NodeId::from(node_id));
                     }
                 }
             }
@@ -94,18 +78,34 @@ impl RenderTree {
         self.invalidate_cache(parent_id);
     }
 
-    pub fn delete_node(&mut self, parent_id: NodeId, node_id: NodeId) {
+    pub fn delete_node(&mut self, parent_id: u64, node_id: u64) {
         let parent = self.node_mut(parent_id);
         parent.children.retain(|&id| id != node_id);
         if let Some(layout) = &mut parent.layout {
-            layout.layout_children.retain(|&id| id != node_id);
+            layout.layout_children.retain(|&id| id != NodeId::from(node_id));
         }
         self.delete_recursive(node_id);
         self.invalidate_cache(parent_id);
     }
 
-    fn delete_recursive(&mut self, node_id: NodeId) {
-        let child_ids: Vec<NodeId> = self.nodes.get(&node_id)
+    pub fn element_mut(&mut self, id: u64) -> &mut Element {
+        self.node_mut(id)
+    }
+
+    pub(crate) fn node(&self, id: u64) -> &Element {
+        self.nodes
+            .get(&id)
+            .expect(&format!("node {} not found", id))
+    }
+
+    pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {
+        self.nodes
+            .get_mut(&id)
+            .expect(&format!("node {} not found", id))
+    }
+
+    fn delete_recursive(&mut self, node_id: u64) {
+        let child_ids: Vec<u64> = self.nodes.get(&node_id)
             .map(|e| e.children.clone())
             .unwrap_or_default();
         for child_id in child_ids {
@@ -114,7 +114,7 @@ impl RenderTree {
         self.nodes.remove(&node_id);
     }
 
-    pub fn invalidate_cache(&mut self, node_id: NodeId) {
+    fn invalidate_cache(&mut self, node_id: u64) {
         let mut current = Some(node_id);
         while let Some(id) = current {
             let element = self.node_mut(id);
@@ -141,15 +141,15 @@ impl<'a> TraversePartialTree for LayoutContext<'a> {
     type ChildIter<'b> = std::iter::Cloned<std::slice::Iter<'b, NodeId>> where Self: 'b;
 
     fn child_ids(&self, parent: NodeId) -> Self::ChildIter<'_> {
-        self.render_tree.node(parent).layout_data().layout_children.iter().cloned()
+        self.render_tree.node(u64::from(parent)).layout_data().layout_children.iter().cloned()
     }
 
     fn child_count(&self, parent: NodeId) -> usize {
-        self.render_tree.node(parent).layout_data().layout_children.len()
+        self.render_tree.node(u64::from(parent)).layout_data().layout_children.len()
     }
 
     fn get_child_id(&self, parent: NodeId, index: usize) -> NodeId {
-        self.render_tree.node(parent).layout_data().layout_children[index]
+        self.render_tree.node(u64::from(parent)).layout_data().layout_children[index]
     }
 }
 
@@ -161,7 +161,7 @@ impl<'a> CacheTree for LayoutContext<'a> {
         available_space: Size<AvailableSpace>,
         run_mode: RunMode,
     ) -> Option<taffy::LayoutOutput> {
-        self.render_tree.node(node_id).layout_data().cache.get(known_dimensions, available_space, run_mode)
+        self.render_tree.node(u64::from(node_id)).layout_data().cache.get(known_dimensions, available_space, run_mode)
     }
 
     fn cache_store(
@@ -172,11 +172,11 @@ impl<'a> CacheTree for LayoutContext<'a> {
         run_mode: RunMode,
         layout_output: taffy::LayoutOutput,
     ) {
-        self.render_tree.node_mut(node_id).layout_data_mut().cache.store(known_dimensions, available_space, run_mode, layout_output)
+        self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().cache.store(known_dimensions, available_space, run_mode, layout_output)
     }
 
     fn cache_clear(&mut self, node_id: NodeId) {
-        self.render_tree.node_mut(node_id).layout_data_mut().cache.clear();
+        self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().cache.clear();
     }
 }
 
@@ -185,11 +185,11 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     type CoreContainerStyle<'b> = &'b Style where Self: 'b;
 
     fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-        &self.render_tree.node(node_id).layout_data().style
+        &self.render_tree.node(u64::from(node_id)).layout_data().style
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        self.render_tree.node_mut(node_id).layout_data_mut().computed = *layout;
+        self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().computed = *layout;
     }
 
     fn compute_child_layout(
@@ -198,7 +198,8 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         inputs: LayoutInput,
     ) -> taffy::LayoutOutput {
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
-            let element = tree.render_tree.node(node_id);
+            let id = u64::from(node_id);
+            let element = tree.render_tree.node(id);
 
             // Handle Text: concatenate text from Span children
             if let ElementKind::Text(_) = &element.kind {
@@ -209,18 +210,18 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
                         text.push_str(&span.text);
                     }
                 }
-                if let ElementKind::Text(text_el) = &mut tree.render_tree.node_mut(node_id).kind {
+                if let ElementKind::Text(text_el) = &mut tree.render_tree.node_mut(id).kind {
                     text_el.text = text;
                 }
             }
 
-            let element = tree.render_tree.node(node_id);
+            let element = tree.render_tree.node(id);
             let has_measurement = matches!(&element.kind, ElementKind::Text(_) | ElementKind::Rectangle(_));
 
             if has_measurement {
                 let tc = &tree.render_tree.typography_ctx;
-                let style = &tree.render_tree.node(node_id).layout_data().style;
-                let kind = &tree.render_tree.node(node_id).kind;
+                let style = &tree.render_tree.node(id).layout_data().style;
+                let kind = &tree.render_tree.node(id).kind;
                 compute_leaf_layout(inputs, style, |_, _| 0.0, |known, available| {
                     kind.measure(known, available, tc)
                 })
@@ -241,11 +242,11 @@ impl<'a> LayoutFlexboxContainer for LayoutContext<'a> {
     type FlexboxItemStyle<'b> = &'b Style where Self: 'b;
 
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        &self.render_tree.node(node_id).layout_data().style
+        &self.render_tree.node(u64::from(node_id)).layout_data().style
     }
 
     fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        &self.render_tree.node(child_node_id).layout_data().style
+        &self.render_tree.node(u64::from(child_node_id)).layout_data().style
     }
 }
 
@@ -254,11 +255,11 @@ impl<'a> LayoutBlockContainer for LayoutContext<'a> {
     type BlockItemStyle<'b> = &'b Style where Self: 'b;
 
     fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-        &self.render_tree.node(node_id).layout_data().style
+        &self.render_tree.node(u64::from(node_id)).layout_data().style
     }
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-        &self.render_tree.node(child_node_id).layout_data().style
+        &self.render_tree.node(u64::from(child_node_id)).layout_data().style
     }
 }
 
@@ -267,10 +268,10 @@ impl<'a> LayoutGridContainer for LayoutContext<'a> {
     type GridItemStyle<'b> = &'b Style where Self: 'b;
 
     fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-        &self.render_tree.node(node_id).layout_data().style
+        &self.render_tree.node(u64::from(node_id)).layout_data().style
     }
 
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-        &self.render_tree.node(child_node_id).layout_data().style
+        &self.render_tree.node(u64::from(child_node_id)).layout_data().style
     }
 }

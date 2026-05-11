@@ -183,8 +183,8 @@ pub enum PointerEvents {
 
 pub struct Element {
     pub kind: ElementKind,
-    pub children: Vec<NodeId>,
-    pub parent: Option<NodeId>,
+    pub children: Vec<u64>,
+    pub parent: Option<u64>,
     pub layout: Option<LayoutData>,
     pub pointer_events: PointerEvents,
 }

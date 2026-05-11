@@ -7,7 +7,7 @@ use crate::rendertree::{WH, BuildContext, LayoutContext, ElementKind, RenderTree
 pub fn composite(
     builder: &mut DisplayListBuilder,
     tree: &mut RenderTree,
-    root_id: NodeId,
+    root_id: u64,
 ) {
     let (width, height) = {
         let style = &tree.node(root_id).layout_data().style;
@@ -23,7 +23,7 @@ pub fn composite(
             height: AvailableSpace::Definite(height),
         };
         let mut layout_ctx = LayoutContext { render_tree: tree };
-        taffy::compute_root_layout(&mut layout_ctx, root_id, available_space);
+        taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
     }
 
     let mut ctx = BuildContext::new(&tree.typography_ctx);
@@ -33,7 +33,7 @@ pub fn composite(
 
 fn build_recursive<'a>(
     scene: &'a RenderTree,
-    node_id: NodeId,
+    node_id: u64,
     ctx: &mut BuildContext<'a>,
     builder: &mut DisplayListBuilder,
 ) {
