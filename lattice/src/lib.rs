@@ -41,9 +41,9 @@ pub fn plugin(qtx: QuickJsContext<'_>) {
 
 const SOURCE: &str = "
 createRoot(1);
-createNode(2, 1);
+createNode(2, 'rect');
 insertNode(1, 2);
-createNode(3, 1);
+createNode(3, 'rect');
 insertNode(1, 3);
 ";
 
