@@ -24,8 +24,8 @@ include Makefile.android
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
-	@echo "  solidrt-go           Build Solidrt Go (release, default)"
-	@echo "  solidrt-go-debug     Build Solidrt Go (debug)"
+	@echo "  solidrt-go           Build SolidRT Go (release, default)"
+	@echo "  solidrt-go-debug     Build SolidRT Go (debug)"
 	@echo "  runtime              Build production runtime (release)"
 	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
@@ -46,11 +46,12 @@ help:
 
 flux:
 	cargo build -p flux --target-dir target/go
+	@mkdir -p $(HOST_DIST)
 	@cp target/go/debug/flux $(HOST_DIST)/
 
 # -- Default app --------------------------------------
 #
-# The dev runner embeds default-app.srt.bin at compile time.
+# SolidRT Go embeds default-app.srt.bin at compile time.
 # Compiled from the committed app.srt.js — no bun tooling needed.
 # Regenerate app.srt.js from app.tsx via `make default-app-bundle`.
 

@@ -8,6 +8,11 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "lib"]
 
 [[bin]]
+name = "solidrt-go"
+path = "src/main.rs"
+required-features = ["go"]
+
+[[bin]]
 name = "solidrt-runner"
 path = "src/main.rs"
 
