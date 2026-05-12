@@ -54,7 +54,7 @@ define android-run
 	cd android && ./gradlew assembleGoDebug
 	adb install -r $(APK_GO_DEBUG)
 	adb logcat -c
-	adb shell am start -n com.solidrt.app/.MainActivity
+	adb shell am start -n com.solidrt.go/.MainActivity
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 

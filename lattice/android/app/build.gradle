@@ -17,9 +17,11 @@ android {
     productFlavors {
         go {
             dimension "variant"
+            applicationId "com.solidrt.go"
         }
         prod {
             dimension "variant"
+            applicationId "com.solidrt.app"
         }
     }
     buildTypes {
