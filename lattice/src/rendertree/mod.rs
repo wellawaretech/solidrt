@@ -3,13 +3,13 @@ pub mod hit;
 mod kinds;
 pub mod layout;
 pub mod platform;
-mod render_tree;
+mod tree;
 
 pub use hit::{HitConfig, HitTester};
 pub use kinds::{Rectangle, Span, Text, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
-pub use render_tree::RenderTree;
+pub use tree::RenderTree;
 
 use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;

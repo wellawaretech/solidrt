@@ -10,8 +10,8 @@ pub fn composite(
   builder: &mut DisplayListBuilder,
   tree: &mut RenderTree,
   platform: &PlatformContext,
-  root_id: u64,
 ) {
+  let Some(root_id) = tree.root else { return };
   let (width, height) = {
     let style = &tree.node(root_id).layout_data().style;
     (

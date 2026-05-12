@@ -21,7 +21,7 @@ impl RenderTree {
     }
   }
 
-  pub fn add_node(&mut self, id: u64, element: Element) -> u64 {
+  pub fn create_node(&mut self, id: u64, element: Element) -> u64 {
     if self.nodes.contains_key(&id) {
       panic!("duplicate node id {}", id);
     }
