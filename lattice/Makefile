@@ -6,7 +6,7 @@ BUILD_VERSION  = BUILD_VERSION="$(TIMESTAMP)"
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 DEFAULT_APP_BIN = $(CURDIR)/dist/default-app.srt.bin
-FLUX            = $(HOST_DIST)/flux
+FLUX            = $(CURDIR)/target/go/debug/flux
 SRT_DEFAULT_BUNDLE ?= $(DEFAULT_APP_BIN)
 
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
@@ -45,9 +45,8 @@ help:
 # -- Tooling ------------------------------------------
 
 flux:
-	cargo build -p flux
-	@mkdir -p $(HOST_DIST)
-	@cp target/debug/flux $(HOST_DIST)/
+	cargo build -p flux --target-dir target/go
+	@cp target/go/debug/flux $(HOST_DIST)/
 
 # -- Default app --------------------------------------
 #
@@ -70,7 +69,5 @@ dist-clean:
 	rm -rf dist
 
 clean:
-	cargo clean
-	cargo clean --target-dir target-dev
-	rm -rf dist
+	rm -rf target dist
 	rm -rf android/app/build android/build android/.gradle

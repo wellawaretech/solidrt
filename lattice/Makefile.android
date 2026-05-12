@@ -29,18 +29,18 @@ endef
 # $(1) = profile (release|debug)
 define ndk-stage
 	mkdir -p $(ANDROID_DIST)
-	cp target/$(ANDROID_TARGET)/$(1)/liblattice.so $(ANDROID_DIST)/libmain.so
-	cp target/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
-	cp target/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so $(ANDROID_DIST)/
+	cp target/go/$(ANDROID_TARGET)/$(1)/liblattice.so $(ANDROID_DIST)/libmain.so
+	cp target/go/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
+	cp target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so $(ANDROID_DIST)/
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
 solidrt-go-android-debug: default-app
-	$(call ndk-build,SOLIDRT-GO (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features dev)
+	$(call ndk-build,SOLIDRT-GO (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features dev --target-dir target/go)
 	$(call ndk-stage,debug)
 
 solidrt-go-android: default-app
-	$(call ndk-build,SOLIDRT-GO (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features dev)
+	$(call ndk-build,SOLIDRT-GO (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features dev --target-dir target/go)
 	$(call ndk-stage,release)
 
 # Bootstrap Gradle wrapper if missing.
