@@ -1,0 +1,33 @@
+{
+  "name": "@solidrt/cli",
+  "version": "0.0.1",
+  "author": "Antoine van Wel",
+  "type": "module",
+  "bin": {
+    "srt": "./bin/srt"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "default-app/"
+  ],
+  "dependencies": {
+    "@babel/core": "^7.28.5",
+    "@babel/preset-typescript": "^7.28.5",
+    "babel-preset-solid": "2.0.0-beta.7",
+    "qrcode-generator": "^2.0.4"
+  },
+  "optionalDependencies": {
+    "@solidrt/linux-x64-gnu": "0.0.1",
+    "@solidrt/win32-x64-msvc": "0.0.1"
+  },
+  "peerDependencies": {
+    "@solidrt/core": "workspace:*",
+    "@solidjs/signals": "2.0.0-beta.7",
+    "@solidjs/universal": "2.0.0-beta.7",
+    "typescript": "^5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": [
+    "bin/**/*",
+    "src/**/*",
+    "default-app/**/*"
+  ]
+}
