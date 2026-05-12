@@ -2,7 +2,7 @@ use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::rendertree::{Rectangle, RenderTree, Span, Text, View, Window};
+use crate::rendertree::{ElementKind, Rectangle, RenderTree, Span, Text, View, Window};
 
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
@@ -48,9 +48,25 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
   )
   .unwrap();
 
+  let tree_ref = shared.0.clone();
+  let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: f64| {
+    let mut tree = tree_ref.borrow_mut();
+    let element = tree.element_mut(node_id);
+    match (&mut element.kind, property.as_str()) {
+      (ElementKind::Rectangle(rect), "x") => rect.x = Some(value as f32),
+      (ElementKind::Rectangle(rect), "y") => rect.y = Some(value as f32),
+      (ElementKind::Rectangle(rect), "w") => rect.w = Some(value as f32),
+      (ElementKind::Rectangle(rect), "h") => rect.h = Some(value as f32),
+      (ElementKind::Rectangle(rect), "r") => rect.r = Some(value as f32),
+      _ => panic!("unknown property '{property}'"),
+    }
+  })
+  .unwrap();
+
   let globals = ctx.globals();
   globals.set("createRoot", create_root).unwrap();
   globals.set("createNode", create_node).unwrap();
   globals.set("deleteNode", delete_node).unwrap();
   globals.set("insertNode", insert_node).unwrap();
+  globals.set("setProperty", set_property).unwrap();
 }

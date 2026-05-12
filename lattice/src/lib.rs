@@ -20,15 +20,14 @@ impl std::ops::Deref for AlloyContext {
 
 pub fn plugin(qtx: QuickJsContext<'_>) {
   let draw_fn = Function::new(qtx.clone(), |qtx: QuickJsContext<'_>| {
-    // let mut builder = DisplayListBuilder::new(None);
-    // let rect = Rect::new(Point::new(200.0, 100.0), Size::new(200.0, 200.0));
-    // let mut paint = Paint::default();
-    // paint.set_color(Color::new_srgba(1.0, 0.0, 0.0, 1.0));
-    // builder.draw_rect(&rect, &paint);
-    // let dl = builder.build().unwrap();
-
-    // let atx = qtx.userdata::<AlloyContext>().unwrap();
-    // atx.submit(dl).expect("Failed to submit display list");
+    let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().unwrap();
+    let atx = qtx.userdata::<AlloyContext>().unwrap();
+    let platform = PlatformContext::new();
+    let mut builder = DisplayListBuilder::new(None);
+    rendertree::composite::composite(&mut builder, &mut tree.0.borrow_mut(), &platform);
+    if let Some(dl) = builder.build() {
+      atx.submit(dl).expect("Failed to submit display list");
+    }
   })
   .unwrap();
 
@@ -42,9 +41,13 @@ pub fn plugin(qtx: QuickJsContext<'_>) {
 const SOURCE: &str = "
 createRoot(1);
 createNode(2, 'rect');
+setProperty(2, 'x', 200);
+setProperty(2, 'y', 200);
+setProperty(2, 'w', 200);
+setProperty(2, 'h', 200);
 insertNode(1, 2);
-createNode(3, 'rect');
-insertNode(1, 3);
+Flux.on('render', draw);
+draw();
 ";
 
 pub fn start(rt: &tokio::runtime::Runtime) {
