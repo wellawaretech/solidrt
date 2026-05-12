@@ -18,22 +18,22 @@ HOST_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
 include Makefile.linux
 include Makefile.android
 
-.DEFAULT_GOAL := dev-runtime
+.DEFAULT_GOAL := solidrt-go
 
 .PHONY: help flux default-app default-app-bundle dist-clean clean
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
-	@echo "  dev-runtime          Release + dev features (default)"
-	@echo "  dev-runtime-debug    Debug + dev features"
-	@echo "  target-runtime       Release, no features (production binary)"
-	@echo "  dist-linux           Build both runtimes into packages/linux-x64-gnu/"
+	@echo "  solidrt-go           Build Solidrt Go (release, default)"
+	@echo "  solidrt-go-debug     Build Solidrt Go (debug)"
+	@echo "  runtime              Build production runtime (release)"
+	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
 	@echo "Android (ABI=$(ANDROID_ABI)):"
-	@echo "  dev-runtime-android        Build .so (release + dev features)"
-	@echo "  dev-runtime-android-debug  Build .so (debug + dev features)"
-	@echo "  run-android                Build, install, launch, tail logcat"
-	@echo "  run-android-debug          Same with debug .so"
+	@echo "  solidrt-go-android        Build .so (release)"
+	@echo "  solidrt-go-android-debug  Build .so (debug)"
+	@echo "  run-android               Build, install, launch, tail logcat"
+	@echo "  run-android-debug         Same with debug .so"
 	@echo ""
 	@echo "Default app:"
 	@echo "  default-app-bundle   Regenerate app.srt.js from app.tsx"

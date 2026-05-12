@@ -9,12 +9,12 @@ RUST_TARGET_x86_64      = x86_64-linux-android
 RUST_TARGET_x86         = i686-linux-android
 ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
 
-ANDROID_DIST = $(CURDIR)/dist/android/$(ANDROID_ABI)
-APK_DEV_DEBUG = android/app/build/outputs/apk/dev/debug/app-dev-debug.apk
+ANDROID_DIST  = $(CURDIR)/dist/android/$(ANDROID_ABI)
+APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: dev-runtime-android dev-runtime-android-debug run-android run-android-debug
+.PHONY: solidrt-go-android solidrt-go-android-debug run-android run-android-debug
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -35,12 +35,12 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-dev-runtime-android-debug: default-app
-	$(call ndk-build,DEV-RUNTIME (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features dev)
+solidrt-go-android-debug: default-app
+	$(call ndk-build,SOLIDRT-GO (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features dev)
 	$(call ndk-stage,debug)
 
-dev-runtime-android: default-app
-	$(call ndk-build,DEV-RUNTIME (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features dev)
+solidrt-go-android: default-app
+	$(call ndk-build,SOLIDRT-GO (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features dev)
 	$(call ndk-stage,release)
 
 # Bootstrap Gradle wrapper if missing.
@@ -51,15 +51,15 @@ $(GRADLE_WRAPPER_JAR):
 # $(1) = profile (release|debug) matching the staged .so
 define android-run
 	$(call ndk-stage,$(1))
-	cd android && ./gradlew assembleDevDebug
-	adb install -r $(APK_DEV_DEBUG)
+	cd android && ./gradlew assembleGoDebug
+	adb install -r $(APK_GO_DEBUG)
 	adb logcat -c
 	adb shell am start -n com.solidrt.app/.MainActivity
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
-run-android-debug: dev-runtime-android-debug $(GRADLE_WRAPPER_JAR)
+run-android-debug: solidrt-go-android-debug $(GRADLE_WRAPPER_JAR)
 	$(call android-run,debug)
 
-run-android: dev-runtime-android $(GRADLE_WRAPPER_JAR)
+run-android: solidrt-go-android $(GRADLE_WRAPPER_JAR)
 	$(call android-run,release)

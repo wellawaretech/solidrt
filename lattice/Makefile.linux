@@ -2,7 +2,7 @@
 
 PKG_LINUX := $(CURDIR)/../packages/linux-x64-gnu
 
-.PHONY: dev-runtime dev-runtime-debug target-runtime dist-linux
+.PHONY: solidrt-go solidrt-go-debug runtime dist-linux
 
 # Stage the runner binary into dist/<host-platform>/.
 # $(1) = cargo target-dir, $(2) = profile (release|debug)
@@ -12,25 +12,25 @@ define stage-runner
 	@echo "Staged solidrt-runner into $(HOST_DIST)/"
 endef
 
-dev-runtime-debug: default-app
-	@echo "Building DEV-RUNTIME (debug) $(TIMESTAMP)"
+solidrt-go-debug: default-app
+	@echo "Building SOLIDRT-GO (debug) $(TIMESTAMP)"
 	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
 	  cargo build --features dev --target-dir target-dev
 	$(call stage-runner,target-dev,debug)
 
-dev-runtime: default-app
-	@echo "Building DEV-RUNTIME (release) $(TIMESTAMP)"
+solidrt-go: default-app
+	@echo "Building SOLIDRT-GO (release) $(TIMESTAMP)"
 	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
 	  cargo build --release --features dev --target-dir target-dev
 	$(call stage-runner,target-dev,release)
 
-target-runtime:
-	@echo "Building TARGET-RUNTIME (release) $(TIMESTAMP)"
+runtime:
+	@echo "Building RUNTIME (release) $(TIMESTAMP)"
 	$(BUILD_VERSION) cargo build --release
 	$(call stage-runner,target,release)
 
 dist-linux:
-	$(MAKE) dev-runtime
-	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-dev
-	$(MAKE) target-runtime
+	$(MAKE) solidrt-go
+	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-go
+	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt
