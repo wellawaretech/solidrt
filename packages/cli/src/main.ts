@@ -41,7 +41,7 @@ if (command === "build") {
 // -- Run command --
 
 if (values.client) {
-  let runner = requireBinary("solid-rt-runner")
+  let runner = requireBinary("solidrt-go")
   let args = ["--dev"]
   if (source) args.push("--dev-server", source)
   process.exit(await run(runner, args))

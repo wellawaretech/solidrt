@@ -1,6 +1,6 @@
 import { solidPlugin } from "./bun-plugin-solid"
 import { values, source, isPrebuilt } from "./args"
-import { requireBinary, run, state } from "./util"
+import { requireBinary, state } from "./util"
 import { resolve } from "path"
 
 export async function bundle(entry = source) {
@@ -47,23 +47,27 @@ export async function bundleTo(outfile: string) {
   return result
 }
 
-async function compileToBytecode(jsFile: string, outFile?: string) {
-  let compiler = requireBinary("qjsrt")
-  let args = ["-c", jsFile]
-  if (outFile) args.push("-o", outFile)
-  let code = await run(compiler, args)
+async function compileJs(jsCode: string, outfile: string) {
+  let compiler = requireBinary("flux")
+  let proc = Bun.spawn([compiler], {
+    stdin: new Blob([jsCode]),
+    stdout: "pipe",
+    stderr: "inherit",
+  })
+  let [bytecode, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited])
   if (code !== 0) process.exit(code)
-  return outFile ?? jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
+  await Bun.write(outfile, bytecode)
+  return outfile
+}
+
+async function compileToBytecode(jsFile: string, outFile?: string) {
+  let jsCode = await Bun.file(jsFile).text()
+  let dest = outFile ?? jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
+  return compileJs(jsCode, dest)
 }
 
 async function compileFromStdin(jsCode: string, outfile: string) {
-  let compiler = requireBinary("qjsrt")
-  let proc = Bun.spawn([compiler, "-c", "-o", outfile], {
-    stdio: [new Blob([jsCode]), "inherit", "inherit"],
-  })
-  let code = await proc.exited
-  if (code !== 0) process.exit(code)
-  return outfile
+  return compileJs(jsCode, outfile)
 }
 
 export async function runBuildCommand() {

@@ -1,4 +1,4 @@
-import { resolveBinary } from "../../native"
+import { resolveBinary } from "./native"
 import type { Interface as ReadlineInterface } from "node:readline"
 import type { Server as BunServer } from "bun"
 
@@ -11,7 +11,7 @@ export let state = {
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,
-  server: null as BunServer | null,
+  server: null as BunServer<unknown> | null,
   serverUrl: null as string | null,
   rl: null as ReadlineInterface | null,
 }

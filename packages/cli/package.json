@@ -8,8 +8,7 @@
   },
   "files": [
     "bin/",
-    "src/",
-    "default-app/"
+    "src/"
   ],
   "dependencies": {
     "@babel/core": "^7.28.5",
