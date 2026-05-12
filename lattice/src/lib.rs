@@ -3,7 +3,7 @@ mod rendertree;
 
 use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
-use flux::rquickjs::{Ctx as QuickJsContext, Function, JsLifetime};
+use flux::rquickjs::{Ctx as QuickJsContext, JsLifetime};
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
 use std::sync::{Arc, OnceLock};
@@ -16,23 +16,6 @@ impl std::ops::Deref for AlloyContext {
   fn deref(&self) -> &Self::Target {
     &self.0
   }
-}
-
-pub fn plugin(qtx: QuickJsContext<'_>) {
-  let draw_fn = Function::new(qtx.clone(), |qtx: QuickJsContext<'_>| {
-    let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().unwrap();
-    let atx = qtx.userdata::<AlloyContext>().unwrap();
-    let platform = PlatformContext::new();
-    let mut builder = DisplayListBuilder::new(None);
-    rendertree::composite::composite(&mut builder, &mut tree.0.borrow_mut(), &platform);
-    if let Some(dl) = builder.build() {
-      atx.submit(dl).expect("Failed to submit display list");
-    }
-  })
-  .unwrap();
-
-  let globals = qtx.globals();
-  globals.set("draw", draw_fn).unwrap();
 }
 
 // const SOURCE: &str = "setInterval(draw, 100)";
@@ -59,24 +42,10 @@ pub fn start(rt: &tokio::runtime::Runtime) {
   let exec_handle_for_setup = exec_handle.clone();
 
   let mut render_tree = RenderTree::new();
-  // let window_id = render_tree.add_node(1, rendertree::Window::default().with_layout());
-  // render_tree.root = Some(window_id);
-  // let mut rect = rendertree::Rectangle::default();
-  // rect.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.8, 0.0, 1.0);
-  // let mut rect_elem = rect.with_layout();
-  // rect_elem.layout_data_mut().style.flex_grow = 1.0;
-  // let rect_id = render_tree.add_node(2, rect_elem);
-  // render_tree.insert_node(window_id, rect_id, None);
-  // let mut rect2 = rendertree::Rectangle::default();
-  // rect2.paint.color = alloy::impellers::Color::new_srgba(0.0, 0.0, 0.8, 1.0);
-  // let mut rect2_elem = rect2.with_layout();
-  // rect2_elem.layout_data_mut().style.flex_grow = 1.0;
-  // let rect2_id = render_tree.add_node(3, rect2_elem);
-  // render_tree.insert_node(window_id, rect2_id, None);
 
   app.run(
     move |atx| {
-      let platform = PlatformContext::new();
+      let platform = Arc::new(PlatformContext::new());
       {
         let mut builder = DisplayListBuilder::new(None);
         rendertree::composite::composite(&mut builder, &mut render_tree, &platform);
@@ -87,8 +56,7 @@ pub fn start(rt: &tokio::runtime::Runtime) {
 
       let engine = FluxEngine::builder()
         .logger(|_level, msg| log!("[js] {msg}"))
-        .userdata(AlloyContext(atx))
-        .plugin(plugin)
+        .plugin(move |ctx| plugins::draw::init(ctx, platform.clone(), AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
 
