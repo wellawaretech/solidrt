@@ -2,7 +2,7 @@ use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::rendertree::{Element, ElementKind, Rectangle, RenderTree, Span, Text, View, Window};
+use crate::rendertree::{Rectangle, RenderTree, Span, Text, View, Window};
 
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
@@ -21,17 +21,15 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
 
   let tree_ref = shared.0.clone();
   let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
-    let element_kind = match kind.as_str() {
+    let element = match kind.as_str() {
       "window" => panic!("use createRoot to create the root Window node"),
-      "view" => ElementKind::View(View::default()),
-      "rect" => ElementKind::Rectangle(Rectangle::default()),
-      "text" => ElementKind::Text(Text::default()),
-      "span" => ElementKind::Span(Span::default()),
+      "view" => View::default().with_layout(),
+      "rect" => Rectangle::default().with_layout(),
+      "text" => Text::default().with_layout(),
+      "span" => Span::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),
     };
-    tree_ref
-      .borrow_mut()
-      .create_node(id, Element::no_layout(element_kind));
+    tree_ref.borrow_mut().create_node(id, element);
   })
   .unwrap();
 
