@@ -6,7 +6,7 @@ pub mod platform;
 mod tree;
 
 pub use hit::{HitConfig, HitTester};
-pub use kinds::{Rectangle, Span, Text, View, Window};
+pub use kinds::{PaintState, Rectangle, Span, Text, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
@@ -80,6 +80,16 @@ pub enum ElementKind {
   Span(Span),
   // Texture(Texture),
   // Audio(Audio),
+}
+
+impl ElementKind {
+  pub fn paint_mut(&mut self) -> Option<&mut PaintState> {
+    match self {
+      ElementKind::Rectangle(r) => Some(&mut r.paint),
+      ElementKind::Text(t) => Some(&mut t.paint),
+      _ => None,
+    }
+  }
 }
 
 impl Buildable for ElementKind {

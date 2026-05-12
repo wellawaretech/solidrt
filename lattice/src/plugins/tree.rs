@@ -2,6 +2,8 @@ use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use alloy::impellers::Color;
+
 use crate::rendertree::{ElementKind, Rectangle, RenderTree, Span, Text, View, Window};
 
 #[derive(Clone, JsLifetime)]
@@ -58,6 +60,15 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
       (ElementKind::Rectangle(rect), "w") => rect.w = Some(value as f32),
       (ElementKind::Rectangle(rect), "h") => rect.h = Some(value as f32),
       (ElementKind::Rectangle(rect), "r") => rect.r = Some(value as f32),
+      (kind, "color") => {
+        let rgba = value as u32;
+        kind.paint_mut().expect("node kind has no paint").color = Color::new_srgba(
+          ((rgba >> 24) & 0xFF) as f32 / 255.0,
+          ((rgba >> 16) & 0xFF) as f32 / 255.0,
+          ((rgba >> 8) & 0xFF) as f32 / 255.0,
+          (rgba & 0xFF) as f32 / 255.0,
+        );
+      }
       _ => panic!("unknown property '{property}'"),
     }
   })

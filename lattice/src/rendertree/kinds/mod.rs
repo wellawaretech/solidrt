@@ -33,7 +33,7 @@ pub struct PaintState {
 impl Default for PaintState {
   fn default() -> Self {
     Self {
-      color: Color::new_srgba(1.0, 0.0, 0.0, 1.0),
+      color: Color::new_srgba(0.5, 0.5, 0.5, 1.0),
       draw_style: DrawStyle::Fill,
       blend_mode: BlendMode::SourceOver,
       stroke_width: 0.0,

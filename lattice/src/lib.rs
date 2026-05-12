@@ -45,6 +45,7 @@ setProperty(2, 'x', 200);
 setProperty(2, 'y', 200);
 setProperty(2, 'w', 200);
 setProperty(2, 'h', 200);
+setProperty(2, 'color', 0x00ff00ff);
 insertNode(1, 2);
 Flux.on('render', draw);
 draw();
