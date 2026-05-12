@@ -20,7 +20,7 @@ export function requireBinary(name: string) {
   let path = resolveBinary(name)
   if (path) return path
   console.error(`Could not find ${name} binary.`)
-  console.error("Build from source: cd engine && make build")
+  console.error("Build from source: cd lattice && make, then set SRT_HOME=<SolidRT project home>")
   process.exit(1)
 }
 
