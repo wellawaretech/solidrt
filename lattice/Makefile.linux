@@ -15,13 +15,13 @@ endef
 solidrt-go-debug: default-app
 	@echo "Building SOLIDRT-GO (debug) $(TIMESTAMP)"
 	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
-	  cargo build --features dev --target-dir target/go
+	  cargo build --features go --target-dir target/go
 	$(call stage-runner,go,debug)
 
 solidrt-go: default-app
 	@echo "Building SOLIDRT-GO (release) $(TIMESTAMP)"
 	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
-	  cargo build --release --features dev --target-dir target/go
+	  cargo build --release --features go --target-dir target/go
 	$(call stage-runner,go,release)
 
 runtime:

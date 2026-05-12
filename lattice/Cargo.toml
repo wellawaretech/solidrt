@@ -11,6 +11,9 @@ crate-type = ["cdylib", "lib"]
 name = "solidrt-runner"
 path = "src/main.rs"
 
+[features]
+go = []
+
 [dependencies]
 alloy = { workspace = true }
 flux = { workspace = true }
