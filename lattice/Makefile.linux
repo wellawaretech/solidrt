@@ -1,0 +1,36 @@
+# lattice/Makefile.linux
+
+PKG_LINUX := $(CURDIR)/../packages/linux-x64-gnu
+
+.PHONY: dev-runtime dev-runtime-debug target-runtime dist-linux
+
+# Stage the runner binary into dist/<host-platform>/.
+# $(1) = cargo target-dir, $(2) = profile (release|debug)
+define stage-runner
+	@mkdir -p $(HOST_DIST)
+	@cp $(1)/$(2)/solidrt-runner $(HOST_DIST)/
+	@echo "Staged solidrt-runner into $(HOST_DIST)/"
+endef
+
+dev-runtime-debug: default-app
+	@echo "Building DEV-RUNTIME (debug) $(TIMESTAMP)"
+	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
+	  cargo build --features dev --target-dir target-dev
+	$(call stage-runner,target-dev,debug)
+
+dev-runtime: default-app
+	@echo "Building DEV-RUNTIME (release) $(TIMESTAMP)"
+	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
+	  cargo build --release --features dev --target-dir target-dev
+	$(call stage-runner,target-dev,release)
+
+target-runtime:
+	@echo "Building TARGET-RUNTIME (release) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build --release
+	$(call stage-runner,target,release)
+
+dist-linux:
+	$(MAKE) dev-runtime
+	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-dev
+	$(MAKE) target-runtime
+	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt

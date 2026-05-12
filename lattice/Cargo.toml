@@ -8,7 +8,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "lib"]
 
 [[bin]]
-name = "solid-rt-runner"
+name = "solidrt-runner"
 path = "src/main.rs"
 
 [dependencies]

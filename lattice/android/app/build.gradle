@@ -1,0 +1,48 @@
+plugins {
+     id 'com.android.application'
+}
+
+android {
+    namespace = "com.solidrt.app"
+    compileSdkVersion 36
+    buildToolsVersion "36.1.0"
+    ndkVersion = "29.0.14206865"
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 36
+        versionCode 1
+        versionName "1.0"
+    }
+    flavorDimensions "variant"
+    productFlavors {
+        dev {
+            dimension "variant"
+        }
+        prod {
+            dimension "variant"
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    sourceSets.main {
+        jniLibs.srcDir '../../dist/android'
+        assets.srcDirs = ['../../dist/assets']
+    }
+    lint {
+        abortOnError = false
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // CameraX + ML Kit — dev flavor only (QR scanner)
+    devImplementation 'androidx.camera:camera-core:1.4.1'
+    devImplementation 'androidx.camera:camera-camera2:1.4.1'
+    devImplementation 'androidx.camera:camera-lifecycle:1.4.1'
+    devImplementation 'com.google.mlkit:barcode-scanning:17.3.0'
+}

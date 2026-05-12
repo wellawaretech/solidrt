@@ -1,0 +1,65 @@
+# lattice/Makefile.android
+
+NDK_HOME    ?= /opt/android-ndk
+ANDROID_ABI ?= arm64-v8a
+
+RUST_TARGET_arm64-v8a   = aarch64-linux-android
+RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
+RUST_TARGET_x86_64      = x86_64-linux-android
+RUST_TARGET_x86         = i686-linux-android
+ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
+
+ANDROID_DIST = $(CURDIR)/dist/android/$(ANDROID_ABI)
+APK_DEV_DEBUG = android/app/build/outputs/apk/dev/debug/app-dev-debug.apk
+
+GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
+
+.PHONY: dev-runtime-android dev-runtime-android-debug run-android run-android-debug
+
+# Cross-compile the engine .so via cargo-ndk.
+# $(1) = label, $(2) = env vars, $(3) = cargo flags
+define ndk-build
+	@echo "Building ANDROID $(1) $(TIMESTAMP)"
+	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
+	  $(2) \
+	  $(BUILD_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
+endef
+
+# Stage .so files into dist/android/ for the Gradle project to pick up.
+# $(1) = profile (release|debug)
+define ndk-stage
+	mkdir -p $(ANDROID_DIST)
+	cp target/$(ANDROID_TARGET)/$(1)/liblattice.so $(ANDROID_DIST)/libmain.so
+	cp target/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
+	cp target/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so $(ANDROID_DIST)/
+	@echo "Staged Android .so files into $(ANDROID_DIST)/"
+endef
+
+dev-runtime-android-debug: default-app
+	$(call ndk-build,DEV-RUNTIME (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features dev)
+	$(call ndk-stage,debug)
+
+dev-runtime-android: default-app
+	$(call ndk-build,DEV-RUNTIME (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features dev)
+	$(call ndk-stage,release)
+
+# Bootstrap Gradle wrapper if missing.
+$(GRADLE_WRAPPER_JAR):
+	cd android && gradle wrapper
+
+# Build APK, install, launch, and stream logcat.
+# $(1) = profile (release|debug) matching the staged .so
+define android-run
+	$(call ndk-stage,$(1))
+	cd android && ./gradlew assembleDevDebug
+	adb install -r $(APK_DEV_DEBUG)
+	adb logcat -c
+	adb shell am start -n com.solidrt.app/.MainActivity
+	adb logcat -s SDL SDL/APP libmain DEBUG libc
+endef
+
+run-android-debug: dev-runtime-android-debug $(GRADLE_WRAPPER_JAR)
+	$(call android-run,debug)
+
+run-android: dev-runtime-android $(GRADLE_WRAPPER_JAR)
+	$(call android-run,release)
