@@ -1,6 +1,7 @@
 import { createRoot, createEffect } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { mappings } from "./constants"
+import { attachWindow } from "./window"
 
 export let nodes = new Map()
 
@@ -49,14 +50,17 @@ export let {
 
     console.log("createElement", proxy.id, elementType)
 
-    // ffi.createElement(elementType, proxy.id)
+    if (elementType === "window") ffi.createRoot(proxy.id)
+    else ffi.createNode(proxy.id, elementType)
+  
     return proxy
   },
 
   createTextNode: (value: string): ProxyNode => {
     let proxy = createProxyNode("span")
-
     console.log("createTextNode", proxy.id, value)
+    ffi.createNode(proxy.id, "span")
+
     // ffi.createTextElement(proxy.id, ""+value)
     // console.debug(`create text element string::${proxy.id} ${value}`)
     return proxy
@@ -74,6 +78,7 @@ export let {
 
     console.log("setProperty", node.id, name, value)
     // if (runPropHandlers(node.id, name, value, prev)) return
+    ffi.setProperty(node.id, name, value)
 
     // let propertyId = PropertyNameMap[name]
     // if (propertyId === undefined) {
@@ -95,13 +100,7 @@ export let {
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
     if (!node) return
 
-    let parentId = parent?.id || 0
-    let anchorId = anchor?.id || 0
-
-    // Update JS tree references
     if (parent) {
-      // console.debug(`insert node ${node.id} into ${parent.id}`)
-
       node.parent = parent
 
       if (!anchor) {
@@ -114,9 +113,10 @@ export let {
           parent.children.splice(index, 0, node)
         }
       }
-    }
 
-    // ffi.insertNode(parentId, node.id, anchorId)
+      if (anchor) ffi.insertNode(parent.id, node.id, anchor.id)
+      else ffi.insertNode(parent.id, node.id)
+    }
   },
 
   removeNode: (parent: ProxyNode, node: ProxyNode): void => {
@@ -131,7 +131,7 @@ export let {
     }
     node.parent = undefined
 
-    // ffi.removeNode(parent.id, node.id)
+    ffi.deleteNode(parent.id, node.id)
 
     // Recursively clean up node and all descendants
     // let cleanup = (n: ProxyNode) => {
@@ -159,7 +159,7 @@ export function render(code: () => any) {
     if (!root || root.elementType !== "window") {
       throw new Error("render() root must be a <window> element")
     }
-    // attachWindow(root.id)
+    attachWindow(root.id)
     insert(null, root)
   })
 }

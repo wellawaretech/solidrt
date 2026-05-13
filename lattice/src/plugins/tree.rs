@@ -1,4 +1,4 @@
-use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime};
+use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -74,10 +74,12 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
   })
   .unwrap();
 
-  let globals = ctx.globals();
-  globals.set("createRoot", create_root).unwrap();
-  globals.set("createNode", create_node).unwrap();
-  globals.set("deleteNode", delete_node).unwrap();
-  globals.set("insertNode", insert_node).unwrap();
-  globals.set("setProperty", set_property).unwrap();
+  let ffi = Object::new(ctx.clone()).unwrap();
+  ffi.set("createRoot", create_root).unwrap();
+  ffi.set("createNode", create_node).unwrap();
+  ffi.set("deleteNode", delete_node).unwrap();
+  ffi.set("insertNode", insert_node).unwrap();
+  ffi.set("setProperty", set_property).unwrap();
+
+  ctx.globals().set("ffi", ffi).unwrap();
 }
