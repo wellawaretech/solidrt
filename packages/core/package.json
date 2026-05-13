@@ -1,5 +1,19 @@
 {
   "name": "@solidrt/core",
   "version": "0.0.1",
-  "type": "module"
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./jsx-runtime": "./jsx-runtime.d.ts",
+    "./jsx-runtime-dev": "./jsx-runtime.d.ts"
+  },
+  "files": [
+    "src/",
+    "jsx-runtime.d.ts"
+  ],
+  "peerDependencies": {
+    "@solidjs/signals": "2.0.0-beta.7",
+    "@solidjs/universal": "2.0.0-beta.7"
+  }
 }
