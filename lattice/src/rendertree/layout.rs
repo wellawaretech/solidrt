@@ -147,7 +147,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
           }
         }
         if let ElementKind::Text(text_el) = &mut tree.render_tree.node_mut(id).kind {
-          text_el.text = text;
+          text_el.computed_text = text;
         }
       }
 

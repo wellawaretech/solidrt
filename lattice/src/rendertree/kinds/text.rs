@@ -9,7 +9,7 @@ use taffy::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct Text {
-  pub text: String,
+  pub computed_text: String,
   pub font_size: f32,
   pub font_style: FontStyle,
   pub text_alignment: TextAlignment,
@@ -20,7 +20,7 @@ pub struct Text {
 impl Default for Text {
   fn default() -> Self {
     Self {
-      text: String::new(),
+      computed_text: String::new(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
       text_alignment: TextAlignment::Left,
@@ -44,7 +44,7 @@ impl Buildable for Text {
       return;
     };
     para_builder.push_style(&style);
-    para_builder.add_text(&self.text);
+    para_builder.add_text(&self.computed_text);
 
     let Some(paragraph) = para_builder.build(ctx.size.w) else {
       return;
@@ -76,7 +76,7 @@ impl Measurable for Text {
     style.set_font_style(self.font_style);
 
     para_builder.push_style(&style);
-    para_builder.add_text(&self.text);
+    para_builder.add_text(&self.computed_text);
 
     let Some(paragraph) = para_builder.build(f32::MAX) else {
       return Size::ZERO;
@@ -97,7 +97,7 @@ impl Measurable for Text {
       return Size::ZERO;
     };
     para_builder.push_style(&style);
-    para_builder.add_text(&self.text);
+    para_builder.add_text(&self.computed_text);
 
     let Some(paragraph) = para_builder.build(width) else {
       return Size::ZERO;

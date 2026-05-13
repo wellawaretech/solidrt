@@ -60,6 +60,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
       (ElementKind::Rectangle(rect), "w") => rect.w = Some(value.get::<f64>().expect("w must be a number") as f32),
       (ElementKind::Rectangle(rect), "h") => rect.h = Some(value.get::<f64>().expect("h must be a number") as f32),
       (ElementKind::Rectangle(rect), "r") => rect.r = Some(value.get::<f64>().expect("r must be a number") as f32),
+      (ElementKind::Span(span), "text") => span.text = value.get::<String>().expect("text must be a string"),
       (kind, "color") => {
         let rgba = value.get::<f64>().expect("color must be a number") as u32;
         kind.paint_mut().expect("node kind has no paint").color = Color::new_srgba(

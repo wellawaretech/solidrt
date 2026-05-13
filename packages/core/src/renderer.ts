@@ -40,11 +40,6 @@ export let {
   ref,
 } = createRenderer<ProxyNode>({
   createElement: (elementType: string): ProxyNode => {
-    // let elementType = ElementTypeMap[element]
-    // if (elementType === undefined) {
-    //   throw new Error(`Unknown element type: ${element}`)
-    // }
-
     let proxy = createProxyNode(elementType)
 
     console.log("createElement", proxy.id, elementType)
@@ -59,16 +54,13 @@ export let {
     let proxy = createProxyNode("span")
     console.log("createTextNode", proxy.id, value)
     ffi.createNode(proxy.id, "span")
-
-    // ffi.createTextElement(proxy.id, ""+value)
-    // console.debug(`create text element string::${proxy.id} ${value}`)
+    ffi.setProperty(proxy.id, "text", ""+value)
     return proxy
   },
 
   replaceText: (node: ProxyNode, value: string): void => {
     console.log("replaceText", node.id, value)
-    // console.debug(`replace text ${node.id} := ${value}`)
-    // ffi.setProperty(node.id, PropertyId.Text, ""+value)
+    ffi.setProperty(node.id, "text", ""+value)
   },
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "span",
@@ -77,23 +69,8 @@ export let {
 
     console.log("setProperty", node.id, name, value)
     // if (runPropHandlers(node.id, name, value, prev)) return
+
     ffi.setProperty(node.id, name, value)
-
-    // let propertyId = PropertyNameMap[name]
-    // if (propertyId === undefined) {
-    //   console.warn(`Unknown property: ${name}`)
-    //   return
-    // }
-
-    // let mapped = (mappings as Record<string, Record<string, number>>)[name]
-
-    // if (typeof value === "string" && mapped) {
-    //   ffi.setProperty(node.id, propertyId, mapped[value] as any)
-    //   return
-    // }
-
-    // // console.debug(`set property ${node.id}::${name} := ${value}`)
-    // ffi.setProperty(node.id, propertyId, value as any)
   },
 
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
