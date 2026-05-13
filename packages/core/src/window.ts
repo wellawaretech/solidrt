@@ -30,7 +30,7 @@ export function onRender(fn: (tick: number) => void) {
 // ------ Window ----------------
 
 export function attachWindow(_nodeId: number) {
-  let unsubscribe: (() => void) | null = null
+  let unsubscribe: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", (time: number) => {

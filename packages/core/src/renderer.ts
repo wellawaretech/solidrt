@@ -1,6 +1,5 @@
 import { createRoot, createEffect } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
-import { mappings } from "./constants"
 import { attachWindow } from "./window"
 
 export let nodes = new Map()

@@ -1,4 +1,4 @@
-use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object};
+use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -51,17 +51,17 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
   .unwrap();
 
   let tree_ref = shared.0.clone();
-  let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: f64| {
+  let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
     let mut tree = tree_ref.borrow_mut();
     let element = tree.element_mut(node_id);
     match (&mut element.kind, property.as_str()) {
-      (ElementKind::Rectangle(rect), "x") => rect.x = Some(value as f32),
-      (ElementKind::Rectangle(rect), "y") => rect.y = Some(value as f32),
-      (ElementKind::Rectangle(rect), "w") => rect.w = Some(value as f32),
-      (ElementKind::Rectangle(rect), "h") => rect.h = Some(value as f32),
-      (ElementKind::Rectangle(rect), "r") => rect.r = Some(value as f32),
+      (ElementKind::Rectangle(rect), "x") => rect.x = Some(value.get::<f64>().expect("x must be a number") as f32),
+      (ElementKind::Rectangle(rect), "y") => rect.y = Some(value.get::<f64>().expect("y must be a number") as f32),
+      (ElementKind::Rectangle(rect), "w") => rect.w = Some(value.get::<f64>().expect("w must be a number") as f32),
+      (ElementKind::Rectangle(rect), "h") => rect.h = Some(value.get::<f64>().expect("h must be a number") as f32),
+      (ElementKind::Rectangle(rect), "r") => rect.r = Some(value.get::<f64>().expect("r must be a number") as f32),
       (kind, "color") => {
-        let rgba = value as u32;
+        let rgba = value.get::<f64>().expect("color must be a number") as u32;
         kind.paint_mut().expect("node kind has no paint").color = Color::new_srgba(
           ((rgba >> 24) & 0xFF) as f32 / 255.0,
           ((rgba >> 16) & 0xFF) as f32 / 255.0,

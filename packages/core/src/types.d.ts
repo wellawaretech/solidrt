@@ -1,5 +1,14 @@
 import type { Accessor, JSX as SolidJSX } from "@solidjs/signals"
-import { mappings } from "./constants"
+
+declare global {
+  let ffi: {
+    createRoot(id: number): void
+    createNode(id: number, kind: string): void
+    insertNode(parentId: number, nodeId: number, anchorId?: number): void
+    deleteNode(parentId: number, nodeId: number): void
+    setProperty(nodeId: number, name: string, value: unknown): void
+  }
+}
 
 type Children = SolidJSX.Element
 
@@ -13,16 +22,16 @@ interface FlexboxProps {
   flexShrink?: number
   flexBasis?: number
 
-  flexDirection?: keyof typeof mappings.flexDirection
-  flexWrap?: keyof typeof mappings.flexWrap
-  alignSelf?: keyof typeof mappings.alignSelf
-  alignItems?: keyof typeof mappings.alignItems
-  alignContent?: keyof typeof mappings.alignContent
-  justifyContent?: keyof typeof mappings.justifyContent
+  flexDirection?: "row" | "column" | "row-reverse" | "column-reverse"
+  flexWrap?: "nowrap" | "wrap" | "wrap-reverse"
+  alignSelf?: "start" | "end" | "flex-start" | "flex-end" | "center" | "baseline" | "stretch"
+  alignItems?: "start" | "end" | "flex-start" | "flex-end" | "center" | "baseline" | "stretch"
+  alignContent?: "start" | "end" | "flex-start" | "flex-end" | "center" | "stretch" | "space-between" | "space-evenly" | "space-around"
+  justifyContent?: "start" | "end" | "flex-start" | "flex-end" | "center" | "stretch" | "space-between" | "space-evenly" | "space-around"
 }
 
 interface GridProps {
-  gridAutoFlow?: keyof typeof mappings.gridAutoFlow
+  gridAutoFlow?: "row" | "column" | "row-dense" | "column-dense"
   gridAutoColumns?: number
   gridAutoRows?: number
   gridColumnStart?: number
@@ -36,8 +45,8 @@ interface GridProps {
 type Dimension = number | "auto" | `${number}%`
 
 export interface LayoutProps extends FlexboxProps, GridProps {
-  display?: keyof typeof mappings.display
-  position?: keyof typeof mappings.position
+  display?: "block" | "flex" | "grid" | "none"
+  position?: "relative" | "absolute"
 
   top?: Dimension
   right?: Dimension
@@ -63,7 +72,7 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   marginBottom?: Dimension
   marginLeft?: Dimension
 
-  overflow?: keyof typeof mappings.overflow
+  overflow?: "visible" | "clip" | "hidden" | "scroll"
 }
 
 import type { LCH } from "./color"
@@ -71,10 +80,10 @@ export type Color = string | LCH
 
 export interface PaintProps {
   color?: Color
-  blendMode?: keyof typeof mappings.blendMode
-  drawStyle?: keyof typeof mappings.drawStyle
-  strokeCap?: keyof typeof mappings.strokeCap
-  strokeJoin?: keyof typeof mappings.strokeJoin
+  blendMode?: "clear" | "source" | "destination" | "source-over" | "destination-over" | "source-in" | "destination-in" | "source-out" | "destination-out" | "source-atop" | "destination-atop" | "xor" | "plus" | "modulate" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "multiply" | "hue" | "saturation" | "color" | "luminosity"
+  drawStyle?: "fill" | "stroke" | "stroke-and-fill"
+  strokeCap?: "butt" | "round" | "square"
+  strokeJoin?: "miter" | "round" | "bevel"
   strokeMiter?: number
   strokeWidth?: number
 }
@@ -98,7 +107,7 @@ export interface PointerProps {
   onKeyDown?: Function
   onKeyUp?: Function
   onTextInput?: Function
-  pointerEvents?: keyof typeof mappings.pointerEvents
+  pointerEvents?: "auto" | "none" | "all"
 }
 
 interface Position {
@@ -140,14 +149,14 @@ export interface OvalProps extends Position, PaintProps, PointerProps {
 
 export interface PathProps extends Position, PaintProps, PointerProps {
   d?: string
-  fillRule?: keyof typeof mappings.fillRule
+  fillRule?: "nonZero" | "evenOdd"
 }
 
 export interface TextProps extends PaintProps {
   children: Children
   fontSize?: number
-  fontStyle?: keyof typeof mappings.fontStyle
-  textAlign?: keyof typeof mappings.textAlign
+  fontStyle?: "normal" | "italic"
+  textAlign?: "left" | "right" | "center" | "justify"
   maxLines?: number
 }
 
