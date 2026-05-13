@@ -17,7 +17,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     .enable_all()
     .build()
     .unwrap();
-  start(&rt);
+  start(&rt, None);
   0
 }
 
@@ -40,6 +40,7 @@ fn ui_thread(
   handle: tokio::runtime::Handle,
   exec_handle_for_setup: Arc<OnceLock<ExecHandle>>,
   atx: Arc<alloy::Context>,
+  source: Option<String>,
 ) {
   let mut render_tree = RenderTree::new();
   let platform = Arc::new(PlatformContext::new());
@@ -78,7 +79,10 @@ fn ui_thread(
       }
     });
     #[cfg(feature = "go")]
-    local.run_until(engine.eval_source(DEFAULT_SOURCE)).await;
+    {
+      let src = source.as_deref().unwrap_or(DEFAULT_SOURCE);
+      local.run_until(engine.eval_source(src)).await;
+    }
   });
 }
 
@@ -98,7 +102,7 @@ fn main_thread(
   }
 }
 
-pub fn start(rt: &tokio::runtime::Runtime) {
+pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
   let start_time = std::time::Instant::now();
@@ -107,7 +111,7 @@ pub fn start(rt: &tokio::runtime::Runtime) {
 
   app.run(
     move |atx| {
-      ui_thread(handle, exec_handle_ui, atx);
+      ui_thread(handle, exec_handle_ui, atx, source);
     },
     move |display, dl| {
       main_thread(&exec_handle_main, start_time, display, dl);
