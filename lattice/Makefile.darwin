@@ -42,14 +42,12 @@ endef
 
 solidrt-go-debug: default-app angle-darwin
 	@echo "Building SOLIDRT-GO macOS (debug) $(TIMESTAMP)"
-	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
-	  cargo build --features go --bin solidrt-go --target-dir target/go
+	$(BUILD_VERSION) cargo build --features go --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,debug,solidrt-go)
 
 solidrt-go: default-app angle-darwin
 	@echo "Building SOLIDRT-GO macOS (release) $(TIMESTAMP)"
-	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
-	  cargo build --release --features go --bin solidrt-go --target-dir target/go
+	$(BUILD_VERSION) cargo build --release --features go --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,release,solidrt-go)
 
 runtime: angle-darwin

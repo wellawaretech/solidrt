@@ -33,22 +33,7 @@ impl std::ops::Deref for AlloyContext {
   }
 }
 
-// const SOURCE: &str = "setInterval(draw, 100)";
-// const SOURCE: &str = "Flux.on('render', draw); draw()";
-
-const SOURCE: &str = "
-createRoot(1);
-createNode(2, 'rect');
-setProperty(2, 'x', 200);
-setProperty(2, 'y', 200);
-setProperty(2, 'w', 200);
-setProperty(2, 'h', 200);
-setProperty(2, 'r', 50);
-setProperty(2, 'color', 0x007f00ff);
-insertNode(1, 2);
-Flux.on('render', draw);
-draw();
-";
+const DEFAULT_BUNDLE: &[u8] = include_bytes!("../dist/default-app.srt.bin");
 
 fn ui_thread(
   handle: tokio::runtime::Handle,
@@ -91,7 +76,7 @@ fn ui_thread(
         tokio::time::sleep(std::time::Duration::from_millis(8)).await;
       }
     });
-    local.run_until(engine.eval_source(SOURCE)).await;
+    local.run_until(engine.eval(DEFAULT_BUNDLE.to_vec())).await;
   });
 }
 
@@ -115,15 +100,15 @@ pub fn start(rt: &tokio::runtime::Runtime) {
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
   let start_time = std::time::Instant::now();
-  let exec_handle: Arc<OnceLock<ExecHandle>> = Arc::new(OnceLock::new());
-  let exec_handle_for_setup = exec_handle.clone();
+  let exec_handle_main: Arc<OnceLock<ExecHandle>> = Arc::new(OnceLock::new());
+  let exec_handle_ui = exec_handle_main.clone();
 
   app.run(
     move |atx| {
-      ui_thread(handle, exec_handle_for_setup, atx);
+      ui_thread(handle, exec_handle_ui, atx);
     },
     move |display, dl| {
-      main_thread(&exec_handle, start_time, display, dl);
+      main_thread(&exec_handle_main, start_time, display, dl);
     },
   );
 }

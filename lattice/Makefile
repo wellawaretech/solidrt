@@ -7,7 +7,6 @@ DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 DEFAULT_APP_BIN = $(CURDIR)/dist/default-app.srt.bin
 FLUX            = $(CURDIR)/target/go/debug/flux
-SRT_DEFAULT_BUNDLE ?= $(DEFAULT_APP_BIN)
 
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 

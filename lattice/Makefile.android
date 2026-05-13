@@ -36,11 +36,11 @@ define ndk-stage
 endef
 
 solidrt-go-android-debug: default-app
-	$(call ndk-build,SOLIDRT-GO (debug),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--features go --target-dir target/go)
+	$(call ndk-build,SOLIDRT-GO (debug),,--features go --target-dir target/go)
 	$(call ndk-stage,debug)
 
 solidrt-go-android: default-app
-	$(call ndk-build,SOLIDRT-GO (release),SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)",--release --features go --target-dir target/go)
+	$(call ndk-build,SOLIDRT-GO (release),,--release --features go --target-dir target/go)
 	$(call ndk-stage,release)
 
 # Bootstrap Gradle wrapper if missing.
