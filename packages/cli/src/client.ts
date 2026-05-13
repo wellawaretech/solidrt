@@ -15,7 +15,9 @@ function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteSt
 
 export function spawnClient() {
   let runner = requireBinary("solidrt-go")
-  state.child = Bun.spawn([runner, "--dev", "--dev-server", `${DEV_HOST}:${DEV_PORT}`], {
+  state.child = Bun.spawn([runner], {
+  //TODO implement dev server connection
+  // state.child = Bun.spawn([runner, "--dev-server", `${DEV_HOST}:${DEV_PORT}`], {
     stdio: ["ignore", "pipe", "pipe"],
   })
 
