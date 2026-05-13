@@ -38,14 +38,15 @@ export function attachWindow(_nodeId: number) {
         let frames = animationFrames
         animationFrames = new Map()
 
-        let t = time * 1000 | 0
-        for (let fn of frames.values()) {
-          fn(t)
-        }
+        let t = (time * 1000) | 0
+        for (let fn of frames.values()) fn(t)
       }
 
       draw()
     })
+
+    // trigger first draw
+    draw()
   })
 
   onCleanup(() => {
