@@ -1,0 +1,14 @@
+{
+  "name": "@solidrt/darwin-arm64",
+  "version": "0.0.1",
+  "description": "SolidRT native binary for macOS arm64",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": [
+    "solidrt-go",
+    "solidrt-runner",
+    "libimpeller.dylib",
+    "libEGL.dylib",
+    "libGLESv2.dylib"
+  ]
+}

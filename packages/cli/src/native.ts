@@ -8,12 +8,12 @@ let require = createRequire(import.meta.url)
 let TRIPLE_MAP: Record<string, string> = {
   "linux-x64": "linux-x64-gnu",
   "darwin-arm64": "darwin-arm64",
-  "darwin-x64": "darwin-x64",
   "win32-x64": "win32-x64-msvc",
 }
 
 let PKG_MAP: Record<string, string> = {
   "linux-x64": "@solidrt/linux-x64-gnu",
+  "darwin-arm64": "@solidrt/darwin-arm64",
   "win32-x64": "@solidrt/win32-x64-msvc",
 }
 

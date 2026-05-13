@@ -4,9 +4,7 @@ ELECTRON_VERSION   = v40.9.2
 ELECTRON_URL       = https://github.com/electron/electron/releases/download/$(ELECTRON_VERSION)
 ANGLE_STAMP_FILE   = .angle-version
 
-DARWIN_ARCH_aarch64-apple-darwin = arm64
-DARWIN_ARCH_x86_64-apple-darwin  = x64
-DARWIN_ARCH = $(DARWIN_ARCH_$(HOST_TARGET))
+DARWIN_ARCH = arm64
 
 DARWIN_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
 ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-darwin-$(DARWIN_ARCH).zip
@@ -64,3 +62,4 @@ dist-darwin:
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
 	$(MAKE) runtime
 	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner
+	cp $(HOST_DIST)/libimpeller.dylib $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/

@@ -11,7 +11,12 @@ impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys"] }
 sdl3 = { version = "0.18.0", features = ["build-from-source"] }
 wgpu = { version = "29", features = ["gles"] }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys"] }
+sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
+wgpu = { version = "29", features = ["gles", "angle"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys", "static_link"] }
 sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
 wgpu = { version = "29", features = ["gles"] }

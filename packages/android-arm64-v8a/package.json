@@ -1,0 +1,11 @@
+{
+  "name": "@solidrt/android-arm64-v8a",
+  "version": "0.0.1",
+  "description": "SolidRT native binary for Android arm64-v8a",
+  "os": ["android"],
+  "cpu": ["arm64"],
+  "main": "solidrt-dev.apk",
+  "files": [
+    "solidrt-dev.apk"
+  ]
+}
