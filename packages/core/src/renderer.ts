@@ -46,7 +46,7 @@ export let {
 
     if (elementType === "window") ffi.createRoot(proxy.id)
     else ffi.createNode(proxy.id, elementType)
-  
+
     return proxy
   },
 
@@ -54,13 +54,13 @@ export let {
     let proxy = createProxyNode("span")
     console.log("createTextNode", proxy.id, value)
     ffi.createNode(proxy.id, "span")
-    ffi.setProperty(proxy.id, "text", ""+value)
+    ffi.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
 
   replaceText: (node: ProxyNode, value: string): void => {
     console.log("replaceText", node.id, value)
-    ffi.setProperty(node.id, "text", ""+value)
+    ffi.setProperty(node.id, "text", "" + value)
   },
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "span",
@@ -90,6 +90,8 @@ export let {
         }
       }
 
+      console.log("insertNode", parent.id, node.id, anchor?.id ?? "")
+
       if (anchor) ffi.insertNode(parent.id, node.id, anchor.id)
       else ffi.insertNode(parent.id, node.id)
     }
@@ -98,7 +100,7 @@ export let {
   removeNode: (parent: ProxyNode, node: ProxyNode): void => {
     if (!node || !parent) return
 
-    // console.log(`remove node ${parent.id}::${node.id}`)
+    console.log("removeNode", parent.id, node.id)
 
     // Update JS tree references
     let index = parent.children.indexOf(node)

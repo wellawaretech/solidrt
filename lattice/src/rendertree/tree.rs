@@ -122,7 +122,7 @@ impl RenderTree {
     self.nodes.remove(&node_id);
   }
 
-  fn invalidate_cache(&mut self, node_id: u64) {
+  pub fn invalidate_cache(&mut self, node_id: u64) {
     let mut current = Some(node_id);
     while let Some(id) = current {
       let element = self.node_mut(id);
