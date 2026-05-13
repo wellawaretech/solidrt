@@ -5,8 +5,6 @@ BUILD_VERSION  = BUILD_VERSION="$(TIMESTAMP)"
 
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
-DEFAULT_APP_BIN = $(CURDIR)/dist/default-app.srt.bin
-FLUX            = $(CURDIR)/target/go/debug/flux
 
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 
@@ -24,7 +22,11 @@ endif
 
 .DEFAULT_GOAL := solidrt-go
 
-.PHONY: help flux default-app default-app-bundle dist-clean clean
+.PHONY: help default-app-bundle dist-clean clean
+
+$(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
+	@echo "Bundling default app (app.tsx -> app.srt.js)..."
+	cd $(CURDIR)/.. && bunx srt build $(DEFAULT_APP_SRC)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -46,27 +48,13 @@ help:
 	@echo "  clean                Remove all build artifacts"
 	@echo "  dist-clean           Remove dist/ only"
 
-# -- Tooling ------------------------------------------
-
-flux:
-	cargo build -p flux --target-dir target/go
-	@mkdir -p $(HOST_DIST)
-	@cp target/go/debug/flux $(HOST_DIST)/
-
 # -- Default app --------------------------------------
 #
-# SolidRT Go embeds default-app.srt.bin at compile time.
-# Compiled from the committed app.srt.js - no bun tooling needed.
-# Regenerate app.srt.js from app.tsx via `make default-app-bundle`.
+# SolidRT Go embeds default-app/app.srt.js at compile time via include_str!.
+# The file target rebuilds app.srt.js when any .tsx source changes.
+# Run `make default-app-bundle` to force a rebuild.
 
-default-app: flux
-	@echo "Compiling default app..."
-	@mkdir -p $(CURDIR)/dist
-	$(FLUX) < $(DEFAULT_APP_JS) > $(DEFAULT_APP_BIN)
-
-default-app-bundle:
-	@echo "Bundling default app (app.tsx -> app.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt build $(DEFAULT_APP_SRC)
+default-app-bundle: $(DEFAULT_APP_JS)
 
 # -- Clean --------------------------------------------
 

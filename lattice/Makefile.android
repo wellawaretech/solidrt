@@ -35,11 +35,11 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-solidrt-go-android-debug: default-app
+solidrt-go-android-debug: $(DEFAULT_APP_JS)
 	$(call ndk-build,SOLIDRT-GO (debug),,--features go --target-dir target/go)
 	$(call ndk-stage,debug)
 
-solidrt-go-android: default-app
+solidrt-go-android: $(DEFAULT_APP_JS)
 	$(call ndk-build,SOLIDRT-GO (release),,--release --features go --target-dir target/go)
 	$(call ndk-stage,release)
 

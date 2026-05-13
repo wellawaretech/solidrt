@@ -33,7 +33,8 @@ impl std::ops::Deref for AlloyContext {
   }
 }
 
-const DEFAULT_BUNDLE: &[u8] = include_bytes!("../dist/default-app.srt.bin");
+#[cfg(feature = "go")]
+const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
 fn ui_thread(
   handle: tokio::runtime::Handle,
@@ -76,7 +77,8 @@ fn ui_thread(
         tokio::time::sleep(std::time::Duration::from_millis(8)).await;
       }
     });
-    local.run_until(engine.eval(DEFAULT_BUNDLE.to_vec())).await;
+    #[cfg(feature = "go")]
+    local.run_until(engine.eval_source(DEFAULT_SOURCE)).await;
   });
 }
 
