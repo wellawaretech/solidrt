@@ -12,11 +12,17 @@ SRT_DEFAULT_BUNDLE ?= $(DEFAULT_APP_BIN)
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 
 PLATFORM_x86_64-unknown-linux-gnu = linux-x64-gnu
+PLATFORM_aarch64-apple-darwin     = darwin-arm64
+PLATFORM_x86_64-apple-darwin      = darwin-x64
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
 HOST_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
 
-include Makefile.linux
 include Makefile.android
+ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
+include Makefile.darwin
+else
+include Makefile.linux
+endif
 
 .DEFAULT_GOAL := solidrt-go
 

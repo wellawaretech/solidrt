@@ -1,0 +1,66 @@
+# lattice/Makefile.darwin
+
+ELECTRON_VERSION   = v40.9.2
+ELECTRON_URL       = https://github.com/electron/electron/releases/download/$(ELECTRON_VERSION)
+ANGLE_STAMP_FILE   = .angle-version
+
+DARWIN_ARCH_aarch64-apple-darwin = arm64
+DARWIN_ARCH_x86_64-apple-darwin  = x64
+DARWIN_ARCH = $(DARWIN_ARCH_$(HOST_TARGET))
+
+DARWIN_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
+ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-darwin-$(DARWIN_ARCH).zip
+ANGLE_EGL        = $(DARWIN_DIST)/libEGL.dylib
+ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
+
+PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
+
+.PHONY: solidrt-go solidrt-go-debug runtime dist-darwin angle-darwin
+
+angle-darwin:
+	@mkdir -p $(DARWIN_DIST)
+	@cur=$$(cat $(DARWIN_DIST)/$(ANGLE_STAMP_FILE) 2>/dev/null); \
+	if [ "$$cur" = "$(ELECTRON_VERSION)" ] && [ -f $(ANGLE_EGL) ] && [ -f $(ANGLE_GLES) ]; then \
+	  exit 0; \
+	fi; \
+	rm -f $(ANGLE_EGL) $(ANGLE_GLES); \
+	if [ ! -f $(ANGLE_DARWIN_ZIP) ]; then \
+	  echo "Downloading ANGLE ($(ELECTRON_VERSION)) from Electron..."; \
+	  curl --progress-bar --fail -L $(ELECTRON_URL)/electron-$(ELECTRON_VERSION)-darwin-$(DARWIN_ARCH).zip -o $(ANGLE_DARWIN_ZIP); \
+	fi; \
+	echo "Extracting ANGLE into $(DARWIN_DIST)..."; \
+	unzip -jo $(ANGLE_DARWIN_ZIP) "*/libEGL.dylib" "*/libGLESv2.dylib" -d $(DARWIN_DIST); \
+	echo "$(ELECTRON_VERSION)" > $(DARWIN_DIST)/$(ANGLE_STAMP_FILE)
+
+# Stage binary + dylibs into HOST_DIST.
+# $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
+define stage-darwin
+	@mkdir -p $(HOST_DIST)
+	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/
+	@cp target/$(1)/$(2)/build/impellers-*/out/libimpeller.dylib $(HOST_DIST)/
+	@cp $(ANGLE_EGL) $(ANGLE_GLES) $(HOST_DIST)/
+	@echo "Staged $(3) into $(HOST_DIST)/"
+endef
+
+solidrt-go-debug: default-app angle-darwin
+	@echo "Building SOLIDRT-GO macOS (debug) $(TIMESTAMP)"
+	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
+	  cargo build --features go --bin solidrt-go --target-dir target/go
+	$(call stage-darwin,go,debug,solidrt-go)
+
+solidrt-go: default-app angle-darwin
+	@echo "Building SOLIDRT-GO macOS (release) $(TIMESTAMP)"
+	$(BUILD_VERSION) SRT_DEFAULT_BUNDLE="$(SRT_DEFAULT_BUNDLE)" \
+	  cargo build --release --features go --bin solidrt-go --target-dir target/go
+	$(call stage-darwin,go,release,solidrt-go)
+
+runtime: angle-darwin
+	@echo "Building RUNTIME macOS (release) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build --release --bin solidrt-runner --target-dir target/runtime
+	$(call stage-darwin,runtime,release,solidrt-runner)
+
+dist-darwin:
+	$(MAKE) solidrt-go
+	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
+	$(MAKE) runtime
+	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner
