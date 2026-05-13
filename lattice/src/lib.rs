@@ -50,6 +50,67 @@ Flux.on('render', draw);
 draw();
 ";
 
+fn ui_thread(
+  handle: tokio::runtime::Handle,
+  exec_handle_for_setup: Arc<OnceLock<ExecHandle>>,
+  atx: Arc<alloy::Context>,
+) {
+  let mut render_tree = RenderTree::new();
+  let platform = Arc::new(PlatformContext::new());
+  {
+    let mut builder = DisplayListBuilder::new(None);
+    rendertree::composite::composite(&mut builder, &mut render_tree, &platform);
+    if let Some(dl) = builder.build() {
+      atx.submit(dl).expect("Failed to submit display list");
+    }
+  }
+
+  let engine = FluxEngine::builder()
+    .logger(|_level, msg| log!("[js] {msg}"))
+    .plugin(move |ctx| plugins::draw::init(ctx, platform.clone(), AlloyContext(atx)))
+    .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
+    .build();
+
+  exec_handle_for_setup.set(engine.exec_handle()).ok();
+
+  handle.block_on(async {
+    let local = tokio::task::LocalSet::new();
+    local.spawn_local(async {
+      loop {
+        while let Some(event) = alloy::sdl_utils::poll_event() {
+          match event {
+            alloy::sdl3::event::Event::Quit { .. } => {
+              std::process::exit(0);
+            }
+            alloy::sdl3::event::Event::KeyDown { keycode, .. } => {
+              log!("[key] {keycode:?}");
+            }
+            _ => {}
+          }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+      }
+    });
+    local.run_until(engine.eval_source(SOURCE)).await;
+  });
+}
+
+fn main_thread(
+  exec_handle: &Arc<OnceLock<ExecHandle>>,
+  start_time: std::time::Instant,
+  display: &mut dyn alloy::RenderSurface,
+  dl: &alloy::impellers::DisplayList,
+) {
+  display
+    .draw_display_list(dl)
+    .expect("Failed to draw display list");
+  display.present();
+  if let Some(eh) = exec_handle.get() {
+    let t = start_time.elapsed().as_secs_f64().to_string();
+    eh.exec(move |ctx| emit_event(&ctx, "render", t));
+  }
+}
+
 pub fn start(rt: &tokio::runtime::Runtime) {
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
@@ -57,57 +118,12 @@ pub fn start(rt: &tokio::runtime::Runtime) {
   let exec_handle: Arc<OnceLock<ExecHandle>> = Arc::new(OnceLock::new());
   let exec_handle_for_setup = exec_handle.clone();
 
-  let mut render_tree = RenderTree::new();
-
   app.run(
     move |atx| {
-      let platform = Arc::new(PlatformContext::new());
-      {
-        let mut builder = DisplayListBuilder::new(None);
-        rendertree::composite::composite(&mut builder, &mut render_tree, &platform);
-        if let Some(dl) = builder.build() {
-          atx.submit(dl).expect("Failed to submit display list");
-        }
-      }
-
-      let engine = FluxEngine::builder()
-        .logger(|_level, msg| log!("[js] {msg}"))
-        .plugin(move |ctx| plugins::draw::init(ctx, platform.clone(), AlloyContext(atx)))
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
-        .build();
-
-      exec_handle_for_setup.set(engine.exec_handle()).ok();
-
-      handle.block_on(async {
-        let local = tokio::task::LocalSet::new();
-        local.spawn_local(async {
-          loop {
-            while let Some(event) = alloy::sdl_utils::poll_event() {
-              match event {
-                alloy::sdl3::event::Event::Quit { .. } => {
-                  std::process::exit(0);
-                }
-                alloy::sdl3::event::Event::KeyDown { keycode, .. } => {
-                  log!("[key] {keycode:?}");
-                }
-                _ => {}
-              }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
-          }
-        });
-        local.run_until(engine.eval_source(SOURCE)).await;
-      });
+      ui_thread(handle, exec_handle_for_setup, atx);
     },
     move |display, dl| {
-      display
-        .draw_display_list(dl)
-        .expect("Failed to draw display list");
-      display.present();
-      if let Some(eh) = exec_handle.get() {
-        let t = start_time.elapsed().as_secs_f64().to_string();
-        eh.exec(move |ctx| emit_event(&ctx, "render", t));
-      }
+      main_thread(&exec_handle, start_time, display, dl);
     },
   );
 }
