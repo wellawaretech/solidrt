@@ -8,6 +8,21 @@ use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
 use std::sync::{Arc, OnceLock};
 
+// --- Start Android entry point ------------------------------
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
+  let rt = tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()
+    .unwrap();
+  start(&rt);
+  0
+}
+
+// --- End Android entry point ------------------------------
+
 #[derive(Clone, JsLifetime)]
 struct AlloyContext(#[qjs(skip_trace)] Arc<alloy::Context>);
 
@@ -28,7 +43,8 @@ setProperty(2, 'x', 200);
 setProperty(2, 'y', 200);
 setProperty(2, 'w', 200);
 setProperty(2, 'h', 200);
-setProperty(2, 'color', 0x00ff00ff);
+setProperty(2, 'r', 50);
+setProperty(2, 'color', 0x007f00ff);
 insertNode(1, 2);
 Flux.on('render', draw);
 draw();
