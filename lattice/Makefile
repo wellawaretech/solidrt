@@ -52,7 +52,7 @@ flux:
 # -- Default app --------------------------------------
 #
 # SolidRT Go embeds default-app.srt.bin at compile time.
-# Compiled from the committed app.srt.js — no bun tooling needed.
+# Compiled from the committed app.srt.js - no bun tooling needed.
 # Regenerate app.srt.js from app.tsx via `make default-app-bundle`.
 
 default-app: flux
