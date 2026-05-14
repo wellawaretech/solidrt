@@ -89,6 +89,27 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Validate ref is a version tag
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Workflow must be triggered from a vX.Y.Z tag, got: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Compute publish flags
+        id: flags
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" == *-* ]]; then
+            # Derive dist-tag from the prerelease identifier:
+            # 0.0.1-exp.1 -> exp, 1.0.0-beta.3 -> beta, 1.0.0-rc.1 -> rc
+            TAG="${VERSION#*-}"
+            TAG="${TAG%%.*}"
+            echo "tag_flag=--tag $TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_flag=" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
@@ -109,7 +130,7 @@ jobs:
       - name: Publish @solidrt/core
         run: |
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
-          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+          npm publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -117,7 +138,7 @@ jobs:
       - name: Publish @solidrt/darwin-arm64
         run: |
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
-          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+          npm publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/darwin-arm64
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -125,7 +146,7 @@ jobs:
       - name: Publish @solidrt/linux-x64-gnu
         run: |
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
-          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+          npm publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/linux-x64-gnu
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -138,7 +159,7 @@ jobs:
           npm pkg set "optionalDependencies.@solidrt/darwin-arm64=$VERSION"
           npm pkg set "optionalDependencies.@solidrt/android-arm64-v8a=$VERSION"
           npm pkg set "peerDependencies.@solidrt/core=$VERSION"
-          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+          npm publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
