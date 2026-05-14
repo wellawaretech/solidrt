@@ -89,20 +89,22 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Validate ref is a version tag
-        run: |
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
-            echo "::error::Workflow must be triggered from a vX.Y.Z tag, got: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-
-      - name: Compute publish flags
+      - name: Compute version and publish flags
         id: flags
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            # Dry-run dispatch from a branch: use a placeholder, nothing will be published
+            VERSION="0.0.0-dry-run"
+          else
+            echo "::error::Real publish requires a vX.Y.Z tag, got: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # Derive dist-tag from the prerelease identifier:
+          # 0.0.1-exp.1 -> exp, 1.0.0-beta.3 -> beta, 1.0.0-rc.1 -> rc
           if [[ "$VERSION" == *-* ]]; then
-            # Derive dist-tag from the prerelease identifier:
-            # 0.0.1-exp.1 -> exp, 1.0.0-beta.3 -> beta, 1.0.0-rc.1 -> rc
             TAG="${VERSION#*-}"
             TAG="${TAG%%.*}"
             echo "tag_flag=--tag $TAG" >> "$GITHUB_OUTPUT"
@@ -134,7 +136,7 @@ jobs:
 
       - name: Publish @solidrt/core
         run: |
-          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
         env:
@@ -142,7 +144,7 @@ jobs:
 
       - name: Publish @solidrt/darwin-arm64
         run: |
-          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/darwin-arm64
         env:
@@ -150,7 +152,7 @@ jobs:
 
       - name: Publish @solidrt/linux-x64-gnu
         run: |
-          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/linux-x64-gnu
         env:
@@ -158,7 +160,7 @@ jobs:
 
       - name: Publish @solidrt/cli
         run: |
-          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/cli
         env:
