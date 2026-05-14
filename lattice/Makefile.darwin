@@ -6,7 +6,7 @@ ANGLE_STAMP_FILE   = .angle-version
 
 DARWIN_ARCH = arm64
 
-DARWIN_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
+DARWIN_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
 ANGLE_DARWIN_ZIP = $(DARWIN_DIST)/electron-darwin-$(DARWIN_ARCH).zip
 ANGLE_EGL        = $(DARWIN_DIST)/libEGL.dylib
 ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib

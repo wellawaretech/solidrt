@@ -6,12 +6,14 @@ BUILD_VERSION  = BUILD_VERSION="$(TIMESTAMP)"
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 
+SRT_HOME ?= $(abspath $(CURDIR)/..)
+
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 
 PLATFORM_x86_64-unknown-linux-gnu = linux-x64-gnu
 PLATFORM_aarch64-apple-darwin     = darwin-arm64
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
-HOST_DIST      = $(CURDIR)/dist/$(HOST_PLATFORM)
+HOST_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
 
 include Makefile.android
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
@@ -59,8 +61,8 @@ default-app-bundle: $(DEFAULT_APP_JS)
 # -- Clean --------------------------------------------
 
 dist-clean:
-	rm -rf dist
+	rm -rf $(SRT_HOME)/dist
 
 clean:
-	rm -rf target dist
+	rm -rf target $(SRT_HOME)/dist
 	rm -rf android/app/build android/build android/.gradle

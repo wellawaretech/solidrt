@@ -34,6 +34,10 @@ Run the app:
 srt run src/index.tsx
 ```
 
+## Development
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for how to build from source.
+
 ## License
 
 MIT. Copyright (c) 2026 Antoine van Wel.

@@ -26,7 +26,7 @@ export function resolveBinary(name: string) {
   if (srtRoot) {
     let triple = TRIPLE_MAP[key]
     if (triple) {
-      let bin = resolve(srtRoot, "lattice", "dist", triple, name + ext)
+      let bin = resolve(srtRoot, "dist", triple, name + ext)
       if (existsSync(bin)) return bin
     }
   }

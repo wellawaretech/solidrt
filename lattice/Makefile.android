@@ -9,7 +9,7 @@ RUST_TARGET_x86_64      = x86_64-linux-android
 RUST_TARGET_x86         = i686-linux-android
 ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
 
-ANDROID_DIST  = $(CURDIR)/dist/android/$(ANDROID_ABI)
+ANDROID_DIST  = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
 APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar

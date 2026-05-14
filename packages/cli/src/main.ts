@@ -43,7 +43,8 @@ if (command === "build") {
 if (values.client) {
   let runner = requireBinary("solidrt-go")
   let args = []
-  if (source) args.push("--dev-server", source)
+  //TODO add dev server connection
+  // if (source) args.push("--dev-server", source)
   let exit = await run(runner, args)
   process.exit(exit)
 }

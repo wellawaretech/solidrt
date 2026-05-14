@@ -22,6 +22,12 @@ SDL is accessed through the sdl3 Rust crate, which does not expose all SDL funct
 - `packages/core` SolidRT core, linking SolidJS and Lattice
 - `packages/cli` SolidRT command-line developer tooling 
 
+# Building
+Run from repo root:
+- `make solidrt-go` - build the go binary (release)
+- `make solidrt-go-debug` - build the go binary (debug)
+- `make runtime` - build the production runtime (release)
+
 # General
 If you get a prompt which asks to implement something, but there's a non-trivial reason why that is not easy, then point this out and ask for feedback how to continue.
 
