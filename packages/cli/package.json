@@ -1,6 +1,6 @@
 {
   "name": "@solidrt/cli",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "author": "Antoine van Wel",
   "type": "module",
   "bin": {
@@ -17,9 +17,9 @@
     "qrcode-generator": "^2.0.4"
   },
   "optionalDependencies": {
-    "@solidrt/linux-x64-gnu": "0.0.1",
-    "@solidrt/darwin-arm64": "0.0.1",
-    "@solidrt/android-arm64-v8a": "0.0.1"
+    "@solidrt/linux-x64-gnu": "0.0.0",
+    "@solidrt/darwin-arm64": "0.0.0",
+    "@solidrt/android-arm64-v8a": "0.0.0"
   },
   "peerDependencies": {
     "@solidrt/core": "workspace:*",

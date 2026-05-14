@@ -1,6 +1,6 @@
 {
   "name": "@solidrt/linux-x64-gnu",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "SolidRT native binary for Linux x64 (glibc)",
   "os": ["linux"],
   "cpu": ["x64"],

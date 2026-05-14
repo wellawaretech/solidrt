@@ -1,6 +1,6 @@
 {
   "name": "@solidrt/darwin-arm64",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "SolidRT native binary for macOS arm64",
   "os": ["darwin"],
   "cpu": ["arm64"],

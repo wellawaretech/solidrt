@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allows manually triggering the workflow from the Actions tab on GitHub.
+  # Use this for dry runs before tagging a real release:
+  #   Actions -> Release -> Run workflow -> dry_run: checked (default)
+  # To do a real publish via manual trigger, uncheck dry_run.
+  # Tag pushes (v*) always publish for real regardless of this input.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (build and pack but do not publish)'
+        type: boolean
+        default: true
+
+jobs:
+  publish-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y libclang-dev clang
+
+      - name: Install JS dependencies
+        run: bun install
+
+      - name: Build
+        run: make dist-linux
+
+      - name: Publish
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/linux-x64-gnu
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-cli:
+    runs-on: ubuntu-latest
+    needs: [publish-linux, publish-core]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version
+          npm pkg set "optionalDependencies.@solidrt/linux-x64-gnu=$VERSION"
+          npm pkg set "optionalDependencies.@solidrt/darwin-arm64=$VERSION"
+          npm pkg set "optionalDependencies.@solidrt/android-arm64-v8a=$VERSION"
+          npm pkg set "peerDependencies.@solidrt/core=$VERSION"
+          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
