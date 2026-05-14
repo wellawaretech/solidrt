@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -35,12 +35,13 @@ jobs:
         run: >
           sudo apt-get install -y
           libclang-dev clang
-          libwayland-dev libdecor-0-dev
+          build-essential git make pkg-config cmake ninja-build gnome-desktop-testing
+          libwayland-dev libdecor-0-dev libpipewire-0.3-dev liburing-dev
           libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
           libxkbcommon-dev libdrm-dev libgbm-dev
           libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
-          libasound2-dev libpulse-dev
-          libdbus-1-dev libudev-dev
+          libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev
+          libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev
 
       - name: Install JS dependencies
         run: bun install
@@ -82,7 +83,7 @@ jobs:
             packages/darwin-arm64/libGLESv2.dylib
 
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-linux, build-darwin]
     environment: release
     steps:
