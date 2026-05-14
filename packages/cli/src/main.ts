@@ -21,9 +21,6 @@ import { startRepl } from "./repl"
 import { startWatcher } from "./watcher"
 import { resolve, dirname } from "path"
 
-let version = pkg.version === "0.0.0" ? "" : " version " + pkg.version
-console.log(`Welcome to SolidRT${version}!`)
-
 // -- Validate args --
 
 if (!command || (command !== "build" && command !== "run")) {
@@ -77,5 +74,7 @@ if (!values.server) {
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
 
+let version = pkg.version === "0.0.0" ? "" : " version " + pkg.version
+console.log(`Welcome to SolidRT${version}!`)
 startRepl()
 startWatcher()
