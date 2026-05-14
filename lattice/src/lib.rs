@@ -1,8 +1,11 @@
 mod plugins;
 mod rendertree;
+#[cfg(feature = "go")]
+mod go;
 
 enum EngineCmd {
   Stop,
+  Reload(String),
 }
 
 use alloy::impellers::ISize;
@@ -46,7 +49,7 @@ fn ui_thread(
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
-  let src = source.as_deref().unwrap_or(DEFAULT_SOURCE);
+  let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
@@ -65,15 +68,7 @@ fn ui_thread(
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
-    local.spawn_local({
-      let cmd_tx = cmd_tx.clone();
-      async move {
-        loop {
-          tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-          let _ = cmd_tx.send(EngineCmd::Stop);
-        }
-      }
-    });
+    go::start(&handle, cmd_tx.clone());
 
     loop {
       let render_tree = RenderTree::new();
@@ -87,14 +82,18 @@ fn ui_thread(
         .build();
       exec_tx.send(engine.exec_handle()).ok();
 
+      let mut next_src: Option<String> = None;
       local
         .run_until(async {
           tokio::select! {
-            _ = engine.eval_source(src) => {}
-            Some(_) = cmd_rx.recv() => {}
+            _ = engine.eval_source(&current_src) => {}
+            Some(cmd) = cmd_rx.recv() => {
+              if let EngineCmd::Reload(src) = cmd { next_src = Some(src); }
+            }
           }
         })
         .await;
+      if let Some(src) = next_src { current_src = src; }
     }
   });
 }
