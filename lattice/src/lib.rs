@@ -77,23 +77,24 @@ fn ui_thread(
 
     loop {
       let render_tree = RenderTree::new();
+      let platform = platform.clone();
+      let atx = atx.clone();
+
       let engine = FluxEngine::builder()
         .logger(|_level, msg| log!("[js] {msg}"))
-        .plugin({
-          let platform = platform.clone();
-          let atx = atx.clone();
-          move |ctx| plugins::draw::init(ctx, platform.clone(), AlloyContext(atx.clone()))
-        })
+        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       exec_tx.send(engine.exec_handle()).ok();
 
-      local.run_until(async {
-        tokio::select! {
-          _ = engine.eval_source(src) => {}
-          Some(_) = cmd_rx.recv() => {}
-        }
-      }).await;
+      local
+        .run_until(async {
+          tokio::select! {
+            _ = engine.eval_source(src) => {}
+            Some(_) = cmd_rx.recv() => {}
+          }
+        })
+        .await;
     }
   });
 }
@@ -108,10 +109,13 @@ fn main_thread(
   if let Ok(new_exec) = exec_rx.try_recv() {
     *current_exec = Some(new_exec);
   }
+
   display
     .draw_display_list(dl)
     .expect("Failed to draw display list");
+
   display.present();
+
   if let Some(eh) = current_exec {
     let t = start_time.elapsed().as_secs_f64().to_string();
     eh.exec(move |ctx| emit_event(&ctx, "render", t));
