@@ -32,7 +32,15 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install system dependencies
-        run: sudo apt-get install -y libclang-dev clang libwayland-dev libxkbcommon-dev libasound2-dev
+        run: >
+          sudo apt-get install -y
+          libclang-dev clang
+          libwayland-dev libdecor-0-dev
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev
+          libxkbcommon-dev libdrm-dev libgbm-dev
+          libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
+          libasound2-dev libpulse-dev
+          libdbus-1-dev libudev-dev
 
       - name: Install JS dependencies
         run: bun install
