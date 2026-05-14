@@ -1,4 +1,4 @@
-# lattice/Makefile.android
+# lattice/Makefile.x-android
 
 NDK_HOME    ?= /opt/android-ndk
 ANDROID_ABI ?= arm64-v8a
@@ -14,7 +14,7 @@ APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: solidrt-go-android run-android
+.PHONY: x-solidrt-go-android x-run-android
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -35,7 +35,7 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-solidrt-go-android: $(DEFAULT_APP_JS)
+x-solidrt-go-android: $(DEFAULT_APP_JS)
 	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) --features go --target-dir target/go)
 	$(call ndk-stage,$(PROFILE))
 
@@ -54,5 +54,5 @@ define android-run
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
-run-android: solidrt-go-android $(GRADLE_WRAPPER_JAR)
+x-run-android: x-solidrt-go-android $(GRADLE_WRAPPER_JAR)
 	$(call android-run,$(PROFILE))

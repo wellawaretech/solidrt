@@ -18,7 +18,7 @@ PLATFORM_aarch64-apple-darwin     = darwin-arm64
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
 HOST_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
 
-include Makefile.android
+include Makefile.x-android
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
 include Makefile.darwin
 else
@@ -40,8 +40,8 @@ help:
 	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
 	@echo "Android (ABI=$(ANDROID_ABI)):"
-	@echo "  solidrt-go-android   Build .so"
-	@echo "  run-android          Build, install, launch, tail logcat"
+	@echo "  x-solidrt-go-android   Build .so"
+	@echo "  x-run-android          Build, install, launch, tail logcat"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo ""
