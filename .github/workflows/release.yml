@@ -136,7 +136,7 @@ jobs:
 
       - name: Publish @solidrt/core
         run: |
-          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
+          npm pkg set version="${{ steps.flags.outputs.version }}"
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
         env:
@@ -144,7 +144,7 @@ jobs:
 
       - name: Publish @solidrt/darwin-arm64
         run: |
-          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
+          npm pkg set version="${{ steps.flags.outputs.version }}"
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/darwin-arm64
         env:
@@ -152,7 +152,7 @@ jobs:
 
       - name: Publish @solidrt/linux-x64-gnu
         run: |
-          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
+          npm pkg set version="${{ steps.flags.outputs.version }}"
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/linux-x64-gnu
         env:
@@ -160,7 +160,7 @@ jobs:
 
       - name: Publish @solidrt/cli
         run: |
-          npm version "${{ steps.flags.outputs.version }}" --no-git-tag-version
+          npm pkg set version="${{ steps.flags.outputs.version }}"
           bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/cli
         env:
