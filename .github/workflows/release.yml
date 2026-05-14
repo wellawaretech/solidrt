@@ -148,6 +148,11 @@ jobs:
           name: darwin-arm64
           path: packages/darwin-arm64
 
+      - name: Restore executable bit on binaries
+        run: |
+          chmod +x packages/linux-x64-gnu/solidrt-go
+          chmod +x packages/darwin-arm64/solidrt-go
+
       - name: Publish @solidrt/core
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
