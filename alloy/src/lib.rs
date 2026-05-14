@@ -308,7 +308,7 @@ pub fn setup(title: &str, size: ISize) -> App {
     .window(title, width, height)
     .opengl()
     .position_centered()
-    .resizable()
+    .fullscreen()
     .high_pixel_density()
     .build()
     .expect("Failed to create window");
@@ -350,6 +350,7 @@ impl App {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
+          // log!("[alloy] display list received");
           render(render_surface.as_mut(), &dl);
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

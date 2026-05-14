@@ -1,16 +1,19 @@
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};
 use alloy::impellers::DisplayListBuilder;
+use rquickjs::Value;
 use taffy::{prelude::length, Display, FlexDirection, Size, Style};
 
 #[derive(Clone, Debug)]
 pub struct Window {
   pub title: String,
+  pub fullscreen: bool,
 }
 
 impl Default for Window {
   fn default() -> Self {
     Window {
-      title: "Solid-RT".to_string(),
+      title: "SolidRT".to_string(),
+      fullscreen: false,
     }
   }
 }
@@ -20,6 +23,14 @@ impl Buildable for Window {
 }
 
 impl Window {
+  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+    match property {
+      "title" => { self.title = value.get::<String>().expect("title must be a string"); Some(false) }
+      "fullscreen" => { self.fullscreen = value.get::<bool>().expect("fullscreen must be a boolean"); Some(false) }
+      _ => None,
+    }
+  }
+
   pub fn with_layout(self) -> Element {
     Element::with_layout(
       ElementKind::Window(self),

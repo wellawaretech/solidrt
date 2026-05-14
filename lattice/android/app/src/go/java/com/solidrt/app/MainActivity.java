@@ -35,25 +35,25 @@ public class MainActivity extends SDLActivity {
         extractAssets();
         super.onCreate(savedInstanceState);
 
-        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            Log.i(TAG, "Camera permission already granted");
-            // startQrScanner();
-        } else {
-            Log.i(TAG, "Requesting camera permission");
-            requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
-        }
+        // if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+        //     Log.i(TAG, "Camera permission already granted");
+        //     startQrScanner();
+        // } else {
+        //     Log.i(TAG, "Requesting camera permission");
+        //     requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
+        // }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_REQUEST
-                && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startQrScanner();
-        } else {
-            Log.w(TAG, "Camera permission denied");
-        }
+        // if (requestCode == CAMERA_PERMISSION_REQUEST
+        //         && grantResults.length > 0
+        //         && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        //     startQrScanner();
+        // } else {
+        //     Log.w(TAG, "Camera permission denied");
+        // }
     }
 
     @SuppressWarnings("unused") // Called from native code via JNI

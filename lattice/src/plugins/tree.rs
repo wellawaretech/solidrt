@@ -56,11 +56,12 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
     let invalidate = {
       let element = tree.element_mut(node_id);
       match (&mut element.kind, property.as_str()) {
-        (ElementKind::Rectangle(rect), "x") => { rect.x = Some(value.get::<f64>().expect("x must be a number") as f32); false }
-        (ElementKind::Rectangle(rect), "y") => { rect.y = Some(value.get::<f64>().expect("y must be a number") as f32); false }
-        (ElementKind::Rectangle(rect), "w") => { rect.w = Some(value.get::<f64>().expect("w must be a number") as f32); false }
-        (ElementKind::Rectangle(rect), "h") => { rect.h = Some(value.get::<f64>().expect("h must be a number") as f32); false }
-        (ElementKind::Rectangle(rect), "r") => { rect.r = Some(value.get::<f64>().expect("r must be a number") as f32); false }
+        (ElementKind::Window(win), prop) => {
+          win.set_property(prop, value).unwrap_or_else(|| panic!("unknown property '{property}'"))
+        }
+        (ElementKind::Rectangle(rect), prop) => {
+          rect.set_property(prop, value).unwrap_or_else(|| panic!("unknown property '{property}'"))
+        }
         (ElementKind::Span(span), "text") => { span.text = value.get::<String>().expect("text must be a string"); true }
         (kind, "color") => {
           let rgba = value.get::<f64>().expect("color must be a number") as u32;
