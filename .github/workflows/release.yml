@@ -119,6 +119,13 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
+      - name: Bump package versions
+        run: |
+          VERSION="${{ steps.flags.outputs.version }}"
+          for dir in packages/core packages/darwin-arm64 packages/linux-x64-gnu packages/cli; do
+            (cd "$dir" && npm pkg set version="$VERSION")
+          done
+
       - name: Install JS dependencies
         run: bun install
 
@@ -135,33 +142,25 @@ jobs:
           path: packages/darwin-arm64
 
       - name: Publish @solidrt/core
-        run: |
-          npm pkg set version="${{ steps.flags.outputs.version }}"
-          bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @solidrt/darwin-arm64
-        run: |
-          npm pkg set version="${{ steps.flags.outputs.version }}"
-          bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/darwin-arm64
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @solidrt/linux-x64-gnu
-        run: |
-          npm pkg set version="${{ steps.flags.outputs.version }}"
-          bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/linux-x64-gnu
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @solidrt/cli
-        run: |
-          npm pkg set version="${{ steps.flags.outputs.version }}"
-          bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/cli
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
