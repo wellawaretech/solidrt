@@ -5,6 +5,7 @@ use crate::rendertree::{
 use alloy::impellers::{
   DisplayListBuilder, FontStyle, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
 };
+use rquickjs::Value;
 use taffy::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -112,6 +113,14 @@ impl Measurable for Text {
 }
 
 impl Text {
+  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+    match property {
+      "fontSize" => { self.font_size = value.get::<f64>().expect("fontSize must be a number") as f32; Some(true) }
+      "maxLines" => { self.max_lines = value.get::<f64>().expect("maxLines must be a number") as u32; Some(true) }
+      _ => None,
+    }
+  }
+
   pub fn with_layout(self) -> Element {
     Element::with_layout(
       ElementKind::Text(self),
