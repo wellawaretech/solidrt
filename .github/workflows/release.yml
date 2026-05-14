@@ -43,9 +43,36 @@ jobs:
           name: linux-x64-gnu
           path: packages/linux-x64-gnu/solidrt-go
 
+  build-darwin:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install JS dependencies
+        run: bun install
+
+      - name: Build
+        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: darwin-arm64
+          path: |
+            packages/darwin-arm64/solidrt-go
+            packages/darwin-arm64/libimpeller.dylib
+            packages/darwin-arm64/libEGL.dylib
+            packages/darwin-arm64/libGLESv2.dylib
+
   publish:
     runs-on: ubuntu-latest
-    needs: build-linux
+    needs: [build-linux, build-darwin]
     steps:
       - uses: actions/checkout@v6
 
@@ -54,17 +81,31 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Download binaries
+      - name: Download Linux binaries
         uses: actions/download-artifact@v8
         with:
           name: linux-x64-gnu
           path: packages/linux-x64-gnu
+
+      - name: Download Darwin binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: darwin-arm64
+          path: packages/darwin-arm64
 
       - name: Publish @solidrt/core
         run: |
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
           npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @solidrt/darwin-arm64
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/darwin-arm64
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
