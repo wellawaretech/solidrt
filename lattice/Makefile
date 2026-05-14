@@ -1,7 +1,7 @@
 # lattice/Makefile
 
-TIMESTAMP     := $(shell date '+%Y%m%d%H%M%S')
-BUILD_VERSION  = BUILD_VERSION="$(TIMESTAMP)"
+VERSION         ?= $(shell git describe --tags --always)
+SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 
 PROFILE            ?= release
 CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)

@@ -13,13 +13,13 @@ define stage-bin
 endef
 
 solidrt-go: $(DEFAULT_APP_JS)
-	@echo "Building SOLIDRT-GO ($(PROFILE)) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	@echo "Building SOLIDRT-GO ($(PROFILE)) $(VERSION)"
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
 	$(call stage-bin,go,$(PROFILE),solidrt-go)
 
 runtime:
-	@echo "Building RUNTIME ($(PROFILE)) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
+	@echo "Building RUNTIME ($(PROFILE)) $(VERSION)"
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
 	$(call stage-bin,runtime,$(PROFILE),solidrt-runner)
 
 dist-linux:

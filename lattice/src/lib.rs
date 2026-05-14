@@ -122,6 +122,9 @@ fn main_thread(
 }
 
 pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
+  let version = option_env!("SOLIDRT_VERSION").unwrap_or("dev");
+  log!("[SolidRT] version {version}");
+
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
   let start_time = std::time::Instant::now();

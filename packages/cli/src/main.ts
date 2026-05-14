@@ -11,6 +11,7 @@
 //   srt build -c examples/hello.tsx     - bundle TSX to .srt.js + compile to .srt.bin
 //   srt build examples/hello.srt.js     - compile .srt.js to .srt.bin
 
+import pkg from "../package.json"
 import { values, command, source, isTsx, isPrebuilt, printUsage } from "./args"
 import { state, requireBinary, run, shutdown } from "./util"
 import { bundle, runBuildCommand } from "./build"
@@ -19,6 +20,9 @@ import { spawnClient } from "./client"
 import { startRepl } from "./repl"
 import { startWatcher } from "./watcher"
 import { resolve, dirname } from "path"
+
+let version = pkg.version === "0.0.0" ? "" : " version " + pkg.version
+console.log(`Welcome to SolidRT${version}!`)
 
 // -- Validate args --
 

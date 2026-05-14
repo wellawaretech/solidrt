@@ -40,7 +40,7 @@ jobs:
         run: bun install
 
       - name: Build
-        run: make dist-linux
+        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Publish
         run: |
