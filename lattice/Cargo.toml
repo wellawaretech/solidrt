@@ -17,6 +17,8 @@ name = "solidrt-runner"
 path = "src/main.rs"
 
 [features]
+#TODO drop the default compile
+default = ["flux/compile"]
 go = ["flux/compile"]
 
 [dependencies]
