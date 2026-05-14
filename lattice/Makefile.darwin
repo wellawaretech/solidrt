@@ -36,7 +36,6 @@ define stage-darwin
 	@mkdir -p $(HOST_DIST)
 	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/
 	@cp target/$(1)/$(2)/build/impellers-*/out/libimpeller.dylib $(HOST_DIST)/
-	@cp $(ANGLE_EGL) $(ANGLE_GLES) $(HOST_DIST)/
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
