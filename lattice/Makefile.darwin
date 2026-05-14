@@ -13,7 +13,7 @@ ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
 
 PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
 
-.PHONY: solidrt-go solidrt-go-debug runtime dist-darwin angle-darwin
+.PHONY: solidrt-go runtime dist-darwin angle-darwin
 
 angle-darwin:
 	@mkdir -p $(DARWIN_DIST)
@@ -40,20 +40,15 @@ define stage-darwin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-solidrt-go-debug: $(DEFAULT_APP_JS) angle-darwin
-	@echo "Building SOLIDRT-GO macOS (debug) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --features go --bin solidrt-go --target-dir target/go
-	$(call stage-darwin,go,debug,solidrt-go)
-
 solidrt-go: $(DEFAULT_APP_JS) angle-darwin
-	@echo "Building SOLIDRT-GO macOS (release) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --release --features go --bin solidrt-go --target-dir target/go
-	$(call stage-darwin,go,release,solidrt-go)
+	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	$(call stage-darwin,go,$(PROFILE),solidrt-go)
 
 runtime: angle-darwin
-	@echo "Building RUNTIME macOS (release) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --release --bin solidrt-runner --target-dir target/runtime
-	$(call stage-darwin,runtime,release,solidrt-runner)
+	@echo "Building RUNTIME macOS ($(PROFILE)) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
+	$(call stage-darwin,runtime,$(PROFILE),solidrt-runner)
 
 dist-darwin:
 	$(MAKE) solidrt-go

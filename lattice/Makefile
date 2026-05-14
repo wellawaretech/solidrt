@@ -3,6 +3,9 @@
 TIMESTAMP     := $(shell date '+%Y%m%d%H%M%S')
 BUILD_VERSION  = BUILD_VERSION="$(TIMESTAMP)"
 
+PROFILE            ?= release
+CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
+
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 
@@ -32,16 +35,15 @@ $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
-	@echo "  solidrt-go           Build SolidRT Go (release, default)"
-	@echo "  solidrt-go-debug     Build SolidRT Go (debug)"
-	@echo "  runtime              Build production runtime (release)"
+	@echo "  solidrt-go           Build SolidRT Go (default)"
+	@echo "  runtime              Build production runtime"
 	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
 	@echo "Android (ABI=$(ANDROID_ABI)):"
-	@echo "  solidrt-go-android        Build .so (release)"
-	@echo "  solidrt-go-android-debug  Build .so (debug)"
-	@echo "  run-android               Build, install, launch, tail logcat"
-	@echo "  run-android-debug         Same with debug .so"
+	@echo "  solidrt-go-android   Build .so"
+	@echo "  run-android          Build, install, launch, tail logcat"
+	@echo ""
+	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo ""
 	@echo "Default app:"
 	@echo "  default-app-bundle   Regenerate app.srt.js from app.tsx"

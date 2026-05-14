@@ -17,7 +17,7 @@ Set `SRT_HOME` to the root of this repository so the CLI picks up locally built
 binaries instead of the published npm packages:
 
 ```sh
-export SRT_HOME=/path/to/solidrt-open
+export SRT_HOME=/path/to/solidrt
 ```
 
 With `SRT_HOME` set, `srt run` and similar commands will resolve binaries from
@@ -27,9 +27,9 @@ With `SRT_HOME` set, `srt run` and similar commands will resolve binaries from
 
 Run from the repo root:
 
-| Command                 | Description                                             |
-| ----------------------- | ------------------------------------------------------- |
-| `make solidrt-go`       | Build the `solidrt-go` binary (release)                 |
-| `make solidrt-go-debug` | Build the `solidrt-go` binary (debug)                   |
+| Command                         | Description                   |
+| ------------------------------- | ----------------------------- |
+| `make solidrt-go`               | Build the `solidrt-go` binary |
+| `make solidrt-go PROFILE=debug` | Build with debug symbols      |
 
 Binaries are staged into `dist/<platform>/` after a successful build.

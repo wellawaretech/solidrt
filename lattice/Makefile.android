@@ -14,7 +14,7 @@ APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: solidrt-go-android solidrt-go-android-debug run-android run-android-debug
+.PHONY: solidrt-go-android run-android
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -35,13 +35,9 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-solidrt-go-android-debug: $(DEFAULT_APP_JS)
-	$(call ndk-build,SOLIDRT-GO (debug),,--features go --target-dir target/go)
-	$(call ndk-stage,debug)
-
 solidrt-go-android: $(DEFAULT_APP_JS)
-	$(call ndk-build,SOLIDRT-GO (release),,--release --features go --target-dir target/go)
-	$(call ndk-stage,release)
+	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) --features go --target-dir target/go)
+	$(call ndk-stage,$(PROFILE))
 
 # Bootstrap Gradle wrapper if missing.
 $(GRADLE_WRAPPER_JAR):
@@ -58,8 +54,5 @@ define android-run
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
-run-android-debug: solidrt-go-android-debug $(GRADLE_WRAPPER_JAR)
-	$(call android-run,debug)
-
 run-android: solidrt-go-android $(GRADLE_WRAPPER_JAR)
-	$(call android-run,release)
+	$(call android-run,$(PROFILE))

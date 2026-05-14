@@ -25,7 +25,7 @@ SDL is accessed through the sdl3 Rust crate, which does not expose all SDL funct
 # Building
 Run from repo root:
 - `make solidrt-go` - build the go binary (release)
-- `make solidrt-go-debug` - build the go binary (debug)
+- `make solidrt-go PROFILE=debug` - build the go binary (debug)
 - `make runtime` - build the production runtime (release)
 
 # General

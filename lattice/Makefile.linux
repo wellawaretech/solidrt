@@ -2,7 +2,7 @@
 
 PKG_LINUX := $(CURDIR)/../packages/linux-x64-gnu
 
-.PHONY: solidrt-go solidrt-go-debug runtime dist-linux
+.PHONY: solidrt-go runtime dist-linux
 
 # Stage a binary into dist/<host-platform>/.
 # $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
@@ -12,20 +12,15 @@ define stage-bin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-solidrt-go-debug: $(DEFAULT_APP_JS)
-	@echo "Building SOLIDRT-GO (debug) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --features go --bin solidrt-go --target-dir target/go
-	$(call stage-bin,go,debug,solidrt-go)
-
 solidrt-go: $(DEFAULT_APP_JS)
-	@echo "Building SOLIDRT-GO (release) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --release --features go --bin solidrt-go --target-dir target/go
-	$(call stage-bin,go,release,solidrt-go)
+	@echo "Building SOLIDRT-GO ($(PROFILE)) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	$(call stage-bin,go,$(PROFILE),solidrt-go)
 
 runtime:
-	@echo "Building RUNTIME (release) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build --release --bin solidrt-runner --target-dir target/runtime
-	$(call stage-bin,runtime,release,solidrt-runner)
+	@echo "Building RUNTIME ($(PROFILE)) $(TIMESTAMP)"
+	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
+	$(call stage-bin,runtime,$(PROFILE),solidrt-runner)
 
 dist-linux:
 	$(MAKE) solidrt-go
