@@ -1,5 +1,7 @@
 mod plugins;
 mod rendertree;
+#[cfg(feature = "go")]
+mod go;
 
 use alloy::impellers::{Color, DisplayListBuilder, ISize, Paint, Point, Rect, Size};
 use alloy::log;
@@ -80,8 +82,18 @@ fn ui_thread(
     });
     #[cfg(feature = "go")]
     {
+      let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<go::GoCmd>();
+      local.spawn_local(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let _ = cmd_tx.send(go::GoCmd::Stop);
+      });
       let src = source.as_deref().unwrap_or(DEFAULT_SOURCE);
-      local.run_until(engine.eval_source(src)).await;
+      local.run_until(async {
+        tokio::select! {
+          _ = engine.eval_source(src) => {}
+          _ = cmd_rx.recv() => {}
+        }
+      }).await;
     }
   });
 }
