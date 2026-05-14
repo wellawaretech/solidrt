@@ -1,8 +1,11 @@
-mod go;
 mod plugins;
 mod rendertree;
 
-use alloy::impellers::{DisplayListBuilder, ISize};
+enum EngineCmd {
+  Stop,
+}
+
+use alloy::impellers::ISize;
 use alloy::log;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
@@ -60,28 +63,20 @@ fn ui_thread(
       }
     });
 
-    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<go::GoCmd>();
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
     local.spawn_local({
       let cmd_tx = cmd_tx.clone();
       async move {
         loop {
           tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-          let _ = cmd_tx.send(go::GoCmd::Stop);
+          let _ = cmd_tx.send(EngineCmd::Stop);
         }
       }
     });
 
     loop {
-      let mut render_tree = RenderTree::new();
-      {
-        let mut builder = DisplayListBuilder::new(None);
-        rendertree::composite::composite(&mut builder, &mut render_tree, &platform);
-        if let Some(dl) = builder.build() {
-          atx.submit(dl).expect("Failed to submit display list");
-        }
-      }
-
+      let render_tree = RenderTree::new();
       let engine = FluxEngine::builder()
         .logger(|_level, msg| log!("[js] {msg}"))
         .plugin({
