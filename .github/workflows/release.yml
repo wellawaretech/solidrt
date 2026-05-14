@@ -17,7 +17,7 @@ on:
         default: true
 
 jobs:
-  publish-linux:
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,11 +28,6 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
       - name: Install system dependencies
         run: sudo apt-get install -y libclang-dev clang
 
@@ -42,16 +37,15 @@ jobs:
       - name: Build
         run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
 
-      - name: Publish
-        run: |
-          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
-          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/linux-x64-gnu
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-gnu
+          path: packages/linux-x64-gnu/solidrt-go
 
-  publish-core:
+  publish:
     runs-on: ubuntu-latest
+    needs: build-linux
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +54,13 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Publish
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-gnu
+          path: packages/linux-x64-gnu
+
+      - name: Publish @solidrt/core
         run: |
           npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
           npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
@@ -68,18 +68,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  publish-cli:
-    runs-on: ubuntu-latest
-    needs: [publish-linux, publish-core]
-    steps:
-      - uses: actions/checkout@v4
+      - name: Publish @solidrt/linux-x64-gnu
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+          npm publish --access public ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/linux-x64-gnu
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Publish
+      - name: Publish @solidrt/cli
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           npm version "$VERSION" --no-git-tag-version

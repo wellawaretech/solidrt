@@ -19,10 +19,10 @@ GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
 define ndk-build
-	@echo "Building ANDROID $(1) $(TIMESTAMP)"
+	@echo "Building ANDROID $(1) $(VERSION)"
 	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
 	  $(2) \
-	  $(BUILD_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
+	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
 endef
 
 # Stage .so files into dist/android/ for the Gradle project to pick up.

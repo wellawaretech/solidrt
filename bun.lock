@@ -11,9 +11,13 @@
         "solid-js": "2.0.0-beta.7",
       },
     },
+    "packages/android-arm64-v8a": {
+      "name": "@solidrt/android-arm64-v8a",
+      "version": "0.0.0",
+    },
     "packages/cli": {
       "name": "@solidrt/cli",
-      "version": "0.0.1",
+      "version": "0.0.0",
       "bin": {
         "srt": "./bin/srt",
       },
@@ -27,9 +31,9 @@
         "@types/bun": "latest",
       },
       "optionalDependencies": {
-        "@solidrt/android-arm64-v8a": "0.0.1",
-        "@solidrt/darwin-arm64": "0.0.1",
-        "@solidrt/linux-x64-gnu": "0.0.1",
+        "@solidrt/android-arm64-v8a": "0.0.0",
+        "@solidrt/darwin-arm64": "0.0.0",
+        "@solidrt/linux-x64-gnu": "0.0.0",
       },
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-beta.7",
@@ -40,11 +44,19 @@
     },
     "packages/core": {
       "name": "@solidrt/core",
-      "version": "0.0.1",
+      "version": "0.0.0",
       "peerDependencies": {
         "@solidjs/signals": "2.0.0-beta.7",
         "@solidjs/universal": "2.0.0-beta.7",
       },
+    },
+    "packages/darwin-arm64": {
+      "name": "@solidrt/darwin-arm64",
+      "version": "0.0.0",
+    },
+    "packages/linux-x64-gnu": {
+      "name": "@solidrt/linux-x64-gnu",
+      "version": "0.0.0",
     },
   },
   "packages": {
@@ -118,9 +130,15 @@
 
     "@solidjs/universal": ["@solidjs/universal@2.0.0-beta.7", "", { "peerDependencies": { "solid-js": "^2.0.0-beta.7" } }, "sha512-KCamzs0gV0wEXibFCPe+PvOuUh0zMsimL8iJakklaUqEFs25Cab8dH+KFVNhHWvzcmO2eSJfDuu8unUUoRdrUg=="],
 
+    "@solidrt/android-arm64-v8a": ["@solidrt/android-arm64-v8a@workspace:packages/android-arm64-v8a"],
+
     "@solidrt/cli": ["@solidrt/cli@workspace:packages/cli"],
 
     "@solidrt/core": ["@solidrt/core@workspace:packages/core"],
+
+    "@solidrt/darwin-arm64": ["@solidrt/darwin-arm64@workspace:packages/darwin-arm64"],
+
+    "@solidrt/linux-x64-gnu": ["@solidrt/linux-x64-gnu@workspace:packages/linux-x64-gnu"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

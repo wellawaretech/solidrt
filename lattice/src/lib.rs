@@ -122,7 +122,7 @@ fn main_thread(
 }
 
 pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
-  let version = option_env!("SOLIDRT_VERSION").unwrap_or("dev");
+  let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
   log!("[SolidRT] version {version}");
 
   let handle = rt.handle().clone();

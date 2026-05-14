@@ -25,5 +25,5 @@ runtime:
 dist-linux:
 	$(MAKE) solidrt-go
 	cp $(HOST_DIST)/solidrt-go $(PKG_LINUX)/solidrt-go
-	$(MAKE) runtime
-	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-runner
+#	$(MAKE) runtime
+#	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-runner

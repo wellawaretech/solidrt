@@ -33,7 +33,7 @@ async fn spawn_go_ws(dev_server: String, tx: UnboundedSender<crate::EngineCmd>) 
 
     log!("[go] Connected to ws://{dev_server}");
 
-    let version = env!("SOLIDRT_VERSION");
+    let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
     let info = format!(
       r#"{{"type":"info","platform":"{}","version":"{version}"}}"#,
       std::env::consts::OS,

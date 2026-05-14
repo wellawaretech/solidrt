@@ -5,7 +5,6 @@
   "os": ["linux"],
   "cpu": ["x64"],
   "files": [
-    "solidrt-go",
-    "solidrt-runner"
+    "solidrt-go"
   ]
 }

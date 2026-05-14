@@ -41,18 +41,18 @@ define stage-darwin
 endef
 
 solidrt-go: $(DEFAULT_APP_JS) angle-darwin
-	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(VERSION)"
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,$(PROFILE),solidrt-go)
 
 runtime: angle-darwin
-	@echo "Building RUNTIME macOS ($(PROFILE)) $(TIMESTAMP)"
-	$(BUILD_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
+	@echo "Building RUNTIME macOS ($(PROFILE)) $(VERSION)"
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
 	$(call stage-darwin,runtime,$(PROFILE),solidrt-runner)
 
 dist-darwin:
 	$(MAKE) solidrt-go
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
-	$(MAKE) runtime
-	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner
 	cp $(HOST_DIST)/libimpeller.dylib $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
+#	$(MAKE) runtime
+#	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner

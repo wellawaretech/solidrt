@@ -4,8 +4,7 @@
     "printWidth": 100
   },
   "workspaces": [
-    "packages/core",
-    "packages/cli"
+    "packages/*"
   ],
   "devDependencies": {
     "@solidrt/cli": "workspace:*",
