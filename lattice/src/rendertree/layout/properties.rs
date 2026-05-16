@@ -1,5 +1,7 @@
 use rquickjs::Value;
+use taffy::geometry::Point;
 use taffy::prelude::*;
+use taffy::style::Overflow;
 
 use super::util::{parse_dimension, parse_length_percentage, parse_length_percentage_auto};
 
@@ -127,6 +129,31 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     }
     "rowGap"    => style.gap.height = parse_length_percentage(value),
     "columnGap" => style.gap.width  = parse_length_percentage(value),
+
+    // Position
+    "position" => {
+      style.position = match value.get::<String>().expect("position must be a string").as_str() {
+        "relative" => Position::Relative,
+        "absolute" => Position::Absolute,
+        v => panic!("unknown position value '{v}'"),
+      };
+    }
+    "top"    => style.inset.top    = parse_length_percentage_auto(value),
+    "right"  => style.inset.right  = parse_length_percentage_auto(value),
+    "bottom" => style.inset.bottom = parse_length_percentage_auto(value),
+    "left"   => style.inset.left   = parse_length_percentage_auto(value),
+
+    // Overflow
+    "overflow" => {
+      let o = match value.get::<String>().expect("overflow must be a string").as_str() {
+        "visible" => Overflow::Visible,
+        "hidden"  => Overflow::Hidden,
+        "scroll"  => Overflow::Scroll,
+        "clip"    => Overflow::Clip,
+        v => panic!("unknown overflow value '{v}'"),
+      };
+      style.overflow = Point { x: o, y: o };
+    }
 
     _ => return None,
   }
