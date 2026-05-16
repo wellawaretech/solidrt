@@ -32,8 +32,8 @@ android {
         }
     }
     sourceSets.main {
-        jniLibs.srcDir '../../dist/android'
-        assets.srcDirs = ['../../dist/assets']
+        jniLibs.srcDir '../../../dist/android'
+        assets.srcDirs = ['../../../dist/assets']
     }
     lint {
         abortOnError = false
