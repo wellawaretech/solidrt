@@ -48,6 +48,7 @@ fn ui_thread(
   handle: tokio::runtime::Handle,
   exec_tx: std::sync::mpsc::Sender<ExecHandle>,
   atx: Arc<alloy::Context>,
+  event_rx: std::sync::mpsc::Receiver<alloy::Event>,
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
@@ -55,12 +56,12 @@ fn ui_thread(
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
-    local.spawn_local(async {
+    local.spawn_local(async move {
       loop {
-        while let Some(event) = alloy::sdl_utils::poll_event() {
+        while let Ok(event) = event_rx.try_recv() {
           match event {
-            alloy::sdl3::event::Event::Quit { .. } => std::process::exit(0),
-            alloy::sdl3::event::Event::KeyDown { keycode, .. } => log!("[key] {keycode:?}"),
+            alloy::Event::Quit => std::process::exit(0),
+            alloy::Event::KeyDown { keycode, .. } => log!("[key] {keycode:?}"),
             _ => {}
           }
         }
@@ -113,8 +114,8 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let current_exec_post = current_exec.clone();
 
   app.run(
-    move |atx| {
-      ui_thread(handle, exec_tx, atx, source);
+    move |atx, event_rx| {
+      ui_thread(handle, exec_tx, atx, event_rx, source);
     },
     alloy::RenderHooks {
       pre_render: Box::new(move || {

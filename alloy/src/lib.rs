@@ -2,7 +2,7 @@ mod gl;
 pub mod sdl_utils;
 
 pub use impellers;
-use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
+use impellers::{Context as ImpellerContext, DisplayList, ISize, Rect, Texture};
 pub use sdl3;
 
 #[macro_export]
@@ -288,8 +288,7 @@ impl DisplayContext {
 
 pub struct App {
   sdl_context: sdl3::Sdl,
-  // Kept alive because DisplayContext stores a raw pointer into it.
-  _window: sdl3::video::Window,
+  window: sdl3::video::Window,
   platform: DisplayContext,
   render_surface: Box<dyn RenderSurface>,
 }
@@ -317,9 +316,48 @@ pub fn setup(title: &str, size: ISize) -> App {
 
   App {
     sdl_context,
-    _window: window,
+    window,
     platform,
     render_surface,
+  }
+}
+
+pub enum Event {
+  Quit,
+  KeyDown {
+    keycode: Option<sdl3::keyboard::Keycode>,
+    scancode: Option<sdl3::keyboard::Scancode>,
+  },
+  Resize {
+    size: ISize,
+    safe_area: Rect,
+    display_scale: f32,
+  },
+}
+
+fn translate_event(
+  sdl_event: sdl3::event::Event,
+  window_ptr: *mut sdl3::sys::video::SDL_Window,
+) -> Option<Event> {
+  match sdl_event {
+    sdl3::event::Event::Quit { .. } => Some(Event::Quit),
+    sdl3::event::Event::KeyDown { keycode, scancode, .. } => {
+      Some(Event::KeyDown { keycode, scancode })
+    }
+    sdl3::event::Event::Window {
+      win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
+      ..
+    } => {
+      let size = ISize::new(w as i64, h as i64);
+      let r = sdl_utils::window_safe_area(window_ptr);
+      let safe_area = Rect::new(
+        impellers::Point::new(r.x as f32, r.y as f32),
+        impellers::Size::new(r.w as f32, r.h as f32),
+      );
+      let display_scale = sdl_utils::window_display_scale(window_ptr);
+      Some(Event::Resize { size, safe_area, display_scale })
+    }
+    _ => None,
   }
 }
 
@@ -331,23 +369,26 @@ pub struct RenderHooks {
 impl App {
   pub fn run(
     self,
-    dl_producer: impl FnOnce(Arc<Context>) + Send + 'static,
+    dl_producer: impl FnOnce(Arc<Context>, mpsc::Receiver<Event>) + Send + 'static,
     mut hooks: RenderHooks,
   ) {
     let App {
       sdl_context: _sdl_context,
-      _window,
+      window,
       platform,
       mut render_surface,
     } = self;
 
+    let window_ptr = window.raw() as *mut sdl3::sys::video::SDL_Window;
+    let _window = window;
+
     let (tx, rx) = mpsc::channel::<DisplayList>();
-    platform.run_context(dl_producer, tx);
+    let (event_tx, event_rx) = mpsc::channel::<Event>();
+    platform.run_context(move |ctx| dl_producer(ctx, event_rx), tx);
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
         Ok(mut dl) => {
-          // Consume all display lists, only render the last one
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
@@ -361,7 +402,11 @@ impl App {
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
       }
-      sdl_utils::pump_events();
+      sdl_utils::drain_events(|sdl_event| {
+        if let Some(e) = translate_event(sdl_event, window_ptr) {
+          event_tx.send(e).ok();
+        }
+      });
     }
   }
 }

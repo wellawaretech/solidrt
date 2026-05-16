@@ -1,32 +1,21 @@
 use sdl3::event::Event;
-use sdl3::sys::events::{
-  SDL_Event, SDL_EventAction, SDL_PeepEvents, SDL_PumpEvents, SDL_EVENT_FIRST, SDL_EVENT_LAST,
-};
+use sdl3::sys::events::{SDL_Event, SDL_PollEvent};
+use sdl3::sys::rect::SDL_Rect;
+use sdl3::sys::video::{SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_Window};
 
-/// Flush pending OS input into SDL's internal event queue.
-///
-/// Must be called from the main thread.
-pub fn pump_events() {
-  unsafe { SDL_PumpEvents() };
+pub fn drain_events(mut f: impl FnMut(Event)) {
+  let mut raw = SDL_Event::default();
+  while unsafe { SDL_PollEvent(&mut raw) } {
+    f(Event::from_ll(raw));
+  }
 }
 
-/// Remove and return the next event from SDL's queue, or `None` if empty.
-///
-/// Thread-safe: `SDL_PeepEvents` does not pump and may be called from any thread.
-pub fn poll_event() -> Option<Event> {
-  let mut raw = SDL_Event::default();
-  let n = unsafe {
-    SDL_PeepEvents(
-      &mut raw,
-      1,
-      SDL_EventAction::GETEVENT,
-      SDL_EVENT_FIRST.0,
-      SDL_EVENT_LAST.0,
-    )
-  };
-  if n == 1 {
-    Some(Event::from_ll(raw))
-  } else {
-    None
-  }
+pub fn window_safe_area(window: *mut SDL_Window) -> SDL_Rect {
+  let mut rect = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
+  unsafe { SDL_GetWindowSafeArea(window, &mut rect) };
+  rect
+}
+
+pub fn window_display_scale(window: *mut SDL_Window) -> f32 {
+  unsafe { SDL_GetWindowDisplayScale(window) }
 }
