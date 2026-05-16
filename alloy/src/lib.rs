@@ -335,10 +335,7 @@ pub enum Event {
   },
 }
 
-fn translate_event(
-  sdl_event: sdl3::event::Event,
-  window_ptr: *mut sdl3::sys::video::SDL_Window,
-) -> Option<Event> {
+fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<Event> {
   match sdl_event {
     sdl3::event::Event::Quit { .. } => Some(Event::Quit),
     sdl3::event::Event::KeyDown { keycode, scancode, .. } => {
@@ -349,12 +346,12 @@ fn translate_event(
       ..
     } => {
       let size = ISize::new(w as i64, h as i64);
-      let r = sdl_utils::window_safe_area(window_ptr);
+      let r = sdl_utils::window_safe_area(window);
       let safe_area = Rect::new(
         impellers::Point::new(r.x as f32, r.y as f32),
         impellers::Size::new(r.w as f32, r.h as f32),
       );
-      let display_scale = sdl_utils::window_display_scale(window_ptr);
+      let display_scale = sdl_utils::window_display_scale(window);
       Some(Event::Resize { size, safe_area, display_scale })
     }
     _ => None,
@@ -373,14 +370,14 @@ impl App {
     mut hooks: RenderHooks,
   ) {
     let App {
-      sdl_context: _sdl_context,
+      sdl_context,
       window,
       platform,
       mut render_surface,
     } = self;
 
-    let window_ptr = window.raw() as *mut sdl3::sys::video::SDL_Window;
-    let _window = window;
+    let window = window;
+    let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let (event_tx, event_rx) = mpsc::channel::<Event>();
@@ -402,11 +399,11 @@ impl App {
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
       }
-      sdl_utils::drain_events(|sdl_event| {
-        if let Some(e) = translate_event(sdl_event, window_ptr) {
+      for sdl_event in event_pump.poll_iter() {
+        if let Some(e) = translate_event(sdl_event, &window) {
           event_tx.send(e).ok();
         }
-      });
+      }
     }
   }
 }
