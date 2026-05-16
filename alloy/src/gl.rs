@@ -195,9 +195,8 @@ pub fn setup_ui_thread(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   notify: Arc<dyn Fn() + Send + Sync>,
-) -> mpsc::Receiver<DisplayList> {
-  let (tx, rx) = mpsc::channel();
-
+  tx: mpsc::Sender<DisplayList>,
+) {
   let gl_context_ptr = Box::new(SendablePtr(unsafe {
     std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_context)
   }));
@@ -227,8 +226,6 @@ pub fn setup_ui_thread(
     ));
     closure(gpu_ctx);
   });
-
-  rx
 }
 
 pub(crate) fn setup_opengl_platform(

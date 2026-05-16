@@ -282,9 +282,12 @@ impl DisplayContext {
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     notify: Arc<dyn Fn() + Send + Sync>,
-  ) -> mpsc::Receiver<DisplayList> {
+    tx: mpsc::Sender<DisplayList>,
+  ) {
     match self {
-      DisplayContext::Gl { ui_context, .. } => gl::setup_ui_thread(ui_context, closure, notify),
+      DisplayContext::Gl { ui_context, .. } => {
+        gl::setup_ui_thread(ui_context, closure, notify, tx)
+      }
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }
@@ -332,7 +335,8 @@ impl App {
   pub fn run(
     self,
     ui: impl FnOnce(Arc<Context>) + Send + 'static,
-    mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
+    mut pre_render: impl FnMut(),
+    mut post_render: impl FnMut(),
   ) {
     let App {
       sdl_context: _sdl_context,
@@ -341,17 +345,23 @@ impl App {
       mut render_surface,
     } = self;
 
+    let (tx, rx) = mpsc::channel::<DisplayList>();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
-    let rx = platform.setup_ui_thread(ui, notify);
+    platform.setup_ui_thread(ui, notify, tx);
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
         Ok(mut dl) => {
+          // Consume all display lists, only render the last one
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          // log!("[alloy] display list received");
-          render(render_surface.as_mut(), &dl);
+          pre_render();
+          render_surface
+            .draw_display_list(&dl)
+            .expect("Failed to draw display list");
+          render_surface.present();
+          post_render();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

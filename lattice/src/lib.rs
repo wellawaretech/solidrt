@@ -13,6 +13,8 @@ use alloy::log;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
@@ -98,29 +100,6 @@ fn ui_thread(
   });
 }
 
-fn main_thread(
-  current_exec: &mut Option<ExecHandle>,
-  exec_rx: &std::sync::mpsc::Receiver<ExecHandle>,
-  start_time: std::time::Instant,
-  display: &mut dyn alloy::RenderSurface,
-  dl: &alloy::impellers::DisplayList,
-) {
-  if let Ok(new_exec) = exec_rx.try_recv() {
-    *current_exec = Some(new_exec);
-  }
-
-  display
-    .draw_display_list(dl)
-    .expect("Failed to draw display list");
-
-  display.present();
-
-  if let Some(eh) = current_exec {
-    let t = start_time.elapsed().as_secs_f64().to_string();
-    eh.exec(move |ctx| emit_event(&ctx, "render", t));
-  }
-}
-
 pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
   log!("[SolidRT] version {version}");
@@ -129,14 +108,24 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
   let start_time = std::time::Instant::now();
   let (exec_tx, exec_rx) = std::sync::mpsc::channel::<ExecHandle>();
-  let mut current_exec: Option<ExecHandle> = None;
+  let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
+  let current_exec_pre = current_exec.clone();
+  let current_exec_post = current_exec.clone();
 
   app.run(
     move |atx| {
       ui_thread(handle, exec_tx, atx, source);
     },
-    move |display, dl| {
-      main_thread(&mut current_exec, &exec_rx, start_time, display, dl);
+    move || {
+      if let Ok(new_exec) = exec_rx.try_recv() {
+        *current_exec_pre.borrow_mut() = Some(new_exec);
+      }
+    },
+    move || {
+      if let Some(eh) = current_exec_post.borrow().as_ref() {
+        let t = start_time.elapsed().as_secs_f64().to_string();
+        eh.exec(move |ctx| emit_event(&ctx, "render", t));
+      }
     },
   );
 }
