@@ -1,4 +1,5 @@
 use rquickjs::Value;
+use taffy::prelude::*;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 pub fn parse_dimension(value: Value<'_>) -> Dimension {
@@ -48,4 +49,22 @@ pub fn parse_length_percentage_auto(value: Value<'_>) -> LengthPercentageAuto {
   } else {
     panic!("length/percentage/auto must be a number or string")
   }
+}
+
+pub fn parse_grid_template(template: &str) -> Vec<GridTemplateComponent<String>> {
+  template.split_whitespace().map(|part| {
+    let track: TrackSizingFunction = if part == "auto" {
+      minmax(auto(), auto())
+    } else if let Some(s) = part.strip_suffix("fr") {
+      let v: f32 = s.parse().expect("fr value must be a number");
+      minmax(length(0.0), fr(v))
+    } else if let Some(s) = part.strip_suffix("px") {
+      let v: f32 = s.parse().expect("px value must be a number");
+      minmax(length(v), length(v))
+    } else {
+      let v: f32 = part.parse().expect("grid track value must be a number");
+      minmax(length(v), length(v))
+    };
+    GridTemplateComponent::from(track)
+  }).collect()
 }

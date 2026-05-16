@@ -3,7 +3,7 @@ use taffy::geometry::Point;
 use taffy::prelude::*;
 use taffy::style::Overflow;
 
-use super::util::{parse_dimension, parse_length_percentage, parse_length_percentage_auto};
+use super::util::{parse_dimension, parse_grid_template, parse_length_percentage, parse_length_percentage_auto};
 
 pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Option<bool> {
   match property {
@@ -154,6 +154,37 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       };
       style.overflow = Point { x: o, y: o };
     }
+
+    // Grid container
+    "gridAutoFlow" => {
+      style.grid_auto_flow = match value.get::<String>().expect("gridAutoFlow must be a string").as_str() {
+        "row"          => GridAutoFlow::Row,
+        "column"       => GridAutoFlow::Column,
+        "rowDense"     => GridAutoFlow::RowDense,
+        "columnDense"  => GridAutoFlow::ColumnDense,
+        v => panic!("unknown gridAutoFlow value '{v}'"),
+      };
+    }
+    "gridTemplateColumns" => {
+      style.grid_template_columns = parse_grid_template(&value.get::<String>().expect("gridTemplateColumns must be a string"));
+    }
+    "gridTemplateRows" => {
+      style.grid_template_rows = parse_grid_template(&value.get::<String>().expect("gridTemplateRows must be a string"));
+    }
+    "gridAutoColumns" => {
+      let v = value.get::<f64>().expect("gridAutoColumns must be a number") as f32;
+      style.grid_auto_columns = vec![minmax(length(v), length(v))];
+    }
+    "gridAutoRows" => {
+      let v = value.get::<f64>().expect("gridAutoRows must be a number") as f32;
+      style.grid_auto_rows = vec![minmax(length(v), length(v))];
+    }
+
+    // Grid item
+    "gridColumnStart" => style.grid_column.start = line(value.get::<f64>().expect("gridColumnStart must be a number") as i16),
+    "gridColumnEnd"   => style.grid_column.end   = line(value.get::<f64>().expect("gridColumnEnd must be a number") as i16),
+    "gridRowStart"    => style.grid_row.start     = line(value.get::<f64>().expect("gridRowStart must be a number") as i16),
+    "gridRowEnd"      => style.grid_row.end       = line(value.get::<f64>().expect("gridRowEnd must be a number") as i16),
 
     _ => return None,
   }
