@@ -1,6 +1,7 @@
 {
   "name": "@solidrt/cli",
   "version": "0.0.0",
+  "license": "MIT",
   "author": "Antoine van Wel",
   "type": "module",
   "bin": {
@@ -8,7 +9,8 @@
   },
   "files": [
     "bin/",
-    "src/"
+    "src/",
+    "LICENSE"
   ],
   "dependencies": {
     "@babel/core": "^7.28.5",

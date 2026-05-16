@@ -1,6 +1,7 @@
 {
   "name": "@solidrt/core",
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -10,7 +11,8 @@
   },
   "files": [
     "src/",
-    "jsx-runtime.d.ts"
+    "jsx-runtime.d.ts",
+    "LICENSE"
   ],
   "peerDependencies": {
     "@solidjs/signals": "2.0.0-beta.7",
