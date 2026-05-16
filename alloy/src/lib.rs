@@ -278,7 +278,7 @@ impl Context {
 }
 
 impl DisplayContext {
-  pub fn setup_ui_thread(
+  pub fn run_context(
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     notify: Arc<dyn Fn() + Send + Sync>,
@@ -286,7 +286,7 @@ impl DisplayContext {
   ) {
     match self {
       DisplayContext::Gl { ui_context, .. } => {
-        gl::setup_ui_thread(ui_context, closure, notify, tx)
+        gl::run_context(ui_context, closure, notify, tx)
       }
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
@@ -334,7 +334,7 @@ pub fn setup(title: &str, size: ISize) -> App {
 impl App {
   pub fn run(
     self,
-    ui: impl FnOnce(Arc<Context>) + Send + 'static,
+    dl_producer: impl FnOnce(Arc<Context>) + Send + 'static,
     mut pre_render: impl FnMut(),
     mut post_render: impl FnMut(),
   ) {
@@ -347,7 +347,7 @@ impl App {
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
-    platform.setup_ui_thread(ui, notify, tx);
+    platform.run_context(dl_producer, notify, tx);
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {

@@ -191,7 +191,7 @@ impl RenderSurface for GlSurface {
   }
 }
 
-pub fn setup_ui_thread(
+pub fn run_context(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   notify: Arc<dyn Fn() + Send + Sync>,
