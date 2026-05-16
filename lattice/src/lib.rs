@@ -13,7 +13,9 @@ use alloy::log;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
 
@@ -45,15 +47,33 @@ const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 fn ui_thread(
   handle: tokio::runtime::Handle,
   exec_tx: std::sync::mpsc::Sender<ExecHandle>,
+  event_rx: tokio::sync::mpsc::UnboundedReceiver<alloy::AppEvent>,
   atx: Arc<alloy::Context>,
   source: Option<String>,
-  eh_slot: Arc<Mutex<Option<ExecHandle>>>,
 ) {
   let platform = Arc::new(PlatformContext::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
+    let eh_slot: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
+    let eh_slot_events = eh_slot.clone();
+
+    local.spawn_local(async move {
+      let mut event_rx = event_rx;
+      while let Some(event) = event_rx.recv().await {
+        let Some(eh) = eh_slot_events.borrow().as_ref().map(ExecHandle::clone) else { continue };
+        match event {
+          alloy::AppEvent::Resize { width, height, safe_area } => {
+            let payload = format!(
+              r#"{{"width":{width},"height":{height},"safeArea":{{"top":{t},"right":{r},"bottom":{b},"left":{l}}}}}"#,
+              t = safe_area.top, r = safe_area.right, b = safe_area.bottom, l = safe_area.left,
+            );
+            eh.exec(move |ctx| emit_event(&ctx, "resize", payload));
+          }
+        }
+      }
+    });
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
@@ -70,7 +90,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       let eh = engine.exec_handle();
-      *eh_slot.lock().expect("eh_slot poisoned") = Some(eh.clone());
+      *eh_slot.borrow_mut() = Some(eh.clone());
       exec_tx.send(eh).ok();
 
       let mut next_src: Option<String> = None;
@@ -120,26 +140,14 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
   let start_time = std::time::Instant::now();
   let (exec_tx, exec_rx) = std::sync::mpsc::channel::<ExecHandle>();
+  let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<alloy::AppEvent>();
   let mut current_exec: Option<ExecHandle> = None;
-  let eh_slot: Arc<Mutex<Option<ExecHandle>>> = Arc::new(Mutex::new(None));
-  let eh_slot_event = eh_slot.clone();
 
   app.run(
     move |atx| {
-      ui_thread(handle, exec_tx, atx, source, eh_slot);
+      ui_thread(handle, exec_tx, event_rx, atx, source);
     },
-    move |event| match event {
-      alloy::AppEvent::Resize { width, height, safe_area } => {
-        if let Some(eh) = eh_slot_event.lock().expect("eh_slot poisoned").as_ref() {
-          let eh = eh.clone();
-          let payload = format!(
-            r#"{{"width":{width},"height":{height},"safeArea":{{"top":{t},"right":{r},"bottom":{b},"left":{l}}}}}"#,
-            t = safe_area.top, r = safe_area.right, b = safe_area.bottom, l = safe_area.left,
-          );
-          eh.exec(move |ctx| emit_event(&ctx, "resize", payload));
-        }
-      }
-    },
+    move |event| { event_tx.send(event).ok(); },
     move |display, dl| {
       main_thread(&mut current_exec, &exec_rx, start_time, display, dl);
     },
