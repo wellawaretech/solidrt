@@ -323,12 +323,16 @@ pub fn setup(title: &str, size: ISize) -> App {
   }
 }
 
+pub struct RenderHooks {
+  pub pre_render: Box<dyn FnMut()>,
+  pub post_render: Box<dyn FnMut()>,
+}
+
 impl App {
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>) + Send + 'static,
-    mut pre_render: impl FnMut(),
-    mut post_render: impl FnMut(),
+    mut hooks: RenderHooks,
   ) {
     let App {
       sdl_context: _sdl_context,
@@ -347,12 +351,12 @@ impl App {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          pre_render();
+          (hooks.pre_render)();
           render_surface
             .draw_display_list(&dl)
             .expect("Failed to draw display list");
           render_surface.present();
-          post_render();
+          (hooks.post_render)();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

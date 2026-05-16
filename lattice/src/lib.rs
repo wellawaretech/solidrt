@@ -116,16 +116,18 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
     move |atx| {
       ui_thread(handle, exec_tx, atx, source);
     },
-    move || {
-      if let Ok(new_exec) = exec_rx.try_recv() {
-        *current_exec_pre.borrow_mut() = Some(new_exec);
-      }
-    },
-    move || {
-      if let Some(eh) = current_exec_post.borrow().as_ref() {
-        let t = start_time.elapsed().as_secs_f64().to_string();
-        eh.exec(move |ctx| emit_event(&ctx, "render", t));
-      }
+    alloy::RenderHooks {
+      pre_render: Box::new(move || {
+        if let Ok(new_exec) = exec_rx.try_recv() {
+          *current_exec_pre.borrow_mut() = Some(new_exec);
+        }
+      }),
+      post_render: Box::new(move || {
+        if let Some(eh) = current_exec_post.borrow().as_ref() {
+          let t = start_time.elapsed().as_secs_f64().to_string();
+          eh.exec(move |ctx| emit_event(&ctx, "render", t));
+        }
+      }),
     },
   );
 }
