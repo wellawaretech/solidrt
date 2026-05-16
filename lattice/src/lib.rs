@@ -46,22 +46,36 @@ const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
 fn ui_thread(
   handle: tokio::runtime::Handle,
-  exec_tx: std::sync::mpsc::Sender<ExecHandle>,
   atx: Arc<alloy::Context>,
   event_rx: std::sync::mpsc::Receiver<alloy::Event>,
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
+  let start_time = std::time::Instant::now();
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
+    let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
+    let current_exec_events = current_exec.clone();
+
     local.spawn_local(async move {
       loop {
         while let Ok(event) = event_rx.try_recv() {
           match event {
             alloy::Event::Quit => std::process::exit(0),
-            alloy::Event::KeyDown { keycode, .. } => log!("[key] {keycode:?}"),
+            alloy::Event::KeyDown { keycode, .. } => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                let key = format!("{keycode:?}");
+                eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
+              }
+            }
+            alloy::Event::FrameRendered => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                let t = start_time.elapsed().as_secs_f64().to_string();
+                eh.exec(move |ctx| emit_event(&ctx, "render", t));
+              }
+            }
             _ => {}
           }
         }
@@ -83,7 +97,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
-      exec_tx.send(engine.exec_handle()).ok();
+      *current_exec.borrow_mut() = Some(engine.exec_handle());
 
       let mut next_src: Option<String> = None;
       local
@@ -107,28 +121,14 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
 
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
-  let start_time = std::time::Instant::now();
-  let (exec_tx, exec_rx) = std::sync::mpsc::channel::<ExecHandle>();
-  let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
-  let current_exec_pre = current_exec.clone();
-  let current_exec_post = current_exec.clone();
 
   app.run(
     move |atx, event_rx| {
-      ui_thread(handle, exec_tx, atx, event_rx, source);
+      ui_thread(handle, atx, event_rx, source);
     },
     alloy::RenderHooks {
-      pre_render: Box::new(move || {
-        if let Ok(new_exec) = exec_rx.try_recv() {
-          *current_exec_pre.borrow_mut() = Some(new_exec);
-        }
-      }),
-      post_render: Box::new(move || {
-        if let Some(eh) = current_exec_post.borrow().as_ref() {
-          let t = start_time.elapsed().as_secs_f64().to_string();
-          eh.exec(move |ctx| emit_event(&ctx, "render", t));
-        }
-      }),
+      pre_render: Box::new(|| {}),
+      post_render: Box::new(|| {}),
     },
   );
 }

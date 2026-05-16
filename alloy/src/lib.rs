@@ -333,6 +333,7 @@ pub enum Event {
     safe_area: Rect,
     display_scale: f32,
   },
+  FrameRendered,
 }
 
 fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<Event> {
@@ -394,6 +395,7 @@ impl App {
             .draw_display_list(&dl)
             .expect("Failed to draw display list");
           render_surface.present();
+          event_tx.send(Event::FrameRendered).ok();
           (hooks.post_render)();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
