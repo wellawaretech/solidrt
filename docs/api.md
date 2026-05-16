@@ -17,13 +17,23 @@ Entry point for a SolidRT application. Accepts a function that returns a `<windo
 ## onRender
 
 ```ts
-onRender(fn: (tick: number) => void): () => void
+onRender(fn: (tick, frame) => void): () => void
 ```
 
-Registers a callback that fires on every rendered frame. `tick` is the current timestamp in milliseconds.
+Registers a callback that fires on every rendered frame. `tick` is the current timestamp in milliseconds. `frame` is the frame count since the application started.
 
 Returns a cleanup function that stops the callback. When called inside a reactive scope (a component or `createEffect`), cleanup is automatic when the scope is destroyed.
 
+
+## onResize
+
+```ts
+onResize(fn: ({ width, height, safeArea }) => void): () => void
+```
+
+Registers a callback that fires whenever the window is resized. `displayScale` is the pixel density of the current display. `safeArea` describes OS-reserved insets (e.g. notches, status bars).
+
+Returns a cleanup function that stops the callback. When called inside a reactive scope (a component or `createEffect`), cleanup is automatic when the scope is destroyed.
 
 ## Elements
 

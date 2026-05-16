@@ -9,11 +9,11 @@ let animationFrames = new Map<number, Function>()
  * Calls `fn` on every rendered frame. Returns a cleanup function to stop rendering.
  * When called within a reactive scope (e.g. a component or createEffect), cleanup is also automatic.
  */
-export function onRender(fn: (tick: number) => void) {
+export function onRender(fn: (tick: number, frame: number) => void) {
   let frameId: number = null!
 
-  let extendedFn = (tick: number) => {
-    fn(tick)
+  let extendedFn = (tick: number, frame: number) => {
+    fn(tick, frame)
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
   }
@@ -54,13 +54,13 @@ export function attachWindow(_nodeId: number) {
   let unsubscribe: () => void = null!
 
   onSettled(() => {
-    unsubscribe = Flux.on("render", (time: number) => {
+    unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
       if (animationFrames.size > 0) {
         let frames = animationFrames
         animationFrames = new Map()
 
         let t = (time * 1000) | 0
-        for (let fn of frames.values()) fn(t)
+        for (let fn of frames.values()) fn(t, frame)
       }
 
       draw()
