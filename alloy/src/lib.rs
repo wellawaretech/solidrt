@@ -302,7 +302,8 @@ pub fn setup(title: &str, size: ISize) -> App {
     .window(title, width, height)
     .opengl()
     .position_centered()
-    .fullscreen()
+    // .fullscreen()
+    .resizable()
     .high_pixel_density()
     .build()
     .expect("Failed to create window");
@@ -385,6 +386,17 @@ impl App {
     platform.run_context(move |ctx| dl_producer(ctx, event_rx), tx);
     let mut frame: u64 = 0;
 
+    let (init_w, init_h) = window.size_in_pixels();
+    let init_r = sdl_utils::window_safe_area(&window);
+    event_tx.send(Event::Resize {
+      size: ISize::new(init_w as i64, init_h as i64),
+      safe_area: Rect::new(
+        impellers::Point::new(init_r.x as f32, init_r.y as f32),
+        impellers::Size::new(init_r.w as f32, init_r.h as f32),
+      ),
+      display_scale: sdl_utils::window_display_scale(&window),
+    }).ok();
+
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
         Ok(mut dl) => {
@@ -405,6 +417,9 @@ impl App {
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
+          if let Event::Resize { size, .. } = &e {
+            render_surface.resize(*size);
+          }
           event_tx.send(e).ok();
         }
       }

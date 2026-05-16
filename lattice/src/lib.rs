@@ -59,18 +59,14 @@ fn ui_thread(
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
 
+    let platform_events = platform.clone();
     local.spawn_local(async move {
       loop {
         while let Ok(event) = event_rx.try_recv() {
           match event {
             alloy::Event::Quit => std::process::exit(0),
-            alloy::Event::KeyDown { keycode, .. } => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let key = format!("{keycode:?}");
-                eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
-              }
-            }
             alloy::Event::Resize { size, safe_area, display_scale } => {
+              platform_events.set_window_size(size.width as f32, size.height as f32);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 eh.exec(move |ctx| {
                   let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
@@ -85,6 +81,12 @@ fn ui_thread(
                   obj.set("displayScale", display_scale).expect("set displayScale");
                   emit_event(&ctx, "resize", obj);
                 });
+              }
+            }
+            alloy::Event::KeyDown { keycode, .. } => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                let key = format!("{keycode:?}");
+                eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
               }
             }
             alloy::Event::FrameRendered { frame } => {

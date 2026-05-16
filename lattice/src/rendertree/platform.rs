@@ -1,7 +1,10 @@
 use alloy::impellers::TypographyContext;
+use std::cell::Cell;
 
 pub struct PlatformContext {
   pub typography: TypographyContext,
+  window_size: Cell<(f32, f32)>,
+  window_size_dirty: Cell<bool>,
 }
 
 // Safety: PlatformContext is only used on the UI thread.
@@ -12,6 +15,21 @@ impl PlatformContext {
   pub fn new() -> Self {
     Self {
       typography: TypographyContext::default(),
+      window_size: Cell::new((0.0, 0.0)),
+      window_size_dirty: Cell::new(false),
     }
+  }
+
+  pub fn window_size(&self) -> (f32, f32) {
+    self.window_size.get()
+  }
+
+  pub fn set_window_size(&self, width: f32, height: f32) {
+    self.window_size.set((width, height));
+    self.window_size_dirty.set(true);
+  }
+
+  pub fn take_window_size_dirty(&self) -> bool {
+    self.window_size_dirty.replace(false)
   }
 }

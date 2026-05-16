@@ -12,25 +12,23 @@ pub fn composite(
   platform: &PlatformContext,
 ) {
   let Some(root_id) = tree.root else { return };
-  let (width, height) = {
-    let style = &tree.node(root_id).layout_data().style;
-    (
-      style.size.width.into_option().unwrap_or(800.0),
-      style.size.height.into_option().unwrap_or(600.0),
-    )
-  };
+  let (width, height) = platform.window_size();
 
-  if tree.node(root_id).layout_data().cache.is_empty() {
-    let available_space = Size {
-      width: AvailableSpace::Definite(width),
-      height: AvailableSpace::Definite(height),
-    };
-    let mut layout_ctx = LayoutContext {
-      render_tree: tree,
-      platform,
-    };
-    taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
+  if platform.take_window_size_dirty() {
+    tree.invalidate_cache(root_id);
   }
+
+  tree.invalidate_cache(root_id);
+
+  let available_space = Size {
+    width: AvailableSpace::Definite(width),
+    height: AvailableSpace::Definite(height),
+  };
+  let mut layout_ctx = LayoutContext {
+    render_tree: tree,
+    platform,
+  };
+  taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
 
   let mut ctx = BuildContext::new(platform);
   ctx.size = WH::new(width, height);

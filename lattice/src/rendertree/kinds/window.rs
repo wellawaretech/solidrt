@@ -1,7 +1,7 @@
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};
 use alloy::impellers::DisplayListBuilder;
 use rquickjs::Value;
-use taffy::{prelude::length, Display, FlexDirection, Size, Style};
+use taffy::{prelude::{length, percent}, Display, FlexDirection, Size, Style};
 
 #[derive(Clone, Debug)]
 pub struct Window {
@@ -38,8 +38,8 @@ impl Window {
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
         size: Size {
-          width: length(800.0),
-          height: length(600.0),
+          width: percent(1.0),
+          height: percent(1.0),
         },
         ..Default::default()
       },
