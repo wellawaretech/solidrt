@@ -2,18 +2,23 @@ use rquickjs::Value;
 use taffy::prelude::*;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
+pub fn parse_dimension_str(s: &str) -> Dimension {
+  if s == "auto" {
+    Dimension::auto()
+  } else if s.ends_with('%') {
+    let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
+    Dimension::percent(n / 100.0)
+  } else {
+    let n: f32 = s.parse().expect("dimension value must be a number or 'auto'");
+    Dimension::length(n)
+  }
+}
+
 pub fn parse_dimension(value: Value<'_>) -> Dimension {
   if let Ok(n) = value.get::<f64>() {
     Dimension::length(n as f32)
   } else if let Ok(s) = value.get::<String>() {
-    if s == "auto" {
-      Dimension::auto()
-    } else if s.ends_with('%') {
-      let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
-      Dimension::percent(n / 100.0)
-    } else {
-      panic!("invalid dimension value: '{s}'")
-    }
+    parse_dimension_str(&s)
   } else {
     panic!("dimension must be a number or string")
   }

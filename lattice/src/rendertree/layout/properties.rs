@@ -3,7 +3,7 @@ use taffy::geometry::Point;
 use taffy::prelude::*;
 use taffy::style::Overflow;
 
-use super::util::{parse_dimension, parse_grid_template, parse_length_percentage, parse_length_percentage_auto};
+use super::util::{parse_dimension, parse_dimension_str, parse_grid_template, parse_length_percentage, parse_length_percentage_auto};
 
 pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Option<bool> {
   match property {
@@ -106,6 +106,44 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     }
 
     // Flex item
+    "flex" => {
+      if let Ok(n) = value.get::<f64>() {
+        style.flex_grow   = n as f32;
+        style.flex_shrink = 1.0;
+        style.flex_basis  = Dimension::length(0.0);
+      } else if let Ok(s) = value.get::<String>() {
+        match s.as_str() {
+          "none" => {
+            style.flex_grow   = 0.0;
+            style.flex_shrink = 0.0;
+            style.flex_basis  = Dimension::auto();
+          }
+          "auto" => {
+            style.flex_grow   = 1.0;
+            style.flex_shrink = 1.0;
+            style.flex_basis  = Dimension::auto();
+          }
+          s => {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            match parts.len() {
+              2 => {
+                style.flex_grow   = parts[0].parse().expect("flex grow must be a number");
+                style.flex_shrink = parts[1].parse().expect("flex shrink must be a number");
+                style.flex_basis  = Dimension::length(0.0);
+              }
+              3 => {
+                style.flex_grow   = parts[0].parse().expect("flex grow must be a number");
+                style.flex_shrink = parts[1].parse().expect("flex shrink must be a number");
+                style.flex_basis  = parse_dimension_str(parts[2]);
+              }
+              _ => panic!("invalid flex value: '{s}'"),
+            }
+          }
+        }
+      } else {
+        panic!("flex must be a number or string")
+      }
+    }
     "flexGrow"   => style.flex_grow   = value.get::<f64>().expect("flexGrow must be a number") as f32,
     "flexShrink" => style.flex_shrink = value.get::<f64>().expect("flexShrink must be a number") as f32,
     "flexBasis"  => style.flex_basis  = parse_dimension(value),
