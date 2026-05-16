@@ -2,7 +2,7 @@ use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-
+use crate::rendertree::layout::properties;
 use crate::rendertree::{ElementKind, Rectangle, RenderTree, Span, Text, View, Window};
 
 #[derive(Clone, JsLifetime)]
@@ -62,9 +62,11 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
         ElementKind::Span(span) => span.set_property(prop, value.clone()),
         ElementKind::View(_) => None,
       };
-      result
-        .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(prop, value)))
-        .unwrap_or_else(|| panic!("unknown property '{property}'"))
+      let result = result
+        .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(prop, value.clone())));
+      let result = result
+        .or_else(|| element.style_mut().and_then(|style| properties::set_property(style, prop, value)));
+      result.unwrap_or_else(|| panic!("unknown property '{property}'"))
     };
     if invalidate {
       tree.invalidate_cache(node_id);
