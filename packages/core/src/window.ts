@@ -26,6 +26,23 @@ export function onRender(fn: (tick: number) => void) {
   return cleanup
 }
 
+// ------ Window resize ----------------
+
+export interface SafeArea {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export function onResize(fn: (width: number, height: number, safeArea: SafeArea) => void) {
+  let cleanup = Flux.on("resize", (e: { width: number; height: number; safeArea: SafeArea }) => {
+    fn(e.width, e.height, e.safeArea)
+  })
+  onCleanup(cleanup)
+  return cleanup
+}
+
 // ------ Window ----------------
 
 export function attachWindow(_nodeId: number) {

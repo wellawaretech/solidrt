@@ -13,6 +13,8 @@ use alloy::log;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
@@ -53,12 +55,27 @@ fn ui_thread(
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
-    local.spawn_local(async {
+    let eh_slot: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
+    let eh_slot_poll = eh_slot.clone();
+
+    local.spawn_local(async move {
       loop {
         while let Some(event) = alloy::sdl_utils::poll_event() {
           match event {
             alloy::sdl3::event::Event::Quit { .. } => std::process::exit(0),
             alloy::sdl3::event::Event::KeyDown { keycode, .. } => log!("[key] {keycode:?}"),
+            alloy::sdl3::event::Event::Window {
+              win_event: alloy::sdl3::event::WindowEvent::PixelSizeChanged(w, h),
+              ..
+            } => {
+              if let Some(eh) = eh_slot_poll.borrow().as_ref() {
+                let eh = eh.clone();
+                let payload = format!(
+                  r#"{{"width":{w},"height":{h},"safeArea":{{"top":0,"right":0,"bottom":0,"left":0}}}}"#
+                );
+                eh.exec(move |ctx| emit_event(&ctx, "resize", payload));
+              }
+            }
             _ => {}
           }
         }
@@ -80,7 +97,9 @@ fn ui_thread(
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
-      exec_tx.send(engine.exec_handle()).ok();
+      let eh = engine.exec_handle();
+      *eh_slot.borrow_mut() = Some(eh.clone());
+      exec_tx.send(eh).ok();
 
       let mut next_src: Option<String> = None;
       local
