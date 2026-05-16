@@ -291,10 +291,21 @@ impl DisplayContext {
   }
 }
 
+pub struct SafeArea {
+  pub top: i32,
+  pub right: i32,
+  pub bottom: i32,
+  pub left: i32,
+}
+
+pub enum AppEvent {
+  Resize { width: i32, height: i32, safe_area: SafeArea },
+}
+
 pub struct App {
   sdl_context: sdl3::Sdl,
   // Kept alive because DisplayContext stores a raw pointer into it.
-  _window: sdl3::video::Window,
+  window: sdl3::video::Window,
   platform: DisplayContext,
   render_surface: Box<dyn RenderSurface>,
 }
@@ -322,7 +333,7 @@ pub fn setup(title: &str, size: ISize) -> App {
 
   App {
     sdl_context,
-    _window: window,
+    window,
     platform,
     render_surface,
   }
@@ -332,11 +343,12 @@ impl App {
   pub fn run(
     self,
     ui: impl FnOnce(Arc<Context>) + Send + 'static,
+    mut on_event: impl FnMut(AppEvent),
     mut render: impl FnMut(&mut dyn RenderSurface, &DisplayList),
   ) {
     let App {
       sdl_context: _sdl_context,
-      _window,
+      window,
       platform,
       mut render_surface,
     } = self;
@@ -350,13 +362,31 @@ impl App {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          // log!("[alloy] display list received");
           render(render_surface.as_mut(), &dl);
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
       }
       sdl_utils::pump_events();
+      while let Some(event) = sdl_utils::poll_event() {
+        match event {
+          sdl3::event::Event::Quit { .. } => std::process::exit(0),
+          sdl3::event::Event::KeyDown { keycode, .. } => log!("[key] {keycode:?}"),
+          sdl3::event::Event::Window {
+            win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
+            ..
+          } => {
+            render_surface.resize(ISize::new(w as i64, h as i64));
+            let (top, right, bottom, left) = sdl_utils::window_safe_area(&window);
+            on_event(AppEvent::Resize {
+              width: w,
+              height: h,
+              safe_area: SafeArea { top, right, bottom, left },
+            });
+          }
+          _ => {}
+        }
+      }
     }
   }
 }
