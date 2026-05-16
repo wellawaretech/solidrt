@@ -70,6 +70,23 @@ fn ui_thread(
                 eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
               }
             }
+            alloy::Event::Resize { size, safe_area, display_scale } => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                eh.exec(move |ctx| {
+                  let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
+                  sa.set("top", safe_area.origin.y).expect("set top");
+                  sa.set("left", safe_area.origin.x).expect("set left");
+                  sa.set("right", safe_area.origin.x + safe_area.size.width).expect("set right");
+                  sa.set("bottom", safe_area.origin.y + safe_area.size.height).expect("set bottom");
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  obj.set("width", size.width).expect("set width");
+                  obj.set("height", size.height).expect("set height");
+                  obj.set("safeArea", sa).expect("set safeArea");
+                  obj.set("displayScale", display_scale).expect("set displayScale");
+                  emit_event(&ctx, "resize", obj);
+                });
+              }
+            }
             alloy::Event::FrameRendered { frame } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let elapsed = start_time.elapsed().as_secs_f64();
