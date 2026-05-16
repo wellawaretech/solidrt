@@ -333,7 +333,7 @@ pub enum Event {
     safe_area: Rect,
     display_scale: f32,
   },
-  FrameRendered,
+  FrameRendered { frame: u64 },
 }
 
 fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<Event> {
@@ -383,6 +383,7 @@ impl App {
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let (event_tx, event_rx) = mpsc::channel::<Event>();
     platform.run_context(move |ctx| dl_producer(ctx, event_rx), tx);
+    let mut frame: u64 = 0;
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
@@ -395,7 +396,8 @@ impl App {
             .draw_display_list(&dl)
             .expect("Failed to draw display list");
           render_surface.present();
-          event_tx.send(Event::FrameRendered).ok();
+          event_tx.send(Event::FrameRendered { frame }).ok();
+          frame += 1;
           (hooks.post_render)();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

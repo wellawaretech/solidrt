@@ -1,6 +1,6 @@
 use crate::pending::PendingOps;
 use rquickjs::function::MutFn;
-use rquickjs::{Ctx, Function, Object, Persistent, Value};
+use rquickjs::{Ctx, Function, IntoJs, Object, Persistent, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -92,8 +92,7 @@ fn on_impl<'js>(event: String, callback: Function<'js>) -> rquickjs::Result<Func
 
 // Dispatches an event to all registered JS listeners.
 // Called from closures pushed via ExecHandle, so it always runs on the JS thread.
-// data is a JSON string; malformed JSON delivers undefined to listeners.
-pub fn emit_event(ctx: &Ctx<'_>, event: &str, data: String) {
+pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
   let store = ctx.userdata::<ListenerMap>().unwrap();
 
   // Snapshot before calling into JS — a listener might call its own
@@ -106,9 +105,9 @@ pub fn emit_event(ctx: &Ctx<'_>, event: &str, data: String) {
     .map(|cbs| cbs.iter().map(|(_, p)| p.clone()).collect())
     .unwrap_or_default();
 
-  let arg = ctx
-    .json_parse(data)
-    .unwrap_or(Value::new_undefined(ctx.clone()));
+  let arg = data
+    .into_js(ctx)
+    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
 
   for listener in snapshot {
     if let Ok(f) = listener.restore(ctx) {

@@ -70,10 +70,15 @@ fn ui_thread(
                 eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
               }
             }
-            alloy::Event::FrameRendered => {
+            alloy::Event::FrameRendered { frame } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let t = start_time.elapsed().as_secs_f64().to_string();
-                eh.exec(move |ctx| emit_event(&ctx, "render", t));
+                let elapsed = start_time.elapsed().as_secs_f64();
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  obj.set("frame", frame).expect("set frame");
+                  obj.set("time", elapsed).expect("set time");
+                  emit_event(&ctx, "render", obj);
+                });
               }
             }
             _ => {}
