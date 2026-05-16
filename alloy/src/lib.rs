@@ -2,7 +2,7 @@ mod gl;
 pub mod sdl_utils;
 
 pub use impellers;
-use impellers::{Context as ImpellerContext, DisplayList, ISize, Rect, Texture};
+use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, Rect, Texture};
 pub use sdl3;
 
 #[macro_export]
@@ -347,13 +347,13 @@ fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) 
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
       ..
     } => {
-      let size = ISize::new(w as i64, h as i64);
+      let display_scale = sdl_utils::window_display_scale(window);
+      let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);
       let r = sdl_utils::window_safe_area(window);
       let safe_area = Rect::new(
         impellers::Point::new(r.x as f32, r.y as f32),
         impellers::Size::new(r.w as f32, r.h as f32),
       );
-      let display_scale = sdl_utils::window_display_scale(window);
       Some(Event::Resize { size, safe_area, display_scale })
     }
     _ => None,
@@ -387,15 +387,18 @@ impl App {
     let mut frame: u64 = 0;
 
     let (init_w, init_h) = window.size_in_pixels();
+    let init_scale = sdl_utils::window_display_scale(&window);
     let init_r = sdl_utils::window_safe_area(&window);
     event_tx.send(Event::Resize {
-      size: ISize::new(init_w as i64, init_h as i64),
+      size: ISize::new((init_w as f32 / init_scale) as i64, (init_h as f32 / init_scale) as i64),
       safe_area: Rect::new(
         impellers::Point::new(init_r.x as f32, init_r.y as f32),
         impellers::Size::new(init_r.w as f32, init_r.h as f32),
       ),
-      display_scale: sdl_utils::window_display_scale(&window),
+      display_scale: init_scale,
     }).ok();
+
+    let mut current_scale = init_scale;
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
@@ -404,9 +407,14 @@ impl App {
             dl = newer;
           }
           (hooks.pre_render)();
-          render_surface
-            .draw_display_list(&dl)
-            .expect("Failed to draw display list");
+          let mut builder = DisplayListBuilder::new(None);
+          builder.scale(current_scale, current_scale);
+          builder.draw_display_list(&dl, 1.0);
+          if let Some(scaled) = builder.build() {
+            render_surface
+              .draw_display_list(&scaled)
+              .expect("Failed to draw display list");
+          }
           render_surface.present();
           event_tx.send(Event::FrameRendered { frame }).ok();
           frame += 1;
@@ -417,8 +425,13 @@ impl App {
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
-          if let Event::Resize { size, .. } = &e {
-            render_surface.resize(*size);
+          if let Event::Resize { size, display_scale, .. } = &e {
+            let phys = ISize::new(
+              (size.width as f32 * display_scale) as i64,
+              (size.height as f32 * display_scale) as i64,
+            );
+            render_surface.resize(phys);
+            current_scale = *display_scale;
           }
           event_tx.send(e).ok();
         }
