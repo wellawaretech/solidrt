@@ -49,6 +49,10 @@ Run the app:
 bunx srt run src/index.tsx
 ```
 
+## API
+
+See [docs/api.md](docs/api.md) for the full API reference.
+
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for how to build from source. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
