@@ -1,16 +1,32 @@
 use rquickjs::Value;
 use taffy::prelude::*;
 
+use super::util::parse_dimension;
+
 pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Option<bool> {
   match property {
     "width" => {
-      let n = value.get::<f64>().expect("width must be a number") as f32;
-      style.size.width = Dimension::length(n);
+      style.size.width = parse_dimension(value);
       Some(true)
     }
     "height" => {
-      let n = value.get::<f64>().expect("height must be a number") as f32;
-      style.size.height = Dimension::length(n);
+      style.size.height = parse_dimension(value);
+      Some(true)
+    }
+    "minWidth" => {
+      style.min_size.width = parse_dimension(value);
+      Some(true)
+    }
+    "minHeight" => {
+      style.min_size.height = parse_dimension(value);
+      Some(true)
+    }
+    "maxWidth" => {
+      style.max_size.width = parse_dimension(value);
+      Some(true)
+    }
+    "maxHeight" => {
+      style.max_size.height = parse_dimension(value);
       Some(true)
     }
     _ => None,
