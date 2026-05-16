@@ -194,7 +194,6 @@ impl RenderSurface for GlSurface {
 pub fn run_context(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
-  notify: Arc<dyn Fn() + Send + Sync>,
   tx: mpsc::Sender<DisplayList>,
 ) {
   let gl_context_ptr = Box::new(SendablePtr(unsafe {
@@ -222,7 +221,6 @@ pub fn run_context(
       queue,
       impeller_ctx,
       tx,
-      notify,
     ));
     closure(gpu_ctx);
   });

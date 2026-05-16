@@ -100,7 +100,6 @@ pub struct Context {
   impeller_ctx: ImpellerContext,
   pub textures: TextureRegistry,
   tx: mpsc::Sender<DisplayList>,
-  notify: Arc<dyn Fn() + Send + Sync>,
 }
 
 // Safety: Context is thread-safe (Send + Sync) because:
@@ -204,7 +203,6 @@ impl Context {
     wgpu_queue: wgpu::Queue,
     impeller_ctx: ImpellerContext,
     tx: mpsc::Sender<DisplayList>,
-    notify: Arc<dyn Fn() + Send + Sync>,
   ) -> Self {
     Context {
       backend,
@@ -213,14 +211,11 @@ impl Context {
       impeller_ctx,
       textures: TextureRegistry::new(),
       tx,
-      notify,
     }
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    self.tx.send(dl).map_err(|_| ())?;
-    (self.notify)();
-    Ok(())
+    self.tx.send(dl).map_err(|_| ())
   }
 
   pub fn get_or_create_texture(
@@ -281,13 +276,10 @@ impl DisplayContext {
   pub fn run_context(
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
-    notify: Arc<dyn Fn() + Send + Sync>,
     tx: mpsc::Sender<DisplayList>,
   ) {
     match self {
-      DisplayContext::Gl { ui_context, .. } => {
-        gl::run_context(ui_context, closure, notify, tx)
-      }
+      DisplayContext::Gl { ui_context, .. } => gl::run_context(ui_context, closure, tx),
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }
@@ -346,8 +338,7 @@ impl App {
     } = self;
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
-    let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(|| {});
-    platform.run_context(dl_producer, notify, tx);
+    platform.run_context(dl_producer, tx);
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
