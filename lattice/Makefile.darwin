@@ -40,9 +40,13 @@ define stage-darwin
 	@mkdir -p $(HOST_DIST)
 	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/
 	@cp target/$(1)/$(2)/build/impellers-*/out/libimpeller.dylib $(HOST_DIST)/
-	install_name_tool -id @rpath/libimpeller.dylib $(HOST_DIST)/libimpeller.dylib
+	@install_name_tool -id @rpath/libimpeller.dylib $(HOST_DIST)/libimpeller.dylib
 	@old=$$(otool -L $(HOST_DIST)/$(3) | awk '/libimpeller\.dylib/{print $$1}'); \
-	install_name_tool -change "$$old" @rpath/libimpeller.dylib $(HOST_DIST)/$(3)
+	if [ -n "$$old" ]; then \
+	  install_name_tool -change "$$old" @rpath/libimpeller.dylib $(HOST_DIST)/$(3); \
+	fi
+	@codesign --force --sign - $(HOST_DIST)/libimpeller.dylib
+	@codesign --force --sign - $(HOST_DIST)/$(3)
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
