@@ -10,7 +10,7 @@
     "@solidrt/cli": "workspace:*",
     "@solidrt/core": "workspace:*",
     "@solidjs/signals": "2.0.0-beta.7",
-    "@solidjs/universal": "2.0.0-beta.7",
+    "@solidjs/universal": "2.0.0-experimental.0",
     "solid-js": "2.0.0-beta.7"
   }
 }
