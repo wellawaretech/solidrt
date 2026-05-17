@@ -226,24 +226,25 @@ pub fn run_context(
   });
 }
 
+/// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.
+pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
+  sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
+  let gl_attr = video.gl_attr();
+  gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
+  gl_attr.set_context_version(3, 0);
+}
+
 pub(crate) fn setup_opengl_platform(
   video: &sdl3::VideoSubsystem,
   window: &sdl3::video::Window,
 ) -> Result<DisplayContext, Box<dyn std::error::Error>> {
-  // Set SDL hints for OpenGL ES via FFI
-  sdl3::hint::set("SDL_OPENGL_ES_DRIVER", "1");
-
-  // Configure GL attributes BEFORE creating contexts
-  let gl_attr = video.gl_attr();
-  gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
-  gl_attr.set_context_version(3, 0);
-
   // Create UI GL context
   let ui_context = window
     .gl_create_context()
     .map_err(|e| format!("Failed to create UI GL context: {}", e))?;
 
   // Enable context sharing for main GL context
+  let gl_attr = video.gl_attr();
   gl_attr.set_share_with_current_context(true);
 
   // Create main GL context

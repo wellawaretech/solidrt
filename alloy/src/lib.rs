@@ -298,6 +298,8 @@ pub fn setup(title: &str, size: ISize) -> App {
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
   let video = sdl_context.video().expect("Failed to get video subsystem");
 
+  gl::configure_opengl(&video);
+
   let window = video
     .window(title, width, height)
     .opengl()
