@@ -353,7 +353,8 @@ pub fn setup(title: &str, size: ISize) -> App {
   }
 }
 
-pub enum Event {
+#[derive(Clone)]
+pub enum AlloyEvent {
   Quit,
   KeyDown {
     keycode: Option<sdl3::keyboard::Keycode>,
@@ -367,11 +368,11 @@ pub enum Event {
   FrameRendered { frame: u64 },
 }
 
-fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<Event> {
+fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
-    sdl3::event::Event::Quit { .. } => Some(Event::Quit),
+    sdl3::event::Event::Quit { .. } => Some(AlloyEvent::Quit),
     sdl3::event::Event::KeyDown { keycode, scancode, .. } => {
-      Some(Event::KeyDown { keycode, scancode })
+      Some(AlloyEvent::KeyDown { keycode, scancode })
     }
     sdl3::event::Event::Window {
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
@@ -384,7 +385,7 @@ fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) 
         impellers::Point::new(r.x as f32, r.y as f32),
         impellers::Size::new(r.w as f32, r.h as f32),
       );
-      Some(Event::Resize { size, safe_area, display_scale })
+      Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
     _ => None,
   }
@@ -398,7 +399,7 @@ pub struct RenderHooks {
 impl App {
   pub fn run(
     self,
-    dl_producer: impl FnOnce(Arc<Context>, mpsc::Receiver<Event>) + Send + 'static,
+    dl_producer: impl FnOnce(Arc<Context>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
     mut hooks: RenderHooks,
   ) {
     let App {
@@ -412,14 +413,14 @@ impl App {
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
-    let (event_tx, event_rx) = mpsc::channel::<Event>();
+    let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     platform.run_context(move |ctx| dl_producer(ctx, event_rx), tx);
     let mut frame: u64 = 0;
 
     let (init_w, init_h) = window.size_in_pixels();
     let init_scale = sdl_utils::window_display_scale(&window);
     let init_r = sdl_utils::window_safe_area(&window);
-    event_tx.send(Event::Resize {
+    event_tx.send(AlloyEvent::Resize {
       size: ISize::new((init_w as f32 / init_scale) as i64, (init_h as f32 / init_scale) as i64),
       safe_area: Rect::new(
         impellers::Point::new(init_r.x as f32, init_r.y as f32),
@@ -446,7 +447,7 @@ impl App {
               .expect("Failed to draw display list");
           }
           render_surface.present();
-          event_tx.send(Event::FrameRendered { frame }).ok();
+          event_tx.send(AlloyEvent::FrameRendered { frame }).ok();
           frame += 1;
           (hooks.post_render)();
         }
@@ -455,7 +456,7 @@ impl App {
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
-          if let Event::Resize { size, display_scale, .. } = &e {
+          if let AlloyEvent::Resize { size, display_scale, .. } = &e {
             let phys = ISize::new(
               (size.width as f32 * display_scale) as i64,
               (size.height as f32 * display_scale) as i64,

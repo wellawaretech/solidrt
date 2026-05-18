@@ -8,7 +8,7 @@ enum EngineCmd {
   Reload(String),
 }
 
-use alloy::impellers::ISize;
+use alloy::impellers::{ISize, Rect};
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
@@ -43,10 +43,26 @@ impl std::ops::Deref for AlloyContext {
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
+fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32) {
+  eh.exec(move |ctx| {
+    let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
+    sa.set("top", safe_area.origin.y).expect("set top");
+    sa.set("left", safe_area.origin.x).expect("set left");
+    sa.set("right", safe_area.origin.x + safe_area.size.width).expect("set right");
+    sa.set("bottom", safe_area.origin.y + safe_area.size.height).expect("set bottom");
+    let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+    obj.set("width", size.width).expect("set width");
+    obj.set("height", size.height).expect("set height");
+    obj.set("safeArea", sa).expect("set safeArea");
+    obj.set("displayScale", display_scale).expect("set displayScale");
+    emit_event(&ctx, "resize", obj);
+  });
+}
+
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
-  event_rx: std::sync::mpsc::Receiver<alloy::Event>,
+  event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
@@ -63,32 +79,20 @@ fn ui_thread(
       loop {
         while let Ok(event) = event_rx.try_recv() {
           match event {
-            alloy::Event::Quit => std::process::exit(0),
-            alloy::Event::Resize { size, safe_area, display_scale } => {
-              platform_events.set_window_size(size.width as f32, size.height as f32);
+            alloy::AlloyEvent::Quit => std::process::exit(0),
+            alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
+              platform_events.set_resize(size.width as f32, size.height as f32, safe_area, display_scale);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
-                eh.exec(move |ctx| {
-                  let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
-                  sa.set("top", safe_area.origin.y).expect("set top");
-                  sa.set("left", safe_area.origin.x).expect("set left");
-                  sa.set("right", safe_area.origin.x + safe_area.size.width).expect("set right");
-                  sa.set("bottom", safe_area.origin.y + safe_area.size.height).expect("set bottom");
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("width", size.width).expect("set width");
-                  obj.set("height", size.height).expect("set height");
-                  obj.set("safeArea", sa).expect("set safeArea");
-                  obj.set("displayScale", display_scale).expect("set displayScale");
-                  emit_event(&ctx, "resize", obj);
-                });
+                emit_resize(eh, size, safe_area, display_scale);
               }
             }
-            alloy::Event::KeyDown { keycode, .. } => {
+            alloy::AlloyEvent::KeyDown { keycode, .. } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let key = format!("{keycode:?}");
                 eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
               }
             }
-            alloy::Event::FrameRendered { frame } => {
+            alloy::AlloyEvent::FrameRendered { frame } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 eh.exec(move |ctx| {
@@ -99,7 +103,6 @@ fn ui_thread(
                 });
               }
             }
-            _ => {}
           }
         }
         tokio::time::sleep(std::time::Duration::from_millis(8)).await;
@@ -112,7 +115,7 @@ fn ui_thread(
 
     loop {
       let render_tree = RenderTree::new();
-      let platform = platform.clone();
+      let platform_draw = platform.clone();
       let atx = atx.clone();
 
       let engine = FluxEngine::builder()
@@ -122,10 +125,16 @@ fn ui_thread(
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
         })
-        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
+        .plugin(move |ctx| plugins::draw::init(ctx, platform_draw, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
+
+      let (w, h) = platform.window_size();
+      if w > 0.0 {
+        let size = alloy::impellers::ISize::new(w as i64, h as i64);
+        emit_resize(current_exec.borrow().as_ref().expect("exec handle"), size, platform.safe_area(), platform.display_scale());
+      }
 
       let mut next_src: Option<String> = None;
       local
@@ -149,7 +158,7 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   log::info!("[srt] SolidRT version {version}");
 
   let handle = rt.handle().clone();
-  let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));
+  let app = alloy::setup("SolidRT", ISize::new(1200, 800));
 
   app.run(
     move |atx, event_rx| {
