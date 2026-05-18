@@ -15,7 +15,7 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@solidjs/signals": "2.0.0-beta.7",
-    "@solidjs/universal": "2.0.0-beta.7"
+    "@solidjs/signals": "2.0.0-beta.13",
+    "@solidjs/universal": "2.0.0-beta.13"
   }
 }
