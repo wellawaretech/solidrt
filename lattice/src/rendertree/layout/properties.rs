@@ -49,58 +49,58 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     // Flex container
     "flexDirection" => {
       style.flex_direction = match value.get::<String>().expect("flexDirection must be a string").as_str() {
-        "row"           => FlexDirection::Row,
-        "column"        => FlexDirection::Column,
-        "rowReverse"    => FlexDirection::RowReverse,
-        "columnReverse" => FlexDirection::ColumnReverse,
+        "row"            => FlexDirection::Row,
+        "column"         => FlexDirection::Column,
+        "row-reverse"    => FlexDirection::RowReverse,
+        "column-reverse" => FlexDirection::ColumnReverse,
         v => panic!("unknown flexDirection value '{v}'"),
       };
     }
     "flexWrap" => {
       style.flex_wrap = match value.get::<String>().expect("flexWrap must be a string").as_str() {
-        "nowrap"      => FlexWrap::NoWrap,
-        "wrap"        => FlexWrap::Wrap,
-        "wrapReverse" => FlexWrap::WrapReverse,
+        "nowrap"       => FlexWrap::NoWrap,
+        "wrap"         => FlexWrap::Wrap,
+        "wrap-reverse" => FlexWrap::WrapReverse,
         v => panic!("unknown flexWrap value '{v}'"),
       };
     }
     "alignItems" => {
       style.align_items = Some(match value.get::<String>().expect("alignItems must be a string").as_str() {
-        "start"     => AlignItems::Start,
-        "end"       => AlignItems::End,
-        "flexStart" => AlignItems::FlexStart,
-        "flexEnd"   => AlignItems::FlexEnd,
-        "center"    => AlignItems::Center,
-        "baseline"  => AlignItems::Baseline,
-        "stretch"   => AlignItems::Stretch,
+        "start"      => AlignItems::Start,
+        "end"        => AlignItems::End,
+        "flex-start" => AlignItems::FlexStart,
+        "flex-end"   => AlignItems::FlexEnd,
+        "center"     => AlignItems::Center,
+        "baseline"   => AlignItems::Baseline,
+        "stretch"    => AlignItems::Stretch,
         v => panic!("unknown alignItems value '{v}'"),
       });
     }
     "justifyContent" => {
       style.justify_content = Some(match value.get::<String>().expect("justifyContent must be a string").as_str() {
-        "start"        => JustifyContent::Start,
-        "end"          => JustifyContent::End,
-        "flexStart"    => JustifyContent::FlexStart,
-        "flexEnd"      => JustifyContent::FlexEnd,
-        "center"       => JustifyContent::Center,
-        "spaceBetween" => JustifyContent::SpaceBetween,
-        "spaceAround"  => JustifyContent::SpaceAround,
-        "spaceEvenly"  => JustifyContent::SpaceEvenly,
-        "stretch"      => JustifyContent::Stretch,
+        "start"         => JustifyContent::Start,
+        "end"           => JustifyContent::End,
+        "flex-start"    => JustifyContent::FlexStart,
+        "flex-end"      => JustifyContent::FlexEnd,
+        "center"        => JustifyContent::Center,
+        "space-between" => JustifyContent::SpaceBetween,
+        "space-around"  => JustifyContent::SpaceAround,
+        "space-evenly"  => JustifyContent::SpaceEvenly,
+        "stretch"       => JustifyContent::Stretch,
         v => panic!("unknown justifyContent value '{v}'"),
       });
     }
     "alignContent" => {
       style.align_content = Some(match value.get::<String>().expect("alignContent must be a string").as_str() {
-        "start"        => AlignContent::Start,
-        "end"          => AlignContent::End,
-        "flexStart"    => AlignContent::FlexStart,
-        "flexEnd"      => AlignContent::FlexEnd,
-        "center"       => AlignContent::Center,
-        "spaceBetween" => AlignContent::SpaceBetween,
-        "spaceAround"  => AlignContent::SpaceAround,
-        "spaceEvenly"  => AlignContent::SpaceEvenly,
-        "stretch"      => AlignContent::Stretch,
+        "start"         => AlignContent::Start,
+        "end"           => AlignContent::End,
+        "flex-start"    => AlignContent::FlexStart,
+        "flex-end"      => AlignContent::FlexEnd,
+        "center"        => AlignContent::Center,
+        "space-between" => AlignContent::SpaceBetween,
+        "space-around"  => AlignContent::SpaceAround,
+        "space-evenly"  => AlignContent::SpaceEvenly,
+        "stretch"       => AlignContent::Stretch,
         v => panic!("unknown alignContent value '{v}'"),
       });
     }
@@ -149,13 +149,13 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     "flexBasis"  => style.flex_basis  = parse_dimension(value),
     "alignSelf" => {
       style.align_self = Some(match value.get::<String>().expect("alignSelf must be a string").as_str() {
-        "start"     => AlignSelf::Start,
-        "end"       => AlignSelf::End,
-        "flexStart" => AlignSelf::FlexStart,
-        "flexEnd"   => AlignSelf::FlexEnd,
-        "center"    => AlignSelf::Center,
-        "baseline"  => AlignSelf::Baseline,
-        "stretch"   => AlignSelf::Stretch,
+        "start"      => AlignSelf::Start,
+        "end"        => AlignSelf::End,
+        "flex-start" => AlignSelf::FlexStart,
+        "flex-end"   => AlignSelf::FlexEnd,
+        "center"     => AlignSelf::Center,
+        "baseline"   => AlignSelf::Baseline,
+        "stretch"    => AlignSelf::Stretch,
         v => panic!("unknown alignSelf value '{v}'"),
       });
     }
@@ -196,10 +196,10 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     // Grid container
     "gridAutoFlow" => {
       style.grid_auto_flow = match value.get::<String>().expect("gridAutoFlow must be a string").as_str() {
-        "row"          => GridAutoFlow::Row,
-        "column"       => GridAutoFlow::Column,
-        "rowDense"     => GridAutoFlow::RowDense,
-        "columnDense"  => GridAutoFlow::ColumnDense,
+        "row"           => GridAutoFlow::Row,
+        "column"        => GridAutoFlow::Column,
+        "row-dense"     => GridAutoFlow::RowDense,
+        "column-dense"  => GridAutoFlow::ColumnDense,
         v => panic!("unknown gridAutoFlow value '{v}'"),
       };
     }
