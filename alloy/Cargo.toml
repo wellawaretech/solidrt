@@ -8,7 +8,7 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "0.18.0", features = ["build-from-source"] }
+sdl3 = { version = "0.18.4", features = ["build-from-source"] }
 wgpu = { version = "29", features = ["gles"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
