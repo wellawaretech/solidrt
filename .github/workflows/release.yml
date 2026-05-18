@@ -115,9 +115,7 @@ jobs:
         run: bun install
 
       - name: Build
-        run: make dist-android VERSION="${GITHUB_REF_NAME#v}"
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_ROOT }}
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
