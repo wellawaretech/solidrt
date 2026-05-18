@@ -75,6 +75,6 @@ process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
 
 let version = pkg.version === "0.0.0" ? "" : " version " + pkg.version
-console.log(`Welcome to SolidRT${version}!`)
+console.log(`[cli] Welcome to SolidRT${version}!`)
 startRepl()
 startWatcher()

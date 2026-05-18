@@ -14,7 +14,7 @@ export function startServer() {
       let url = new URL(req.url)
       let path = decodeURIComponent(url.pathname)
 
-      print("[http] get", path)
+      print("[cli] get", path)
 
       let filePath = resolve(state.sourceDir, "." + path)
       if (!filePath.startsWith(state.sourceDir)) {
@@ -24,7 +24,7 @@ export function startServer() {
       try {
         stat = await fsStat(filePath)
       } catch {
-        print("[http] file not found %s", path)
+        print("[cli] file not found %s", path)
         return new Response("Not found", { status: 404 })
       }
 
@@ -52,7 +52,7 @@ export function startServer() {
     websocket: {
       open(ws) {
         state.clients.set(ws, { platform: "unknown", version: "unknown" })
-        print(`[dev] Client connected ${ws.remoteAddress}`)
+        print(`[cli] Client connected ${ws.remoteAddress}`)
         if (state.currentCode) {
           ws.send(JSON.stringify({ type: "reload", code: state.currentCode }))
         }
@@ -60,9 +60,9 @@ export function startServer() {
       close(ws) {
         let info = state.clients.get(ws)
         state.clients.delete(ws)
-        print(`[dev] Client disconnected: ${info?.platform ?? "unknown"}`)
+        print(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
         if (state.child && state.clients.size === 0 && state.child.exitCode !== null) {
-          print("[dev] All clients disconnected, shutting down")
+          print("[cli] All clients disconnected, shutting down")
           state.server?.stop()
           process.exit(0)
         }
@@ -75,7 +75,7 @@ export function startServer() {
               platform: data.platform ?? "unknown",
               version: data.version ?? "unknown",
             })
-            print(`[dev] Client info ${ws.remoteAddress} ${data.platform} (${data.version})`)
+            print(`[cli] Client info ${ws.remoteAddress} ${data.platform} (${data.version})`)
           }
         } catch {}
       },
@@ -107,19 +107,19 @@ export function startServer() {
   }
 
   console.log("")
-  console.log(`[dev] WebSocket server on ws://${serverUrl}`)
+  console.log(`[cli] WebSocket server on ws://${serverUrl}`)
 
   // UDP discovery
   let udp = createSocket("udp4")
   udp.on("message", (msg, rinfo) => {
     if (msg.toString() === "SRT_DISCOVER") {
-      print(`[dev] Discovery request from ${rinfo.address}:${rinfo.port}`)
+      print(`[cli] Discovery request from ${rinfo.address}:${rinfo.port}`)
       udp.send("SRT_SERVER", rinfo.port, rinfo.address)
     }
   })
   udp.bind(DEV_PORT, () => {
     udp.setBroadcast(true)
-    print("[dev] UDP discovery listener on port " + DEV_PORT)
+    print("[cli] UDP discovery listener on port " + DEV_PORT)
   })
 
   // Keepalive

@@ -8,7 +8,7 @@ import { startWatcher } from "./watcher"
 function cmdStop(args: string) {
   if (!args) {
     broadcastStop()
-    print("[dev] Sent stop to all clients")
+    print("[cli] Sent stop to all clients")
     return
   }
   let clientList = [...state.clients.keys()]
@@ -19,7 +19,7 @@ function cmdStop(args: string) {
       continue
     }
     clientList[idx].send(JSON.stringify({ type: "stop" }))
-    print(`[dev] Sent stop to client ${idx}`)
+    print(`[cli] Sent stop to client ${idx}`)
   }
 }
 
@@ -27,7 +27,7 @@ async function cmdReload(args: string) {
   if (state.source && state.source.endsWith(".tsx")) {
     let result = await bundle(state.source)
     if (!result) {
-      printErr("[dev] Build failed, reload aborted")
+      printErr("[cli] Build failed, reload aborted")
       return
     }
     for (let output of result.outputs) {
@@ -37,7 +37,7 @@ async function cmdReload(args: string) {
   let msg = JSON.stringify({ type: "reload", code: state.currentCode })
   if (!args) {
     for (let ws of state.clients.keys()) ws.send(msg)
-    print("[dev] Sent reload to all clients")
+    print("[cli] Sent reload to all clients")
     return
   }
   let clientList = [...state.clients.keys()]
@@ -48,7 +48,7 @@ async function cmdReload(args: string) {
       continue
     }
     clientList[idx].send(msg)
-    print(`[dev] Sent reload to client ${idx}`)
+    print(`[cli] Sent reload to client ${idx}`)
   }
 }
 
@@ -73,7 +73,7 @@ async function cmdLoad(file: string) {
   if (file.endsWith(".tsx")) {
     let result = await bundle(path)
     if (!result) {
-      printErr("[dev] Build failed")
+      printErr("[cli] Build failed")
       return
     }
     for (let output of result.outputs) {
@@ -85,7 +85,7 @@ async function cmdLoad(file: string) {
     let bytes = await Bun.file(path).arrayBuffer()
     let msg = { type: "reload", bytecode: Buffer.from(bytes).toString("base64") }
     for (let ws of state.clients.keys()) ws.send(JSON.stringify(msg))
-    print(`[dev] Loaded ${file} (bytecode, ${bytes.byteLength} bytes)`)
+    print(`[cli] Loaded ${file} (bytecode, ${bytes.byteLength} bytes)`)
     return
   } else {
     print("Unsupported file type. Use .tsx, .srt.js, or .srt.bin")
@@ -97,7 +97,7 @@ async function cmdLoad(file: string) {
   for (let ws of state.clients.keys()) {
     ws.send(JSON.stringify({ type: "reload", code: state.currentCode }))
   }
-  print(`[dev] Loaded ${file}`)
+  print(`[cli] Loaded ${file}`)
 }
 
 let COMMANDS = ["load ", "stop", "reload", "list", "quit", "exit", "help"]

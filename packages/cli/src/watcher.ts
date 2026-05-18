@@ -11,15 +11,15 @@ export function startWatcher() {
 
   if (currentWatcher) currentWatcher.close()
 
-  print(`[dev] Watching ${watchDir} for changes...`)
+  print(`[cli] Watching ${watchDir} for changes...`)
   currentWatcher = watch(watchDir, { recursive: true }, async (_event, filename) => {
     if (!filename) return
     if (!/\.(tsx?|jsx?)$/.test(filename)) return
 
-    print(`[watch] Change detected: ${filename}`)
+    print(`[cli] Change detected: ${filename}`)
     let result = await bundle(state.source)
     if (!result) {
-      printErr("[dev] Build failed, waiting for changes...")
+      printErr("[cli] Build failed, waiting for changes...")
       return
     }
     for (let output of result.outputs) {

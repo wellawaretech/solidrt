@@ -21,7 +21,7 @@ export async function bundle(entry = source) {
       plugins: [solidPlugin({ devBase })],
     })
   } catch (e) {
-    console.error("[dev] compile error:\n", e)
+    console.error("[cli] compile error:\n", e)
     return null
   }
 

@@ -31,6 +31,6 @@ export function spawnClient() {
       state.server?.stop()
       process.exit(0)
     }
-    print(`[dev] Local client exited, ${state.clients.size} remote client(s) still connected`)
+    print(`[cli] Local client exited, ${state.clients.size} remote client(s) still connected`)
   })
 }
