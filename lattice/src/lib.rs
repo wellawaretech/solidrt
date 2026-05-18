@@ -9,7 +9,6 @@ enum EngineCmd {
 }
 
 use alloy::impellers::ISize;
-use alloy::log;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
@@ -117,7 +116,12 @@ fn ui_thread(
       let atx = atx.clone();
 
       let engine = FluxEngine::builder()
-        .logger(|_level, msg| log!("{msg}"))
+        .logger(|level, msg| match level {
+          flux::LogLevel::Debug => log::debug!("{msg}"),
+          flux::LogLevel::Log => log::info!("{msg}"),
+          flux::LogLevel::Warn => log::warn!("{msg}"),
+          flux::LogLevel::Error => log::error!("{msg}"),
+        })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
@@ -140,8 +144,9 @@ fn ui_thread(
 }
 
 pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
+  alloy::install_logger();
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
-  log!("[srt] SolidRT version {version}");
+  log::info!("[srt] SolidRT version {version}");
 
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));

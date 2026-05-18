@@ -34,8 +34,10 @@ impl Logger {
 
 pub fn default_logger() -> Logger {
   Logger(Arc::new(|level, msg| match level {
-    LogLevel::Debug | LogLevel::Log => println!("{msg}"),
-    LogLevel::Warn | LogLevel::Error => eprintln!("{msg}"),
+    LogLevel::Debug => log::debug!("{msg}"),
+    LogLevel::Log => log::info!("{msg}"),
+    LogLevel::Warn => log::warn!("{msg}"),
+    LogLevel::Error => log::error!("{msg}"),
   }))
 }
 

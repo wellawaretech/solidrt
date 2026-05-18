@@ -23,6 +23,7 @@ go = ["flux/compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "d
 
 [dependencies]
 alloy = { workspace = true }
+log = { workspace = true }
 flux = { workspace = true, default-features = false }
 half = "2.7.1"
 rquickjs = { workspace = true }

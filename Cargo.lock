@@ -22,6 +22,7 @@ name = "alloy"
 version = "0.1.0"
 dependencies = [
  "impellers",
+ "log",
  "pollster",
  "sdl3",
  "wgpu",
@@ -361,6 +362,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 name = "flux"
 version = "0.1.0"
 dependencies = [
+ "log",
  "reqwest",
  "rquickjs",
  "tokio",
@@ -909,6 +911,7 @@ dependencies = [
  "futures-util",
  "half",
  "http",
+ "log",
  "rquickjs",
  "serde_json",
  "taffy",
