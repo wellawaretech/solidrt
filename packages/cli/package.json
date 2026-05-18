@@ -20,7 +20,8 @@
   },
   "optionalDependencies": {
     "@solidrt/linux-x64-gnu": "workspace:*",
-    "@solidrt/darwin-arm64": "workspace:*"
+    "@solidrt/darwin-arm64": "workspace:*",
+    "@solidrt/win32-x64-msvc": "workspace:*"
   },
   "peerDependencies": {
     "@solidrt/core": "workspace:*",

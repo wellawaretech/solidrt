@@ -1,0 +1,52 @@
+# lattice/Makefile.windows
+
+ELECTRON_VERSION   = v40.9.2
+ELECTRON_URL       = https://github.com/electron/electron/releases/download/$(ELECTRON_VERSION)
+ANGLE_STAMP_FILE   = .angle-version
+
+ANGLE_WIN_ZIP = $(HOST_DIST)/electron-win32-x64.zip
+ANGLE_EGL     = $(HOST_DIST)/libEGL.dll
+ANGLE_GLES    = $(HOST_DIST)/libGLESv2.dll
+
+PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
+
+.PHONY: solidrt-go runtime dist-windows angle-windows
+
+angle-windows:
+	@mkdir -p $(HOST_DIST)
+	@cur=$$(cat $(HOST_DIST)/$(ANGLE_STAMP_FILE) 2>/dev/null); \
+	if [ "$$cur" = "$(ELECTRON_VERSION)" ] && [ -f $(ANGLE_EGL) ] && [ -f $(ANGLE_GLES) ]; then \
+	  exit 0; \
+	fi; \
+	rm -f $(ANGLE_EGL) $(ANGLE_GLES); \
+	if [ ! -f $(ANGLE_WIN_ZIP) ]; then \
+	  echo "Downloading ANGLE ($(ELECTRON_VERSION)) from Electron..."; \
+	  curl --progress-bar --fail -L $(ELECTRON_URL)/electron-$(ELECTRON_VERSION)-win32-x64.zip -o $(ANGLE_WIN_ZIP); \
+	fi; \
+	echo "Extracting ANGLE into $(HOST_DIST)..."; \
+	unzip -jo $(ANGLE_WIN_ZIP) "libEGL.dll" "libGLESv2.dll" -d $(HOST_DIST); \
+	echo "$(ELECTRON_VERSION)" > $(HOST_DIST)/$(ANGLE_STAMP_FILE)
+
+# $(1)=target subdir (go|runtime), $(2)=profile (release|debug), $(3)=binary name (no .exe)
+define stage-windows
+	@mkdir -p $(HOST_DIST)
+	@cp target/$(1)/$(2)/$(3).exe $(HOST_DIST)/
+	@echo "Staged $(3).exe into $(HOST_DIST)/"
+endef
+
+solidrt-go: $(DEFAULT_APP_JS) angle-windows
+	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
+	RUSTFLAGS="-Clink-arg=/OPT:NOREF,NOICF" \
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	$(call stage-windows,go,$(PROFILE),solidrt-go)
+
+runtime: angle-windows
+	@echo "Building RUNTIME Windows ($(PROFILE)) $(VERSION)"
+	RUSTFLAGS="-Clink-arg=/OPT:NOREF,NOICF" \
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
+	$(call stage-windows,runtime,$(PROFILE),solidrt-runner)
+
+dist-windows:
+	$(MAKE) solidrt-go
+	cp $(HOST_DIST)/solidrt-go.exe $(PKG_WIN)/solidrt-go.exe
+	cp $(ANGLE_EGL) $(ANGLE_GLES) $(PKG_WIN)/

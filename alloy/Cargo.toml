@@ -21,5 +21,13 @@ impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys", "static_lin
 sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
 wgpu = { version = "29", features = ["gles"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+impellers = { version = "0.4.1", features = ["prebuilt_libs", "sys", "static_link"] }
+sdl3 = { version = "0.18.0", features = ["build-from-source-static"] }
+# "angle" feature omitted: SDL provides the GL context using the ANGLE DLLs we ship,
+# letting wgpu wrap it via new_external(). Enabling wgpu's own ANGLE bundled a second
+# copy and caused conflicts.
+wgpu = { version = "29", features = ["gles"] }
+
 [dependencies]
 pollster = "0.3"

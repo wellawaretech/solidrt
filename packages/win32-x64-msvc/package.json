@@ -1,0 +1,14 @@
+{
+  "name": "@solidrt/win32-x64-msvc",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "SolidRT native binary for Windows x64 (MSVC)",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "solidrt-go.exe",
+    "libEGL.dll",
+    "libGLESv2.dll",
+    "LICENSE"
+  ]
+}
