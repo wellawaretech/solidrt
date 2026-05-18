@@ -353,6 +353,10 @@ pub fn setup(title: &str, size: ISize) -> App {
   }
 }
 
+pub enum AlloyCommand {
+  EmitInitEvents,
+}
+
 #[derive(Clone)]
 pub enum AlloyEvent {
   Quit,
@@ -366,6 +370,20 @@ pub enum AlloyEvent {
     display_scale: f32,
   },
   FrameRendered { frame: u64 },
+}
+
+fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
+  let (w, h) = window.size_in_pixels();
+  let scale = sdl_utils::window_display_scale(window);
+  let r = sdl_utils::window_safe_area(window);
+  AlloyEvent::Resize {
+    size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
+    safe_area: Rect::new(
+      impellers::Point::new(r.x as f32, r.y as f32),
+      impellers::Size::new(r.w as f32, r.h as f32),
+    ),
+    display_scale: scale,
+  }
 }
 
 fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<AlloyEvent> {
@@ -399,7 +417,7 @@ pub struct RenderHooks {
 impl App {
   pub fn run(
     self,
-    dl_producer: impl FnOnce(Arc<Context>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
+    dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
     mut hooks: RenderHooks,
   ) {
     let App {
@@ -414,22 +432,13 @@ impl App {
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
-    platform.run_context(move |ctx| dl_producer(ctx, event_rx), tx);
+    let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
+    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
     let mut frame: u64 = 0;
 
-    let (init_w, init_h) = window.size_in_pixels();
-    let init_scale = sdl_utils::window_display_scale(&window);
-    let init_r = sdl_utils::window_safe_area(&window);
-    event_tx.send(AlloyEvent::Resize {
-      size: ISize::new((init_w as f32 / init_scale) as i64, (init_h as f32 / init_scale) as i64),
-      safe_area: Rect::new(
-        impellers::Point::new(init_r.x as f32, init_r.y as f32),
-        impellers::Size::new(init_r.w as f32, init_r.h as f32),
-      ),
-      display_scale: init_scale,
-    }).ok();
+    event_tx.send(current_resize_event(&window)).ok();
 
-    let mut current_scale = init_scale;
+    let mut current_scale = sdl_utils::window_display_scale(&window);
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
@@ -465,6 +474,13 @@ impl App {
             current_scale = *display_scale;
           }
           event_tx.send(e).ok();
+        }
+      }
+      while let Ok(cmd) = cmd_rx.try_recv() {
+        match cmd {
+          AlloyCommand::EmitInitEvents => {
+            event_tx.send(current_resize_event(&window)).ok();
+          }
         }
       }
     }

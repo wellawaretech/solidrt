@@ -62,6 +62,7 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
+  alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   source: Option<String>,
 ) {
@@ -81,7 +82,7 @@ fn ui_thread(
           match event {
             alloy::AlloyEvent::Quit => std::process::exit(0),
             alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
-              platform_events.set_resize(size.width as f32, size.height as f32, safe_area, display_scale);
+              platform_events.set_window_size(size.width as f32, size.height as f32);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 emit_resize(eh, size, safe_area, display_scale);
               }
@@ -115,7 +116,7 @@ fn ui_thread(
 
     loop {
       let render_tree = RenderTree::new();
-      let platform_draw = platform.clone();
+      let platform = platform.clone();
       let atx = atx.clone();
 
       let engine = FluxEngine::builder()
@@ -125,16 +126,11 @@ fn ui_thread(
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
         })
-        .plugin(move |ctx| plugins::draw::init(ctx, platform_draw, AlloyContext(atx)))
+        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
-
-      let (w, h) = platform.window_size();
-      if w > 0.0 {
-        let size = alloy::impellers::ISize::new(w as i64, h as i64);
-        emit_resize(current_exec.borrow().as_ref().expect("exec handle"), size, platform.safe_area(), platform.display_scale());
-      }
+      alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
 
       let mut next_src: Option<String> = None;
       local
@@ -161,8 +157,8 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let app = alloy::setup("SolidRT", ISize::new(1200, 800));
 
   app.run(
-    move |atx, event_rx| {
-      ui_thread(handle, atx, event_rx, source);
+    move |atx, alloy_cmd_tx, event_rx| {
+      ui_thread(handle, atx, alloy_cmd_tx, event_rx, source);
     },
     alloy::RenderHooks {
       pre_render: Box::new(|| {}),
