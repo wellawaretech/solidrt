@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+
+      - name: Install system dependencies
+        run: >
+          sudo apt-get install -y
+          libclang-dev clang
+          build-essential git make pkg-config cmake ninja-build gnome-desktop-testing
+          libwayland-dev libdecor-0-dev libpipewire-0.3-dev liburing-dev
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev
+          libxkbcommon-dev libdrm-dev libgbm-dev
+          libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev
+          libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev
+          libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev
+
+      - name: Check
+        run: cargo check --workspace
