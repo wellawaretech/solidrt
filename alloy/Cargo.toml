@@ -31,4 +31,4 @@ wgpu = { version = "29", features = ["gles"] }
 
 [dependencies]
 log = { workspace = true }
-pollster = "0.3"
+pollster = "0.4"
