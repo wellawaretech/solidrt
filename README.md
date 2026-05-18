@@ -17,11 +17,11 @@ _SolidRT is in pre-alpha stage. Anything can and will be changed._
 - `@solidrt/core` - links SolidJS with Lattice; the main package for application developers
 - `@solidrt/cli` - developer tooling
 
-**platform packages**
+**Platform packages**
 
 - `@solidrt/linux-x64-gnu` - Linux x64 (glibc)
 - `@solidrt/darwin-arm64` - macOS arm64
-- `@solidrt/android-arm64-v8a` - Android arm64-v8a
+- `@solidrt/win32-x64-msvc` - Windows x64 (MSVC)
 
 ## Usage
 

@@ -45,6 +45,7 @@ help:
 	@echo "Android (ABI=$(ANDROID_ABI)):"
 	@echo "  x-solidrt-go-android   Build .so"
 	@echo "  x-run-android          Build, install, launch, tail logcat"
+	@echo "  dist-android           Build APK into packages/android-arm64-v8a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo ""

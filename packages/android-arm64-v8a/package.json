@@ -2,10 +2,7 @@
   "name": "@solidrt/android-arm64-v8a",
   "version": "0.0.0",
   "license": "MIT",
-  "description": "SolidRT native binary for Android arm64-v8a",
-  "os": ["android"],
-  "cpu": ["arm64"],
-  "main": "solidrt-dev.apk",
+  "description": "SolidRT platform package for Android arm64-v8a",
   "files": [
     "solidrt-dev.apk",
     "LICENSE"

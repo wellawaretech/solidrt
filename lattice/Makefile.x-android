@@ -3,6 +3,8 @@
 NDK_HOME    ?= /opt/android-ndk
 ANDROID_ABI ?= arm64-v8a
 
+PKG_ANDROID := $(CURDIR)/../packages/android-arm64-v8a
+
 RUST_TARGET_arm64-v8a   = aarch64-linux-android
 RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
 RUST_TARGET_x86_64      = x86_64-linux-android
@@ -14,7 +16,7 @@ APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: x-solidrt-go-android x-run-android
+.PHONY: x-solidrt-go-android x-run-android dist-android
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -56,3 +58,8 @@ endef
 
 x-run-android: x-solidrt-go-android $(GRADLE_WRAPPER_JAR)
 	$(call android-run,$(PROFILE))
+
+dist-android: x-solidrt-go-android $(GRADLE_WRAPPER_JAR)
+	cd android && ./gradlew assembleGoDebug
+	cp $(APK_GO_DEBUG) $(PKG_ANDROID)/solidrt-dev.apk
+	@echo "Staged solidrt-dev.apk into $(PKG_ANDROID)/"

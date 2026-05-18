@@ -1,3 +1,7 @@
 # @solidrt/android-arm64-v8a
 
-SolidRT native binary for Android arm64-v8a. This is an optional dependency of `@solidrt/cli` and is installed automatically - you do not need to install it directly.
+SolidRT platform package for Android arm64-v8a. Install this package to enable Android development with SolidRT:
+
+```sh
+bun add -d @solidrt/android-arm64-v8a
+```
