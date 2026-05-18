@@ -117,7 +117,7 @@ fn ui_thread(
       let atx = atx.clone();
 
       let engine = FluxEngine::builder()
-        .logger(|_level, msg| log!("[js] {msg}"))
+        .logger(|_level, msg| log!("{msg}"))
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
@@ -141,7 +141,7 @@ fn ui_thread(
 
 pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
-  log!("[SolidRT] version {version}");
+  log!("[srt] SolidRT version {version}");
 
   let handle = rt.handle().clone();
   let app = alloy::setup("Alloy + Flux demo", ISize::new(1200, 800));

@@ -29,6 +29,10 @@ fn format_value<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
   }
 }
 
+fn console_debug<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {
+  ctx.logger().debug(&format_args(&ctx, &args.0));
+}
+
 fn console_log<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {
   ctx.logger().log(&format_args(&ctx, &args.0));
 }
@@ -45,10 +49,12 @@ pub(crate) fn init_console(ctx: &Ctx<'_>) {
   let globals = ctx.globals();
   let console = Object::new(ctx.clone()).unwrap();
 
+  let debug = Function::new(ctx.clone(), console_debug).unwrap();
   let log = Function::new(ctx.clone(), console_log).unwrap();
   let warn = Function::new(ctx.clone(), console_warn).unwrap();
   let error = Function::new(ctx.clone(), console_error).unwrap();
 
+  console.set("debug", debug).unwrap();
   console.set("log", log).unwrap();
   console.set("warn", warn).unwrap();
   console.set("error", error).unwrap();

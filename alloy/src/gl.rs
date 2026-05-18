@@ -1,4 +1,4 @@
-use crate::{Backend, Context, DisplayContext, GpuTexture, RenderSurface};
+use crate::{log, Backend, Context, DisplayContext, GpuTexture, RenderSurface};
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
 use std::sync::{mpsc, Arc};
 
@@ -203,17 +203,17 @@ pub fn run_context(
   std::thread::spawn(move || {
     let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
     assert!(!egl_display.is_null(), "no EGL display");
-    eprintln!("[UI thread] EGL display obtained");
+    log!("[alloy] EGL display obtained");
 
     let ui_pbuffer = create_ui_pbuffer(egl_display, gl_context_ptr.0);
     make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
-    eprintln!("[UI thread] GL context made current on pbuffer");
+    log!("[alloy] GL context made current on pbuffer");
 
     let (device, queue) = create_wgpu_device();
-    eprintln!("[UI thread] wGPU device created");
+    log!("[alloy] wGPU device created");
 
     let impeller_ctx = create_impeller_context();
-    eprintln!("[UI thread] Impeller context created");
+    log!("[alloy] Impeller context created");
 
     let gpu_ctx = Arc::new(Context::new(
       Backend::Gl,

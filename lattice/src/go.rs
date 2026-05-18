@@ -8,7 +8,7 @@ pub fn start(handle: &tokio::runtime::Handle, tx: UnboundedSender<crate::EngineC
 async fn spawn_go_ws(dev_server: String, tx: UnboundedSender<crate::EngineCmd>) {
   use futures_util::{SinkExt, StreamExt};
 
-  log!("[go] Connecting to ws://{}...", dev_server);
+  log!("[sgo] Connecting to ws://{}...", dev_server);
 
   let uri = http::Uri::builder()
     .scheme("ws")
@@ -25,13 +25,13 @@ async fn spawn_go_ws(dev_server: String, tx: UnboundedSender<crate::EngineCmd>) 
       {
         Ok(conn) => break conn,
         Err(e) => {
-          log!("[go] Connection failed: {e}, retrying in 3s...");
+          log!("[sgo] Connection failed: {e}, retrying in 3s...");
           tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
       }
     };
 
-    log!("[go] Connected to ws://{dev_server}");
+    log!("[sgo] Connected to ws://{dev_server}");
 
     let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
     let info = format!(
@@ -58,7 +58,7 @@ async fn spawn_go_ws(dev_server: String, tx: UnboundedSender<crate::EngineCmd>) 
       }
     }
 
-    log!("[go] Connection lost, reconnecting in 3s...");
+    log!("[sgo] Connection lost, reconnecting in 3s...");
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
   }
 }
@@ -68,17 +68,17 @@ const DEV_SERVER_PORT: u16 = 15194;
 async fn spawn_go_udp_discovery(tx: UnboundedSender<crate::EngineCmd>) {
   use tokio::net::UdpSocket;
 
-  log!("[go] Starting UDP discovery on port {DEV_SERVER_PORT}...");
+  log!("[sgo] Starting UDP discovery on port {DEV_SERVER_PORT}...");
 
   let sock = match UdpSocket::bind("0.0.0.0:0").await {
     Ok(s) => s,
     Err(e) => {
-      log!("[go] UDP bind failed: {e}");
+      log!("[sgo] UDP bind failed: {e}");
       return;
     }
   };
   if let Err(e) = sock.set_broadcast(true) {
-    log!("[go] UDP set_broadcast failed: {e}");
+    log!("[sgo] UDP set_broadcast failed: {e}");
     return;
   }
 
@@ -86,7 +86,7 @@ async fn spawn_go_udp_discovery(tx: UnboundedSender<crate::EngineCmd>) {
   loop {
     let dest = format!("255.255.255.255:{DEV_SERVER_PORT}");
     if let Err(e) = sock.send_to(b"SRT_DISCOVER", &dest).await {
-      log!("[go] UDP send failed: {e}");
+      log!("[sgo] UDP send failed: {e}");
     }
 
     match tokio::time::timeout(
@@ -99,13 +99,13 @@ async fn spawn_go_udp_discovery(tx: UnboundedSender<crate::EngineCmd>) {
         let msg = std::str::from_utf8(&buf[..len]).unwrap_or("");
         if msg == "SRT_SERVER" {
           let server_addr = format!("{}:{DEV_SERVER_PORT}", addr.ip());
-          log!("[go] Discovered dev server at {server_addr}");
+          log!("[sgo] Discovered dev server at {server_addr}");
           spawn_go_ws(server_addr, tx).await;
           return;
         }
       }
-      Ok(Err(e)) => log!("[go] UDP recv error: {e}"),
-      Err(_) => log!("[go] No dev server found, retrying..."),
+      Ok(Err(e)) => log!("[sgo] UDP recv error: {e}"),
+      Err(_) => log!("[sgo] No dev server found, retrying..."),
     }
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;

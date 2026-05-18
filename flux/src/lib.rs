@@ -31,7 +31,7 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   });
 
   result.unwrap_or_else(|e| {
-    eprintln!("error: {e}");
+    eprintln!("[flux] error: {e}");
     std::process::exit(1);
   })
 }
