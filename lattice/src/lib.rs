@@ -92,10 +92,9 @@ fn ui_thread(
               }
             }
             alloy::AlloyEvent::PointerMove { x, y } => {
-              frame_state_events.set_pointer_pos(x, y);
+              frame_state_events.push_input(InputEvent::PointerMove { x, y });
             }
             alloy::AlloyEvent::PointerDown { button, x, y } => {
-              frame_state_events.set_pointer_pos(x, y);
               frame_state_events.push_input(InputEvent::PointerDown { button, x, y });
             }
             alloy::AlloyEvent::KeyDown { keycode, .. } => {

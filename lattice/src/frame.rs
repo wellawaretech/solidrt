@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 
 pub enum InputEvent {
+  PointerMove { x: f32, y: f32 },
   PointerDown { button: u8, x: f32, y: f32 },
 }
 

@@ -425,6 +425,21 @@ pub struct RenderHooks {
   pub post_render: Box<dyn FnMut()>,
 }
 
+fn apply_main_thread_effects(
+  event: &AlloyEvent,
+  render_surface: &mut Box<dyn RenderSurface>,
+  current_scale: &mut f32,
+) {
+  if let AlloyEvent::Resize { size, display_scale, .. } = event {
+    let phys = ISize::new(
+      (size.width as f32 * display_scale) as i64,
+      (size.height as f32 * display_scale) as i64,
+    );
+    render_surface.resize(phys);
+    *current_scale = *display_scale;
+  }
+}
+
 impl App {
   pub fn run(
     self,
@@ -476,14 +491,7 @@ impl App {
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
-          if let AlloyEvent::Resize { size, display_scale, .. } = &e {
-            let phys = ISize::new(
-              (size.width as f32 * display_scale) as i64,
-              (size.height as f32 * display_scale) as i64,
-            );
-            render_surface.resize(phys);
-            current_scale = *display_scale;
-          }
+          apply_main_thread_effects(&e, &mut render_surface, &mut current_scale);
           event_tx.send(e).ok();
         }
       }
