@@ -1,4 +1,5 @@
 import { onCleanup, onSettled } from "@solidjs/signals"
+import { getEventHandler } from "./events"
 
 // ------ Animation frames ----------------
 
@@ -52,6 +53,8 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 
 export function attachWindow(_nodeId: number) {
   let unsubscribe: () => void = null!
+  let unsubEnter: () => void = null!
+  let unsubLeave: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
@@ -66,11 +69,25 @@ export function attachWindow(_nodeId: number) {
       draw()
     })
 
+    unsubEnter = Flux.on("pointerEnter", ({ targets }: { targets: number[] }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerEnter")?.()
+      }
+    })
+
+    unsubLeave = Flux.on("pointerLeave", ({ targets }: { targets: number[] }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerLeave")?.()
+      }
+    })
+
     // trigger first draw
     draw()
   })
 
   onCleanup(() => {
     if (unsubscribe) unsubscribe()
+    if (unsubEnter) unsubEnter()
+    if (unsubLeave) unsubLeave()
   })
 }

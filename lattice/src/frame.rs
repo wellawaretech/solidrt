@@ -1,7 +1,8 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 pub struct FrameState {
   pointer_pos: Cell<(f32, f32)>,
+  hovered_path: RefCell<Vec<u64>>,
 }
 
 // Safety: FrameState is only accessed on the UI thread.
@@ -12,6 +13,7 @@ impl FrameState {
   pub fn new() -> Self {
     Self {
       pointer_pos: Cell::new((0.0, 0.0)),
+      hovered_path: RefCell::new(Vec::new()),
     }
   }
 
@@ -21,5 +23,13 @@ impl FrameState {
 
   pub fn set_pointer_pos(&self, x: f32, y: f32) {
     self.pointer_pos.set((x, y));
+  }
+
+  pub fn hovered_path(&self) -> Vec<u64> {
+    self.hovered_path.borrow().clone()
+  }
+
+  pub fn set_hovered_path(&self, path: Vec<u64>) {
+    *self.hovered_path.borrow_mut() = path;
   }
 }
