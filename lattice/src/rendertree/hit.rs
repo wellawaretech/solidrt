@@ -95,6 +95,7 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
     return false;
   }
 
+  let my_index = path.len();
   path.push((node_id, point, local));
 
   if pointer_events == PointerEvents::All && element.kind.is_in_bounds(local, &ctx) {
@@ -115,6 +116,9 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
       .unwrap_or_default();
     let child_point = XY::new(local.x - child_pos.x, local.y - child_pos.y);
     if hit_recursive(tree, child_id, child_point, child_size, path) {
+      if pointer_events == PointerEvents::None {
+        path.remove(my_index);
+      }
       return true;
     }
   }

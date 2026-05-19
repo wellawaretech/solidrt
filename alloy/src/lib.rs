@@ -389,6 +389,21 @@ fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
+// Maps SDL mouse buttons to web-standard MouseEvent.button codes:
+// 0=left, 1=middle, 2=right, 3=back (X1), 4=forward (X2).
+// Unknown returns None so the caller can drop the event.
+fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
+  use sdl3::mouse::MouseButton::*;
+  match b {
+    Left => Some(0),
+    Middle => Some(1),
+    Right => Some(2),
+    X1 => Some(3),
+    X2 => Some(4),
+    Unknown => None,
+  }
+}
+
 fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
@@ -413,8 +428,9 @@ fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<
       Some(AlloyEvent::PointerMove { x: x / scale, y: y / scale })
     }
     SdlEvent::MouseButtonDown { mouse_btn, x, y, .. } => {
+      let button = map_mouse_button(mouse_btn)?;
       let scale = sdl_utils::window_display_scale(window);
-      Some(AlloyEvent::PointerDown { button: mouse_btn as u8, x: x / scale, y: y / scale })
+      Some(AlloyEvent::PointerDown { button, x: x / scale, y: y / scale })
     }
     _ => None,
   }

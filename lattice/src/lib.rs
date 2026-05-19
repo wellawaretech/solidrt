@@ -97,10 +97,16 @@ fn ui_thread(
             alloy::AlloyEvent::PointerDown { button, x, y } => {
               frame_state_events.push_input(InputEvent::PointerDown { button, x, y });
             }
-            alloy::AlloyEvent::KeyDown { keycode, .. } => {
+            alloy::AlloyEvent::KeyDown { keycode, scancode } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let key = format!("{keycode:?}");
-                eh.exec(move |ctx| emit_event(&ctx, "keydown", key));
+                let key = keycode.map(|k| k.name()).unwrap_or_default();
+                let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  obj.set("key", key).expect("set key");
+                  obj.set("code", code).expect("set code");
+                  emit_event(&ctx, "keydown", obj);
+                });
               }
             }
             alloy::AlloyEvent::FrameRendered { frame } => {
