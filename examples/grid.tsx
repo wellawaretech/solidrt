@@ -13,10 +13,10 @@ function App() {
 
   return (
     <window display="grid" gridTemplateColumns="1fr 1fr" gridTemplateRows="1fr 1fr">
-      <rect width="100%" height="100%" color={0x882222ff} />
-      <rect width="100%" height="100%" color={0x222288ff} />
-      <rect width="100%" height="100%" color={0x228822ff} />
-      <rect width="100%" height="100%" color={0x888822ff} />
+      <rect width="100%" height="100%" color="#822" />
+      <rect width="100%" height="100%" color="#228" />
+      <rect width="100%" height="100%" color="#282" />
+      <rect width="100%" height="100%" color="#882" />
       <rect
         r={50}
         position="absolute"
@@ -24,13 +24,13 @@ function App() {
         height="50%"
         top="25%"
         left="25%"
-        color={0xff88007f}
+        color="#f808"
       />
       <view position="absolute" bottom={bottom()} right={right()} justifyContent="center" alignItems="flex-end">
-        <text fontSize={16} color={0xffffffff}>
+        <text fontSize={16} color="#fff">
           grid
         </text>
-        <text fontSize={32} color={0xffffffff}>
+        <text fontSize={32} color="#fff">
           layout
         </text>
       </view>
