@@ -2,6 +2,9 @@ import { createRoot, createEffect } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
 import { parseColorToU32, isColorProp } from "./color"
+import { setEventHandler, cleanupNodeHandlers } from "./events"
+
+export { getEventHandler } from "./events"
 
 export let nodes = new Map()
 
@@ -69,7 +72,11 @@ export let {
     if (!node) return
 
     // console.debug("[srt] setProperty", node.id, name, value)
-    // if (runPropHandlers(node.id, name, value, prev)) return
+
+    if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
+      setEventHandler(node.id, name, value as Function | null | undefined)
+      return
+    }
 
     if (name === "color" && typeof value === "string") {
       ffi.setProperty(node.id, name, parseColorToU32(value))
@@ -118,12 +125,12 @@ export let {
     ffi.deleteNode(parent.id, node.id)
 
     // Recursively clean up node and all descendants
-    // let cleanup = (n: ProxyNode) => {
-    //   for (let child of n.children) cleanup(child)
-    //   nodes.delete(n.id)
-    //   runNodeCleanup(n.id)
-    // }
-    // cleanup(node)
+    let cleanup = (n: ProxyNode) => {
+      for (let child of n.children) cleanup(child)
+      nodes.delete(n.id)
+      cleanupNodeHandlers(n.id)
+    }
+    cleanup(node)
   },
 
   getParentNode: (node: ProxyNode) => node?.parent,
