@@ -28,7 +28,7 @@ function Nested(props: { depth: number }) {
       onPointerEnter={() => setColor(highlightColor)}
       onPointerLeave={() => setColor(defaultColor)}
     >
-      <d-rect color={color()} r={size() / 4} />
+      <d-rect color={color()} radius={size() / 4} />
       <Nested depth={props.depth - 1} />
     </view>
   )
@@ -79,8 +79,8 @@ function App() {
         height={30}
         onPointerDown={toggle}
       >
-        <d-rect color="#eee" r={10} w={10} h={30} />
-        <d-rect color="#eee" r={10} x={15} w={10} h={30} />
+        <d-rect color="#eee" radius={10} w={10} h={30} />
+        <d-rect color="#eee" radius={10} x={15} w={10} h={30} />
       </view>
 
       {/* <Promo /> */}

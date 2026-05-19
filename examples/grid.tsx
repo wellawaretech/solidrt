@@ -18,7 +18,9 @@ function App() {
       <rect width="100%" height="100%" color="#282" />
       <rect width="100%" height="100%" color="#882" />
       <rect
-        r={50}
+      onPointerEnter={()=>{console.log("enter")}}
+      onPointerLeave={()=>{console.log("leave")}}
+        radius={50}
         position="absolute"
         width="50%"
         height="50%"
@@ -27,10 +29,10 @@ function App() {
         color="#f808"
       />
       <view position="absolute" bottom={bottom()} right={right()} justifyContent="center" alignItems="flex-end">
-        <text fontSize={16} color="#fff">
+        <text fontSize={48} color="#fff">
           grid
         </text>
-        <text fontSize={32} color="#fff">
+        <text fontSize={64} color="#fff">
           layout
         </text>
       </view>

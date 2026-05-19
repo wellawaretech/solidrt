@@ -143,7 +143,9 @@ export interface AudioProps {
 export interface RectProps extends Position, PaintProps, PointerProps {
   w?: number
   h?: number
-  r?: number
+  // Corner radius. A single number applies to all four corners; an array is
+  // [top-left, top-right, bottom-right, bottom-left] (CSS border-radius order).
+  radius?: number | [number, number, number, number]
 }
 
 export interface OvalProps extends Position, PaintProps, PointerProps {
