@@ -1,3 +1,4 @@
+mod frame;
 mod plugins;
 mod rendertree;
 #[cfg(feature = "go")]
@@ -9,6 +10,7 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
+use frame::FrameState;
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
@@ -67,6 +69,7 @@ fn ui_thread(
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
+  let frame_state = Arc::new(FrameState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
   let start_time = std::time::Instant::now();
 
@@ -76,6 +79,7 @@ fn ui_thread(
     let current_exec_events = current_exec.clone();
 
     let platform_events = platform.clone();
+    let frame_state_events = frame_state.clone();
     local.spawn_local(async move {
       loop {
         while let Ok(event) = event_rx.try_recv() {
@@ -88,10 +92,10 @@ fn ui_thread(
               }
             }
             alloy::AlloyEvent::PointerMove { x, y } => {
-              platform_events.set_pointer_pos(x, y);
+              frame_state_events.set_pointer_pos(x, y);
             }
             alloy::AlloyEvent::PointerDown { x, y } => {
-              platform_events.set_pointer_pos(x, y);
+              frame_state_events.set_pointer_pos(x, y);
             }
             alloy::AlloyEvent::KeyDown { keycode, .. } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
@@ -124,6 +128,7 @@ fn ui_thread(
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
+      let frame_state = frame_state.clone();
 
       let engine = FluxEngine::builder()
         .logger(|level, msg| match level {
@@ -132,7 +137,7 @@ fn ui_thread(
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
         })
-        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx)))
+        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), frame_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());

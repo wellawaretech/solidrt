@@ -140,7 +140,7 @@ impl Element {
       children: vec![],
       parent: None,
       layout: Some(LayoutData::new(style)),
-      interaction: None,
+      interaction: Some(HitConfig::default()),
     }
   }
 
@@ -150,7 +150,7 @@ impl Element {
       children: vec![],
       parent: None,
       layout: None,
-      interaction: None,
+      interaction: Some(HitConfig::default()),
     }
   }
 
