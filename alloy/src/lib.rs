@@ -462,9 +462,11 @@ impl App {
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
     let mut frame: u64 = 0;
 
-    event_tx.send(current_resize_event(&window)).ok();
-
     let mut current_scale = sdl_utils::window_display_scale(&window);
+
+    let initial = current_resize_event(&window);
+    apply_main_thread_effects(&initial, &mut render_surface, &mut current_scale);
+    event_tx.send(initial).ok();
 
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
@@ -498,7 +500,9 @@ impl App {
       while let Ok(cmd) = cmd_rx.try_recv() {
         match cmd {
           AlloyCommand::EmitInitEvents => {
-            event_tx.send(current_resize_event(&window)).ok();
+            let e = current_resize_event(&window);
+            apply_main_thread_effects(&e, &mut render_surface, &mut current_scale);
+            event_tx.send(e).ok();
           }
         }
       }
