@@ -26,6 +26,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
       "window" => panic!("use createRoot to create the root Window node"),
       "view" => View::default().with_layout(),
       "rect" => Rectangle::default().with_layout(),
+      "d-rect" => Rectangle::default().no_layout(),
       "text" => Text::default().with_layout(),
       "span" => Span::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),
@@ -60,7 +61,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
         ElementKind::Rectangle(rect) => rect.set_property(prop, value.clone()),
         ElementKind::Text(text) => text.set_property(prop, value.clone()),
         ElementKind::Span(span) => span.set_property(prop, value.clone()),
-        ElementKind::View(_) => None,
+        ElementKind::View(view) => view.set_property(prop, value.clone()),
       };
       let result = result
         .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(prop, value.clone())));

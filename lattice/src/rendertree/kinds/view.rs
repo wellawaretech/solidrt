@@ -1,5 +1,6 @@
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, WH, XY};
+use rquickjs::Value;
 use alloy::impellers::DisplayListBuilder;
 use taffy::{FlexDirection, Style};
 
@@ -75,6 +76,18 @@ impl Hittable for View {
 }
 
 impl View {
+  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+    match property {
+      "rotate" => { self.rotate = Some(value.get::<f64>().expect("rotate must be a number") as f32); Some(false) }
+      "scale" => { self.scale = Some(value.get::<f64>().expect("scale must be a number") as f32); Some(false) }
+      "x" => { let pos = self.pos.get_or_insert_with(XY::default); pos.x = value.get::<f64>().expect("x must be a number") as f32; Some(false) }
+      "y" => { let pos = self.pos.get_or_insert_with(XY::default); pos.y = value.get::<f64>().expect("y must be a number") as f32; Some(false) }
+      "cx" => { let center = self.center.get_or_insert_with(XY::default); center.x = value.get::<f64>().expect("cx must be a number") as f32; Some(false) }
+      "cy" => { let center = self.center.get_or_insert_with(XY::default); center.y = value.get::<f64>().expect("cy must be a number") as f32; Some(false) }
+      _ => None,
+    }
+  }
+
   pub fn with_layout(self) -> Element {
     Element::with_layout(
       ElementKind::View(self),
