@@ -1,3 +1,4 @@
+use sdl3::sys::keyboard::SDL_GetModState;
 use sdl3::sys::rect::SDL_Rect;
 use sdl3::sys::video::{SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea};
 
@@ -15,4 +16,11 @@ pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {
 
 pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {
   unsafe { SDL_GetWindowDisplayScale(window.raw()) }
+}
+
+pub fn mod_state() -> sdl3::keyboard::Mod {
+  unsafe {
+    sdl3::keyboard::Mod::from_bits(SDL_GetModState().0)
+      .unwrap_or(sdl3::keyboard::Mod::NOMOD)
+  }
 }

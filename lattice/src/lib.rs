@@ -96,19 +96,22 @@ fn ui_thread(
                 emit_resize(eh, size, safe_area, display_scale);
               }
             }
-            alloy::AlloyEvent::PointerMove { x, y } => {
-              input_state_events.set_pointer_pos(x, y);
+            alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+              input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
+              input_state_events.set_modifiers(modifiers);
               if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::PointerMove { x, y });
+                es.push_input(InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
               }
             }
-            alloy::AlloyEvent::PointerDown { button, x, y } => {
-              input_state_events.set_pointer_pos(x, y);
+            alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
+              input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
+              input_state_events.set_modifiers(modifiers);
               if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::PointerDown { button, x, y });
+                es.push_input(InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers });
               }
             }
-            alloy::AlloyEvent::KeyDown { keycode, scancode } => {
+            alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
+              input_state_events.set_modifiers(modifiers);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let key = keycode.map(|k| k.name()).unwrap_or_default();
                 let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
@@ -116,6 +119,10 @@ fn ui_thread(
                   let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                   obj.set("key", key).expect("set key");
                   obj.set("code", code).expect("set code");
+                  obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
+                  obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
+                  obj.set("altKey", modifiers.alt).expect("set altKey");
+                  obj.set("metaKey", modifiers.meta).expect("set metaKey");
                   emit_event(&ctx, "keydown", obj);
                 });
               }

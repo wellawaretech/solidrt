@@ -358,12 +358,57 @@ pub enum AlloyCommand {
   EmitInitEvents,
 }
 
+// Pointer kind. Combined with a u64 pointer_id, uniquely identifies an
+// active pointer. Mouse and touch IDs come from disjoint SDL ID spaces,
+// so they share a numeric range only by accident; pointer_type
+// discriminates them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PointerType {
+  Mouse,
+  Touch,
+  Pen,
+}
+
+impl PointerType {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      PointerType::Mouse => "mouse",
+      PointerType::Touch => "touch",
+      PointerType::Pen => "pen",
+    }
+  }
+}
+
+// Keyboard modifier state at the time of an event. `meta` is Cmd on
+// macOS, Win on Windows, Super on Linux. Matches the names browsers
+// expose via KeyboardEvent / PointerEvent (shiftKey, ctrlKey, ...).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Modifiers {
+  pub shift: bool,
+  pub ctrl: bool,
+  pub alt: bool,
+  pub meta: bool,
+}
+
+impl From<sdl3::keyboard::Mod> for Modifiers {
+  fn from(m: sdl3::keyboard::Mod) -> Self {
+    use sdl3::keyboard::Mod;
+    Self {
+      shift: m.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD),
+      ctrl: m.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD),
+      alt: m.intersects(Mod::LALTMOD | Mod::RALTMOD),
+      meta: m.intersects(Mod::LGUIMOD | Mod::RGUIMOD),
+    }
+  }
+}
+
 #[derive(Clone)]
 pub enum AlloyEvent {
   Quit,
   KeyDown {
     keycode: Option<sdl3::keyboard::Keycode>,
     scancode: Option<sdl3::keyboard::Scancode>,
+    modifiers: Modifiers,
   },
   Resize {
     size: ISize,
@@ -371,8 +416,21 @@ pub enum AlloyEvent {
     display_scale: f32,
   },
   FrameRendered { frame: u64 },
-  PointerMove { x: f32, y: f32 },
-  PointerDown { button: u8, x: f32, y: f32 },
+  PointerMove {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
+  PointerDown {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    button: u8,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
 }
 
 fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -407,8 +465,8 @@ fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
 fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
-    SdlEvent::KeyDown { keycode, scancode, .. } => {
-      Some(AlloyEvent::KeyDown { keycode, scancode })
+    SdlEvent::KeyDown { keycode, scancode, keymod, .. } => {
+      Some(AlloyEvent::KeyDown { keycode, scancode, modifiers: keymod.into() })
     }
     SdlEvent::Window {
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
@@ -423,14 +481,27 @@ fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<
       );
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
-    SdlEvent::MouseMotion { x, y, .. } => {
+    SdlEvent::MouseMotion { which, x, y, .. } => {
       let scale = sdl_utils::window_display_scale(window);
-      Some(AlloyEvent::PointerMove { x: x / scale, y: y / scale })
+      Some(AlloyEvent::PointerMove {
+        pointer_id: which as u64,
+        pointer_type: PointerType::Mouse,
+        x: x / scale,
+        y: y / scale,
+        modifiers: sdl_utils::mod_state().into(),
+      })
     }
-    SdlEvent::MouseButtonDown { mouse_btn, x, y, .. } => {
+    SdlEvent::MouseButtonDown { which, mouse_btn, x, y, .. } => {
       let button = map_mouse_button(mouse_btn)?;
       let scale = sdl_utils::window_display_scale(window);
-      Some(AlloyEvent::PointerDown { button, x: x / scale, y: y / scale })
+      Some(AlloyEvent::PointerDown {
+        pointer_id: which as u64,
+        pointer_type: PointerType::Mouse,
+        button,
+        x: x / scale,
+        y: y / scale,
+        modifiers: sdl_utils::mod_state().into(),
+      })
     }
     _ => None,
   }
