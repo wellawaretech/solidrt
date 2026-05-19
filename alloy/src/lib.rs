@@ -4,6 +4,7 @@ pub mod sdl_utils;
 pub use impellers;
 use impellers::{Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, Rect, Texture};
 pub use sdl3;
+use sdl3::event::Event as SdlEvent;
 
 struct SdlLogger;
 
@@ -370,6 +371,8 @@ pub enum AlloyEvent {
     display_scale: f32,
   },
   FrameRendered { frame: u64 },
+  PointerMove { x: f32, y: f32 },
+  PointerDown { x: f32, y: f32 },
 }
 
 fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -386,13 +389,13 @@ fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
-fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) -> Option<AlloyEvent> {
+fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
-    sdl3::event::Event::Quit { .. } => Some(AlloyEvent::Quit),
-    sdl3::event::Event::KeyDown { keycode, scancode, .. } => {
+    SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
+    SdlEvent::KeyDown { keycode, scancode, .. } => {
       Some(AlloyEvent::KeyDown { keycode, scancode })
     }
-    sdl3::event::Event::Window {
+    SdlEvent::Window {
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
       ..
     } => {
@@ -404,6 +407,14 @@ fn translate_event(sdl_event: sdl3::event::Event, window: &sdl3::video::Window) 
         impellers::Size::new(r.w as f32, r.h as f32),
       );
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
+    }
+    SdlEvent::MouseMotion { x, y, .. } => {
+      let scale = sdl_utils::window_display_scale(window);
+      Some(AlloyEvent::PointerMove { x: x / scale, y: y / scale })
+    }
+    SdlEvent::MouseButtonDown { x, y, .. } => {
+      let scale = sdl_utils::window_display_scale(window);
+      Some(AlloyEvent::PointerDown { x: x / scale, y: y / scale })
     }
     _ => None,
   }

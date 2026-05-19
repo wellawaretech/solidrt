@@ -1,4 +1,4 @@
-use crate::rendertree::{self, PlatformContext};
+use crate::rendertree::{self, hit::{DefaultHitTester, HitTester}, PlatformContext, XY};
 use crate::AlloyContext;
 use crate::plugins;
 use alloy::impellers::DisplayListBuilder;
@@ -10,6 +10,11 @@ pub fn init(qtx: QuickJsContext<'_>, platform: Arc<PlatformContext>, atx: AlloyC
     let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().unwrap();
     let mut builder = DisplayListBuilder::new(None);
     rendertree::composite::composite(&mut builder, &mut tree.0.borrow_mut(), &platform);
+
+    let (px, py) = platform.pointer_pos();
+    let hit = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(px, py));
+    log::debug!("[srt] hit test ({px}, {py}) -> {hit:?}");
+
     if let Some(dl) = builder.build() {
       atx.submit(dl).expect("Failed to submit display list");
     }

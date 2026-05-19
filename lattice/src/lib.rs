@@ -87,6 +87,12 @@ fn ui_thread(
                 emit_resize(eh, size, safe_area, display_scale);
               }
             }
+            alloy::AlloyEvent::PointerMove { x, y } => {
+              platform_events.set_pointer_pos(x, y);
+            }
+            alloy::AlloyEvent::PointerDown { x, y } => {
+              platform_events.set_pointer_pos(x, y);
+            }
             alloy::AlloyEvent::KeyDown { keycode, .. } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let key = format!("{keycode:?}");
