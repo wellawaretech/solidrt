@@ -10,7 +10,7 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
-use frame::{FrameState, InputEvent};
+use frame::{EngineState, InputEvent, InputState};
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
@@ -69,7 +69,7 @@ fn ui_thread(
   source: Option<String>,
 ) {
   let platform = Arc::new(PlatformContext::new());
-  let frame_state = Arc::new(FrameState::new());
+  let input_state = Arc::new(InputState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
   let start_time = std::time::Instant::now();
 
@@ -77,9 +77,14 @@ fn ui_thread(
     let local = tokio::task::LocalSet::new();
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
+    // Holds the active engine's state. Replaced on every reload, which
+    // drops the previous EngineState (and any queued input aimed at the
+    // outgoing tree).
+    let current_engine_state: Rc<RefCell<Option<Arc<EngineState>>>> = Rc::new(RefCell::new(None));
+    let current_engine_state_events = current_engine_state.clone();
 
     let platform_events = platform.clone();
-    let frame_state_events = frame_state.clone();
+    let input_state_events = input_state.clone();
     local.spawn_local(async move {
       loop {
         while let Ok(event) = event_rx.try_recv() {
@@ -92,10 +97,16 @@ fn ui_thread(
               }
             }
             alloy::AlloyEvent::PointerMove { x, y } => {
-              frame_state_events.push_input(InputEvent::PointerMove { x, y });
+              input_state_events.set_pointer_pos(x, y);
+              if let Some(es) = current_engine_state_events.borrow().as_ref() {
+                es.push_input(InputEvent::PointerMove { x, y });
+              }
             }
             alloy::AlloyEvent::PointerDown { button, x, y } => {
-              frame_state_events.push_input(InputEvent::PointerDown { button, x, y });
+              input_state_events.set_pointer_pos(x, y);
+              if let Some(es) = current_engine_state_events.borrow().as_ref() {
+                es.push_input(InputEvent::PointerDown { button, x, y });
+              }
             }
             alloy::AlloyEvent::KeyDown { keycode, scancode } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {
@@ -134,7 +145,9 @@ fn ui_thread(
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
-      let frame_state = frame_state.clone();
+      let input_state = input_state.clone();
+      let engine_state = Arc::new(EngineState::new());
+      *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
       let engine = FluxEngine::builder()
         .logger(|level, msg| match level {
@@ -143,7 +156,7 @@ fn ui_thread(
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
         })
-        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), frame_state))
+        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
         .build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());

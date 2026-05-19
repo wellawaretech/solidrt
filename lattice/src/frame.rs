@@ -5,22 +5,34 @@ pub enum InputEvent {
   PointerDown { button: u8, x: f32, y: f32 },
 }
 
-pub struct FrameState {
+// Per-frame state is split into two structs by lifetime, not by topic.
+//
+// InputState  - facts about the physical input device. Persists across
+//               engine reloads, because the device doesn't reset just
+//               because the JS bundle is being swapped.
+//
+// EngineState - anything whose meaning depends on the current engine's
+//               render tree. Recreated on every reload, so its contents
+//               are automatically dropped when the engine is replaced.
+//
+// Rule of thumb: if you would be surprised that this still applied
+// after a reload, it belongs in EngineState. In particular, anything
+// carrying a node id, or a coordinate that was aimed at a specific
+// tree, is EngineState - node ids become dangling on reload, and
+// queued coordinates were aimed at a tree that no longer exists.
+
+pub struct InputState {
   pointer_pos: Cell<(f32, f32)>,
-  hovered_path: RefCell<Vec<u64>>,
-  input_queue: RefCell<Vec<InputEvent>>,
 }
 
-// Safety: FrameState is only accessed on the UI thread.
-unsafe impl Send for FrameState {}
-unsafe impl Sync for FrameState {}
+// Safety: InputState is only accessed on the UI thread.
+unsafe impl Send for InputState {}
+unsafe impl Sync for InputState {}
 
-impl FrameState {
+impl InputState {
   pub fn new() -> Self {
     Self {
       pointer_pos: Cell::new((0.0, 0.0)),
-      hovered_path: RefCell::new(Vec::new()),
-      input_queue: RefCell::new(Vec::new()),
     }
   }
 
@@ -30,6 +42,24 @@ impl FrameState {
 
   pub fn set_pointer_pos(&self, x: f32, y: f32) {
     self.pointer_pos.set((x, y));
+  }
+}
+
+pub struct EngineState {
+  hovered_path: RefCell<Vec<u64>>,
+  input_queue: RefCell<Vec<InputEvent>>,
+}
+
+// Safety: EngineState is only accessed on the UI thread.
+unsafe impl Send for EngineState {}
+unsafe impl Sync for EngineState {}
+
+impl EngineState {
+  pub fn new() -> Self {
+    Self {
+      hovered_path: RefCell::new(Vec::new()),
+      input_queue: RefCell::new(Vec::new()),
+    }
   }
 
   pub fn hovered_path(&self) -> Vec<u64> {

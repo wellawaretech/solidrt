@@ -1,4 +1,4 @@
-use crate::frame::{FrameState, InputEvent};
+use crate::frame::{EngineState, InputEvent, InputState};
 use crate::rendertree::{self, hit::{DefaultHitTester, HitEntry, HitTester}, PlatformContext, XY};
 use crate::AlloyContext;
 use crate::plugins;
@@ -6,16 +6,21 @@ use alloy::impellers::DisplayListBuilder;
 use flux::{emit_event, rquickjs::{Array, Ctx as QuickJsContext, Function, Object}};
 use std::sync::Arc;
 
-pub fn init(qtx: QuickJsContext<'_>, platform: Arc<PlatformContext>, atx: AlloyContext, frame_state: Arc<FrameState>) {
+pub fn init(
+  qtx: QuickJsContext<'_>,
+  platform: Arc<PlatformContext>,
+  atx: AlloyContext,
+  input_state: Arc<InputState>,
+  engine_state: Arc<EngineState>,
+) {
   let draw_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
     let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().unwrap();
     let mut builder = DisplayListBuilder::new(None);
     rendertree::composite::composite(&mut builder, &mut tree.0.borrow_mut(), &platform);
 
-    for event in frame_state.drain_input() {
+    for event in engine_state.drain_input() {
       match event {
         InputEvent::PointerMove { x, y } => {
-          frame_state.set_pointer_pos(x, y);
           let move_path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
           let obj = Object::new(qtx.clone()).expect("pointerMove obj");
           let targets = Array::new(qtx.clone()).expect("pointerMove targets");
@@ -40,11 +45,11 @@ pub fn init(qtx: QuickJsContext<'_>, platform: Arc<PlatformContext>, atx: AlloyC
       }
     }
 
-    let (px, py) = frame_state.pointer_pos();
+    let (px, py) = input_state.pointer_pos();
     let path: Vec<HitEntry> = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(px, py));
 
     let new_ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
-    let old_ids = frame_state.hovered_path();
+    let old_ids = engine_state.hovered_path();
 
     if new_ids != old_ids {
       let mut diverge = 0;
@@ -75,7 +80,7 @@ pub fn init(qtx: QuickJsContext<'_>, platform: Arc<PlatformContext>, atx: AlloyC
       }
     }
 
-    frame_state.set_hovered_path(new_ids);
+    engine_state.set_hovered_path(new_ids);
 
     if let Some(dl) = builder.build() {
       atx.submit(dl).expect("Failed to submit display list");
