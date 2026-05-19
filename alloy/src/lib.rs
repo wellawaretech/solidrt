@@ -372,7 +372,7 @@ pub enum AlloyEvent {
   },
   FrameRendered { frame: u64 },
   PointerMove { x: f32, y: f32 },
-  PointerDown { x: f32, y: f32 },
+  PointerDown { button: u8, x: f32, y: f32 },
 }
 
 fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -412,9 +412,9 @@ fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<
       let scale = sdl_utils::window_display_scale(window);
       Some(AlloyEvent::PointerMove { x: x / scale, y: y / scale })
     }
-    SdlEvent::MouseButtonDown { x, y, .. } => {
+    SdlEvent::MouseButtonDown { mouse_btn, x, y, .. } => {
       let scale = sdl_utils::window_display_scale(window);
-      Some(AlloyEvent::PointerDown { x: x / scale, y: y / scale })
+      Some(AlloyEvent::PointerDown { button: mouse_btn as u8, x: x / scale, y: y / scale })
     }
     _ => None,
   }

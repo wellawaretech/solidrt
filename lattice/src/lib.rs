@@ -10,7 +10,7 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
-use frame::FrameState;
+use frame::{FrameState, InputEvent};
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
@@ -94,8 +94,9 @@ fn ui_thread(
             alloy::AlloyEvent::PointerMove { x, y } => {
               frame_state_events.set_pointer_pos(x, y);
             }
-            alloy::AlloyEvent::PointerDown { x, y } => {
+            alloy::AlloyEvent::PointerDown { button, x, y } => {
               frame_state_events.set_pointer_pos(x, y);
+              frame_state_events.push_input(InputEvent::PointerDown { button, x, y });
             }
             alloy::AlloyEvent::KeyDown { keycode, .. } => {
               if let Some(eh) = current_exec_events.borrow().as_ref() {

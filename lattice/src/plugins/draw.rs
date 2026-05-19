@@ -1,4 +1,4 @@
-use crate::frame::FrameState;
+use crate::frame::{FrameState, InputEvent};
 use crate::rendertree::{self, hit::{DefaultHitTester, HitEntry, HitTester}, PlatformContext, XY};
 use crate::AlloyContext;
 use crate::plugins;
@@ -48,6 +48,23 @@ pub fn init(qtx: QuickJsContext<'_>, platform: Arc<PlatformContext>, atx: AlloyC
     }
 
     frame_state.set_hovered_path(new_ids);
+
+    for event in frame_state.drain_input() {
+      match event {
+        InputEvent::PointerDown { button, x, y } => {
+          let down_path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
+          if down_path.is_empty() { continue; }
+          let obj = Object::new(qtx.clone()).expect("pointerDown obj");
+          let targets = Array::new(qtx.clone()).expect("pointerDown targets");
+          for (i, &(id, _, _)) in down_path.iter().enumerate() { targets.set(i, id).expect("set"); }
+          obj.set("targets", targets).expect("set targets");
+          obj.set("clientX", x).expect("set clientX");
+          obj.set("clientY", y).expect("set clientY");
+          obj.set("button", button).expect("set button");
+          emit_event(&qtx, "pointerDown", obj);
+        }
+      }
+    }
 
     if let Some(dl) = builder.build() {
       atx.submit(dl).expect("Failed to submit display list");

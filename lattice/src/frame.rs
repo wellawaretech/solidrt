@@ -1,8 +1,13 @@
 use std::cell::{Cell, RefCell};
 
+pub enum InputEvent {
+  PointerDown { button: u8, x: f32, y: f32 },
+}
+
 pub struct FrameState {
   pointer_pos: Cell<(f32, f32)>,
   hovered_path: RefCell<Vec<u64>>,
+  input_queue: RefCell<Vec<InputEvent>>,
 }
 
 // Safety: FrameState is only accessed on the UI thread.
@@ -14,6 +19,7 @@ impl FrameState {
     Self {
       pointer_pos: Cell::new((0.0, 0.0)),
       hovered_path: RefCell::new(Vec::new()),
+      input_queue: RefCell::new(Vec::new()),
     }
   }
 
@@ -31,5 +37,13 @@ impl FrameState {
 
   pub fn set_hovered_path(&self, path: Vec<u64>) {
     *self.hovered_path.borrow_mut() = path;
+  }
+
+  pub fn push_input(&self, event: InputEvent) {
+    self.input_queue.borrow_mut().push(event);
+  }
+
+  pub fn drain_input(&self) -> Vec<InputEvent> {
+    self.input_queue.borrow_mut().drain(..).collect()
   }
 }

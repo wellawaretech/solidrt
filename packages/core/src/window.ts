@@ -53,6 +53,7 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 
 export function attachWindow(_nodeId: number) {
   let unsubscribe: () => void = null!
+  let unsubDown: () => void = null!
   let unsubEnter: () => void = null!
   let unsubLeave: () => void = null!
 
@@ -67,6 +68,12 @@ export function attachWindow(_nodeId: number) {
       }
 
       draw()
+    })
+
+    unsubDown = Flux.on("pointerDown", ({ targets, button, clientX, clientY }: { targets: number[], button: number, clientX: number, clientY: number }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerDown")?.({ button, clientX, clientY })
+      }
     })
 
     unsubEnter = Flux.on("pointerEnter", ({ targets }: { targets: number[] }) => {
@@ -87,6 +94,7 @@ export function attachWindow(_nodeId: number) {
 
   onCleanup(() => {
     if (unsubscribe) unsubscribe()
+    if (unsubDown) unsubDown()
     if (unsubEnter) unsubEnter()
     if (unsubLeave) unsubLeave()
   })
