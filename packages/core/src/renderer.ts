@@ -1,6 +1,7 @@
 import { createRoot, createEffect } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
+import { parseColorToU32, isColorProp } from "./color"
 
 export let nodes = new Map()
 
@@ -42,7 +43,7 @@ export let {
   createElement: (elementType: string): ProxyNode => {
     let proxy = createProxyNode(elementType)
 
-    console.debug("[srt] createElement", proxy.id, elementType)
+    // console.debug("[srt] createElement", proxy.id, elementType)
 
     if (elementType === "window") ffi.createRoot(proxy.id)
     else ffi.createNode(proxy.id, elementType)
@@ -52,23 +53,28 @@ export let {
 
   createTextNode: (value: string): ProxyNode => {
     let proxy = createProxyNode("span")
-    console.debug("[srt] createTextNode", proxy.id, value)
+    // console.debug("[srt] createTextNode", proxy.id, value)
     ffi.createNode(proxy.id, "span")
     ffi.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
 
   replaceText: (node: ProxyNode, value: string): void => {
-    console.debug("[srt] replaceText", node.id, value)
+    // console.debug("[srt] replaceText", node.id, value)
     ffi.setProperty(node.id, "text", "" + value)
   },
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "span",
-  setProperty: <T>(node: ProxyNode, name: string, value: T, prev?: T): void => {
+  setProperty: <T>(node: ProxyNode, name: string, value: T): void => {
     if (!node) return
 
-    console.debug("[srt] setProperty", node.id, name, value)
+    // console.debug("[srt] setProperty", node.id, name, value)
     // if (runPropHandlers(node.id, name, value, prev)) return
+
+    if (name === "color" && typeof value === "string") {
+      ffi.setProperty(node.id, name, parseColorToU32(value))
+      return
+    }
 
     ffi.setProperty(node.id, name, value)
   },
@@ -90,7 +96,7 @@ export let {
         }
       }
 
-      console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
+      // console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
 
       if (anchor) ffi.insertNode(parent.id, node.id, anchor.id)
       else ffi.insertNode(parent.id, node.id)
@@ -100,7 +106,7 @@ export let {
   removeNode: (parent: ProxyNode, node: ProxyNode): void => {
     if (!node || !parent) return
 
-    console.debug("[srt] removeNode", parent.id, node.id)
+    // console.debug("[srt] removeNode", parent.id, node.id)
 
     // Update JS tree references
     let index = parent.children.indexOf(node)
