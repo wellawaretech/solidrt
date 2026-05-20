@@ -1,13 +1,25 @@
 import { render } from "@solidrt/core"
-import { createSignal } from "@solidjs/signals"
+import { Logo } from "./logo"
 
 function App() {
-  let [count, setCount] = createSignal(0)
-  setInterval(() => setCount((c) => c + 1), 1000)
-
   return (
-    <window>
-        <text fontSize={100} color={0x007f7fff}>Hello, World {count()}</text>
+    <window title="Solid-RT Demo">
+      <view
+        flexGrow={1}
+        justifyContent="center"
+        alignItems="center"
+        flexDirection="column"
+        gap={20}
+      >
+        <d-rect color="#111" />
+        <view>
+          <d-rect color="#000" />
+          <Logo />
+        </view>
+        <view>
+          <text color="lightgrey">waiting for connection...</text>
+        </view>
+      </view>
     </window>
   )
 }

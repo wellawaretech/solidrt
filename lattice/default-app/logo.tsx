@@ -1,18 +1,24 @@
-import { onRender, type Color } from "@solidrt/core"
+import { onRender, onResize } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
-export type LogoColors = {
-  dark: Color
-  mid: Color
-  light: Color
+type LogoColors = {
+  dark: string
+  mid: string
+  light: string
 }
 
 type Shade = "dark" | "mid" | "light"
 
-const DEFAULT_COLORS: LogoColors = {
-  dark: "rgba(51,51,51)",
-  mid: "rgba(102,102,102)",
-  light: "rgba(153,153,153)",
+const SOLID_COLORS: LogoColors = {
+  dark: "rgba(26,51,128)",
+  mid: "rgba(51,102,179)",
+  light: "rgba(102,153,230)",
+}
+
+const RT_COLORS: LogoColors = {
+  dark: "rgba(100,100,100)",
+  mid: "rgba(140,140,140)",
+  light: "rgba(180,180,180)",
 }
 
 const M = 25
@@ -172,21 +178,21 @@ let letters: Letter[] = [
       { shape: tri2, x: 2 * M, y: 6 * M, rot: -3, shade: "mid" },
     ],
   },
-  {
-    // -
-    width: 8 * M,
-    height: 8 * M,
-    scale: 0.5,
-    pieces: [
-      { shape: tri3, x: 0, y: 0, rot: 4, shade: "dark" },
-      { shape: tri3, x: 0, y: 4 * M, rot: 2, shade: "mid" },
-      { shape: tri1, x: 4 * M, y: 0, rot: -2, shade: "light" },
-      { shape: sq, x: 4 * M, y: 2 * M, rot: 0, shade: "mid" },
-      { shape: tri1, x: 4 * M, y: 4 * M, rot: 0, shade: "light" },
-      { shape: par1, x: 4 * M, y: 4 * M, rot: 2, shade: "dark" },
-      { shape: tri2, x: 6 * M, y: 2 * M, rot: 3, shade: "light" },
-    ],
-  },
+// {
+//   // -
+//   width: 8 * M,
+//   height: 8 * M,
+//   scale: 0.5,
+//   pieces: [
+//     { shape: tri3, x: 0, y: 0, rot: 4, shade: "dark" },
+//     { shape: tri3, x: 0, y: 4 * M, rot: 2, shade: "mid" },
+//     { shape: tri1, x: 4 * M, y: 0, rot: -2, shade: "light" },
+//     { shape: sq, x: 4 * M, y: 2 * M, rot: 0, shade: "mid" },
+//     { shape: tri1, x: 4 * M, y: 4 * M, rot: 0, shade: "light" },
+//     { shape: par1, x: 4 * M, y: 4 * M, rot: 2, shade: "dark" },
+//     { shape: tri2, x: 6 * M, y: 2 * M, rot: 3, shade: "light" },
+//   ],
+// },
   {
     // R
     width: 6 * M,
@@ -226,6 +232,7 @@ const HOLD_EXPLODED = 0
 
 function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: number }) {
   let [dist, setDist] = createSignal(EXPLODE_DIST)
+  let start: number = null!
 
   let letterCx = props.letter.width / 2
   let letterCy = props.letter.height / 2
@@ -237,7 +244,10 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
 
   let pieceSpins = props.letter.pieces.map((_, i) => (((i * 7 + 3) % 11) - 5) * 30)
 
-  onRender((tick: number) => {
+  onRender((_tick: number) => {
+    if (start === null) start = _tick
+    let tick = _tick - start
+
     // same cycle length for all letters; delay only offsets the start
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED
     let t = (tick - props.delay) % cycleLen
@@ -284,17 +294,18 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
   )
 }
 
-export function Logo(props: { width: number; dark?: Color; mid?: Color; light?: Color }) {
-  let colors = (): LogoColors => ({
-    dark: props.dark ?? DEFAULT_COLORS.dark,
-    mid: props.mid ?? DEFAULT_COLORS.mid,
-    light: props.light ?? DEFAULT_COLORS.light,
+export function Logo() {
+  let [scale, setScale] = createSignal(1)
+
+  onResize(({ width }) => {
+    setScale((width * 0.8) / 1500)
   })
+
   return (
-    <view justifyContent="center" width={1500} scale={props.width / 1000}>
+    <view justifyContent="center" width={1500} scale={scale()}>
       <view gap={50} flexDirection="row" alignItems="flex-end">
         {letters.map((letter, i) => (
-          <TangramLetter letter={letter} colors={colors()} delay={i * STAGGER_DELAY} />
+          <TangramLetter letter={letter} colors={i < 5 ? SOLID_COLORS : RT_COLORS} delay={i * STAGGER_DELAY} />
         ))}
       </view>
     </view>

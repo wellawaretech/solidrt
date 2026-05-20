@@ -11,7 +11,7 @@ export let state = {
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,
-  server: null as BunServer<unknown> | null,
+  server: null as BunServer<undefined> | null,
   serverUrl: null as string | null,
   rl: null as ReadlineInterface | null,
 }
