@@ -1,4 +1,5 @@
 mod frame;
+mod overlay;
 mod plugins;
 mod rendertree;
 #[cfg(feature = "go")]
@@ -199,7 +200,7 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
     },
     alloy::RenderHooks {
       pre_render: Box::new(|_, _| {}),
-      post_render: Box::new(|_, _| {}),
+      post_render: overlay::fps(),
     },
   );
 }
