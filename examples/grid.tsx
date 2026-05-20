@@ -6,7 +6,6 @@ function App() {
   let [right, setRight] = createSignal(0)
 
   onResize(({ width, height, safeArea }) => {
-    console.log("onResize", width, height, safeArea)
     setBottom(10 + (height - safeArea.bottom))
     setRight(10 + (width - safeArea.right))
   })
@@ -18,9 +17,7 @@ function App() {
       <rect width="100%" height="100%" color="#282" />
       <rect width="100%" height="100%" color="#882" />
       <rect
-      onPointerEnter={()=>{console.log("enter")}}
-      onPointerLeave={()=>{console.log("leave")}}
-        radius={50}
+        radius={[50, 0, 50, 0]}
         position="absolute"
         width="50%"
         height="50%"
@@ -28,7 +25,13 @@ function App() {
         left="25%"
         color="#f808"
       />
-      <view position="absolute" bottom={bottom()} right={right()} justifyContent="center" alignItems="flex-end">
+      <view
+        position="absolute"
+        bottom={bottom()}
+        right={right()}
+        justifyContent="center"
+        alignItems="flex-end"
+      >
         <text fontSize={48} color="#fff">
           grid
         </text>
