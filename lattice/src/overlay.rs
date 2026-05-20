@@ -33,9 +33,9 @@ pub fn fps() -> Box<dyn FnMut(&mut DisplayListBuilder, &alloy::FrameInfo)> {
 
     let Some(paragraph) = pb.build(200.0) else { return; };
     let text_width = paragraph.get_max_intrinsic_width();
-    let logical_w = (info.size.width as f32) / info.scale;
-    let x = logical_w - text_width - 10.0;
-    let y = 10.0;
+    let safe = info.safe_area;
+    let x = safe.origin.x + safe.size.width - text_width - 10.0;
+    let y = safe.origin.y + 10.0;
     b.draw_paragraph(&paragraph, Point::new(x, y));
   })
 }

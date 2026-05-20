@@ -1,4 +1,4 @@
-import { onRender, onResize, render } from "@solidrt/core"
+import { onRender, onResize, onWindowBlur, onWindowFocus, render } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
 // Recursion test. 
@@ -47,6 +47,7 @@ function App() {
   let running = true
   let lastTick = 0
   let offset = 0
+  let pauseStart = 0
 
   onRender((tick: number) => {
     lastTick = tick
@@ -55,13 +56,19 @@ function App() {
     setRotate(rad((tick - offset) / 200))
   })
 
-  let toggle = () => {
-    running = !running
-
-    if (!running) offset = lastTick - offset
-    else offset = lastTick - offset
+  let pause = () => {
+    if (!running) return
+    running = false
+    pauseStart = lastTick
   }
 
+  let resume = () => {
+    if (running) return
+    offset += lastTick - pauseStart
+    running = true
+  }
+
+  let toggle = () => (running ? pause() : resume())
 
   return (
     <window
