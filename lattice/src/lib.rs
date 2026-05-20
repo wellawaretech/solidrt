@@ -198,8 +198,8 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
       ui_thread(handle, atx, alloy_cmd_tx, event_rx, source);
     },
     alloy::RenderHooks {
-      pre_render: Box::new(|| {}),
-      post_render: Box::new(|| {}),
+      pre_render: Box::new(|_, _| {}),
+      post_render: Box::new(|_, _| {}),
     },
   );
 }

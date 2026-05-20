@@ -60,7 +60,10 @@ impl Context {
         .expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     }
-    self.textures.get(id).unwrap()
+    self
+      .textures
+      .get(id)
+      .expect("texture must exist after insert")
   }
 
   pub fn get_or_update_texture(
@@ -78,12 +81,18 @@ impl Context {
         .expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     } else {
-      let entry = self.textures.get(id).unwrap();
+      let entry = self
+        .textures
+        .get(id)
+        .expect("texture must exist in else branch");
       entry
         .gpu
         .upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
     }
-    self.textures.get(id).unwrap()
+    self
+      .textures
+      .get(id)
+      .expect("texture must exist after insert or update")
   }
 
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {

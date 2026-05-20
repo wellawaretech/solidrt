@@ -1,5 +1,6 @@
 use impellers::{DisplayList, DisplayListBuilder, ISize};
 use std::sync::{mpsc, Arc};
+use std::time::Instant;
 
 use crate::backend::{create_render_surface, DisplayContext, RenderSurface};
 use crate::context::Context;
@@ -46,15 +47,23 @@ pub fn setup(title: &str, size: ISize) -> App {
   }
 }
 
+pub struct FrameInfo {
+  pub frame: u64,
+  pub frame_time: Instant,
+  pub scale: f32,
+  pub size: ISize,
+}
+
 pub struct RenderHooks {
-  pub pre_render: Box<dyn FnMut()>,
-  pub post_render: Box<dyn FnMut()>,
+  pub pre_render: Box<dyn FnMut(&mut DisplayListBuilder, &FrameInfo)>,
+  pub post_render: Box<dyn FnMut(&mut DisplayListBuilder, &FrameInfo)>,
 }
 
 fn apply_main_thread_effects(
   event: &AlloyEvent,
   render_surface: &mut Box<dyn RenderSurface>,
   current_scale: &mut f32,
+  current_size: &mut ISize,
 ) {
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let phys = ISize::new(
@@ -63,6 +72,7 @@ fn apply_main_thread_effects(
     );
     render_surface.resize(phys);
     *current_scale = *display_scale;
+    *current_size = phys;
   }
 }
 
@@ -89,9 +99,11 @@ impl App {
     let mut frame: u64 = 0;
 
     let mut current_scale = sdl_utils::window_display_scale(&window);
+    let (w0, h0) = window.size_in_pixels();
+    let mut current_size = ISize::new(w0 as i64, h0 as i64);
 
     let initial = current_resize_event(&window);
-    apply_main_thread_effects(&initial, &mut render_surface, &mut current_scale);
+    apply_main_thread_effects(&initial, &mut render_surface, &mut current_scale, &mut current_size);
     event_tx.send(initial).ok();
 
     loop {
@@ -100,10 +112,17 @@ impl App {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          (hooks.pre_render)();
+          let info = FrameInfo {
+            frame,
+            frame_time: Instant::now(),
+            scale: current_scale,
+            size: current_size,
+          };
           let mut builder = DisplayListBuilder::new(None);
           builder.scale(current_scale, current_scale);
+          (hooks.pre_render)(&mut builder, &info);
           builder.draw_display_list(&dl, 1.0);
+          (hooks.post_render)(&mut builder, &info);
           if let Some(scaled) = builder.build() {
             render_surface
               .draw_display_list(&scaled)
@@ -112,14 +131,13 @@ impl App {
           render_surface.present();
           event_tx.send(AlloyEvent::FrameRendered { frame }).ok();
           frame += 1;
-          (hooks.post_render)();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
-          apply_main_thread_effects(&e, &mut render_surface, &mut current_scale);
+          apply_main_thread_effects(&e, &mut render_surface, &mut current_scale, &mut current_size);
           event_tx.send(e).ok();
         }
       }
@@ -127,7 +145,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &mut render_surface, &mut current_scale);
+            apply_main_thread_effects(&e, &mut render_surface, &mut current_scale, &mut current_size);
             event_tx.send(e).ok();
           }
         }
