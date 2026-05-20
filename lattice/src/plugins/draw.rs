@@ -67,6 +67,21 @@ pub fn init(
           let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, x, y, modifiers, &ids);
           obj.set("button", button).expect("set button");
           emit_event(&qtx, "pointerUp", obj);
+
+          // For touch, the pointer ends here. Emit a final pointerLeave
+          // for anything still in its hovered path so JS can clean up,
+          // then drop the hover entry to prevent it from leaking across
+          // future touches.
+          if pointer_type == PointerType::Touch {
+            let key = (pointer_type, pointer_id);
+            let old_ids = engine_state.hovered_path(key);
+            if !old_ids.is_empty() {
+              let leave: Vec<u64> = old_ids.iter().rev().copied().collect();
+              let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, x, y, modifiers, &leave);
+              emit_event(&qtx, "pointerLeave", obj);
+            }
+            engine_state.remove_hovered_path(key);
+          }
         }
         InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
           let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));

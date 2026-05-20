@@ -17,6 +17,14 @@ pub struct App {
 
 pub fn setup(title: &str, size: ISize) -> App {
   let (width, height) = (size.width as u32, size.height as u32);
+
+  // Keep touch and mouse streams separate. Without this, SDL synthesizes
+  // mouse events from touches (and vice versa) using SDL_TOUCH_MOUSEID
+  // as `which`, which would arrive on our mouse arm and be misclassified
+  // as PointerType::Mouse with a sentinel pointer_id.
+  sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
+  sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
+
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
   let video = sdl_context.video().expect("Failed to get video subsystem");
 

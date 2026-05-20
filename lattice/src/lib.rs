@@ -117,6 +117,10 @@ fn ui_thread(
               if let Some(es) = current_engine_state_events.borrow().as_ref() {
                 es.push_input(InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers });
               }
+              // Touch pointers end at release; mouse pointers persist.
+              if pointer_type == alloy::PointerType::Touch {
+                input_state_events.remove_pointer((pointer_type, pointer_id));
+              }
             }
             alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
               input_state_events.set_modifiers(modifiers);

@@ -206,6 +206,49 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         modifiers: sdl_utils::mod_state().into(),
       })
     }
+    // SDL touch coordinates are normalized [0, 1]; scale to logical pixels.
+    // touch_id distinguishes multiple touch surfaces, finger_id distinguishes
+    // simultaneous touches on one surface. We key on finger_id and rely on
+    // pointer_type=Touch to disambiguate from mouse; if multi-surface touch
+    // matters later, pointer_id can be (touch_id << 32) | finger_id.
+    SdlEvent::FingerDown { finger_id, x, y, .. } => {
+      let (lw, lh) = touch_window_logical_size(window);
+      Some(AlloyEvent::PointerDown {
+        pointer_id: finger_id,
+        pointer_type: PointerType::Touch,
+        button: 0,
+        x: x * lw,
+        y: y * lh,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
+    SdlEvent::FingerMotion { finger_id, x, y, .. } => {
+      let (lw, lh) = touch_window_logical_size(window);
+      Some(AlloyEvent::PointerMove {
+        pointer_id: finger_id,
+        pointer_type: PointerType::Touch,
+        x: x * lw,
+        y: y * lh,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
+    SdlEvent::FingerUp { finger_id, x, y, .. } => {
+      let (lw, lh) = touch_window_logical_size(window);
+      Some(AlloyEvent::PointerUp {
+        pointer_id: finger_id,
+        pointer_type: PointerType::Touch,
+        button: 0,
+        x: x * lw,
+        y: y * lh,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
     _ => None,
   }
+}
+
+fn touch_window_logical_size(window: &sdl3::video::Window) -> (f32, f32) {
+  let scale = sdl_utils::window_display_scale(window);
+  let (pw, ph) = window.size_in_pixels();
+  (pw as f32 / scale, ph as f32 / scale)
 }

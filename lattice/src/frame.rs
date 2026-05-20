@@ -79,6 +79,10 @@ impl InputState {
     self.pointers.borrow_mut().insert(key, (x, y));
   }
 
+  pub fn remove_pointer(&self, key: PointerKey) {
+    self.pointers.borrow_mut().remove(&key);
+  }
+
   pub fn pointers(&self) -> Vec<(PointerKey, (f32, f32))> {
     self.pointers.borrow().iter().map(|(k, v)| (*k, *v)).collect()
   }
@@ -115,6 +119,10 @@ impl EngineState {
 
   pub fn set_hovered_path(&self, key: PointerKey, path: Vec<u64>) {
     self.hovered_paths.borrow_mut().insert(key, path);
+  }
+
+  pub fn remove_hovered_path(&self, key: PointerKey) {
+    self.hovered_paths.borrow_mut().remove(&key);
   }
 
   pub fn push_input(&self, event: InputEvent) {
