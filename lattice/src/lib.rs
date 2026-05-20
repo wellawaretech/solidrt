@@ -91,6 +91,22 @@ fn ui_thread(
         while let Ok(event) = event_rx.try_recv() {
           match event {
             alloy::AlloyEvent::Quit => std::process::exit(0),
+            alloy::AlloyEvent::WindowFocus => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  emit_event(&ctx, "windowFocus", obj);
+                });
+              }
+            }
+            alloy::AlloyEvent::WindowBlur => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  emit_event(&ctx, "windowBlur", obj);
+                });
+              }
+            }
             alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
               platform_events.set_window_size(size.width as f32, size.height as f32);
               if let Some(eh) = current_exec_events.borrow().as_ref() {

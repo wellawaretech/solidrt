@@ -1,5 +1,6 @@
 import { onCleanup, onSettled } from "@solidjs/signals"
 import { getEventHandler } from "./events"
+import { getFocusedNodeId } from "./focus"
 
 // ------ Animation frames ----------------
 
@@ -49,6 +50,18 @@ export function onResize(fn: (data: ResizeEvent) => void) {
   return unsubscribe
 }
 
+export function onWindowFocus(fn: () => void) {
+  let unsubscribe = Flux.on("windowFocus", fn)
+  onCleanup(unsubscribe)
+  return unsubscribe
+}
+
+export function onWindowBlur(fn: () => void) {
+  let unsubscribe = Flux.on("windowBlur", fn)
+  onCleanup(unsubscribe)
+  return unsubscribe
+}
+
 // ------ Window ----------------
 
 export function attachWindow(_nodeId: number) {
@@ -59,6 +72,8 @@ export function attachWindow(_nodeId: number) {
   let unsubEnter: () => void = null!
   let unsubLeave: () => void = null!
   let unsubWheel: () => void = null!
+  let unsubKeyDown: () => void = null!
+  let unsubKeyUp: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
@@ -109,6 +124,20 @@ export function attachWindow(_nodeId: number) {
       }
     })
 
+    unsubKeyDown = Flux.on("keydown", (e: any) => {
+      let id = getFocusedNodeId()
+      if (id != null) {
+        getEventHandler(id, "onKeyDown")?.(e)
+      }
+    })
+
+    unsubKeyUp = Flux.on("keyup", (e: any) => {
+      let id = getFocusedNodeId()
+      if (id != null) {
+        getEventHandler(id, "onKeyUp")?.(e)
+      }
+    })
+
     // trigger first draw
     draw()
   })
@@ -121,5 +150,7 @@ export function attachWindow(_nodeId: number) {
     if (unsubEnter) unsubEnter()
     if (unsubLeave) unsubLeave()
     if (unsubWheel) unsubWheel()
+    if (unsubKeyDown) unsubKeyDown()
+    if (unsubKeyUp) unsubKeyUp()
   })
 }

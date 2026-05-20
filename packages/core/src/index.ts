@@ -1,2 +1,3 @@
 export * from "./renderer"
-export { onRender, onResize } from "./window"
+export { setFocus, getFocusedNodeId } from "./focus"
+export { onRender, onResize, onWindowFocus, onWindowBlur } from "./window"

@@ -54,6 +54,8 @@ impl From<sdl3::keyboard::Mod> for Modifiers {
 #[derive(Clone)]
 pub enum AlloyEvent {
   Quit,
+  WindowFocus,
+  WindowBlur,
   KeyDown {
     keycode: Option<sdl3::keyboard::Keycode>,
     scancode: Option<sdl3::keyboard::Scancode>,
@@ -144,6 +146,12 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     }
     SdlEvent::KeyUp { keycode, scancode, keymod, .. } => {
       Some(AlloyEvent::KeyUp { keycode, scancode, modifiers: keymod.into() })
+    }
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => {
+      Some(AlloyEvent::WindowFocus)
+    }
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => {
+      Some(AlloyEvent::WindowBlur)
     }
     SdlEvent::Window {
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
