@@ -4152,22 +4152,20 @@ function Logo() {
 
 // lattice/default-app/app.tsx
 function App() {
-  var _el$ = createElement("window"), _el$2 = createElement("view"), _el$3 = createElement("d-rect"), _el$4 = createElement("view"), _el$5 = createElement("text"), _el$7 = createElement("view");
+  var _el$ = createElement("window"), _el$2 = createElement("d-rect"), _el$3 = createElement("view"), _el$4 = createElement("text");
   insertNode(_el$, _el$2);
-  setProp(_el$, "title", "Solid-RT Demo");
-  insertNode(_el$2, _el$3);
-  insertNode(_el$2, _el$4);
-  insertNode(_el$2, _el$7);
-  setProp(_el$2, "flexGrow", 1);
-  setProp(_el$2, "justifyContent", "center");
-  setProp(_el$2, "alignItems", "center");
-  setProp(_el$2, "flexDirection", "column-reverse");
-  setProp(_el$2, "gap", 20);
-  setProp(_el$3, "color", "#111");
-  insertNode(_el$4, _el$5);
-  insertNode(_el$5, createTextNode(`waiting for connection...`));
-  setProp(_el$5, "color", "lightgrey");
-  insert(_el$7, createComponent2(Logo, {}));
+  insertNode(_el$, _el$3);
+  setProp(_el$, "title", "solidrt-go");
+  setProp(_el$2, "color", "#111");
+  insertNode(_el$3, _el$4);
+  setProp(_el$3, "flexGrow", 1);
+  setProp(_el$3, "justifyContent", "center");
+  setProp(_el$3, "alignItems", "center");
+  setProp(_el$3, "flexDirection", "column-reverse");
+  setProp(_el$3, "gap", 20);
+  insertNode(_el$4, createTextNode(`waiting for connection...`));
+  setProp(_el$4, "color", "lightgrey");
+  insert(_el$3, createComponent2(Logo, {}), null);
   return _el$;
 }
 render(() => createComponent2(App, {}));

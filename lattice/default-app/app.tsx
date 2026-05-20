@@ -3,7 +3,8 @@ import { Logo } from "./logo"
 
 function App() {
   return (
-    <window title="Solid-RT Demo">
+    <window title="solidrt-go">
+      <d-rect color="#111" />
       <view
         flexGrow={1}
         justifyContent="center"
@@ -11,13 +12,8 @@ function App() {
         flexDirection="column-reverse"
         gap={20}
       >
-        <d-rect color="#111" />
-        <view>
-          <text color="lightgrey">waiting for connection...</text>
-        </view>
-        <view>
-          <Logo />
-        </view>
+        <text color="lightgrey">waiting for connection...</text>
+        <Logo />
       </view>
     </window>
   )
