@@ -4117,6 +4117,7 @@ function TangramLetter(props) {
   });
   return _el$;
 }
+var LOGO_HEIGHT = Math.max(...letters.map((l2) => l2.height));
 function Logo() {
   let [scale, setScale] = createSignal(1);
   onResize(({
@@ -4136,32 +4137,37 @@ function Logo() {
     colors: i2 < 5 ? SOLID_COLORS : RT_COLORS,
     delay: i2 * STAGGER_DELAY
   })));
-  effect3(() => scale(), (_v$, _$p) => {
-    setProp(_el$4, "scale", _v$, _$p);
+  effect3(() => ({
+    e: LOGO_HEIGHT * scale(),
+    t: scale()
+  }), ({
+    e: e2,
+    t: t2
+  }, _p$) => {
+    e2 !== _p$?.e && setProp(_el$4, "height", e2, _p$?.e);
+    t2 !== _p$?.t && setProp(_el$4, "scale", t2, _p$?.t);
   });
   return _el$4;
 }
 
 // lattice/default-app/app.tsx
 function App() {
-  var _el$ = createElement("window"), _el$2 = createElement("view"), _el$3 = createElement("d-rect"), _el$4 = createElement("view"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("text");
+  var _el$ = createElement("window"), _el$2 = createElement("view"), _el$3 = createElement("d-rect"), _el$4 = createElement("view"), _el$5 = createElement("text"), _el$7 = createElement("view");
   insertNode(_el$, _el$2);
   setProp(_el$, "title", "Solid-RT Demo");
   insertNode(_el$2, _el$3);
   insertNode(_el$2, _el$4);
-  insertNode(_el$2, _el$6);
+  insertNode(_el$2, _el$7);
   setProp(_el$2, "flexGrow", 1);
   setProp(_el$2, "justifyContent", "center");
   setProp(_el$2, "alignItems", "center");
-  setProp(_el$2, "flexDirection", "column");
+  setProp(_el$2, "flexDirection", "column-reverse");
   setProp(_el$2, "gap", 20);
   setProp(_el$3, "color", "#111");
   insertNode(_el$4, _el$5);
-  setProp(_el$5, "color", "#000");
-  insert(_el$4, createComponent2(Logo, {}), null);
-  insertNode(_el$6, _el$7);
-  insertNode(_el$7, createTextNode(`waiting for connection...`));
-  setProp(_el$7, "color", "lightgrey");
+  insertNode(_el$5, createTextNode(`waiting for connection...`));
+  setProp(_el$5, "color", "lightgrey");
+  insert(_el$7, createComponent2(Logo, {}));
   return _el$;
 }
 render(() => createComponent2(App, {}));

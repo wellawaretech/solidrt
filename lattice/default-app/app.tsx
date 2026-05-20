@@ -8,16 +8,15 @@ function App() {
         flexGrow={1}
         justifyContent="center"
         alignItems="center"
-        flexDirection="column"
+        flexDirection="column-reverse"
         gap={20}
       >
         <d-rect color="#111" />
         <view>
-          <d-rect color="#000" />
-          <Logo />
+          <text color="lightgrey">waiting for connection...</text>
         </view>
         <view>
-          <text color="lightgrey">waiting for connection...</text>
+          <Logo />
         </view>
       </view>
     </window>

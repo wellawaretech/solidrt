@@ -294,6 +294,8 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
   )
 }
 
+const LOGO_HEIGHT = Math.max(...letters.map((l) => l.height))
+
 export function Logo() {
   let [scale, setScale] = createSignal(1)
 
@@ -302,7 +304,7 @@ export function Logo() {
   })
 
   return (
-    <view justifyContent="center" width={1500} scale={scale()}>
+    <view justifyContent="center" width={1500} height={LOGO_HEIGHT * scale()} scale={scale()}>
       <view gap={50} flexDirection="row" alignItems="flex-end">
         {letters.map((letter, i) => (
           <TangramLetter letter={letter} colors={i < 5 ? SOLID_COLORS : RT_COLORS} delay={i * STAGGER_DELAY} />
