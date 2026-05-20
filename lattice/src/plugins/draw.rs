@@ -61,6 +61,21 @@ pub fn init(
           obj.set("button", button).expect("set button");
           emit_event(&qtx, "pointerDown", obj);
         }
+        InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
+          let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
+          let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+          let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, x, y, modifiers, &ids);
+          obj.set("button", button).expect("set button");
+          emit_event(&qtx, "pointerUp", obj);
+        }
+        InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
+          let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
+          let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+          let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, x, y, modifiers, &ids);
+          obj.set("deltaX", delta_x).expect("set deltaX");
+          obj.set("deltaY", delta_y).expect("set deltaY");
+          emit_event(&qtx, "wheel", obj);
+        }
       }
     }
 

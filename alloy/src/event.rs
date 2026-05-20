@@ -59,6 +59,11 @@ pub enum AlloyEvent {
     scancode: Option<sdl3::keyboard::Scancode>,
     modifiers: Modifiers,
   },
+  KeyUp {
+    keycode: Option<sdl3::keyboard::Keycode>,
+    scancode: Option<sdl3::keyboard::Scancode>,
+    modifiers: Modifiers,
+  },
   Resize {
     size: ISize,
     safe_area: Rect,
@@ -78,6 +83,26 @@ pub enum AlloyEvent {
     button: u8,
     x: f32,
     y: f32,
+    modifiers: Modifiers,
+  },
+  PointerUp {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    button: u8,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
+  // delta_x / delta_y use browser convention: positive delta_y means
+  // content should scroll down (wheel rolled toward the user). SDL's
+  // direction=Flipped is normalized away at translation time.
+  Wheel {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    delta_x: f32,
+    delta_y: f32,
     modifiers: Modifiers,
   },
 }
@@ -117,6 +142,9 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     SdlEvent::KeyDown { keycode, scancode, keymod, .. } => {
       Some(AlloyEvent::KeyDown { keycode, scancode, modifiers: keymod.into() })
     }
+    SdlEvent::KeyUp { keycode, scancode, keymod, .. } => {
+      Some(AlloyEvent::KeyUp { keycode, scancode, modifiers: keymod.into() })
+    }
     SdlEvent::Window {
       win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
       ..
@@ -149,6 +177,32 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         button,
         x: x / scale,
         y: y / scale,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
+    SdlEvent::MouseButtonUp { which, mouse_btn, x, y, .. } => {
+      let button = map_mouse_button(mouse_btn)?;
+      let scale = sdl_utils::window_display_scale(window);
+      Some(AlloyEvent::PointerUp {
+        pointer_id: which as u64,
+        pointer_type: PointerType::Mouse,
+        button,
+        x: x / scale,
+        y: y / scale,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
+    SdlEvent::MouseWheel { which, x, y, direction, mouse_x, mouse_y, .. } => {
+      let scale = sdl_utils::window_display_scale(window);
+      let flipped = matches!(direction, sdl3::mouse::MouseWheelDirection::Flipped);
+      let sign = if flipped { 1.0 } else { -1.0 };
+      Some(AlloyEvent::Wheel {
+        pointer_id: which as u64,
+        pointer_type: PointerType::Mouse,
+        x: mouse_x / scale,
+        y: mouse_y / scale,
+        delta_x: sign * x,
+        delta_y: sign * y,
         modifiers: sdl_utils::mod_state().into(),
       })
     }

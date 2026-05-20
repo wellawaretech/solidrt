@@ -20,6 +20,23 @@ pub enum InputEvent {
     y: f32,
     modifiers: Modifiers,
   },
+  PointerUp {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    button: u8,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
+  Wheel {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    modifiers: Modifiers,
+  },
 }
 
 // Per-frame state is split into two structs by lifetime, not by topic.

@@ -54,8 +54,11 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 export function attachWindow(_nodeId: number) {
   let unsubscribe: () => void = null!
   let unsubDown: () => void = null!
+  let unsubUp: () => void = null!
+  let unsubMove: () => void = null!
   let unsubEnter: () => void = null!
   let unsubLeave: () => void = null!
+  let unsubWheel: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
@@ -70,21 +73,39 @@ export function attachWindow(_nodeId: number) {
       draw()
     })
 
-    unsubDown = Flux.on("pointerDown", ({ targets, button, clientX, clientY }: { targets: number[], button: number, clientX: number, clientY: number }) => {
+    unsubDown = Flux.on("pointerDown", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
       for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerDown")?.({ button, clientX, clientY })
+        getEventHandler(nodeId, "onPointerDown")?.(e)
       }
     })
 
-    unsubEnter = Flux.on("pointerEnter", ({ targets }: { targets: number[] }) => {
+    unsubUp = Flux.on("pointerUp", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
       for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerEnter")?.()
+        getEventHandler(nodeId, "onPointerUp")?.(e)
       }
     })
 
-    unsubLeave = Flux.on("pointerLeave", ({ targets }: { targets: number[] }) => {
+    unsubMove = Flux.on("pointerMove", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
       for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerLeave")?.()
+        getEventHandler(nodeId, "onPointerMove")?.(e)
+      }
+    })
+
+    unsubEnter = Flux.on("pointerEnter", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerEnter")?.(e)
+      }
+    })
+
+    unsubLeave = Flux.on("pointerLeave", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerLeave")?.(e)
+      }
+    })
+
+    unsubWheel = Flux.on("wheel", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onWheel")?.(e)
       }
     })
 
@@ -95,7 +116,10 @@ export function attachWindow(_nodeId: number) {
   onCleanup(() => {
     if (unsubscribe) unsubscribe()
     if (unsubDown) unsubDown()
+    if (unsubUp) unsubUp()
+    if (unsubMove) unsubMove()
     if (unsubEnter) unsubEnter()
     if (unsubLeave) unsubLeave()
+    if (unsubWheel) unsubWheel()
   })
 }
