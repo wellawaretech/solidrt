@@ -5,6 +5,13 @@ import { bundle } from "./build"
 
 let currentWatcher: ReturnType<typeof watch> | null = null
 
+export function stopWatcher() {
+  if (currentWatcher) {
+    currentWatcher.close()
+    currentWatcher = null
+  }
+}
+
 export function startWatcher() {
   if (!state.source) return
   let watchDir = dirname(resolve(state.source))

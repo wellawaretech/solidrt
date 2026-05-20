@@ -226,7 +226,10 @@ fn ui_thread(
           tokio::select! {
             _ = engine.eval_source(&current_src) => {}
             Some(cmd) = cmd_rx.recv() => {
-              if let EngineCmd::Reload(src) = cmd { next_src = Some(src); }
+              match cmd {
+                EngineCmd::Reload(src) => { next_src = Some(src); }
+                EngineCmd::Stop => { next_src = Some(DEFAULT_SOURCE.to_string()); }
+              }
             }
           }
         })

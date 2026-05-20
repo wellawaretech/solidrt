@@ -3,10 +3,13 @@ import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, broadcastStop, shutdown } from "./util"
 import { bundle } from "./build"
-import { startWatcher } from "./watcher"
+import { startWatcher, stopWatcher } from "./watcher"
 
 function cmdStop(args: string) {
   if (!args) {
+    stopWatcher()
+    state.currentCode = null
+    state.source = undefined
     broadcastStop()
     print("[cli] Sent stop to all clients")
     return
