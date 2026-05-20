@@ -154,7 +154,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       let element = tree.render_tree.node(id);
       let has_measurement = matches!(
         &element.kind,
-        ElementKind::Text(_) | ElementKind::Rectangle(_)
+        ElementKind::Text(_) | ElementKind::Rectangle(_) | ElementKind::Path(_)
       );
 
       if has_measurement {

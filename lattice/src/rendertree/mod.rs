@@ -6,7 +6,7 @@ pub mod platform;
 mod tree;
 
 pub use hit::{HitConfig, HitTester};
-pub use kinds::{PaintState, Rectangle, Span, Text, View, Window};
+pub use kinds::{PaintState, Path, Rectangle, Span, Text, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
@@ -75,7 +75,7 @@ pub enum ElementKind {
   View(View),
   Rectangle(Rectangle),
   // Oval(Oval),
-  // Path(Path),
+  Path(Path),
   Text(Text),
   Span(Span),
   // Texture(Texture),
@@ -86,6 +86,7 @@ impl ElementKind {
   pub fn paint_mut(&mut self) -> Option<&mut PaintState> {
     match self {
       ElementKind::Rectangle(r) => Some(&mut r.paint),
+      ElementKind::Path(p) => Some(&mut p.paint),
       ElementKind::Text(t) => Some(&mut t.paint),
       _ => None,
     }
@@ -99,7 +100,7 @@ impl Buildable for ElementKind {
       ElementKind::View(n) => n.build(ctx, builder),
       ElementKind::Rectangle(n) => n.build(ctx, builder),
       // ElementKind::Oval(n) => n.build(ctx, builder),
-      // ElementKind::Path(n) => n.build(ctx, builder),
+      ElementKind::Path(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
       // ElementKind::Texture(n) => n.build(ctx, builder),
       ElementKind::Span(_) => {} // ElementKind::Audio(_) => {}
@@ -117,7 +118,7 @@ impl Measurable for ElementKind {
     match self {
       ElementKind::Text(n) => n.measure(known_dimensions, available_space, platform),
       // ElementKind::Texture(n) => n.measure(known_dimensions, available_space, platform),
-      // ElementKind::Path(n) => n.measure(known_dimensions, available_space, platform),
+      ElementKind::Path(n) => n.measure(known_dimensions, available_space, platform),
       // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, platform),
       ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, platform),
       _ => Size::ZERO,

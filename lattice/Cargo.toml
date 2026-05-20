@@ -28,6 +28,9 @@ flux = { workspace = true, default-features = false }
 half = "2.7.1"
 rquickjs = { workspace = true }
 taffy = "0.9.2"
+svgtypes = "0.16"
+lyon_path = "1"
+lyon_algorithms = "1"
 tokio = { workspace = true }
 tokio-websockets = { version = "0.13", features = ["client", "fastrand", "sha1_smol"], optional = true }
 futures-util = { version = "0.3", features = ["sink"], optional = true }

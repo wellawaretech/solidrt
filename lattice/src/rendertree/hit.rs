@@ -49,7 +49,7 @@ impl Hittable for ElementKind {
     match self {
       ElementKind::Rectangle(n) => n.is_in_bounds(point, ctx),
       // ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
-      // ElementKind::Path(n) => n.is_in_bounds(point, ctx),
+      ElementKind::Path(n) => n.is_in_bounds(point, ctx),
       // ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
       ElementKind::Span(_) => false,
       _ => point.x >= 0.0 && point.x < ctx.size.w && point.y >= 0.0 && point.y < ctx.size.h,

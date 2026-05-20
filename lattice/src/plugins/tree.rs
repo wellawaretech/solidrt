@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::rendertree::layout::properties;
-use crate::rendertree::{ElementKind, Rectangle, RenderTree, Span, Text, View, Window};
+use crate::rendertree::{ElementKind, Path, Rectangle, RenderTree, Span, Text, View, Window};
 
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
@@ -27,6 +27,8 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
       "view" => View::default().with_layout(),
       "rect" => Rectangle::default().with_layout(),
       "d-rect" => Rectangle::default().no_layout(),
+      "path" => Path::default().with_layout(),
+      "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),
       "span" => Span::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),
@@ -59,6 +61,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
       let result = match &mut element.kind {
         ElementKind::Window(win) => win.set_property(prop, value.clone()),
         ElementKind::Rectangle(rect) => rect.set_property(prop, value.clone()),
+        ElementKind::Path(path) => path.set_property(prop, value.clone()),
         ElementKind::Text(text) => text.set_property(prop, value.clone()),
         ElementKind::Span(span) => span.set_property(prop, value.clone()),
         ElementKind::View(view) => view.set_property(prop, value.clone()),
