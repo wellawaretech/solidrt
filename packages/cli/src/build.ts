@@ -48,7 +48,7 @@ export async function bundleTo(outfile: string) {
 }
 
 async function compileJs(jsCode: string, outfile: string) {
-  let compiler = requireBinary("flux")
+  let compiler = requireBinary("fluxc")
   let proc = Bun.spawn([compiler], {
     stdin: new Blob([jsCode]),
     stdout: "pipe",
