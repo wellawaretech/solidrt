@@ -25,7 +25,7 @@ impl Default for Text {
       computed_text: String::new(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
-      font_weight: FontWeight::Bold,
+      font_weight: FontWeight::Medium,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
       paint: PaintState::default(),

@@ -97,6 +97,8 @@ export interface TransformProps {
   scale?: OA<number>
   x?: OA<number>
   y?: OA<number>
+  cx?: OA<number>
+  cy?: OA<number>
 }
 
 export interface PointerProps {
