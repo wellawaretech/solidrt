@@ -1,4 +1,4 @@
-use impellers::{DisplayList, DisplayListBuilder, ISize, Point, Rect, Size};
+use impellers::{DisplayList, ISize};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
@@ -6,7 +6,6 @@ use crate::backend::{create_render_surface, DisplayContext, RenderSurface};
 use crate::context::Context;
 use crate::event::{current_resize_event, translate_event, AlloyCommand, AlloyEvent};
 use crate::gl;
-use crate::sdl_utils;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
@@ -55,35 +54,16 @@ pub fn setup(title: &str, size: ISize) -> App {
   }
 }
 
-pub struct FrameInfo {
-  pub frame: u64,
-  pub frame_time: Instant,
-  pub scale: f32,
-  pub size: ISize,
-  pub safe_area: Rect,
-}
-
-pub struct RenderHooks {
-  pub pre_render: Box<dyn FnMut(&mut DisplayListBuilder, &FrameInfo)>,
-  pub post_render: Box<dyn FnMut(&mut DisplayListBuilder, &FrameInfo)>,
-}
-
 fn apply_main_thread_effects(
   event: &AlloyEvent,
   render_surface: &mut Box<dyn RenderSurface>,
-  current_scale: &mut f32,
-  current_size: &mut ISize,
-  current_safe_area: &mut Rect,
 ) {
-  if let AlloyEvent::Resize { size, display_scale, safe_area } = event {
+  if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let phys = ISize::new(
       (size.width as f32 * display_scale) as i64,
       (size.height as f32 * display_scale) as i64,
     );
     render_surface.resize(phys);
-    *current_scale = *display_scale;
-    *current_size = phys;
-    *current_safe_area = *safe_area;
   }
 }
 
@@ -91,7 +71,6 @@ impl App {
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
-    mut hooks: RenderHooks,
   ) {
     let App {
       sdl_context,
@@ -107,13 +86,12 @@ impl App {
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
     let mut frame: u64 = 0;
 
-    let mut current_scale = sdl_utils::window_display_scale(&window);
-    let (w0, h0) = window.size_in_pixels();
-    let mut current_size = ISize::new(w0 as i64, h0 as i64);
-    let mut current_safe_area = Rect::new(Point::new(0.0, 0.0), Size::new(w0 as f32, h0 as f32));
+    let mut fps_last_second = Instant::now();
+    let mut fps_frame_count: u32 = 0;
+    let mut fps: u32 = 0;
 
     let initial = current_resize_event(&window);
-    apply_main_thread_effects(&initial, &mut render_surface, &mut current_scale, &mut current_size, &mut current_safe_area);
+    apply_main_thread_effects(&initial, &mut render_surface);
     event_tx.send(initial).ok();
 
     loop {
@@ -122,25 +100,18 @@ impl App {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          let info = FrameInfo {
-            frame,
-            frame_time: Instant::now(),
-            scale: current_scale,
-            size: current_size,
-            safe_area: current_safe_area,
-          };
-          let mut builder = DisplayListBuilder::new(None);
-          builder.scale(current_scale, current_scale);
-          (hooks.pre_render)(&mut builder, &info);
-          builder.draw_display_list(&dl, 1.0);
-          (hooks.post_render)(&mut builder, &info);
-          if let Some(scaled) = builder.build() {
-            render_surface
-              .draw_display_list(&scaled)
-              .expect("Failed to draw display list");
+          let frame_time = Instant::now();
+          fps_frame_count += 1;
+          if frame_time.saturating_duration_since(fps_last_second).as_secs_f32() >= 1.0 {
+            fps = fps_frame_count;
+            fps_frame_count = 0;
+            fps_last_second = frame_time;
           }
+          render_surface
+            .draw_display_list(&dl)
+            .expect("Failed to draw display list");
           render_surface.present();
-          event_tx.send(AlloyEvent::FrameRendered { frame }).ok();
+          event_tx.send(AlloyEvent::FrameRendered { frame, fps }).ok();
           frame += 1;
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -148,7 +119,7 @@ impl App {
       }
       for sdl_event in event_pump.poll_iter() {
         if let Some(e) = translate_event(sdl_event, &window) {
-          apply_main_thread_effects(&e, &mut render_surface, &mut current_scale, &mut current_size, &mut current_safe_area);
+          apply_main_thread_effects(&e, &mut render_surface);
           event_tx.send(e).ok();
         }
       }
@@ -156,7 +127,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &mut render_surface, &mut current_scale, &mut current_size, &mut current_safe_area);
+            apply_main_thread_effects(&e, &mut render_surface);
             event_tx.send(e).ok();
           }
           AlloyCommand::SetTitle(t) => {

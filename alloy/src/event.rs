@@ -73,7 +73,7 @@ pub enum AlloyEvent {
     safe_area: Rect,
     display_scale: f32,
   },
-  FrameRendered { frame: u64 },
+  FrameRendered { frame: u64, fps: u32 },
   PointerMove {
     pointer_id: u64,
     pointer_type: PointerType,

@@ -109,6 +109,8 @@ fn ui_thread(
             }
             alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
               platform_events.set_window_size(size.width as f32, size.height as f32);
+              platform_events.set_display_scale(display_scale);
+              platform_events.set_safe_area(safe_area);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 emit_resize(eh, size, safe_area, display_scale);
               }
@@ -178,7 +180,8 @@ fn ui_thread(
                 });
               }
             }
-            alloy::AlloyEvent::FrameRendered { frame } => {
+            alloy::AlloyEvent::FrameRendered { frame, fps } => {
+              platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 eh.exec(move |ctx| {
@@ -248,14 +251,7 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
   let handle = rt.handle().clone();
   let app = alloy::setup("SolidRT", ISize::new(1200, 800));
 
-  app.run(
-    move |atx, alloy_cmd_tx, event_rx| {
-      ui_thread(handle, atx, alloy_cmd_tx, event_rx, source);
-    },
-    alloy::RenderHooks {
-      pre_render: Box::new(|_, _| {}),
-      post_render: Box::new(|_, _| {}),
-      // post_render: overlay::fps(),
-    },
-  );
+  app.run(move |atx, alloy_cmd_tx, event_rx| {
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source);
+  });
 }
