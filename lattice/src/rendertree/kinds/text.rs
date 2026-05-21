@@ -3,7 +3,7 @@ use crate::rendertree::{
   BuildContext, Buildable, Element, ElementKind, Measurable, PlatformContext,
 };
 use alloy::impellers::{
-  DisplayListBuilder, FontStyle, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
+  DisplayListBuilder, FontStyle, FontWeight, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
 };
 use rquickjs::Value;
 use taffy::prelude::*;
@@ -13,6 +13,7 @@ pub struct Text {
   pub computed_text: String,
   pub font_size: f32,
   pub font_style: FontStyle,
+  pub font_weight: FontWeight,
   pub text_alignment: TextAlignment,
   pub max_lines: u32,
   pub paint: PaintState,
@@ -24,6 +25,7 @@ impl Default for Text {
       computed_text: String::new(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
+      font_weight: FontWeight::Bold,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
       paint: PaintState::default(),
@@ -36,8 +38,10 @@ impl Buildable for Text {
     let mut style = ParagraphStyle::default();
     let paint = self.paint.to_paint();
     style.set_foreground(&paint);
+    style.set_font_family("Noto Sans");
     style.set_font_size(self.font_size);
     style.set_font_style(self.font_style);
+    style.set_font_weight(self.font_weight);
     style.set_text_alignment(self.text_alignment);
     style.set_max_lines(self.max_lines);
 
@@ -73,8 +77,10 @@ impl Measurable for Text {
     };
 
     let mut style = ParagraphStyle::default();
+    style.set_font_family("Noto Sans");
     style.set_font_size(self.font_size);
     style.set_font_style(self.font_style);
+    style.set_font_weight(self.font_weight);
 
     para_builder.push_style(&style);
     para_builder.add_text(&self.computed_text);
@@ -117,6 +123,21 @@ impl Text {
     match property {
       "fontSize" => { self.font_size = value.get::<f64>().expect("fontSize must be a number") as f32; Some(true) }
       "maxLines" => { self.max_lines = value.get::<f64>().expect("maxLines must be a number") as u32; Some(true) }
+      "fontWeight" => {
+        let w = value.get::<f64>().expect("fontWeight must be a number") as u32;
+        self.font_weight = match w {
+          100 => FontWeight::Thin,
+          200 => FontWeight::ExtraLight,
+          300 => FontWeight::Light,
+          500 => FontWeight::Medium,
+          600 => FontWeight::SemiBold,
+          700 => FontWeight::Bold,
+          800 => FontWeight::ExtraBold,
+          900 => FontWeight::Black,
+          _ => FontWeight::Regular,
+        };
+        Some(true)
+      }
       _ => None,
     }
   }

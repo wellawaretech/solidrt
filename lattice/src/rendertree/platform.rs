@@ -1,5 +1,8 @@
 use alloy::impellers::TypographyContext;
+use std::borrow::Cow;
 use std::cell::Cell;
+
+const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
 
 pub struct PlatformContext {
   pub typography: TypographyContext,
@@ -13,8 +16,12 @@ unsafe impl Sync for PlatformContext {}
 
 impl PlatformContext {
   pub fn new() -> Self {
+    let mut typography = TypographyContext::default();
+    typography
+      .register_font(Cow::Borrowed(NOTO_SANS), Some("Noto Sans"))
+      .expect("Failed to register Noto Sans font");
     Self {
-      typography: TypographyContext::default(),
+      typography,
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
     }

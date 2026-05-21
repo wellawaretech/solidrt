@@ -159,9 +159,10 @@ export interface PathProps extends Position, PaintProps, PointerProps {
 }
 
 export interface TextProps extends PaintProps {
-  children: Children
+  children?: Children
   fontSize?: number
   fontStyle?: "normal" | "italic"
+  fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
   textAlign?: "left" | "right" | "center" | "justify"
   maxLines?: number
 }
