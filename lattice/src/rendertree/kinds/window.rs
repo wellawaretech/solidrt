@@ -1,6 +1,8 @@
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};
 use alloy::impellers::DisplayListBuilder;
+use alloy::AlloyCommand;
 use rquickjs::Value;
+use std::sync::mpsc::Sender;
 use taffy::{prelude::{length, percent}, Display, FlexDirection, Size, Style};
 
 #[derive(Clone, Debug)]
@@ -23,10 +25,23 @@ impl Buildable for Window {
 }
 
 impl Window {
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(
+    &mut self,
+    property: &str,
+    value: Value<'_>,
+    cmd_tx: &Sender<AlloyCommand>,
+  ) -> Option<bool> {
     match property {
-      "title" => { self.title = value.get::<String>().expect("title must be a string"); Some(false) }
-      "fullscreen" => { self.fullscreen = value.get::<bool>().expect("fullscreen must be a boolean"); Some(false) }
+      "title" => {
+        self.title = value.get::<String>().expect("title must be a string");
+        cmd_tx.send(AlloyCommand::SetTitle(self.title.clone())).ok();
+        Some(false)
+      }
+      "fullscreen" => {
+        self.fullscreen = value.get::<bool>().expect("fullscreen must be a boolean");
+        cmd_tx.send(AlloyCommand::SetFullscreen(self.fullscreen)).ok();
+        Some(false)
+      }
       _ => None,
     }
   }

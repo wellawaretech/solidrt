@@ -1,6 +1,7 @@
 use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::mpsc::Sender;
 
 use crate::rendertree::layout::properties;
 use crate::rendertree::{ElementKind, Path, Rectangle, RenderTree, Span, Text, View, Window};
@@ -8,7 +9,7 @@ use crate::rendertree::{ElementKind, Path, Rectangle, RenderTree, Span, Text, Vi
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
-pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
+pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).unwrap();
 
@@ -53,13 +54,14 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree) {
   .unwrap();
 
   let tree_ref = shared.0.clone();
+  let cmd_tx = alloy_cmd_tx.clone();
   let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
     let mut tree = tree_ref.borrow_mut();
     let invalidate = {
       let element = tree.element_mut(node_id);
       let prop = property.as_str();
       let result = match &mut element.kind {
-        ElementKind::Window(win) => win.set_property(prop, value.clone()),
+        ElementKind::Window(win) => win.set_property(prop, value.clone(), &cmd_tx),
         ElementKind::Rectangle(rect) => rect.set_property(prop, value.clone()),
         ElementKind::Path(path) => path.set_property(prop, value.clone()),
         ElementKind::Text(text) => text.set_property(prop, value.clone()),

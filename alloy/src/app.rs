@@ -95,12 +95,10 @@ impl App {
   ) {
     let App {
       sdl_context,
-      window,
+      mut window,
       platform,
       mut render_surface,
     } = self;
-
-    let window = window;
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
@@ -160,6 +158,16 @@ impl App {
             let e = current_resize_event(&window);
             apply_main_thread_effects(&e, &mut render_surface, &mut current_scale, &mut current_size, &mut current_safe_area);
             event_tx.send(e).ok();
+          }
+          AlloyCommand::SetTitle(t) => {
+            if let Err(e) = window.set_title(&t) {
+              log::warn!("set_title failed: {e}");
+            }
+          }
+          AlloyCommand::SetFullscreen(fs) => {
+            if let Err(e) = window.set_fullscreen(fs) {
+              log::warn!("set_fullscreen failed: {e}");
+            }
           }
         }
       }

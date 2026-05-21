@@ -124,6 +124,7 @@ interface Position {
 export interface WindowProps extends LayoutProps {
   children?: Children
   title?: string
+  fullscreen?: boolean
   vsync?: boolean
   fps?: boolean
 }

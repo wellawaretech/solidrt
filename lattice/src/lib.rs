@@ -207,6 +207,7 @@ fn ui_thread(
       let engine_state = Arc::new(EngineState::new());
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
+      let tree_cmd_tx = alloy_cmd_tx.clone();
       let engine = FluxEngine::builder()
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
@@ -215,7 +216,7 @@ fn ui_thread(
           flux::LogLevel::Error => log::error!("{msg}"),
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree))
+        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx))
         .build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
@@ -253,7 +254,8 @@ pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
     },
     alloy::RenderHooks {
       pre_render: Box::new(|_, _| {}),
-      post_render: overlay::fps(),
+      post_render: Box::new(|_, _| {}),
+      // post_render: overlay::fps(),
     },
   );
 }

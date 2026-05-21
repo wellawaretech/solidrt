@@ -5,6 +5,8 @@ use crate::sdl_utils;
 
 pub enum AlloyCommand {
   EmitInitEvents,
+  SetTitle(String),
+  SetFullscreen(bool),
 }
 
 // Pointer kind. Combined with a u64 pointer_id, uniquely identifies an
