@@ -1,7 +1,8 @@
+pub mod body;
 pub mod console;
 pub mod fetch;
 pub mod flux;
-pub mod io;
+pub mod http;
 pub mod memory;
 pub mod timer;
 
@@ -31,10 +32,8 @@ pub(crate) async fn init_context(
   let mut resolver = BuiltinResolver::default();
   let mut loader = ModuleLoader::default();
 
-  resolver.add_module("qjs:memory").add_module("qjs:io");
-  loader
-    .add_module("qjs:memory", memory::MemoryModule)
-    .add_module("qjs:io", io::IoModule);
+  resolver.add_module("qjs:memory");
+  loader.add_module("qjs:memory", memory::MemoryModule);
 
   runtime.set_loader(resolver, loader).await;
 
@@ -54,11 +53,14 @@ pub(crate) async fn init_context(
       }
       let flux_obj = Object::new(ctx.clone()).unwrap();
 
+      http::init_http(&ctx);
       timer::init_timers(&ctx);
-      io::init_io(&ctx);
       fetch::init_fetch(&ctx);
       console::init_console(&ctx);
       flux::events::init_events(&ctx, &flux_obj);
+      flux::file::init_file(&ctx, &flux_obj);
+      flux::dir::init_dir(&ctx, &flux_obj);
+      flux::write::init_write(&ctx, &flux_obj);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 

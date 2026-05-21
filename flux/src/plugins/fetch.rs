@@ -1,53 +1,12 @@
 use rquickjs::{
-  function::MutFn, promise::Promised, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
+  function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value,
 };
-use std::cell::Cell;
 use std::io;
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-
-const USER_AGENT: &str = concat!("flux/", env!("CARGO_PKG_VERSION"));
-
-#[derive(Clone, JsLifetime)]
-struct HttpClient(#[qjs(skip_trace)] Rc<reqwest::Client>);
-
-fn reqwest_err(e: reqwest::Error) -> rquickjs::Error {
-  rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
-}
-
-fn http_client() -> HttpClient {
-  HttpClient(Rc::new(
-    reqwest::Client::builder()
-      .user_agent(USER_AGENT)
-      .build()
-      .unwrap(),
-  ))
-}
-
-struct JsBytes(Vec<u8>);
-
-impl<'js> IntoJs<'js> for JsBytes {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    TypedArray::<u8>::new(ctx.clone(), self.0).map(|ta| ta.into_value())
-  }
-}
-
-struct JsonValue(String);
-
-impl<'js> IntoJs<'js> for JsonValue {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    ctx.json_parse(self.0)
-  }
-}
-
-fn throw_consumed(ctx: &Ctx<'_>) -> rquickjs::Error {
-  ctx.throw(
-    rquickjs::String::from_str(ctx.clone(), "Body already consumed")
-      .unwrap()
-      .into(),
-  )
-}
+use crate::plugins::body::attach_body;
+use crate::plugins::http::{reqwest_err, HttpClient};
 
 struct ResponseData {
   status: u16,
@@ -59,69 +18,7 @@ struct ResponseData {
 }
 
 fn build_response<'js>(ctx: &Ctx<'js>, data: ResponseData) -> rquickjs::Result<Value<'js>> {
-  let consumed = Rc::new(Cell::new(false));
   let body = Rc::new(data.body);
-
-  let text_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let consumed = consumed.clone();
-      let body = body.clone();
-      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        if consumed.get() {
-          return Err(throw_consumed(&ctx));
-        }
-        consumed.set(true);
-        let body = body.clone();
-        Ok(Promised(async move {
-          String::from_utf8(body.as_ref().clone())
-            .map_err(|e| rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidData, e)))
-        }))
-      }
-    }),
-  )
-  .unwrap();
-
-  let bytes_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let consumed = consumed.clone();
-      let body = body.clone();
-      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        if consumed.get() {
-          return Err(throw_consumed(&ctx));
-        }
-        consumed.set(true);
-        let body = body.clone();
-        Ok(Promised(async move {
-          Ok::<JsBytes, rquickjs::Error>(JsBytes(body.as_ref().clone()))
-        }))
-      }
-    }),
-  )
-  .unwrap();
-
-  let json_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let consumed = consumed.clone();
-      let body = body.clone();
-      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        if consumed.get() {
-          return Err(throw_consumed(&ctx));
-        }
-        consumed.set(true);
-        let body = body.clone();
-        Ok(Promised(async move {
-          let text = String::from_utf8(body.as_ref().clone())
-            .map_err(|e| rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidData, e)))?;
-          Ok::<JsonValue, rquickjs::Error>(JsonValue(text))
-        }))
-      }
-    }),
-  )
-  .unwrap();
-
   let headers = ctx.json_parse(data.headers_json)?;
 
   let obj = Object::new(ctx.clone())?;
@@ -130,9 +27,17 @@ fn build_response<'js>(ctx: &Ctx<'js>, data: ResponseData) -> rquickjs::Result<V
   obj.set("statusText", data.status_text)?;
   obj.set("url", data.url)?;
   obj.set("headers", headers)?;
-  obj.set("text", text_fn)?;
-  obj.set("bytes", bytes_fn)?;
-  obj.set("json", json_fn)?;
+
+  let body_for_closure = body.clone();
+  attach_body(
+    ctx,
+    &obj,
+    move || {
+      let body = body_for_closure.clone();
+      async move { Ok((*body).clone()) }
+    },
+    true,
+  )?;
 
   Ok(obj.into_value())
 }
@@ -172,8 +77,6 @@ fn status_text(status: reqwest::StatusCode) -> &'static str {
 }
 
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
-  ctx.store_userdata(http_client()).unwrap();
-
   let globals = ctx.globals();
 
   let fetch_fn = Function::new(
@@ -183,8 +86,15 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
        url: String,
        opts: rquickjs::function::Opt<Object<'_>>|
        -> rquickjs::Result<Promised<_>> {
-        let client = ctx.userdata::<HttpClient>().unwrap().0.clone();
-        let pending = ctx.userdata::<PendingOps>().unwrap().clone();
+        let client = ctx
+          .userdata::<HttpClient>()
+          .expect("http client")
+          .0
+          .clone();
+        let pending = ctx
+          .userdata::<PendingOps>()
+          .expect("pending ops")
+          .clone();
 
         let method = opts
           .0
@@ -236,9 +146,9 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
       },
     ),
   )
-  .unwrap();
+  .expect("create fetch function");
 
-  globals.set("fetch", fetch_fn).unwrap();
+  globals.set("fetch", fetch_fn).expect("set fetch global");
 }
 
 async fn do_fetch(
