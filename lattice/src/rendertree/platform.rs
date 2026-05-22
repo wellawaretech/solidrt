@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 
 const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
+const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
 
 pub struct PlatformContext {
   pub typography: TypographyContext,
@@ -23,6 +24,9 @@ impl PlatformContext {
     typography
       .register_font(Cow::Borrowed(NOTO_SANS), Some("Noto Sans"))
       .expect("Failed to register Noto Sans font");
+    typography
+      .register_font(Cow::Borrowed(NOTO_SANS_MONO), Some("Noto Sans Mono"))
+      .expect("Failed to register Noto Sans Mono font");
     Self {
       typography,
       window_size: Cell::new((0.0, 0.0)),

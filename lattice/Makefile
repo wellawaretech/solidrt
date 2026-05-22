@@ -64,6 +64,17 @@ help:
 
 default-app-bundle: $(DEFAULT_APP_JS)
 
+# -- Fonts --------------------------------------------
+
+FONTS_DIR = $(CURDIR)/assets/fonts
+
+download-fonts:
+	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSans.ttf
+	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansmono/NotoSansMono%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSansMono.ttf
+	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/OFL.txt" -o $(FONTS_DIR)/OFL.txt
+
+.PHONY: download-fonts
+
 # -- Clean --------------------------------------------
 
 dist-clean:

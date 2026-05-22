@@ -11,6 +11,7 @@ use taffy::prelude::*;
 #[derive(Clone, Debug)]
 pub struct Text {
   pub computed_text: String,
+  pub font_family: String,
   pub font_size: f32,
   pub font_style: FontStyle,
   pub font_weight: FontWeight,
@@ -23,6 +24,7 @@ impl Default for Text {
   fn default() -> Self {
     Self {
       computed_text: String::new(),
+      font_family: "Noto Sans".to_string(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
       font_weight: FontWeight::Medium,
@@ -38,7 +40,7 @@ impl Buildable for Text {
     let mut style = ParagraphStyle::default();
     let paint = self.paint.to_paint();
     style.set_foreground(&paint);
-    style.set_font_family("Noto Sans");
+    style.set_font_family(&self.font_family);
     style.set_font_size(self.font_size);
     style.set_font_style(self.font_style);
     style.set_font_weight(self.font_weight);
@@ -77,7 +79,7 @@ impl Measurable for Text {
     };
 
     let mut style = ParagraphStyle::default();
-    style.set_font_family("Noto Sans");
+    style.set_font_family(&self.font_family);
     style.set_font_size(self.font_size);
     style.set_font_style(self.font_style);
     style.set_font_weight(self.font_weight);
@@ -121,6 +123,15 @@ impl Measurable for Text {
 impl Text {
   pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
     match property {
+      "fontFamily" => {
+        let s = value.get::<String>().expect("fontFamily must be a string");
+        self.font_family = match s.as_str() {
+          "mono" => "Noto Sans Mono".to_string(),
+          "sans" => "Noto Sans".to_string(),
+          other => other.to_string(),
+        };
+        Some(true)
+      }
       "fontSize" => { self.font_size = value.get::<f64>().expect("fontSize must be a number") as f32; Some(true) }
       "maxLines" => { self.max_lines = value.get::<f64>().expect("maxLines must be a number") as u32; Some(true) }
       "fontWeight" => {
