@@ -4,6 +4,15 @@ import { networkInterfaces } from "node:os"
 import { createSocket } from "node:dgram"
 import qrcode from "qrcode-generator"
 import { DEV_HOST, DEV_PORT, state, print } from "./util"
+import * as cache from "./cache"
+
+function headersToObject(h: Headers): Record<string, string> {
+  let out: Record<string, string> = {}
+  h.forEach((v, k) => {
+    out[k] = v
+  })
+  return out
+}
 
 async function handleProxy(req: Request): Promise<Response> {
   let target = req.headers.get("x-srt-proxy-url")
@@ -14,10 +23,30 @@ async function handleProxy(req: Request): Promise<Response> {
   let forwardHeaders = new Headers(req.headers)
   forwardHeaders.delete("host")
   forwardHeaders.delete("x-srt-proxy-url")
+  forwardHeaders.delete("x-srt-cache")
   forwardHeaders.delete("content-length")
 
+  let cacheStatus: cache.Decision = "skip"
+  let cacheable = !cache.shouldConsider(req.method, req.headers).skip
+  let bypass = cacheable && cache.isBypass(req.headers)
+
+  if (cacheable && !bypass) {
+    let hit = cache.get(req.method, target)
+    if (hit) {
+      print("[cli] proxy %s %s [cache hit]", req.method, target)
+      let respHeaders = new Headers(hit.headers)
+      respHeaders.set("x-srt-cache", "hit")
+      return new Response(hit.body, { status: hit.status, headers: respHeaders })
+    }
+  }
+
   let hasBody = req.method !== "GET" && req.method !== "HEAD"
-  print("[cli] proxy %s %s", req.method, target)
+  if (cacheable) {
+    cacheStatus = bypass ? "bypass" : "miss"
+    print("[cli] proxy %s %s [%s]", req.method, target, cacheStatus)
+  } else {
+    print("[cli] proxy %s %s", req.method, target)
+  }
 
   try {
     let upstream = await fetch(target, {
@@ -29,7 +58,19 @@ async function handleProxy(req: Request): Promise<Response> {
     let respHeaders = new Headers(upstream.headers)
     respHeaders.delete("content-encoding")
     respHeaders.delete("transfer-encoding")
-    return new Response(upstream.body, {
+
+    let bodyBytes = new Uint8Array(await upstream.arrayBuffer())
+    if (cacheable) {
+      cache.put(
+        req.method,
+        target,
+        upstream.status,
+        headersToObject(respHeaders),
+        bodyBytes,
+      )
+      respHeaders.set("x-srt-cache", cacheStatus)
+    }
+    return new Response(bodyBytes, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: respHeaders,

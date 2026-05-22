@@ -19,6 +19,7 @@ import { startServer } from "./server"
 import { spawnClient } from "./client"
 import { startRepl } from "./repl"
 import { startWatcher } from "./watcher"
+import * as cache from "./cache"
 import { resolve, dirname } from "path"
 
 // -- Validate args --
@@ -53,6 +54,11 @@ if (values.client) {
 // Initialize state from args
 state.source = source
 state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
+
+if (values.cache) {
+  cache.initCache({ dir: process.cwd() })
+  console.log("[cli] HTTP cache enabled (.srt-cache/)")
+}
 
 startServer()
 

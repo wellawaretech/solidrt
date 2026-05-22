@@ -8,6 +8,7 @@ export let { values, positionals } = parseArgs({
     output: { type: "string", short: "o" },
     client: { type: "boolean", default: false },
     server: { type: "boolean", default: false },
+    cache: { type: "boolean", default: false },
   },
   allowPositionals: true,
 })
@@ -29,5 +30,7 @@ Options:
   -m, --minify          Minify the output
   -c, --compile         Compile to bytecode (build only)
   -o, --output <name>   Bundle filename (build only)
-      --stdout          Write bundle to stdout (build only)`)
+      --stdout          Write bundle to stdout (build only)
+      --cache           Enable HTTP cache for fetch traffic; entries are
+                        kept in .srt-cache/. Delete that folder to reset.`)
 }
