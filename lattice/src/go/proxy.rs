@@ -1,14 +1,20 @@
-// Replaces Flux.file and Flux.dir with HTTP-backed versions that route through
-// the cli's dev server. Flux.write is left alone (cli has no write endpoint;
-// dev writes stay device-local).
+// Replaces Flux.file, Flux.dir, Flux.write and the global fetch with
+// HTTP-backed versions that route through the cli's dev server.
+//
+// File/dir reads use GET on the cli; Flux.write uses PUT (cli writes the body
+// into state.sourceDir). Global fetch is rewritten to call the cli's
+// /__proxy__ endpoint with the original URL in the X-SRT-Proxy-Url header;
+// the cli forwards the request and relays the response.
 //
 // File vs directory disambiguation uses the cli's X-SRT-Type response header
 // (set by server.ts) to avoid ambiguity around .json files.
 
-use flux::attach_body;
 use flux::rquickjs::{
-  function::MutFn, promise::Promised, Array, Ctx, Function, IntoJs, JsLifetime, Object, Value,
+  function::{MutFn, Opt},
+  promise::Promised,
+  Array, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
 };
+use flux::{attach_body, do_fetch};
 use std::io;
 use std::rc::Rc;
 
@@ -240,6 +246,80 @@ fn build_proxy_dir<'js>(
   Ok(obj)
 }
 
+fn build_proxy_write<'js>(
+  ctx: Ctx<'js>,
+  path: String,
+  data: Value<'js>,
+) -> flux::rquickjs::Result<Promised<impl std::future::Future<Output = flux::rquickjs::Result<()>>>>
+{
+  let bytes = if let Some(s) = data.as_string() {
+    s.to_string()?.into_bytes()
+  } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+    ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
+  } else {
+    return Err(ctx.throw(
+      flux::rquickjs::String::from_str(
+        ctx.clone(),
+        "Flux.write: data must be string or Uint8Array",
+      )
+      .expect("create error string")
+      .into(),
+    ));
+  };
+  let state = ctx
+    .userdata::<ProxyState>()
+    .expect("proxy state")
+    .clone();
+  let url = url_for(&state.base, &path);
+  let client = state.client.clone();
+  Ok(Promised(async move {
+    let resp = client
+      .put(&url)
+      .body(bytes)
+      .send()
+      .await
+      .map_err(http_err)?;
+    let status = resp.status();
+    if !status.is_success() {
+      return Err(http_err(format!(
+        "write HTTP {} for {}",
+        status.as_u16(),
+        url
+      )));
+    }
+    Ok::<(), flux::rquickjs::Error>(())
+  }))
+}
+
+fn extract_fetch_body<'js>(val: &Value<'js>) -> Option<Vec<u8>> {
+  if val.is_null() || val.is_undefined() {
+    return None;
+  }
+  if let Some(s) = val.as_string() {
+    return Some(s.to_string().ok()?.into_bytes());
+  }
+  if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
+    return Some(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+  }
+  None
+}
+
+fn extract_fetch_headers<'js>(opts: &Object<'js>) -> Vec<(String, String)> {
+  let h: Object = match opts.get("headers") {
+    Ok(h) => h,
+    Err(_) => return Vec::new(),
+  };
+  let mut out = Vec::new();
+  for key in h.keys::<String>() {
+    if let Ok(key) = key {
+      if let Ok(Some(val)) = h.get::<_, Option<String>>(&key) {
+        out.push((key, val));
+      }
+    }
+  }
+  out
+}
+
 pub fn install_proxy(ctx: Ctx<'_>, dev_server: String) {
   let client = reqwest::Client::builder()
     .user_agent("lattice-go-proxy")
@@ -267,5 +347,60 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String) {
     Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
   flux.set("dir", dir_fn).expect("override Flux.dir");
 
-  log::info!("[sgo] Installed Flux.file/dir proxy -> http://{}/", &*base);
+  let write_fn =
+    Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
+  flux.set("write", write_fn).expect("override Flux.write");
+
+  let proxy_url = Rc::new(format!("http://{}/__proxy__", &*base));
+  let fetch_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let proxy_url = proxy_url.clone();
+      move |ctx: Ctx<'_>,
+            url: String,
+            opts: Opt<Object<'_>>|
+            -> flux::rquickjs::Result<Promised<_>> {
+        let state = ctx
+          .userdata::<ProxyState>()
+          .expect("proxy state")
+          .clone();
+
+        let method = opts
+          .0
+          .as_ref()
+          .and_then(|o| o.get::<_, Option<String>>("method").ok().flatten())
+          .unwrap_or_else(|| "GET".to_string())
+          .to_uppercase();
+
+        let body = opts
+          .0
+          .as_ref()
+          .and_then(|o| o.get::<_, Value>("body").ok())
+          .and_then(|v| extract_fetch_body(&v));
+
+        let mut headers = opts
+          .0
+          .as_ref()
+          .map(extract_fetch_headers)
+          .unwrap_or_default();
+        headers.push(("x-srt-proxy-url".to_string(), url));
+
+        let proxy_url = (*proxy_url).clone();
+        let client = state.client.clone();
+        Ok(Promised(async move {
+          do_fetch(client, &method, &proxy_url, headers, body).await
+        }))
+      }
+    }),
+  )
+  .expect("create proxy fetch");
+  ctx
+    .globals()
+    .set("fetch", fetch_fn)
+    .expect("override fetch global");
+
+  log::info!(
+    "[sgo] Installed Flux file/dir/write and fetch proxy -> http://{}/",
+    &*base
+  );
 }

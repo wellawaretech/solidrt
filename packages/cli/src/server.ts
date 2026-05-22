@@ -5,6 +5,41 @@ import { createSocket } from "node:dgram"
 import qrcode from "qrcode-generator"
 import { DEV_HOST, DEV_PORT, state, print } from "./util"
 
+async function handleProxy(req: Request): Promise<Response> {
+  let target = req.headers.get("x-srt-proxy-url")
+  if (!target) {
+    return new Response("Missing X-SRT-Proxy-Url", { status: 400 })
+  }
+
+  let forwardHeaders = new Headers(req.headers)
+  forwardHeaders.delete("host")
+  forwardHeaders.delete("x-srt-proxy-url")
+  forwardHeaders.delete("content-length")
+
+  let hasBody = req.method !== "GET" && req.method !== "HEAD"
+  print("[cli] proxy %s %s", req.method, target)
+
+  try {
+    let upstream = await fetch(target, {
+      method: req.method,
+      headers: forwardHeaders,
+      body: hasBody ? await req.arrayBuffer() : undefined,
+      redirect: "follow",
+    })
+    let respHeaders = new Headers(upstream.headers)
+    respHeaders.delete("content-encoding")
+    respHeaders.delete("transfer-encoding")
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: respHeaders,
+    })
+  } catch (e) {
+    print("[cli] proxy error %s: %s", target, String(e))
+    return new Response(`Proxy error: ${String(e)}`, { status: 502 })
+  }
+}
+
 export function startServer() {
   state.server = Bun.serve({
     port: DEV_PORT,
@@ -14,12 +49,24 @@ export function startServer() {
       let url = new URL(req.url)
       let path = decodeURIComponent(url.pathname)
 
-      print("[cli] get", path)
+      if (path === "/__proxy__") {
+        return handleProxy(req)
+      }
 
       let filePath = resolve(state.sourceDir, "." + path)
       if (!filePath.startsWith(state.sourceDir)) {
         return new Response("Forbidden", { status: 403 })
       }
+
+      if (req.method === "PUT") {
+        print("[cli] put", path)
+        let bytes = new Uint8Array(await req.arrayBuffer())
+        await Bun.write(filePath, bytes)
+        return new Response(null, { status: 204 })
+      }
+
+      print("[cli] get", path)
+
       let stat
       try {
         stat = await fsStat(filePath)

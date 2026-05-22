@@ -8,13 +8,13 @@ use crate::pending::PendingOps;
 use crate::plugins::body::attach_body;
 use crate::plugins::http::{reqwest_err, HttpClient};
 
-struct ResponseData {
-  status: u16,
-  status_text: String,
-  url: String,
-  ok: bool,
-  headers_json: String,
-  body: Vec<u8>,
+pub struct ResponseData {
+  pub status: u16,
+  pub status_text: String,
+  pub url: String,
+  pub ok: bool,
+  pub headers_json: String,
+  pub body: Vec<u8>,
 }
 
 fn build_response<'js>(ctx: &Ctx<'js>, data: ResponseData) -> rquickjs::Result<Value<'js>> {
@@ -151,7 +151,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   globals.set("fetch", fetch_fn).expect("set fetch global");
 }
 
-async fn do_fetch(
+pub async fn do_fetch(
   client: Rc<reqwest::Client>,
   method: &str,
   url: &str,
