@@ -44,10 +44,10 @@ export function startServer() {
           }),
         )
         entries.sort((a, b) => a.name.localeCompare(b.name))
-        return Response.json(entries)
+        return Response.json(entries, { headers: { "X-SRT-Type": "directory" } })
       }
 
-      return new Response(Bun.file(filePath))
+      return new Response(Bun.file(filePath), { headers: { "X-SRT-Type": "file" } })
     },
     websocket: {
       open(ws) {

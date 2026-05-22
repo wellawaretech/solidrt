@@ -200,7 +200,9 @@ fn ui_thread(
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
-    go::start(&handle, cmd_tx.clone());
+    let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    #[cfg(feature = "go")]
+    go::start(&handle, cmd_tx.clone(), dev_server.clone());
 
     loop {
       let render_tree = RenderTree::new();
@@ -211,7 +213,7 @@ fn ui_thread(
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
       let tree_cmd_tx = alloy_cmd_tx.clone();
-      let engine = FluxEngine::builder()
+      let mut builder = FluxEngine::builder()
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
           flux::LogLevel::Log => log::info!("{msg}"),
@@ -219,8 +221,12 @@ fn ui_thread(
           flux::LogLevel::Error => log::error!("{msg}"),
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx))
-        .build();
+        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx));
+      #[cfg(feature = "go")]
+      if let Some(url) = dev_server.get().cloned() {
+        builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));
+      }
+      let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
 

@@ -6,7 +6,7 @@ use std::future::Future;
 use std::io;
 use std::rc::Rc;
 
-pub(crate) struct JsBytes(pub Vec<u8>);
+pub struct JsBytes(pub Vec<u8>);
 
 impl<'js> IntoJs<'js> for JsBytes {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
@@ -14,7 +14,7 @@ impl<'js> IntoJs<'js> for JsBytes {
   }
 }
 
-pub(crate) struct JsonValue(pub String);
+pub struct JsonValue(pub String);
 
 impl<'js> IntoJs<'js> for JsonValue {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
@@ -40,7 +40,7 @@ fn utf8_err(e: std::string::FromUtf8Error) -> rquickjs::Error {
 /// If consume_once is true, calling any of the three methods more than once
 /// throws "Body already consumed" (web fetch semantics). If false, methods can
 /// be called repeatedly (file-like semantics).
-pub(crate) fn attach_body<'js, F, Fut>(
+pub fn attach_body<'js, F, Fut>(
   ctx: &Ctx<'js>,
   obj: &Object<'js>,
   fetch_bytes: F,

@@ -5,6 +5,7 @@ mod plugins;
 
 pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
 pub use logger::{CtxLogger, LogLevel, Logger};
+pub use plugins::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::flux::events::emit_event;
 pub use rquickjs;
 

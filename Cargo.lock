@@ -926,6 +926,7 @@ dependencies = [
  "log",
  "lyon_algorithms",
  "lyon_path",
+ "reqwest",
  "rquickjs",
  "serde_json",
  "svgtypes",
