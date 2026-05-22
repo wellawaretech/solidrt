@@ -22,6 +22,7 @@ interface FlexboxProps {
   gap?: number
   rowGap?: number
   columnGap?: number
+  flex?: number | "none" | "auto" | (string & {})
   flexGrow?: number
   flexShrink?: number
   flexBasis?: number

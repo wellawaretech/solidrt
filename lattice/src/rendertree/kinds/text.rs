@@ -83,6 +83,7 @@ impl Measurable for Text {
     style.set_font_size(self.font_size);
     style.set_font_style(self.font_style);
     style.set_font_weight(self.font_weight);
+    style.set_max_lines(self.max_lines);
 
     para_builder.push_style(&style);
     para_builder.add_text(&self.computed_text);

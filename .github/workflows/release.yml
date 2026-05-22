@@ -197,7 +197,7 @@ jobs:
       - name: Bump package versions
         run: |
           VERSION="${{ steps.flags.outputs.version }}"
-          for dir in packages/core packages/darwin-arm64 packages/linux-x64-gnu packages/win32-x64-msvc packages/android-arm64-v8a packages/cli; do
+          for dir in packages/core packages/components packages/darwin-arm64 packages/linux-x64-gnu packages/win32-x64-msvc packages/android-arm64-v8a packages/cli; do
             (cd "$dir" && npm pkg set version="$VERSION")
           done
 
@@ -260,6 +260,12 @@ jobs:
       - name: Publish @solidrt/android-arm64-v8a
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/android-arm64-v8a
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @solidrt/components
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/components
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 

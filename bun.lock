@@ -7,6 +7,7 @@
         "@solidjs/signals": "2.0.0-beta.13",
         "@solidjs/universal": "2.0.0-beta.13",
         "@solidrt/cli": "workspace:*",
+        "@solidrt/components": "workspace:*",
         "@solidrt/core": "workspace:*",
         "solid-js": "2.0.0-beta.13",
       },
@@ -38,6 +39,14 @@
       "peerDependencies": {
         "@solidrt/core": "workspace:*",
         "typescript": "^5",
+      },
+    },
+    "packages/components": {
+      "name": "@solidrt/components",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@solidjs/signals": "2.0.0-beta.13",
+        "@solidrt/core": "workspace:*",
       },
     },
     "packages/core": {
@@ -138,6 +147,8 @@
     "@solidrt/android-arm64-v8a": ["@solidrt/android-arm64-v8a@workspace:packages/android-arm64-v8a"],
 
     "@solidrt/cli": ["@solidrt/cli@workspace:packages/cli"],
+
+    "@solidrt/components": ["@solidrt/components@workspace:packages/components"],
 
     "@solidrt/core": ["@solidrt/core@workspace:packages/core"],
 
