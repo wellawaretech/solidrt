@@ -1,0 +1,11 @@
+{
+  "name": "@solidrt/flux-types",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "Antoine van Wel",
+  "types": "index.d.ts",
+  "files": [
+    "index.d.ts",
+    "LICENSE"
+  ]
+}

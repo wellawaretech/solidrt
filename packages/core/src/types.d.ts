@@ -1,9 +1,8 @@
+/// <reference types="@solidrt/flux-types" />
+
 import type { Accessor, JSX as SolidJSX } from "@solidjs/signals"
 
 declare global {
-  let Flux: {
-    on(event: string, callback: (data: any) => void): () => void
-  }
 
   let ffi: {
     createRoot(id: number): void

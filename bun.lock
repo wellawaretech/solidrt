@@ -9,6 +9,7 @@
         "@solidrt/cli": "workspace:*",
         "@solidrt/components": "workspace:*",
         "@solidrt/core": "workspace:*",
+        "@solidrt/flux-types": "workspace:*",
         "solid-js": "2.0.0-beta.13",
       },
     },
@@ -53,6 +54,7 @@
       "name": "@solidrt/core",
       "version": "0.0.0",
       "dependencies": {
+        "@solidrt/flux-types": "workspace:*",
         "colord": "^2.9.3",
       },
       "peerDependencies": {
@@ -62,6 +64,10 @@
     },
     "packages/darwin-arm64": {
       "name": "@solidrt/darwin-arm64",
+      "version": "0.0.0",
+    },
+    "packages/flux-types": {
+      "name": "@solidrt/flux-types",
       "version": "0.0.0",
     },
     "packages/linux-x64-gnu": {
@@ -153,6 +159,8 @@
     "@solidrt/core": ["@solidrt/core@workspace:packages/core"],
 
     "@solidrt/darwin-arm64": ["@solidrt/darwin-arm64@workspace:packages/darwin-arm64"],
+
+    "@solidrt/flux-types": ["@solidrt/flux-types@workspace:packages/flux-types"],
 
     "@solidrt/linux-x64-gnu": ["@solidrt/linux-x64-gnu@workspace:packages/linux-x64-gnu"],
 

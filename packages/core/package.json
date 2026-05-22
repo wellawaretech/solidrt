@@ -2,6 +2,7 @@
   "name": "@solidrt/core",
   "version": "0.0.0",
   "license": "MIT",
+  "author": "Antoine van Wel",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -16,6 +17,9 @@
   ],
   "dependencies": {
     "colord": "^2.9.3"
+  },
+  "devDependencies": {
+    "@solidrt/flux-types": "workspace:*"
   },
   "peerDependencies": {
     "@solidjs/signals": "2.0.0-beta.13",
