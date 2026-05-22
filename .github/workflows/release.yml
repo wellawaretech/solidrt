@@ -200,6 +200,7 @@ jobs:
           PUBLISH_DIRS=(
             packages/core
             packages/components
+            packages/flux-types
             packages/darwin-arm64
             packages/linux-x64-gnu
             packages/win32-x64-msvc
@@ -275,6 +276,12 @@ jobs:
       - name: Publish @solidrt/android-arm64-v8a
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/android-arm64-v8a
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @solidrt/flux-types
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/flux-types
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
