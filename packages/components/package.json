@@ -9,6 +9,7 @@
   },
   "files": [
     "src/",
+    "README.md",
     "LICENSE"
   ],
   "peerDependencies": {
