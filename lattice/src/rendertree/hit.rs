@@ -1,3 +1,5 @@
+use taffy::style::Overflow;
+
 use super::{ElementKind, RenderTree, WH, XY};
 
 /// Controls whether an element participates in hit testing.
@@ -90,6 +92,21 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
 
   let ctx = HitContext { size };
   let local = element.kind.transform_to_local(point, &ctx);
+
+  // Overflow gate: when an axis has non-visible overflow, the layout box clips
+  // both self and any descendants on that axis. Mirrors the paint-time clip in
+  // composite.rs.
+  let (overflow_x, overflow_y) = element
+    .layout
+    .as_ref()
+    .map(|l| (l.style.overflow.x, l.style.overflow.y))
+    .unwrap_or((Overflow::Visible, Overflow::Visible));
+  let clipped_out = (overflow_x != Overflow::Visible
+    && (local.x < 0.0 || local.x >= size.w))
+    || (overflow_y != Overflow::Visible && (local.y < 0.0 || local.y >= size.h));
+  if clipped_out {
+    return false;
+  }
 
   if pointer_events == PointerEvents::Auto && !element.kind.is_in_bounds(local, &ctx) {
     return false;

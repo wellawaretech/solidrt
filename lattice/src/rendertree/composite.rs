@@ -1,10 +1,15 @@
-use alloy::impellers::DisplayListBuilder;
+use alloy::impellers::{ClipOperation, DisplayListBuilder, Point as IPoint, Rect, Size as ISize};
 use taffy::prelude::*;
+use taffy::style::Overflow;
 use taffy::Point;
 
 use crate::rendertree::{
   BuildContext, ElementKind, LayoutContext, PlatformContext, RenderTree, WH,
 };
+
+// Large finite extent used to leave one axis effectively unclipped when only the
+// other axis has non-visible overflow. clip_rect requires a finite rectangle.
+const CLIP_INF: f32 = 1.0e7;
 
 pub fn composite(
   builder: &mut DisplayListBuilder,
@@ -43,14 +48,43 @@ fn build_recursive<'a>(
 ) {
   let element = scene.node(node_id);
 
-  if let ElementKind::View(_) = &element.kind {
+  let (overflow_x, overflow_y) = element
+    .layout
+    .as_ref()
+    .map(|l| (l.style.overflow.x, l.style.overflow.y))
+    .unwrap_or((Overflow::Visible, Overflow::Visible));
+  let clip_x = overflow_x != Overflow::Visible;
+  let clip_y = overflow_y != Overflow::Visible;
+  let needs_clip = clip_x || clip_y;
+
+  let needs_save = matches!(&element.kind, ElementKind::View(_)) || needs_clip;
+  if needs_save {
     builder.save();
   }
 
   element.build(ctx, builder);
 
+  if needs_clip {
+    if let Some(layout) = &element.layout {
+      let w = layout.computed.size.width;
+      let h = layout.computed.size.height;
+      let x_min = if clip_x { 0.0 } else { -CLIP_INF };
+      let y_min = if clip_y { 0.0 } else { -CLIP_INF };
+      let x_max = if clip_x { w } else { CLIP_INF };
+      let y_max = if clip_y { h } else { CLIP_INF };
+      let rect = Rect::new(
+        IPoint::new(x_min, y_min),
+        ISize::new(x_max - x_min, y_max - y_min),
+      );
+      builder.clip_rect(&rect, ClipOperation::Intersect);
+    }
+  }
+
   // Text children are Spans — not visual, skip recursion
   if let ElementKind::Text(_) = &element.kind {
+    if needs_save {
+      builder.restore();
+    }
     return;
   }
 
@@ -96,7 +130,7 @@ fn build_recursive<'a>(
     builder.translate(-pos.x, -pos.y);
   }
 
-  if let ElementKind::View(_) = &element.kind {
+  if needs_save {
     builder.restore();
   }
 }

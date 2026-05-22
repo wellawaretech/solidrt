@@ -78,6 +78,8 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   marginLeft?: Dimension
 
   overflow?: "visible" | "clip" | "hidden" | "scroll"
+  overflowX?: "visible" | "clip" | "hidden" | "scroll"
+  overflowY?: "visible" | "clip" | "hidden" | "scroll"
 }
 
 import type { LCH } from "./color"

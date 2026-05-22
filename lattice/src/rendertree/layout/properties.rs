@@ -182,16 +182,9 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     "left"   => style.inset.left   = parse_length_percentage_auto(value),
 
     // Overflow
-    "overflow" => {
-      let o = match value.get::<String>().expect("overflow must be a string").as_str() {
-        "visible" => Overflow::Visible,
-        "hidden"  => Overflow::Hidden,
-        "scroll"  => Overflow::Scroll,
-        "clip"    => Overflow::Clip,
-        v => panic!("unknown overflow value '{v}'"),
-      };
-      style.overflow = Point { x: o, y: o };
-    }
+    "overflow"  => { let o = parse_overflow("overflow",  value); style.overflow = Point { x: o, y: o }; }
+    "overflowX" => { style.overflow.x = parse_overflow("overflowX", value); }
+    "overflowY" => { style.overflow.y = parse_overflow("overflowY", value); }
 
     // Grid container
     "gridAutoFlow" => {
@@ -227,4 +220,15 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
     _ => return None,
   }
   Some(true)
+}
+
+fn parse_overflow(prop: &str, value: Value<'_>) -> Overflow {
+  let s = value.get::<String>().unwrap_or_else(|_| panic!("{prop} must be a string"));
+  match s.as_str() {
+    "visible" => Overflow::Visible,
+    "hidden"  => Overflow::Hidden,
+    "scroll"  => Overflow::Scroll,
+    "clip"    => Overflow::Clip,
+    v => panic!("unknown {prop} value '{v}'"),
+  }
 }
