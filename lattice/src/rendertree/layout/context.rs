@@ -4,7 +4,7 @@ use taffy::Cache;
 use taffy::{
   compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
   compute_leaf_layout, CacheTree, LayoutBlockContainer, LayoutFlexboxContainer,
-  LayoutGridContainer, RunMode,
+  LayoutGridContainer,
 };
 
 use super::super::tree::RenderTree;
@@ -68,35 +68,22 @@ impl<'a> TraversePartialTree for LayoutContext<'a> {
 }
 
 impl<'a> CacheTree for LayoutContext<'a> {
-  fn cache_get(
-    &self,
-    node_id: NodeId,
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
-    run_mode: RunMode,
-  ) -> Option<taffy::LayoutOutput> {
+  fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<taffy::LayoutOutput> {
     self
       .render_tree
       .node(u64::from(node_id))
       .layout_data()
       .cache
-      .get(known_dimensions, available_space, run_mode)
+      .get(input)
   }
 
-  fn cache_store(
-    &mut self,
-    node_id: NodeId,
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
-    run_mode: RunMode,
-    layout_output: taffy::LayoutOutput,
-  ) {
+  fn cache_store(&mut self, node_id: NodeId, input: &LayoutInput, layout_output: taffy::LayoutOutput) {
     self
       .render_tree
       .node_mut(u64::from(node_id))
       .layout_data_mut()
       .cache
-      .store(known_dimensions, available_space, run_mode, layout_output)
+      .store(input, layout_output)
   }
 
   fn cache_clear(&mut self, node_id: NodeId) {
@@ -170,7 +157,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       } else {
         match element.layout_data().style.display {
           Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
-          Display::Block => compute_block_layout(tree, node_id, inputs),
+          Display::Block => compute_block_layout(tree, node_id, inputs, None),
           Display::Grid => compute_grid_layout(tree, node_id, inputs),
           Display::None => taffy::LayoutOutput::HIDDEN,
         }

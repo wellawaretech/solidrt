@@ -32,6 +32,8 @@ If you get a prompt which asks to implement something, but there's a non-trivial
 
 Always ask for user confirmation of your plan before starting to implement.
 
+Prefer minimalistic proposals which do the bare minimum, while focussing on elegant, correct code. Example: when implementing a text input component, the bare minimum would be to enable and disable the keyboard when focussing on the element and leaving; blinking cursors, cursors that can move, text selection, they are all extra's.
+
 If you get a question without asking for an implementation, then just answer the question instead of implementing anything.
 
 If you do not know something, or if instructions are ambiguous, then explicitly say so and ask for feedback.
