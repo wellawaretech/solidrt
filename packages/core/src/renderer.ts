@@ -3,6 +3,7 @@ import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
 import { parseColorToU32, isColorProp } from "./color"
 import { setEventHandler, cleanupNodeHandlers } from "./events"
+import { getFocusedNodeId, setFocus } from "./focus"
 
 export { getEventHandler } from "./events"
 
@@ -124,9 +125,11 @@ export let {
 
     ffi.deleteNode(parent.id, node.id)
 
-    // Recursively clean up node and all descendants
+    // Recursively clean up node and all descendants. Clear focus before
+    // dropping handlers so onBlur still fires for a focused descendant.
     let cleanup = (n: ProxyNode) => {
       for (let child of n.children) cleanup(child)
+      if (n.id === getFocusedNodeId()) setFocus(null)
       nodes.delete(n.id)
       cleanupNodeHandlers(n.id)
     }

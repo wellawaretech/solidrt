@@ -1,6 +1,6 @@
 import { onCleanup, onSettled } from "@solidjs/signals"
 import { getEventHandler } from "./events"
-import { getFocusedNodeId } from "./focus"
+import { getFocusedNodeId, setFocus } from "./focus"
 
 // ------ Animation frames ----------------
 
@@ -92,6 +92,12 @@ export function attachWindow(_nodeId: number) {
     unsubDown = Flux.on("pointerDown", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerDown")?.(e)
+      }
+      // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
+      // moves focus to a new node is not immediately blurred again.
+      let focused = getFocusedNodeId()
+      if (focused != null && !targets.includes(focused)) {
+        setFocus(null)
       }
     })
 
