@@ -7,6 +7,9 @@ pub enum AlloyCommand {
   EmitInitEvents,
   SetTitle(String),
   SetFullscreen(bool),
+  SetCursor(sdl3::mouse::SystemCursor),
+  SetCursorVisible(bool),
+  SetTextInputActive(bool),
 }
 
 // Pointer kind. Combined with a u64 pointer_id, uniquely identifies an
@@ -96,6 +99,9 @@ pub enum AlloyEvent {
     x: f32,
     y: f32,
     modifiers: Modifiers,
+  },
+  TextInput {
+    text: String,
   },
   // delta_x / delta_y use browser convention: positive delta_y means
   // content should scroll down (wheel rolled toward the user). SDL's
@@ -253,6 +259,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         modifiers: sdl_utils::mod_state().into(),
       })
     }
+    SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
     _ => None,
   }
 }

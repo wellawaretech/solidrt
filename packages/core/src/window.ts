@@ -74,6 +74,7 @@ export function attachWindow(_nodeId: number) {
   let unsubWheel: () => void = null!
   let unsubKeyDown: () => void = null!
   let unsubKeyUp: () => void = null!
+  let unsubTextInput: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
@@ -138,6 +139,13 @@ export function attachWindow(_nodeId: number) {
       }
     })
 
+    unsubTextInput = Flux.on("textInput", (e: any) => {
+      let id = getFocusedNodeId()
+      if (id != null) {
+        getEventHandler(id, "onTextInput")?.(e)
+      }
+    })
+
     // trigger first draw
     draw()
   })
@@ -152,5 +160,6 @@ export function attachWindow(_nodeId: number) {
     if (unsubWheel) unsubWheel()
     if (unsubKeyDown) unsubKeyDown()
     if (unsubKeyUp) unsubKeyUp()
+    if (unsubTextInput) unsubTextInput()
   })
 }

@@ -80,12 +80,19 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   })
   .unwrap();
 
+  let cmd_tx = alloy_cmd_tx.clone();
+  let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
+    cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
+  })
+  .unwrap();
+
   let ffi = Object::new(ctx.clone()).unwrap();
   ffi.set("createRoot", create_root).unwrap();
   ffi.set("createNode", create_node).unwrap();
   ffi.set("deleteNode", delete_node).unwrap();
   ffi.set("insertNode", insert_node).unwrap();
   ffi.set("setProperty", set_property).unwrap();
+  ffi.set("setTextInputActive", set_text_input_active).unwrap();
 
   ctx.globals().set("ffi", ffi).unwrap();
 }

@@ -10,6 +10,7 @@ declare global {
     insertNode(parentId: number, nodeId: number, anchorId?: number): void
     deleteNode(parentId: number, nodeId: number): void
     setProperty(nodeId: number, name: string, value: unknown): void
+    setTextInputActive(active: boolean): void
   }
 }
 

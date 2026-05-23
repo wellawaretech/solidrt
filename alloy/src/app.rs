@@ -140,6 +140,21 @@ impl App {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
+          AlloyCommand::SetCursor(cursor) => {
+            match sdl3::mouse::Cursor::from_system(cursor) {
+              Ok(c) => c.set(),
+              Err(e) => log::warn!("set_cursor failed: {e}"),
+            }
+          }
+          AlloyCommand::SetCursorVisible(visible) => {
+            sdl_context.mouse().show_cursor(visible);
+          }
+          AlloyCommand::SetTextInputActive(active) => {
+            if let Ok(video) = sdl_context.video() {
+              let ti = video.text_input();
+              if active { ti.start(&window); } else { ti.stop(&window); }
+            }
+          }
         }
       }
     }
