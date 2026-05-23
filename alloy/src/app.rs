@@ -94,6 +94,10 @@ impl App {
     apply_main_thread_effects(&initial, &mut render_surface);
     event_tx.send(initial).ok();
 
+    // Polled each loop iteration; transitions emit KeyboardVisibility so the
+    // JS side can react (auto-blur on hide, layout adjustments on show).
+    let mut prev_keyboard_shown = false;
+
     loop {
       match rx.recv_timeout(std::time::Duration::from_millis(8)) {
         Ok(mut dl) => {
@@ -155,6 +159,14 @@ impl App {
               if active { ti.start(&window); } else { ti.stop(&window); }
             }
           }
+        }
+      }
+
+      if let Ok(video) = sdl_context.video() {
+        let shown = video.text_input().is_screen_keyboard_shown(&window);
+        if shown != prev_keyboard_shown {
+          prev_keyboard_shown = shown;
+          event_tx.send(AlloyEvent::KeyboardVisibility { shown }).ok();
         }
       }
     }

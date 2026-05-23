@@ -189,6 +189,15 @@ fn ui_thread(
                 });
               }
             }
+            alloy::AlloyEvent::KeyboardVisibility { shown } => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  obj.set("shown", shown).expect("set shown");
+                  emit_event(&ctx, "keyboardVisibility", obj);
+                });
+              }
+            }
             alloy::AlloyEvent::FrameRendered { frame, fps } => {
               platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {

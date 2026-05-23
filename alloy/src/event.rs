@@ -103,6 +103,10 @@ pub enum AlloyEvent {
   TextInput {
     text: String,
   },
+  // Emitted when the on-screen keyboard visibility changes. SDL does not
+  // provide an event for this, so it is detected by polling
+  // SDL_ScreenKeyboardShown each loop iteration.
+  KeyboardVisibility { shown: bool },
   // delta_x / delta_y use browser convention: positive delta_y means
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.

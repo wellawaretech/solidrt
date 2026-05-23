@@ -75,6 +75,7 @@ export function attachWindow(_nodeId: number) {
   let unsubKeyDown: () => void = null!
   let unsubKeyUp: () => void = null!
   let unsubTextInput: () => void = null!
+  let unsubKeyboardVisibility: () => void = null!
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
@@ -152,6 +153,12 @@ export function attachWindow(_nodeId: number) {
       }
     })
 
+    // When the user dismisses the on-screen keyboard (swipe down, "Done",
+    // back button), blur the focused node so the app's UI state catches up.
+    unsubKeyboardVisibility = Flux.on("keyboardVisibility", ({ shown }: { shown: boolean }) => {
+      if (!shown) setFocus(null)
+    })
+
     // trigger first draw
     draw()
   })
@@ -167,5 +174,6 @@ export function attachWindow(_nodeId: number) {
     if (unsubKeyDown) unsubKeyDown()
     if (unsubKeyUp) unsubKeyUp()
     if (unsubTextInput) unsubTextInput()
+    if (unsubKeyboardVisibility) unsubKeyboardVisibility()
   })
 }
