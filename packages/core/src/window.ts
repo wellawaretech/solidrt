@@ -50,6 +50,16 @@ export function onResize(fn: (data: ResizeEvent) => void) {
   return unsubscribe
 }
 
+// Fires after layout has been computed for the current frame but before paint.
+// Setting properties that affect layout from this callback will be picked up
+// by a re-layout pass before painting (one extra pass; cascades beyond that
+// paint stale).
+export function onLayout(fn: () => void) {
+  let unsubscribe = Flux.on("postLayout", fn)
+  onCleanup(unsubscribe)
+  return unsubscribe
+}
+
 export function onWindowFocus(fn: () => void) {
   let unsubscribe = Flux.on("windowFocus", fn)
   onCleanup(unsubscribe)

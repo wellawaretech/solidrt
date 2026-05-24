@@ -46,7 +46,23 @@ pub fn init(
     let mut builder = DisplayListBuilder::new(None);
     let scale = platform.display_scale();
     builder.scale(scale, scale);
-    rendertree::composite::composite(&mut builder, &mut tree.0.borrow_mut(), &platform);
+
+    // Layout phase: scope the mut borrow so onLayout handlers (which may
+    // call setProperty etc.) don't trip the RefCell.
+    {
+      let mut tree_b = tree.0.borrow_mut();
+      rendertree::composite::layout_phase(&mut tree_b, &platform);
+    }
+
+    // Post-layout hook. Handlers run synchronously and may invalidate the
+    // layout cache via setProperty; paint_phase re-runs layout to absorb
+    // those changes.
+    emit_event(&qtx, "postLayout", ());
+
+    {
+      let mut tree_b = tree.0.borrow_mut();
+      rendertree::composite::paint_phase(&mut builder, &mut tree_b, &platform);
+    }
 
     for event in engine_state.drain_input() {
       match event {

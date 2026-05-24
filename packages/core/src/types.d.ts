@@ -12,7 +12,6 @@ declare global {
     setProperty(nodeId: number, name: string, value: unknown): void
     setTextInputActive(active: boolean): void
     measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
-    getBoundingBox(id: number): { x: number, y: number, width: number, height: number } | null
   }
 }
 

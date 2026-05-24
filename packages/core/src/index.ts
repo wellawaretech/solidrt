@@ -1,7 +1,5 @@
 export * from "./renderer"
 export { setFocus, getFocusedNodeId } from "./focus"
-export { onRender, onResize, onWindowFocus, onWindowBlur } from "./window"
+export { onRender, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { measureText } from "./text"
-export { getBoundingBox } from "./layout"
-export type { BoundingBox } from "./layout"
 export type { MeasureTextOptions } from "./types"

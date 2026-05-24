@@ -42,7 +42,6 @@ impl WH {
 pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
   pub size: WH,
-  pub origin: XY,
 }
 
 impl<'a> BuildContext<'a> {
@@ -50,7 +49,6 @@ impl<'a> BuildContext<'a> {
     Self {
       platform,
       size: WH::default(),
-      origin: XY::default(),
     }
   }
 }
