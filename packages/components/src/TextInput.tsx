@@ -1,5 +1,6 @@
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { measureText, setFocus } from "@solidrt/core"
+import { theme } from "./theme"
 
 type Dimension = number | "auto" | `${number}%`
 
@@ -16,15 +17,6 @@ export interface TextInputProps {
   disabled?: boolean
   autoFocus?: boolean
 
-  fontSize?: number
-  color?: string
-  placeholderColor?: string
-  background?: string
-  borderColor?: string
-  borderWidth?: number
-  borderRadius?: number
-  caretColor?: string
-  padding?: number
   width?: Dimension
 }
 
@@ -40,15 +32,6 @@ export function TextInput(props: TextInputProps) {
   let blinkId: any = null
 
   let value = () => props.value ?? internalValue()
-  let fontSize = () => props.fontSize ?? 14
-  let color = () => props.color ?? "#333"
-  let placeholderColor = () => props.placeholderColor ?? "rgba(0,0,0,0.4)"
-  let background = () => props.background ?? "#ccc"
-  let borderColor = () => props.borderColor ?? "rgba(0,0,0,0.2)"
-  let borderWidth = () => props.borderWidth ?? 1
-  let borderRadius = () => props.borderRadius ?? 4
-  let caretColor = () => props.caretColor ?? color()
-  let padding = () => props.padding ?? 8
 
   let commit = (next: string) => {
     if (props.maxLength != null && next.length > props.maxLength) {
@@ -106,15 +89,15 @@ export function TextInput(props: TextInputProps) {
 
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0
   let displayText = () => (showPlaceholder() ? (props.placeholder ?? "") : value())
-  let displayColor = () => (showPlaceholder() ? placeholderColor() : color())
+  let displayColor = () => (showPlaceholder() ? theme.color.textMuted : theme.color.text)
 
   // V1: viewport width derived from numeric props.width minus padding.
   // For "auto" / "%" widths, fall back to 0 (no scroll, caret may overflow).
-  let viewportWidth = () => (typeof props.width === "number" ? props.width - 2 * padding() : 0)
+  let viewportWidth = () => (typeof props.width === "number" ? props.width - 2 * theme.spacing.md : 0)
   let caretWidth = () => (focused() && !showPlaceholder() ? 1 : 0)
   let scrollX = () => {
     if (showPlaceholder()) return 0
-    let tw = measureText(value(), { fontSize: fontSize() }).width
+    let tw = measureText(value(), { fontSize: theme.fontSize.body }).width
     let vw = viewportWidth()
     if (vw <= 0) return 0
     return Math.max(0, tw + caretWidth() - vw)
@@ -129,20 +112,22 @@ export function TextInput(props: TextInputProps) {
       flexDirection="row"
       alignItems="center"
       width={props.width}
-      paddingLeft={padding()}
-      paddingRight={padding()}
+      paddingLeft={theme.spacing.md}
+      paddingRight={theme.spacing.md}
+      paddingTop={theme.spacing.md}
+      paddingBottom={theme.spacing.md}
       onPointerDown={handlePointerDown}
       onFocus={handleFocus}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
       onTextInput={handleTextInput}
     >
-      <d-rect color={background()} radius={borderRadius()} />
+      <d-rect color={theme.color.surface} radius={theme.radius.sm} />
       <d-rect
         drawStyle="stroke"
-        color={borderColor()}
-        strokeWidth={borderWidth()}
-        radius={borderRadius()}
+        color={theme.color.border}
+        strokeWidth={theme.borderWidth.sm}
+        radius={theme.radius.sm}
       />
       <view
         flex={1}
@@ -151,11 +136,11 @@ export function TextInput(props: TextInputProps) {
         overflow="hidden"
         scrollX={scrollX()}
       >
-        <text fontSize={fontSize()} color={displayColor()} maxLines={1} flexShrink={0}>
+        <text fontSize={theme.fontSize.body} color={displayColor()} maxLines={1} flexShrink={0}>
           {displayText()}
         </text>
         {focused() && caretOn() && !showPlaceholder() ? (
-          <rect color={caretColor()} w={1} h={fontSize()} flexShrink={0} />
+          <rect color={theme.color.text} w={1} h={theme.fontSize.body} flexShrink={0} />
         ) : null}
       </view>
     </view>
