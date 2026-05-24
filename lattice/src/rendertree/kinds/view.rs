@@ -10,6 +10,10 @@ pub struct View {
   pub scale: Option<f32>,
   pub pos: Option<XY>,
   pub center: Option<XY>,
+  // Scroll offset applied to children at build time, after the clip is set.
+  // Positive values shift content leftward/upward (web convention: positive
+  // scrollX means scrolled "into" the content from the left).
+  pub scroll: Option<XY>,
 }
 
 impl View {
@@ -84,6 +88,8 @@ impl View {
       "y" => { let pos = self.pos.get_or_insert_with(XY::default); pos.y = value.get::<f64>().expect("y must be a number") as f32; Some(false) }
       "cx" => { let center = self.center.get_or_insert_with(XY::default); center.x = value.get::<f64>().expect("cx must be a number") as f32; Some(false) }
       "cy" => { let center = self.center.get_or_insert_with(XY::default); center.y = value.get::<f64>().expect("cy must be a number") as f32; Some(false) }
+      "scrollX" => { let s = self.scroll.get_or_insert_with(XY::default); s.x = value.get::<f64>().expect("scrollX must be a number") as f32; Some(false) }
+      "scrollY" => { let s = self.scroll.get_or_insert_with(XY::default); s.y = value.get::<f64>().expect("scrollY must be a number") as f32; Some(false) }
       _ => None,
     }
   }

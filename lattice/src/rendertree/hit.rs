@@ -119,6 +119,14 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
     return true;
   }
 
+  // Scroll offset on a View shifts its children's apparent positions by -scroll
+  // in viewport space, so to map a viewport-local point into a child's frame we
+  // add scroll back.
+  let scroll = match &element.kind {
+    ElementKind::View(v) => v.scroll.unwrap_or_default(),
+    _ => XY::default(),
+  };
+
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
     let child_size = child
@@ -131,7 +139,7 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
       .as_ref()
       .map(|l| XY::new(l.computed.location.x, l.computed.location.y))
       .unwrap_or_default();
-    let child_point = XY::new(local.x - child_pos.x, local.y - child_pos.y);
+    let child_point = XY::new(local.x - child_pos.x + scroll.x, local.y - child_pos.y + scroll.y);
     if hit_recursive(tree, child_id, child_point, child_size, path) {
       if pointer_events == PointerEvents::None {
         path.remove(my_index);

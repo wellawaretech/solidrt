@@ -80,6 +80,15 @@ fn build_recursive<'a>(
     }
   }
 
+  // Scroll offset: applied after the clip so the clip box stays put in
+  // viewport space while children slide under it. Positive scroll shifts
+  // content leftward/upward.
+  if let ElementKind::View(view) = &element.kind {
+    if let Some(s) = view.scroll {
+      builder.translate(-s.x, -s.y);
+    }
+  }
+
   // Text children are Spans — not visual, skip recursion
   if let ElementKind::Text(_) = &element.kind {
     if needs_save {

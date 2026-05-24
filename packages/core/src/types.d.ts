@@ -11,7 +11,16 @@ declare global {
     deleteNode(parentId: number, nodeId: number): void
     setProperty(nodeId: number, name: string, value: unknown): void
     setTextInputActive(active: boolean): void
+    measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
   }
+}
+
+export interface MeasureTextOptions {
+  fontFamily?: "sans" | "mono" | (string & {})
+  fontSize?: number
+  fontStyle?: "normal" | "italic"
+  fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+  maxLines?: number
 }
 
 type Children = SolidJSX.Element
@@ -102,6 +111,8 @@ export interface TransformProps {
   y?: OA<number>
   cx?: OA<number>
   cy?: OA<number>
+  scrollX?: OA<number>
+  scrollY?: OA<number>
 }
 
 export interface PointerProps {

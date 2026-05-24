@@ -1,15 +1,32 @@
-use flux::rquickjs::{function::Opt, Ctx, Function, JsLifetime, Object, Value};
+use alloy::impellers::{FontStyle, FontWeight};
+use flux::rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use taffy::prelude::*;
 
 use crate::rendertree::layout::properties;
-use crate::rendertree::{ElementKind, Path, Rectangle, RenderTree, Span, Text, View, Window};
+use crate::rendertree::{ElementKind, Measurable, Path, PlatformContext, Rectangle, RenderTree, Span, Text, View, Window};
+
+struct TextSize {
+  width: f32,
+  height: f32,
+}
+
+impl<'js> IntoJs<'js> for TextSize {
+  fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("width", self.width)?;
+    obj.set("height", self.height)?;
+    Ok(obj.into_value())
+  }
+}
 
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
-pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>) {
+pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>, platform: Arc<PlatformContext>) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).unwrap();
 
@@ -86,6 +103,51 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   })
   .unwrap();
 
+  let measure_platform = platform.clone();
+  let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
+    let mut node = Text::default();
+    node.computed_text = text;
+
+    if let Some(opts) = options.0 {
+      if let Ok(v) = opts.get::<_, String>("fontFamily") {
+        node.font_family = match v.as_str() {
+          "mono" => "Noto Sans Mono".to_string(),
+          "sans" => "Noto Sans".to_string(),
+          other => other.to_string(),
+        };
+      }
+      if let Ok(v) = opts.get::<_, f64>("fontSize") { node.font_size = v as f32; }
+      if let Ok(v) = opts.get::<_, String>("fontStyle") {
+        node.font_style = match v.as_str() {
+          "italic" => FontStyle::Italic,
+          _ => FontStyle::Normal,
+        };
+      }
+      if let Ok(v) = opts.get::<_, f64>("fontWeight") {
+        node.font_weight = match v as u32 {
+          100 => FontWeight::Thin,
+          200 => FontWeight::ExtraLight,
+          300 => FontWeight::Light,
+          500 => FontWeight::Medium,
+          600 => FontWeight::SemiBold,
+          700 => FontWeight::Bold,
+          800 => FontWeight::ExtraBold,
+          900 => FontWeight::Black,
+          _ => FontWeight::Regular,
+        };
+      }
+      if let Ok(v) = opts.get::<_, f64>("maxLines") { node.max_lines = v as u32; }
+    }
+
+    let size = node.measure(
+      Size { width: None, height: None },
+      Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+      &measure_platform,
+    );
+    TextSize { width: size.width, height: size.height }
+  })
+  .unwrap();
+
   let ffi = Object::new(ctx.clone()).unwrap();
   ffi.set("createRoot", create_root).unwrap();
   ffi.set("createNode", create_node).unwrap();
@@ -93,6 +155,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   ffi.set("insertNode", insert_node).unwrap();
   ffi.set("setProperty", set_property).unwrap();
   ffi.set("setTextInputActive", set_text_input_active).unwrap();
+  ffi.set("measureText", measure_text).unwrap();
 
   ctx.globals().set("ffi", ffi).unwrap();
 }

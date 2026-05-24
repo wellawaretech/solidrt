@@ -231,6 +231,7 @@ fn ui_thread(
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
       let tree_cmd_tx = alloy_cmd_tx.clone();
+      let tree_platform = platform.clone();
       let mut builder = FluxEngine::builder()
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
@@ -239,7 +240,7 @@ fn ui_thread(
           flux::LogLevel::Error => log::error!("{msg}"),
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx));
+        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform));
       #[cfg(feature = "go")]
       if let Some(url) = dev_server.get().cloned() {
         builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));

@@ -1,3 +1,5 @@
 export * from "./renderer"
 export { setFocus, getFocusedNodeId } from "./focus"
 export { onRender, onResize, onWindowFocus, onWindowBlur } from "./window"
+export { measureText } from "./text"
+export type { MeasureTextOptions } from "./types"
