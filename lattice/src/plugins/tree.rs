@@ -23,6 +23,24 @@ impl<'js> IntoJs<'js> for TextSize {
   }
 }
 
+struct BoundingBox {
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+}
+
+impl<'js> IntoJs<'js> for BoundingBox {
+  fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("x", self.x)?;
+    obj.set("y", self.y)?;
+    obj.set("width", self.width)?;
+    obj.set("height", self.height)?;
+    Ok(obj.into_value())
+  }
+}
+
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
@@ -103,6 +121,56 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   })
   .unwrap();
 
+  let tree_ref = shared.0.clone();
+  let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> {
+    // TODO: build_recursive in composite.rs already accumulates the absolute
+    // origin for every node while painting; this function re-walks the tree
+    // for each query. Cache the absolute (x, y) into LayoutData during the
+    // build pass and read it back here instead of recomputing.
+    //
+    // Also: rotate/scale on intermediate views are not accounted for; only
+    // translates compose cleanly into an axis-aligned bounding box.
+    let tree = tree_ref.borrow();
+
+    let mut cur_id = id;
+    let (width, height);
+    let (mut x, mut y);
+    {
+      let node = tree.try_node(cur_id)?;
+      let layout = node.layout.as_ref()?;
+      if layout.cache.is_empty() { return None; }
+      width = layout.computed.size.width;
+      height = layout.computed.size.height;
+      x = layout.computed.location.x;
+      y = layout.computed.location.y;
+    }
+
+    loop {
+      let parent_id = match tree.try_node(cur_id).and_then(|n| n.parent) {
+        Some(p) => p,
+        None => break,
+      };
+      let parent = match tree.try_node(parent_id) {
+        Some(p) => p,
+        None => break,
+      };
+      if let ElementKind::View(v) = &parent.kind {
+        if let Some(pos) = v.pos {
+          x += pos.x;
+          y += pos.y;
+        }
+      }
+      if let Some(parent_layout) = parent.layout.as_ref() {
+        x += parent_layout.computed.location.x;
+        y += parent_layout.computed.location.y;
+      }
+      cur_id = parent_id;
+    }
+
+    Some(BoundingBox { x, y, width, height })
+  })
+  .unwrap();
+
   let measure_platform = platform.clone();
   let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
     let mut node = Text::default();
@@ -156,6 +224,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   ffi.set("setProperty", set_property).unwrap();
   ffi.set("setTextInputActive", set_text_input_active).unwrap();
   ffi.set("measureText", measure_text).unwrap();
+  ffi.set("getBoundingBox", get_bounding_box).unwrap();
 
   ctx.globals().set("ffi", ffi).unwrap();
 }

@@ -20,7 +20,6 @@ export function SafeArea(props: {
     has(edge) ? Math.max(insets()[edge], props.minimum ?? 0) : 0
   return (
     <view
-      overflow="hidden"
       flex={1}
       flexDirection="column"
       marginTop={pad("top")}
