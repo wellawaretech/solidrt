@@ -97,7 +97,7 @@ export function TextInput(props: TextInputProps) {
   let caretWidth = () => (focused() && !showPlaceholder() ? 1 : 0)
   let scrollX = () => {
     if (showPlaceholder()) return 0
-    let tw = measureText(value(), { fontSize: theme.fontSize.body }).width
+    let tw = measureText(value(), { fontSize: theme.text.body.size }).width
     let vw = viewportWidth()
     if (vw <= 0) return 0
     return Math.max(0, tw + caretWidth() - vw)
@@ -114,8 +114,8 @@ export function TextInput(props: TextInputProps) {
       width={props.width}
       paddingLeft={theme.spacing.md}
       paddingRight={theme.spacing.md}
-      paddingTop={theme.spacing.md}
-      paddingBottom={theme.spacing.md}
+      paddingTop={theme.spacing.sm}
+      paddingBottom={theme.spacing.sm}
       onPointerDown={handlePointerDown}
       onFocus={handleFocus}
       onBlur={handleBlur}
@@ -136,11 +136,17 @@ export function TextInput(props: TextInputProps) {
         overflow="hidden"
         scrollX={scrollX()}
       >
-        <text fontSize={theme.fontSize.body} color={displayColor()} maxLines={1} flexShrink={0}>
+        <text
+          fontSize={theme.text.body.size}
+          lineHeight={theme.text.body.lineHeight}
+          color={displayColor()}
+          maxLines={1}
+          flexShrink={0}
+        >
           {displayText()}
         </text>
         {focused() && caretOn() && !showPlaceholder() ? (
-          <rect color={theme.color.text} w={1} h={theme.fontSize.body} flexShrink={0} />
+          <rect color={theme.color.text} w={1} h={theme.text.body.size} flexShrink={0} />
         ) : null}
       </view>
     </view>

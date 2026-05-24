@@ -17,6 +17,7 @@ pub struct Text {
   pub font_weight: FontWeight,
   pub text_alignment: TextAlignment,
   pub max_lines: u32,
+  pub line_height: f32,
   pub paint: PaintState,
 }
 
@@ -30,6 +31,7 @@ impl Default for Text {
       font_weight: FontWeight::Medium,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
+      line_height: 0.0,
       paint: PaintState::default(),
     }
   }
@@ -46,6 +48,7 @@ impl Buildable for Text {
     style.set_font_weight(self.font_weight);
     style.set_text_alignment(self.text_alignment);
     style.set_max_lines(self.max_lines);
+    style.set_height(self.line_height);
 
     let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
       return;
@@ -84,6 +87,7 @@ impl Measurable for Text {
     style.set_font_style(self.font_style);
     style.set_font_weight(self.font_weight);
     style.set_max_lines(self.max_lines);
+    style.set_height(self.line_height);
 
     para_builder.push_style(&style);
     para_builder.add_text(&self.computed_text);
@@ -134,6 +138,7 @@ impl Text {
         Some(true)
       }
       "fontSize" => { self.font_size = value.get::<f64>().expect("fontSize must be a number") as f32; Some(true) }
+      "lineHeight" => { self.line_height = value.get::<f64>().expect("lineHeight must be a number") as f32; Some(true) }
       "maxLines" => { self.max_lines = value.get::<f64>().expect("maxLines must be a number") as u32; Some(true) }
       "fontWeight" => {
         let w = value.get::<f64>().expect("fontWeight must be a number") as u32;
