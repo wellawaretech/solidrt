@@ -96,10 +96,6 @@ impl RenderTree {
     self.node_mut(id)
   }
 
-  pub fn try_node(&self, id: u64) -> Option<&Element> {
-    self.nodes.get(&id)
-  }
-
   pub(crate) fn node(&self, id: u64) -> &Element {
     self
       .nodes

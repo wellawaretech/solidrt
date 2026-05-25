@@ -198,6 +198,27 @@ fn ui_thread(
                 });
               }
             }
+            alloy::AlloyEvent::PowerStatus { info } => {
+              if let Some(eh) = current_exec_events.borrow().as_ref() {
+                use alloy::sdl_utils::PowerState;
+                let state = match info.state {
+                  PowerState::OnBattery => "onBattery",
+                  PowerState::Charging  => "charging",
+                  PowerState::Charged   => "charged",
+                  PowerState::NoBattery => "noBattery",
+                  PowerState::Unknown   => "unknown",
+                };
+                eh.exec(move |ctx| {
+                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                  obj.set("state", state).expect("set state");
+                  match info.percent {
+                    Some(p) => obj.set("percent", p).expect("set percent"),
+                    None    => obj.set("percent", rquickjs::Null).expect("set percent null"),
+                  }
+                  emit_event(&ctx, "powerStatus", obj);
+                });
+              }
+            }
             alloy::AlloyEvent::FrameRendered { frame, fps } => {
               platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {

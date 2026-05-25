@@ -89,6 +89,7 @@ impl App {
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut fps: u32 = 0;
+    let mut last_power_check = Instant::now();
 
     let initial = current_resize_event(&window);
     apply_main_thread_effects(&initial, &mut render_surface);
@@ -168,6 +169,12 @@ impl App {
           prev_keyboard_shown = shown;
           event_tx.send(AlloyEvent::KeyboardVisibility { shown }).ok();
         }
+      }
+
+      //TODO how often do we check? configurable? send on AlloyCommand only?
+      if last_power_check.elapsed().as_secs() >= 10 {
+        last_power_check = Instant::now();
+        event_tx.send(AlloyEvent::PowerStatus { info: crate::sdl_utils::get_power_info() }).ok();
       }
     }
   }

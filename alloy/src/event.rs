@@ -103,6 +103,9 @@ pub enum AlloyEvent {
   TextInput {
     text: String,
   },
+  PowerStatus {
+    info: sdl_utils::PowerInfo,
+  },
   // Emitted when the on-screen keyboard visibility changes. SDL does not
   // provide an event for this, so it is detected by polling
   // SDL_ScreenKeyboardShown each loop iteration.
