@@ -28,7 +28,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     .enable_all()
     .build()
     .unwrap();
-  start(&rt, None, None);
+  start(&rt, None, None, (1280, 720));
   0
 }
 

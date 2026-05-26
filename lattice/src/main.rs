@@ -1,7 +1,7 @@
 fn main() {
   let mut args = std::env::args().skip(1);
   let mut record = false;
-  let mut fps: u32 = 30;
+  let mut fps: u32 = 60;
   let mut duration: u32 = 1;
   let mut size: (u32, u32) = (1280, 720);
   let mut source_path: Option<String> = None;

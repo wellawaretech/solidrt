@@ -44,7 +44,7 @@ build options:
       --stdout          Write bundle to stdout
 
 record options:
-      --fps <N>             Frames per second (default: 30)
+      --fps <N>             Frames per second (default: 60)
       --duration <N>        Duration in seconds (default: 1)
       --size <WxH>          Frame size (default: 1280x720)`)
 }
