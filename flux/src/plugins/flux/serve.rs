@@ -1,9 +1,9 @@
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response as HyperResponse, StatusCode};
+use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
 use rquickjs::promise::MaybePromise;
 use rquickjs::{function::MutFn, Class, Ctx, Function, Object, Value};
@@ -11,18 +11,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::flux::request::{request_from_parts, Request};
 use crate::plugins::flux::response::Response;
-
-fn build_request_obj<'js>(
-  ctx: &Ctx<'js>,
-  method: &str,
-  url: &str,
-) -> rquickjs::Result<Object<'js>> {
-  let obj = Object::new(ctx.clone())?;
-  obj.set("method", method)?;
-  obj.set("url", url)?;
-  Ok(obj)
-}
 
 fn text_response(status: StatusCode, body: &str) -> HyperResponse<Full<Bytes>> {
   HyperResponse::builder()
@@ -32,12 +22,13 @@ fn text_response(status: StatusCode, body: &str) -> HyperResponse<Full<Bytes>> {
     .expect("build response")
 }
 
-fn response_from_native(r: &Response) -> HyperResponse<Full<Bytes>> {
+fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<Full<Bytes>> {
   let status =
     StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
   let mut builder = HyperResponse::builder().status(status);
   let mut has_content_type = false;
-  for (k, v) in &r.headers {
+  let headers = r.headers.borrow().entries();
+  for (k, v) in &headers {
     if k.eq_ignore_ascii_case("content-type") {
       has_content_type = true;
     }
@@ -46,8 +37,9 @@ fn response_from_native(r: &Response) -> HyperResponse<Full<Bytes>> {
   if !has_content_type {
     builder = builder.header("Content-Type", "text/plain");
   }
+  let body = r.body.take().unwrap_or_default();
   builder
-    .body(Full::new(Bytes::from(r.body.clone())))
+    .body(Full::new(Bytes::from(body)))
     .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
 }
 
@@ -67,13 +59,28 @@ fn response_from_value<'js>(
 }
 
 async fn handle_request<'js>(
-  req: Request<Incoming>,
+  req: HyperRequest<Incoming>,
   fetch_fn: Option<&Function<'js>>,
   logger: &Logger,
 ) -> HyperResponse<Full<Bytes>> {
   let method = req.method().as_str().to_string();
   let url = req.uri().to_string();
+  let headers: Vec<(String, String)> = req
+    .headers()
+    .iter()
+    .filter_map(|(name, value)| {
+      value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+    })
+    .collect();
   logger.log(&format!("[flux] serve {} {}", method, url));
+
+  let body_bytes = match req.into_body().collect().await {
+    Ok(collected) => collected.to_bytes().to_vec(),
+    Err(e) => {
+      logger.warn(&format!("[flux] serve request body read error: {e}"));
+      return text_response(StatusCode::BAD_REQUEST, "Bad Request");
+    }
+  };
 
   let f = match fetch_fn {
     Some(f) => f,
@@ -81,9 +88,15 @@ async fn handle_request<'js>(
   };
 
   let ctx = f.ctx().clone();
-  let val = match build_request_obj(&ctx, &method, &url)
-    .and_then(|req_obj| f.call::<(Object<'_>,), Value<'_>>((req_obj,)))
-  {
+  let req_class = match request_from_parts(&ctx, method, url, body_bytes, headers) {
+    Ok(c) => c,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve build Request error: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
+
+  let val = match f.call::<(Class<'_, Request<'_>>,), Value<'_>>((req_class,)) {
     Ok(v) => v,
     Err(e) => {
       logger.warn(&format!("[flux] serve fetch callback error: {e}"));
@@ -111,7 +124,7 @@ async fn serve_one_connection<'js>(
   logger: Logger,
 ) {
   let io = TokioIo::new(sock);
-  let service = service_fn(|req: Request<Incoming>| {
+  let service = service_fn(|req: HyperRequest<Incoming>| {
     let fetch_fn = fetch_fn.clone();
     let logger = logger.clone();
     async move { Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), &logger).await) }

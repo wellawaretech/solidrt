@@ -1,41 +1,57 @@
 use rquickjs::class::Trace;
 use rquickjs::function::Opt;
-use rquickjs::{Class, Ctx, JsLifetime, Object, TypedArray, Value};
+use rquickjs::promise::Promised;
+use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 
-#[derive(Trace, JsLifetime)]
+use crate::plugins::body::{
+  body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue,
+};
+use crate::plugins::flux::headers::{headers_from_init, headers_from_pairs, Headers};
+
+#[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]
-pub struct Response {
+pub struct Response<'js> {
   #[qjs(skip_trace)]
-  pub body: Vec<u8>,
-  pub status: u16,
+  pub(crate) body: BodyState,
+  pub(crate) status: u16,
   #[qjs(skip_trace)]
-  pub status_text: String,
+  pub(crate) status_text: String,
+  pub(crate) headers: Class<'js, Headers>,
   #[qjs(skip_trace)]
-  pub headers: Vec<(String, String)>,
+  pub(crate) url: String,
+}
+
+impl<'js> Trace<'js> for Response<'js> {
+  fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
+    self.headers.trace(tracer);
+  }
 }
 
 #[rquickjs::methods]
-impl Response {
+impl<'js> Response<'js> {
   #[qjs(constructor)]
-  pub fn new<'js>(
+  pub fn new(
+    ctx: Ctx<'js>,
     body: Opt<Value<'js>>,
     init: Opt<Object<'js>>,
   ) -> rquickjs::Result<Self> {
-    let body = match body.0 {
-      Some(v) => extract_body(&v)?,
+    let body_bytes = match body.0 {
+      Some(v) => extract_body_value(&v, "Response")?,
       None => Vec::new(),
     };
-    let (status, status_text, headers) = parse_init(init.0.as_ref())?;
+    let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
+    let headers = headers_from_init(&ctx, headers_val.as_ref())?;
     Ok(Response {
-      body,
+      body: BodyState::new(body_bytes),
       status,
       status_text,
       headers,
+      url: String::new(),
     })
   }
 
-  #[qjs(static)]
-  pub fn json<'js>(
+  #[qjs(static, rename = "json")]
+  pub fn json_static(
     ctx: Ctx<'js>,
     val: Value<'js>,
     init: Opt<Object<'js>>,
@@ -45,18 +61,20 @@ impl Response {
       .map(|s| s.to_string())
       .transpose()?
       .unwrap_or_else(|| "null".to_string());
-    let (status, status_text, mut headers) = parse_init(init.0.as_ref())?;
-    let has_ct = headers
-      .iter()
-      .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
-    if !has_ct {
-      headers.push(("Content-Type".to_string(), "application/json".to_string()));
+    let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
+    let headers = headers_from_init(&ctx, headers_val.as_ref())?;
+    {
+      let h = headers.borrow();
+      if !h.has("content-type".to_string()) {
+        h.set("Content-Type".to_string(), "application/json".to_string());
+      }
     }
     Ok(Response {
-      body: json.into_bytes(),
+      body: BodyState::new(json.into_bytes()),
       status,
       status_text,
       headers,
+      url: String::new(),
     })
   }
 
@@ -69,45 +87,78 @@ impl Response {
   pub fn status_text(&self) -> String {
     self.status_text.clone()
   }
+
+  #[qjs(get)]
+  pub fn ok(&self) -> bool {
+    self.status >= 200 && self.status < 300
+  }
+
+  #[qjs(get)]
+  pub fn url(&self) -> String {
+    self.url.clone()
+  }
+
+  #[qjs(get)]
+  pub fn headers(&self) -> Class<'js, Headers> {
+    self.headers.clone()
+  }
+
+  pub fn text(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<String>>>> {
+    let text = body_text(&self.body, &ctx)?;
+    Ok(Promised(std::future::ready(Ok(text))))
+  }
+
+  pub fn bytes(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsBytes>>>> {
+    let bytes = body_bytes(&self.body, &ctx)?;
+    Ok(Promised(std::future::ready(Ok(bytes))))
+  }
+
+  pub fn json(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsonValue>>>> {
+    let json = body_json(&self.body, &ctx)?;
+    Ok(Promised(std::future::ready(Ok(json))))
+  }
 }
 
-fn extract_body<'js>(val: &Value<'js>) -> rquickjs::Result<Vec<u8>> {
-  if val.is_null() || val.is_undefined() {
-    return Ok(Vec::new());
-  }
-  if let Some(s) = val.as_string() {
-    return Ok(s.to_string()?.into_bytes());
-  }
-  if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
-  }
-  Err(rquickjs::Error::new_from_js_message(
-    "body",
-    "Response",
-    "must be string, Uint8Array, null, or undefined",
-  ))
+/// Build a Response instance directly from Rust state (used by fetch.rs).
+pub(crate) fn response_from_parts<'js>(
+  ctx: &Ctx<'js>,
+  body: Vec<u8>,
+  status: u16,
+  status_text: String,
+  url: String,
+  headers: Vec<(String, String)>,
+) -> rquickjs::Result<Class<'js, Response<'js>>> {
+  let headers = headers_from_pairs(ctx, headers)?;
+  Class::instance(
+    ctx.clone(),
+    Response {
+      body: BodyState::new(body),
+      status,
+      status_text,
+      headers,
+      url,
+    },
+  )
 }
 
 fn parse_init<'js>(
   init: Option<&Object<'js>>,
-) -> rquickjs::Result<(u16, String, Vec<(String, String)>)> {
+) -> rquickjs::Result<(u16, String, Option<Value<'js>>)> {
   let status: u16 = init.and_then(|o| o.get("status").ok()).unwrap_or(200);
   let status_text: String = init
     .and_then(|o| o.get("statusText").ok())
     .unwrap_or_default();
-  let headers = match init.and_then(|o| o.get::<_, Object>("headers").ok()) {
-    Some(h) => {
-      let mut out = Vec::new();
-      for key in h.keys::<String>().flatten() {
-        if let Ok(Some(val)) = h.get::<_, Option<String>>(&key) {
-          out.push((key, val));
-        }
-      }
-      out
-    }
-    None => Vec::new(),
-  };
-  Ok((status, status_text, headers))
+  let headers_val = init.and_then(|o| o.get::<_, Value>("headers").ok());
+  Ok((status, status_text, headers_val))
 }
 
 pub(crate) fn init_response(ctx: &Ctx<'_>) {

@@ -1,57 +1,29 @@
-use rquickjs::{
-  function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value,
-};
+use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 use std::io;
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-use crate::plugins::body::attach_body;
+use crate::plugins::flux::response::{response_from_parts, Response};
 use crate::plugins::http::{reqwest_err, HttpClient};
 
 pub struct ResponseData {
   pub status: u16,
   pub status_text: String,
   pub url: String,
-  pub ok: bool,
-  pub headers_json: String,
+  pub headers: Vec<(String, String)>,
   pub body: Vec<u8>,
 }
 
-fn build_response<'js>(ctx: &Ctx<'js>, data: ResponseData) -> rquickjs::Result<Value<'js>> {
-  let body = Rc::new(data.body);
-  let headers = ctx.json_parse(data.headers_json)?;
-
-  let obj = Object::new(ctx.clone())?;
-  obj.set("ok", data.ok)?;
-  obj.set("status", data.status)?;
-  obj.set("statusText", data.status_text)?;
-  obj.set("url", data.url)?;
-  obj.set("headers", headers)?;
-
-  let body_for_closure = body.clone();
-  attach_body(
-    ctx,
-    &obj,
-    move || {
-      let body = body_for_closure.clone();
-      async move { Ok((*body).clone()) }
-    },
-    true,
-  )?;
-
-  Ok(obj.into_value())
-}
-
-fn headers_to_json(headers: &reqwest::header::HeaderMap) -> String {
-  let mut items = Vec::new();
-  for (name, value) in headers.iter() {
-    let name = name.as_str();
-    let value = value.to_str().unwrap_or("");
-    let escaped_name = name.replace('\\', "\\\\").replace('"', "\\\"");
-    let escaped_value = value.replace('\\', "\\\\").replace('"', "\\\"");
-    items.push(format!(r#""{}":"{}""#, escaped_name, escaped_value));
-  }
-  format!("{{{}}}", items.join(","))
+fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
+  headers
+    .iter()
+    .filter_map(|(name, value)| {
+      value
+        .to_str()
+        .ok()
+        .map(|v| (name.as_str().to_string(), v.to_string()))
+    })
+    .collect()
 }
 
 fn status_text(status: reqwest::StatusCode) -> &'static str {
@@ -187,21 +159,28 @@ pub async fn do_fetch(
   let resp = req.send().await.map_err(reqwest_err)?;
   let status = resp.status();
   let resp_url = resp.url().to_string();
-  let resp_headers = headers_to_json(resp.headers());
+  let resp_headers = headers_to_pairs(resp.headers());
   let resp_body = resp.bytes().await.map_err(reqwest_err)?;
 
   Ok(ResponseData {
     status: status.as_u16(),
     status_text: status_text(status).to_string(),
     url: resp_url,
-    ok: status.is_success(),
-    headers_json: resp_headers,
+    headers: resp_headers,
     body: resp_body.to_vec(),
   })
 }
 
 impl<'js> IntoJs<'js> for ResponseData {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    build_response(ctx, self)
+    response_from_parts(
+      ctx,
+      self.body,
+      self.status,
+      self.status_text,
+      self.url,
+      self.headers,
+    )?
+    .into_js(ctx)
   }
 }

@@ -1,10 +1,76 @@
 use rquickjs::{
   function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value,
 };
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::io;
 use std::rc::Rc;
+
+/// In-memory body buffer shared by Response and Request. Consume-once semantics:
+/// `take` returns the bytes once, then subsequent calls return None.
+pub(crate) struct BodyState {
+  bytes: RefCell<Option<Vec<u8>>>,
+}
+
+impl BodyState {
+  pub(crate) fn new(bytes: Vec<u8>) -> Self {
+    Self {
+      bytes: RefCell::new(Some(bytes)),
+    }
+  }
+
+  pub(crate) fn empty() -> Self {
+    Self {
+      bytes: RefCell::new(Some(Vec::new())),
+    }
+  }
+
+  /// Peek a copy of the bytes without consuming. Returns None if already consumed.
+  pub(crate) fn peek(&self) -> Option<Vec<u8>> {
+    self.bytes.borrow().clone()
+  }
+
+  /// Consume the bytes. Returns None if already consumed.
+  pub(crate) fn take(&self) -> Option<Vec<u8>> {
+    self.bytes.borrow_mut().take()
+  }
+}
+
+pub(crate) fn body_text(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<String> {
+  let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
+  String::from_utf8(bytes).map_err(utf8_err)
+}
+
+pub(crate) fn body_bytes(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<JsBytes> {
+  let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
+  Ok(JsBytes(bytes))
+}
+
+pub(crate) fn body_json(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<JsonValue> {
+  let text = body_text(state, ctx)?;
+  Ok(JsonValue(text))
+}
+
+/// Extract bytes from a JS value (string, Uint8Array, null/undefined).
+pub(crate) fn extract_body_value<'js>(
+  val: &Value<'js>,
+  for_class: &'static str,
+) -> rquickjs::Result<Vec<u8>> {
+  if val.is_null() || val.is_undefined() {
+    return Ok(Vec::new());
+  }
+  if let Some(s) = val.as_string() {
+    return Ok(s.to_string()?.into_bytes());
+  }
+  if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
+    return Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
+  }
+  Err(rquickjs::Error::new_from_js_message(
+    "body",
+    for_class,
+    "must be string, Uint8Array, null, or undefined",
+  ))
+}
 
 pub struct JsBytes(pub Vec<u8>);
 
