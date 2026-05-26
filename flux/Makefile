@@ -1,7 +1,13 @@
 WORKSPACE_ROOT := ..
 
 PROFILE            ?= release
-CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
+ifeq ($(PROFILE),release)
+  CARGO_PROFILE_FLAG = --release
+else ifeq ($(PROFILE),debug)
+  CARGO_PROFILE_FLAG =
+else
+  CARGO_PROFILE_FLAG = --profile $(PROFILE)
+endif
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
@@ -22,9 +28,13 @@ define stage-bin
 	@echo "Staged $(1)$(HOST_EXT) into $(HOST_DIST)/"
 endef
 
-.PHONY: build flux fluxc test clean
+.PHONY: build build-opt flux fluxc test clean
 
 build: flux fluxc
+
+# Stripped + fat LTO + single codegen unit. Slower build, optimised binary.
+build-opt:
+	$(MAKE) build PROFILE=release-opt
 
 flux:
 	cargo build $(CARGO_PROFILE_FLAG) --bin flux
