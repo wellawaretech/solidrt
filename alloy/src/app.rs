@@ -36,7 +36,7 @@ pub fn setup(title: &str, size: ISize) -> App {
     .opengl()
     .position_centered()
     // .fullscreen()
-    .resizable()
+    // .resizable()
     .high_pixel_density()
     .build()
     .expect("Failed to create window");

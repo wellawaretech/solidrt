@@ -19,18 +19,18 @@ export let isTsx = source?.endsWith(".tsx")
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
 export function printUsage() {
-  console.error(`Usage: srt <build|run> [options] [entry.tsx]
+  console.error(`Usage: srt <command> [options] [entry.tsx]
 
 Commands:
-  run [file.tsx]        Start dev server + client (no file = embedded default)
-  run --client          Start dev client only (connects to WS server)
-  run --server [file]   Start dev server only, no client
+  run [file.tsx]        Start dev server + local solidrt-go client
+  run --client          Start solidrt-go client only
+  run --server [file]   Start dev server only
+  record <file.tsx>     Record frames
 
 Options:
   -m, --minify          Minify the output
   -c, --compile         Compile to bytecode (build only)
   -o, --output <name>   Bundle filename (build only)
       --stdout          Write bundle to stdout (build only)
-      --cache           Enable HTTP cache for fetch traffic; entries are
-                        kept in .srt-cache/. Delete that folder to reset.`)
+      --cache           Enable HTTP cache`)
 }

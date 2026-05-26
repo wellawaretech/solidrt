@@ -10,11 +10,12 @@
 //   srt build examples/hello.tsx        - bundle TSX to .srt.js
 //   srt build -c examples/hello.tsx     - bundle TSX to .srt.js + compile to .srt.bin
 //   srt build examples/hello.srt.js     - compile .srt.js to .srt.bin
+//   srt record examples/hello.tsx       - bundle TSX and run with frame capture
 
 import pkg from "../package.json"
 import { values, command, source, isTsx, isPrebuilt, printUsage } from "./args"
 import { state, requireBinary, run, shutdown } from "./util"
-import { bundle, runBuildCommand } from "./build"
+import { bundle, bundleTo, runBuildCommand } from "./build"
 import { startServer } from "./server"
 import { spawnClient } from "./client"
 import { startRepl } from "./repl"
@@ -24,7 +25,7 @@ import { resolve, dirname } from "path"
 
 // -- Validate args --
 
-if (!command || (command !== "build" && command !== "run")) {
+if (!command || (command !== "build" && command !== "run" && command !== "record")) {
   printUsage()
   process.exit(1)
 }
@@ -34,10 +35,25 @@ if (command === "build" && (!source || (!isTsx && !isPrebuilt))) {
   process.exit(1)
 }
 
+if (command === "record" && (!source || !isTsx)) {
+  console.error("Usage: srt record <entry.tsx>")
+  process.exit(1)
+}
+
 // -- Build command --
 
 if (command === "build") {
   await runBuildCommand()
+}
+
+// -- Record command --
+
+if (command === "record") {
+  let jsOutfile = source!.replace(/\.tsx$/, "") + ".srt.js"
+  await bundleTo(jsOutfile)
+  let runner = requireBinary("solidrt-go")
+  let exit = await run(runner, ["--record", resolve(jsOutfile)])
+  process.exit(exit)
 }
 
 // -- Run command --
