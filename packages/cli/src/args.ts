@@ -9,6 +9,8 @@ export let { values, positionals } = parseArgs({
     client: { type: "boolean", default: false },
     server: { type: "boolean", default: false },
     cache: { type: "boolean", default: false },
+    fps: { type: "string" },
+    duration: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -19,18 +21,27 @@ export let isTsx = source?.endsWith(".tsx")
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
 export function printUsage() {
-  console.error(`Usage: srt <command> [options] [entry.tsx]
+  console.error(`Usage: srt <command> [options] [file]
 
 Commands:
-  run [file.tsx]        Start dev server + local solidrt-go client
-  run --client          Start solidrt-go client only
-  run --server [file]   Start dev server only
-  record <file.tsx>     Record frames
+  run [file.tsx]              Start dev server + local solidrt-go client
+  run --client                Start solidrt-go client only
+  run --server [file.tsx]     Start dev server only
+  build <file.tsx>            Bundle
+  record <file.tsx>           Capture frames for video generation
 
-Options:
+run options:
+      --client          Run client only
+      --server          Run server only
+      --cache           Enable HTTP cache
+
+build options:
   -m, --minify          Minify the output
-  -c, --compile         Compile to bytecode (build only)
-  -o, --output <name>   Bundle filename (build only)
-      --stdout          Write bundle to stdout (build only)
-      --cache           Enable HTTP cache`)
+  -c, --compile         Compile to bytecode
+  -o, --output <name>   Output filename
+      --stdout          Write bundle to stdout
+
+record options:
+      --fps <N>         Frames per second (default: 60)
+      --duration <N>    Duration in seconds (default: 1)`)
 }

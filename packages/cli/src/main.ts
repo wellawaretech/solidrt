@@ -52,7 +52,10 @@ if (command === "record") {
   let jsOutfile = source!.replace(/\.tsx$/, "") + ".srt.js"
   await bundleTo(jsOutfile)
   let runner = requireBinary("solidrt-go")
-  let exit = await run(runner, ["--record", resolve(jsOutfile)])
+  let recordArgs = ["--record", resolve(jsOutfile)]
+  if (values.fps) recordArgs.push("--fps", values.fps)
+  if (values.duration) recordArgs.push("--duration", values.duration)
+  let exit = await run(runner, recordArgs)
   process.exit(exit)
 }
 
@@ -60,7 +63,7 @@ if (command === "record") {
 
 if (values.client) {
   let runner = requireBinary("solidrt-go")
-  let args = []
+  let args: string[] = []
   //TODO add dev server connection
   // if (source) args.push("--dev-server", source)
   let exit = await run(runner, args)
