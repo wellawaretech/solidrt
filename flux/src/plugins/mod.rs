@@ -61,6 +61,7 @@ pub(crate) async fn init_context(
       flux::file::init_file(&ctx, &flux_obj);
       flux::dir::init_dir(&ctx, &flux_obj);
       flux::write::init_write(&ctx, &flux_obj);
+      flux::serve::init_serve(&ctx, &flux_obj);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 
