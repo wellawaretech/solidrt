@@ -1,4 +1,5 @@
 import { DEV_HOST, DEV_PORT, state, print, requireBinary } from "./util"
+import { values } from "./args"
 
 function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream) {
   let reader = stream.getReader()
@@ -15,7 +16,8 @@ function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteSt
 
 export function spawnClient() {
   let runner = requireBinary("solidrt-go")
-  state.child = Bun.spawn([runner], {
+  let args = values.size ? ["--size", values.size] : []
+  state.child = Bun.spawn([runner, ...args], {
   //TODO implement dev server connection
   // state.child = Bun.spawn([runner, "--dev-server", `${DEV_HOST}:${DEV_PORT}`], {
     stdio: ["ignore", "pipe", "pipe"],

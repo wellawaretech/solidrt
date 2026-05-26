@@ -11,6 +11,7 @@ export let { values, positionals } = parseArgs({
     cache: { type: "boolean", default: false },
     fps: { type: "string" },
     duration: { type: "string" },
+    size: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -31,9 +32,10 @@ Commands:
   record <file.tsx>           Capture frames for video generation
 
 run options:
-      --client          Run client only
-      --server          Run server only
-      --cache           Enable HTTP cache
+      --client              Run client only
+      --server              Run server only
+      --cache               Enable HTTP cache
+      --size <WxH>          Window size (default: 1280x720)
 
 build options:
   -m, --minify          Minify the output
@@ -42,6 +44,7 @@ build options:
       --stdout          Write bundle to stdout
 
 record options:
-      --fps <N>         Frames per second (default: 60)
-      --duration <N>    Duration in seconds (default: 1)`)
+      --fps <N>             Frames per second (default: 30)
+      --duration <N>        Duration in seconds (default: 1)
+      --size <WxH>          Frame size (default: 1280x720)`)
 }

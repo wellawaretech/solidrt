@@ -55,6 +55,7 @@ if (command === "record") {
   let recordArgs = ["--record", resolve(jsOutfile)]
   if (values.fps) recordArgs.push("--fps", values.fps)
   if (values.duration) recordArgs.push("--duration", values.duration)
+  if (values.size) recordArgs.push("--size", values.size)
   let exit = await run(runner, recordArgs)
   process.exit(exit)
 }
@@ -64,6 +65,7 @@ if (command === "record") {
 if (values.client) {
   let runner = requireBinary("solidrt-go")
   let args: string[] = []
+  if (values.size) args.push("--size", values.size)
   //TODO add dev server connection
   // if (source) args.push("--dev-server", source)
   let exit = await run(runner, args)
