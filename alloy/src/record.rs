@@ -74,6 +74,11 @@ pub(crate) fn run_record_loop(
     event_tx
       .send(AlloyEvent::FrameRendered { frame, fps: record.fps })
       .ok();
+
+    let frame_number = frame + 1;
+    if frame_number % record.fps as u64 == 0 {
+      log::info!("[alloy] recorded {} frames", frame_number);
+    }
   }
 
   log::info!("[alloy] recording complete ({} frames)", record.frames);

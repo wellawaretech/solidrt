@@ -245,7 +245,9 @@ fn ui_thread(
     #[cfg(feature = "go")]
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
     #[cfg(feature = "go")]
-    go::start(&handle, cmd_tx.clone(), dev_server.clone());
+    if record_fps.is_none() {
+      go::start(&handle, cmd_tx.clone(), dev_server.clone());
+    }
 
     loop {
       let render_tree = RenderTree::new();
