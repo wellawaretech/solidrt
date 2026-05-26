@@ -6,7 +6,7 @@ use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 use crate::plugins::body::{
   body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue,
 };
-use crate::plugins::flux::headers::{headers_from_init, headers_from_pairs, Headers};
+use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]

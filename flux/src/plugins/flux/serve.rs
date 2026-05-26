@@ -11,8 +11,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::flux::request::{request_from_parts, Request};
-use crate::plugins::flux::response::Response;
+use crate::plugins::request::{request_from_parts, Request};
+use crate::plugins::response::Response;
 
 fn text_response(status: StatusCode, body: &str) -> HyperResponse<Full<Bytes>> {
   HyperResponse::builder()

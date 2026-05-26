@@ -2,8 +2,11 @@ pub mod body;
 pub mod console;
 pub mod fetch;
 pub mod flux;
+pub mod headers;
 pub mod http;
 pub mod memory;
+pub mod request;
+pub mod response;
 pub mod timer;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
@@ -61,9 +64,9 @@ pub(crate) async fn init_context(
       flux::file::init_file(&ctx, &flux_obj);
       flux::dir::init_dir(&ctx, &flux_obj);
       flux::write::init_write(&ctx, &flux_obj);
-      flux::headers::init_headers(&ctx);
-      flux::request::init_request(&ctx);
-      flux::response::init_response(&ctx);
+      headers::init_headers(&ctx);
+      request::init_request(&ctx);
+      response::init_response(&ctx);
       flux::serve::init_serve(&ctx, &flux_obj);
 
       ctx.globals().set("Flux", flux_obj).unwrap();

@@ -3,7 +3,7 @@ use std::io;
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-use crate::plugins::flux::response::{response_from_parts, Response};
+use crate::plugins::response::response_from_parts;
 use crate::plugins::http::{reqwest_err, HttpClient};
 
 pub struct ResponseData {
