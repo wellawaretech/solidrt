@@ -5,8 +5,9 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
+use rquickjs::promise::MaybePromise;
 use rquickjs::{function::MutFn, Class, Ctx, Function, Object, Value};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
@@ -65,33 +66,64 @@ fn response_from_value<'js>(
   text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
-fn handle_request<'js>(
-  req: &Request<Incoming>,
+async fn handle_request<'js>(
+  req: Request<Incoming>,
   fetch_fn: Option<&Function<'js>>,
   logger: &Logger,
 ) -> HyperResponse<Full<Bytes>> {
-  let method = req.method().as_str();
+  let method = req.method().as_str().to_string();
   let url = req.uri().to_string();
   logger.log(&format!("[flux] serve {} {}", method, url));
 
-  match fetch_fn {
-    Some(f) => {
-      let ctx = f.ctx().clone();
-      match build_request_obj(&ctx, method, &url)
-        .and_then(|req_obj| f.call::<(Object<'_>,), Value<'_>>((req_obj,)))
-      {
-        Ok(val) => response_from_value(val, logger),
-        Err(e) => {
-          logger.warn(&format!("[flux] serve fetch callback error: {e}"));
-          text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
-        }
-      }
+  let f = match fetch_fn {
+    Some(f) => f,
+    None => return text_response(StatusCode::NOT_FOUND, "Not Found"),
+  };
+
+  let ctx = f.ctx().clone();
+  let val = match build_request_obj(&ctx, &method, &url)
+    .and_then(|req_obj| f.call::<(Object<'_>,), Value<'_>>((req_obj,)))
+  {
+    Ok(v) => v,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve fetch callback error: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
     }
-    None => text_response(StatusCode::NOT_FOUND, "Not Found"),
+  };
+
+  let resolved = match MaybePromise::from_value(val)
+    .into_future::<Value<'_>>()
+    .await
+  {
+    Ok(v) => v,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve fetch rejected: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
+
+  response_from_value(resolved, logger)
+}
+
+async fn serve_one_connection<'js>(
+  sock: TcpStream,
+  fetch_fn: Option<Function<'js>>,
+  logger: Logger,
+) {
+  let io = TokioIo::new(sock);
+  let service = service_fn(|req: Request<Incoming>| {
+    let fetch_fn = fetch_fn.clone();
+    let logger = logger.clone();
+    async move { Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), &logger).await) }
+  });
+
+  if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+    logger.warn(&format!("[flux] serve connection error: {e}"));
   }
 }
 
 async fn run_server<'js>(
+  ctx: Ctx<'js>,
   listener: TcpListener,
   fetch_fn: Option<Function<'js>>,
   logger: Logger,
@@ -104,16 +136,11 @@ async fn run_server<'js>(
         continue;
       }
     };
-    let io = TokioIo::new(sock);
-
-    let service = service_fn(|req: Request<Incoming>| {
-      let resp = handle_request(&req, fetch_fn.as_ref(), &logger);
-      async move { Ok::<_, std::convert::Infallible>(resp) }
+    let fetch_fn = fetch_fn.clone();
+    let logger = logger.clone();
+    ctx.spawn(async move {
+      serve_one_connection(sock, fetch_fn, logger).await;
     });
-
-    if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-      logger.warn(&format!("[flux] serve connection error: {e}"));
-    }
   }
 }
 
@@ -136,8 +163,9 @@ pub(crate) fn init_serve<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
       let listener = TcpListener::from_std(listener).map_err(rquickjs::Error::Io)?;
 
       pending.hold();
+      let ctx_for_server = ctx.clone();
       ctx.spawn(async move {
-        run_server(listener, fetch_fn, logger).await;
+        run_server(ctx_for_server, listener, fetch_fn, logger).await;
       });
       Ok(())
     }),
