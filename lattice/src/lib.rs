@@ -28,7 +28,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     .enable_all()
     .build()
     .unwrap();
-  start(&rt, None);
+  start(&rt, None, None);
   0
 }
 
@@ -68,6 +68,7 @@ fn ui_thread(
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   source: Option<String>,
+  record_fps: Option<u32>,
 ) {
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
@@ -222,11 +223,14 @@ fn ui_thread(
             alloy::AlloyEvent::FrameRendered { frame, fps } => {
               platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let elapsed = start_time.elapsed().as_secs_f64();
+                let time = match record_fps {
+                  Some(rfps) if rfps > 0 => frame as f64 / rfps as f64,
+                  _ => start_time.elapsed().as_secs_f64(),
+                };
                 eh.exec(move |ctx| {
                   let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                   obj.set("frame", frame).expect("set frame");
-                  obj.set("time", elapsed).expect("set time");
+                  obj.set("time", time).expect("set time");
                   emit_event(&ctx, "render", obj);
                 });
               }
@@ -289,15 +293,23 @@ fn ui_thread(
   });
 }
 
-pub fn start(rt: &tokio::runtime::Runtime, source: Option<String>) {
+pub fn start(
+  rt: &tokio::runtime::Runtime,
+  source: Option<String>,
+  record: Option<alloy::RecordConfig>,
+) {
   alloy::install_logger();
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
   log::info!("[srt] SolidRT version {version}");
 
   let handle = rt.handle().clone();
-  let app = alloy::setup("SolidRT", ISize::new(1200, 800));
+  let record_fps = record.as_ref().map(|r| r.fps);
+  let mut app = alloy::setup("SolidRT", ISize::new(1200, 800));
+  if let Some(record) = record {
+    app = app.with_recording(record);
+  }
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps);
   });
 }
