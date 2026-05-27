@@ -31,7 +31,7 @@ taffy = "0.10.1"
 svgtypes = "0.16"
 lyon_path = "1"
 lyon_algorithms = "1"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tokio = { workspace = true }
 tokio-websockets = { version = "0.13", features = ["client", "fastrand", "sha1_smol"], optional = true }
 futures-util = { version = "0.3", features = ["sink"], optional = true }

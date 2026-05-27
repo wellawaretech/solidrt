@@ -87,15 +87,36 @@ impl GpuTexture {
 
   pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], size: ISize) {
     let (width, height) = (size.width as u32, size.height as u32);
+    let bytes_per_row = width * 4;
+    // wgpu requires bytes_per_row to be a multiple of COPY_BYTES_PER_ROW_ALIGNMENT (256).
+    // Stage rows into a padded buffer when the natural row stride isn't aligned.
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let bytes_per_row_aligned = bytes_per_row.div_ceil(align) * align;
+    let staging_size = (bytes_per_row_aligned as u64) * (height as u64);
+
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("texture_upload_buffer"),
-      size: data.len() as u64,
+      size: staging_size,
       usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
       mapped_at_creation: true,
     });
     {
       let mut mapped = buffer.slice(..).get_mapped_range_mut();
-      mapped.copy_from_slice(data);
+      if bytes_per_row == bytes_per_row_aligned {
+        mapped.copy_from_slice(data);
+      } else {
+        // Pad rows out to bytes_per_row_aligned via a temporary Vec, then copy
+        // the padded buffer in one shot. BufferViewMut doesn't support partial
+        // indexing in this wgpu version.
+        let mut padded = vec![0u8; staging_size as usize];
+        for row in 0..height as usize {
+          let src_start = row * bytes_per_row as usize;
+          let dst_start = row * bytes_per_row_aligned as usize;
+          padded[dst_start..dst_start + bytes_per_row as usize]
+            .copy_from_slice(&data[src_start..src_start + bytes_per_row as usize]);
+        }
+        mapped.copy_from_slice(&padded);
+      }
     }
     buffer.unmap();
 
@@ -107,7 +128,7 @@ impl GpuTexture {
         buffer: &buffer,
         layout: wgpu::TexelCopyBufferLayout {
           offset: 0,
-          bytes_per_row: Some(width * 4),
+          bytes_per_row: Some(bytes_per_row_aligned),
           rows_per_image: Some(height),
         },
       },

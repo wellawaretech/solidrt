@@ -4,4 +4,19 @@ export { onRender, onLayout, onResize, onWindowFocus, onWindowBlur } from "./win
 export { measureText } from "./text"
 export { createTexture, decodeImage } from "./gpu"
 export type { DecodedImage } from "./gpu"
-export type { MeasureTextOptions } from "./types"
+export type {
+  LayoutProps,
+  TransformProps,
+  PointerProps,
+  PaintProps,
+  WindowProps,
+  ViewProps,
+  RectProps,
+  OvalProps,
+  PathProps,
+  TextProps,
+  TextureProps,
+  AudioProps,
+  MeasureTextOptions,
+  Color,
+} from "./types"
