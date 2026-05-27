@@ -28,7 +28,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     .enable_all()
     .build()
     .unwrap();
-  start(&rt, None, None, (1280, 720));
+  start(&rt, None, None, (1280, 720), false);
   0
 }
 
@@ -69,6 +69,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   source: Option<String>,
   record_fps: Option<u32>,
+  proxy: bool,
 ) {
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
@@ -272,8 +273,10 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx));
       #[cfg(feature = "go")]
-      if let Some(url) = dev_server.get().cloned() {
-        builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));
+      if proxy {
+        if let Some(url) = dev_server.get().cloned() {
+          builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));
+        }
       }
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
@@ -303,6 +306,7 @@ pub fn start(
   source: Option<String>,
   record: Option<alloy::RecordConfig>,
   size: (u32, u32),
+  proxy: bool,
 ) {
   alloy::install_logger();
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
@@ -316,6 +320,6 @@ pub fn start(
   }
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps, proxy);
   });
 }

@@ -9,6 +9,7 @@ export let { values, positionals } = parseArgs({
     client: { type: "boolean", default: false },
     server: { type: "boolean", default: false },
     cache: { type: "boolean", default: false },
+    proxy: { type: "boolean", default: false },
     fps: { type: "string" },
     duration: { type: "string" },
     size: { type: "string" },
@@ -35,6 +36,7 @@ run options:
       --client              Run client only
       --server              Run server only
       --cache               Enable HTTP cache
+      --proxy               Route client file/dir/fetch through the dev server
       --size <WxH>          Window size (default: 1280x720)
 
 build options:
