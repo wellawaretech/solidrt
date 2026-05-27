@@ -25,11 +25,17 @@ declare global {
     stat(): Promise<FluxFileStat>
   }
 
+  type FluxServeOptions = {
+    port: number
+    fetch?: (req: Request) => Response | string | Promise<Response | string>
+  }
+
   let Flux: {
     on(event: string, callback: (data: any) => void): () => void
     dir(path: string): FluxDir
     file(path: string): FluxFile
     write(path: string, data: string | Uint8Array): Promise<void>
+    serve(options: FluxServeOptions): void
   }
 }
 
