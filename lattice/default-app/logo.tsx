@@ -110,7 +110,7 @@ function path(shape: Point[], rotate: number) {
 let letters: Letter[] = [
   {
     // S
-    width: 5 * R,
+    width: 5 * R -0.5*R,
     height: 6 * R,
     pieces: [
       { shape: tri1, x: R, y: 5 * R, rot: 1, shade: "light" },
@@ -124,7 +124,7 @@ let letters: Letter[] = [
   },
   {
     // O
-    width: 4 * R + 2 * M,
+    width: 4 * R + 2 * M -0.5*R,
     height: 2 * M + 4 * R,
     pieces: [
       { shape: tri3, x: 0, y: 2 * M, rot: -1, shade: "dark" },
