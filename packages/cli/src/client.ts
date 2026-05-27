@@ -18,7 +18,6 @@ export function spawnClient() {
   let runner = requireBinary("solidrt-go")
   let args: string[] = []
   if (values.size) args.push("--size", values.size)
-  if (values.proxy) args.push("--proxy")
   state.child = Bun.spawn([runner, ...args], {
   //TODO implement dev server connection
   // state.child = Bun.spawn([runner, "--dev-server", `${DEV_HOST}:${DEV_PORT}`], {

@@ -1,4 +1,5 @@
 import { resolveBinary } from "./native"
+import { values } from "./args"
 import type { Interface as ReadlineInterface } from "node:readline"
 import type { Server as BunServer } from "bun"
 
@@ -39,6 +40,10 @@ export function printErr(...args: any[]) {
   process.stdout.write("\r\x1b[K")
   console.error(...args)
   state.rl?.prompt(true)
+}
+
+export function buildReload(payload: { code?: string | null; bytecode?: string }) {
+  return JSON.stringify({ type: "reload", proxy: values.proxy, ...payload })
 }
 
 export function broadcastStop() {

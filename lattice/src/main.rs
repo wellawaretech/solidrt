@@ -1,7 +1,6 @@
 fn main() {
   let mut args = std::env::args().skip(1);
   let mut record = false;
-  let mut proxy = false;
   let mut fps: u32 = 60;
   let mut duration: u32 = 1;
   let mut size: (u32, u32) = (1280, 720);
@@ -9,8 +8,6 @@ fn main() {
   while let Some(arg) = args.next() {
     if arg == "--record" {
       record = true;
-    } else if arg == "--proxy" {
-      proxy = true;
     } else if arg == "--fps" {
       fps = args.next()
         .expect("--fps requires a value")
@@ -48,5 +45,5 @@ fn main() {
     .enable_all()
     .build()
     .expect("Failed to build Tokio runtime");
-  lattice::start(&rt, source, record_config, size, proxy);
+  lattice::start(&rt, source, record_config, size);
 }

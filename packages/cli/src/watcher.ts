@@ -1,6 +1,6 @@
 import { watch } from "node:fs"
 import { resolve, dirname } from "path"
-import { state, print, printErr } from "./util"
+import { state, print, printErr, buildReload } from "./util"
 import { bundle } from "./build"
 
 let currentWatcher: ReturnType<typeof watch> | null = null
@@ -32,8 +32,9 @@ export function startWatcher() {
     for (let output of result.outputs) {
       state.currentCode = await output.text()
     }
+    let msg = buildReload({ code: state.currentCode })
     for (let ws of state.clients.keys()) {
-      ws.send(JSON.stringify({ type: "reload", code: state.currentCode }))
+      ws.send(msg)
     }
   })
 }

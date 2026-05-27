@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
-import { state, print, printErr, broadcastStop, shutdown } from "./util"
+import { state, print, printErr, broadcastStop, buildReload, shutdown } from "./util"
 import { bundle } from "./build"
 import { startWatcher, stopWatcher } from "./watcher"
 
@@ -37,7 +37,7 @@ async function cmdReload(args: string) {
       state.currentCode = await output.text()
     }
   }
-  let msg = JSON.stringify({ type: "reload", code: state.currentCode })
+  let msg = buildReload({ code: state.currentCode })
   if (!args) {
     for (let ws of state.clients.keys()) ws.send(msg)
     print("[cli] Sent reload to all clients")
@@ -86,8 +86,8 @@ async function cmdLoad(file: string) {
     state.currentCode = await Bun.file(path).text()
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
-    let msg = { type: "reload", bytecode: Buffer.from(bytes).toString("base64") }
-    for (let ws of state.clients.keys()) ws.send(JSON.stringify(msg))
+    let msg = buildReload({ bytecode: Buffer.from(bytes).toString("base64") })
+    for (let ws of state.clients.keys()) ws.send(msg)
     print(`[cli] Loaded ${file} (bytecode, ${bytes.byteLength} bytes)`)
     return
   } else {
@@ -97,8 +97,9 @@ async function cmdLoad(file: string) {
   state.source = path
   state.sourceDir = dirname(path)
   startWatcher()
+  let reloadMsg = buildReload({ code: state.currentCode })
   for (let ws of state.clients.keys()) {
-    ws.send(JSON.stringify({ type: "reload", code: state.currentCode }))
+    ws.send(reloadMsg)
   }
   print(`[cli] Loaded ${file}`)
 }

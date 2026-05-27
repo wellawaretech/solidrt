@@ -17,6 +17,7 @@ use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
@@ -28,7 +29,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     .enable_all()
     .build()
     .unwrap();
-  start(&rt, None, None, (1280, 720), false);
+  start(&rt, None, None, (1280, 720));
   0
 }
 
@@ -69,8 +70,8 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   source: Option<String>,
   record_fps: Option<u32>,
-  proxy: bool,
 ) {
+  let proxy_enabled = Arc::new(AtomicBool::new(false));
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
@@ -247,7 +248,7 @@ fn ui_thread(
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
     #[cfg(feature = "go")]
     if record_fps.is_none() {
-      go::start(&handle, cmd_tx.clone(), dev_server.clone());
+      go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_enabled.clone());
     }
 
     loop {
@@ -273,7 +274,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx));
       #[cfg(feature = "go")]
-      if proxy {
+      if proxy_enabled.load(Ordering::Relaxed) {
         if let Some(url) = dev_server.get().cloned() {
           builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));
         }
@@ -306,7 +307,6 @@ pub fn start(
   source: Option<String>,
   record: Option<alloy::RecordConfig>,
   size: (u32, u32),
-  proxy: bool,
 ) {
   alloy::install_logger();
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
@@ -320,6 +320,6 @@ pub fn start(
   }
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps, proxy);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps);
   });
 }

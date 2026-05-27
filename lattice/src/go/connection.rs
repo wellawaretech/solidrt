@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::OnceCell;
@@ -8,14 +9,16 @@ pub fn start(
   handle: &tokio::runtime::Handle,
   tx: UnboundedSender<crate::EngineCmd>,
   dev_server: DevServerCell,
+  proxy_enabled: Arc<AtomicBool>,
 ) {
-  handle.spawn(async move { spawn_go_udp_discovery(tx, dev_server).await });
+  handle.spawn(async move { spawn_go_udp_discovery(tx, dev_server, proxy_enabled).await });
 }
 
 async fn spawn_go_ws(
   dev_server_addr: String,
   tx: UnboundedSender<crate::EngineCmd>,
   dev_server: DevServerCell,
+  proxy_enabled: Arc<AtomicBool>,
 ) {
   use futures_util::{SinkExt, StreamExt};
 
@@ -60,6 +63,8 @@ async fn spawn_go_ws(
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
           match json.get("type").and_then(|t| t.as_str()) {
             Some("reload") => {
+              let proxy = json.get("proxy").and_then(|p| p.as_bool()).unwrap_or(false);
+              proxy_enabled.store(proxy, Ordering::Relaxed);
               if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
                 let _ = tx.send(crate::EngineCmd::Reload(code.to_string()));
               }
@@ -83,6 +88,7 @@ const DEV_SERVER_PORT: u16 = 15194;
 async fn spawn_go_udp_discovery(
   tx: UnboundedSender<crate::EngineCmd>,
   dev_server: DevServerCell,
+  proxy_enabled: Arc<AtomicBool>,
 ) {
   use tokio::net::UdpSocket;
 
@@ -118,7 +124,7 @@ async fn spawn_go_udp_discovery(
         if msg == "SRT_SERVER" {
           let server_addr = format!("{}:{DEV_SERVER_PORT}", addr.ip());
           log::info!("[sgo] Discovered dev server at {server_addr}");
-          spawn_go_ws(server_addr, tx, dev_server).await;
+          spawn_go_ws(server_addr, tx, dev_server, proxy_enabled).await;
           return;
         }
       }

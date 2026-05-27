@@ -66,7 +66,6 @@ if (values.client) {
   let runner = requireBinary("solidrt-go")
   let args: string[] = []
   if (values.size) args.push("--size", values.size)
-  if (values.proxy) args.push("--proxy")
   //TODO add dev server connection
   // if (source) args.push("--dev-server", source)
   let exit = await run(runner, args)
@@ -79,7 +78,7 @@ state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
 
 if (values.cache) {
   cache.initCache({ dir: process.cwd() })
-  console.log("[cli] HTTP cache enabled (.srt-cache/)")
+  console.log("[cli] HTTP cache enabled")
 }
 
 startServer()

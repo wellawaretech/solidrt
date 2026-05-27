@@ -36,7 +36,7 @@ run options:
       --client              Run client only
       --server              Run server only
       --cache               Enable HTTP cache
-      --proxy               Route client file/dir/fetch through the dev server
+      --proxy               Tell connected clients to route file/dir/fetch through the dev server
       --size <WxH>          Window size (default: 1280x720)
 
 build options:

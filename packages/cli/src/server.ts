@@ -3,7 +3,7 @@ import { stat as fsStat, readdir } from "node:fs/promises"
 import { networkInterfaces } from "node:os"
 import { createSocket } from "node:dgram"
 import qrcode from "qrcode-generator"
-import { DEV_HOST, DEV_PORT, state, print } from "./util"
+import { DEV_HOST, DEV_PORT, state, print, buildReload } from "./util"
 import * as cache from "./cache"
 
 function headersToObject(h: Headers): Record<string, string> {
@@ -142,7 +142,7 @@ export function startServer() {
         state.clients.set(ws, { platform: "unknown", version: "unknown" })
         print(`[cli] Client connected ${ws.remoteAddress}`)
         if (state.currentCode) {
-          ws.send(JSON.stringify({ type: "reload", code: state.currentCode }))
+          ws.send(buildReload({ code: state.currentCode }))
         }
       },
       close(ws) {
