@@ -5,7 +5,7 @@ mod path;
 mod rectangle;
 mod span;
 mod text;
-// pub mod texture;
+mod texture;
 mod view;
 mod window;
 
@@ -16,5 +16,6 @@ pub use path::Path;
 pub use rectangle::Rectangle;
 pub use span::Span;
 pub use text::Text;
+pub use texture::Texture;
 pub use view::View;
 pub use window::Window;

@@ -988,6 +988,7 @@ dependencies = [
  "futures-util",
  "half",
  "http",
+ "image",
  "log",
  "lyon_algorithms",
  "lyon_path",

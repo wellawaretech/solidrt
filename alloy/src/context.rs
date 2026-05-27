@@ -95,6 +95,20 @@ impl Context {
       .expect("texture must exist after insert or update")
   }
 
+  /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller.
+  /// Returns the registry id assigned to the new texture.
+  pub fn create_texture_from_pixels(&self, width: u32, height: u32, pixels: &[u8]) -> u64 {
+    let size = ISize::new(width as i64, height as i64);
+    let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
+    gpu.upload(&self.wgpu_device, &self.wgpu_queue, pixels, size);
+    let impeller = self
+      .adopt_texture(&gpu, size)
+      .expect("adopt texture failed");
+    let id = self.textures.allocate_id();
+    self.textures.insert(id, TextureEntry { gpu, impeller });
+    id
+  }
+
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
     match gpu_texture.backend {
       Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, size),

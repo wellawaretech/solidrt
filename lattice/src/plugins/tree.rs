@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use taffy::prelude::*;
 
+use crate::AlloyContext;
 use crate::rendertree::layout::properties;
-use crate::rendertree::{ElementKind, Measurable, Path, PlatformContext, Rectangle, RenderTree, Span, Text, View, Window};
+use crate::rendertree::{ElementKind, Measurable, MeasureContext, Path, PlatformContext, Rectangle, RenderTree, Span, Text, Texture, View, Window};
 
 struct TextSize {
   width: f32,
@@ -26,7 +27,7 @@ impl<'js> IntoJs<'js> for TextSize {
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
-pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>, platform: Arc<PlatformContext>) {
+pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>, platform: Arc<PlatformContext>, atx: AlloyContext) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).unwrap();
 
@@ -49,6 +50,8 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
       "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),
       "span" => Span::default().no_layout(),
+      "texture" => Texture::default().with_layout(),
+      "d-texture" => Texture::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),
     };
     tree_ref.borrow_mut().create_node(id, element);
@@ -84,6 +87,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
         ElementKind::Text(text) => text.set_property(prop, value.clone()),
         ElementKind::Span(span) => span.set_property(prop, value.clone()),
         ElementKind::View(view) => view.set_property(prop, value.clone()),
+        ElementKind::Texture(tex) => tex.set_property(prop, value.clone()),
       };
       let result = result
         .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(prop, value.clone())));
@@ -104,6 +108,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   .unwrap();
 
   let measure_platform = platform.clone();
+  let measure_atx = atx.clone();
   let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
     let mut node = Text::default();
     node.computed_text = text;
@@ -139,11 +144,12 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
       if let Ok(v) = opts.get::<_, f64>("maxLines") { node.max_lines = v as u32; }
     }
 
-    let size = node.measure(
-      Size { width: None, height: None },
-      Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-      &measure_platform,
-    );
+    let size = node.measure(&MeasureContext {
+      platform: &measure_platform,
+      alloy: &*measure_atx,
+      known: Size { width: None, height: None },
+      available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+    });
     TextSize { width: size.width, height: size.height }
   })
   .unwrap();

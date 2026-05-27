@@ -1,6 +1,6 @@
 use super::PaintState;
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, PlatformContext,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
 use alloy::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
@@ -64,20 +64,15 @@ impl Buildable for Text {
 }
 
 impl Measurable for Text {
-  fn measure(
-    &self,
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
-    platform: &PlatformContext,
-  ) -> Size<f32> {
-    if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+  fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
+    if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return Size {
         width: w,
         height: h,
       };
     }
 
-    let Some(mut para_builder) = ParagraphBuilder::new(&platform.typography) else {
+    let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
       return Size::ZERO;
     };
 
@@ -99,15 +94,15 @@ impl Measurable for Text {
     let max_intrinsic_width = paragraph.get_max_intrinsic_width();
     let min_intrinsic_width = paragraph.get_min_intrinsic_width();
 
-    let width = known_dimensions
+    let width = ctx.known
       .width
-      .unwrap_or_else(|| match available_space.width {
+      .unwrap_or_else(|| match ctx.available.width {
         AvailableSpace::Definite(w) => max_intrinsic_width.min(w),
         AvailableSpace::MaxContent => max_intrinsic_width,
         AvailableSpace::MinContent => min_intrinsic_width,
       });
 
-    let Some(mut para_builder) = ParagraphBuilder::new(&platform.typography) else {
+    let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
       return Size::ZERO;
     };
     para_builder.push_style(&style);
@@ -117,7 +112,7 @@ impl Measurable for Text {
       return Size::ZERO;
     };
 
-    let height = known_dimensions
+    let height = ctx.known
       .height
       .unwrap_or_else(|| paragraph.get_height());
 

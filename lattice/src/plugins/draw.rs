@@ -51,7 +51,7 @@ pub fn init(
     // call setProperty etc.) don't trip the RefCell.
     {
       let mut tree_b = tree.0.borrow_mut();
-      rendertree::composite::layout_phase(&mut tree_b, &platform);
+      rendertree::composite::layout_phase(&mut tree_b, &platform, &*atx);
     }
 
     // Post-layout hook. Handlers run synchronously and may invalidate the
@@ -61,7 +61,7 @@ pub fn init(
 
     {
       let mut tree_b = tree.0.borrow_mut();
-      rendertree::composite::paint_phase(&mut builder, &mut tree_b, &platform);
+      rendertree::composite::paint_phase(&mut builder, &mut tree_b, &platform, &*atx);
     }
 
     for event in engine_state.drain_input() {

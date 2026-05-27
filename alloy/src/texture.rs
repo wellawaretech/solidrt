@@ -10,6 +10,15 @@ pub struct TextureEntry {
   pub impeller: Texture,
 }
 
+impl TextureEntry {
+  pub fn width(&self) -> u32 {
+    self.gpu.wgpu_texture.width()
+  }
+  pub fn height(&self) -> u32 {
+    self.gpu.wgpu_texture.height()
+  }
+}
+
 impl std::ops::Deref for TextureEntry {
   type Target = Texture;
   fn deref(&self) -> &Texture {
@@ -19,12 +28,14 @@ impl std::ops::Deref for TextureEntry {
 
 pub struct TextureRegistry {
   entries: RefCell<HashMap<u64, Rc<TextureEntry>>>,
+  next_id: RefCell<u64>,
 }
 
 impl TextureRegistry {
   pub(crate) fn new() -> Self {
     TextureRegistry {
       entries: RefCell::new(HashMap::new()),
+      next_id: RefCell::new(1),
     }
   }
 
@@ -34,6 +45,13 @@ impl TextureRegistry {
 
   pub fn insert(&self, id: u64, entry: TextureEntry) {
     self.entries.borrow_mut().insert(id, Rc::new(entry));
+  }
+
+  pub fn allocate_id(&self) -> u64 {
+    let mut id = self.next_id.borrow_mut();
+    let result = *id;
+    *id += 1;
+    result
   }
 }
 
@@ -57,7 +75,8 @@ impl GpuTexture {
       format: wgpu::TextureFormat::Rgba8Unorm,
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT
         | wgpu::TextureUsages::COPY_SRC
-        | wgpu::TextureUsages::COPY_DST,
+        | wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::TEXTURE_BINDING,
       view_formats: &[],
     });
     GpuTexture {

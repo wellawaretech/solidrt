@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, PlatformContext, XY,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
 use alloy::impellers::{
   DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point,
@@ -12,7 +12,7 @@ use lyon_path::iterator::PathIterator;
 use rquickjs::Value;
 use std::cell::RefCell;
 use svgtypes::{PathParser, PathSegment};
-use taffy::{AvailableSpace, Size as TaffySize};
+use taffy::Size as TaffySize;
 
 pub struct Path {
   pub d: String,
@@ -365,21 +365,16 @@ impl Buildable for Path {
 }
 
 impl Measurable for Path {
-  fn measure(
-    &self,
-    known_dimensions: TaffySize<Option<f32>>,
-    _available_space: TaffySize<AvailableSpace>,
-    _platform: &PlatformContext,
-  ) -> TaffySize<f32> {
-    if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
+    if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return TaffySize { width: w, height: h };
     }
     self.ensure_built();
     let bounds = self.bounds.borrow();
     let Some((_, _, w, h)) = *bounds else { return TaffySize::ZERO };
     TaffySize {
-      width: known_dimensions.width.unwrap_or(w),
-      height: known_dimensions.height.unwrap_or(h),
+      width: ctx.known.width.unwrap_or(w),
+      height: ctx.known.height.unwrap_or(h),
     }
   }
 }

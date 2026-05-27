@@ -8,7 +8,7 @@ use taffy::{
 };
 
 use super::super::tree::RenderTree;
-use crate::rendertree::{ElementKind, Measurable, PlatformContext};
+use crate::rendertree::{ElementKind, Measurable, MeasureContext, PlatformContext};
 
 pub struct LayoutData {
   pub style: Style,
@@ -31,6 +31,7 @@ impl LayoutData {
 pub struct LayoutContext<'a> {
   pub render_tree: &'a mut RenderTree,
   pub platform: &'a PlatformContext,
+  pub alloy: &'a alloy::Context,
 }
 
 impl<'a> TraversePartialTree for LayoutContext<'a> {
@@ -141,18 +142,19 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       let element = tree.render_tree.node(id);
       let has_measurement = matches!(
         &element.kind,
-        ElementKind::Text(_) | ElementKind::Rectangle(_) | ElementKind::Path(_)
+        ElementKind::Text(_) | ElementKind::Rectangle(_) | ElementKind::Path(_) | ElementKind::Texture(_)
       );
 
       if has_measurement {
         let platform = tree.platform;
+        let alloy = tree.alloy;
         let style = &tree.render_tree.node(id).layout_data().style;
         let kind = &tree.render_tree.node(id).kind;
         compute_leaf_layout(
           inputs,
           style,
           |_, _| 0.0,
-          |known, available| kind.measure(known, available, platform),
+          |known, available| kind.measure(&MeasureContext { platform, alloy, known, available }),
         )
       } else {
         match element.layout_data().style.display {

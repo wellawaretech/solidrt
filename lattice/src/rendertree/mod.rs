@@ -6,7 +6,7 @@ pub mod platform;
 mod tree;
 
 pub use hit::{HitConfig, HitTester};
-pub use kinds::{PaintState, Path, Rectangle, Span, Text, View, Window};
+pub use kinds::{PaintState, Path, Rectangle, Span, Text, Texture, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
@@ -38,19 +38,31 @@ impl WH {
   }
 }
 
-/// Build context passed during display list tree traversal.
+/// Build context passed during display list tree traversal. Engine state
+/// (platform, alloy) comes first; paint-time geometry follows.
 pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
+  pub alloy: &'a alloy::Context,
   pub size: WH,
 }
 
 impl<'a> BuildContext<'a> {
-  pub fn new(platform: &'a PlatformContext) -> Self {
+  pub fn new(platform: &'a PlatformContext, alloy: &'a alloy::Context) -> Self {
     Self {
       platform,
+      alloy,
       size: WH::default(),
     }
   }
+}
+
+/// Measure context passed during layout. Engine state (platform, alloy) comes
+/// first; the taffy-supplied size constraints for this call follow.
+pub struct MeasureContext<'a> {
+  pub platform: &'a PlatformContext,
+  pub alloy: &'a alloy::Context,
+  pub known: Size<Option<f32>>,
+  pub available: Size<AvailableSpace>,
 }
 
 /// Trait for element type build behavior
@@ -60,12 +72,7 @@ pub trait Buildable {
 
 /// Trait for content-based sizing (text, images, etc.)
 pub trait Measurable {
-  fn measure(
-    &self,
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
-    platform: &PlatformContext,
-  ) -> Size<f32>;
+  fn measure(&self, ctx: &MeasureContext) -> Size<f32>;
 }
 
 pub enum ElementKind {
@@ -76,7 +83,7 @@ pub enum ElementKind {
   Path(Path),
   Text(Text),
   Span(Span),
-  // Texture(Texture),
+  Texture(Texture),
   // Audio(Audio),
 }
 
@@ -100,25 +107,20 @@ impl Buildable for ElementKind {
       // ElementKind::Oval(n) => n.build(ctx, builder),
       ElementKind::Path(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
-      // ElementKind::Texture(n) => n.build(ctx, builder),
+      ElementKind::Texture(n) => n.build(ctx, builder),
       ElementKind::Span(_) => {} // ElementKind::Audio(_) => {}
     }
   }
 }
 
 impl Measurable for ElementKind {
-  fn measure(
-    &self,
-    known_dimensions: Size<Option<f32>>,
-    available_space: Size<AvailableSpace>,
-    platform: &PlatformContext,
-  ) -> Size<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
     match self {
-      ElementKind::Text(n) => n.measure(known_dimensions, available_space, platform),
-      // ElementKind::Texture(n) => n.measure(known_dimensions, available_space, platform),
-      ElementKind::Path(n) => n.measure(known_dimensions, available_space, platform),
-      // ElementKind::Oval(n) => n.measure(known_dimensions, available_space, platform),
-      ElementKind::Rectangle(n) => n.measure(known_dimensions, available_space, platform),
+      ElementKind::Text(n) => n.measure(ctx),
+      ElementKind::Texture(n) => n.measure(ctx),
+      ElementKind::Path(n) => n.measure(ctx),
+      // ElementKind::Oval(n) => n.measure(ctx),
+      ElementKind::Rectangle(n) => n.measure(ctx),
       _ => Size::ZERO,
     }
   }

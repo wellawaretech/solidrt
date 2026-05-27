@@ -35,7 +35,7 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
 // --- End Android entry point ------------------------------
 
 #[derive(Clone, JsLifetime)]
-struct AlloyContext(#[qjs(skip_trace)] Arc<alloy::Context>);
+pub(crate) struct AlloyContext(#[qjs(skip_trace)] pub(crate) Arc<alloy::Context>);
 
 impl std::ops::Deref for AlloyContext {
   type Target = alloy::Context;
@@ -259,6 +259,8 @@ fn ui_thread(
 
       let tree_cmd_tx = alloy_cmd_tx.clone();
       let tree_platform = platform.clone();
+      let tree_atx = AlloyContext(atx.clone());
+      let texture_atx = AlloyContext(atx.clone());
       let mut builder = FluxEngine::builder()
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
@@ -267,7 +269,8 @@ fn ui_thread(
           flux::LogLevel::Error => log::error!("{msg}"),
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform));
+        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
+        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx));
       #[cfg(feature = "go")]
       if let Some(url) = dev_server.get().cloned() {
         builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));

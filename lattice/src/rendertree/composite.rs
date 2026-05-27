@@ -13,7 +13,7 @@ const CLIP_INF: f32 = 1.0e7;
 
 // Runs taffy layout. Safe to call repeatedly: taffy's per-node cache makes
 // a second call cheap when nothing has been invalidated since the previous run.
-pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext) {
+pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &alloy::Context) {
   let Some(root_id) = tree.root else { return };
   let (width, height) = platform.window_size();
 
@@ -28,6 +28,7 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext) {
   let mut layout_ctx = LayoutContext {
     render_tree: tree,
     platform,
+    alloy,
   };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
 }
@@ -37,13 +38,14 @@ pub fn paint_phase(
   builder: &mut DisplayListBuilder,
   tree: &mut RenderTree,
   platform: &PlatformContext,
+  alloy: &alloy::Context,
 ) {
   let Some(root_id) = tree.root else { return };
   let (width, height) = platform.window_size();
 
-  layout_phase(tree, platform);
+  layout_phase(tree, platform, alloy);
 
-  let mut ctx = BuildContext::new(platform);
+  let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = WH::new(width, height);
   build_recursive(tree, root_id, &mut ctx, builder);
 }

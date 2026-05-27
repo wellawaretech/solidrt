@@ -1,11 +1,11 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, PlatformContext, XY,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use rquickjs::Value;
-use taffy::{AvailableSpace, Size as TaffySize};
+use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]
 pub struct Rectangle {
@@ -44,15 +44,10 @@ impl Buildable for Rectangle {
 }
 
 impl Measurable for Rectangle {
-  fn measure(
-    &self,
-    known_dimensions: TaffySize<Option<f32>>,
-    _available_space: TaffySize<AvailableSpace>,
-    _platform: &PlatformContext,
-  ) -> TaffySize<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
     TaffySize {
-      width: known_dimensions.width.unwrap_or(self.w.unwrap_or(0.0)),
-      height: known_dimensions.height.unwrap_or(self.h.unwrap_or(0.0)),
+      width: ctx.known.width.unwrap_or(self.w.unwrap_or(0.0)),
+      height: ctx.known.height.unwrap_or(self.h.unwrap_or(0.0)),
     }
   }
 }

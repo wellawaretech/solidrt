@@ -16,6 +16,13 @@ export namespace JSX {
   type Element = SolidJSX.Element
   type ElementChildrenAttribute = SolidJSX.ElementChildrenAttribute
 
+  type RefCallback<T> = (el: T) => void
+  type Ref<T> = T | RefCallback<T>
+
+  interface IntrinsicAttributes {
+    ref?: Ref<{ id: number }> | undefined
+  }
+
   interface IntrinsicElements {
     window: WindowProps
     view: ViewProps

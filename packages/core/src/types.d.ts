@@ -13,6 +13,11 @@ declare global {
     setTextInputActive(active: boolean): void
     measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
   }
+
+  let gpu: {
+    createTexture(data: Uint8Array, width: number, height: number): number
+    decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
+  }
 }
 
 export interface MeasureTextOptions {
