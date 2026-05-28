@@ -1,21 +1,21 @@
 import { createSignal } from "@solidjs/signals"
 import { onResize, render } from "@solidrt/core"
 
+let [bottom, setBottom] = createSignal(0)
+let [right, setRight] = createSignal(0)
+
+onResize(({ width, height, safeArea }) => {
+  setBottom(Math.max(height - safeArea.bottom, 10))
+  setRight(Math.max(width - safeArea.right, 10))
+})
+
 function App() {
-  let [bottom, setBottom] = createSignal(0)
-  let [right, setRight] = createSignal(0)
-
-  onResize(({ width, height, safeArea }) => {
-    setBottom(10 + (height - safeArea.bottom))
-    setRight(10 + (width - safeArea.right))
-  })
-
   return (
     <window display="grid" gridTemplateColumns="1fr 1fr" gridTemplateRows="1fr 1fr">
-      <rect width="100%" height="100%" color="#822" />
-      <rect width="100%" height="100%" color="#228" />
-      <rect width="100%" height="100%" color="#282" />
-      <rect width="100%" height="100%" color="#882" />
+      <rect color="#822" />
+      <rect color="#228" />
+      <rect color="#282" />
+      <rect color="#882" />
       <rect
         radius={[50, 0, 50, 0]}
         position="absolute"

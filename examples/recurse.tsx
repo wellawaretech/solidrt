@@ -39,8 +39,8 @@ let [right, setRight] = createSignal(0)
 
 onResize(({ width, height, safeArea }) => {
   setSize(Math.min(width, height))
-  setBottom(10 + (height - safeArea.bottom))
-  setRight(10 + (width - safeArea.right))
+  setBottom(Math.max(height - safeArea.bottom, 10))
+  setRight(Math.max(width - safeArea.right, 10))
 })
 
 function App() {

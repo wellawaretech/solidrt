@@ -24,7 +24,7 @@ import { SafeArea } from "@solidrt/components"
 function App() {
   return (
     <window>
-      <SafeArea>
+      <SafeArea top bottom>
         <text>Content clear of system UI</text>
       </SafeArea>
     </window>
@@ -32,13 +32,28 @@ function App() {
 }
 ```
 
+Top and bottom insets are applied by default. Pass `false` to opt out of an edge, or a number to apply the inset with a minimum padding.
+
+```jsx
+// top only
+<SafeArea bottom={false}>
+
+// apply top and bottom insets, with a minimum of 16px each
+<SafeArea top={16} bottom={16}>
+
+// all four edges
+<SafeArea top bottom left right>
+```
+
 **Props**
 
-| Prop       | Type                                         | Default             | Description                                                    |
-| ---------- | -------------------------------------------- | ------------------- | -------------------------------------------------------------- |
-| `edges`    | `("top" \| "bottom" \| "left" \| "right")[]` | `["top", "bottom"]` | Which edges to apply safe area insets on                       |
-| `minimum`  | `number`                                     | `0`                 | Minimum padding applied even if the safe area inset is smaller |
-| `children` | `any`                                        | -                   | Content to render inside the safe area                         |
+| Prop       | Type                | Default | Description                                         |
+| ---------- | ------------------- | ------- | --------------------------------------------------- |
+| `top`      | `boolean \| number` | `true`  | Apply top inset. A number sets the minimum padding. |
+| `bottom`   | `boolean \| number` | `true`  | Apply bottom inset. A number sets the minimum padding. |
+| `left`     | `boolean \| number` | `false` | Apply left inset. A number sets the minimum padding. |
+| `right`    | `boolean \| number` | `false` | Apply right inset. A number sets the minimum padding. |
+| `children` | `any`               | -       | Content to render inside the safe area.             |
 
 ### TextInput
 
@@ -77,6 +92,26 @@ function NameField() {
 | `disabled`     | `boolean`                  | `false` | Ignores pointer and key events when true                     |
 | `autoFocus`    | `boolean`                  | `false` | Focuses on mount                                             |
 | `width`        | `number \| "auto" \| "N%"` | -       | Field width                                                  |
+
+### Image
+
+Loads and displays an image from a URL or raw bytes.
+
+```jsx
+import { Image } from "@solidrt/components"
+
+function Avatar() {
+  return <Image src="https://example.com/avatar.png" width={64} height={64} />
+}
+```
+
+**Props**
+
+Accepts all layout, transform, and pointer event props, plus:
+
+| Prop  | Type                   | Description                                  |
+| ----- | ---------------------- | -------------------------------------------- |
+| `src` | `string \| Uint8Array` | URL to fetch, or raw image bytes to decode   |
 
 ## License
 

@@ -52,3 +52,31 @@ Renders text. Children are the text content.
 ### `<rect>`
 
 Draws a rectangle. Supports paint and pointer event props. `r` sets the corner radius.
+
+### `<texture>`
+
+Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `imageWidth`, `imageHeight`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters.
+
+## gpu
+
+Functions for loading image data onto the GPU.
+
+```ts
+import { decodeImage, createTexture } from "@solidrt/core"
+```
+
+### decodeImage
+
+```ts
+decodeImage(bytes: Uint8Array): DecodedImage
+```
+
+Decodes an image file (JPEG, PNG, etc.) from raw bytes. Returns an object with `data` (raw RGBA pixels), `width`, and `height`.
+
+### createTexture
+
+```ts
+createTexture(data: Uint8Array, width: number, height: number): number
+```
+
+Uploads raw RGBA pixel data to the GPU and returns a texture ID. Pass the returned ID as the `src` prop on a `<texture>` element.

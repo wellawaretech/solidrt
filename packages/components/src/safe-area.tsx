@@ -2,8 +2,10 @@ import { createSignal } from "@solidjs/signals"
 import { onResize } from "@solidrt/core"
 
 export function SafeArea(props: {
-  edges?: ("top" | "bottom" | "left" | "right")[]
-  minimum?: number
+  top?: boolean | number
+  bottom?: boolean | number
+  left?: boolean | number
+  right?: boolean | number
   children?: any
 }) {
   let [insets, setInsets] = createSignal({ top: 0, bottom: 0, left: 0, right: 0 })
@@ -15,9 +17,13 @@ export function SafeArea(props: {
       right: width - safeArea.right,
     })
   })
-  let has = (e: string) => (props.edges ?? ["top", "bottom"]).includes(e as any)
-  let pad = (edge: "top" | "bottom" | "left" | "right") =>
-    has(edge) ? Math.max(insets()[edge], props.minimum ?? 0) : 0
+  let pad = (edge: "top" | "bottom" | "left" | "right") => {
+    let defaultOn = edge === "top" || edge === "bottom"
+    let p = props[edge] ?? defaultOn
+    if (p === false) return 0
+    if (p === true) return insets()[edge]
+    return Math.max(insets()[edge], p as number)
+  }
   return (
     <view
       flex={1}
