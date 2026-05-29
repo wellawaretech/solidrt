@@ -1,4 +1,4 @@
-import { onCleanup, onSettled } from "@solidjs/signals"
+import { onCleanup, onSettled, flush } from "@solidjs/signals"
 import { getEventHandler } from "./events"
 import { getFocusedNodeId, setFocus } from "./focus"
 
@@ -8,10 +8,11 @@ let nextFrameId = 1
 let animationFrames = new Map<number, Function>()
 
 /**
- * Calls `fn` on every rendered frame. Returns a cleanup function to stop rendering.
- * When called within a reactive scope (e.g. a component or createEffect), cleanup is also automatic.
+ * Calls `fn` before every frame is painted. The first call receives tick=0 (game time).
+ * Returns a cleanup function to stop updates. When called within a reactive scope
+ * (e.g. a component or createEffect), cleanup is also automatic.
  */
-export function onRender(fn: (tick: number, frame: number) => void) {
+export function onFrame(fn: (tick: number, frame: number) => void) {
   let frameId: number = null!
 
   let extendedFn = (tick: number, frame: number) => {
@@ -86,57 +87,72 @@ export function attachWindow(_nodeId: number) {
   let unsubKeyUp: () => void = null!
   let unsubTextInput: () => void = null!
   let unsubKeyboardVisibility: () => void = null!
+  let unsubFirstResize: (() => void) | null = null
+
+  function runFrame(t: number, frame: number) {
+    if (animationFrames.size > 0) {
+      let frames = animationFrames
+      animationFrames = new Map()
+      for (let fn of frames.values()) fn(t, frame)
+    }
+    flush()
+    draw()
+  }
 
   onSettled(() => {
-    unsubscribe = Flux.on("render", ({ time, frame }: { time: number, frame: number }) => {
-      if (animationFrames.size > 0) {
-        let frames = animationFrames
-        animationFrames = new Map()
-
-        let t = (time * 1000) | 0
-        for (let fn of frames.values()) fn(t, frame)
-      }
-
-      draw()
+    unsubscribe = Flux.on("render", ({ time, frame }: { time: number; frame: number }) => {
+      runFrame((time * 1000) | 0, frame)
     })
 
-    unsubDown = Flux.on("pointerDown", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerDown")?.(e)
-      }
-      // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
-      // moves focus to a new node is not immediately blurred again.
-      let focused = getFocusedNodeId()
-      if (focused != null && !targets.includes(focused)) {
-        setFocus(null)
-      }
-    })
+    unsubDown = Flux.on(
+      "pointerDown",
+      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+        for (let nodeId of targets) {
+          getEventHandler(nodeId, "onPointerDown")?.(e)
+        }
+        // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
+        // moves focus to a new node is not immediately blurred again.
+        let focused = getFocusedNodeId()
+        if (focused != null && !targets.includes(focused)) {
+          setFocus(null)
+        }
+      },
+    )
 
-    unsubUp = Flux.on("pointerUp", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
+    unsubUp = Flux.on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerUp")?.(e)
       }
     })
 
-    unsubMove = Flux.on("pointerMove", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerMove")?.(e)
-      }
-    })
+    unsubMove = Flux.on(
+      "pointerMove",
+      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+        for (let nodeId of targets) {
+          getEventHandler(nodeId, "onPointerMove")?.(e)
+        }
+      },
+    )
 
-    unsubEnter = Flux.on("pointerEnter", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerEnter")?.(e)
-      }
-    })
+    unsubEnter = Flux.on(
+      "pointerEnter",
+      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+        for (let nodeId of targets) {
+          getEventHandler(nodeId, "onPointerEnter")?.(e)
+        }
+      },
+    )
 
-    unsubLeave = Flux.on("pointerLeave", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerLeave")?.(e)
-      }
-    })
+    unsubLeave = Flux.on(
+      "pointerLeave",
+      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+        for (let nodeId of targets) {
+          getEventHandler(nodeId, "onPointerLeave")?.(e)
+        }
+      },
+    )
 
-    unsubWheel = Flux.on("wheel", ({ targets, ...e }: { targets: number[], [k: string]: any }) => {
+    unsubWheel = Flux.on("wheel", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onWheel")?.(e)
       }
@@ -169,8 +185,13 @@ export function attachWindow(_nodeId: number) {
       if (!shown) setFocus(null)
     })
 
-    // trigger first draw
-    draw()
+    // Bootstrap the first frame on the first resize event: by then any
+    // onResize subscribers (which run earlier in the dispatch list) have
+    // set their initial signal values, so runFrame's flush sees a fully
+    // initialized graph. Resize is a sticky event in Flux, so this fires
+    // synchronously here if a value has already been cached. Runs outside
+    // the tracked-effect scope so flush() is legal.
+    unsubFirstResize = Flux.once("resize", () => runFrame(0, 0))
   })
 
   onCleanup(() => {
@@ -185,5 +206,6 @@ export function attachWindow(_nodeId: number) {
     if (unsubKeyUp) unsubKeyUp()
     if (unsubTextInput) unsubTextInput()
     if (unsubKeyboardVisibility) unsubKeyboardVisibility()
+    if (unsubFirstResize) unsubFirstResize()
   })
 }

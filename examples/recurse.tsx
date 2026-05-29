@@ -1,4 +1,4 @@
-import { onRender, onResize, onWindowBlur, onWindowFocus, render } from "@solidrt/core"
+import { onFrame, onResize, onWindowBlur, onWindowFocus, render } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
 // Recursion test. 
@@ -49,7 +49,7 @@ function App() {
   let offset = 0
   let pauseStart = 0
 
-  onRender((tick: number) => {
+  onFrame((tick: number) => {
     lastTick = tick
 
     if (!running) return

@@ -225,13 +225,19 @@ fn ui_thread(
             alloy::AlloyEvent::FrameRendered { frame, fps } => {
               platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
+                // FrameRendered reports the frame native just finished
+                // drawing. JS uses the "render" event to compute the NEXT
+                // frame's state, so shift both fields by +1. The JS-side
+                // bootstrap owns frame 0; without the shift, record mode
+                // re-runs frame 0 at tick 0 and duplicates a PNG.
+                let next_frame = frame + 1;
                 let time = match record_fps {
-                  Some(rfps) if rfps > 0 => frame as f64 / rfps as f64,
+                  Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
                   _ => start_time.elapsed().as_secs_f64(),
                 };
                 eh.exec(move |ctx| {
                   let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("frame", frame).expect("set frame");
+                  obj.set("frame", next_frame).expect("set frame");
                   obj.set("time", time).expect("set time");
                   emit_event(&ctx, "render", obj);
                 });
@@ -283,6 +289,7 @@ fn ui_thread(
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
 
+      log::info!("[srt] flux engine start");
       let mut next_src: Option<String> = None;
       local
         .run_until(async {

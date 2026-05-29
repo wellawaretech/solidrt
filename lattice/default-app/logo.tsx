@@ -1,4 +1,4 @@
-import { onRender, onResize } from "@solidrt/core"
+import { onFrame, onResize } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
 type LogoColors = {
@@ -232,7 +232,6 @@ const HOLD_EXPLODED = 0
 
 function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: number }) {
   let [dist, setDist] = createSignal(EXPLODE_DIST)
-  let start: number = null!
 
   let letterCx = props.letter.width / 2
   let letterCy = props.letter.height / 2
@@ -244,13 +243,10 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
 
   let pieceSpins = props.letter.pieces.map((_, i) => (((i * 7 + 3) % 11) - 5) * 30)
 
-  onRender((_tick: number) => {
-    if (start === null) start = _tick
-    let tick = _tick - start
-
-    // same cycle length for all letters; delay only offsets the start
+  onFrame((tick: number, frame: number) => {
+    // tick is game time (ms since app start); +5000 starts the cycle in the assembled phase
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED
-    let t = (tick - props.delay) % cycleLen
+    let t = (tick + 5000 - props.delay) % cycleLen
 
     if (t < 0) {
       // before this letter's first cycle starts
