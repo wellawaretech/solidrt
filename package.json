@@ -12,7 +12,7 @@
     "@solidrt/core": "workspace:*",
     "@solidrt/flux-types": "workspace:*",
     "@solidjs/signals": "2.0.0-beta.14",
-    "@solidjs/universal": "2.0.0-beta.13",
-    "solid-js": "2.0.0-beta.13"
+    "@solidjs/universal": "2.0.0-beta.14",
+    "solid-js": "2.0.0-beta.14"
   }
 }
