@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.13/node_modules/@solidjs/signals/dist/dev.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.14/node_modules/@solidjs/signals/dist/dev.js
 class NotReadyError extends Error {
   source;
   constructor(source) {
@@ -1454,7 +1454,7 @@ var foundPending = false;
 var latestReadActive = false;
 var context = null;
 var currentOptimisticLane = null;
-var pendingCheckLoadingPath = false;
+var pendingCheckSources = null;
 var snapshotCaptureActive = false;
 var snapshotSources = null;
 function ownerInSnapshotScope(owner) {
@@ -1776,11 +1776,6 @@ function signal(v, options, firewall = null) {
   }
   return s;
 }
-function optimisticSignal(v, options) {
-  const s = signal(v, options);
-  s._overrideValue = NOT_PENDING;
-  return s;
-}
 function optimisticComputed(fn, options) {
   const c = computed(fn, options);
   c._overrideValue = NOT_PENDING;
@@ -1842,12 +1837,24 @@ function read(el) {
     const firewall = el._firewall;
     const prevCheck = pendingCheckActive;
     pendingCheckActive = false;
+    let c2 = context;
+    if (c2?._root)
+      c2 = c2._parentComputed;
     const owner2 = firewall || el;
-    if (pendingCheckLoadingPath && owner2._statusFlags & STATUS_PENDING && owner2._statusFlags & STATUS_UNINITIALIZED) {
-      let c2 = context;
-      if (c2?._root)
-        c2 = c2._parentComputed;
-      if (c2 && tracking)
+    const pendingComputed = el;
+    if (typeof pendingComputed._fn === "function") {
+      const comp = el;
+      if (comp._flags & REACTIVE_LAZY) {
+        comp._flags &= ~REACTIVE_LAZY;
+        recompute(comp, true);
+      } else if (comp._flags & REACTIVE_DISPOSED) {
+        recompute(comp, true);
+      } else {
+        updateIfNecessary(comp);
+      }
+    }
+    if (c2 && owner2._statusFlags & STATUS_PENDING && owner2._statusFlags & STATUS_UNINITIALIZED) {
+      if (tracking && el !== c2)
         link(el, c2);
       pendingCheckActive = prevCheck;
       throw owner2._error;
@@ -1856,21 +1863,16 @@ function read(el) {
       if (el._overrideValue !== NOT_PENDING && (firewall._inFlight || !!(firewall._statusFlags & STATUS_PENDING))) {
         foundPending = true;
       }
-      let c2 = context;
-      if (c2?._root)
-        c2 = c2._parentComputed;
+      collectPendingSources(el);
+      collectPendingSources(firewall);
       if (c2 && tracking)
         link(el, c2);
-      read(getPendingSignal(el));
-      read(getPendingSignal(firewall));
     } else {
-      if (read(getPendingSignal(el)))
-        foundPending = true;
-      if (firewall && read(getPendingSignal(firewall)))
-        foundPending = true;
+      collectPendingSources(el);
+      if (firewall)
+        collectPendingSources(firewall);
     }
     pendingCheckActive = prevCheck;
-    return el._value;
   }
   let c = context;
   if (c?._root)
@@ -2093,20 +2095,21 @@ function runWithOwner(owner, fn) {
     tracking = prevTracking;
   }
 }
-function getPendingSignal(el) {
-  if (!el._pendingSignal) {
-    el._pendingSignal = optimisticSignal(false, { ownedWrite: true });
-    if (el._parentSource) {
-      el._pendingSignal._parentSource = el;
-    }
-    if (computePendingState(el))
-      setSignal(el._pendingSignal, true);
-  }
-  return el._pendingSignal;
+function collectPendingSources(el) {
+  pendingCheckSources?.add(el);
+  const owner = el._firewall || el;
+  if (owner !== el)
+    pendingCheckSources?.add(owner);
 }
 function computePendingState(el) {
   const comp = el;
   const firewall = el._firewall;
+  if (el._parentSource) {
+    const parent = el._parentSource;
+    if (parent._statusFlags & STATUS_PENDING && !(parent._statusFlags & STATUS_UNINITIALIZED))
+      return true;
+    return el._pendingValue !== NOT_PENDING && !(comp._statusFlags & STATUS_UNINITIALIZED);
+  }
   if (firewall && el._pendingValue !== NOT_PENDING) {
     return !firewall._inFlight && !(firewall._statusFlags & STATUS_PENDING);
   }
@@ -2844,7 +2847,7 @@ function flattenArray(children, results = [], options) {
   return needsUnwrap;
 }
 
-// node_modules/.bun/solid-js@2.0.0-beta.13/node_modules/solid-js/dist/dev.js
+// node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/dev.js
 var $DEVCOMP = Symbol("COMPONENT_DEV");
 function devComponent(Comp, props) {
   return createRoot(() => {
@@ -2897,7 +2900,7 @@ if (globalThis) {
     console.warn("You appear to have multiple instances of Solid. This can lead to unexpected behavior.");
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-beta.13+97643fd58f54a293/node_modules/@solidjs/universal/dist/dev.js
+// node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/dev.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -3149,10 +3152,16 @@ function createRenderer$1({
   return {
     render(code, element) {
       let disposer;
-      createRoot((dispose) => {
-        disposer = dispose;
-        insert(element, code());
-      });
+      try {
+        createRoot((dispose) => {
+          disposer = dispose;
+          insert(element, code());
+        });
+      } catch (err) {
+        if (disposer)
+          disposer();
+        throw err;
+      }
       return disposer;
     },
     insert,
@@ -3215,6 +3224,24 @@ function cleanupNodeHandlers(nodeId) {
 
 // packages/core/src/focus.ts
 var focusedNodeId = null;
+var textInputActive = false;
+function setFocus(nodeId) {
+  if (nodeId === focusedNodeId)
+    return;
+  let oldId = focusedNodeId;
+  focusedNodeId = nodeId;
+  if (oldId != null) {
+    getEventHandler(oldId, "onBlur")?.();
+  }
+  if (nodeId != null) {
+    getEventHandler(nodeId, "onFocus")?.();
+  }
+  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
+  if (wantActive !== textInputActive) {
+    textInputActive = wantActive;
+    ffi.setTextInputActive(wantActive);
+  }
+}
 function getFocusedNodeId() {
   return focusedNodeId;
 }
@@ -3222,7 +3249,7 @@ function getFocusedNodeId() {
 // packages/core/src/window.ts
 var nextFrameId = 1;
 var animationFrames = new Map;
-function onRender(fn) {
+function onFrame(fn) {
   let frameId = null;
   let extendedFn = (tick, frame) => {
     fn(tick, frame);
@@ -3250,20 +3277,30 @@ function attachWindow(_nodeId) {
   let unsubWheel = null;
   let unsubKeyDown = null;
   let unsubKeyUp = null;
+  let unsubTextInput = null;
+  let unsubKeyboardVisibility = null;
+  let unsubFirstResize = null;
+  function runFrame(t, frame) {
+    if (animationFrames.size > 0) {
+      let frames = animationFrames;
+      animationFrames = new Map;
+      for (let fn of frames.values())
+        fn(t, frame);
+    }
+    flush();
+    draw();
+  }
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }) => {
-      if (animationFrames.size > 0) {
-        let frames = animationFrames;
-        animationFrames = new Map;
-        let t = time * 1000 | 0;
-        for (let fn of frames.values())
-          fn(t, frame);
-      }
-      draw();
+      runFrame(time * 1000 | 0, frame);
     });
     unsubDown = Flux.on("pointerDown", ({ targets, ...e }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerDown")?.(e);
+      }
+      let focused = getFocusedNodeId();
+      if (focused != null && !targets.includes(focused)) {
+        setFocus(null);
       }
     });
     unsubUp = Flux.on("pointerUp", ({ targets, ...e }) => {
@@ -3303,7 +3340,17 @@ function attachWindow(_nodeId) {
         getEventHandler(id, "onKeyUp")?.(e);
       }
     });
-    draw();
+    unsubTextInput = Flux.on("textInput", (e) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onTextInput")?.(e);
+      }
+    });
+    unsubKeyboardVisibility = Flux.on("keyboardVisibility", ({ shown }) => {
+      if (!shown)
+        setFocus(null);
+    });
+    unsubFirstResize = Flux.once("resize", () => runFrame(0, 0));
   });
   onCleanup(() => {
     if (unsubscribe)
@@ -3324,6 +3371,12 @@ function attachWindow(_nodeId) {
       unsubKeyDown();
     if (unsubKeyUp)
       unsubKeyUp();
+    if (unsubTextInput)
+      unsubTextInput();
+    if (unsubKeyboardVisibility)
+      unsubKeyboardVisibility();
+    if (unsubFirstResize)
+      unsubFirstResize();
   });
 }
 
@@ -3619,6 +3672,8 @@ var {
     let cleanup2 = (n2) => {
       for (let child of n2.children)
         cleanup2(child);
+      if (n2.id === getFocusedNodeId())
+        setFocus(null);
       nodes.delete(n2.id);
       cleanupNodeHandlers(n2.id);
     };
@@ -3702,7 +3757,7 @@ function path(shape, rotate) {
 }
 var letters = [
   {
-    width: 5 * R,
+    width: 5 * R - 0.5 * R,
     height: 6 * R,
     pieces: [{
       shape: tri1,
@@ -3749,7 +3804,7 @@ var letters = [
     }]
   },
   {
-    width: 4 * R + 2 * M2,
+    width: 4 * R + 2 * M2 - 0.5 * R,
     height: 2 * M2 + 4 * R,
     pieces: [{
       shape: tri3,
@@ -4038,7 +4093,6 @@ var HOLD_ASSEMBLED = 5000;
 var HOLD_EXPLODED = 0;
 function TangramLetter(props) {
   let [dist, setDist] = createSignal(EXPLODE_DIST);
-  let start = null;
   let letterCx = props.letter.width / 2;
   let letterCy = props.letter.height / 2;
   let pieceVectors = props.letter.pieces.map((p2) => {
@@ -4046,12 +4100,9 @@ function TangramLetter(props) {
     return [p2.x + scx - letterCx, p2.y + scy - letterCy];
   });
   let pieceSpins = props.letter.pieces.map((_, i2) => ((i2 * 7 + 3) % 11 - 5) * 30);
-  onRender((_tick) => {
-    if (start === null)
-      start = _tick;
-    let tick = _tick - start;
+  onFrame((tick, frame) => {
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED;
-    let t2 = (tick - props.delay) % cycleLen;
+    let t2 = (tick + 5000 - props.delay) % cycleLen;
     if (t2 < 0) {
       setDist(EXPLODE_DIST);
     } else if (t2 < ANIM_DURATION) {
