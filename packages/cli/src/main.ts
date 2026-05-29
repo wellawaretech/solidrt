@@ -5,8 +5,8 @@
 // Usage:
 //   srt run                             - start dev server + client
 //   srt run examples/hello.tsx          - start dev server + client, bundle + push via WS
-//   srt run --client                    - start dev client only (connects to WS server)
-//   srt run --server examples/hello.tsx - start dev server only, no client
+//   srt server examples/hello.tsx       - start dev server only, no client
+//   srt client                          - start dev client only (connects to WS server)
 //   srt build examples/hello.tsx        - bundle TSX to .srt.js
 //   srt build -c examples/hello.tsx     - bundle TSX to .srt.js + compile to .srt.bin
 //   srt build examples/hello.srt.js     - compile .srt.js to .srt.bin
@@ -25,7 +25,9 @@ import { resolve, dirname } from "path"
 
 // -- Validate args --
 
-if (!command || (command !== "build" && command !== "run" && command !== "record")) {
+let COMMANDS = ["run", "server", "client", "build", "record"]
+
+if (!command || !COMMANDS.includes(command)) {
   printUsage()
   process.exit(1)
 }
@@ -60,9 +62,9 @@ if (command === "record") {
   process.exit(exit)
 }
 
-// -- Run command --
+// -- Client command --
 
-if (values.client) {
+if (command === "client") {
   let runner = requireBinary("solidrt-go")
   let args: string[] = []
   if (values.size) args.push("--size", values.size)
@@ -71,6 +73,8 @@ if (values.client) {
   let exit = await run(runner, args)
   process.exit(exit)
 }
+
+// -- Server / Run command --
 
 // Initialize state from args
 state.source = source
@@ -94,7 +98,7 @@ if (source && isTsx) {
   }
 }
 
-if (!values.server) {
+if (command === "run") {
   spawnClient()
 }
 

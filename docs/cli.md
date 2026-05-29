@@ -1,19 +1,26 @@
 # CLI
 
-Developing SolidRT applications starts at
-`@solidrt/cli`.
-This package provides the `srt` command and pulls the relevant platform binary.
-As a prerequisite, for development only, you need to install [Bun](https://bun.sh). 
+Developing SolidRT applications begins here.
+This package provides the `srt` command and pulls the relevant platform binaries for compiler and runtime.
+As a prerequisite you need to install [Bun](https://bun.sh).
+Next, install `@solidrt/cli` either globally or as a development dependency in your project:
 
-_Bun is not used for running SolidRT applications; SolidRT comes with its own runtime called `flux`._
+```sh
+bun add -d @solidrt/cli
+```
 
-Development of SolidRT applications involves a _development server_ and a _client_ called `solidrt-go`. 
+_Bun is not used for running SolidRT applications; SolidRT comes with its own platform-independent JavaScript runtime called `flux`._
+
+Development of SolidRT applications involves a _development server_ and a _client_ called `solidrt-go`.
 The dev server watches your source files, bundles them and distributes them to connected clients. The clients will then run your code in an environment with extra features for development.
 
-The common workflow is to use the `run` command which will start both. 
+The common workflow is to use the `run` command which will start both the dev server and a local runtime. Next, start clients on other devices and connect them to the dev server. Change your code and see all devices update instantly.
 
-Start other clients on any device and connect them to the dev server. Now you can test your application on all connected devices simultaneously.
+## Proxy and cache
 
+Applications may request a lot of resources. If you would be developing an app which requests images from external websites, this may be a lot of repetitive calls on each reload. With multiple devices connected, the situation escalates quickly. Therefore SolidRT introduces a proxy with a cache. These are enabled through `--proxy` and `--cache`. Traffic from clients are routed through the dev server. Http requests are cached in an Sqlite instance named `.srt-cache.db`. To clear the cache, delete that file.
+
+> proxy will be split in http proxy and file/folder proxy; cache will be enabled automatically for http proxy
 
 ## Command-line interface
 
@@ -23,127 +30,110 @@ Start `srt` via `bunx`:
 bunx srt <command> [options]
 ```
 
-## The `run` command
+| Command  | Description                                                                        |
+| -------- | ---------------------------------------------------------------------------------- |
+| `server` | Start dev server only                                                              |
+| `client` | Start a local client only                                                          |
+| `run`    | Start both dev server and a local client                                           |
+| `build`  | Bundle a `.tsx` file to JavaScript, or compile JavaScript to bytecode              |
+| `bundle` | Package the program, assets, and runtime into a standalone distributable (planned) |
+| `record` | Bundle a `.tsx` file and capture frames to produce a video                         |
 
-Start the dev server and spawn a local `solidrt-go` client.
+### Command `server`
+
+Starts the dev server. Usage:
 
 ```sh
-bunx srt run [file]
+bunx srt server [flags] [file]
 ```
 
 When `file` is provided, it is compiled and pushed to all connected clients immediately. The file is then watched for changes and automatically rebuilt and pushed on save.
 
-**Flags**
+When running, a REPL is started. See section Dev server REPL.
 
-| Flag       | Description                                                   |
-| ---------- | ------------------------------------------------------------- |
-| `--server` | Start the dev server only, without a local client             |
-| `--client` | Start a local client only, connecting to a running server     |
-| `--proxy`  | Route all file, directory, and network requests from connected clients through the dev server |
-| `--cache`  | Cache proxied HTTP responses on the dev server                |
-| `--size`   | Window size as `WxH` (default: `1280x720`)                    |
+| Flag      | Description                                                     |
+| --------- | --------------------------------------------------------------- |
+| `--proxy` | Route all file, folder, and network requests through dev server |
+| `--cache` | Cache proxied HTTP responses on the dev server (requires `--proxy`) |
 
-`--cache` requires `--proxy`.
+### Command `client`
 
-**Examples**
+Starts a local client. Usage
 
 ```sh
-bunx srt run src/index.tsx                      # server + local client, load file
-bunx srt run --server src/index.tsx             # server only
-bunx srt run --server --proxy --cache src/index.tsx  # server with caching proxy
-bunx srt run --client                           # local client only
+bunx srt client [flags]
 ```
 
----
+| Flag     | Description          |
+| -------- | -------------------- |
+| `--size` | Window size as `WxH` |
 
-## srt build
+### Command `run`
+
+Starts both the dev server and a client. It takes the same options as `server` and `client` commands.
+
+```sh
+bunx srt run [flags] [file]
+```
+
+### Command `build`
 
 Bundle a `.tsx` file to JavaScript, or compile JavaScript to bytecode.
 
 ```sh
-bunx srt build <file>
+bunx srt build [flags] <file>
 ```
 
-Accepted input:
-
-| Input       | Description                                        |
-| ----------- | -------------------------------------------------- |
-| `.tsx`      | Bundle with Bun and the Solid plugin               |
-| `.srt.js`   | Compile to bytecode                                |
-
-**Flags**
-
-| Flag               | Description                                          |
-| ------------------ | ---------------------------------------------------- |
-| `-c, --compile`    | Compile the output to bytecode (`.srt.bin`)          |
-| `-m, --minify`     | Minify the output                                    |
-| `-o, --output`     | Output filename without extension                    |
-| `--stdout`         | Write output to stdout instead of a file             |
+| Flag        | Description |
+| ----------- |  ---------------------------------------- |
+| `--compile` |  Compile the output to bytecode           |
+| `--minify`  |  Minify the output                        |
+| `--output`  |  Output filename without extension        |
+| `--stdout`  |  Write output to stdout instead of a file |
 
 Without `--compile`, the output is a `.srt.js` file. With `--compile`, the output is a `.srt.bin` bytecode file that can be loaded directly by the runtime without further compilation.
 
-**Examples**
-
-```sh
-bunx srt build src/index.tsx                  # -> index.srt.js
-bunx srt build src/index.tsx -c               # -> index.srt.bin
-bunx srt build src/index.tsx -c -m -o dist/app  # -> dist/app.srt.bin, minified
-bunx srt build src/index.srt.js --stdout      # bytecode to stdout
-```
-
----
-
-## srt bundle
+### Command `bundle`
 
 > Not yet available. Planned for a future release.
 
-Package a SolidRT application into a standalone distributable. The bundle includes the compiled program, all assets, and the SolidRT runtime - everything needed to run the app on a target platform without any external dependencies or a separate runtime install.
+Package a SolidRT application into a standalone distributable. The bundle includes the compiled program, all assets, and the SolidRT runtime.
 
 ```sh
 bunx srt bundle <file.tsx> [options]
 ```
 
-<!-- TODO: document flags and output format once the command is implemented -->
+### Command `record`
 
----
-
-## srt record
-
-Bundle a `.tsx` file, run it, and capture frames to produce a video.
+Write frames to disk instead of showing on screen. Usage:
 
 ```sh
 bunx srt record <file.tsx>
 ```
 
-**Flags**
-
-| Flag           | Description                               |
-| -------------- | ----------------------------------------- |
-| `--fps <N>`    | Frames per second (default: `60`)         |
-| `--duration <N>` | Duration in seconds (default: `1`)      |
-| `--size <WxH>` | Frame size (default: `1280x720`)          |
-
-**Example**
+Files are written as `png` with file names `frame-<index>.png`.
+Combine them to form a video, for instance using `ffmpeg`:
 
 ```sh
-bunx srt record src/animation.tsx --duration 3 --fps 30
+ffmpeg -framerate 60 -i frame-%06d.png -c:v libx264 -crf 18 -pix_fmt yuv420p out.mp4
 ```
+
+| Flag             | Description                        |
+| ---------------- | ---------------------------------- |
+| `--size <WxH>`   | Frame size (default: `1280x720`)   |
+| `--fps <N>`      | Frames per second (default: `60`)  |
+| `--duration <N>` | Duration in seconds (default: `1`) |
 
 ## Development server REPL
 
-Running `srt run` opens an interactive REPL alongside the server. The REPL lets you manage connected clients and load files without restarting.
+When starting the development server, an interactive REPL opens. The REPL lets you manage connected clients and load files without restarting.
 
-| Command         | Description                                         |
-| --------------- | --------------------------------------------------- |
-| `load <file>`   | Load and push a `.tsx`, `.srt.js`, or `.srt.bin`    |
-| `reload [n...]` | Rebuild and push to all clients, or specific clients by index |
-| `stop [n...]`   | Stop all clients, or specific clients by index      |
-| `list`          | List connected clients with platform and version    |
-| `help`          | Show available REPL commands                        |
-| `!<cmd>`        | Run a shell command                                 |
-| `quit` / `exit` | Shut down the server and exit                       |
-
-Client indices come from `list`. For example, `reload 0 2` rebuilds and pushes to clients 0 and 2 only.
-
-
-## The client: `solidrt-go`
+| Command         | Description                                      |
+| --------------- | ------------------------------------------------ |
+| `load <file>`   | Load and push a `.tsx`, `.srt.js`, or `.srt.bin` |
+| `reload`        | Rebuild and push to all clients                  |
+| `stop`          | Stop all clients                                 |
+| `list`          | List connected clients with platform and version |
+| `help`          | Show available REPL commands                     |
+| `!<cmd>`        | Run a shell command                              |
+| `quit` / `exit` | Shut down the server and exit                    |

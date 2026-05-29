@@ -1,19 +1,17 @@
 // SQLite-backed HTTP response cache for the dev server's /__proxy__ endpoint.
 //
-// Project-local: stored at <cwd>/.srt-cache/cache.db. Opt-in via the --cache
-// flag. Entries live forever; delete the .srt-cache directory to drop them.
+// Project-local: stored at <cwd>/.srt-cache.db. Opt-in via the --cache
+// flag. Entries live forever; delete .srt-cache.db to drop them.
 //
 // Cached: GET (and HEAD) 2xx responses with no Authorization on the request
 // and no Cache-Control: no-store on either side. The cache key is
 // sha256(method + "\n" + url); headers are intentionally not part of the key.
 
 import { Database } from "bun:sqlite"
-import { resolve, join } from "path"
-import { mkdirSync } from "node:fs"
+import { resolve } from "path"
 import { createHash } from "node:crypto"
 
-const CACHE_DIR = ".srt-cache"
-const CACHE_DB = "cache.db"
+const CACHE_FILE = ".srt-cache.db"
 
 export type Decision = "hit" | "miss" | "bypass" | "skip"
 
@@ -30,8 +28,7 @@ let db: Database | null = null
 let enabled = false
 
 export function initCache(opts: { dir: string }) {
-  mkdirSync(resolve(opts.dir, CACHE_DIR), { recursive: true })
-  let d = new Database(join(resolve(opts.dir, CACHE_DIR), CACHE_DB), { create: true })
+  let d = new Database(resolve(opts.dir, CACHE_FILE), { create: true })
   d.run(`CREATE TABLE IF NOT EXISTS entries (
     key         TEXT PRIMARY KEY,
     method      TEXT NOT NULL,

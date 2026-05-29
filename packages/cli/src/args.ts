@@ -6,8 +6,6 @@ export let { values, positionals } = parseArgs({
     compile: { type: "boolean", short: "c", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
-    client: { type: "boolean", default: false },
-    server: { type: "boolean", default: false },
     cache: { type: "boolean", default: false },
     proxy: { type: "boolean", default: false },
     fps: { type: "string" },
@@ -26,17 +24,17 @@ export function printUsage() {
   console.error(`Usage: srt <command> [options] [file]
 
 Commands:
-  run [file.tsx]              Start dev server + local solidrt-go client
-  run --client                Start solidrt-go client only
-  run --server [file.tsx]     Start dev server only
-  build <file.tsx>            Bundle
-  record <file.tsx>           Capture frames for video generation
+  run [file.tsx]        Start dev server + local solidrt-go client
+  server [file.tsx]     Start dev server only
+  client                Start solidrt-go client only
+  build <file.tsx>      Bundle TSX to JS, or compile JS to bytecode
+  record <file.tsx>     Capture frames for video generation
 
-run options:
-      --client              Run client only
-      --server              Run server only
+run/server options:
       --cache               Enable HTTP cache
-      --proxy               Tell connected clients to route file/dir/fetch through the dev server
+      --proxy               Route file/dir/fetch through the dev server
+
+run/client options:
       --size <WxH>          Window size (default: 1280x720)
 
 build options:
