@@ -71,7 +71,8 @@ fn ui_thread(
   source: Option<String>,
   record_fps: Option<u32>,
 ) {
-  let proxy_enabled = Arc::new(AtomicBool::new(false));
+  let proxy_files_enabled = Arc::new(AtomicBool::new(false));
+  let proxy_http_enabled = Arc::new(AtomicBool::new(false));
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
@@ -254,7 +255,7 @@ fn ui_thread(
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
     #[cfg(feature = "go")]
     if record_fps.is_none() {
-      go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_enabled.clone());
+      go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_files_enabled.clone(), proxy_http_enabled.clone());
     }
 
     loop {
@@ -280,9 +281,13 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx));
       #[cfg(feature = "go")]
-      if proxy_enabled.load(Ordering::Relaxed) {
-        if let Some(url) = dev_server.get().cloned() {
-          builder = builder.plugin(move |ctx| go::install_proxy(ctx, url));
+      {
+        let proxy_files = proxy_files_enabled.load(Ordering::Relaxed);
+        let proxy_http = proxy_http_enabled.load(Ordering::Relaxed);
+        if proxy_files || proxy_http {
+          if let Some(url) = dev_server.get().cloned() {
+            builder = builder.plugin(move |ctx| go::install_proxy(ctx, url, proxy_files, proxy_http));
+          }
         }
       }
       let engine = builder.build();

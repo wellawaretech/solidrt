@@ -43,7 +43,7 @@ export function printErr(...args: any[]) {
 }
 
 export function buildReload(payload: { code?: string | null; bytecode?: string }) {
-  return JSON.stringify({ type: "reload", proxy: values.proxy, ...payload })
+  return JSON.stringify({ type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload })
 }
 
 export function broadcastStop() {

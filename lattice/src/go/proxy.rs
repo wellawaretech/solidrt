@@ -320,7 +320,7 @@ fn extract_fetch_headers<'js>(opts: &Object<'js>) -> Vec<(String, String)> {
   out
 }
 
-pub fn install_proxy(ctx: Ctx<'_>, dev_server: String) {
+pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) {
   let client = reqwest::Client::builder()
     .user_agent("lattice-go-proxy")
     .build()
@@ -334,73 +334,77 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String) {
     })
     .expect("store proxy state");
 
-  let flux: Object = ctx
-    .globals()
-    .get("Flux")
-    .expect("Flux global must be set before installing proxy");
+  if files {
+    let flux: Object = ctx
+      .globals()
+      .get("Flux")
+      .expect("Flux global must be set before installing proxy");
 
-  let file_fn =
-    Function::new(ctx.clone(), build_proxy_file).expect("create proxy Flux.file");
-  flux.set("file", file_fn).expect("override Flux.file");
+    let file_fn =
+      Function::new(ctx.clone(), build_proxy_file).expect("create proxy Flux.file");
+    flux.set("file", file_fn).expect("override Flux.file");
 
-  let dir_fn =
-    Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
-  flux.set("dir", dir_fn).expect("override Flux.dir");
+    let dir_fn =
+      Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
+    flux.set("dir", dir_fn).expect("override Flux.dir");
 
-  let write_fn =
-    Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
-  flux.set("write", write_fn).expect("override Flux.write");
+    let write_fn =
+      Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
+    flux.set("write", write_fn).expect("override Flux.write");
+  }
 
-  let proxy_url = Rc::new(format!("http://{}/__proxy__", &*base));
-  let fetch_fn = Function::new(
-    ctx.clone(),
-    MutFn::from({
-      let proxy_url = proxy_url.clone();
-      move |ctx: Ctx<'_>,
-            url: String,
-            opts: Opt<Object<'_>>|
-            -> flux::rquickjs::Result<Promised<_>> {
-        let state = ctx
-          .userdata::<ProxyState>()
-          .expect("proxy state")
-          .clone();
+  if http {
+    let proxy_url = Rc::new(format!("http://{}/__proxy__", &*base));
+    let fetch_fn = Function::new(
+      ctx.clone(),
+      MutFn::from({
+        let proxy_url = proxy_url.clone();
+        move |ctx: Ctx<'_>,
+              url: String,
+              opts: Opt<Object<'_>>|
+              -> flux::rquickjs::Result<Promised<_>> {
+          let state = ctx
+            .userdata::<ProxyState>()
+            .expect("proxy state")
+            .clone();
 
-        let method = opts
-          .0
-          .as_ref()
-          .and_then(|o| o.get::<_, Option<String>>("method").ok().flatten())
-          .unwrap_or_else(|| "GET".to_string())
-          .to_uppercase();
+          let method = opts
+            .0
+            .as_ref()
+            .and_then(|o| o.get::<_, Option<String>>("method").ok().flatten())
+            .unwrap_or_else(|| "GET".to_string())
+            .to_uppercase();
 
-        let body = opts
-          .0
-          .as_ref()
-          .and_then(|o| o.get::<_, Value>("body").ok())
-          .and_then(|v| extract_fetch_body(&v));
+          let body = opts
+            .0
+            .as_ref()
+            .and_then(|o| o.get::<_, Value>("body").ok())
+            .and_then(|v| extract_fetch_body(&v));
 
-        let mut headers = opts
-          .0
-          .as_ref()
-          .map(extract_fetch_headers)
-          .unwrap_or_default();
-        headers.push(("x-srt-proxy-url".to_string(), url));
+          let mut headers = opts
+            .0
+            .as_ref()
+            .map(extract_fetch_headers)
+            .unwrap_or_default();
+          headers.push(("x-srt-proxy-url".to_string(), url));
 
-        let proxy_url = (*proxy_url).clone();
-        let client = state.client.clone();
-        Ok(Promised(async move {
-          do_fetch(client, &method, &proxy_url, headers, body).await
-        }))
-      }
-    }),
-  )
-  .expect("create proxy fetch");
-  ctx
-    .globals()
-    .set("fetch", fetch_fn)
-    .expect("override fetch global");
+          let proxy_url = (*proxy_url).clone();
+          let client = state.client.clone();
+          Ok(Promised(async move {
+            do_fetch(client, &method, &proxy_url, headers, body).await
+          }))
+        }
+      }),
+    )
+    .expect("create proxy fetch");
+    ctx
+      .globals()
+      .set("fetch", fetch_fn)
+      .expect("override fetch global");
+  }
 
   log::info!(
-    "[sgo] Installed Flux file/dir/write and fetch proxy -> http://{}/",
+    "[sgo] Installed proxy (files={files} http={http}) -> http://{}/",
     &*base
   );
 }

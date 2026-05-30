@@ -6,8 +6,8 @@ export let { values, positionals } = parseArgs({
     compile: { type: "boolean", short: "c", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
-    cache: { type: "boolean", default: false },
-    proxy: { type: "boolean", default: false },
+    "proxy-files": { type: "boolean", default: false },
+    "proxy-http": { type: "boolean", default: false },
     fps: { type: "string" },
     duration: { type: "string" },
     size: { type: "string" },
@@ -31,8 +31,8 @@ Commands:
   record <file.tsx>     Capture frames for video generation
 
 run/server options:
-      --cache               Enable HTTP cache
-      --proxy               Route file/dir/fetch through the dev server
+      --proxy-files         Route file/dir access through the dev server
+      --proxy-http          Route fetch calls through the dev server (HTTP cache enabled)
 
 run/client options:
       --size <WxH>          Window size (default: 1280x720)

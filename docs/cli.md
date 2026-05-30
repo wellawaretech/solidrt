@@ -16,11 +16,14 @@ The dev server watches your source files, bundles them and distributes them to c
 
 The common workflow is to use the `run` command which will start both the dev server and a local runtime. Next, start clients on other devices and connect them to the dev server. Change your code and see all devices update instantly.
 
-## Proxy and cache
+## Proxies
 
-Applications may request a lot of resources. If you would be developing an app which requests images from external websites, this may be a lot of repetitive calls on each reload. With multiple devices connected, the situation escalates quickly. Therefore SolidRT introduces a proxy with a cache. These are enabled through `--proxy` and `--cache`. Traffic from clients are routed through the dev server. Http requests are cached in an Sqlite instance named `.srt-cache.db`. To clear the cache, delete that file.
+SolidRT provides two independent proxies to route traffic through the dev server:
 
-> proxy will be split in http proxy and file/folder proxy; cache will be enabled automatically for http proxy
+- `--proxy-http` - routes `fetch` calls through the dev server. HTTP responses are cached automatically in an SQLite file named `.srt-cache.db`. To clear the cache, delete that file.
+- `--proxy-files` - routes `Flux.file`, `Flux.dir`, and `Flux.write` calls through the dev server, giving all connected clients access to the files on your development machine. USE WITH CARE!
+
+With multiple devices connected, caching is especially useful: a resource fetched once is served from cache on every subsequent reload across all clients.
 
 ## Command-line interface
 
@@ -51,10 +54,10 @@ When `file` is provided, it is compiled and pushed to all connected clients imme
 
 When running, a REPL is started. See section Dev server REPL.
 
-| Flag      | Description                                                     |
-| --------- | --------------------------------------------------------------- |
-| `--proxy` | Route all file, folder, and network requests through dev server |
-| `--cache` | Cache proxied HTTP responses on the dev server (requires `--proxy`) |
+| Flag            | Description                                              |
+| --------------- | -------------------------------------------------------- |
+| `--proxy-files` | Route file/dir access through the dev server             |
+| `--proxy-http`  | Route fetch calls through the dev server (cache enabled) |
 
 ### Command `client`
 

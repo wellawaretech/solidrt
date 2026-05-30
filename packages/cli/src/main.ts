@@ -80,7 +80,7 @@ if (command === "client") {
 state.source = source
 state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
 
-if (values.cache) {
+if (values["proxy-http"]) {
   cache.initCache({ dir: process.cwd() })
   console.log("[cli] HTTP cache enabled")
 }
