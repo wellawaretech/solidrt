@@ -1,3 +1,4 @@
+use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
 use rquickjs::function::MutFn;
 use rquickjs::{Ctx, Function, IntoJs, Object, Persistent, Value};
@@ -80,7 +81,9 @@ fn once_impl<'js>(event: String, callback: Function<'js>) -> rquickjs::Result<Fu
     };
     if let Some(persistent_value) = cached {
       if let Ok(value) = persistent_value.restore(&ctx) {
-        let _ = callback.call::<_, ()>((value,));
+        if let Err(e) = callback.call::<_, ()>((value,)) {
+          report_uncaught(&ctx, e, &format!("once(\"{event}\") listener"));
+        }
         return Function::new(ctx, MutFn::from(|_: Ctx<'_>| {}));
       }
     }
@@ -110,7 +113,9 @@ fn register<'js>(
     };
     if let Some(persistent_value) = cached {
       if let Ok(value) = persistent_value.restore(ctx) {
-        let _ = callback.call::<_, ()>((value,));
+        if let Err(e) = callback.call::<_, ()>((value,)) {
+          report_uncaught(ctx, e, &format!("on(\"{event}\") listener"));
+        }
       }
     }
   }
@@ -182,7 +187,9 @@ pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
 
   for listener in snapshot {
     if let Ok(f) = listener.restore(ctx) {
-      let _ = f.call::<_, ()>((arg.clone(),));
+      if let Err(e) = f.call::<_, ()>((arg.clone(),)) {
+        report_uncaught(ctx, e, &format!("\"{event}\" listener"));
+      }
     }
   }
 

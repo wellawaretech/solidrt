@@ -7,8 +7,11 @@ export async function bundle(entry = source) {
   let result = null
 
   let devBase = state.serverUrl ?? undefined
-  let define: Record<string, string> = { "process.env.NODE_ENV": "production" }
-  if (devBase) define.__SRT_DEV_BASE__ = JSON.stringify(devBase)
+  let dev = !!devBase
+  let define: Record<string, string> = {
+    "process.env.NODE_ENV": dev ? "development" : "production",
+  }
+  if (devBase) define.__SRT_DEV_BASE__ = devBase
 
   try {
     result = await Bun.build({
@@ -17,6 +20,10 @@ export async function bundle(entry = source) {
       format: "esm",
       minify: values.minify,
       external: ["qjs:*"],
+      // Resolve the `development` export condition in dev so libraries like
+      // @solidjs/signals ship their dev build (extra invariants, infinite-loop
+      // guard) instead of the unguarded prod build that busy-loops on bugs.
+      conditions: dev ? ["development"] : undefined,
       define,
       plugins: [solidPlugin({ devBase })],
     })

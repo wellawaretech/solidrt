@@ -188,10 +188,13 @@ export function attachWindow(_nodeId: number) {
     // Bootstrap the first frame on the first resize event: by then any
     // onResize subscribers (which run earlier in the dispatch list) have
     // set their initial signal values, so runFrame's flush sees a fully
-    // initialized graph. Resize is a sticky event in Flux, so this fires
-    // synchronously here if a value has already been cached. Runs outside
-    // the tracked-effect scope so flush() is legal.
-    unsubFirstResize = Flux.once("resize", () => runFrame(0, 0))
+    // initialized graph. Resize is a sticky event in Flux, so it can replay
+    // synchronously here, while we are still inside this onSettled callback
+    // where flush() is illegal (not reentrant). Defer runFrame to a microtask
+    // so the first frame always runs after this callback returns.
+    unsubFirstResize = Flux.once("resize", () => {
+      queueMicrotask(() => runFrame(0, 0))
+    })
   })
 
   onCleanup(() => {

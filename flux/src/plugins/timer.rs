@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
+use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
 
 type ActiveMap = Rc<std::cell::RefCell<HashMap<u32, oneshot::Sender<()>>>>;
@@ -64,7 +65,9 @@ impl Timers {
       tokio::select! {
           _ = tokio::time::sleep(Duration::from_millis(ms)) => {
               timers.remove(id);
-              let _ = cb.call::<(), ()>(());
+              if let Err(e) = cb.call::<(), ()>(()) {
+                report_uncaught(cb.ctx(), e, "setTimeout callback");
+              }
           }
           _ = cancel_rx => {}
       }
@@ -84,7 +87,9 @@ impl Timers {
           _ = async {
               loop {
                   interval.tick().await;
-                  let _ = cb.call::<(), ()>(());
+                  if let Err(e) = cb.call::<(), ()>(()) {
+                    report_uncaught(cb.ctx(), e, "setInterval callback");
+                  }
               }
           } => {}
           _ = cancel_rx => {}
