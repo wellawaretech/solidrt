@@ -1,11 +1,9 @@
 import { createRoot, createEffect } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
-import { parseColorToU32, isColorProp } from "./color"
-import { setEventHandler, cleanupNodeHandlers } from "./events"
-import { getFocusedNodeId, setFocus } from "./focus"
+import { parseColorToU32, setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
 
-export { getEventHandler } from "./events"
+export { getEventHandler } from "./core"
 
 export let nodes = new Map()
 

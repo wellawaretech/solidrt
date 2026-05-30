@@ -1,6 +1,5 @@
 import { onCleanup, onSettled, flush } from "@solidjs/signals"
-import { getEventHandler } from "./events"
-import { getFocusedNodeId, setFocus } from "./focus"
+import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
 // ------ Animation frames ----------------
 
