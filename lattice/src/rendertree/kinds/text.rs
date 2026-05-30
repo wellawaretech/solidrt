@@ -1,11 +1,10 @@
 use super::PaintState;
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue,
 };
 use alloy::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
 };
-use rquickjs::Value;
 use taffy::prelude::*;
 
 #[derive(Clone, Debug)]
@@ -121,22 +120,22 @@ impl Measurable for Text {
 }
 
 impl Text {
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
     match property {
       "fontFamily" => {
-        let s = value.get::<String>().expect("fontFamily must be a string");
-        self.font_family = match s.as_str() {
+        let s = value.as_str().expect("fontFamily must be a string");
+        self.font_family = match s {
           "mono" => "Noto Sans Mono".to_string(),
           "sans" => "Noto Sans".to_string(),
           other => other.to_string(),
         };
         Some(true)
       }
-      "fontSize" => { self.font_size = value.get::<f64>().expect("fontSize must be a number") as f32; Some(true) }
-      "lineHeight" => { self.line_height = value.get::<f64>().expect("lineHeight must be a number") as f32; Some(true) }
-      "maxLines" => { self.max_lines = value.get::<f64>().expect("maxLines must be a number") as u32; Some(true) }
+      "fontSize" => { self.font_size = value.as_f64().expect("fontSize must be a number") as f32; Some(true) }
+      "lineHeight" => { self.line_height = value.as_f64().expect("lineHeight must be a number") as f32; Some(true) }
+      "maxLines" => { self.max_lines = value.as_f64().expect("maxLines must be a number") as u32; Some(true) }
       "fontWeight" => {
-        let w = value.get::<f64>().expect("fontWeight must be a number") as u32;
+        let w = value.as_f64().expect("fontWeight must be a number") as u32;
         self.font_weight = match w {
           100 => FontWeight::Thin,
           200 => FontWeight::ExtraLight,

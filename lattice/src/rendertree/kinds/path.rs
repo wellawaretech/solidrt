@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue, XY,
 };
 use alloy::impellers::{
   DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point,
@@ -9,7 +9,6 @@ use alloy::impellers::{
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
-use rquickjs::Value;
 use std::cell::RefCell;
 use svgtypes::{PathParser, PathSegment};
 use taffy::Size as TaffySize;
@@ -309,25 +308,25 @@ impl Path {
     *self.lyon_path.borrow_mut() = None;
   }
 
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
     match property {
       "d" => {
-        self.d = value.get::<String>().expect("d must be a string");
+        self.d = value.as_str().expect("d must be a string").to_string();
         self.invalidate();
         Some(true)
       }
       "x" => {
-        self.x = Some(value.get::<f64>().expect("x must be a number") as f32);
+        self.x = Some(value.as_f64().expect("x must be a number") as f32);
         self.invalidate();
         Some(true)
       }
       "y" => {
-        self.y = Some(value.get::<f64>().expect("y must be a number") as f32);
+        self.y = Some(value.as_f64().expect("y must be a number") as f32);
         self.invalidate();
         Some(true)
       }
       "fillRule" => {
-        self.fill_rule = match value.get::<String>().expect("fillRule must be a string").as_str() {
+        self.fill_rule = match value.as_str().expect("fillRule must be a string") {
           "nonZero" => FillType::NonZero,
           "evenOdd" => FillType::Odd,
           v => panic!("unknown fillRule '{v}'"),

@@ -7,8 +7,30 @@ use std::sync::mpsc::Sender;
 use taffy::prelude::*;
 
 use crate::AlloyContext;
-use crate::rendertree::layout::properties;
-use crate::rendertree::{BoundingBox, Element, ElementKind, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
+use crate::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, PropValue, RenderTree, Text, Window};
+
+// Marshals a JavaScript value into the engine-independent PropValue that
+// rendertree setters consume. This is the FFI boundary: rquickjs types stay on
+// this side of it.
+fn to_prop_value(value: &Value<'_>) -> PropValue {
+  if value.is_null() || value.is_undefined() {
+    PropValue::Null
+  } else if let Some(b) = value.as_bool() {
+    PropValue::Bool(b)
+  } else if let Some(n) = value.as_number() {
+    PropValue::Number(n)
+  } else if let Some(s) = value.as_string() {
+    PropValue::Text(s.to_string().expect("property string must be valid UTF-8"))
+  } else if let Some(arr) = value.as_array() {
+    let mut items = Vec::with_capacity(arr.len());
+    for i in 0..arr.len() {
+      items.push(to_prop_value(&arr.get::<Value>(i).expect("array element must be a value")));
+    }
+    PropValue::List(items)
+  } else {
+    PropValue::Null
+  }
+}
 
 struct TextSize {
   width: f32,
@@ -74,30 +96,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   let tree_ref = shared.0.clone();
   let cmd_tx = alloy_cmd_tx.clone();
   let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
-    let mut tree = tree_ref.borrow_mut();
-    let invalidate = {
-      let element = tree.element_mut(node_id);
-      let prop = property.as_str();
-      let result = match &mut element.kind {
-        ElementKind::Window(win) => win.set_property(prop, value.clone(), &cmd_tx),
-        ElementKind::Rectangle(rect) => rect.set_property(prop, value.clone()),
-        ElementKind::Oval(oval) => oval.set_property(prop, value.clone()),
-        ElementKind::Line(line) => line.set_property(prop, value.clone()),
-        ElementKind::Path(path) => path.set_property(prop, value.clone()),
-        ElementKind::Text(text) => text.set_property(prop, value.clone()),
-        ElementKind::Span(span) => span.set_property(prop, value.clone()),
-        ElementKind::View(view) => view.set_property(prop, value.clone()),
-        ElementKind::Texture(tex) => tex.set_property(prop, value.clone()),
-      };
-      let result = result
-        .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(prop, value.clone())));
-      let result = result
-        .or_else(|| element.style_mut().and_then(|style| properties::set_property(style, prop, value)));
-      result.unwrap_or_else(|| panic!("unknown property '{property}'"))
-    };
-    if invalidate {
-      tree.invalidate_cache(node_id);
-    }
+    tree_ref.borrow_mut().set_property(node_id, &property, &to_prop_value(&value), &cmd_tx);
   })
   .unwrap();
 

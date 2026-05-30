@@ -4,12 +4,14 @@ mod kinds;
 pub mod layout;
 pub mod platform;
 mod tree;
+mod value;
 
 pub use hit::{HitConfig, HitTester};
 pub use kinds::{Line, Oval, PaintState, Path, Rectangle, Span, Text, Texture, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
+pub use value::PropValue;
 
 use alloy::impellers::DisplayListBuilder;
 use taffy::prelude::*;

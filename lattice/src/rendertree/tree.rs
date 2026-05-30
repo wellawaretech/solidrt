@@ -1,7 +1,11 @@
 use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+
+use alloy::AlloyCommand;
 use taffy::NodeId;
 
-use crate::rendertree::{BoundingBox, Element, ElementKind};
+use crate::rendertree::layout::properties;
+use crate::rendertree::{BoundingBox, Element, ElementKind, PropValue};
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -105,6 +109,40 @@ impl RenderTree {
 
   pub(crate) fn try_node(&self, id: u64) -> Option<&Element> {
     self.nodes.get(&id)
+  }
+
+  /// Applies a single property to a node, dispatching to the element kind, then
+  /// its paint state, then its layout style, and invalidating the layout cache
+  /// when the change affects layout. Panics if no layer recognizes the property.
+  pub fn set_property(
+    &mut self,
+    node_id: u64,
+    property: &str,
+    value: &PropValue,
+    cmd_tx: &Sender<AlloyCommand>,
+  ) {
+    let invalidate = {
+      let element = self.node_mut(node_id);
+      let result = match &mut element.kind {
+        ElementKind::Window(win) => win.set_property(property, value, cmd_tx),
+        ElementKind::Rectangle(rect) => rect.set_property(property, value),
+        ElementKind::Oval(oval) => oval.set_property(property, value),
+        ElementKind::Line(line) => line.set_property(property, value),
+        ElementKind::Path(path) => path.set_property(property, value),
+        ElementKind::Text(text) => text.set_property(property, value),
+        ElementKind::Span(span) => span.set_property(property, value),
+        ElementKind::View(view) => view.set_property(property, value),
+        ElementKind::Texture(tex) => tex.set_property(property, value),
+      };
+      let result = result
+        .or_else(|| element.kind.paint_mut().and_then(|paint| paint.set_property(property, value)));
+      let result = result
+        .or_else(|| element.style_mut().and_then(|style| properties::set_property(style, property, value)));
+      result.unwrap_or_else(|| panic!("unknown property '{property}'"))
+    };
+    if invalidate {
+      self.invalidate_cache(node_id);
+    }
   }
 
   /// Window-relative bounding box of a node from the most recently computed

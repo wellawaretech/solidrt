@@ -1,6 +1,7 @@
-use rquickjs::Value;
 use taffy::prelude::*;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
+
+use crate::rendertree::PropValue;
 
 pub fn parse_dimension_str(s: &str) -> Dimension {
   if s == "auto" {
@@ -14,20 +15,20 @@ pub fn parse_dimension_str(s: &str) -> Dimension {
   }
 }
 
-pub fn parse_dimension(value: Value<'_>) -> Dimension {
-  if let Ok(n) = value.get::<f64>() {
+pub fn parse_dimension(value: &PropValue) -> Dimension {
+  if let Some(n) = value.as_f64() {
     Dimension::length(n as f32)
-  } else if let Ok(s) = value.get::<String>() {
-    parse_dimension_str(&s)
+  } else if let Some(s) = value.as_str() {
+    parse_dimension_str(s)
   } else {
     panic!("dimension must be a number or string")
   }
 }
 
-pub fn parse_length_percentage(value: Value<'_>) -> LengthPercentage {
-  if let Ok(n) = value.get::<f64>() {
+pub fn parse_length_percentage(value: &PropValue) -> LengthPercentage {
+  if let Some(n) = value.as_f64() {
     LengthPercentage::length(n as f32)
-  } else if let Ok(s) = value.get::<String>() {
+  } else if let Some(s) = value.as_str() {
     if s.ends_with('%') {
       let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
       LengthPercentage::percent(n / 100.0)
@@ -39,10 +40,10 @@ pub fn parse_length_percentage(value: Value<'_>) -> LengthPercentage {
   }
 }
 
-pub fn parse_length_percentage_auto(value: Value<'_>) -> LengthPercentageAuto {
-  if let Ok(n) = value.get::<f64>() {
+pub fn parse_length_percentage_auto(value: &PropValue) -> LengthPercentageAuto {
+  if let Some(n) = value.as_f64() {
     LengthPercentageAuto::length(n as f32)
-  } else if let Ok(s) = value.get::<String>() {
+  } else if let Some(s) = value.as_str() {
     if s == "auto" {
       LengthPercentageAuto::auto()
     } else if s.ends_with('%') {

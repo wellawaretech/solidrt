@@ -1,5 +1,5 @@
+use crate::rendertree::PropValue;
 use alloy::impellers::{BlendMode, Color, DrawStyle, Paint, StrokeCap, StrokeJoin};
-use rquickjs::Value;
 
 #[derive(Clone, Debug)]
 pub struct PaintState {
@@ -39,10 +39,10 @@ impl PaintState {
     paint
   }
 
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
     match property {
       "color" => {
-        let rgba = value.get::<f64>().expect("color must be a number") as u32;
+        let rgba = value.as_f64().expect("color must be a number") as u32;
         self.color = Color::new_srgba(
           ((rgba >> 24) & 0xFF) as f32 / 255.0,
           ((rgba >> 16) & 0xFF) as f32 / 255.0,
@@ -52,15 +52,15 @@ impl PaintState {
         Some(false)
       }
       "strokeWidth" => {
-        self.stroke_width = value.get::<f64>().expect("strokeWidth must be a number") as f32;
+        self.stroke_width = value.as_f64().expect("strokeWidth must be a number") as f32;
         Some(false)
       }
       "strokeMiter" => {
-        self.stroke_miter = value.get::<f64>().expect("strokeMiter must be a number") as f32;
+        self.stroke_miter = value.as_f64().expect("strokeMiter must be a number") as f32;
         Some(false)
       }
       "drawStyle" => {
-        self.draw_style = match value.get::<String>().expect("drawStyle must be a string").as_str() {
+        self.draw_style = match value.as_str().expect("drawStyle must be a string") {
           "fill" => DrawStyle::Fill,
           "stroke" => DrawStyle::Stroke,
           "strokeAndFill" => DrawStyle::StrokeAndFill,
@@ -69,7 +69,7 @@ impl PaintState {
         Some(false)
       }
       "strokeCap" => {
-        self.stroke_cap = match value.get::<String>().expect("strokeCap must be a string").as_str() {
+        self.stroke_cap = match value.as_str().expect("strokeCap must be a string") {
           "butt" => StrokeCap::Butt,
           "round" => StrokeCap::Round,
           "square" => StrokeCap::Square,
@@ -78,7 +78,7 @@ impl PaintState {
         Some(false)
       }
       "strokeJoin" => {
-        self.stroke_join = match value.get::<String>().expect("strokeJoin must be a string").as_str() {
+        self.stroke_join = match value.as_str().expect("strokeJoin must be a string") {
           "miter" => StrokeJoin::Miter,
           "round" => StrokeJoin::Round,
           "bevel" => StrokeJoin::Bevel,
@@ -87,7 +87,7 @@ impl PaintState {
         Some(false)
       }
       "blendMode" => {
-        self.blend_mode = match value.get::<String>().expect("blendMode must be a string").as_str() {
+        self.blend_mode = match value.as_str().expect("blendMode must be a string") {
           "clear" => BlendMode::Clear,
           "source" => BlendMode::Source,
           "destination" => BlendMode::Destination,

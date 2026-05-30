@@ -1,5 +1,4 @@
-use crate::rendertree::{Element, ElementKind};
-use rquickjs::Value;
+use crate::rendertree::{Element, ElementKind, PropValue};
 
 #[derive(Clone, Debug, Default)]
 pub struct Span {
@@ -7,9 +6,9 @@ pub struct Span {
 }
 
 impl Span {
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
     match property {
-      "text" => { self.text = value.get::<String>().expect("text must be a string"); Some(true) }
+      "text" => { self.text = value.as_str().expect("text must be a string").to_string(); Some(true) }
       _ => None,
     }
   }

@@ -142,7 +142,7 @@ pub fn init(
       engine_state.set_hovered_path(key, new_ids);
     }
 
-    // overlay::fps(&mut builder, &platform.typography, platform.safe_area(), platform.fps());
+    overlay::fps(&mut builder, &platform.typography, platform.safe_area(), platform.fps());
 
     if let Some(dl) = builder.build() {
       atx.submit(dl).expect("Failed to submit display list");

@@ -1,11 +1,11 @@
-use rquickjs::Value;
 use taffy::geometry::Point;
 use taffy::prelude::*;
 use taffy::style::Overflow;
 
 use super::util::{parse_dimension, parse_dimension_str, parse_grid_template, parse_length_percentage, parse_length_percentage_auto};
+use crate::rendertree::PropValue;
 
-pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Option<bool> {
+pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Option<bool> {
   match property {
     // Size
     "width"     => style.size.width      = parse_dimension(value),
@@ -37,7 +37,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
 
     // Display
     "display" => {
-      style.display = match value.get::<String>().expect("display must be a string").as_str() {
+      style.display = match value.as_str().expect("display must be a string") {
         "flex"  => Display::Flex,
         "block" => Display::Block,
         "grid"  => Display::Grid,
@@ -48,7 +48,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
 
     // Flex container
     "flexDirection" => {
-      style.flex_direction = match value.get::<String>().expect("flexDirection must be a string").as_str() {
+      style.flex_direction = match value.as_str().expect("flexDirection must be a string") {
         "row"            => FlexDirection::Row,
         "column"         => FlexDirection::Column,
         "row-reverse"    => FlexDirection::RowReverse,
@@ -57,7 +57,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       };
     }
     "flexWrap" => {
-      style.flex_wrap = match value.get::<String>().expect("flexWrap must be a string").as_str() {
+      style.flex_wrap = match value.as_str().expect("flexWrap must be a string") {
         "nowrap"       => FlexWrap::NoWrap,
         "wrap"         => FlexWrap::Wrap,
         "wrap-reverse" => FlexWrap::WrapReverse,
@@ -65,7 +65,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       };
     }
     "alignItems" => {
-      style.align_items = Some(match value.get::<String>().expect("alignItems must be a string").as_str() {
+      style.align_items = Some(match value.as_str().expect("alignItems must be a string") {
         "start"      => AlignItems::Start,
         "end"        => AlignItems::End,
         "flex-start" => AlignItems::FlexStart,
@@ -77,7 +77,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       });
     }
     "justifyContent" => {
-      style.justify_content = Some(match value.get::<String>().expect("justifyContent must be a string").as_str() {
+      style.justify_content = Some(match value.as_str().expect("justifyContent must be a string") {
         "start"         => JustifyContent::Start,
         "end"           => JustifyContent::End,
         "flex-start"    => JustifyContent::FlexStart,
@@ -91,7 +91,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       });
     }
     "alignContent" => {
-      style.align_content = Some(match value.get::<String>().expect("alignContent must be a string").as_str() {
+      style.align_content = Some(match value.as_str().expect("alignContent must be a string") {
         "start"         => AlignContent::Start,
         "end"           => AlignContent::End,
         "flex-start"    => AlignContent::FlexStart,
@@ -107,12 +107,12 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
 
     // Flex item
     "flex" => {
-      if let Ok(n) = value.get::<f64>() {
+      if let Some(n) = value.as_f64() {
         style.flex_grow   = n as f32;
         style.flex_shrink = 1.0;
         style.flex_basis  = Dimension::length(0.0);
-      } else if let Ok(s) = value.get::<String>() {
-        match s.as_str() {
+      } else if let Some(s) = value.as_str() {
+        match s {
           "none" => {
             style.flex_grow   = 0.0;
             style.flex_shrink = 0.0;
@@ -144,11 +144,11 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
         panic!("flex must be a number or string")
       }
     }
-    "flexGrow"   => style.flex_grow   = value.get::<f64>().expect("flexGrow must be a number") as f32,
-    "flexShrink" => style.flex_shrink = value.get::<f64>().expect("flexShrink must be a number") as f32,
+    "flexGrow"   => style.flex_grow   = value.as_f64().expect("flexGrow must be a number") as f32,
+    "flexShrink" => style.flex_shrink = value.as_f64().expect("flexShrink must be a number") as f32,
     "flexBasis"  => style.flex_basis  = parse_dimension(value),
     "alignSelf" => {
-      style.align_self = Some(match value.get::<String>().expect("alignSelf must be a string").as_str() {
+      style.align_self = Some(match value.as_str().expect("alignSelf must be a string") {
         "start"      => AlignSelf::Start,
         "end"        => AlignSelf::End,
         "flex-start" => AlignSelf::FlexStart,
@@ -170,7 +170,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
 
     // Position
     "position" => {
-      style.position = match value.get::<String>().expect("position must be a string").as_str() {
+      style.position = match value.as_str().expect("position must be a string") {
         "relative" => Position::Relative,
         "absolute" => Position::Absolute,
         v => panic!("unknown position value '{v}'"),
@@ -188,7 +188,7 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
 
     // Grid container
     "gridAutoFlow" => {
-      style.grid_auto_flow = match value.get::<String>().expect("gridAutoFlow must be a string").as_str() {
+      style.grid_auto_flow = match value.as_str().expect("gridAutoFlow must be a string") {
         "row"           => GridAutoFlow::Row,
         "column"        => GridAutoFlow::Column,
         "row-dense"     => GridAutoFlow::RowDense,
@@ -197,34 +197,34 @@ pub fn set_property(style: &mut Style, property: &str, value: Value<'_>) -> Opti
       };
     }
     "gridTemplateColumns" => {
-      style.grid_template_columns = parse_grid_template(&value.get::<String>().expect("gridTemplateColumns must be a string"));
+      style.grid_template_columns = parse_grid_template(value.as_str().expect("gridTemplateColumns must be a string"));
     }
     "gridTemplateRows" => {
-      style.grid_template_rows = parse_grid_template(&value.get::<String>().expect("gridTemplateRows must be a string"));
+      style.grid_template_rows = parse_grid_template(value.as_str().expect("gridTemplateRows must be a string"));
     }
     "gridAutoColumns" => {
-      let v = value.get::<f64>().expect("gridAutoColumns must be a number") as f32;
+      let v = value.as_f64().expect("gridAutoColumns must be a number") as f32;
       style.grid_auto_columns = vec![minmax(length(v), length(v))];
     }
     "gridAutoRows" => {
-      let v = value.get::<f64>().expect("gridAutoRows must be a number") as f32;
+      let v = value.as_f64().expect("gridAutoRows must be a number") as f32;
       style.grid_auto_rows = vec![minmax(length(v), length(v))];
     }
 
     // Grid item
-    "gridColumnStart" => style.grid_column.start = line(value.get::<f64>().expect("gridColumnStart must be a number") as i16),
-    "gridColumnEnd"   => style.grid_column.end   = line(value.get::<f64>().expect("gridColumnEnd must be a number") as i16),
-    "gridRowStart"    => style.grid_row.start     = line(value.get::<f64>().expect("gridRowStart must be a number") as i16),
-    "gridRowEnd"      => style.grid_row.end       = line(value.get::<f64>().expect("gridRowEnd must be a number") as i16),
+    "gridColumnStart" => style.grid_column.start = line(value.as_f64().expect("gridColumnStart must be a number") as i16),
+    "gridColumnEnd"   => style.grid_column.end   = line(value.as_f64().expect("gridColumnEnd must be a number") as i16),
+    "gridRowStart"    => style.grid_row.start     = line(value.as_f64().expect("gridRowStart must be a number") as i16),
+    "gridRowEnd"      => style.grid_row.end       = line(value.as_f64().expect("gridRowEnd must be a number") as i16),
 
     _ => return None,
   }
   Some(true)
 }
 
-fn parse_overflow(prop: &str, value: Value<'_>) -> Overflow {
-  let s = value.get::<String>().unwrap_or_else(|_| panic!("{prop} must be a string"));
-  match s.as_str() {
+fn parse_overflow(prop: &str, value: &PropValue) -> Overflow {
+  let s = value.as_str().unwrap_or_else(|| panic!("{prop} must be a string"));
+  match s {
     "visible" => Overflow::Visible,
     "hidden"  => Overflow::Hidden,
     "scroll"  => Overflow::Scroll,

@@ -1,8 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue, XY};
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
-use rquickjs::Value;
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]
@@ -37,12 +36,12 @@ impl Measurable for Oval {
 }
 
 impl Oval {
-  pub fn set_property(&mut self, property: &str, value: Value<'_>) -> Option<bool> {
+  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
     match property {
-      "x" => { self.x = Some(value.get::<f64>().expect("x must be a number") as f32); Some(false) }
-      "y" => { self.y = Some(value.get::<f64>().expect("y must be a number") as f32); Some(false) }
-      "w" => { self.w = Some(value.get::<f64>().expect("w must be a number") as f32); Some(false) }
-      "h" => { self.h = Some(value.get::<f64>().expect("h must be a number") as f32); Some(false) }
+      "x" => { self.x = Some(value.as_f64().expect("x must be a number") as f32); Some(false) }
+      "y" => { self.y = Some(value.as_f64().expect("y must be a number") as f32); Some(false) }
+      "w" => { self.w = Some(value.as_f64().expect("w must be a number") as f32); Some(false) }
+      "h" => { self.h = Some(value.as_f64().expect("h must be a number") as f32); Some(false) }
       _ => None,
     }
   }
