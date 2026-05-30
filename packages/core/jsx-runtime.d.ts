@@ -1,6 +1,5 @@
 import type {
   WindowProps,
-  CircleProps,
   RectProps,
   OvalProps,
   PathProps,

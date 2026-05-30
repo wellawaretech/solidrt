@@ -1,39 +1,21 @@
-import { createSignal, onCleanup } from "@solidjs/signals"
-import { decodeImage, createTexture } from "@solidrt/core/gpu"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
-export interface ImageProps extends PointerProps {
-  src: string | Uint8Array
+export interface ViewProps extends PointerProps {
+  children?: any
+  ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps
 }
 
-//TODO onLoad, onError
-//TODO release texture in onCleanup
-export function Image(props: ImageProps) {
-  let [res] = createSignal(async () => {
-    let bytes: Uint8Array
-    if (typeof props.src === "string") {
-      let response = await fetch(props.src)
-      bytes = await response.bytes()
-    } else {
-      bytes = props.src
-    }
-    let { data, width, height } = decodeImage(bytes)
-    let id = createTexture(data, width, height)
-    return { id, width, height }
-  })
-
-  let src = () => res()?.id
+export function View(props: ViewProps) {
+  let hasBackground = () =>
+    props.style?.backgroundColor != null || props.style?.borderRadius != null
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0
-
-  onCleanup(() => {
-    //TODO release texture
-  })
 
   return (
     <view
+      ref={props.ref}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}
@@ -52,10 +34,13 @@ export function Image(props: ImageProps) {
       onTextInput={props.onTextInput}
       pointerEvents={props.pointerEvents}
     >
-      {props.style?.backgroundColor != null ? (
-        <d-rect color={props.style.backgroundColor} radius={props.style?.borderRadius} />
+      {hasBackground() ? (
+        <d-rect
+          color={props.style?.backgroundColor ?? "transparent"}
+          radius={props.style?.borderRadius}
+        />
       ) : null}
-      <texture src={src()} />
+      {props.children}
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"

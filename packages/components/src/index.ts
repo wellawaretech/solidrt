@@ -1,4 +1,8 @@
+export { Window, type WindowProps } from "./window"
+export { View, type ViewProps } from "./view"
+export { Text, type TextProps } from "./text"
 export { Image, type ImageProps } from "./image"
 export { SafeArea } from "./safe-area"
 export { TextInput, type TextInputProps } from "./text-input"
 export { theme, setTheme, type Theme } from "./theme"
+export type { StyleProps, TextLayoutProps } from "./types"

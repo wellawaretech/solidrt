@@ -1,9 +1,8 @@
 /// <reference types="@solidrt/flux-types" />
 
-import type { Accessor, JSX as SolidJSX } from "@solidjs/signals"
+import type { JSX as SolidJSX } from "@solidjs/signals"
 
 declare global {
-
   let ffi: {
     createRoot(id: number): void
     createNode(id: number, kind: string): void
@@ -30,8 +29,6 @@ export interface MeasureTextOptions {
 
 type Children = SolidJSX.Element
 
-type OA<T> = T | Accessor<T>
-
 interface FlexboxProps {
   gap?: number
   rowGap?: number
@@ -39,7 +36,7 @@ interface FlexboxProps {
   flex?: number | "none" | "auto" | (string & {})
   flexGrow?: number
   flexShrink?: number
-  flexBasis?: number
+  flexBasis?: Dimension
 
   flexDirection?: "row" | "column" | "row-reverse" | "column-reverse"
   flexWrap?: "nowrap" | "wrap" | "wrap-reverse"
@@ -96,8 +93,8 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   overflowY?: "visible" | "clip" | "hidden" | "scroll"
 }
 
-import type { LCH } from "./color"
-export type Color = string | LCH
+// Colors are CSS color strings, parsed to a packed u32 by parseColorToU32.
+export type Color = string
 
 export interface PaintProps {
   color?: Color
@@ -110,28 +107,48 @@ export interface PaintProps {
 }
 
 export interface TransformProps {
-  rotate?: OA<number>
-  scale?: OA<number>
-  x?: OA<number>
-  y?: OA<number>
-  cx?: OA<number>
-  cy?: OA<number>
-  scrollX?: OA<number>
-  scrollY?: OA<number>
+  rotate?: number
+  scale?: number
+  x?: number
+  y?: number
+  cx?: number
+  cy?: number
+  scrollX?: number
+  scrollY?: number
+}
+
+export interface PointerEvent {
+  x: number
+  y: number
+}
+
+export interface WheelEvent {
+  x: number
+  y: number
+  deltaX: number
+  deltaY: number
+}
+
+export interface KeyEvent {
+  key: string
+}
+
+export interface TextEvent {
+  text: string
 }
 
 export interface PointerProps {
-  onPointerDown?: Function
-  onPointerUp?: Function
-  onPointerMove?: Function
-  onPointerEnter?: Function
-  onPointerLeave?: Function
-  onWheel?: Function
-  onFocus?: Function
-  onBlur?: Function
-  onKeyDown?: Function
-  onKeyUp?: Function
-  onTextInput?: Function
+  onPointerDown?: (event: PointerEvent) => void
+  onPointerUp?: (event: PointerEvent) => void
+  onPointerMove?: (event: PointerEvent) => void
+  onPointerEnter?: (event: PointerEvent) => void
+  onPointerLeave?: (event: PointerEvent) => void
+  onWheel?: (event: WheelEvent) => void
+  onFocus?: () => void
+  onBlur?: () => void
+  onKeyDown?: (event: KeyEvent) => void
+  onKeyUp?: (event: KeyEvent) => void
+  onTextInput?: (event: TextEvent) => void
   pointerEvents?: "auto" | "none" | "all"
 }
 
