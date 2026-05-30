@@ -15,7 +15,10 @@ export namespace JSX {
   type Element = SolidJSX.Element
   type ElementChildrenAttribute = SolidJSX.ElementChildrenAttribute
 
-  type RefCallback<T> = (el: T) => void
+  // Return type is unconstrained: a ref callback's return value is ignored, so
+  // an arrow like `ref={n => (this.node = n)}` (which returns the assignment)
+  // is accepted as readily as a void-returning block body.
+  type RefCallback<T> = (el: T) => unknown
   type Ref<T> = T | RefCallback<T>
 
   interface IntrinsicAttributes {

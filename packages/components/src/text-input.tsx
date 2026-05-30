@@ -1,5 +1,5 @@
-import { createSignal, onCleanup } from "@solidjs/signals"
-import { measureText, setFocus } from "@solidrt/core"
+import { createSignal, flush, onCleanup } from "@solidjs/signals"
+import { getBoundingBox, measureText, onLayout, setFocus } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
@@ -28,8 +28,10 @@ export function TextInput(props: TextInputProps) {
   let [internalValue, setInternalValue] = createSignal(props.defaultValue ?? "")
   let [focused, setFocused] = createSignal(false)
   let [caretOn, setCaretOn] = createSignal(true)
+  let [viewportWidth, setViewportWidth] = createSignal(0)
 
   let node: { id: number } | undefined
+  let viewport: { id: number } | undefined
   let blinkId: any = null
 
   let value = () => props.value ?? internalValue()
@@ -99,10 +101,19 @@ export function TextInput(props: TextInputProps) {
   let displayText = () => (showPlaceholder() ? (props.placeholder ?? "") : value())
   let displayColor = () => (showPlaceholder() ? theme.color.textMuted : textColor())
 
-  // V1: viewport width derived from numeric layout width minus padding.
-  // For "auto" / "%" widths, fall back to 0 (no scroll, caret may overflow).
-  let viewportWidth = () =>
-    typeof props.layout?.width === "number" ? props.layout.width - 2 * theme.spacing.md : 0
+  // Viewport width is the inner scroll container's own laid-out width, read
+  // after layout. This works for numeric, "auto" and "%" widths alike (no need
+  // to subtract padding: the padding lives on the outer view). getBoundingBox
+  // is a snapshot, so we push it into a signal from onLayout. The flush drains
+  // the resulting scrollX update synchronously, before paint, so the scroll
+  // tracks the width in the same frame instead of trailing it by one.
+  onLayout(() => {
+    if (!viewport) return
+    let w = getBoundingBox(viewport)?.width ?? 0
+    if (w !== viewportWidth()) setViewportWidth(w)
+    flush()
+  })
+
   let caretWidth = () => (focused() && !showPlaceholder() ? 1 : 0)
   let scrollX = () => {
     if (showPlaceholder()) return 0
@@ -143,6 +154,7 @@ export function TextInput(props: TextInputProps) {
         radius={borderRadius()}
       />
       <view
+        ref={(n: { id: number }) => (viewport = n)}
         flex={1}
         flexDirection="row"
         alignItems="center"

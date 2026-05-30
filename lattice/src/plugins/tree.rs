@@ -24,6 +24,24 @@ impl<'js> IntoJs<'js> for TextSize {
   }
 }
 
+struct BoundingBox {
+  x: f32,
+  y: f32,
+  width: f32,
+  height: f32,
+}
+
+impl<'js> IntoJs<'js> for BoundingBox {
+  fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("x", self.x)?;
+    obj.set("y", self.y)?;
+    obj.set("width", self.width)?;
+    obj.set("height", self.height)?;
+    Ok(obj.into_value())
+  }
+}
+
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
@@ -101,6 +119,75 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   })
   .unwrap();
 
+  let tree_ref = shared.0.clone();
+  let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> {
+    // Window-relative bounding box from the layout computed in the current
+    // frame's layout_phase. Call inside onLayout (or an event handler) so the
+    // values reflect the current frame; layout is computed before the display
+    // list is built, so the numbers are up to date there. Returns None for
+    // layout-less nodes (d-rect, span) and before the first layout has run.
+    //
+    // Computed lazily: this walks from the queried node up to the root each
+    // call, so nothing is cached and only queried nodes cost anything.
+    //
+    // Phase 1: only translations compose into the result - each ancestor's
+    // layout position, plus View `pos` (forward) and `scroll` (inverse). A
+    // View `rotate` or `scale` anywhere in the chain is ignored, so the
+    // reported x/y is wrong under rotation/scaling; width/height are always
+    // the node's own computed size. TODO: compose full transforms by walking
+    // the four corners up through each ancestor, mirroring hit testing.
+    let tree = tree_ref.borrow();
+
+    let node = tree.try_node(id)?;
+    let layout = node.layout.as_ref()?;
+    if layout.cache.is_empty() {
+      return None;
+    }
+
+    let width = layout.computed.size.width;
+    let height = layout.computed.size.height;
+
+    // Own location, plus own View pos (which translates the node itself).
+    let mut x = layout.computed.location.x;
+    let mut y = layout.computed.location.y;
+    if let ElementKind::View(v) = &node.kind {
+      if let Some(p) = v.pos {
+        x += p.x;
+        y += p.y;
+      }
+    }
+
+    // Ascend to the root, adding each ancestor's layout position and View
+    // translate, and removing any scroll the ancestor applies to its children.
+    let mut cur_id = id;
+    loop {
+      let Some(parent_id) = tree.try_node(cur_id).and_then(|n| n.parent) else {
+        break;
+      };
+      let Some(parent) = tree.try_node(parent_id) else {
+        break;
+      };
+      if let Some(parent_layout) = parent.layout.as_ref() {
+        x += parent_layout.computed.location.x;
+        y += parent_layout.computed.location.y;
+      }
+      if let ElementKind::View(v) = &parent.kind {
+        if let Some(p) = v.pos {
+          x += p.x;
+          y += p.y;
+        }
+        if let Some(s) = v.scroll {
+          x -= s.x;
+          y -= s.y;
+        }
+      }
+      cur_id = parent_id;
+    }
+
+    Some(BoundingBox { x, y, width, height })
+  })
+  .unwrap();
+
   let cmd_tx = alloy_cmd_tx.clone();
   let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
     cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
@@ -162,6 +249,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   ffi.set("setProperty", set_property).unwrap();
   ffi.set("setTextInputActive", set_text_input_active).unwrap();
   ffi.set("measureText", measure_text).unwrap();
+  ffi.set("getBoundingBox", get_bounding_box).unwrap();
 
   ctx.globals().set("ffi", ffi).unwrap();
 }

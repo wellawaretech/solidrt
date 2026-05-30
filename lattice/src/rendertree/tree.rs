@@ -103,6 +103,10 @@ impl RenderTree {
       .expect(&format!("node {} not found", id))
   }
 
+  pub(crate) fn try_node(&self, id: u64) -> Option<&Element> {
+    self.nodes.get(&id)
+  }
+
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {
     self
       .nodes

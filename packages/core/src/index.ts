@@ -2,6 +2,8 @@ export * from "./renderer"
 export { setFocus, getFocusedNodeId } from "./focus"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { measureText } from "./text"
+export { getBoundingBox } from "./layout"
+export type { BoundingBox } from "./layout"
 export { createTexture, decodeImage } from "./gpu"
 export type { DecodedImage } from "./gpu"
 export type {
