@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use taffy::NodeId;
 
-use crate::rendertree::Element;
+use crate::rendertree::{BoundingBox, Element, ElementKind};
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -105,6 +105,70 @@ impl RenderTree {
 
   pub(crate) fn try_node(&self, id: u64) -> Option<&Element> {
     self.nodes.get(&id)
+  }
+
+  /// Window-relative bounding box of a node from the most recently computed
+  /// layout. Returns None for layout-less nodes (d-rect, span) and before the
+  /// first layout has run (cache empty).
+  ///
+  /// Computed lazily: walks from the node up to the root each call, so nothing
+  /// is cached and only queried nodes cost anything. Call after layout_phase
+  /// (e.g. from the postLayout hook) for current-frame values.
+  ///
+  /// Phase 1: only translations compose into the result - each ancestor's
+  /// layout position, plus View `pos` (forward) and `scroll` (inverse). A View
+  /// `rotate` or `scale` anywhere in the chain is ignored, so the reported x/y
+  /// is wrong under rotation/scaling; width/height are always the node's own
+  /// computed size. TODO: compose full transforms by walking the four corners
+  /// up through each ancestor, mirroring hit testing.
+  pub fn bounding_box(&self, id: u64) -> Option<BoundingBox> {
+    let node = self.try_node(id)?;
+    let layout = node.layout.as_ref()?;
+    if layout.cache.is_empty() {
+      return None;
+    }
+
+    let width = layout.computed.size.width;
+    let height = layout.computed.size.height;
+
+    // Own location, plus own View pos (which translates the node itself).
+    let mut x = layout.computed.location.x;
+    let mut y = layout.computed.location.y;
+    if let ElementKind::View(v) = &node.kind {
+      if let Some(p) = v.pos {
+        x += p.x;
+        y += p.y;
+      }
+    }
+
+    // Ascend to the root, adding each ancestor's layout position and View
+    // translate, and removing any scroll the ancestor applies to its children.
+    let mut cur_id = id;
+    loop {
+      let Some(parent_id) = self.try_node(cur_id).and_then(|n| n.parent) else {
+        break;
+      };
+      let Some(parent) = self.try_node(parent_id) else {
+        break;
+      };
+      if let Some(parent_layout) = parent.layout.as_ref() {
+        x += parent_layout.computed.location.x;
+        y += parent_layout.computed.location.y;
+      }
+      if let ElementKind::View(v) = &parent.kind {
+        if let Some(p) = v.pos {
+          x += p.x;
+          y += p.y;
+        }
+        if let Some(s) = v.scroll {
+          x -= s.x;
+          y -= s.y;
+        }
+      }
+      cur_id = parent_id;
+    }
+
+    Some(BoundingBox { x, y, width, height })
   }
 
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {

@@ -38,6 +38,16 @@ impl WH {
   }
 }
 
+/// Window-relative axis-aligned bounding box of a node, as returned by
+/// RenderTree::bounding_box.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BoundingBox {
+  pub x: f32,
+  pub y: f32,
+  pub width: f32,
+  pub height: f32,
+}
+
 /// Build context passed during display list tree traversal. Engine state
 /// (platform, alloy) comes first; paint-time geometry follows.
 pub struct BuildContext<'a> {
@@ -152,6 +162,24 @@ impl Element {
       parent: None,
       layout: None,
       interaction: Some(HitConfig::default()),
+    }
+  }
+
+  /// Builds an element from its JSX tag name. The root Window is created via
+  /// RenderTree::create_root instead, so "window" is rejected here.
+  pub fn from_kind(kind: &str) -> Element {
+    match kind {
+      "window" => panic!("use createRoot to create the root Window node"),
+      "view" => View::default().with_layout(),
+      "rect" => Rectangle::default().with_layout(),
+      "d-rect" => Rectangle::default().no_layout(),
+      "path" => Path::default().with_layout(),
+      "d-path" => Path::default().no_layout(),
+      "text" => Text::default().with_layout(),
+      "span" => Span::default().no_layout(),
+      "texture" => Texture::default().with_layout(),
+      "d-texture" => Texture::default().no_layout(),
+      _ => panic!("unknown node kind: {kind}"),
     }
   }
 
