@@ -1,13 +1,14 @@
 import { solidPlugin } from "./bun-plugin-solid"
 import { values, source, isPrebuilt } from "./args"
-import { requireBinary, state } from "./util"
+import { requireBinary, state, print } from "./util"
 import { resolve } from "path"
 
 export async function bundle(entry = source) {
   let result = null
 
   let devBase = state.serverUrl ?? undefined
-  let dev = !!devBase
+  let dev = !!devBase || values.dev
+  print(`[cli] Bundling (${dev ? "development" : "production"})`)
   let define: Record<string, string> = {
     "process.env.NODE_ENV": dev ? "development" : "production",
   }

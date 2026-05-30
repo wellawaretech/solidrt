@@ -7,9 +7,9 @@
 //   srt run examples/hello.tsx          - start dev server + client, bundle + push via WS
 //   srt server examples/hello.tsx       - start dev server only, no client
 //   srt client                          - start dev client only (connects to WS server)
-//   srt build examples/hello.tsx        - bundle TSX to .srt.js
-//   srt build -c examples/hello.tsx     - bundle TSX to .srt.js + compile to .srt.bin
-//   srt build examples/hello.srt.js     - compile .srt.js to .srt.bin
+//   srt bundle examples/hello.tsx       - bundle TSX to .srt.js
+//   srt bundle -c examples/hello.tsx    - bundle TSX to .srt.js + compile to .srt.bin
+//   srt bundle examples/hello.srt.js   - compile .srt.js to .srt.bin
 //   srt record examples/hello.tsx       - bundle TSX and run with frame capture
 
 import pkg from "../package.json"
@@ -25,15 +25,15 @@ import { resolve, dirname } from "path"
 
 // -- Validate args --
 
-let COMMANDS = ["run", "server", "client", "build", "record"]
+let COMMANDS = ["run", "server", "client", "bundle", "record"]
 
 if (!command || !COMMANDS.includes(command)) {
   printUsage()
   process.exit(1)
 }
 
-if (command === "build" && (!source || (!isTsx && !isPrebuilt))) {
-  console.error("Usage: srt build [options] <entry.tsx|.srt.js|.srt.bin>")
+if (command === "bundle" && (!source || (!isTsx && !isPrebuilt))) {
+  console.error("Usage: srt bundle [options] <entry.tsx|.srt.js|.srt.bin>")
   process.exit(1)
 }
 
@@ -42,9 +42,9 @@ if (command === "record" && (!source || !isTsx)) {
   process.exit(1)
 }
 
-// -- Build command --
+// -- Bundle command --
 
-if (command === "build") {
+if (command === "bundle") {
   await runBuildCommand()
 }
 

@@ -2,6 +2,7 @@ import { parseArgs } from "node:util"
 
 export let { values, positionals } = parseArgs({
   options: {
+    dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", short: "c", default: false },
     stdout: { type: "boolean", default: false },
@@ -27,7 +28,7 @@ Commands:
   run [file.tsx]        Start dev server + local solidrt-go client
   server [file.tsx]     Start dev server only
   client                Start solidrt-go client only
-  build <file.tsx>      Bundle TSX to JS, or compile JS to bytecode
+  bundle <file.tsx>     Transpile TSX to JS, or compile JS to bytecode
   record <file.tsx>     Capture frames for video generation
 
 run/server options:
@@ -37,7 +38,8 @@ run/server options:
 run/client options:
       --size <WxH>          Window size (default: 1280x720)
 
-build options:
+bundle options:
+  -d, --dev             Use development build of SolidJS (default: production)
   -m, --minify          Minify the output
   -c, --compile         Compile to bytecode
   -o, --output <name>   Output filename
