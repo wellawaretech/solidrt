@@ -36,7 +36,7 @@ fn main() {
     Some(alloy::RecordConfig {
       fps,
       frames: (duration * fps) as u64,
-      output_prefix: "video".to_string(),
+      output_prefix: "frame".to_string(),
     })
   } else {
     None
