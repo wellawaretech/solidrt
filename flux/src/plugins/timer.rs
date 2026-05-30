@@ -1,4 +1,7 @@
-use rquickjs::{function::MutFn, Ctx, Function};
+use rquickjs::{
+  function::{MutFn, This},
+  Ctx, Function,
+};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -99,6 +102,30 @@ impl Timers {
   }
 }
 
+// Schedule a callback as a microtask. An already-resolved promise's `then`
+// reaction runs on the job (microtask) queue, which is the timing we want. The
+// callback is wrapped so a throw is reported as an uncaught error, matching the
+// behavior of setTimeout/setInterval rather than being swallowed into an
+// unhandled promise rejection.
+fn schedule_microtask<'js>(cb: Function<'js>) -> rquickjs::Result<()> {
+  let ctx = cb.ctx().clone();
+  let (promise, resolve, _reject) = ctx.promise()?;
+  resolve.call::<_, ()>(())?;
+
+  let wrapper = Function::new(
+    ctx.clone(),
+    MutFn::from(move || {
+      if let Err(e) = cb.call::<(), ()>(()) {
+        report_uncaught(cb.ctx(), e, "queueMicrotask callback");
+      }
+    }),
+  )?;
+
+  let then = promise.then()?;
+  then.call::<_, ()>((This(promise), wrapper))?;
+  Ok(())
+}
+
 pub(crate) fn init_timers(ctx: &Ctx<'_>) {
   let timers = Timers::new(ctx);
   let globals = ctx.globals();
@@ -142,9 +169,11 @@ pub(crate) fn init_timers(ctx: &Ctx<'_>) {
   )
   .unwrap();
 
-  let queue_microtask = ctx
-    .eval::<rquickjs::Value, _>("(function(cb) { Promise.resolve().then(cb) })")
-    .unwrap();
+  let queue_microtask = Function::new(
+    ctx.clone(),
+    MutFn::from(|cb: Function<'_>| schedule_microtask(cb)),
+  )
+  .unwrap();
 
   globals.set("setTimeout", set_timeout).unwrap();
   globals.set("clearTimeout", clear_timeout).unwrap();
