@@ -36,7 +36,7 @@ Run the app:
 bunx srt run src/index.tsx
 ```
 
-Optionally, create a `tsconfig.json` to enable JSX support and type recognition for SolidRT elements:
+Optionally, create a `tsconfig.json` to enable type recognition for SolidRT elements:
 
 ```json
 {
@@ -51,7 +51,7 @@ Optionally, create a `tsconfig.json` to enable JSX support and type recognition 
 
 ## API
 
-See [docs/api.md](https://github.com/wellawaretech/solidrt/blob/main/docs/api.md) for the full API reference.
+See [docs/core.md](https://github.com/wellawaretech/solidrt/blob/main/docs/core.md) for the full API reference.
 
 ## License
 

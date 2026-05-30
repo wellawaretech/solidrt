@@ -1,5 +1,5 @@
 // mod audio;
-// mod oval;
+mod oval;
 mod paint;
 mod path;
 mod rectangle;
@@ -10,7 +10,7 @@ mod view;
 mod window;
 
 // pub use audio::AudioNode;
-// pub use oval::OvalNode;
+pub use oval::Oval;
 pub use paint::PaintState;
 pub use path::Path;
 pub use rectangle::Rectangle;

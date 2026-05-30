@@ -81,6 +81,7 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
       let result = match &mut element.kind {
         ElementKind::Window(win) => win.set_property(prop, value.clone(), &cmd_tx),
         ElementKind::Rectangle(rect) => rect.set_property(prop, value.clone()),
+        ElementKind::Oval(oval) => oval.set_property(prop, value.clone()),
         ElementKind::Path(path) => path.set_property(prop, value.clone()),
         ElementKind::Text(text) => text.set_property(prop, value.clone()),
         ElementKind::Span(span) => span.set_property(prop, value.clone()),

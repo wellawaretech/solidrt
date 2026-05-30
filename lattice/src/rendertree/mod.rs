@@ -6,7 +6,7 @@ pub mod platform;
 mod tree;
 
 pub use hit::{HitConfig, HitTester};
-pub use kinds::{PaintState, Path, Rectangle, Span, Text, Texture, View, Window};
+pub use kinds::{Oval, PaintState, Path, Rectangle, Span, Text, Texture, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
@@ -89,7 +89,7 @@ pub enum ElementKind {
   Window(Window),
   View(View),
   Rectangle(Rectangle),
-  // Oval(Oval),
+  Oval(Oval),
   Path(Path),
   Text(Text),
   Span(Span),
@@ -101,6 +101,7 @@ impl ElementKind {
   pub fn paint_mut(&mut self) -> Option<&mut PaintState> {
     match self {
       ElementKind::Rectangle(r) => Some(&mut r.paint),
+      ElementKind::Oval(o) => Some(&mut o.paint),
       ElementKind::Path(p) => Some(&mut p.paint),
       ElementKind::Text(t) => Some(&mut t.paint),
       _ => None,
@@ -114,7 +115,7 @@ impl Buildable for ElementKind {
       ElementKind::Window(n) => n.build(ctx, builder),
       ElementKind::View(n) => n.build(ctx, builder),
       ElementKind::Rectangle(n) => n.build(ctx, builder),
-      // ElementKind::Oval(n) => n.build(ctx, builder),
+      ElementKind::Oval(n) => n.build(ctx, builder),
       ElementKind::Path(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
       ElementKind::Texture(n) => n.build(ctx, builder),
@@ -129,7 +130,7 @@ impl Measurable for ElementKind {
       ElementKind::Text(n) => n.measure(ctx),
       ElementKind::Texture(n) => n.measure(ctx),
       ElementKind::Path(n) => n.measure(ctx),
-      // ElementKind::Oval(n) => n.measure(ctx),
+      ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Rectangle(n) => n.measure(ctx),
       _ => Size::ZERO,
     }
@@ -173,6 +174,8 @@ impl Element {
       "view" => View::default().with_layout(),
       "rect" => Rectangle::default().with_layout(),
       "d-rect" => Rectangle::default().no_layout(),
+      "oval" => Oval::default().with_layout(),
+      "d-oval" => Oval::default().no_layout(),
       "path" => Path::default().with_layout(),
       "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),

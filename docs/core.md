@@ -82,6 +82,14 @@ Draws a rectangle. Supports paint and pointer event props. `r` sets the corner r
 <rect width={80} height={80} r={8} fill="#0077ff" />
 ```
 
+### `<oval>`
+
+Draws an oval (ellipse) inscribed in the given bounds. Supports paint and pointer event props.
+
+```jsx
+<oval width={80} height={80} fill="#0077ff" />
+```
+
 ### `<texture>`
 
 Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `imageWidth`, `imageHeight`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters.
