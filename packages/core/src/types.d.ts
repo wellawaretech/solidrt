@@ -193,6 +193,15 @@ export interface OvalProps extends Position, PaintProps, PointerProps {
   h?: number
 }
 
+export interface LineProps extends PaintProps, PointerProps {
+  x1?: number
+  y1?: number
+  x2?: number
+  y2?: number
+  onLength?: number
+  offLength?: number
+}
+
 export interface PathProps extends Position, PaintProps, PointerProps {
   d?: string
   fillRule?: "nonZero" | "evenOdd"

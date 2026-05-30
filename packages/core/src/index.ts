@@ -17,6 +17,7 @@ export type {
   ViewProps,
   RectProps,
   OvalProps,
+  LineProps,
   PathProps,
   TextProps,
   TextureProps,

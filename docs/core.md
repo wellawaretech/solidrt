@@ -39,12 +39,38 @@ onFrame((tick, frame) => {
 ## onResize
 
 ```ts
-onResize(fn: ({ width, height, safeArea }) => void): () => void
+onResize(fn: ({ width, height, safeArea, displayScale }) => void): () => void
 ```
 
-Registers a callback that fires whenever the window is resized. `safeArea` describes OS-reserved insets (e.g. notches, status bars).
+Registers a callback that fires whenever the window is resized. `safeArea` describes OS-reserved insets (e.g. notches, status bars). `displayScale` is the device pixel ratio.
 
 Returns a cleanup function. When called inside a reactive scope, cleanup is automatic.
+
+## onLayout
+
+```ts
+onLayout(fn: () => void): () => void
+```
+
+Registers a callback that fires after layout has been computed for the current frame, but before paint. Setting layout-affecting properties from this callback triggers one additional layout pass before painting.
+
+Returns a cleanup function. When called inside a reactive scope, cleanup is automatic.
+
+## onWindowFocus
+
+```ts
+onWindowFocus(fn: () => void): () => void
+```
+
+Registers a callback that fires when the OS window gains focus.
+
+## onWindowBlur
+
+```ts
+onWindowBlur(fn: () => void): () => void
+```
+
+Registers a callback that fires when the OS window loses focus.
 
 ---
 
@@ -76,18 +102,35 @@ Renders text. Children are the text content.
 
 ### `<rect>`
 
-Draws a rectangle. Supports paint and pointer event props. `r` sets the corner radius.
+Draws a rectangle. Supports paint and pointer event props. `w` and `h` set the size; `x` and `y` offset the origin. `radius` sets the corner radius - a single number applies to all corners, or pass `[top-left, top-right, bottom-right, bottom-left]`.
 
 ```jsx
-<rect width={80} height={80} r={8} fill="#0077ff" />
+<rect w={80} h={80} radius={8} fill="#0077ff" />
 ```
 
 ### `<oval>`
 
-Draws an oval (ellipse) inscribed in the given bounds. Supports paint and pointer event props.
+Draws an oval (ellipse) inscribed in the given bounds. Supports paint and pointer event props. `w` and `h` set the bounds; `x` and `y` offset the origin.
 
 ```jsx
-<oval width={80} height={80} fill="#0077ff" />
+<oval w={80} h={80} fill="#0077ff" />
+```
+
+### `<line>`
+
+Draws a straight line between two points. Supports paint and pointer event props. Set `onLength` and `offLength` together to draw a dashed line.
+
+```jsx
+<line x1={0} y1={0} x2={100} y2={100} stroke="#0077ff" strokeWidth={2} />
+<line x1={0} y1={0} x2={100} y2={0} onLength={8} offLength={4} stroke="#0077ff" strokeWidth={2} />
+```
+
+### `<path>`
+
+Draws an SVG path. `d` is the SVG path data string. `x` and `y` offset the entire path. `fillRule` controls how overlapping subpaths are filled (`"nonZero"` by default, or `"evenOdd"`). Supports paint and pointer event props.
+
+```jsx
+<path d="M 10 10 L 90 10 L 50 80 Z" fill="#0077ff" />
 ```
 
 ### `<texture>`
@@ -127,3 +170,39 @@ let img = decodeImage(bytes)
 let id = createTexture(img.data, img.width, img.height)
 // <texture src={id} imageWidth={img.width} imageHeight={img.height} />
 ```
+
+---
+
+## Utilities
+
+### measureText
+
+```ts
+measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
+```
+
+Synchronously measures the rendered size of a text string. Accepts the same font options as `<text>`: `fontFamily`, `fontSize`, `fontStyle`, `fontWeight`, `maxLines`.
+
+### getBoundingBox
+
+```ts
+getBoundingBox(node: { id: number }): BoundingBox | null
+```
+
+Returns the window-relative bounding box of a node from the most recently computed layout, or `null` if the node has no layout or has not been laid out yet. This is a snapshot - call it from `onLayout` or an event handler to get values for the current frame.
+
+### setFocus
+
+```ts
+setFocus(nodeId: number | null): void
+```
+
+Programmatically moves focus to the given node, or clears focus when passed `null`. Triggers `onFocus` and `onBlur` handlers and activates the on-screen keyboard if the newly focused node has an `onTextInput` handler.
+
+### getFocusedNodeId
+
+```ts
+getFocusedNodeId(): number | null
+```
+
+Returns the id of the currently focused node, or `null` if nothing is focused.

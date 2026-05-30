@@ -1,4 +1,5 @@
 // mod audio;
+mod line;
 mod oval;
 mod paint;
 mod path;
@@ -10,6 +11,7 @@ mod view;
 mod window;
 
 // pub use audio::AudioNode;
+pub use line::Line;
 pub use oval::Oval;
 pub use paint::PaintState;
 pub use path::Path;
