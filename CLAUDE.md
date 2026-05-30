@@ -7,6 +7,10 @@ Prefer `let` over `const`. Use `const` only for "real" constants of a single val
 ## Rust
 Never only use `.unwrap()`; use `.expect(..)` or `.unwrap_or(..)` or something similar to explicitly handle the scenario where the result is not Ok.
 
+Plugins (the `*/plugins/` modules that register `ffi`/global functions) should be thin FFI layers: marshal arguments and results between JavaScript and Rust, and nothing more. Domain logic belongs in the owning module (e.g. rendertree), exposed as methods the plugin closure forwards to.
+
+The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
+
 # Dependencies
 ## SDL
 SDL is accessed through the sdl3 Rust crate, which does not expose all SDL functionality. If something is not available in the sdl3 crate, check if it's available in SDL directly, and if so, add a wrapper function in `alloy/src/sdl_utils.rs`.
