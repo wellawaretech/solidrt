@@ -17,7 +17,6 @@ mod oval;
 mod paint;
 mod path;
 mod rectangle;
-mod span;
 mod text;
 mod texture;
 mod view;
@@ -39,7 +38,7 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
     ElementKind::Line(line) => line::apply(line, name, value),
     ElementKind::Path(path) => path::apply(path, name, value),
     ElementKind::Text(text) => text::apply(text, name, value),
-    ElementKind::Span(span) => span::apply(span, name, value),
+    ElementKind::Span(span) => text::apply_span(span, name, value),
     ElementKind::Texture(tex) => texture::apply(tex, name, value),
   };
   if let Some(invalidate) = handled {

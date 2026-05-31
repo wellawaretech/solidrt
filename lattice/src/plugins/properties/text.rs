@@ -2,7 +2,7 @@ use alloy::impellers::FontWeight;
 
 use super::{f32_of, str_of};
 use crate::plugins::value::PropValue;
-use crate::rendertree::Text;
+use crate::rendertree::{Span, Text};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {
@@ -25,6 +25,13 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
       900 => FontWeight::Black,
       _ => FontWeight::Regular,
     }),
+    _ => return None,
+  })
+}
+
+pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Option<bool> {
+  Some(match name {
+    "text" => span.set_text(str_of(value, "text").to_string()),
     _ => return None,
   })
 }

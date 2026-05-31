@@ -38,7 +38,7 @@ impl Window {
   pub fn set_fullscreen(&mut self, fullscreen: bool, cmd_tx: &Sender<AlloyCommand>) -> bool {
     self.fullscreen = fullscreen;
     cmd_tx.send(AlloyCommand::SetFullscreen(fullscreen)).ok();
-    false
+    true
   }
 
   pub fn with_layout(self) -> Element {
