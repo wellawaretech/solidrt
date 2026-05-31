@@ -25,11 +25,25 @@ mod window;
 use std::sync::mpsc::Sender;
 
 use alloy::AlloyCommand;
+use taffy::style::Position;
 
 use crate::plugins::value::PropValue;
 use crate::rendertree::{Element, ElementKind};
 
 pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> bool {
+  // `position` is decoded here rather than in the layout style adapter because
+  // it has a side effect beyond the taffy Style: it marks the element as a
+  // positioning context used to resolve container-relative bounding boxes.
+  if name == "position" {
+    let position = match str_of(value, "position") {
+      "relative" => Position::Relative,
+      "absolute" => Position::Absolute,
+      v => panic!("unknown position value '{v}'"),
+    };
+    el.set_position(position);
+    return true;
+  }
+
   let handled = match &mut el.kind {
     ElementKind::Window(win) => window::apply(win, name, value, cmd_tx),
     ElementKind::View(view) => view::apply(view, name, value),

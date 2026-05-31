@@ -38,8 +38,10 @@ impl WH {
   }
 }
 
-/// Window-relative axis-aligned bounding box of a node, as returned by
-/// RenderTree::bounding_box.
+/// Axis-aligned bounding box of a node. RenderTree::bounding_box reports it
+/// relative to the node's nearest positioning context (an ancestor with an
+/// explicit `position="relative"`), falling back to the window when there is
+/// none. RenderTree::bounding_box_viewport reports it window-relative instead.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BoundingBox {
   pub x: f32,
@@ -208,6 +210,16 @@ impl Element {
 
   pub fn style_mut(&mut self) -> Option<&mut Style> {
     self.layout.as_mut().map(|l| &mut l.style)
+  }
+
+  /// Sets the taffy position and records whether this node is an explicit
+  /// positioning context (only `Relative` counts; see LayoutData). Position has
+  /// this side effect beyond the taffy Style, so it routes through here rather
+  /// than the direct style adapter.
+  pub fn set_position(&mut self, position: Position) {
+    let layout = self.layout.as_mut().expect("position requires a layout element");
+    layout.style.position = position;
+    layout.positioning_context = matches!(position, Position::Relative);
   }
 
   pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {

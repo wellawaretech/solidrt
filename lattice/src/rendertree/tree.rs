@@ -108,13 +108,30 @@ impl RenderTree {
     self.nodes.get(&id)
   }
 
-  /// Window-relative bounding box of a node from the most recently computed
-  /// layout. Returns None for layout-less nodes (d-rect, span) and before the
-  /// first layout has run (cache empty).
-  ///
-  /// Computed lazily: walks from the node up to the root each call, so nothing
-  /// is cached and only queried nodes cost anything. Call after layout_phase
-  /// (e.g. from the postLayout hook) for current-frame values.
+  /// Bounding box of a node relative to its nearest positioning context: the
+  /// closest ancestor whose JSX explicitly set `position="relative"`. Falls
+  /// back to the window when there is none. This is the frame an absolutely
+  /// positioned sibling overlay is drawn in, so coordinates from here can feed
+  /// directly into such an overlay. Returns None for layout-less nodes (d-rect,
+  /// span) and before the first layout has run (cache empty).
+  pub fn bounding_box(&self, id: u64) -> Option<BoundingBox> {
+    self.compute_bounding_box(id, true)
+  }
+
+  /// Bounding box of a node relative to the window root (CSS getBoundingClientRect
+  /// semantics). Kept for callers that want absolute coordinates; not currently
+  /// exposed to JavaScript.
+  #[allow(dead_code)]
+  pub fn bounding_box_viewport(&self, id: u64) -> Option<BoundingBox> {
+    self.compute_bounding_box(id, false)
+  }
+
+  /// Computed lazily: walks from the node upward each call, so nothing is cached
+  /// and only queried nodes cost anything. Call after layout_phase (e.g. from
+  /// the postLayout hook) for current-frame values. When `stop_at_context` is
+  /// set the ascent stops at (and does not fold in) the first positioning
+  /// context ancestor, yielding coordinates in that ancestor's frame; otherwise
+  /// it continues to the root.
   ///
   /// Phase 1: only translations compose into the result - each ancestor's
   /// layout position, plus View `pos` (forward) and `scroll` (inverse). A View
@@ -122,7 +139,7 @@ impl RenderTree {
   /// is wrong under rotation/scaling; width/height are always the node's own
   /// computed size. TODO: compose full transforms by walking the four corners
   /// up through each ancestor, mirroring hit testing.
-  pub fn bounding_box(&self, id: u64) -> Option<BoundingBox> {
+  fn compute_bounding_box(&self, id: u64, stop_at_context: bool) -> Option<BoundingBox> {
     let node = self.try_node(id)?;
     let layout = node.layout.as_ref()?;
     if layout.cache.is_empty() {
@@ -141,9 +158,17 @@ impl RenderTree {
         y += p.y;
       }
     }
+    if let ElementKind::Rectangle(r) = &node.kind {
+      x += r.x.unwrap_or(0.0);
+      y += r.y.unwrap_or(0.0);
+    }
 
-    // Ascend to the root, adding each ancestor's layout position and View
-    // translate, and removing any scroll the ancestor applies to its children.
+    // Ascend, adding each ancestor's layout position and View translate, and
+    // removing any scroll the ancestor applies to its children. For the
+    // container-relative box, stop before folding in the first positioning
+    // context: the result is then expressed in that ancestor's frame. Absolute
+    // ancestors are deliberately transparent here - their offset is still
+    // accumulated, they just never act as the stop.
     let mut cur_id = id;
     loop {
       let Some(parent_id) = self.try_node(cur_id).and_then(|n| n.parent) else {
@@ -152,6 +177,11 @@ impl RenderTree {
       let Some(parent) = self.try_node(parent_id) else {
         break;
       };
+      if stop_at_context
+        && parent.layout.as_ref().is_some_and(|l| l.positioning_context)
+      {
+        break;
+      }
       if let Some(parent_layout) = parent.layout.as_ref() {
         x += parent_layout.computed.location.x;
         y += parent_layout.computed.location.y;

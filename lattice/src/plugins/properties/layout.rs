@@ -174,14 +174,8 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
     "rowGap"    => style.gap.height = parse_length_percentage(value),
     "columnGap" => style.gap.width  = parse_length_percentage(value),
 
-    // Position
-    "position" => {
-      style.position = match str_of(value, "position") {
-        "relative" => Position::Relative,
-        "absolute" => Position::Absolute,
-        v => panic!("unknown position value '{v}'"),
-      };
-    }
+    // Position. `position` itself is handled in apply_jsx (it also marks a
+    // positioning context on the element), so only the insets land here.
     "top"    => style.inset.top    = parse_length_percentage_auto(value),
     "right"  => style.inset.right  = parse_length_percentage_auto(value),
     "bottom" => style.inset.bottom = parse_length_percentage_auto(value),

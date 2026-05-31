@@ -15,6 +15,11 @@ pub struct LayoutData {
   pub computed: Layout,
   pub cache: Cache,
   pub layout_children: Vec<NodeId>,
+  // True only when JSX explicitly set `position="relative"`. taffy's default
+  // position is Relative for every node, so this flag is what distinguishes a
+  // deliberately declared positioning context from the implicit default. It is
+  // the stop point when resolving a node's container-relative bounding box.
+  pub positioning_context: bool,
 }
 
 impl LayoutData {
@@ -24,6 +29,7 @@ impl LayoutData {
       computed: Layout::new(),
       cache: Cache::new(),
       layout_children: vec![],
+      positioning_context: false,
     }
   }
 }
