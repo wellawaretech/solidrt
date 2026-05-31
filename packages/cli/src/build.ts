@@ -80,11 +80,13 @@ export async function runBuildCommand() {
       console.error("Can only compile .srt.js files. .srt.bin is already compiled.")
       process.exit(1)
     }
-    await compileToBytecode(resolve(source!))
+    let binOut = await compileToBytecode(resolve(source!))
+    let binSize = (await Bun.file(binOut).stat()).size
+    console.log(`>> wrote ${binSize} bytes to ${binOut}`)
     process.exit()
   }
 
-  let baseName = values.output ?? source!.replace(/\.tsx$/, "")
+  let baseName = values.output ?? source!.replace(/\.[jt]sx$/, "")
 
   if (values.stdout) {
     let result = await bundle()
@@ -110,6 +112,8 @@ export async function runBuildCommand() {
     }
     let binOutfile = baseName + ".srt.bin"
     await compileFromStdin(jsCode, binOutfile)
+    let binSize = (await Bun.file(binOutfile).stat()).size
+    console.log(`>> wrote ${binSize} bytes to ${binOutfile}`)
     process.exit()
   }
 

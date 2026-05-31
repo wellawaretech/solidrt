@@ -33,12 +33,12 @@ if (!command || !COMMANDS.includes(command)) {
 }
 
 if (command === "bundle" && (!source || (!isTsx && !isPrebuilt))) {
-  console.error("Usage: srt bundle [options] <entry.tsx|.srt.js|.srt.bin>")
+  console.error("Usage: srt bundle [options] <entry.[tsx|jsx|srt.js|srt.bin]>")
   process.exit(1)
 }
 
 if (command === "record" && (!source || !isTsx)) {
-  console.error("Usage: srt record <entry.tsx>")
+  console.error("Usage: srt record <entry.[tsx|jsx]>")
   process.exit(1)
 }
 
@@ -72,7 +72,7 @@ if (command === "bundle") {
 // -- Record command --
 
 if (command === "record") {
-  let jsOutfile = source!.replace(/\.tsx$/, "") + ".srt.js"
+  let jsOutfile = source!.replace(/\.[jt]sx$/, "") + ".srt.js"
   await bundleTo(jsOutfile)
   let runner = requireBinary("solidrt-go")
   let recordArgs = ["--record", resolve(jsOutfile)]
@@ -117,6 +117,8 @@ if (source && isTsx) {
       state.currentCode = await output.text()
     }
   }
+} else if (source && isPrebuilt && source.endsWith(".srt.js")) {
+  state.currentCode = await Bun.file(resolve(source)).text()
 }
 
 if (command === "run") {

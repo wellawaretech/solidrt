@@ -18,35 +18,35 @@ export let { values, positionals } = parseArgs({
 
 export let command = positionals[0]
 export let source = positionals[1]
-export let isTsx = source?.endsWith(".tsx")
+export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
 export function printUsage() {
   console.error(`Usage: srt <command> [options] [file]
 
 Commands:
-  run [file.tsx]        Start dev server + local solidrt-go client
-  server [file.tsx]     Start dev server only
-  client                Start solidrt-go client only
-  bundle <file.tsx>     Transpile TSX to JS, or compile JS to bytecode
-  record <file.tsx>     Capture frames for video generation
+  run [file.tsx|jsx]     Start dev server + local solidrt-go client
+  server [file.tsx|jsx]  Start dev server only
+  client                 Start solidrt-go client only
+  bundle <file.tsx|jsx>  Transpile TSX/JSX to JS or bytecode
+  record <file.tsx|jsx>  Capture frames for video generation
 
 run/server options:
-      --proxy-files         Route file/dir access through the dev server
-      --proxy-http          Route fetch calls through the dev server (HTTP cache enabled)
+      --proxy-files      Route file/dir access through the dev server
+      --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
 
 run/client options:
-      --size <WxH>          Window size (default: 1280x720)
+      --size <WxH>       Window size (default: 1280x720)
 
 bundle options:
-  -d, --dev             Use development build of SolidJS (default: production)
-  -m, --minify          Minify the output
-  -c, --compile         Compile to bytecode
-  -o, --output <name>   Output filename
-      --stdout          Write bundle to stdout
+  -d, --dev              Use development build of SolidJS (default: production)
+  -m, --minify           Minify the output
+  -c, --compile          Compile to bytecode
+  -o, --output <name>    Output filename
+      --stdout           Write bundle to stdout
 
 record options:
-      --fps <N>             Frames per second (default: 60)
-      --duration <N>        Duration in seconds (default: 1)
-      --size <WxH>          Frame size (default: 1280x720)`)
+      --fps <N>          Frames per second (default: 60)
+      --duration <N>     Duration in seconds (default: 1)
+      --size <WxH>       Frame size (default: 1280x720)`)
 }
