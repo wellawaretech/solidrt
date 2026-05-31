@@ -54,9 +54,9 @@ export let {
   },
 
   createTextNode: (value: string): ProxyNode => {
-    let proxy = createProxyNode("span")
+    let proxy = createProxyNode("d-span")
     // console.debug("[srt] createTextNode", proxy.id, value)
-    ffi.createNode(proxy.id, "span")
+    ffi.createNode(proxy.id, "d-span")
     ffi.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
@@ -66,7 +66,7 @@ export let {
     ffi.setProperty(node.id, "text", "" + value)
   },
 
-  isTextNode: (node: ProxyNode): boolean => node?.elementType === "span",
+  isTextNode: (node: ProxyNode): boolean => node?.elementType === "d-span",
   setProperty: <T>(node: ProxyNode, name: string, value: T): void => {
     if (!node) return
 

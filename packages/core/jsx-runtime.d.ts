@@ -34,6 +34,7 @@ export namespace JSX {
     path: PathProps & LayoutProps
     texture: TextureProps & LayoutProps
     audio: AudioProps
+    "d-view": ViewProps
     "d-rect": RectProps
     "d-oval": OvalProps
     "d-path": PathProps

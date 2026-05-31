@@ -176,6 +176,7 @@ impl Element {
     match kind {
       "window" => panic!("use createRoot to create the root Window node"),
       "view" => View::default().with_layout(),
+      "d-view" => View::default().no_layout(),
       "rect" => Rectangle::default().with_layout(),
       "d-rect" => Rectangle::default().no_layout(),
       "oval" => Oval::default().with_layout(),
@@ -185,7 +186,8 @@ impl Element {
       "path" => Path::default().with_layout(),
       "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),
-      "span" => Span::default().no_layout(),
+      "d-text" => Text::default().no_layout(),
+      "d-span" => Span::default().no_layout(),
       "texture" => Texture::default().with_layout(),
       "d-texture" => Texture::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),
