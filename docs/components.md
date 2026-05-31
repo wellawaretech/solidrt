@@ -4,11 +4,9 @@ SolidRT provides _low-level_ primitives. Its core does not understand "images" -
 
 This package provides several higher-level components which serve as a starting point for regular applications.
 
-
 ```sh
 bun add @solidrt/components
 ```
-
 
 ## Theming
 
@@ -38,16 +36,16 @@ Event handlers (`onPointerDown`, `onKeyDown`, etc.) are passed directly as top-l
 
 `StyleProps`:
 
-| Prop              | Type                                          | Description                            |
-| ----------------- | --------------------------------------------- | -------------------------------------- |
-| `color`           | `string`                                      | Text color (used by `Text`).           |
-| `backgroundColor` | `string`                                      | Fill color.                            |
-| `borderColor`     | `string`                                      | Stroke color (when `borderWidth` set). |
-| `borderWidth`     | `number`                                      | Border stroke width.                   |
-| `borderRadius`    | `number \| [number, number, number, number]`  | Corner radius.                         |
-| `x` / `y`         | `number`                                      | Translation offset.                    |
-| `rotate`          | `number`                                      | Rotation.                              |
-| `scale`           | `number`                                      | Scale factor.                          |
+| Prop              | Type                                         | Description                            |
+| ----------------- | -------------------------------------------- | -------------------------------------- |
+| `color`           | `string`                                     | Text color (used by `Text`).           |
+| `backgroundColor` | `string`                                     | Fill color.                            |
+| `borderColor`     | `string`                                     | Stroke color (when `borderWidth` set). |
+| `borderWidth`     | `number`                                     | Border stroke width.                   |
+| `borderRadius`    | `number \| [number, number, number, number]` | Corner radius.                         |
+| `x` / `y`         | `number`                                     | Translation offset.                    |
+| `rotate`          | `number`                                     | Rotation.                              |
+| `scale`           | `number`                                     | Scale factor.                          |
 
 ---
 
@@ -88,7 +86,7 @@ A general-purpose box. Spreads `layout` onto the underlying view, applies the tr
 ```jsx
 import { View } from "@solidrt/components"
 
-<View
+;<View
   layout={{ padding: 16, flexDirection: "column", gap: 8 }}
   style={{ backgroundColor: "#222", borderRadius: 8 }}
 >
@@ -116,7 +114,7 @@ Renders text inside a layout box. Font properties live in `layout` (they affect 
 ```jsx
 import { Text } from "@solidrt/components"
 
-<Text layout={{ fontSize: 18, maxLines: 2 }} style={{ color: "#fff" }}>
+;<Text layout={{ fontSize: 18, maxLines: 2 }} style={{ color: "#fff" }}>
   Hello
 </Text>
 ```
@@ -244,3 +242,4 @@ Top and bottom insets are applied by default. Pass `false` to opt out of an edge
 | `bottom`   | `boolean \| number` | `true`  | Apply bottom inset. A number sets the minimum padding. |
 | `left`     | `boolean \| number` | `false` | Apply left inset. A number sets the minimum padding.   |
 | `right`    | `boolean \| number` | `false` | Apply right inset. A number sets the minimum padding.  |
+| `relative` | `boolean`           | `true`  | Sets `position="relative"`.                            |

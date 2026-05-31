@@ -6,6 +6,7 @@ export function SafeArea(props: {
   bottom?: boolean | number
   left?: boolean | number
   right?: boolean | number
+  relative?: boolean
   children?: any
 }) {
   let [insets, setInsets] = createSignal({ top: 0, bottom: 0, left: 0, right: 0 })
@@ -28,6 +29,7 @@ export function SafeArea(props: {
     <view
       flex={1}
       flexDirection="column"
+      position={props.relative !== false ? "relative" : undefined}
       marginTop={pad("top")}
       marginBottom={pad("bottom")}
       marginLeft={pad("left")}
