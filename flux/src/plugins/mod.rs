@@ -38,6 +38,9 @@ pub(crate) async fn init_context(
   resolver.add_module("qjs:memory");
   loader.add_module("qjs:memory", memory::MemoryModule);
 
+  resolver.add_module("flux:sqlite");
+  loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
+
   runtime.set_loader(resolver, loader).await;
 
   let context = AsyncContext::full(&runtime)

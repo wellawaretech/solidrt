@@ -11,6 +11,8 @@ Plugins (the `*/plugins/` modules that register `ffi`/global functions) should b
 
 The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
 
+In `flux/src/plugins/`, the root holds generic, web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers). flux-specific modules (the `Flux.*` globals and `flux:*` modules, e.g. `serve`, `file`, `sqlite`) go in the `flux/src/plugins/flux/` subfolder. Put new flux-specific plugins there, not in the root.
+
 # Dependencies
 ## SDL
 SDL is accessed through the sdl3 Rust crate, which does not expose all SDL functionality. If something is not available in the sdl3 crate, check if it's available in SDL directly, and if so, add a wrapper function in `alloy/src/sdl_utils.rs`.
