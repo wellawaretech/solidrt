@@ -21,12 +21,8 @@ export async function bundle(entry = source) {
       format: "esm",
       minify: values.minify,
       external: ["qjs:*"],
-      // Resolve the `development` export condition in dev so libraries like
-      // @solidjs/signals ship their dev build (extra invariants, infinite-loop
-      // guard) instead of the unguarded prod build that busy-loops on bugs.
-      conditions: dev ? ["development"] : undefined,
       define,
-      plugins: [solidPlugin({ devBase })],
+      plugins: [solidPlugin()],
     })
   } catch (e) {
     console.error("[cli] compile error:\n", e)
