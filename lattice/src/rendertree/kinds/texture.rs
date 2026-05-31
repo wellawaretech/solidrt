@@ -1,6 +1,6 @@
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue, XY,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
 use alloy::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
 use taffy::{AlignSelf, Display, Size as TaffySize, Style};
@@ -83,25 +83,13 @@ impl Measurable for Texture {
 }
 
 impl Texture {
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "src" => {
-        // null/undefined clears, number sets id.
-        if value.is_null() {
-          self.texture_id = None;
-        } else {
-          let id = value.as_f64().expect("src must be a texture id (number)") as u64;
-          self.texture_id = Some(id);
-        }
-        Some(true)
-      }
-      "srcX" => { self.src_x = Some(value.as_f64().expect("srcX must be a number") as f32); Some(true) }
-      "srcY" => { self.src_y = Some(value.as_f64().expect("srcY must be a number") as f32); Some(true) }
-      "srcW" => { self.src_w = Some(value.as_f64().expect("srcW must be a number") as f32); Some(true) }
-      "srcH" => { self.src_h = Some(value.as_f64().expect("srcH must be a number") as f32); Some(true) }
-      _ => None,
-    }
-  }
+  // Source id and crop rect feed measurement, so all affect layout. None clears
+  // the texture; the null-vs-number decoding happens in the binding layer.
+  pub fn set_src(&mut self, id: Option<u64>) -> bool { self.texture_id = id; true }
+  pub fn set_src_x(&mut self, v: f32) -> bool { self.src_x = Some(v); true }
+  pub fn set_src_y(&mut self, v: f32) -> bool { self.src_y = Some(v); true }
+  pub fn set_src_w(&mut self, v: f32) -> bool { self.src_w = Some(v); true }
+  pub fn set_src_h(&mut self, v: f32) -> bool { self.src_h = Some(v); true }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

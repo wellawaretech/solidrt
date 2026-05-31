@@ -1,4 +1,3 @@
-use crate::rendertree::PropValue;
 use alloy::impellers::{BlendMode, Color, DrawStyle, Paint, StrokeCap, StrokeJoin};
 
 #[derive(Clone, Debug)]
@@ -39,89 +38,13 @@ impl PaintState {
     paint
   }
 
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "color" => {
-        let rgba = value.as_f64().expect("color must be a number") as u32;
-        self.color = Color::new_srgba(
-          ((rgba >> 24) & 0xFF) as f32 / 255.0,
-          ((rgba >> 16) & 0xFF) as f32 / 255.0,
-          ((rgba >> 8) & 0xFF) as f32 / 255.0,
-          (rgba & 0xFF) as f32 / 255.0,
-        );
-        Some(false)
-      }
-      "strokeWidth" => {
-        self.stroke_width = value.as_f64().expect("strokeWidth must be a number") as f32;
-        Some(false)
-      }
-      "strokeMiter" => {
-        self.stroke_miter = value.as_f64().expect("strokeMiter must be a number") as f32;
-        Some(false)
-      }
-      "drawStyle" => {
-        self.draw_style = match value.as_str().expect("drawStyle must be a string") {
-          "fill" => DrawStyle::Fill,
-          "stroke" => DrawStyle::Stroke,
-          "strokeAndFill" => DrawStyle::StrokeAndFill,
-          v => panic!("unknown drawStyle '{v}'"),
-        };
-        Some(false)
-      }
-      "strokeCap" => {
-        self.stroke_cap = match value.as_str().expect("strokeCap must be a string") {
-          "butt" => StrokeCap::Butt,
-          "round" => StrokeCap::Round,
-          "square" => StrokeCap::Square,
-          v => panic!("unknown strokeCap '{v}'"),
-        };
-        Some(false)
-      }
-      "strokeJoin" => {
-        self.stroke_join = match value.as_str().expect("strokeJoin must be a string") {
-          "miter" => StrokeJoin::Miter,
-          "round" => StrokeJoin::Round,
-          "bevel" => StrokeJoin::Bevel,
-          v => panic!("unknown strokeJoin '{v}'"),
-        };
-        Some(false)
-      }
-      "blendMode" => {
-        self.blend_mode = match value.as_str().expect("blendMode must be a string") {
-          "clear" => BlendMode::Clear,
-          "source" => BlendMode::Source,
-          "destination" => BlendMode::Destination,
-          "sourceOver" => BlendMode::SourceOver,
-          "destinationOver" => BlendMode::DestinationOver,
-          "sourceIn" => BlendMode::SourceIn,
-          "destinationIn" => BlendMode::DestinationIn,
-          "sourceOut" => BlendMode::SourceOut,
-          "destinationOut" => BlendMode::DestinationOut,
-          "sourceATop" => BlendMode::SourceATop,
-          "destinationATop" => BlendMode::DestinationATop,
-          "xor" => BlendMode::Xor,
-          "plus" => BlendMode::Plus,
-          "modulate" => BlendMode::Modulate,
-          "screen" => BlendMode::Screen,
-          "overlay" => BlendMode::Overlay,
-          "darken" => BlendMode::Darken,
-          "lighten" => BlendMode::Lighten,
-          "colorDodge" => BlendMode::ColorDodge,
-          "colorBurn" => BlendMode::ColorBurn,
-          "hardLight" => BlendMode::HardLight,
-          "softLight" => BlendMode::SoftLight,
-          "difference" => BlendMode::Difference,
-          "exclusion" => BlendMode::Exclusion,
-          "multiply" => BlendMode::Multiply,
-          "hue" => BlendMode::Hue,
-          "saturation" => BlendMode::Saturation,
-          "color" => BlendMode::Color,
-          "luminosity" => BlendMode::Luminosity,
-          v => panic!("unknown blendMode '{v}'"),
-        };
-        Some(false)
-      }
-      _ => None,
-    }
-  }
+  // Paint never affects layout, so all setters report false. Values arrive
+  // already decoded (color unpacked, enums resolved) from the binding layer.
+  pub fn set_color(&mut self, color: Color) -> bool { self.color = color; false }
+  pub fn set_draw_style(&mut self, v: DrawStyle) -> bool { self.draw_style = v; false }
+  pub fn set_blend_mode(&mut self, v: BlendMode) -> bool { self.blend_mode = v; false }
+  pub fn set_stroke_width(&mut self, v: f32) -> bool { self.stroke_width = v; false }
+  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> bool { self.stroke_cap = v; false }
+  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> bool { self.stroke_join = v; false }
+  pub fn set_stroke_miter(&mut self, v: f32) -> bool { self.stroke_miter = v; false }
 }

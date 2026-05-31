@@ -1,12 +1,18 @@
+// Layout style is taffy's own `Style`, a stable external type, so the adapter
+// decodes JSX values and assigns its fields directly (choice B) rather than
+// going through rendertree setters. Coupling here is to taffy, not to
+// rendertree internals. Every style property affects layout.
+
 use taffy::geometry::Point;
 use taffy::prelude::*;
 use taffy::style::Overflow;
+use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
-use super::util::{parse_dimension, parse_dimension_str, parse_grid_template, parse_length_percentage, parse_length_percentage_auto};
-use crate::rendertree::PropValue;
+use super::{f32_of, str_of};
+use crate::plugins::value::PropValue;
 
-pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Option<bool> {
-  match property {
+pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
+  match name {
     // Size
     "width"     => style.size.width      = parse_dimension(value),
     "height"    => style.size.height     = parse_dimension(value),
@@ -37,7 +43,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
 
     // Display
     "display" => {
-      style.display = match value.as_str().expect("display must be a string") {
+      style.display = match str_of(value, "display") {
         "flex"  => Display::Flex,
         "block" => Display::Block,
         "grid"  => Display::Grid,
@@ -48,7 +54,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
 
     // Flex container
     "flexDirection" => {
-      style.flex_direction = match value.as_str().expect("flexDirection must be a string") {
+      style.flex_direction = match str_of(value, "flexDirection") {
         "row"            => FlexDirection::Row,
         "column"         => FlexDirection::Column,
         "row-reverse"    => FlexDirection::RowReverse,
@@ -57,7 +63,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
       };
     }
     "flexWrap" => {
-      style.flex_wrap = match value.as_str().expect("flexWrap must be a string") {
+      style.flex_wrap = match str_of(value, "flexWrap") {
         "nowrap"       => FlexWrap::NoWrap,
         "wrap"         => FlexWrap::Wrap,
         "wrap-reverse" => FlexWrap::WrapReverse,
@@ -65,7 +71,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
       };
     }
     "alignItems" => {
-      style.align_items = Some(match value.as_str().expect("alignItems must be a string") {
+      style.align_items = Some(match str_of(value, "alignItems") {
         "start"      => AlignItems::Start,
         "end"        => AlignItems::End,
         "flex-start" => AlignItems::FlexStart,
@@ -77,7 +83,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
       });
     }
     "justifyContent" => {
-      style.justify_content = Some(match value.as_str().expect("justifyContent must be a string") {
+      style.justify_content = Some(match str_of(value, "justifyContent") {
         "start"         => JustifyContent::Start,
         "end"           => JustifyContent::End,
         "flex-start"    => JustifyContent::FlexStart,
@@ -91,7 +97,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
       });
     }
     "alignContent" => {
-      style.align_content = Some(match value.as_str().expect("alignContent must be a string") {
+      style.align_content = Some(match str_of(value, "alignContent") {
         "start"         => AlignContent::Start,
         "end"           => AlignContent::End,
         "flex-start"    => AlignContent::FlexStart,
@@ -144,11 +150,11 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
         panic!("flex must be a number or string")
       }
     }
-    "flexGrow"   => style.flex_grow   = value.as_f64().expect("flexGrow must be a number") as f32,
-    "flexShrink" => style.flex_shrink = value.as_f64().expect("flexShrink must be a number") as f32,
+    "flexGrow"   => style.flex_grow   = f32_of(value, "flexGrow"),
+    "flexShrink" => style.flex_shrink = f32_of(value, "flexShrink"),
     "flexBasis"  => style.flex_basis  = parse_dimension(value),
     "alignSelf" => {
-      style.align_self = Some(match value.as_str().expect("alignSelf must be a string") {
+      style.align_self = Some(match str_of(value, "alignSelf") {
         "start"      => AlignSelf::Start,
         "end"        => AlignSelf::End,
         "flex-start" => AlignSelf::FlexStart,
@@ -170,7 +176,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
 
     // Position
     "position" => {
-      style.position = match value.as_str().expect("position must be a string") {
+      style.position = match str_of(value, "position") {
         "relative" => Position::Relative,
         "absolute" => Position::Absolute,
         v => panic!("unknown position value '{v}'"),
@@ -188,7 +194,7 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
 
     // Grid container
     "gridAutoFlow" => {
-      style.grid_auto_flow = match value.as_str().expect("gridAutoFlow must be a string") {
+      style.grid_auto_flow = match str_of(value, "gridAutoFlow") {
         "row"           => GridAutoFlow::Row,
         "column"        => GridAutoFlow::Column,
         "row-dense"     => GridAutoFlow::RowDense,
@@ -197,17 +203,17 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
       };
     }
     "gridTemplateColumns" => {
-      style.grid_template_columns = parse_grid_template(value.as_str().expect("gridTemplateColumns must be a string"));
+      style.grid_template_columns = parse_grid_template(str_of(value, "gridTemplateColumns"));
     }
     "gridTemplateRows" => {
-      style.grid_template_rows = parse_grid_template(value.as_str().expect("gridTemplateRows must be a string"));
+      style.grid_template_rows = parse_grid_template(str_of(value, "gridTemplateRows"));
     }
     "gridAutoColumns" => {
-      let v = value.as_f64().expect("gridAutoColumns must be a number") as f32;
+      let v = f32_of(value, "gridAutoColumns");
       style.grid_auto_columns = vec![minmax(length(v), length(v))];
     }
     "gridAutoRows" => {
-      let v = value.as_f64().expect("gridAutoRows must be a number") as f32;
+      let v = f32_of(value, "gridAutoRows");
       style.grid_auto_rows = vec![minmax(length(v), length(v))];
     }
 
@@ -223,12 +229,83 @@ pub fn set_property(style: &mut Style, property: &str, value: &PropValue) -> Opt
 }
 
 fn parse_overflow(prop: &str, value: &PropValue) -> Overflow {
-  let s = value.as_str().unwrap_or_else(|| panic!("{prop} must be a string"));
-  match s {
+  match str_of(value, prop) {
     "visible" => Overflow::Visible,
     "hidden"  => Overflow::Hidden,
     "scroll"  => Overflow::Scroll,
     "clip"    => Overflow::Clip,
     v => panic!("unknown {prop} value '{v}'"),
   }
+}
+
+fn parse_dimension_str(s: &str) -> Dimension {
+  if s == "auto" {
+    Dimension::auto()
+  } else if s.ends_with('%') {
+    let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
+    Dimension::percent(n / 100.0)
+  } else {
+    let n: f32 = s.parse().expect("dimension value must be a number or 'auto'");
+    Dimension::length(n)
+  }
+}
+
+fn parse_dimension(value: &PropValue) -> Dimension {
+  if let Some(n) = value.as_f64() {
+    Dimension::length(n as f32)
+  } else if let Some(s) = value.as_str() {
+    parse_dimension_str(s)
+  } else {
+    panic!("dimension must be a number or string")
+  }
+}
+
+fn parse_length_percentage(value: &PropValue) -> LengthPercentage {
+  if let Some(n) = value.as_f64() {
+    LengthPercentage::length(n as f32)
+  } else if let Some(s) = value.as_str() {
+    if s.ends_with('%') {
+      let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
+      LengthPercentage::percent(n / 100.0)
+    } else {
+      panic!("invalid length/percentage value: '{s}'")
+    }
+  } else {
+    panic!("length/percentage must be a number or percentage string")
+  }
+}
+
+fn parse_length_percentage_auto(value: &PropValue) -> LengthPercentageAuto {
+  if let Some(n) = value.as_f64() {
+    LengthPercentageAuto::length(n as f32)
+  } else if let Some(s) = value.as_str() {
+    if s == "auto" {
+      LengthPercentageAuto::auto()
+    } else if s.ends_with('%') {
+      let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
+      LengthPercentageAuto::percent(n / 100.0)
+    } else {
+      panic!("invalid length/percentage/auto value: '{s}'")
+    }
+  } else {
+    panic!("length/percentage/auto must be a number or string")
+  }
+}
+
+fn parse_grid_template(template: &str) -> Vec<GridTemplateComponent<String>> {
+  template.split_whitespace().map(|part| {
+    let track: TrackSizingFunction = if part == "auto" {
+      minmax(auto(), auto())
+    } else if let Some(s) = part.strip_suffix("fr") {
+      let v: f32 = s.parse().expect("fr value must be a number");
+      minmax(length(0.0), fr(v))
+    } else if let Some(s) = part.strip_suffix("px") {
+      let v: f32 = s.parse().expect("px value must be a number");
+      minmax(length(v), length(v))
+    } else {
+      let v: f32 = part.parse().expect("grid track value must be a number");
+      minmax(length(v), length(v))
+    };
+    GridTemplateComponent::from(track)
+  }).collect()
 }

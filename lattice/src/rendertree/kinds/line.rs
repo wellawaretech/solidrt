@@ -1,6 +1,6 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue, XY};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use alloy::impellers::{DisplayListBuilder, Point};
 use taffy::Size as TaffySize;
 
@@ -37,17 +37,12 @@ impl Measurable for Line {
 }
 
 impl Line {
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "x1" => { self.x1 = value.as_f64().expect("x1 must be a number") as f32; Some(false) }
-      "y1" => { self.y1 = value.as_f64().expect("y1 must be a number") as f32; Some(false) }
-      "x2" => { self.x2 = value.as_f64().expect("x2 must be a number") as f32; Some(false) }
-      "y2" => { self.y2 = value.as_f64().expect("y2 must be a number") as f32; Some(false) }
-      "onLength" => { self.on_length = Some(value.as_f64().expect("onLength must be a number") as f32); Some(false) }
-      "offLength" => { self.off_length = Some(value.as_f64().expect("offLength must be a number") as f32); Some(false) }
-      _ => None,
-    }
-  }
+  pub fn set_x1(&mut self, v: f32) -> bool { self.x1 = v; false }
+  pub fn set_y1(&mut self, v: f32) -> bool { self.y1 = v; false }
+  pub fn set_x2(&mut self, v: f32) -> bool { self.x2 = v; false }
+  pub fn set_y2(&mut self, v: f32) -> bool { self.y2 = v; false }
+  pub fn set_on_length(&mut self, v: f32) -> bool { self.on_length = Some(v); false }
+  pub fn set_off_length(&mut self, v: f32) -> bool { self.off_length = Some(v); false }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

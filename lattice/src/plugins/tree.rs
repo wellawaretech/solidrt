@@ -7,7 +7,8 @@ use std::sync::mpsc::Sender;
 use taffy::prelude::*;
 
 use crate::AlloyContext;
-use crate::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, PropValue, RenderTree, Text, Window};
+use crate::plugins::value::PropValue;
+use crate::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
 
 // Marshals a JavaScript value into the engine-independent PropValue that
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on
@@ -96,7 +97,12 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   let tree_ref = shared.0.clone();
   let cmd_tx = alloy_cmd_tx.clone();
   let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
-    tree_ref.borrow_mut().set_property(node_id, &property, &to_prop_value(&value), &cmd_tx);
+    let value = to_prop_value(&value);
+    let mut tree = tree_ref.borrow_mut();
+    let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx);
+    if invalidate {
+      tree.invalidate_cache(node_id);
+    }
   })
   .unwrap();
 

@@ -1,5 +1,5 @@
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, PropValue, WH, XY};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, WH, XY};
 use alloy::impellers::DisplayListBuilder;
 use taffy::{FlexDirection, Style};
 
@@ -79,19 +79,16 @@ impl Hittable for View {
 }
 
 impl View {
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "rotate" => { self.rotate = Some(value.as_f64().expect("rotate must be a number") as f32); Some(false) }
-      "scale" => { self.scale = Some(value.as_f64().expect("scale must be a number") as f32); Some(false) }
-      "x" => { let pos = self.pos.get_or_insert_with(XY::default); pos.x = value.as_f64().expect("x must be a number") as f32; Some(false) }
-      "y" => { let pos = self.pos.get_or_insert_with(XY::default); pos.y = value.as_f64().expect("y must be a number") as f32; Some(false) }
-      "cx" => { let center = self.center.get_or_insert_with(XY::default); center.x = value.as_f64().expect("cx must be a number") as f32; Some(false) }
-      "cy" => { let center = self.center.get_or_insert_with(XY::default); center.y = value.as_f64().expect("cy must be a number") as f32; Some(false) }
-      "scrollX" => { let s = self.scroll.get_or_insert_with(XY::default); s.x = value.as_f64().expect("scrollX must be a number") as f32; Some(false) }
-      "scrollY" => { let s = self.scroll.get_or_insert_with(XY::default); s.y = value.as_f64().expect("scrollY must be a number") as f32; Some(false) }
-      _ => None,
-    }
-  }
+  // Setters return whether the change affects layout. View transforms (pos,
+  // scale, rotate, scroll) are paint-time only, so they never do.
+  pub fn set_rotate(&mut self, v: f32) -> bool { self.rotate = Some(v); false }
+  pub fn set_scale(&mut self, v: f32) -> bool { self.scale = Some(v); false }
+  pub fn set_x(&mut self, v: f32) -> bool { self.pos.get_or_insert_with(XY::default).x = v; false }
+  pub fn set_y(&mut self, v: f32) -> bool { self.pos.get_or_insert_with(XY::default).y = v; false }
+  pub fn set_cx(&mut self, v: f32) -> bool { self.center.get_or_insert_with(XY::default).x = v; false }
+  pub fn set_cy(&mut self, v: f32) -> bool { self.center.get_or_insert_with(XY::default).y = v; false }
+  pub fn set_scroll_x(&mut self, v: f32) -> bool { self.scroll.get_or_insert_with(XY::default).x = v; false }
+  pub fn set_scroll_y(&mut self, v: f32) -> bool { self.scroll.get_or_insert_with(XY::default).y = v; false }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

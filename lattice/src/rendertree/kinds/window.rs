@@ -1,8 +1,8 @@
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, PropValue};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};
 use alloy::impellers::DisplayListBuilder;
 use alloy::AlloyCommand;
 use std::sync::mpsc::Sender;
-use taffy::{prelude::{length, percent}, Display, FlexDirection, Size, Style};
+use taffy::{prelude::percent, Display, FlexDirection, Size, Style};
 
 #[derive(Clone, Debug)]
 pub struct Window {
@@ -24,25 +24,21 @@ impl Buildable for Window {
 }
 
 impl Window {
-  pub fn set_property(
-    &mut self,
-    property: &str,
-    value: &PropValue,
-    cmd_tx: &Sender<AlloyCommand>,
-  ) -> Option<bool> {
-    match property {
-      "title" => {
-        self.title = value.as_str().expect("title must be a string").to_string();
-        cmd_tx.send(AlloyCommand::SetTitle(self.title.clone())).ok();
-        Some(false)
-      }
-      "fullscreen" => {
-        self.fullscreen = value.as_bool().expect("fullscreen must be a boolean");
-        cmd_tx.send(AlloyCommand::SetFullscreen(self.fullscreen)).ok();
-        Some(false)
-      }
-      _ => None,
-    }
+  // Title and fullscreen are not plain fields: changing them must push a command
+  // to the windowing backend. That behavior lives here, in the element, so the
+  // binding layer only has to decode the value and call the setter.
+  // Return whether the change affects layout (never, for window chrome). Both
+  // also push a command to the windowing backend.
+  pub fn set_title(&mut self, title: String, cmd_tx: &Sender<AlloyCommand>) -> bool {
+    self.title = title;
+    cmd_tx.send(AlloyCommand::SetTitle(self.title.clone())).ok();
+    false
+  }
+
+  pub fn set_fullscreen(&mut self, fullscreen: bool, cmd_tx: &Sender<AlloyCommand>) -> bool {
+    self.fullscreen = fullscreen;
+    cmd_tx.send(AlloyCommand::SetFullscreen(fullscreen)).ok();
+    false
   }
 
   pub fn with_layout(self) -> Element {

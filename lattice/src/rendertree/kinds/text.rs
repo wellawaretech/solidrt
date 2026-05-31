@@ -1,6 +1,6 @@
 use super::PaintState;
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
 use alloy::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
@@ -120,38 +120,13 @@ impl Measurable for Text {
 }
 
 impl Text {
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "fontFamily" => {
-        let s = value.as_str().expect("fontFamily must be a string");
-        self.font_family = match s {
-          "mono" => "Noto Sans Mono".to_string(),
-          "sans" => "Noto Sans".to_string(),
-          other => other.to_string(),
-        };
-        Some(true)
-      }
-      "fontSize" => { self.font_size = value.as_f64().expect("fontSize must be a number") as f32; Some(true) }
-      "lineHeight" => { self.line_height = value.as_f64().expect("lineHeight must be a number") as f32; Some(true) }
-      "maxLines" => { self.max_lines = value.as_f64().expect("maxLines must be a number") as u32; Some(true) }
-      "fontWeight" => {
-        let w = value.as_f64().expect("fontWeight must be a number") as u32;
-        self.font_weight = match w {
-          100 => FontWeight::Thin,
-          200 => FontWeight::ExtraLight,
-          300 => FontWeight::Light,
-          500 => FontWeight::Medium,
-          600 => FontWeight::SemiBold,
-          700 => FontWeight::Bold,
-          800 => FontWeight::ExtraBold,
-          900 => FontWeight::Black,
-          _ => FontWeight::Regular,
-        };
-        Some(true)
-      }
-      _ => None,
-    }
-  }
+  // All text properties feed measurement, so every change affects layout. The
+  // resolved font family name and FontWeight come in already decoded.
+  pub fn set_font_family(&mut self, family: String) -> bool { self.font_family = family; true }
+  pub fn set_font_size(&mut self, v: f32) -> bool { self.font_size = v; true }
+  pub fn set_line_height(&mut self, v: f32) -> bool { self.line_height = v; true }
+  pub fn set_max_lines(&mut self, v: u32) -> bool { self.max_lines = v; true }
+  pub fn set_font_weight(&mut self, weight: FontWeight) -> bool { self.font_weight = weight; true }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

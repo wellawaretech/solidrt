@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, PropValue, XY,
+  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
 use alloy::impellers::{
   DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point,
@@ -308,35 +308,12 @@ impl Path {
     *self.lyon_path.borrow_mut() = None;
   }
 
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "d" => {
-        self.d = value.as_str().expect("d must be a string").to_string();
-        self.invalidate();
-        Some(true)
-      }
-      "x" => {
-        self.x = Some(value.as_f64().expect("x must be a number") as f32);
-        self.invalidate();
-        Some(true)
-      }
-      "y" => {
-        self.y = Some(value.as_f64().expect("y must be a number") as f32);
-        self.invalidate();
-        Some(true)
-      }
-      "fillRule" => {
-        self.fill_rule = match value.as_str().expect("fillRule must be a string") {
-          "nonZero" => FillType::NonZero,
-          "evenOdd" => FillType::Odd,
-          v => panic!("unknown fillRule '{v}'"),
-        };
-        self.invalidate();
-        Some(false)
-      }
-      _ => None,
-    }
-  }
+  // The path's geometry is cached, so any change here invalidates that cache.
+  // d/x/y also affect the measured size (layout); fill rule does not.
+  pub fn set_d(&mut self, d: String) -> bool { self.d = d; self.invalidate(); true }
+  pub fn set_x(&mut self, v: f32) -> bool { self.x = Some(v); self.invalidate(); true }
+  pub fn set_y(&mut self, v: f32) -> bool { self.y = Some(v); self.invalidate(); true }
+  pub fn set_fill_rule(&mut self, rule: FillType) -> bool { self.fill_rule = rule; self.invalidate(); false }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

@@ -1,7 +1,7 @@
-// Engine-independent property value. The FFI/plugin layer converts its host
-// representation (e.g. a JavaScript value) into a PropValue before handing it to
-// rendertree setters, so rendertree never references the host value type. This
-// keeps rendertree usable from engines that are not JavaScript.
+// The binding-layer boundary value. The FFI marshals a host value (e.g. a
+// JavaScript value via QuickJS) into a PropValue, and the JSX property adapter
+// decodes it into the native Rust values that rendertree setters take. This
+// type lives in the plugin layer on purpose: rendertree never sees it.
 
 #[derive(Clone, Debug)]
 pub enum PropValue {

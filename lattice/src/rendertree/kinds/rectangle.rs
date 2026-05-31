@@ -3,7 +3,6 @@ use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
   BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
-use crate::rendertree::PropValue;
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use taffy::Size as TaffySize;
 
@@ -53,31 +52,14 @@ impl Measurable for Rectangle {
 }
 
 impl Rectangle {
-  pub fn set_property(&mut self, property: &str, value: &PropValue) -> Option<bool> {
-    match property {
-      "x" => { self.x = Some(value.as_f64().expect("x must be a number") as f32); Some(false) }
-      "y" => { self.y = Some(value.as_f64().expect("y must be a number") as f32); Some(false) }
-      "w" => { self.w = Some(value.as_f64().expect("w must be a number") as f32); Some(false) }
-      "h" => { self.h = Some(value.as_f64().expect("h must be a number") as f32); Some(false) }
-      "radius" => {
-        if let Some(arr) = value.as_list() {
-          if arr.len() != 4 {
-            panic!("radius array must have 4 elements [top-left, top-right, bottom-right, bottom-left]");
-          }
-          let tl = arr[0].as_f64().expect("radius[0] must be a number") as f32;
-          let tr = arr[1].as_f64().expect("radius[1] must be a number") as f32;
-          let br = arr[2].as_f64().expect("radius[2] must be a number") as f32;
-          let bl = arr[3].as_f64().expect("radius[3] must be a number") as f32;
-          self.radius = Some([tl, tr, br, bl]);
-        } else {
-          let v = value.as_f64().expect("radius must be a number or an array of 4 numbers") as f32;
-          self.radius = Some([v, v, v, v]);
-        }
-        Some(false)
-      }
-      _ => None,
-    }
-  }
+  // Rectangle geometry is painted within its layout box, so none of these
+  // affect layout.
+  pub fn set_x(&mut self, v: f32) -> bool { self.x = Some(v); false }
+  pub fn set_y(&mut self, v: f32) -> bool { self.y = Some(v); false }
+  pub fn set_w(&mut self, v: f32) -> bool { self.w = Some(v); false }
+  pub fn set_h(&mut self, v: f32) -> bool { self.h = Some(v); false }
+  // [top-left, top-right, bottom-right, bottom-left].
+  pub fn set_radius(&mut self, radius: [f32; 4]) -> bool { self.radius = Some(radius); false }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(
