@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use taffy::NodeId;
+use taffy::{NodeId, Size};
 
 use crate::rendertree::{BoundingBox, Element, ElementKind};
 
@@ -36,6 +36,15 @@ impl RenderTree {
       child.parent = Some(parent_id);
       child.has_layout()
     };
+
+    // Detached subtrees must stay entirely detached so a detached node's
+    // inherited position and size resolve to a single laid-out ancestor.
+    if child_has_layout && !self.node(parent_id).has_layout() {
+      panic!(
+        "attached node {node_id} cannot be inserted under detached node {parent_id}; \
+         detached subtrees must be entirely detached"
+      );
+    }
 
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
@@ -112,8 +121,8 @@ impl RenderTree {
   /// closest ancestor whose JSX explicitly set `position="relative"`. Falls
   /// back to the window when there is none. This is the frame an absolutely
   /// positioned sibling overlay is drawn in, so coordinates from here can feed
-  /// directly into such an overlay. Returns None for layout-less nodes (d-rect,
-  /// span) and before the first layout has run (cache empty).
+  /// directly into such an overlay. Detached nodes report the box inherited from
+  /// their nearest laid-out ancestor. Returns None before the first layout.
   pub fn bounding_box(&self, id: u64) -> Option<BoundingBox> {
     self.compute_bounding_box(id, true)
   }
@@ -136,24 +145,23 @@ impl RenderTree {
   /// Phase 1: only translations compose into the result - each ancestor's
   /// layout position, plus View `pos` (forward) and `scroll` (inverse). A View
   /// `rotate` or `scale` anywhere in the chain is ignored, so the reported x/y
-  /// is wrong under rotation/scaling; width/height are always the node's own
-  /// computed size. TODO: compose full transforms by walking the four corners
+  /// is wrong under rotation/scaling. Size and local offset come from the kind's
+  /// `local_bounds`. TODO: compose full transforms by walking the four corners
   /// up through each ancestor, mirroring hit testing.
   fn compute_bounding_box(&self, id: u64, stop_at_context: bool) -> Option<BoundingBox> {
     let node = self.try_node(id)?;
-    let layout = node.layout.as_ref()?;
-    if layout.cache.is_empty() {
-      return None;
-    }
-
-    // The node's painted box in its own layout-box frame (own paint offset,
-    // size override, and View pos all live in local_bounds), placed at the
-    // layout box origin.
-    let local = node.kind.local_bounds(layout.computed.size);
+    let local = node.kind.local_bounds(self.content_fallback(id)?);
     let width = local.width;
     let height = local.height;
-    let mut x = layout.computed.location.x + local.x;
-    let mut y = layout.computed.location.y + local.y;
+    let mut x = local.x;
+    let mut y = local.y;
+
+    // Detached nodes have no layout placement; they inherit position from the
+    // ancestor walk below.
+    if let Some(layout) = node.layout.as_ref() {
+      x += layout.computed.location.x;
+      y += layout.computed.location.y;
+    }
 
     // Ascend, adding each ancestor's layout position and View translate, and
     // removing any scroll the ancestor applies to its children. For the
@@ -192,6 +200,23 @@ impl RenderTree {
     }
 
     Some(BoundingBox { x, y, width, height })
+  }
+
+  /// Fallback size for shapes without explicit w/h: the nearest laid-out node's
+  /// box (self, or the ancestor a detached subtree hangs from). None before the
+  /// first layout has populated the cache.
+  fn content_fallback(&self, id: u64) -> Option<Size<f32>> {
+    let mut cur = id;
+    loop {
+      let node = self.try_node(cur)?;
+      if let Some(layout) = node.layout.as_ref() {
+        if layout.cache.is_empty() {
+          return None;
+        }
+        return Some(layout.computed.size);
+      }
+      cur = node.parent?;
+    }
   }
 
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {

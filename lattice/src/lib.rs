@@ -5,6 +5,7 @@ mod rendertree;
 #[cfg(feature = "go")]
 mod go;
 
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
   Stop,
   Reload(String),
@@ -17,6 +18,7 @@ use flux::{emit_event, ExecHandle, FluxEngine};
 use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
+#[cfg(feature = "go")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -71,7 +73,9 @@ fn ui_thread(
   source: Option<String>,
   record_fps: Option<u32>,
 ) {
+  #[cfg(feature = "go")]
   let proxy_files_enabled = Arc::new(AtomicBool::new(false));
+  #[cfg(feature = "go")]
   let proxy_http_enabled = Arc::new(AtomicBool::new(false));
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
@@ -250,6 +254,7 @@ fn ui_thread(
       }
     });
 
+    #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
@@ -270,6 +275,7 @@ fn ui_thread(
       let tree_platform = platform.clone();
       let tree_atx = AlloyContext(atx.clone());
       let texture_atx = AlloyContext(atx.clone());
+      #[cfg_attr(not(feature = "go"), allow(unused_mut))]
       let mut builder = FluxEngine::builder()
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),

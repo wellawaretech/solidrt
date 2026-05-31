@@ -1,6 +1,6 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
+use crate::rendertree::{BoundingBox, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use taffy::Size as TaffySize;
 
@@ -31,6 +31,17 @@ impl Measurable for Oval {
     TaffySize {
       width: ctx.known.width.unwrap_or(self.w.unwrap_or(0.0)),
       height: ctx.known.height.unwrap_or(self.h.unwrap_or(0.0)),
+    }
+  }
+}
+
+impl Bounded for Oval {
+  fn local_bounds(&self, fallback: TaffySize<f32>) -> BoundingBox {
+    BoundingBox {
+      x: self.x.unwrap_or(0.0),
+      y: self.y.unwrap_or(0.0),
+      width: self.w.unwrap_or(fallback.width),
+      height: self.h.unwrap_or(fallback.height),
     }
   }
 }

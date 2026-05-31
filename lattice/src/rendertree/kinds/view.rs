@@ -1,7 +1,7 @@
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, WH, XY};
+use crate::rendertree::{BoundingBox, Bounded, BuildContext, Buildable, Element, ElementKind, WH, XY};
 use alloy::impellers::DisplayListBuilder;
-use taffy::{FlexDirection, Style};
+use taffy::{FlexDirection, Size, Style};
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
@@ -38,6 +38,13 @@ impl Buildable for View {
       builder.rotate(value.to_degrees());
     }
     builder.translate(-c.x, -c.y);
+  }
+}
+
+impl Bounded for View {
+  fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
+    let p = self.pos.unwrap_or_default();
+    BoundingBox { x: p.x, y: p.y, width: fallback.width, height: fallback.height }
   }
 }
 
