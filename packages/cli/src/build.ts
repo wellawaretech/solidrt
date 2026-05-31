@@ -20,7 +20,7 @@ export async function bundle(entry = source) {
       target: "browser",
       format: "esm",
       minify: values.minify,
-      external: ["qjs:*"],
+      external: ["qjs:*", "flux:*"],
       define,
       plugins: [solidPlugin()],
     })

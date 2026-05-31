@@ -40,7 +40,7 @@ async fn import_alloc() {
   engine
     .eval_source(
       r#"
-            import { alloc } from "qjs:memory";
+            import { alloc } from "flux:memory";
             let buf = alloc(16);
             console.log(buf.byteLength);
             "#,
@@ -63,7 +63,7 @@ async fn import_memset() {
   engine
     .eval_source(
       r#"
-            import { alloc, memset } from "qjs:memory";
+            import { alloc, memset } from "flux:memory";
             let buf = alloc(4);
             memset(buf, 0, 4, 0xAB);
             console.log(buf[0], buf[1], buf[2], buf[3]);
@@ -87,7 +87,7 @@ async fn import_memset32() {
   engine
     .eval_source(
       r#"
-            import { alloc, memset32 } from "qjs:memory";
+            import { alloc, memset32 } from "flux:memory";
             let buf = alloc(8);
             memset32(buf, 0, 2, 0x01020304);
             console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
@@ -112,7 +112,7 @@ async fn memset_offset() {
   engine
     .eval_source(
       r#"
-            import { alloc, memset } from "qjs:memory";
+            import { alloc, memset } from "flux:memory";
             let buf = alloc(8);
             memset(buf, 2, 3, 0xFF);
             console.log(buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]);
@@ -136,7 +136,7 @@ async fn import_free() {
   engine
     .eval_source(
       r#"
-            import { alloc, free, memset } from "qjs:memory";
+            import { alloc, free, memset } from "flux:memory";
             let buf = alloc(4);
             memset(buf, 0, 4, 0x11);
             console.log(buf.byteLength);
@@ -162,7 +162,7 @@ async fn memset_out_of_bounds() {
   engine
     .eval_source(
       r#"
-            import { alloc, memset } from "qjs:memory";
+            import { alloc, memset } from "flux:memory";
             let buf = alloc(4);
             try {
                 memset(buf, 2, 4, 0xFF);
