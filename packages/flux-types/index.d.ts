@@ -40,4 +40,18 @@ declare global {
   }
 }
 
+declare module "flux:sqlite" {
+  // Values accepted as bound parameters. booleans bind as 0/1.
+  type SqlParam = null | boolean | number | string | Uint8Array
+  // Values returned in result rows. BLOB comes back as Uint8Array.
+  type SqlValue = null | number | string | Uint8Array
+  type Row = Record<string, SqlValue>
+
+  export class Database {
+    static connect(path: string): Promise<Database>
+    query(sql: string, params?: SqlParam[]): Promise<Row[]>
+    close(): Promise<void>
+  }
+}
+
 export {}

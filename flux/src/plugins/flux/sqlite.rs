@@ -30,8 +30,9 @@
 //! - Integers always go i64 -> JS number; no `safeIntegers`/bigint mode, so
 //!   values above 2^53 lose precision silently.
 //! - Errors surface as generic `IO Error: ...`, not a typed SQLite error.
+//! - `close()` exists but is async (returns a promise); Bun's is synchronous.
 //!
-//! Not implemented at all: transactions, `close()`, `constants`,
+//! Not implemented at all: transactions, `constants`,
 //! `serialize()`/`deserialize()`, `loadExtension()`, `.as(Class)`.
 
 use std::io;
@@ -103,6 +104,22 @@ impl Database {
       let r = run_query(&pool, &sql, bound).await;
       pending.release();
       r
+    }))
+  }
+
+  /// Close the connection pool, releasing all connections. Safe to call more
+  /// than once; later queries on a closed database will reject.
+  pub fn close<'js>(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<()>>>> {
+    let pool = self.pool.clone();
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      pool.close().await;
+      pending.release();
+      Ok(())
     }))
   }
 }
