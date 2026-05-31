@@ -146,12 +146,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       }
 
       let element = tree.render_tree.node(id);
-      let has_measurement = matches!(
-        &element.kind,
-        ElementKind::Text(_) | ElementKind::Rectangle(_) | ElementKind::Path(_) | ElementKind::Texture(_)
-      );
-
-      if has_measurement {
+      if element.kind.is_measured_leaf() {
         let platform = tree.platform;
         let alloy = tree.alloy;
         let style = &tree.render_tree.node(id).layout_data().style;

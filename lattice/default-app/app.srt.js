@@ -3201,185 +3201,6 @@ function createRenderer(options) {
   };
 }
 
-// packages/core/src/events.ts
-var handlers = new Map;
-function setEventHandler(nodeId, name, fn) {
-  if (fn == null) {
-    handlers.get(nodeId)?.delete(name);
-    return;
-  }
-  let nodeHandlers = handlers.get(nodeId);
-  if (!nodeHandlers) {
-    nodeHandlers = new Map;
-    handlers.set(nodeId, nodeHandlers);
-  }
-  nodeHandlers.set(name, fn);
-}
-function getEventHandler(nodeId, name) {
-  return handlers.get(nodeId)?.get(name);
-}
-function cleanupNodeHandlers(nodeId) {
-  handlers.delete(nodeId);
-}
-
-// packages/core/src/focus.ts
-var focusedNodeId = null;
-var textInputActive = false;
-function setFocus(nodeId) {
-  if (nodeId === focusedNodeId)
-    return;
-  let oldId = focusedNodeId;
-  focusedNodeId = nodeId;
-  if (oldId != null) {
-    getEventHandler(oldId, "onBlur")?.();
-  }
-  if (nodeId != null) {
-    getEventHandler(nodeId, "onFocus")?.();
-  }
-  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
-  if (wantActive !== textInputActive) {
-    textInputActive = wantActive;
-    ffi.setTextInputActive(wantActive);
-  }
-}
-function getFocusedNodeId() {
-  return focusedNodeId;
-}
-
-// packages/core/src/window.ts
-var nextFrameId = 1;
-var animationFrames = new Map;
-function onFrame(fn) {
-  let frameId = null;
-  let extendedFn = (tick, frame) => {
-    fn(tick, frame);
-    frameId = nextFrameId++;
-    animationFrames.set(frameId, extendedFn);
-  };
-  frameId = nextFrameId++;
-  animationFrames.set(frameId, extendedFn);
-  let cleanup2 = () => animationFrames.delete(frameId);
-  onCleanup(cleanup2);
-  return cleanup2;
-}
-function onResize(fn) {
-  let unsubscribe = Flux.on("resize", fn);
-  onCleanup(unsubscribe);
-  return unsubscribe;
-}
-function attachWindow(_nodeId) {
-  let unsubscribe = null;
-  let unsubDown = null;
-  let unsubUp = null;
-  let unsubMove = null;
-  let unsubEnter = null;
-  let unsubLeave = null;
-  let unsubWheel = null;
-  let unsubKeyDown = null;
-  let unsubKeyUp = null;
-  let unsubTextInput = null;
-  let unsubKeyboardVisibility = null;
-  let unsubFirstResize = null;
-  function runFrame(t, frame) {
-    if (animationFrames.size > 0) {
-      let frames = animationFrames;
-      animationFrames = new Map;
-      for (let fn of frames.values())
-        fn(t, frame);
-    }
-    flush();
-    draw();
-  }
-  onSettled(() => {
-    unsubscribe = Flux.on("render", ({ time, frame }) => {
-      runFrame(time * 1000 | 0, frame);
-    });
-    unsubDown = Flux.on("pointerDown", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerDown")?.(e);
-      }
-      let focused = getFocusedNodeId();
-      if (focused != null && !targets.includes(focused)) {
-        setFocus(null);
-      }
-    });
-    unsubUp = Flux.on("pointerUp", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerUp")?.(e);
-      }
-    });
-    unsubMove = Flux.on("pointerMove", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerMove")?.(e);
-      }
-    });
-    unsubEnter = Flux.on("pointerEnter", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerEnter")?.(e);
-      }
-    });
-    unsubLeave = Flux.on("pointerLeave", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerLeave")?.(e);
-      }
-    });
-    unsubWheel = Flux.on("wheel", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onWheel")?.(e);
-      }
-    });
-    unsubKeyDown = Flux.on("keydown", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyDown")?.(e);
-      }
-    });
-    unsubKeyUp = Flux.on("keyup", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyUp")?.(e);
-      }
-    });
-    unsubTextInput = Flux.on("textInput", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onTextInput")?.(e);
-      }
-    });
-    unsubKeyboardVisibility = Flux.on("keyboardVisibility", ({ shown }) => {
-      if (!shown)
-        setFocus(null);
-    });
-    unsubFirstResize = Flux.once("resize", () => runFrame(0, 0));
-  });
-  onCleanup(() => {
-    if (unsubscribe)
-      unsubscribe();
-    if (unsubDown)
-      unsubDown();
-    if (unsubUp)
-      unsubUp();
-    if (unsubMove)
-      unsubMove();
-    if (unsubEnter)
-      unsubEnter();
-    if (unsubLeave)
-      unsubLeave();
-    if (unsubWheel)
-      unsubWheel();
-    if (unsubKeyDown)
-      unsubKeyDown();
-    if (unsubKeyUp)
-      unsubKeyUp();
-    if (unsubTextInput)
-      unsubTextInput();
-    if (unsubKeyboardVisibility)
-      unsubKeyboardVisibility();
-    if (unsubFirstResize)
-      unsubFirstResize();
-  });
-}
-
 // node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
 var r = { grad: 0.9, turn: 360, rad: 360 / (2 * Math.PI) };
 var t = function(r2) {
@@ -3578,11 +3399,188 @@ function names_default(e2, f2) {
   }, "name"]);
 }
 
-// packages/core/src/color.ts
+// packages/core/src/core.ts
 k([names_default]);
 function parseColorToU32(color) {
   let { r: r2, g: g2, b: b2, a: a2 } = w(color).toRgb();
   return ((r2 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a2 * 255 & 255) >>> 0;
+}
+var handlers = new Map;
+function setEventHandler(nodeId, name, fn) {
+  if (fn == null) {
+    handlers.get(nodeId)?.delete(name);
+    return;
+  }
+  let nodeHandlers = handlers.get(nodeId);
+  if (!nodeHandlers) {
+    nodeHandlers = new Map;
+    handlers.set(nodeId, nodeHandlers);
+  }
+  nodeHandlers.set(name, fn);
+}
+function getEventHandler(nodeId, name) {
+  return handlers.get(nodeId)?.get(name);
+}
+function cleanupNodeHandlers(nodeId) {
+  handlers.delete(nodeId);
+}
+var focusedNodeId = null;
+var textInputActive = false;
+function setFocus(nodeId) {
+  if (nodeId === focusedNodeId)
+    return;
+  let oldId = focusedNodeId;
+  focusedNodeId = nodeId;
+  if (oldId != null) {
+    getEventHandler(oldId, "onBlur")?.();
+  }
+  if (nodeId != null) {
+    getEventHandler(nodeId, "onFocus")?.();
+  }
+  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
+  if (wantActive !== textInputActive) {
+    textInputActive = wantActive;
+    ffi.setTextInputActive(wantActive);
+  }
+}
+function getFocusedNodeId() {
+  return focusedNodeId;
+}
+
+// packages/core/src/window.ts
+var nextFrameId = 1;
+var animationFrames = new Map;
+function onFrame(fn) {
+  let frameId = null;
+  let extendedFn = (tick, frame) => {
+    fn(tick, frame);
+    frameId = nextFrameId++;
+    animationFrames.set(frameId, extendedFn);
+  };
+  frameId = nextFrameId++;
+  animationFrames.set(frameId, extendedFn);
+  let cleanup2 = () => animationFrames.delete(frameId);
+  onCleanup(cleanup2);
+  return cleanup2;
+}
+function onResize(fn) {
+  let unsubscribe = Flux.on("resize", fn);
+  onCleanup(unsubscribe);
+  return unsubscribe;
+}
+function attachWindow(_nodeId) {
+  let unsubscribe = null;
+  let unsubDown = null;
+  let unsubUp = null;
+  let unsubMove = null;
+  let unsubEnter = null;
+  let unsubLeave = null;
+  let unsubWheel = null;
+  let unsubKeyDown = null;
+  let unsubKeyUp = null;
+  let unsubTextInput = null;
+  let unsubKeyboardVisibility = null;
+  let unsubFirstResize = null;
+  function runFrame(t2, frame) {
+    if (animationFrames.size > 0) {
+      let frames = animationFrames;
+      animationFrames = new Map;
+      for (let fn of frames.values())
+        fn(t2, frame);
+    }
+    flush();
+    draw();
+  }
+  onSettled(() => {
+    unsubscribe = Flux.on("render", ({ time, frame }) => {
+      runFrame(time * 1000 | 0, frame);
+    });
+    unsubDown = Flux.on("pointerDown", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerDown")?.(e2);
+      }
+      let focused = getFocusedNodeId();
+      if (focused != null && !targets.includes(focused)) {
+        setFocus(null);
+      }
+    });
+    unsubUp = Flux.on("pointerUp", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerUp")?.(e2);
+      }
+    });
+    unsubMove = Flux.on("pointerMove", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerMove")?.(e2);
+      }
+    });
+    unsubEnter = Flux.on("pointerEnter", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerEnter")?.(e2);
+      }
+    });
+    unsubLeave = Flux.on("pointerLeave", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerLeave")?.(e2);
+      }
+    });
+    unsubWheel = Flux.on("wheel", ({ targets, ...e2 }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onWheel")?.(e2);
+      }
+    });
+    unsubKeyDown = Flux.on("keydown", (e2) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onKeyDown")?.(e2);
+      }
+    });
+    unsubKeyUp = Flux.on("keyup", (e2) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onKeyUp")?.(e2);
+      }
+    });
+    unsubTextInput = Flux.on("textInput", (e2) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onTextInput")?.(e2);
+      }
+    });
+    unsubKeyboardVisibility = Flux.on("keyboardVisibility", ({ shown }) => {
+      if (!shown)
+        setFocus(null);
+    });
+    unsubFirstResize = Flux.once("resize", () => {
+      queueMicrotask(() => runFrame(0, 0));
+    });
+  });
+  onCleanup(() => {
+    if (unsubscribe)
+      unsubscribe();
+    if (unsubDown)
+      unsubDown();
+    if (unsubUp)
+      unsubUp();
+    if (unsubMove)
+      unsubMove();
+    if (unsubEnter)
+      unsubEnter();
+    if (unsubLeave)
+      unsubLeave();
+    if (unsubWheel)
+      unsubWheel();
+    if (unsubKeyDown)
+      unsubKeyDown();
+    if (unsubKeyUp)
+      unsubKeyUp();
+    if (unsubTextInput)
+      unsubTextInput();
+    if (unsubKeyboardVisibility)
+      unsubKeyboardVisibility();
+    if (unsubFirstResize)
+      unsubFirstResize();
+  });
 }
 
 // packages/core/src/renderer.ts
@@ -3617,15 +3615,15 @@ var {
     return proxy;
   },
   createTextNode: (value) => {
-    let proxy = createProxyNode("span");
-    ffi.createNode(proxy.id, "span");
+    let proxy = createProxyNode("d-span");
+    ffi.createNode(proxy.id, "d-span");
     ffi.setProperty(proxy.id, "text", "" + value);
     return proxy;
   },
   replaceText: (node, value) => {
     ffi.setProperty(node.id, "text", "" + value);
   },
-  isTextNode: (node) => node?.elementType === "span",
+  isTextNode: (node) => node?.elementType === "d-span",
   setProperty: (node, name, value) => {
     if (!node)
       return;
@@ -4102,7 +4100,7 @@ function TangramLetter(props) {
   let pieceSpins = props.letter.pieces.map((_, i2) => ((i2 * 7 + 3) % 11 - 5) * 30);
   onFrame((tick, frame) => {
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED;
-    let t2 = (tick + 5000 - props.delay) % cycleLen;
+    let t2 = (tick - props.delay) % cycleLen;
     if (t2 < 0) {
       setDist(EXPLODE_DIST);
     } else if (t2 < ANIM_DURATION) {

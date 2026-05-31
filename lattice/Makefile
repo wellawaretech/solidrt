@@ -34,7 +34,7 @@ endif
 
 $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 	@echo "Bundling default app (app.tsx -> app.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt build $(DEFAULT_APP_SRC)
+	cd $(CURDIR)/.. && bunx srt bundle $(DEFAULT_APP_SRC)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"

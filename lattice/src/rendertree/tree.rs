@@ -146,22 +146,14 @@ impl RenderTree {
       return None;
     }
 
-    let width = layout.computed.size.width;
-    let height = layout.computed.size.height;
-
-    // Own location, plus own View pos (which translates the node itself).
-    let mut x = layout.computed.location.x;
-    let mut y = layout.computed.location.y;
-    if let ElementKind::View(v) = &node.kind {
-      if let Some(p) = v.pos {
-        x += p.x;
-        y += p.y;
-      }
-    }
-    if let ElementKind::Rectangle(r) = &node.kind {
-      x += r.x.unwrap_or(0.0);
-      y += r.y.unwrap_or(0.0);
-    }
+    // The node's painted box in its own layout-box frame (own paint offset,
+    // size override, and View pos all live in local_bounds), placed at the
+    // layout box origin.
+    let local = node.kind.local_bounds(layout.computed.size);
+    let width = local.width;
+    let height = local.height;
+    let mut x = layout.computed.location.x + local.x;
+    let mut y = layout.computed.location.y + local.y;
 
     // Ascend, adding each ancestor's layout position and View translate, and
     // removing any scroll the ancestor applies to its children. For the

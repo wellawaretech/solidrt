@@ -246,7 +246,7 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
   onFrame((tick: number, frame: number) => {
     // tick is game time (ms since app start); +5000 starts the cycle in the assembled phase
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED
-    let t = (tick + 5000 - props.delay) % cycleLen
+    let t = (tick - props.delay) % cycleLen
 
     if (t < 0) {
       // before this letter's first cycle starts

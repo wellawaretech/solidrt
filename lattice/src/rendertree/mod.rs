@@ -111,6 +111,51 @@ impl ElementKind {
       _ => None,
     }
   }
+
+  /// Kinds sized by their own geometry (leaves), as opposed to container kinds
+  /// sized by their children. MUST stay in sync with the arms of `Measurable
+  /// for ElementKind` below: a leaf here is a kind that has a real `measure`.
+  pub fn is_measured_leaf(&self) -> bool {
+    matches!(
+      self,
+      ElementKind::Text(_)
+        | ElementKind::Rectangle(_)
+        | ElementKind::Oval(_)
+        | ElementKind::Line(_)
+        | ElementKind::Path(_)
+        | ElementKind::Texture(_)
+    )
+  }
+
+  /// A kind's painted box expressed in its own layout-box frame: `x`/`y` are the
+  /// offset of the paint from the layout box origin, `width`/`height` the painted
+  /// size. The bounding-box walk accumulates ancestor offsets onto `x`/`y`, so
+  /// this stays purely local. Box-model kinds that paint inside their layout box
+  /// (Rectangle, Oval, View) report their own offset and any size override;
+  /// every other kind defaults to the layout box. Line and Path paint in their
+  /// own coordinate space rather than inside the layout box, so reporting the
+  /// layout box for them is a known approximation.
+  pub fn local_bounds(&self, layout: Size<f32>) -> BoundingBox {
+    match self {
+      ElementKind::Rectangle(r) => BoundingBox {
+        x: r.x.unwrap_or(0.0),
+        y: r.y.unwrap_or(0.0),
+        width: r.w.unwrap_or(layout.width),
+        height: r.h.unwrap_or(layout.height),
+      },
+      ElementKind::Oval(o) => BoundingBox {
+        x: o.x.unwrap_or(0.0),
+        y: o.y.unwrap_or(0.0),
+        width: o.w.unwrap_or(layout.width),
+        height: o.h.unwrap_or(layout.height),
+      },
+      ElementKind::View(v) => {
+        let (x, y) = v.pos.map(|p| (p.x, p.y)).unwrap_or((0.0, 0.0));
+        BoundingBox { x, y, width: layout.width, height: layout.height }
+      }
+      _ => BoundingBox { x: 0.0, y: 0.0, width: layout.width, height: layout.height },
+    }
+  }
 }
 
 impl Buildable for ElementKind {
