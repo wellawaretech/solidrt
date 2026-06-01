@@ -16,9 +16,12 @@
 //!
 //! Fundamental difference: Bun's API is fully synchronous (`new Database()`,
 //! `query.all()`); ours is async. So construction is `await Database.connect()`
-//! and `new Database()` throws. Bun's `db.transaction(fn)` wraps a SYNC callback
-//! and does not translate directly to our model; transaction support is not yet
-//! implemented and will need a different (async) shape.
+//! and `new Database()` throws. Bun's `db.transaction(fn)` wraps a SYNC callback;
+//! that does not translate to our async model (the callback would yield between
+//! statements). Instead `db.transaction(statements)` takes a DECLARATIVE batch -
+//! an array of `[sql, params]` run in one BEGIN/COMMIT (ROLLBACK on any error).
+//! It cannot branch on intermediate results; a programmable async-callback form
+//! may be layered on later (the connection-actor below already supports it).
 //!
 //! Prepared statements follow flux's "raw primitive first, conveniences opt-in"
 //! principle. `db.query(sql)` returns a reusable `Statement` whose executions go
@@ -42,7 +45,10 @@
 //! Differs from Bun (current scope - may change):
 //! - Construction and all executions are async (return promises).
 //! - No `db.prepare()` (see above), no `stmt.values()`/`iterate()`/`finalize()`/
-//!   `.as(Class)`, no `db.transaction()`.
+//!   `.as(Class)`.
+//! - `db.transaction` is a declarative batch (array of `[sql, params]`), not
+//!   Bun's programmable sync callback. Returns one `{changes, lastInsertRowid}`
+//!   per statement. Statements must be writes/DDL (they go through `execute`).
 //! - Bind params are ONE explicit argument: a positional array (`all([1, 2])`,
 //!   itself a valid Bun form). We deliberately do NOT also accept Bun's
 //!   spread-args overload (`all(1, 2)`) - one shape, no argument-shape guessing.
@@ -86,6 +92,9 @@ pub struct RunResult {
   last_insert_rowid: i64,
 }
 
+/// One RunResult per statement in a transaction batch.
+pub struct TxResults(Vec<RunResult>);
+
 /// A command sent from a JS call to the connection thread. Each variant carries
 /// a oneshot sender the thread replies on.
 enum Command {
@@ -105,6 +114,10 @@ enum Command {
   Exec {
     sql: String,
     reply: oneshot::Sender<rusqlite::Result<()>>,
+  },
+  Transaction {
+    statements: Vec<(String, Vec<SqlValue>)>,
+    reply: oneshot::Sender<rusqlite::Result<Vec<RunResult>>>,
   },
   Close {
     reply: oneshot::Sender<()>,
@@ -180,6 +193,25 @@ impl Database {
     Ok(Promised(async move {
       pending.hold();
       let r = batch_roundtrip(&cmd_tx, sql).await;
+      pending.release();
+      r
+    }))
+  }
+
+  /// Run a batch of `[sql, params]` statements in a single transaction. All run
+  /// in one BEGIN/COMMIT; any error rolls the whole batch back and rejects.
+  /// Resolves to one `{ changes, lastInsertRowid }` per statement.
+  pub fn transaction<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    statements: Array<'js>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<TxResults>>>> {
+    let parsed = extract_statements(statements)?;
+    let cmd_tx = self.cmd_tx.clone();
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      let r = transaction_roundtrip(&cmd_tx, parsed).await;
       pending.release();
       r
     }))
@@ -291,7 +323,7 @@ async fn spawn_database(path: String) -> rquickjs::Result<Database> {
 
 /// The connection thread: owns the `Connection` and serves commands serially.
 fn actor_main(path: String, cmd_rx: Receiver<Command>, open_tx: oneshot::Sender<rusqlite::Result<()>>) {
-  let conn = match Connection::open(&path) {
+  let mut conn = match Connection::open(&path) {
     Ok(c) => c,
     Err(e) => {
       let _ = open_tx.send(Err(e));
@@ -314,6 +346,9 @@ fn actor_main(path: String, cmd_rx: Receiver<Command>, open_tx: oneshot::Sender<
       }
       Command::Exec { sql, reply } => {
         let _ = reply.send(conn.execute_batch(&sql));
+      }
+      Command::Transaction { statements, reply } => {
+        let _ = reply.send(do_transaction(&mut conn, &statements));
       }
       Command::Close { reply } => {
         close_reply = Some(reply);
@@ -360,6 +395,15 @@ async fn batch_roundtrip(cmd_tx: &Sender<Command>, sql: String) -> rquickjs::Res
   let (reply, rx) = oneshot::channel();
   cmd_tx.send(Command::Exec { sql, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
+}
+
+async fn transaction_roundtrip(
+  cmd_tx: &Sender<Command>,
+  statements: Vec<(String, Vec<SqlValue>)>,
+) -> rquickjs::Result<TxResults> {
+  let (reply, rx) = oneshot::channel();
+  cmd_tx.send(Command::Transaction { statements, reply }).map_err(|_| closed_err())?;
+  rx.await.map_err(|_| closed_err())?.map(TxResults).map_err(sqlite_err)
 }
 
 fn do_query(
@@ -411,6 +455,22 @@ fn do_run(conn: &Connection, sql: &str, params: &[SqlValue], cached: bool) -> ru
   Ok(RunResult { changes: changes as i64, last_insert_rowid: conn.last_insert_rowid() })
 }
 
+/// Run all statements in a single transaction. The rusqlite `Transaction` guard
+/// rolls back on drop, so an error on any statement (via `?`) discards the lot.
+fn do_transaction(
+  conn: &mut Connection,
+  statements: &[(String, Vec<SqlValue>)],
+) -> rusqlite::Result<Vec<RunResult>> {
+  let tx = conn.transaction()?;
+  let mut results = Vec::with_capacity(statements.len());
+  for (sql, params) in statements {
+    let changes = tx.execute(sql, rusqlite::params_from_iter(params.iter()))?;
+    results.push(RunResult { changes: changes as i64, last_insert_rowid: tx.last_insert_rowid() });
+  }
+  tx.commit()?;
+  Ok(results)
+}
+
 fn sqlvalue_from_ref(v: rusqlite::types::ValueRef<'_>) -> SqlValue {
   use rusqlite::types::ValueRef;
   match v {
@@ -444,6 +504,24 @@ fn extract_params(params: Option<Array<'_>>) -> rquickjs::Result<Vec<SqlValue>> 
   for v in arr.iter::<Value>() {
     let v = v?;
     out.push(js_to_sql(v)?);
+  }
+  Ok(out)
+}
+
+/// Convert a JS array of `[sql, params]` entries into owned statements.
+fn extract_statements(arr: Array<'_>) -> rquickjs::Result<Vec<(String, Vec<SqlValue>)>> {
+  let mut out = Vec::with_capacity(arr.len());
+  for entry in arr.iter::<Value>() {
+    let entry = entry?;
+    let Some(pair) = entry.into_array() else {
+      return Err(rquickjs::Error::Io(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "each transaction statement must be an array [sql, params?]",
+      )));
+    };
+    let sql: String = pair.get(0)?;
+    let params = pair.get::<Array>(1).ok();
+    out.push((sql, extract_params(params)?));
   }
   Ok(out)
 }
@@ -526,6 +604,16 @@ impl<'js> IntoJs<'js> for RunResult {
     obj.set("changes", self.changes)?;
     obj.set("lastInsertRowid", self.last_insert_rowid)?;
     Ok(obj.into_value())
+  }
+}
+
+impl<'js> IntoJs<'js> for TxResults {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let arr = Array::new(ctx.clone())?;
+    for (idx, r) in self.0.into_iter().enumerate() {
+      arr.set(idx, r)?;
+    }
+    Ok(arr.into_value())
   }
 }
 

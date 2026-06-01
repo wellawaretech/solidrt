@@ -66,6 +66,10 @@ declare module "flux:sqlite" {
     run(sql: string, params?: SqlParam[]): Promise<RunResult>
     // Run a multi-statement script (no params), e.g. schema setup / migrations.
     exec(sql: string): Promise<void>
+    // Run a batch of [sql, params] statements in one transaction (BEGIN/COMMIT,
+    // ROLLBACK on any error). Resolves to one result per statement. Statements
+    // must be writes/DDL. Cannot branch on intermediate results.
+    transaction(statements: [string, SqlParam[]?][]): Promise<RunResult[]>
     close(): Promise<void>
   }
 }
