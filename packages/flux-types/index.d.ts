@@ -64,6 +64,8 @@ declare module "flux:sqlite" {
     query(sql: string): Statement
     // One-shot write; uses plain prepare (no caching).
     run(sql: string, params?: SqlParam[]): Promise<RunResult>
+    // Run a multi-statement script (no params), e.g. schema setup / migrations.
+    exec(sql: string): Promise<void>
     close(): Promise<void>
   }
 }

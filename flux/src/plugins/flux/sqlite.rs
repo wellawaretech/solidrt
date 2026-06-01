@@ -34,15 +34,20 @@
 //! - Creates the file if missing.
 //! - `db.query(sql)` -> reusable Statement; `stmt.all/get/run`.
 //! - `db.run(sql, params)` -> `{ changes, lastInsertRowid }`.
+//! - `db.exec(sql)` runs a multi-statement script (no params).
 //! - Positional `?` parameters; rows returned as plain objects.
+//! - Bind params as a positional array (`all([1, 2])`) - one of Bun's forms.
 //! - `BLOB` <-> `Uint8Array`.
 //!
 //! Differs from Bun (current scope - may change):
 //! - Construction and all executions are async (return promises).
 //! - No `db.prepare()` (see above), no `stmt.values()`/`iterate()`/`finalize()`/
-//!   `.as(Class)`, no `db.exec()` batch, no `db.transaction()`.
-//! - Params are passed as an array (`query(sql).all([1, 2])`), not spread args.
-//! - Positional `?` only; no named params (`$p` / `:p` / `@p`) or object binding.
+//!   `.as(Class)`, no `db.transaction()`.
+//! - Bind params are ONE explicit argument: a positional array (`all([1, 2])`,
+//!   itself a valid Bun form). We deliberately do NOT also accept Bun's
+//!   spread-args overload (`all(1, 2)`) - one shape, no argument-shape guessing.
+//! - Named params (`$p` / `:p` / `@p`, object binding) not yet supported; when
+//!   added they keep the single-argument style (an object), not an overload.
 //! - Integers always go i64 -> JS number; no `safeIntegers`/bigint mode, so
 //!   values above 2^53 lose precision silently.
 //! - Errors surface as generic `IO Error: ...`, not a typed SQLite error.
@@ -96,6 +101,10 @@ enum Command {
     params: Vec<SqlValue>,
     cached: bool,
     reply: oneshot::Sender<rusqlite::Result<RunResult>>,
+  },
+  Exec {
+    sql: String,
+    reply: oneshot::Sender<rusqlite::Result<()>>,
   },
   Close {
     reply: oneshot::Sender<()>,
@@ -154,6 +163,23 @@ impl Database {
     Ok(Promised(async move {
       pending.hold();
       let r = exec_roundtrip(&cmd_tx, sql, bound, false).await;
+      pending.release();
+      r
+    }))
+  }
+
+  /// Run a batch of statements (separated by `;`) with no parameters. Intended
+  /// for schema setup / migrations. Resolves to undefined.
+  pub fn exec<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    sql: String,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<()>>>> {
+    let cmd_tx = self.cmd_tx.clone();
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      let r = batch_roundtrip(&cmd_tx, sql).await;
       pending.release();
       r
     }))
@@ -286,6 +312,9 @@ fn actor_main(path: String, cmd_rx: Receiver<Command>, open_tx: oneshot::Sender<
       Command::Run { sql, params, cached, reply } => {
         let _ = reply.send(do_run(&conn, &sql, &params, cached));
       }
+      Command::Exec { sql, reply } => {
+        let _ = reply.send(conn.execute_batch(&sql));
+      }
       Command::Close { reply } => {
         close_reply = Some(reply);
         break;
@@ -324,6 +353,12 @@ async fn exec_roundtrip(
   cmd_tx
     .send(Command::Run { sql, params, cached, reply })
     .map_err(|_| closed_err())?;
+  rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
+}
+
+async fn batch_roundtrip(cmd_tx: &Sender<Command>, sql: String) -> rquickjs::Result<()> {
+  let (reply, rx) = oneshot::channel();
+  cmd_tx.send(Command::Exec { sql, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
 }
 
