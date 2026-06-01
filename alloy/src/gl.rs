@@ -1,5 +1,6 @@
 use crate::{Backend, Context, DisplayContext, GpuTexture, RenderSurface};
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
+use sdl3::video::SwapInterval;
 use std::sync::{mpsc, Arc};
 
 struct SendablePtr(*mut std::ffi::c_void);
@@ -264,9 +265,9 @@ pub(crate) fn setup_opengl_platform(
     .map_err(|e| format!("Failed to make main GL context current: {}", e))?;
 
   // Set swap interval (vsync) via FFI
-  unsafe {
-    sdl3::sys::video::SDL_GL_SetSwapInterval(1);
-  }
+  video
+    .gl_set_swap_interval(SwapInterval::VSync).map_err(|e|
+     format!("Failed to set swap interval: {}", e))?;
 
   Ok(DisplayContext::Gl {
     window_opaque: window as *const _ as *const std::ffi::c_void,
