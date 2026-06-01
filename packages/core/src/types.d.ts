@@ -207,7 +207,7 @@ export interface PathProps extends Position, PaintProps, PointerProps {
   fillRule?: "nonZero" | "evenOdd"
 }
 
-export interface TextProps extends PaintProps {
+export interface TextProps extends PaintProps, PointerProps {
   children?: Children
   fontFamily?: "sans" | "mono" | (string & {})
   fontSize?: number
