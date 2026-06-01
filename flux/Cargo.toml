@@ -31,7 +31,11 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
+# Pinned to 0.37 on purpose: rusqlite >= 0.40 pulls libsqlite3-sys 0.38, whose
+# build.rs uses the still-unstable `cfg_select!` macro and fails on stable rustc
+# (1.93.1 here). 0.37 -> libsqlite3-sys 0.35 builds fine. See TODO.md; bump once
+# cfg_select is stable on our toolchain.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

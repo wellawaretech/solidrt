@@ -47,9 +47,23 @@ declare module "flux:sqlite" {
   type SqlValue = null | number | string | Uint8Array
   type Row = Record<string, SqlValue>
 
+  // The outcome of a write.
+  type RunResult = { changes: number; lastInsertRowid: number }
+
+  // A reusable prepared statement. Created with db.query(sql); its executions
+  // reuse the compiled statement (cached on the connection).
+  export class Statement {
+    all(params?: SqlParam[]): Promise<Row[]>
+    get(params?: SqlParam[]): Promise<Row | undefined>
+    run(params?: SqlParam[]): Promise<RunResult>
+  }
+
   export class Database {
     static connect(path: string): Promise<Database>
-    query(sql: string, params?: SqlParam[]): Promise<Row[]>
+    // Create a reusable prepared statement (synchronous; compiles on first run).
+    query(sql: string): Statement
+    // One-shot write; uses plain prepare (no caching).
+    run(sql: string, params?: SqlParam[]): Promise<RunResult>
     close(): Promise<void>
   }
 }

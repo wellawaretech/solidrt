@@ -4,50 +4,63 @@
 //! match. The differences below are intentional (current scope) or fundamental
 //! (async vs sync). Keep this list current as the plugin grows.
 //!
+//! Architecture: each `Database` owns a dedicated OS thread that holds the
+//! `rusqlite::Connection` for its whole life. JS calls marshal a command over a
+//! channel, the thread runs it synchronously on the connection, and the result
+//! comes back over a oneshot which the async method awaits (wrapped in
+//! `Promised`). So queries run off the JS thread without blocking it, and the
+//! connection is never shared across threads. This actor shape is also what a
+//! future transaction feature needs: a transaction can "check out" the
+//! connection thread for the duration of BEGIN..COMMIT while other commands
+//! wait, which a shared-pool model cannot do safely across `await` points.
+//!
 //! Fundamental difference: Bun's API is fully synchronous (`new Database()`,
-//! `query.all()`); ours is async, running queries off the JS thread via tokio.
-//! So construction is `await Database.connect(path)` and `new Database()`
-//! throws. Bun's `db.transaction(fn)` wraps a SYNC callback and therefore does
-//! not translate directly to our model; any transaction support we add will
-//! need a different (async) shape.
+//! `query.all()`); ours is async. So construction is `await Database.connect()`
+//! and `new Database()` throws. Bun's `db.transaction(fn)` wraps a SYNC callback
+//! and does not translate directly to our model; transaction support is not yet
+//! implemented and will need a different (async) shape.
+//!
+//! Prepared statements follow flux's "raw primitive first, conveniences opt-in"
+//! principle. `db.query(sql)` returns a reusable `Statement` whose executions go
+//! through `prepare_cached` (the connection caches the compiled statement), so
+//! reuse is explicit: you opt in by creating a Statement. The one-shot
+//! `db.run(sql, params)` uses plain `prepare` with no caching. We do NOT offer
+//! Bun's `db.prepare()` (an uncached but compile-once held statement): rusqlite's
+//! `Statement` borrows the Connection and cannot be stored as a long-lived JS
+//! object, so our Statement holds only the SQL and recompiles via the cache.
 //!
 //! Matches Bun:
 //! - Named export `Database`, in-memory (`:memory:`) databases.
 //! - Creates the file if missing.
+//! - `db.query(sql)` -> reusable Statement; `stmt.all/get/run`.
+//! - `db.run(sql, params)` -> `{ changes, lastInsertRowid }`.
 //! - Positional `?` parameters; rows returned as plain objects.
 //! - `BLOB` <-> `Uint8Array`.
 //!
 //! Differs from Bun (current scope - may change):
-//! - Construction is async: `await Database.connect(path)`, not `new Database()`.
-//! - Single method `db.query(sql, params)` always returns ALL rows as objects.
-//!   No statement/execution split, so we lack Bun's `.get()` (first row),
-//!   `.run()`, `.values()` (array-of-arrays), and `.iterate()`.
-//! - No `lastInsertRowid` / `changes` from writes (consequence of no `.run()`).
-//!   Cannot retrieve an auto-generated INSERT id yet.
-//! - No prepared-statement reuse/caching; each `query()` recompiles the SQL.
-//! - Params are passed as an array (`query(sql, [1, 2])`), not spread args.
+//! - Construction and all executions are async (return promises).
+//! - No `db.prepare()` (see above), no `stmt.values()`/`iterate()`/`finalize()`/
+//!   `.as(Class)`, no `db.exec()` batch, no `db.transaction()`.
+//! - Params are passed as an array (`query(sql).all([1, 2])`), not spread args.
 //! - Positional `?` only; no named params (`$p` / `:p` / `@p`) or object binding.
 //! - Integers always go i64 -> JS number; no `safeIntegers`/bigint mode, so
 //!   values above 2^53 lose precision silently.
 //! - Errors surface as generic `IO Error: ...`, not a typed SQLite error.
-//! - `close()` exists but is async (returns a promise); Bun's is synchronous.
-//!
-//! Not implemented at all: transactions, `constants`,
-//! `serialize()`/`deserialize()`, `loadExtension()`, `.as(Class)`.
+//! - `close()` is async (returns a promise); Bun's is synchronous.
 
 use std::io;
-use std::str::FromStr;
+use std::sync::mpsc::{Receiver, Sender};
 
 use rquickjs::class::Trace;
 use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, IntoJs, JsLifetime, Object, TypedArray, Value};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Column, Row, SqlitePool, TypeInfo, ValueRef};
+use rusqlite::Connection;
+use tokio::sync::oneshot;
 
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
-/// decoded result cells (SQL -> JS). Owned so it can cross the async boundary.
+/// decoded result cells (SQL -> JS). Owned so it can cross the channel.
 enum SqlValue {
   Null,
   Int(i64),
@@ -59,11 +72,41 @@ enum SqlValue {
 /// Result rows: each row is a list of (column name, value) pairs.
 pub struct Rows(Vec<Vec<(String, SqlValue)>>);
 
+/// A single row, or none. Returned by `stmt.get()`.
+pub struct FirstRow(Option<Vec<(String, SqlValue)>>);
+
+/// The outcome of a write: rows changed and the last inserted rowid.
+pub struct RunResult {
+  changes: i64,
+  last_insert_rowid: i64,
+}
+
+/// A command sent from a JS call to the connection thread. Each variant carries
+/// a oneshot sender the thread replies on.
+enum Command {
+  Query {
+    sql: String,
+    params: Vec<SqlValue>,
+    cached: bool,
+    first_only: bool,
+    reply: oneshot::Sender<rusqlite::Result<Rows>>,
+  },
+  Run {
+    sql: String,
+    params: Vec<SqlValue>,
+    cached: bool,
+    reply: oneshot::Sender<rusqlite::Result<RunResult>>,
+  },
+  Close {
+    reply: oneshot::Sender<()>,
+  },
+}
+
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "Database")]
 pub struct Database {
   #[qjs(skip_trace)]
-  pool: SqlitePool,
+  cmd_tx: Sender<Command>,
 }
 
 #[rquickjs::methods]
@@ -84,101 +127,277 @@ impl Database {
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
-      let r = open_pool(&path).await;
+      let r = spawn_database(path).await;
       pending.release();
       r
     }))
   }
 
-  pub fn query<'js>(
+  /// Create a reusable prepared statement. Construction is synchronous and
+  /// cheap (it only stores the SQL); the compile happens on first execution and
+  /// is then cached on the connection, so repeated `all`/`get`/`run` reuse it.
+  pub fn query<'js>(&self, ctx: Ctx<'js>, sql: String) -> rquickjs::Result<Class<'js, Statement>> {
+    Class::instance(ctx, Statement { cmd_tx: self.cmd_tx.clone(), sql })
+  }
+
+  /// One-shot write. Uses plain `prepare` (no caching). Resolves to
+  /// `{ changes, lastInsertRowid }`.
+  pub fn run<'js>(
     &self,
     ctx: Ctx<'js>,
     sql: String,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<Rows>>>> {
-    let pool = self.pool.clone();
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<RunResult>>>> {
+    let cmd_tx = self.cmd_tx.clone();
     let bound = extract_params(params.0)?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
-      let r = run_query(&pool, &sql, bound).await;
+      let r = exec_roundtrip(&cmd_tx, sql, bound, false).await;
       pending.release();
       r
     }))
   }
 
-  /// Close the connection pool, releasing all connections. Safe to call more
-  /// than once; later queries on a closed database will reject.
+  /// Close the connection, releasing it. Safe to call more than once; later
+  /// queries on a closed database will reject.
   pub fn close<'js>(
     &self,
     ctx: Ctx<'js>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<()>>>> {
-    let pool = self.pool.clone();
+    let cmd_tx = self.cmd_tx.clone();
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
-      pool.close().await;
+      let (reply, rx) = oneshot::channel();
+      // A send error means the thread already exited: treat as closed.
+      if cmd_tx.send(Command::Close { reply }).is_ok() {
+        let _ = rx.await;
+      }
       pending.release();
       Ok(())
     }))
   }
 }
 
-async fn open_pool(path: &str) -> rquickjs::Result<Database> {
-  let opts = SqliteConnectOptions::from_str(path)
-    .map_err(sqlite_err)?
-    .create_if_missing(true);
-  let pool = SqlitePoolOptions::new()
-    .connect_with(opts)
-    .await
-    .map_err(sqlite_err)?;
-  Ok(Database { pool })
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class(rename = "Statement")]
+pub struct Statement {
+  #[qjs(skip_trace)]
+  cmd_tx: Sender<Command>,
+  #[qjs(skip_trace)]
+  sql: String,
 }
 
-async fn run_query(pool: &SqlitePool, sql: &str, params: Vec<SqlValue>) -> rquickjs::Result<Rows> {
-  let mut q = sqlx::query(sql);
-  for p in params {
-    q = match p {
-      SqlValue::Null => q.bind(None::<i64>),
-      SqlValue::Int(i) => q.bind(i),
-      SqlValue::Real(f) => q.bind(f),
-      SqlValue::Text(s) => q.bind(s),
-      SqlValue::Blob(b) => q.bind(b),
-    };
+#[rquickjs::methods]
+impl Statement {
+  /// All matching rows, as an array of plain objects.
+  pub fn all<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    params: Opt<Array<'js>>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<Rows>>>> {
+    let cmd_tx = self.cmd_tx.clone();
+    let sql = self.sql.clone();
+    let bound = extract_params(params.0)?;
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      let r = query_roundtrip(&cmd_tx, sql, bound, true, false).await;
+      pending.release();
+      r
+    }))
   }
 
-  let rows = q.fetch_all(pool).await.map_err(sqlite_err)?;
+  /// The first matching row as a plain object, or `undefined` if there are none.
+  pub fn get<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    params: Opt<Array<'js>>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<FirstRow>>>> {
+    let cmd_tx = self.cmd_tx.clone();
+    let sql = self.sql.clone();
+    let bound = extract_params(params.0)?;
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      let r = query_roundtrip(&cmd_tx, sql, bound, true, true)
+        .await
+        .map(|rows| FirstRow(rows.0.into_iter().next()));
+      pending.release();
+      r
+    }))
+  }
 
-  let mut out = Vec::with_capacity(rows.len());
-  for row in &rows {
-    let mut cells = Vec::with_capacity(row.len());
-    for col in row.columns() {
-      let i = col.ordinal();
-      let name = col.name().to_string();
-      let (is_null, type_name) = {
-        let raw = row.try_get_raw(i).map_err(sqlite_err)?;
-        (raw.is_null(), raw.type_info().name().to_string())
-      };
-      let val = if is_null {
-        SqlValue::Null
-      } else {
-        match type_name.as_str() {
-          "INTEGER" | "BIGINT" | "INT8" | "INT" => {
-            SqlValue::Int(row.try_get(i).map_err(sqlite_err)?)
-          }
-          "REAL" | "DOUBLE" | "FLOAT" | "NUMERIC" => {
-            SqlValue::Real(row.try_get(i).map_err(sqlite_err)?)
-          }
-          "BLOB" => SqlValue::Blob(row.try_get(i).map_err(sqlite_err)?),
-          // TEXT and anything else: decode as text.
-          _ => SqlValue::Text(row.try_get(i).map_err(sqlite_err)?),
-        }
-      };
-      cells.push((name, val));
+  /// Execute as a write. Resolves to `{ changes, lastInsertRowid }`.
+  pub fn run<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    params: Opt<Array<'js>>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<RunResult>>>> {
+    let cmd_tx = self.cmd_tx.clone();
+    let sql = self.sql.clone();
+    let bound = extract_params(params.0)?;
+    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      let r = exec_roundtrip(&cmd_tx, sql, bound, true).await;
+      pending.release();
+      r
+    }))
+  }
+}
+
+/// Spawn the connection thread and wait for it to open the database.
+async fn spawn_database(path: String) -> rquickjs::Result<Database> {
+  let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Command>();
+  let (open_tx, open_rx) = oneshot::channel::<rusqlite::Result<()>>();
+  std::thread::Builder::new()
+    .name("flux-sqlite".to_string())
+    .spawn(move || actor_main(path, cmd_rx, open_tx))
+    .map_err(sqlite_err)?;
+  match open_rx.await {
+    Ok(Ok(())) => Ok(Database { cmd_tx }),
+    Ok(Err(e)) => Err(sqlite_err(e)),
+    Err(_) => Err(sqlite_err("sqlite thread terminated before opening")),
+  }
+}
+
+/// The connection thread: owns the `Connection` and serves commands serially.
+fn actor_main(path: String, cmd_rx: Receiver<Command>, open_tx: oneshot::Sender<rusqlite::Result<()>>) {
+  let conn = match Connection::open(&path) {
+    Ok(c) => c,
+    Err(e) => {
+      let _ = open_tx.send(Err(e));
+      return;
+    }
+  };
+  // If the caller went away while we were opening, drop the connection and stop.
+  if open_tx.send(Ok(())).is_err() {
+    return;
+  }
+
+  let mut close_reply = None;
+  while let Ok(cmd) = cmd_rx.recv() {
+    match cmd {
+      Command::Query { sql, params, cached, first_only, reply } => {
+        let _ = reply.send(do_query(&conn, &sql, &params, cached, first_only));
+      }
+      Command::Run { sql, params, cached, reply } => {
+        let _ = reply.send(do_run(&conn, &sql, &params, cached));
+      }
+      Command::Close { reply } => {
+        close_reply = Some(reply);
+        break;
+      }
+    }
+  }
+  // Finalize the connection before acking close, so a subsequent open of the
+  // same file sees a fully released database.
+  drop(conn);
+  if let Some(reply) = close_reply {
+    let _ = reply.send(());
+  }
+}
+
+async fn query_roundtrip(
+  cmd_tx: &Sender<Command>,
+  sql: String,
+  params: Vec<SqlValue>,
+  cached: bool,
+  first_only: bool,
+) -> rquickjs::Result<Rows> {
+  let (reply, rx) = oneshot::channel();
+  cmd_tx
+    .send(Command::Query { sql, params, cached, first_only, reply })
+    .map_err(|_| closed_err())?;
+  rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
+}
+
+async fn exec_roundtrip(
+  cmd_tx: &Sender<Command>,
+  sql: String,
+  params: Vec<SqlValue>,
+  cached: bool,
+) -> rquickjs::Result<RunResult> {
+  let (reply, rx) = oneshot::channel();
+  cmd_tx
+    .send(Command::Run { sql, params, cached, reply })
+    .map_err(|_| closed_err())?;
+  rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
+}
+
+fn do_query(
+  conn: &Connection,
+  sql: &str,
+  params: &[SqlValue],
+  cached: bool,
+  first_only: bool,
+) -> rusqlite::Result<Rows> {
+  if cached {
+    let mut stmt = conn.prepare_cached(sql)?;
+    query_with(&mut stmt, params, first_only)
+  } else {
+    let mut stmt = conn.prepare(sql)?;
+    query_with(&mut stmt, params, first_only)
+  }
+}
+
+fn query_with(
+  stmt: &mut rusqlite::Statement,
+  params: &[SqlValue],
+  first_only: bool,
+) -> rusqlite::Result<Rows> {
+  let col_names: Vec<String> = stmt.column_names().into_iter().map(|s| s.to_string()).collect();
+  let n = col_names.len();
+  let mut out = Vec::new();
+  let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+  while let Some(row) = rows.next()? {
+    let mut cells = Vec::with_capacity(n);
+    for i in 0..n {
+      cells.push((col_names[i].clone(), sqlvalue_from_ref(row.get_ref(i)?)));
     }
     out.push(cells);
+    if first_only {
+      break;
+    }
   }
   Ok(Rows(out))
+}
+
+fn do_run(conn: &Connection, sql: &str, params: &[SqlValue], cached: bool) -> rusqlite::Result<RunResult> {
+  let changes = if cached {
+    let mut stmt = conn.prepare_cached(sql)?;
+    stmt.execute(rusqlite::params_from_iter(params.iter()))?
+  } else {
+    let mut stmt = conn.prepare(sql)?;
+    stmt.execute(rusqlite::params_from_iter(params.iter()))?
+  };
+  Ok(RunResult { changes: changes as i64, last_insert_rowid: conn.last_insert_rowid() })
+}
+
+fn sqlvalue_from_ref(v: rusqlite::types::ValueRef<'_>) -> SqlValue {
+  use rusqlite::types::ValueRef;
+  match v {
+    ValueRef::Null => SqlValue::Null,
+    ValueRef::Integer(i) => SqlValue::Int(i),
+    ValueRef::Real(f) => SqlValue::Real(f),
+    ValueRef::Text(t) => SqlValue::Text(String::from_utf8_lossy(t).into_owned()),
+    ValueRef::Blob(b) => SqlValue::Blob(b.to_vec()),
+  }
+}
+
+impl rusqlite::types::ToSql for SqlValue {
+  fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+    use rusqlite::types::{ToSqlOutput, Value as V, ValueRef};
+    Ok(match self {
+      SqlValue::Null => ToSqlOutput::Owned(V::Null),
+      SqlValue::Int(i) => ToSqlOutput::Owned(V::Integer(*i)),
+      SqlValue::Real(f) => ToSqlOutput::Owned(V::Real(*f)),
+      SqlValue::Text(s) => ToSqlOutput::Borrowed(ValueRef::Text(s.as_bytes())),
+      SqlValue::Blob(b) => ToSqlOutput::Borrowed(ValueRef::Blob(b)),
+    })
+  }
 }
 
 /// Convert a JS array of bind parameters into owned SqlValues.
@@ -219,6 +438,10 @@ fn sqlite_err(e: impl std::fmt::Display) -> rquickjs::Error {
   rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
+fn closed_err() -> rquickjs::Error {
+  sqlite_err("database is closed")
+}
+
 impl<'js> IntoJs<'js> for SqlValue {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     match self {
@@ -231,17 +454,43 @@ impl<'js> IntoJs<'js> for SqlValue {
   }
 }
 
+/// Build a plain object from a row's (name, value) cells.
+fn row_to_object<'js>(
+  ctx: &Ctx<'js>,
+  cells: Vec<(String, SqlValue)>,
+) -> rquickjs::Result<Object<'js>> {
+  let obj = Object::new(ctx.clone())?;
+  for (name, val) in cells {
+    obj.set(name, val)?;
+  }
+  Ok(obj)
+}
+
 impl<'js> IntoJs<'js> for Rows {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let arr = Array::new(ctx.clone())?;
     for (idx, row) in self.0.into_iter().enumerate() {
-      let obj = Object::new(ctx.clone())?;
-      for (name, val) in row {
-        obj.set(name, val)?;
-      }
-      arr.set(idx, obj)?;
+      arr.set(idx, row_to_object(ctx, row)?)?;
     }
     Ok(arr.into_value())
+  }
+}
+
+impl<'js> IntoJs<'js> for FirstRow {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    match self.0 {
+      Some(cells) => Ok(row_to_object(ctx, cells)?.into_value()),
+      None => Ok(Value::new_undefined(ctx.clone())),
+    }
+  }
+}
+
+impl<'js> IntoJs<'js> for RunResult {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("changes", self.changes)?;
+    obj.set("lastInsertRowid", self.last_insert_rowid)?;
+    Ok(obj.into_value())
   }
 }
 
