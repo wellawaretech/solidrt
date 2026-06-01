@@ -21,9 +21,7 @@ unsafe impl Sync for PlatformContext {}
 impl PlatformContext {
   pub fn new() -> Self {
     let mut typography = TypographyContext::default();
-    typography
-      .register_font(Cow::Borrowed(NOTO_SANS), Some("Noto Sans"))
-      .expect("Failed to register Noto Sans font");
+    typography.register_font(Cow::Borrowed(NOTO_SANS), Some("Noto Sans")).expect("Failed to register Noto Sans font");
     typography
       .register_font(Cow::Borrowed(NOTO_SANS_MONO), Some("Noto Sans Mono"))
       .expect("Failed to register Noto Sans Mono font");

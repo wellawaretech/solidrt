@@ -6,40 +6,25 @@ use std::sync::{mpsc, Arc};
 struct SendablePtr(*mut std::ffi::c_void);
 unsafe impl Send for SendablePtr {}
 
-pub fn create_ui_pbuffer(
-  display: *mut std::ffi::c_void,
-  gl_context: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
+pub fn create_ui_pbuffer(display: *mut std::ffi::c_void, gl_context: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
   const EGL_NONE: i32 = 0x3038;
   const EGL_CONFIG_ID: i32 = 0x3028;
   const EGL_WIDTH: i32 = 0x3057;
   const EGL_HEIGHT: i32 = 0x3056;
 
-  type EglQueryContextFn =
-    extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, i32, *mut i32) -> u32;
-  type EglChooseConfigFn = extern "C" fn(
-    *mut std::ffi::c_void,
-    *const i32,
-    *mut *mut std::ffi::c_void,
-    i32,
-    *mut i32,
-  ) -> u32;
-  type EglCreatePbufferFn = extern "C" fn(
-    *mut std::ffi::c_void,
-    *mut std::ffi::c_void,
-    *const i32,
-  ) -> *mut std::ffi::c_void;
+  type EglQueryContextFn = extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, i32, *mut i32) -> u32;
+  type EglChooseConfigFn =
+    extern "C" fn(*mut std::ffi::c_void, *const i32, *mut *mut std::ffi::c_void, i32, *mut i32) -> u32;
+  type EglCreatePbufferFn =
+    extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, *const i32) -> *mut std::ffi::c_void;
 
   unsafe {
-    let egl_query_context: EglQueryContextFn = std::mem::transmute(
-      sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglQueryContext".as_ptr()).unwrap(),
-    );
-    let egl_choose_config: EglChooseConfigFn = std::mem::transmute(
-      sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglChooseConfig".as_ptr()).unwrap(),
-    );
-    let egl_create_pbuffer: EglCreatePbufferFn = std::mem::transmute(
-      sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglCreatePbufferSurface".as_ptr()).unwrap(),
-    );
+    let egl_query_context: EglQueryContextFn =
+      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglQueryContext".as_ptr()).unwrap());
+    let egl_choose_config: EglChooseConfigFn =
+      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglChooseConfig".as_ptr()).unwrap());
+    let egl_create_pbuffer: EglCreatePbufferFn =
+      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglCreatePbufferSurface".as_ptr()).unwrap());
 
     let mut config_id: i32 = 0;
     let r = egl_query_context(display, gl_context, EGL_CONFIG_ID, &mut config_id);
@@ -49,10 +34,7 @@ pub fn create_ui_pbuffer(
     let mut config: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut num_configs: i32 = 0;
     let r = egl_choose_config(display, select.as_ptr(), &mut config, 1, &mut num_configs);
-    assert!(
-      r != 0 && num_configs > 0 && !config.is_null(),
-      "eglChooseConfig failed"
-    );
+    assert!(r != 0 && num_configs > 0 && !config.is_null(), "eglChooseConfig failed");
 
     let pb_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
     let pbuffer = egl_create_pbuffer(display, config, pb_attribs.as_ptr());
@@ -61,21 +43,14 @@ pub fn create_ui_pbuffer(
   }
 }
 
-pub fn make_current(
-  display: *mut std::ffi::c_void,
-  surface: *mut std::ffi::c_void,
-  gl_context: *mut std::ffi::c_void,
-) {
+pub fn make_current(display: *mut std::ffi::c_void, surface: *mut std::ffi::c_void, gl_context: *mut std::ffi::c_void) {
   let egl_make_current: extern "C" fn(
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
-  ) -> u32 = unsafe {
-    std::mem::transmute(
-      sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglMakeCurrent".as_ptr()).unwrap(),
-    )
-  };
+  ) -> u32 =
+    unsafe { std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglMakeCurrent".as_ptr()).unwrap()) };
   let result = egl_make_current(display, surface, surface, gl_context);
   assert!(result != 0, "eglMakeCurrent failed on UI thread");
 }
@@ -127,8 +102,7 @@ pub fn create_impeller_context() -> ImpellerContext {
 
 /// Extract the GL texture name from a wgpu texture (GL backend only).
 fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
-  let hal_texture =
-    unsafe { texture.as_hal::<wgpu::hal::gles::Api>() }.expect("not a GL-backed wgpu texture");
+  let hal_texture = unsafe { texture.as_hal::<wgpu::hal::gles::Api>() }.expect("not a GL-backed wgpu texture");
   match hal_texture.inner {
     wgpu::hal::gles::TextureInner::Texture { raw, .. } => raw.0.get() as u32,
     _ => panic!("wgpu texture is not a GL texture"),
@@ -136,11 +110,7 @@ fn wgpu_texture_gl_handle(texture: &wgpu::Texture) -> u32 {
 }
 
 /// Adopt a wGPU GL texture into Impeller (zero-copy).
-pub fn adopt_texture(
-  gpu_texture: &GpuTexture,
-  impeller_ctx: &ImpellerContext,
-  size: ISize,
-) -> Option<Texture> {
+pub fn adopt_texture(gpu_texture: &GpuTexture, impeller_ctx: &ImpellerContext, size: ISize) -> Option<Texture> {
   let (width, height) = (size.width as u32, size.height as u32);
   let gl_handle = wgpu_texture_gl_handle(&gpu_texture.wgpu_texture);
 
@@ -155,29 +125,22 @@ pub struct GlSurface {
 }
 
 impl GlSurface {
-  pub fn create(
-    window: &sdl3::video::Window,
-    size: ISize,
-  ) -> Result<Self, Box<dyn std::error::Error>> {
+  pub fn create(window: &sdl3::video::Window, size: ISize) -> Result<Self, Box<dyn std::error::Error>> {
     let mut ctx = create_impeller_context();
 
-    let surface = unsafe { ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.ok_or_else(|| {
-      Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>
-    })?;
+    let surface = unsafe { ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }
+      .ok_or_else(|| Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>)?;
 
-    Ok(GlSurface {
-      ctx,
-      surface,
-      window_raw: window.raw() as usize,
-    })
+    Ok(GlSurface { ctx, surface, window_raw: window.raw() as usize })
   }
 }
 
 impl RenderSurface for GlSurface {
   fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>> {
-    self.surface.draw_display_list(dl).map_err(|_| {
-      Box::new(std::io::Error::other("Failed to draw display list")) as Box<dyn std::error::Error>
-    })
+    self
+      .surface
+      .draw_display_list(dl)
+      .map_err(|_| Box::new(std::io::Error::other("Failed to draw display list")) as Box<dyn std::error::Error>)
   }
 
   fn present(&mut self) {
@@ -187,8 +150,7 @@ impl RenderSurface for GlSurface {
   }
 
   fn resize(&mut self, size: ISize) {
-    self.surface = unsafe { self.ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }
-      .expect("Failed to resize GL surface");
+    self.surface = unsafe { self.ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.expect("Failed to resize GL surface");
   }
 }
 
@@ -197,9 +159,8 @@ pub fn run_context(
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<DisplayList>,
 ) {
-  let gl_context_ptr = Box::new(SendablePtr(unsafe {
-    std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_context)
-  }));
+  let gl_context_ptr =
+    Box::new(SendablePtr(unsafe { std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_context) }));
 
   std::thread::spawn(move || {
     let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
@@ -216,13 +177,7 @@ pub fn run_context(
     let impeller_ctx = create_impeller_context();
     log::info!("[alloy] Impeller context created");
 
-    let gpu_ctx = Arc::new(Context::new(
-      Backend::Gl,
-      device,
-      queue,
-      impeller_ctx,
-      tx,
-    ));
+    let gpu_ctx = Arc::new(Context::new(Backend::Gl, device, queue, impeller_ctx, tx));
     closure(gpu_ctx);
   });
 }
@@ -246,32 +201,20 @@ pub(crate) fn setup_opengl_platform(
   window: &sdl3::video::Window,
 ) -> Result<DisplayContext, Box<dyn std::error::Error>> {
   // Create UI GL context
-  let ui_context = window
-    .gl_create_context()
-    .map_err(|e| format!("Failed to create UI GL context: {}", e))?;
+  let ui_context = window.gl_create_context().map_err(|e| format!("Failed to create UI GL context: {}", e))?;
 
   // Enable context sharing for main GL context
   let gl_attr = video.gl_attr();
   gl_attr.set_share_with_current_context(true);
 
   // Create main GL context
-  let main_context = window
-    .gl_create_context()
-    .map_err(|e| format!("Failed to create main GL context: {}", e))?;
+  let main_context = window.gl_create_context().map_err(|e| format!("Failed to create main GL context: {}", e))?;
 
   // Make main context current on the render thread
-  window
-    .gl_make_current(&main_context)
-    .map_err(|e| format!("Failed to make main GL context current: {}", e))?;
+  window.gl_make_current(&main_context).map_err(|e| format!("Failed to make main GL context current: {}", e))?;
 
   // Set swap interval (vsync) via FFI
-  video
-    .gl_set_swap_interval(SwapInterval::VSync).map_err(|e|
-     format!("Failed to set swap interval: {}", e))?;
+  video.gl_set_swap_interval(SwapInterval::VSync).map_err(|e| format!("Failed to set swap interval: {}", e))?;
 
-  Ok(DisplayContext::Gl {
-    window_opaque: window as *const _ as *const std::ffi::c_void,
-    main_context,
-    ui_context,
-  })
+  Ok(DisplayContext::Gl { window_opaque: window as *const _ as *const std::ffi::c_void, main_context, ui_context })
 }

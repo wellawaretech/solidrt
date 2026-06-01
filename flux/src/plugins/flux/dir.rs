@@ -31,9 +31,7 @@ fn entry_type(ft: std::fs::FileType) -> &'static str {
 }
 
 async fn read_entries(path: &str) -> rquickjs::Result<Vec<(String, &'static str)>> {
-  let mut entries = tokio::fs::read_dir(path)
-    .await
-    .map_err(rquickjs::Error::Io)?;
+  let mut entries = tokio::fs::read_dir(path).await.map_err(rquickjs::Error::Io)?;
   let mut out = Vec::new();
   while let Some(entry) = entries.next_entry().await.map_err(rquickjs::Error::Io)? {
     let name = entry.file_name().to_string_lossy().into_owned();
@@ -53,10 +51,7 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx
-          .userdata::<PendingOps>()
-          .expect("pending ops")
-          .clone();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
         Ok(Promised(async move {
           pending.hold();
@@ -75,17 +70,11 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx
-          .userdata::<PendingOps>()
-          .expect("pending ops")
-          .clone();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
         Ok(Promised(async move {
           pending.hold();
-          let exists = tokio::fs::metadata(&**path)
-            .await
-            .map(|m| m.is_dir())
-            .unwrap_or(false);
+          let exists = tokio::fs::metadata(&**path).await.map(|m| m.is_dir()).unwrap_or(false);
           pending.release();
           Ok::<bool, rquickjs::Error>(exists)
         }))

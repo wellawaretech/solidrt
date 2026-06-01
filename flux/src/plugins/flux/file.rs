@@ -36,9 +36,7 @@ fn file_type_str(ft: std::fs::FileType) -> &'static str {
 
 fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
   let mtime = meta.modified().ok()?;
-  let dur = mtime
-    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-    .ok()?;
+  let dur = mtime.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()?;
   i64::try_from(dur.as_millis()).ok()
 }
 
@@ -47,10 +45,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   let obj = Object::new(ctx.clone())?;
   obj.set("path", path.as_ref().clone())?;
 
-  let pending = ctx
-    .userdata::<PendingOps>()
-    .expect("pending ops")
-    .clone();
+  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
 
   // Body methods read from disk on each call (not consume-once).
   let path_for_body = path.clone();
@@ -76,17 +71,11 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx
-          .userdata::<PendingOps>()
-          .expect("pending ops")
-          .clone();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
         Ok(Promised(async move {
           pending.hold();
-          let exists = tokio::fs::metadata(&**path)
-            .await
-            .map(|m| m.is_file())
-            .unwrap_or(false);
+          let exists = tokio::fs::metadata(&**path).await.map(|m| m.is_file()).unwrap_or(false);
           pending.release();
           Ok::<bool, rquickjs::Error>(exists)
         }))
@@ -101,10 +90,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx
-          .userdata::<PendingOps>()
-          .expect("pending ops")
-          .clone();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
         Ok(Promised(async move {
           pending.hold();
@@ -127,7 +113,6 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
 }
 
 pub(crate) fn init_file<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
-  let file_fn =
-    Function::new(ctx.clone(), build_file).expect("create Flux.file function");
+  let file_fn = Function::new(ctx.clone(), build_file).expect("create Flux.file function");
   flux.set("file", file_fn).expect("set Flux.file");
 }

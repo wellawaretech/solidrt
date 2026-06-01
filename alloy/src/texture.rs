@@ -33,10 +33,7 @@ pub struct TextureRegistry {
 
 impl TextureRegistry {
   pub(crate) fn new() -> Self {
-    TextureRegistry {
-      entries: RefCell::new(HashMap::new()),
-      next_id: RefCell::new(1),
-    }
+    TextureRegistry { entries: RefCell::new(HashMap::new()), next_id: RefCell::new(1) }
   }
 
   pub fn get(&self, id: u64) -> Option<Rc<TextureEntry>> {
@@ -64,11 +61,7 @@ impl GpuTexture {
   pub fn new(device: &wgpu::Device, backend: Backend, size: ISize) -> Self {
     let wgpu_texture = device.create_texture(&wgpu::TextureDescriptor {
       label: Some("gpu_render_texture"),
-      size: wgpu::Extent3d {
-        width: size.width as u32,
-        height: size.height as u32,
-        depth_or_array_layers: 1,
-      },
+      size: wgpu::Extent3d { width: size.width as u32, height: size.height as u32, depth_or_array_layers: 1 },
       mip_level_count: 1,
       sample_count: 1,
       dimension: wgpu::TextureDimension::D2,
@@ -79,10 +72,7 @@ impl GpuTexture {
         | wgpu::TextureUsages::TEXTURE_BINDING,
       view_formats: &[],
     });
-    GpuTexture {
-      wgpu_texture,
-      backend,
-    }
+    GpuTexture { wgpu_texture, backend }
   }
 
   pub fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], size: ISize) {
@@ -120,9 +110,8 @@ impl GpuTexture {
     }
     buffer.unmap();
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-      label: Some("texture_copy_encoder"),
-    });
+    let mut encoder =
+      device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("texture_copy_encoder") });
     encoder.copy_buffer_to_texture(
       wgpu::TexelCopyBufferInfo {
         buffer: &buffer,
@@ -138,11 +127,7 @@ impl GpuTexture {
         origin: wgpu::Origin3d::ZERO,
         aspect: wgpu::TextureAspect::All,
       },
-      wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-      },
+      wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
     queue.submit(std::iter::once(encoder.finish()));
     let _ = device.poll(wgpu::PollType::Poll);

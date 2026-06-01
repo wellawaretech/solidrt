@@ -16,10 +16,7 @@ unsafe impl Send for RenderTree {}
 
 impl RenderTree {
   pub fn new() -> Self {
-    Self {
-      nodes: HashMap::new(),
-      root: None,
-    }
+    Self { nodes: HashMap::new(), root: None }
   }
 
   pub fn create_node(&mut self, id: u64, element: Element) -> u64 {
@@ -49,9 +46,7 @@ impl RenderTree {
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
     if let Some(layout) = &mut parent.layout {
-      layout
-        .layout_children
-        .retain(|&id| id != NodeId::from(node_id));
+      layout.layout_children.retain(|&id| id != NodeId::from(node_id));
     }
 
     match anchor_id {
@@ -65,11 +60,7 @@ impl RenderTree {
           if let Some(layout) = &mut parent.layout {
             let anchor_nid = NodeId::from(anchor);
             let node_nid = NodeId::from(node_id);
-            if let Some(pos) = layout
-              .layout_children
-              .iter()
-              .position(|&id| id == anchor_nid)
-            {
+            if let Some(pos) = layout.layout_children.iter().position(|&id| id == anchor_nid) {
               layout.layout_children.insert(pos, node_nid);
             } else {
               layout.layout_children.push(node_nid);
@@ -94,9 +85,7 @@ impl RenderTree {
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
     if let Some(layout) = &mut parent.layout {
-      layout
-        .layout_children
-        .retain(|&id| id != NodeId::from(node_id));
+      layout.layout_children.retain(|&id| id != NodeId::from(node_id));
     }
     self.delete_recursive(node_id);
     self.invalidate_cache(parent_id);
@@ -107,10 +96,7 @@ impl RenderTree {
   }
 
   pub(crate) fn node(&self, id: u64) -> &Element {
-    self
-      .nodes
-      .get(&id)
-      .expect(&format!("node {} not found", id))
+    self.nodes.get(&id).expect(&format!("node {} not found", id))
   }
 
   pub(crate) fn try_node(&self, id: u64) -> Option<&Element> {
@@ -177,9 +163,7 @@ impl RenderTree {
       let Some(parent) = self.try_node(parent_id) else {
         break;
       };
-      if stop_at_context
-        && parent.layout.as_ref().is_some_and(|l| l.positioning_context)
-      {
+      if stop_at_context && parent.layout.as_ref().is_some_and(|l| l.positioning_context) {
         break;
       }
       if let Some(parent_layout) = parent.layout.as_ref() {
@@ -220,18 +204,11 @@ impl RenderTree {
   }
 
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {
-    self
-      .nodes
-      .get_mut(&id)
-      .expect(&format!("node {} not found", id))
+    self.nodes.get_mut(&id).expect(&format!("node {} not found", id))
   }
 
   fn delete_recursive(&mut self, node_id: u64) {
-    let child_ids: Vec<u64> = self
-      .nodes
-      .get(&node_id)
-      .map(|e| e.children.clone())
-      .unwrap_or_default();
+    let child_ids: Vec<u64> = self.nodes.get(&node_id).map(|e| e.children.clone()).unwrap_or_default();
     for child_id in child_ids {
       self.delete_recursive(child_id);
     }

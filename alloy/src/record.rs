@@ -24,19 +24,16 @@ pub(crate) fn run_record_loop(
   let width = w_px as usize;
   let height = h_px as usize;
 
-  type GlReadPixelsFn =
-    unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut std::ffi::c_void);
+  type GlReadPixelsFn = unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut std::ffi::c_void);
   type GlBindFramebufferFn = unsafe extern "C" fn(u32, u32);
   let gl_read_pixels: GlReadPixelsFn = unsafe {
     std::mem::transmute(
-      sdl3::sys::video::SDL_GL_GetProcAddress(c"glReadPixels".as_ptr())
-        .expect("Failed to load glReadPixels"),
+      sdl3::sys::video::SDL_GL_GetProcAddress(c"glReadPixels".as_ptr()).expect("Failed to load glReadPixels"),
     )
   };
   let gl_bind_framebuffer: GlBindFramebufferFn = unsafe {
     std::mem::transmute(
-      sdl3::sys::video::SDL_GL_GetProcAddress(c"glBindFramebuffer".as_ptr())
-        .expect("Failed to load glBindFramebuffer"),
+      sdl3::sys::video::SDL_GL_GetProcAddress(c"glBindFramebuffer".as_ptr()).expect("Failed to load glBindFramebuffer"),
     )
   };
 
@@ -52,9 +49,7 @@ pub(crate) fn run_record_loop(
       Err(_) => break,
     };
 
-    render_surface
-      .draw_display_list(&dl)
-      .expect("Failed to draw display list");
+    render_surface.draw_display_list(&dl).expect("Failed to draw display list");
 
     unsafe {
       gl_bind_framebuffer(GL_READ_FRAMEBUFFER, 0);
@@ -72,9 +67,7 @@ pub(crate) fn run_record_loop(
     write_png(&record.output_prefix, frame, width, height, &rgba);
 
     let time = frame as f64 / record.fps as f64;
-    event_tx
-      .send(AlloyEvent::FrameRendered { frame, fps: record.fps, time })
-      .ok();
+    event_tx.send(AlloyEvent::FrameRendered { frame, fps: record.fps, time }).ok();
 
     let frame_number = frame + 1;
     if frame_number % record.fps as u64 == 0 {

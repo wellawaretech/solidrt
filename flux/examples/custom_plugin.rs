@@ -20,16 +20,12 @@ fn whoami_plugin(ctx: Ctx<'_>) {
 
   ctx.globals().set("whoami", whoami_fn).unwrap();
 
-  on_shutdown(&ctx, |logger| {
-    logger.log("shutdown: plugin cleanup complete")
-  });
+  on_shutdown(&ctx, |logger| logger.log("shutdown: plugin cleanup complete"));
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
   let engine = FluxEngine::builder().plugin(whoami_plugin).build();
 
-  engine
-    .eval_source(r#"console.log(`Hello, ${whoami()}!`)"#)
-    .await;
+  engine.eval_source(r#"console.log(`Hello, ${whoami()}!`)"#).await;
 }

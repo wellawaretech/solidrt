@@ -24,26 +24,16 @@ impl ModuleDef for MemoryModule {
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     let alloc_fn = Function::new(ctx.clone(), alloc)?;
 
-    let free_fn = Function::new(
-      ctx.clone(),
-      |_ctx: Ctx<'_>, data: TypedArray<'_, u8>| -> rquickjs::Result<()> {
-        let mut ab = data.arraybuffer()?;
-        ab.detach();
-        Ok(())
-      },
-    )?;
+    let free_fn = Function::new(ctx.clone(), |_ctx: Ctx<'_>, data: TypedArray<'_, u8>| -> rquickjs::Result<()> {
+      let mut ab = data.arraybuffer()?;
+      ab.detach();
+      Ok(())
+    })?;
 
     let memset_fn = Function::new(
       ctx.clone(),
-      |ctx: Ctx<'_>,
-       data: TypedArray<'_, u8>,
-       offset: usize,
-       length: usize,
-       value: u8|
-       -> rquickjs::Result<()> {
-        let raw = data
-          .as_raw()
-          .ok_or_else(|| throw_str(&ctx, "detached buffer"))?;
+      |ctx: Ctx<'_>, data: TypedArray<'_, u8>, offset: usize, length: usize, value: u8| -> rquickjs::Result<()> {
+        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "detached buffer"))?;
         if offset + length > raw.len {
           return Err(throw_str(&ctx, "memset: offset + length out of bounds"));
         }
@@ -55,24 +45,12 @@ impl ModuleDef for MemoryModule {
 
     let memset32_fn = Function::new(
       ctx.clone(),
-      |ctx: Ctx<'_>,
-       data: TypedArray<'_, u8>,
-       offset: usize,
-       length: usize,
-       value: u32|
-       -> rquickjs::Result<()> {
-        let raw = data
-          .as_raw()
-          .ok_or_else(|| throw_str(&ctx, "detached buffer"))?;
+      |ctx: Ctx<'_>, data: TypedArray<'_, u8>, offset: usize, length: usize, value: u32| -> rquickjs::Result<()> {
+        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "detached buffer"))?;
         if (offset + length) * 4 > raw.len {
-          return Err(throw_str(
-            &ctx,
-            "memset32: offset + length out of bounds (u32 units)",
-          ));
+          return Err(throw_str(&ctx, "memset32: offset + length out of bounds (u32 units)"));
         }
-        let buf = unsafe {
-          std::slice::from_raw_parts_mut((raw.ptr.as_ptr() as *mut u32).add(offset), length)
-        };
+        let buf = unsafe { std::slice::from_raw_parts_mut((raw.ptr.as_ptr() as *mut u32).add(offset), length) };
         buf.fill(value);
         Ok(())
       },

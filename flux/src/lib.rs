@@ -24,10 +24,7 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
       .map_err(|e| format!("failed to compile '{module_name}': {e}"))?;
 
     module
-      .write(WriteOptions {
-        endianness: WriteOptionsEndianness::Little,
-        ..Default::default()
-      })
+      .write(WriteOptions { endianness: WriteOptionsEndianness::Little, ..Default::default() })
       .catch(&ctx)
       .map_err(|e| format!("failed to write bytecode: {e}"))
   });

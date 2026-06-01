@@ -3,9 +3,7 @@ use taffy::prelude::*;
 use taffy::style::Overflow;
 use taffy::Point;
 
-use crate::rendertree::{
-  BuildContext, ElementKind, LayoutContext, PlatformContext, RenderTree, WH,
-};
+use crate::rendertree::{BuildContext, ElementKind, LayoutContext, PlatformContext, RenderTree, WH};
 
 // Large finite extent used to leave one axis effectively unclipped when only the
 // other axis has non-visible overflow. clip_rect requires a finite rectangle.
@@ -21,15 +19,8 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &a
     tree.invalidate_cache(root_id);
   }
 
-  let available_space = Size {
-    width: AvailableSpace::Definite(width),
-    height: AvailableSpace::Definite(height),
-  };
-  let mut layout_ctx = LayoutContext {
-    render_tree: tree,
-    platform,
-    alloy,
-  };
+  let available_space = Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
+  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
 }
 
@@ -82,10 +73,7 @@ fn build_recursive<'a>(
       let y_min = if clip_y { 0.0 } else { -CLIP_INF };
       let x_max = if clip_x { w } else { CLIP_INF };
       let y_max = if clip_y { h } else { CLIP_INF };
-      let rect = Rect::new(
-        IPoint::new(x_min, y_min),
-        ISize::new(x_max - x_min, y_max - y_min),
-      );
+      let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
       builder.clip_rect(&rect, ClipOperation::Intersect);
     }
   }
@@ -110,11 +98,7 @@ fn build_recursive<'a>(
   for &child_id in &element.children {
     let child = scene.node(child_id);
 
-    let pos = child
-      .layout
-      .as_ref()
-      .map(|l| l.computed.location)
-      .unwrap_or(Point::ZERO);
+    let pos = child.layout.as_ref().map(|l| l.computed.location).unwrap_or(Point::ZERO);
 
     builder.translate(pos.x, pos.y);
 

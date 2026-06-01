@@ -2,9 +2,8 @@ use taffy::prelude::*;
 use taffy::tree::LayoutInput;
 use taffy::Cache;
 use taffy::{
-  compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
-  compute_leaf_layout, CacheTree, LayoutBlockContainer, LayoutFlexboxContainer,
-  LayoutGridContainer,
+  compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+  CacheTree, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
 };
 
 use super::super::tree::RenderTree;
@@ -24,13 +23,7 @@ pub struct LayoutData {
 
 impl LayoutData {
   pub fn new(style: Style) -> Self {
-    Self {
-      style,
-      computed: Layout::new(),
-      cache: Cache::new(),
-      layout_children: vec![],
-      positioning_context: false,
-    }
+    Self { style, computed: Layout::new(), cache: Cache::new(), layout_children: vec![], positioning_context: false }
   }
 }
 
@@ -47,59 +40,29 @@ impl<'a> TraversePartialTree for LayoutContext<'a> {
     Self: 'b;
 
   fn child_ids(&self, parent: NodeId) -> Self::ChildIter<'_> {
-    self
-      .render_tree
-      .node(u64::from(parent))
-      .layout_data()
-      .layout_children
-      .iter()
-      .cloned()
+    self.render_tree.node(u64::from(parent)).layout_data().layout_children.iter().cloned()
   }
 
   fn child_count(&self, parent: NodeId) -> usize {
-    self
-      .render_tree
-      .node(u64::from(parent))
-      .layout_data()
-      .layout_children
-      .len()
+    self.render_tree.node(u64::from(parent)).layout_data().layout_children.len()
   }
 
   fn get_child_id(&self, parent: NodeId, index: usize) -> NodeId {
-    self
-      .render_tree
-      .node(u64::from(parent))
-      .layout_data()
-      .layout_children[index]
+    self.render_tree.node(u64::from(parent)).layout_data().layout_children[index]
   }
 }
 
 impl<'a> CacheTree for LayoutContext<'a> {
   fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<taffy::LayoutOutput> {
-    self
-      .render_tree
-      .node(u64::from(node_id))
-      .layout_data()
-      .cache
-      .get(input)
+    self.render_tree.node(u64::from(node_id)).layout_data().cache.get(input)
   }
 
   fn cache_store(&mut self, node_id: NodeId, input: &LayoutInput, layout_output: taffy::LayoutOutput) {
-    self
-      .render_tree
-      .node_mut(u64::from(node_id))
-      .layout_data_mut()
-      .cache
-      .store(input, layout_output)
+    self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().cache.store(input, layout_output)
   }
 
   fn cache_clear(&mut self, node_id: NodeId) {
-    self
-      .render_tree
-      .node_mut(u64::from(node_id))
-      .layout_data_mut()
-      .cache
-      .clear();
+    self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().cache.clear();
   }
 }
 
@@ -111,19 +74,11 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     Self: 'b;
 
   fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(node_id)).layout_data().style
   }
 
   fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-    self
-      .render_tree
-      .node_mut(u64::from(node_id))
-      .layout_data_mut()
-      .computed = *layout;
+    self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().computed = *layout;
   }
 
   fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
@@ -180,19 +135,11 @@ impl<'a> LayoutFlexboxContainer for LayoutContext<'a> {
     Self: 'b;
 
   fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(node_id)).layout_data().style
   }
 
   fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(child_node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(child_node_id)).layout_data().style
   }
 }
 
@@ -207,19 +154,11 @@ impl<'a> LayoutBlockContainer for LayoutContext<'a> {
     Self: 'b;
 
   fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(node_id)).layout_data().style
   }
 
   fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(child_node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(child_node_id)).layout_data().style
   }
 }
 
@@ -234,18 +173,10 @@ impl<'a> LayoutGridContainer for LayoutContext<'a> {
     Self: 'b;
 
   fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(node_id)).layout_data().style
   }
 
   fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-    &self
-      .render_tree
-      .node(u64::from(child_node_id))
-      .layout_data()
-      .style
+    &self.render_tree.node(u64::from(child_node_id)).layout_data().style
   }
 }

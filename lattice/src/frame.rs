@@ -5,38 +5,10 @@ use std::collections::HashMap;
 pub type PointerKey = (PointerType, u64);
 
 pub enum InputEvent {
-  PointerMove {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  PointerDown {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    button: u8,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  PointerUp {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    button: u8,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  Wheel {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    x: f32,
-    y: f32,
-    delta_x: f32,
-    delta_y: f32,
-    modifiers: Modifiers,
-  },
+  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
+  PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
 }
 
 // Per-frame state is split into two structs by lifetime, not by topic.
@@ -69,10 +41,7 @@ unsafe impl Sync for InputState {}
 
 impl InputState {
   pub fn new() -> Self {
-    Self {
-      pointers: RefCell::new(HashMap::new()),
-      modifiers: Cell::new(Modifiers::default()),
-    }
+    Self { pointers: RefCell::new(HashMap::new()), modifiers: Cell::new(Modifiers::default()) }
   }
 
   pub fn set_pointer_pos(&self, key: PointerKey, x: f32, y: f32) {
@@ -107,10 +76,7 @@ unsafe impl Sync for EngineState {}
 
 impl EngineState {
   pub fn new() -> Self {
-    Self {
-      hovered_paths: RefCell::new(HashMap::new()),
-      input_queue: RefCell::new(Vec::new()),
-    }
+    Self { hovered_paths: RefCell::new(HashMap::new()), input_queue: RefCell::new(Vec::new()) }
   }
 
   pub fn hovered_path(&self, key: PointerKey) -> Vec<u64> {

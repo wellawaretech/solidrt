@@ -40,11 +40,32 @@ impl PaintState {
 
   // Paint never affects layout, so all setters report false. Values arrive
   // already decoded (color unpacked, enums resolved) from the binding layer.
-  pub fn set_color(&mut self, color: Color) -> bool { self.color = color; false }
-  pub fn set_draw_style(&mut self, v: DrawStyle) -> bool { self.draw_style = v; false }
-  pub fn set_blend_mode(&mut self, v: BlendMode) -> bool { self.blend_mode = v; false }
-  pub fn set_stroke_width(&mut self, v: f32) -> bool { self.stroke_width = v; false }
-  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> bool { self.stroke_cap = v; false }
-  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> bool { self.stroke_join = v; false }
-  pub fn set_stroke_miter(&mut self, v: f32) -> bool { self.stroke_miter = v; false }
+  pub fn set_color(&mut self, color: Color) -> bool {
+    self.color = color;
+    false
+  }
+  pub fn set_draw_style(&mut self, v: DrawStyle) -> bool {
+    self.draw_style = v;
+    false
+  }
+  pub fn set_blend_mode(&mut self, v: BlendMode) -> bool {
+    self.blend_mode = v;
+    false
+  }
+  pub fn set_stroke_width(&mut self, v: f32) -> bool {
+    self.stroke_width = v;
+    false
+  }
+  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> bool {
+    self.stroke_cap = v;
+    false
+  }
+  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> bool {
+    self.stroke_join = v;
+    false
+  }
+  pub fn set_stroke_miter(&mut self, v: f32) -> bool {
+    self.stroke_miter = v;
+    false
+  }
 }

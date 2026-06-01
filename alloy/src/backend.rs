@@ -40,11 +40,7 @@ impl DisplayContext {
     }
   }
 
-  pub fn run_context(
-    &self,
-    closure: impl FnOnce(Arc<Context>) + Send + 'static,
-    tx: mpsc::Sender<DisplayList>,
-  ) {
+  pub fn run_context(&self, closure: impl FnOnce(Arc<Context>) + Send + 'static, tx: mpsc::Sender<DisplayList>) {
     match self {
       DisplayContext::Gl { ui_context, .. } => gl::run_context(ui_context, closure, tx),
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),

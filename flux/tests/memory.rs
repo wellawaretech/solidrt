@@ -3,10 +3,7 @@
 use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
-fn capture_log() -> (
-  Arc<Mutex<Vec<(LogLevel, String)>>>,
-  impl Fn(LogLevel, &str) + Send + Sync + 'static,
-) {
+fn capture_log() -> (Arc<Mutex<Vec<(LogLevel, String)>>>, impl Fn(LogLevel, &str) + Send + Sync + 'static) {
   let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
   let log2 = log.clone();
   let f = move |level: LogLevel, msg: &str| {
@@ -16,21 +13,11 @@ fn capture_log() -> (
 }
 
 fn log_output(log: &[(LogLevel, String)]) -> String {
-  log
-    .iter()
-    .filter(|(l, _)| *l == LogLevel::Log)
-    .map(|(_, m)| m.as_str())
-    .collect::<Vec<_>>()
-    .join("\n")
+  log.iter().filter(|(l, _)| *l == LogLevel::Log).map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("\n")
 }
 
 fn error_output(log: &[(LogLevel, String)]) -> String {
-  log
-    .iter()
-    .filter(|(l, _)| *l == LogLevel::Error)
-    .map(|(_, m)| m.as_str())
-    .collect::<Vec<_>>()
-    .join("\n")
+  log.iter().filter(|(l, _)| *l == LogLevel::Error).map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("\n")
 }
 
 #[tokio::test]
@@ -48,11 +35,7 @@ async fn import_alloc() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   assert_eq!(log_output(&log), "16");
 }
 
@@ -72,11 +55,7 @@ async fn import_memset() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   assert_eq!(log_output(&log), "171 171 171 171");
 }
 
@@ -96,11 +75,7 @@ async fn import_memset32() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   // 0x01020304 in little-endian bytes: 4, 3, 2, 1
   assert_eq!(log_output(&log), "4 3 2 1 4 3 2 1");
 }
@@ -121,11 +96,7 @@ async fn memset_offset() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   assert_eq!(log_output(&log), "0 0 255 255 255 0 0 0");
 }
 
@@ -147,11 +118,7 @@ async fn import_free() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   assert_eq!(log_output(&log), "4\n0");
 }
 
@@ -175,10 +142,6 @@ async fn memset_out_of_bounds() {
     .await;
 
   let log = log.lock().unwrap();
-  assert!(
-    error_output(&log).is_empty(),
-    "stderr: {}",
-    error_output(&log)
-  );
+  assert!(error_output(&log).is_empty(), "stderr: {}", error_output(&log));
   assert_eq!(log_output(&log), "memset: offset + length out of bounds");
 }

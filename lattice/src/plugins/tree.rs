@@ -2,13 +2,13 @@ use alloy::impellers::{FontStyle, FontWeight};
 use flux::rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use taffy::prelude::*;
 
-use crate::AlloyContext;
 use crate::plugins::value::PropValue;
 use crate::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
+use crate::AlloyContext;
 
 // Marshals a JavaScript value into the engine-independent PropValue that
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on
@@ -61,7 +61,13 @@ impl<'js> IntoJs<'js> for BoundingBox {
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
-pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>, platform: Arc<PlatformContext>, atx: AlloyContext) {
+pub fn init(
+  ctx: &Ctx<'_>,
+  tree: RenderTree,
+  alloy_cmd_tx: Sender<alloy::AlloyCommand>,
+  platform: Arc<PlatformContext>,
+  atx: AlloyContext,
+) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).unwrap();
 
@@ -86,12 +92,9 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   .unwrap();
 
   let tree_ref = shared.0.clone();
-  let insert_node = Function::new(
-    ctx.clone(),
-    move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
-      tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
-    },
-  )
+  let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
+    tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
+  })
   .unwrap();
 
   let tree_ref = shared.0.clone();
@@ -107,10 +110,8 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
   .unwrap();
 
   let tree_ref = shared.0.clone();
-  let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> {
-    tree_ref.borrow().bounding_box(id)
-  })
-  .unwrap();
+  let get_bounding_box =
+    Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> { tree_ref.borrow().bounding_box(id) }).unwrap();
 
   let cmd_tx = alloy_cmd_tx.clone();
   let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
@@ -132,7 +133,9 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
           other => other.to_string(),
         };
       }
-      if let Ok(v) = opts.get::<_, f64>("fontSize") { node.font_size = v as f32; }
+      if let Ok(v) = opts.get::<_, f64>("fontSize") {
+        node.font_size = v as f32;
+      }
       if let Ok(v) = opts.get::<_, String>("fontStyle") {
         node.font_style = match v.as_str() {
           "italic" => FontStyle::Italic,
@@ -152,7 +155,9 @@ pub fn init(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCo
           _ => FontWeight::Regular,
         };
       }
-      if let Ok(v) = opts.get::<_, f64>("maxLines") { node.max_lines = v as u32; }
+      if let Ok(v) = opts.get::<_, f64>("maxLines") {
+        node.max_lines = v as u32;
+      }
     }
 
     let size = node.measure(&MeasureContext {

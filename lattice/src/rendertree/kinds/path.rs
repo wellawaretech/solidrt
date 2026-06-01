@@ -1,11 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
-};
-use alloy::impellers::{
-  DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point,
-};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
+use alloy::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point};
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
@@ -56,11 +52,7 @@ impl Clone for Path {
 
 impl std::fmt::Debug for Path {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("Path")
-      .field("d", &self.d)
-      .field("x", &self.x)
-      .field("y", &self.y)
-      .finish()
+    f.debug_struct("Path").field("d", &self.d).field("x", &self.x).field("y", &self.y).finish()
   }
 }
 
@@ -106,13 +98,12 @@ impl Path {
     };
 
     let mut lyon_open = false;
-    let ensure_lyon_begun =
-      |lb: &mut lyon_path::path::Builder, cx: f32, cy: f32, open: &mut bool| {
-        if !*open {
-          lb.begin(point(cx, cy));
-          *open = true;
-        }
-      };
+    let ensure_lyon_begun = |lb: &mut lyon_path::path::Builder, cx: f32, cy: f32, open: &mut bool| {
+      if !*open {
+        lb.begin(point(cx, cy));
+        *open = true;
+      }
+    };
 
     // Tracked for SmoothCurveTo (S) and SmoothQuadratic (T) reflection.
     // Reset to None whenever the previous segment was not C/S or Q/T respectively.
@@ -177,11 +168,7 @@ impl Path {
           include(&mut bb, &cp2);
           include(&mut bb, &end);
           path_builder.cubic_curve_to(cp1, cp2, end);
-          lyon_builder.cubic_bezier_to(
-            point(cp1.x, cp1.y),
-            point(cp2.x, cp2.y),
-            point(end.x, end.y),
-          );
+          lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
           last_quad_cp = None;
@@ -199,11 +186,7 @@ impl Path {
           include(&mut bb, &cp2);
           include(&mut bb, &end);
           path_builder.cubic_curve_to(cp1, cp2, end);
-          lyon_builder.cubic_bezier_to(
-            point(cp1.x, cp1.y),
-            point(cp2.x, cp2.y),
-            point(end.x, end.y),
-          );
+          lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
           last_cubic_cp2 = Some(cp2);
           last_quad_cp = None;
@@ -236,16 +219,7 @@ impl Path {
           last_quad_cp = Some(cp);
           last_cubic_cp2 = None;
         }
-        PathSegment::EllipticalArc {
-          abs,
-          rx,
-          ry,
-          x_axis_rotation,
-          large_arc,
-          sweep,
-          x,
-          y,
-        } => {
+        PathSegment::EllipticalArc { abs, rx, ry, x_axis_rotation, large_arc, sweep, x, y } => {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let end = resolve(abs, x, y, &cursor);
           let svg_arc = SvgArc {
@@ -267,11 +241,7 @@ impl Path {
             include(&mut bb, &cp2);
             include(&mut bb, &end_pt);
             path_builder.cubic_curve_to(cp1, cp2, end_pt);
-            lyon_builder.cubic_bezier_to(
-              point(cp1.x, cp1.y),
-              point(cp2.x, cp2.y),
-              point(end_pt.x, end_pt.y),
-            );
+            lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end_pt.x, end_pt.y));
           }
           cursor = (end.x, end.y);
           last_cubic_cp2 = None;
@@ -310,19 +280,29 @@ impl Path {
 
   // The path's geometry is cached, so any change here invalidates that cache.
   // d/x/y also affect the measured size (layout); fill rule does not.
-  pub fn set_d(&mut self, d: String) -> bool { self.d = d; self.invalidate(); true }
-  pub fn set_x(&mut self, v: f32) -> bool { self.x = Some(v); self.invalidate(); true }
-  pub fn set_y(&mut self, v: f32) -> bool { self.y = Some(v); self.invalidate(); true }
-  pub fn set_fill_rule(&mut self, rule: FillType) -> bool { self.fill_rule = rule; self.invalidate(); false }
+  pub fn set_d(&mut self, d: String) -> bool {
+    self.d = d;
+    self.invalidate();
+    true
+  }
+  pub fn set_x(&mut self, v: f32) -> bool {
+    self.x = Some(v);
+    self.invalidate();
+    true
+  }
+  pub fn set_y(&mut self, v: f32) -> bool {
+    self.y = Some(v);
+    self.invalidate();
+    true
+  }
+  pub fn set_fill_rule(&mut self, rule: FillType) -> bool {
+    self.fill_rule = rule;
+    self.invalidate();
+    false
+  }
 
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Path(self),
-      taffy::Style {
-        display: taffy::Display::Block,
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Path(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
   }
 
   pub fn no_layout(self) -> Element {
@@ -347,11 +327,10 @@ impl Measurable for Path {
     }
     self.ensure_built();
     let bounds = self.bounds.borrow();
-    let Some((_, _, w, h)) = *bounds else { return TaffySize::ZERO };
-    TaffySize {
-      width: ctx.known.width.unwrap_or(w),
-      height: ctx.known.height.unwrap_or(h),
-    }
+    let Some((_, _, w, h)) = *bounds else {
+      return TaffySize::ZERO;
+    };
+    TaffySize { width: ctx.known.width.unwrap_or(w), height: ctx.known.height.unwrap_or(h) }
   }
 }
 
@@ -359,19 +338,19 @@ impl Hittable for Path {
   fn is_in_bounds(&self, pt: XY, _ctx: &HitContext) -> bool {
     self.ensure_built();
     let bounds = self.bounds.borrow();
-    let Some((x, y, w, h)) = *bounds else { return false };
+    let Some((x, y, w, h)) = *bounds else {
+      return false;
+    };
 
     let half_stroke = self.paint.stroke_width / 2.0;
-    if pt.x < x - half_stroke
-      || pt.x > x + w + half_stroke
-      || pt.y < y - half_stroke
-      || pt.y > y + h + half_stroke
-    {
+    if pt.x < x - half_stroke || pt.x > x + w + half_stroke || pt.y < y - half_stroke || pt.y > y + h + half_stroke {
       return false;
     }
 
     let lyon_path = self.lyon_path.borrow();
-    let Some(ref path) = *lyon_path else { return false };
+    let Some(ref path) = *lyon_path else {
+      return false;
+    };
     let test_pt = point(pt.x, pt.y);
 
     let lyon_fill_rule = match self.fill_rule {
@@ -383,8 +362,7 @@ impl Hittable for Path {
       DrawStyle::Fill => hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1),
       DrawStyle::Stroke => point_near_path(&test_pt, path, half_stroke),
       DrawStyle::StrokeAndFill => {
-        hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1)
-          || point_near_path(&test_pt, path, half_stroke)
+        hit_test_path(&test_pt, path.iter(), lyon_fill_rule, 0.1) || point_near_path(&test_pt, path, half_stroke)
       }
     }
   }
@@ -394,11 +372,7 @@ impl Hittable for Path {
 /// Uses flattening + point-to-segment distance instead of tessellating the stroke
 /// into a filled outline, to avoid pulling in lyon_tessellation and the associated
 /// memory allocation for the stroke mesh.
-fn point_near_path(
-  pt: &lyon_path::geom::Point<f32>,
-  path: &lyon_path::Path,
-  max_dist: f32,
-) -> bool {
+fn point_near_path(pt: &lyon_path::geom::Point<f32>, path: &lyon_path::Path, max_dist: f32) -> bool {
   let max_dist_sq = max_dist * max_dist;
   let mut last = point(0.0, 0.0);
 

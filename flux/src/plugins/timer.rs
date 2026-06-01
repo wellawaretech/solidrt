@@ -48,13 +48,9 @@ impl Timers {
         self.pending.release();
         Ok(())
       }
-      None => Err(
-        ctx.throw(
-          rquickjs::String::from_str(ctx.clone(), &format!("invalid timer id: {id}"))
-            .unwrap()
-            .into(),
-        ),
-      ),
+      None => {
+        Err(ctx.throw(rquickjs::String::from_str(ctx.clone(), &format!("invalid timer id: {id}")).unwrap().into()))
+      }
     }
   }
 
@@ -163,17 +159,10 @@ pub(crate) fn init_timers(ctx: &Ctx<'_>) {
   )
   .unwrap();
 
-  let clear_interval = Function::new(
-    ctx.clone(),
-    MutFn::from(move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)),
-  )
-  .unwrap();
+  let clear_interval =
+    Function::new(ctx.clone(), MutFn::from(move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id))).unwrap();
 
-  let queue_microtask = Function::new(
-    ctx.clone(),
-    MutFn::from(|cb: Function<'_>| schedule_microtask(cb)),
-  )
-  .unwrap();
+  let queue_microtask = Function::new(ctx.clone(), MutFn::from(|cb: Function<'_>| schedule_microtask(cb))).unwrap();
 
   globals.set("setTimeout", set_timeout).unwrap();
   globals.set("clearTimeout", clear_timeout).unwrap();

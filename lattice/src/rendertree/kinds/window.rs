@@ -12,10 +12,7 @@ pub struct Window {
 
 impl Default for Window {
   fn default() -> Self {
-    Window {
-      title: "SolidRT".to_string(),
-      fullscreen: false,
-    }
+    Window { title: "SolidRT".to_string(), fullscreen: false }
   }
 }
 
@@ -47,10 +44,7 @@ impl Window {
       Style {
         display: Display::Flex,
         flex_direction: FlexDirection::Column,
-        size: Size {
-          width: percent(1.0),
-          height: percent(1.0),
-        },
+        size: Size { width: percent(1.0), height: percent(1.0) },
         ..Default::default()
       },
     )

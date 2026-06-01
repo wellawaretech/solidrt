@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
-  BoundingBox, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
+  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use taffy::Size as TaffySize;
@@ -65,20 +65,32 @@ impl Bounded for Rectangle {
 impl Rectangle {
   // Rectangle geometry is painted within its layout box, so none of these
   // affect layout.
-  pub fn set_x(&mut self, v: f32) -> bool { self.x = Some(v); false }
-  pub fn set_y(&mut self, v: f32) -> bool { self.y = Some(v); false }
-  pub fn set_w(&mut self, v: f32) -> bool { self.w = Some(v); false }
-  pub fn set_h(&mut self, v: f32) -> bool { self.h = Some(v); false }
+  pub fn set_x(&mut self, v: f32) -> bool {
+    self.x = Some(v);
+    false
+  }
+  pub fn set_y(&mut self, v: f32) -> bool {
+    self.y = Some(v);
+    false
+  }
+  pub fn set_w(&mut self, v: f32) -> bool {
+    self.w = Some(v);
+    false
+  }
+  pub fn set_h(&mut self, v: f32) -> bool {
+    self.h = Some(v);
+    false
+  }
   // [top-left, top-right, bottom-right, bottom-left].
-  pub fn set_radius(&mut self, radius: [f32; 4]) -> bool { self.radius = Some(radius); false }
+  pub fn set_radius(&mut self, radius: [f32; 4]) -> bool {
+    self.radius = Some(radius);
+    false
+  }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(
       ElementKind::Rectangle(self),
-      taffy::Style {
-        display: taffy::Display::Block,
-        ..Default::default()
-      },
+      taffy::Style { display: taffy::Display::Block, ..Default::default() },
     )
   }
 
@@ -100,40 +112,17 @@ impl Hittable for Rectangle {
       DrawStyle::Fill => in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]),
       DrawStyle::Stroke => {
         let outer = [tl + half_sw, tr + half_sw, br + half_sw, bl + half_sw];
-        let inner = [
-          (tl - half_sw).max(0.0),
-          (tr - half_sw).max(0.0),
-          (br - half_sw).max(0.0),
-          (bl - half_sw).max(0.0),
-        ];
-        let in_outer = in_rounded_rect(
-          point,
-          rx - half_sw,
-          ry - half_sw,
-          rw + half_sw * 2.0,
-          rh + half_sw * 2.0,
-          outer,
-        );
-        let in_inner = in_rounded_rect(
-          point,
-          rx + half_sw,
-          ry + half_sw,
-          rw - half_sw * 2.0,
-          rh - half_sw * 2.0,
-          inner,
-        );
+        let inner =
+          [(tl - half_sw).max(0.0), (tr - half_sw).max(0.0), (br - half_sw).max(0.0), (bl - half_sw).max(0.0)];
+        let in_outer =
+          in_rounded_rect(point, rx - half_sw, ry - half_sw, rw + half_sw * 2.0, rh + half_sw * 2.0, outer);
+        let in_inner =
+          in_rounded_rect(point, rx + half_sw, ry + half_sw, rw - half_sw * 2.0, rh - half_sw * 2.0, inner);
         in_outer && !in_inner
       }
       DrawStyle::StrokeAndFill => {
         let outer = [tl + half_sw, tr + half_sw, br + half_sw, bl + half_sw];
-        in_rounded_rect(
-          point,
-          rx - half_sw,
-          ry - half_sw,
-          rw + half_sw * 2.0,
-          rh + half_sw * 2.0,
-          outer,
-        )
+        in_rounded_rect(point, rx - half_sw, ry - half_sw, rw + half_sw * 2.0, rh + half_sw * 2.0, outer)
       }
     }
   }

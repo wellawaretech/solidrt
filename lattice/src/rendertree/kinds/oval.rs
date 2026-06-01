@@ -1,6 +1,8 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BoundingBox, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
+use crate::rendertree::{
+  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
+};
 use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use taffy::Size as TaffySize;
 
@@ -47,19 +49,25 @@ impl Bounded for Oval {
 }
 
 impl Oval {
-  pub fn set_x(&mut self, v: f32) -> bool { self.x = Some(v); false }
-  pub fn set_y(&mut self, v: f32) -> bool { self.y = Some(v); false }
-  pub fn set_w(&mut self, v: f32) -> bool { self.w = Some(v); false }
-  pub fn set_h(&mut self, v: f32) -> bool { self.h = Some(v); false }
+  pub fn set_x(&mut self, v: f32) -> bool {
+    self.x = Some(v);
+    false
+  }
+  pub fn set_y(&mut self, v: f32) -> bool {
+    self.y = Some(v);
+    false
+  }
+  pub fn set_w(&mut self, v: f32) -> bool {
+    self.w = Some(v);
+    false
+  }
+  pub fn set_h(&mut self, v: f32) -> bool {
+    self.h = Some(v);
+    false
+  }
 
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Oval(self),
-      taffy::Style {
-        display: taffy::Display::Block,
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Oval(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
   }
 
   pub fn no_layout(self) -> Element {
@@ -83,7 +91,9 @@ impl Hittable for Oval {
       DrawStyle::Fill => {
         let rx = ow / 2.0;
         let ry = oh / 2.0;
-        if rx <= 0.0 || ry <= 0.0 { return false; }
+        if rx <= 0.0 || ry <= 0.0 {
+          return false;
+        }
         (dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) <= 1.0
       }
       DrawStyle::Stroke => {
@@ -91,17 +101,25 @@ impl Hittable for Oval {
         let ry_outer = oh / 2.0 + half_sw;
         let rx_inner = (ow / 2.0 - half_sw).max(0.0);
         let ry_inner = (oh / 2.0 - half_sw).max(0.0);
-        if rx_outer <= 0.0 || ry_outer <= 0.0 { return false; }
+        if rx_outer <= 0.0 || ry_outer <= 0.0 {
+          return false;
+        }
         let d_outer = (dx / rx_outer) * (dx / rx_outer) + (dy / ry_outer) * (dy / ry_outer);
-        if d_outer > 1.0 { return false; }
-        if rx_inner <= 0.0 || ry_inner <= 0.0 { return true; }
+        if d_outer > 1.0 {
+          return false;
+        }
+        if rx_inner <= 0.0 || ry_inner <= 0.0 {
+          return true;
+        }
         let d_inner = (dx / rx_inner) * (dx / rx_inner) + (dy / ry_inner) * (dy / ry_inner);
         d_inner >= 1.0
       }
       DrawStyle::StrokeAndFill => {
         let rx = ow / 2.0 + half_sw;
         let ry = oh / 2.0 + half_sw;
-        if rx <= 0.0 || ry <= 0.0 { return false; }
+        if rx <= 0.0 || ry <= 0.0 {
+          return false;
+        }
         (dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) <= 1.0
       }
     }

@@ -14,11 +14,11 @@ use crate::plugins::value::PropValue;
 pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
   match name {
     // Size
-    "width"     => style.size.width      = parse_dimension(value),
-    "height"    => style.size.height     = parse_dimension(value),
-    "minWidth"  => style.min_size.width  = parse_dimension(value),
+    "width" => style.size.width = parse_dimension(value),
+    "height" => style.size.height = parse_dimension(value),
+    "minWidth" => style.min_size.width = parse_dimension(value),
     "minHeight" => style.min_size.height = parse_dimension(value),
-    "maxWidth"  => style.max_size.width  = parse_dimension(value),
+    "maxWidth" => style.max_size.width = parse_dimension(value),
     "maxHeight" => style.max_size.height = parse_dimension(value),
 
     // Padding
@@ -26,28 +26,28 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
       let v = parse_length_percentage(value);
       style.padding = Rect { top: v, right: v, bottom: v, left: v };
     }
-    "paddingTop"    => style.padding.top    = parse_length_percentage(value),
-    "paddingRight"  => style.padding.right  = parse_length_percentage(value),
+    "paddingTop" => style.padding.top = parse_length_percentage(value),
+    "paddingRight" => style.padding.right = parse_length_percentage(value),
     "paddingBottom" => style.padding.bottom = parse_length_percentage(value),
-    "paddingLeft"   => style.padding.left   = parse_length_percentage(value),
+    "paddingLeft" => style.padding.left = parse_length_percentage(value),
 
     // Margin
     "margin" => {
       let v = parse_length_percentage_auto(value);
       style.margin = Rect { top: v, right: v, bottom: v, left: v };
     }
-    "marginTop"    => style.margin.top    = parse_length_percentage_auto(value),
-    "marginRight"  => style.margin.right  = parse_length_percentage_auto(value),
+    "marginTop" => style.margin.top = parse_length_percentage_auto(value),
+    "marginRight" => style.margin.right = parse_length_percentage_auto(value),
     "marginBottom" => style.margin.bottom = parse_length_percentage_auto(value),
-    "marginLeft"   => style.margin.left   = parse_length_percentage_auto(value),
+    "marginLeft" => style.margin.left = parse_length_percentage_auto(value),
 
     // Display
     "display" => {
       style.display = match str_of(value, "display") {
-        "flex"  => Display::Flex,
+        "flex" => Display::Flex,
         "block" => Display::Block,
-        "grid"  => Display::Grid,
-        "none"  => Display::None,
+        "grid" => Display::Grid,
+        "none" => Display::None,
         v => panic!("unknown display value '{v}'"),
       };
     }
@@ -55,58 +55,58 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
     // Flex container
     "flexDirection" => {
       style.flex_direction = match str_of(value, "flexDirection") {
-        "row"            => FlexDirection::Row,
-        "column"         => FlexDirection::Column,
-        "row-reverse"    => FlexDirection::RowReverse,
+        "row" => FlexDirection::Row,
+        "column" => FlexDirection::Column,
+        "row-reverse" => FlexDirection::RowReverse,
         "column-reverse" => FlexDirection::ColumnReverse,
         v => panic!("unknown flexDirection value '{v}'"),
       };
     }
     "flexWrap" => {
       style.flex_wrap = match str_of(value, "flexWrap") {
-        "nowrap"       => FlexWrap::NoWrap,
-        "wrap"         => FlexWrap::Wrap,
+        "nowrap" => FlexWrap::NoWrap,
+        "wrap" => FlexWrap::Wrap,
         "wrap-reverse" => FlexWrap::WrapReverse,
         v => panic!("unknown flexWrap value '{v}'"),
       };
     }
     "alignItems" => {
       style.align_items = Some(match str_of(value, "alignItems") {
-        "start"      => AlignItems::Start,
-        "end"        => AlignItems::End,
+        "start" => AlignItems::Start,
+        "end" => AlignItems::End,
         "flex-start" => AlignItems::FlexStart,
-        "flex-end"   => AlignItems::FlexEnd,
-        "center"     => AlignItems::Center,
-        "baseline"   => AlignItems::Baseline,
-        "stretch"    => AlignItems::Stretch,
+        "flex-end" => AlignItems::FlexEnd,
+        "center" => AlignItems::Center,
+        "baseline" => AlignItems::Baseline,
+        "stretch" => AlignItems::Stretch,
         v => panic!("unknown alignItems value '{v}'"),
       });
     }
     "justifyContent" => {
       style.justify_content = Some(match str_of(value, "justifyContent") {
-        "start"         => JustifyContent::Start,
-        "end"           => JustifyContent::End,
-        "flex-start"    => JustifyContent::FlexStart,
-        "flex-end"      => JustifyContent::FlexEnd,
-        "center"        => JustifyContent::Center,
+        "start" => JustifyContent::Start,
+        "end" => JustifyContent::End,
+        "flex-start" => JustifyContent::FlexStart,
+        "flex-end" => JustifyContent::FlexEnd,
+        "center" => JustifyContent::Center,
         "space-between" => JustifyContent::SpaceBetween,
-        "space-around"  => JustifyContent::SpaceAround,
-        "space-evenly"  => JustifyContent::SpaceEvenly,
-        "stretch"       => JustifyContent::Stretch,
+        "space-around" => JustifyContent::SpaceAround,
+        "space-evenly" => JustifyContent::SpaceEvenly,
+        "stretch" => JustifyContent::Stretch,
         v => panic!("unknown justifyContent value '{v}'"),
       });
     }
     "alignContent" => {
       style.align_content = Some(match str_of(value, "alignContent") {
-        "start"         => AlignContent::Start,
-        "end"           => AlignContent::End,
-        "flex-start"    => AlignContent::FlexStart,
-        "flex-end"      => AlignContent::FlexEnd,
-        "center"        => AlignContent::Center,
+        "start" => AlignContent::Start,
+        "end" => AlignContent::End,
+        "flex-start" => AlignContent::FlexStart,
+        "flex-end" => AlignContent::FlexEnd,
+        "center" => AlignContent::Center,
         "space-between" => AlignContent::SpaceBetween,
-        "space-around"  => AlignContent::SpaceAround,
-        "space-evenly"  => AlignContent::SpaceEvenly,
-        "stretch"       => AlignContent::Stretch,
+        "space-around" => AlignContent::SpaceAround,
+        "space-evenly" => AlignContent::SpaceEvenly,
+        "stretch" => AlignContent::Stretch,
         v => panic!("unknown alignContent value '{v}'"),
       });
     }
@@ -114,33 +114,33 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
     // Flex item
     "flex" => {
       if let Some(n) = value.as_f64() {
-        style.flex_grow   = n as f32;
+        style.flex_grow = n as f32;
         style.flex_shrink = 1.0;
-        style.flex_basis  = Dimension::length(0.0);
+        style.flex_basis = Dimension::length(0.0);
       } else if let Some(s) = value.as_str() {
         match s {
           "none" => {
-            style.flex_grow   = 0.0;
+            style.flex_grow = 0.0;
             style.flex_shrink = 0.0;
-            style.flex_basis  = Dimension::auto();
+            style.flex_basis = Dimension::auto();
           }
           "auto" => {
-            style.flex_grow   = 1.0;
+            style.flex_grow = 1.0;
             style.flex_shrink = 1.0;
-            style.flex_basis  = Dimension::auto();
+            style.flex_basis = Dimension::auto();
           }
           s => {
             let parts: Vec<&str> = s.split_whitespace().collect();
             match parts.len() {
               2 => {
-                style.flex_grow   = parts[0].parse().expect("flex grow must be a number");
+                style.flex_grow = parts[0].parse().expect("flex grow must be a number");
                 style.flex_shrink = parts[1].parse().expect("flex shrink must be a number");
-                style.flex_basis  = Dimension::length(0.0);
+                style.flex_basis = Dimension::length(0.0);
               }
               3 => {
-                style.flex_grow   = parts[0].parse().expect("flex grow must be a number");
+                style.flex_grow = parts[0].parse().expect("flex grow must be a number");
                 style.flex_shrink = parts[1].parse().expect("flex shrink must be a number");
-                style.flex_basis  = parse_dimension_str(parts[2]);
+                style.flex_basis = parse_dimension_str(parts[2]);
               }
               _ => panic!("invalid flex value: '{s}'"),
             }
@@ -150,18 +150,18 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
         panic!("flex must be a number or string")
       }
     }
-    "flexGrow"   => style.flex_grow   = f32_of(value, "flexGrow"),
+    "flexGrow" => style.flex_grow = f32_of(value, "flexGrow"),
     "flexShrink" => style.flex_shrink = f32_of(value, "flexShrink"),
-    "flexBasis"  => style.flex_basis  = parse_dimension(value),
+    "flexBasis" => style.flex_basis = parse_dimension(value),
     "alignSelf" => {
       style.align_self = Some(match str_of(value, "alignSelf") {
-        "start"      => AlignSelf::Start,
-        "end"        => AlignSelf::End,
+        "start" => AlignSelf::Start,
+        "end" => AlignSelf::End,
         "flex-start" => AlignSelf::FlexStart,
-        "flex-end"   => AlignSelf::FlexEnd,
-        "center"     => AlignSelf::Center,
-        "baseline"   => AlignSelf::Baseline,
-        "stretch"    => AlignSelf::Stretch,
+        "flex-end" => AlignSelf::FlexEnd,
+        "center" => AlignSelf::Center,
+        "baseline" => AlignSelf::Baseline,
+        "stretch" => AlignSelf::Stretch,
         v => panic!("unknown alignSelf value '{v}'"),
       });
     }
@@ -171,28 +171,35 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
       let v = parse_length_percentage(value);
       style.gap = Size { width: v, height: v };
     }
-    "rowGap"    => style.gap.height = parse_length_percentage(value),
-    "columnGap" => style.gap.width  = parse_length_percentage(value),
+    "rowGap" => style.gap.height = parse_length_percentage(value),
+    "columnGap" => style.gap.width = parse_length_percentage(value),
 
     // Position. `position` itself is handled in apply_jsx (it also marks a
     // positioning context on the element), so only the insets land here.
-    "top"    => style.inset.top    = parse_length_percentage_auto(value),
-    "right"  => style.inset.right  = parse_length_percentage_auto(value),
+    "top" => style.inset.top = parse_length_percentage_auto(value),
+    "right" => style.inset.right = parse_length_percentage_auto(value),
     "bottom" => style.inset.bottom = parse_length_percentage_auto(value),
-    "left"   => style.inset.left   = parse_length_percentage_auto(value),
+    "left" => style.inset.left = parse_length_percentage_auto(value),
 
     // Overflow
-    "overflow"  => { let o = parse_overflow("overflow",  value); style.overflow = Point { x: o, y: o }; }
-    "overflowX" => { style.overflow.x = parse_overflow("overflowX", value); }
-    "overflowY" => { style.overflow.y = parse_overflow("overflowY", value); }
+    "overflow" => {
+      let o = parse_overflow("overflow", value);
+      style.overflow = Point { x: o, y: o };
+    }
+    "overflowX" => {
+      style.overflow.x = parse_overflow("overflowX", value);
+    }
+    "overflowY" => {
+      style.overflow.y = parse_overflow("overflowY", value);
+    }
 
     // Grid container
     "gridAutoFlow" => {
       style.grid_auto_flow = match str_of(value, "gridAutoFlow") {
-        "row"           => GridAutoFlow::Row,
-        "column"        => GridAutoFlow::Column,
-        "row-dense"     => GridAutoFlow::RowDense,
-        "column-dense"  => GridAutoFlow::ColumnDense,
+        "row" => GridAutoFlow::Row,
+        "column" => GridAutoFlow::Column,
+        "row-dense" => GridAutoFlow::RowDense,
+        "column-dense" => GridAutoFlow::ColumnDense,
         v => panic!("unknown gridAutoFlow value '{v}'"),
       };
     }
@@ -212,10 +219,12 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
     }
 
     // Grid item
-    "gridColumnStart" => style.grid_column.start = line(value.as_f64().expect("gridColumnStart must be a number") as i16),
-    "gridColumnEnd"   => style.grid_column.end   = line(value.as_f64().expect("gridColumnEnd must be a number") as i16),
-    "gridRowStart"    => style.grid_row.start     = line(value.as_f64().expect("gridRowStart must be a number") as i16),
-    "gridRowEnd"      => style.grid_row.end       = line(value.as_f64().expect("gridRowEnd must be a number") as i16),
+    "gridColumnStart" => {
+      style.grid_column.start = line(value.as_f64().expect("gridColumnStart must be a number") as i16)
+    }
+    "gridColumnEnd" => style.grid_column.end = line(value.as_f64().expect("gridColumnEnd must be a number") as i16),
+    "gridRowStart" => style.grid_row.start = line(value.as_f64().expect("gridRowStart must be a number") as i16),
+    "gridRowEnd" => style.grid_row.end = line(value.as_f64().expect("gridRowEnd must be a number") as i16),
 
     _ => return None,
   }
@@ -225,9 +234,9 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
 fn parse_overflow(prop: &str, value: &PropValue) -> Overflow {
   match str_of(value, prop) {
     "visible" => Overflow::Visible,
-    "hidden"  => Overflow::Hidden,
-    "scroll"  => Overflow::Scroll,
-    "clip"    => Overflow::Clip,
+    "hidden" => Overflow::Hidden,
+    "scroll" => Overflow::Scroll,
+    "clip" => Overflow::Clip,
     v => panic!("unknown {prop} value '{v}'"),
   }
 }
@@ -287,19 +296,22 @@ fn parse_length_percentage_auto(value: &PropValue) -> LengthPercentageAuto {
 }
 
 fn parse_grid_template(template: &str) -> Vec<GridTemplateComponent<String>> {
-  template.split_whitespace().map(|part| {
-    let track: TrackSizingFunction = if part == "auto" {
-      minmax(auto(), auto())
-    } else if let Some(s) = part.strip_suffix("fr") {
-      let v: f32 = s.parse().expect("fr value must be a number");
-      minmax(length(0.0), fr(v))
-    } else if let Some(s) = part.strip_suffix("px") {
-      let v: f32 = s.parse().expect("px value must be a number");
-      minmax(length(v), length(v))
-    } else {
-      let v: f32 = part.parse().expect("grid track value must be a number");
-      minmax(length(v), length(v))
-    };
-    GridTemplateComponent::from(track)
-  }).collect()
+  template
+    .split_whitespace()
+    .map(|part| {
+      let track: TrackSizingFunction = if part == "auto" {
+        minmax(auto(), auto())
+      } else if let Some(s) = part.strip_suffix("fr") {
+        let v: f32 = s.parse().expect("fr value must be a number");
+        minmax(length(0.0), fr(v))
+      } else if let Some(s) = part.strip_suffix("px") {
+        let v: f32 = s.parse().expect("px value must be a number");
+        minmax(length(v), length(v))
+      } else {
+        let v: f32 = part.parse().expect("grid track value must be a number");
+        minmax(length(v), length(v))
+      };
+      GridTemplateComponent::from(track)
+    })
+    .collect()
 }

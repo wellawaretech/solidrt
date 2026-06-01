@@ -23,8 +23,7 @@ fn text_response(status: StatusCode, body: &str) -> HyperResponse<Full<Bytes>> {
 }
 
 fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<Full<Bytes>> {
-  let status =
-    StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+  let status = StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
   let mut builder = HyperResponse::builder().status(status);
   let mut has_content_type = false;
   let headers = r.headers.borrow().entries();
@@ -43,10 +42,7 @@ fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<Full<Bytes>> {
     .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
 }
 
-fn response_from_value<'js>(
-  val: Value<'js>,
-  logger: &Logger,
-) -> HyperResponse<Full<Bytes>> {
+fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<Full<Bytes>> {
   if let Some(s) = val.as_string() {
     let s = s.to_string().unwrap_or_default();
     return text_response(StatusCode::OK, &s);
@@ -68,9 +64,7 @@ async fn handle_request<'js>(
   let headers: Vec<(String, String)> = req
     .headers()
     .iter()
-    .filter_map(|(name, value)| {
-      value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
-    })
+    .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
     .collect();
   logger.log(&format!("[flux] serve {} {}", method, url));
 
@@ -104,10 +98,7 @@ async fn handle_request<'js>(
     }
   };
 
-  let resolved = match MaybePromise::from_value(val)
-    .into_future::<Value<'_>>()
-    .await
-  {
+  let resolved = match MaybePromise::from_value(val).into_future::<Value<'_>>().await {
     Ok(v) => v,
     Err(e) => {
       logger.warn(&format!("[flux] serve fetch rejected: {e}"));
@@ -118,11 +109,7 @@ async fn handle_request<'js>(
   response_from_value(resolved, logger)
 }
 
-async fn serve_one_connection<'js>(
-  sock: TcpStream,
-  fetch_fn: Option<Function<'js>>,
-  logger: Logger,
-) {
+async fn serve_one_connection<'js>(sock: TcpStream, fetch_fn: Option<Function<'js>>, logger: Logger) {
   let io = TokioIo::new(sock);
   let service = service_fn(|req: HyperRequest<Incoming>| {
     let fetch_fn = fetch_fn.clone();
@@ -135,12 +122,7 @@ async fn serve_one_connection<'js>(
   }
 }
 
-async fn run_server<'js>(
-  ctx: Ctx<'js>,
-  listener: TcpListener,
-  fetch_fn: Option<Function<'js>>,
-  logger: Logger,
-) {
+async fn run_server<'js>(ctx: Ctx<'js>, listener: TcpListener, fetch_fn: Option<Function<'js>>, logger: Logger) {
   loop {
     let (sock, _) = match listener.accept().await {
       Ok(v) => v,
@@ -164,10 +146,7 @@ pub(crate) fn init_serve<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
       let ctx = opts.ctx().clone();
       let port: u16 = opts.get("port")?;
       let fetch_fn: Option<Function<'_>> = opts.get("fetch").ok();
-      let pending = ctx
-        .userdata::<PendingOps>()
-        .expect("pending ops")
-        .clone();
+      let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
       let logger = ctx.logger();
 
       let addr = format!("0.0.0.0:{port}");

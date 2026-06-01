@@ -42,9 +42,7 @@ pub(crate) async fn init_context(
 
   runtime.set_loader(resolver, loader).await;
 
-  let context = AsyncContext::full(&runtime)
-    .await
-    .expect("failed to create JS context");
+  let context = AsyncContext::full(&runtime).await.expect("failed to create JS context");
 
   let pending = PendingOps::new();
 

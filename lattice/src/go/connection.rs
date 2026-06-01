@@ -35,10 +35,7 @@ async fn spawn_go_ws(
 
   loop {
     let (mut client, _) = loop {
-      match tokio_websockets::ClientBuilder::from_uri(uri.clone())
-        .connect()
-        .await
-      {
+      match tokio_websockets::ClientBuilder::from_uri(uri.clone()).connect().await {
         Ok(conn) => break conn,
         Err(e) => {
           log::warn!("[sgo] Connection failed: {e}, retrying in 3s...");
@@ -54,10 +51,7 @@ async fn spawn_go_ws(
     let _ = dev_server.set(dev_server_addr.clone());
 
     let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
-    let info = format!(
-      r#"{{"type":"info","platform":"{}","version":"{version}"}}"#,
-      std::env::consts::OS,
-    );
+    let info = format!(r#"{{"type":"info","platform":"{}","version":"{version}"}}"#, std::env::consts::OS,);
     let _ = client.send(tokio_websockets::Message::text(info)).await;
 
     while let Some(Ok(msg)) = client.next().await {
@@ -118,12 +112,7 @@ async fn spawn_go_udp_discovery(
       log::warn!("[sgo] UDP send failed: {e}");
     }
 
-    match tokio::time::timeout(
-      std::time::Duration::from_secs(2),
-      sock.recv_from(&mut buf),
-    )
-    .await
-    {
+    match tokio::time::timeout(std::time::Duration::from_secs(2), sock.recv_from(&mut buf)).await {
       Ok(Ok((len, addr))) => {
         let msg = std::str::from_utf8(&buf[..len]).unwrap_or("");
         if msg == "SRT_SERVER" {

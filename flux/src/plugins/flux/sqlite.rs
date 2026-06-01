@@ -140,10 +140,7 @@ pub struct Database {
 impl Database {
   #[qjs(constructor)]
   pub fn new(ctx: Ctx<'_>) -> rquickjs::Result<Database> {
-    Err(ctx.throw(
-      rquickjs::String::from_str(ctx.clone(), "use Database.connect() to open a database")?
-        .into(),
-    ))
+    Err(ctx.throw(rquickjs::String::from_str(ctx.clone(), "use Database.connect() to open a database")?.into()))
   }
 
   /// Open a database. `mode` selects access: `"ro"` (default, read-only, file
@@ -289,9 +286,7 @@ impl Statement {
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
-      let r = query_roundtrip(&cmd_tx, sql, bound, true, true)
-        .await
-        .map(|rows| FirstRow(rows.0.into_iter().next()));
+      let r = query_roundtrip(&cmd_tx, sql, bound, true, true).await.map(|rows| FirstRow(rows.0.into_iter().next()));
       pending.release();
       r
     }))
@@ -404,9 +399,7 @@ async fn query_roundtrip(
   first_only: bool,
 ) -> rquickjs::Result<Rows> {
   let (reply, rx) = oneshot::channel();
-  cmd_tx
-    .send(Command::Query { sql, params, cached, first_only, reply })
-    .map_err(|_| closed_err())?;
+  cmd_tx.send(Command::Query { sql, params, cached, first_only, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
 }
 
@@ -417,9 +410,7 @@ async fn exec_roundtrip(
   cached: bool,
 ) -> rquickjs::Result<RunResult> {
   let (reply, rx) = oneshot::channel();
-  cmd_tx
-    .send(Command::Run { sql, params, cached, reply })
-    .map_err(|_| closed_err())?;
+  cmd_tx.send(Command::Run { sql, params, cached, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
 }
 
@@ -454,11 +445,7 @@ fn do_query(
   }
 }
 
-fn query_with(
-  stmt: &mut rusqlite::Statement,
-  params: &[SqlValue],
-  first_only: bool,
-) -> rusqlite::Result<Rows> {
+fn query_with(stmt: &mut rusqlite::Statement, params: &[SqlValue], first_only: bool) -> rusqlite::Result<Rows> {
   let col_names: Vec<String> = stmt.column_names().into_iter().map(|s| s.to_string()).collect();
   let n = col_names.len();
   let mut out = Vec::new();
@@ -489,10 +476,7 @@ fn do_run(conn: &Connection, sql: &str, params: &[SqlValue], cached: bool) -> ru
 
 /// Run all statements in a single transaction. The rusqlite `Transaction` guard
 /// rolls back on drop, so an error on any statement (via `?`) discards the lot.
-fn do_transaction(
-  conn: &mut Connection,
-  statements: &[(String, Vec<SqlValue>)],
-) -> rusqlite::Result<Vec<RunResult>> {
+fn do_transaction(conn: &mut Connection, statements: &[(String, Vec<SqlValue>)]) -> rusqlite::Result<Vec<RunResult>> {
   let tx = conn.transaction()?;
   let mut results = Vec::with_capacity(statements.len());
   for (sql, params) in statements {
@@ -572,10 +556,7 @@ fn js_to_sql(v: Value<'_>) -> rquickjs::Result<SqlValue> {
   } else if let Ok(ta) = TypedArray::<u8>::from_value(v.clone()) {
     Ok(SqlValue::Blob(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()))
   } else {
-    Err(rquickjs::Error::Io(io::Error::new(
-      io::ErrorKind::InvalidInput,
-      "unsupported SQL parameter type",
-    )))
+    Err(rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidInput, "unsupported SQL parameter type")))
   }
 }
 
@@ -600,10 +581,7 @@ impl<'js> IntoJs<'js> for SqlValue {
 }
 
 /// Build a plain object from a row's (name, value) cells.
-fn row_to_object<'js>(
-  ctx: &Ctx<'js>,
-  cells: Vec<(String, SqlValue)>,
-) -> rquickjs::Result<Object<'js>> {
+fn row_to_object<'js>(ctx: &Ctx<'js>, cells: Vec<(String, SqlValue)>) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
   for (name, val) in cells {
     obj.set(name, val)?;
@@ -658,8 +636,7 @@ impl ModuleDef for SqliteModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-    let ctor = Class::<Database>::create_constructor(ctx)?
-      .expect("Database class has a constructor");
+    let ctor = Class::<Database>::create_constructor(ctx)?.expect("Database class has a constructor");
     exports.export("Database", ctor)?;
     Ok(())
   }

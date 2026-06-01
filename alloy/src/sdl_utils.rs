@@ -51,8 +51,5 @@ pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {
 }
 
 pub fn mod_state() -> sdl3::keyboard::Mod {
-  unsafe {
-    sdl3::keyboard::Mod::from_bits(SDL_GetModState().0)
-      .unwrap_or(sdl3::keyboard::Mod::NOMOD)
-  }
+  unsafe { sdl3::keyboard::Mod::from_bits(SDL_GetModState().0).unwrap_or(sdl3::keyboard::Mod::NOMOD) }
 }

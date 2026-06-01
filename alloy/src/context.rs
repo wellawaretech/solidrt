@@ -31,68 +31,36 @@ impl Context {
     impeller_ctx: ImpellerContext,
     tx: mpsc::Sender<DisplayList>,
   ) -> Self {
-    Context {
-      backend,
-      wgpu_device,
-      wgpu_queue,
-      impeller_ctx,
-      textures: TextureRegistry::new(),
-      tx,
-    }
+    Context { backend, wgpu_device, wgpu_queue, impeller_ctx, textures: TextureRegistry::new(), tx }
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
     self.tx.send(dl).map_err(|_| ())
   }
 
-  pub fn get_or_create_texture(
-    &self,
-    id: u64,
-    size: ISize,
-    make_pixels: impl FnOnce() -> Vec<u8>,
-  ) -> Rc<TextureEntry> {
+  pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
       let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
       gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
-      let impeller = self
-        .adopt_texture(&gpu, size)
-        .expect("adopt texture failed");
+      let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     }
-    self
-      .textures
-      .get(id)
-      .expect("texture must exist after insert")
+    self.textures.get(id).expect("texture must exist after insert")
   }
 
-  pub fn get_or_update_texture(
-    &self,
-    id: u64,
-    size: ISize,
-    make_pixels: impl FnOnce() -> Vec<u8>,
-  ) -> Rc<TextureEntry> {
+  pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
       let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
       gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
-      let impeller = self
-        .adopt_texture(&gpu, size)
-        .expect("adopt texture failed");
+      let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     } else {
-      let entry = self
-        .textures
-        .get(id)
-        .expect("texture must exist in else branch");
-      entry
-        .gpu
-        .upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+      let entry = self.textures.get(id).expect("texture must exist in else branch");
+      entry.gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
     }
-    self
-      .textures
-      .get(id)
-      .expect("texture must exist after insert or update")
+    self.textures.get(id).expect("texture must exist after insert or update")
   }
 
   /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller.
@@ -101,9 +69,7 @@ impl Context {
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
     gpu.upload(&self.wgpu_device, &self.wgpu_queue, pixels, size);
-    let impeller = self
-      .adopt_texture(&gpu, size)
-      .expect("adopt texture failed");
+    let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
     let id = self.textures.allocate_id();
     self.textures.insert(id, TextureEntry { gpu, impeller });
     id

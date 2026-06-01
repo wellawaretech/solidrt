@@ -1,7 +1,5 @@
 use alloy::Context;
-use impellers::{
-  Color, DisplayList, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TextureSampling,
-};
+use impellers::{Color, DisplayList, DisplayListBuilder, ISize, Paint, Point, Rect, Size, TextureSampling};
 use std::time::Duration;
 
 fn make_pixels(size: ISize, color: u32) -> Vec<u8> {
@@ -29,9 +27,7 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
 
   const GREEN_TEX: u64 = 2;
   let alpha = ((t.sin() * 0.5 + 0.5) * 255.0) as u8;
-  let tex = ctx.get_or_update_texture(GREEN_TEX, size, || {
-    make_pixels(size, 0x4D8033_00 | alpha as u32)
-  });
+  let tex = ctx.get_or_update_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033_00 | alpha as u32));
   let dst_rect = Rect::new(Point::new(280.0, 10.0), size.cast());
   builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
@@ -54,9 +50,7 @@ fn main() {
       }
     },
     |display, dl| {
-      display
-        .draw_display_list(dl)
-        .expect("Failed to draw display list");
+      display.draw_display_list(dl).expect("Failed to draw display list");
       display.present();
     },
   );

@@ -3,8 +3,8 @@ use std::io;
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
-use crate::plugins::response::response_from_parts;
 use crate::plugins::http::{reqwest_err, HttpClient};
+use crate::plugins::response::response_from_parts;
 
 pub struct ResponseData {
   pub status: u16,
@@ -17,12 +17,7 @@ pub struct ResponseData {
 fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
   headers
     .iter()
-    .filter_map(|(name, value)| {
-      value
-        .to_str()
-        .ok()
-        .map(|v| (name.as_str().to_string(), v.to_string()))
-    })
+    .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
     .collect()
 }
 
@@ -54,19 +49,9 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let fetch_fn = Function::new(
     ctx.clone(),
     MutFn::from(
-      |ctx: Ctx<'_>,
-       url: String,
-       opts: rquickjs::function::Opt<Object<'_>>|
-       -> rquickjs::Result<Promised<_>> {
-        let client = ctx
-          .userdata::<HttpClient>()
-          .expect("http client")
-          .0
-          .clone();
-        let pending = ctx
-          .userdata::<PendingOps>()
-          .expect("pending ops")
-          .clone();
+      |ctx: Ctx<'_>, url: String, opts: rquickjs::function::Opt<Object<'_>>| -> rquickjs::Result<Promised<_>> {
+        let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
 
         let method = opts
           .0
@@ -139,10 +124,7 @@ pub async fn do_fetch(
     "HEAD" => client.head(url),
     _ => client.request(
       method.parse().map_err(|_| {
-        rquickjs::Error::Io(io::Error::new(
-          io::ErrorKind::InvalidInput,
-          format!("invalid HTTP method: {}", method),
-        ))
+        rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidInput, format!("invalid HTTP method: {}", method)))
       })?,
       url,
     ),
@@ -173,14 +155,6 @@ pub async fn do_fetch(
 
 impl<'js> IntoJs<'js> for ResponseData {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    response_from_parts(
-      ctx,
-      self.body,
-      self.status,
-      self.status_text,
-      self.url,
-      self.headers,
-    )?
-    .into_js(ctx)
+    response_from_parts(ctx, self.body, self.status, self.status_text, self.url, self.headers)?.into_js(ctx)
   }
 }

@@ -1,7 +1,5 @@
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
-};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use alloy::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
 use taffy::{AlignSelf, Display, Size as TaffySize, Style};
 
@@ -18,17 +16,16 @@ impl Texture {
   fn source_rect(&self, tex_w: u32, tex_h: u32) -> Rect {
     Rect::new(
       Point::new(self.src_x.unwrap_or(0.0), self.src_y.unwrap_or(0.0)),
-      ISize::new(
-        self.src_w.unwrap_or(tex_w as f32),
-        self.src_h.unwrap_or(tex_h as f32),
-      ),
+      ISize::new(self.src_w.unwrap_or(tex_w as f32), self.src_h.unwrap_or(tex_h as f32)),
     )
   }
 }
 
 impl Buildable for Texture {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let Some(tex_id) = self.texture_id else { return };
+    let Some(tex_id) = self.texture_id else {
+      return;
+    };
     let Some(entry) = ctx.alloy.textures.get(tex_id) else {
       log::warn!("[texture] build: tex_id={} not in registry", tex_id);
       return;
@@ -37,13 +34,7 @@ impl Buildable for Texture {
     let src_rect = self.source_rect(entry.width(), entry.height());
     let dst_rect = Rect::new(Point::new(0.0, 0.0), ISize::new(ctx.size.w, ctx.size.h));
     let paint = Paint::default();
-    builder.draw_texture_rect(
-      &entry.impeller,
-      &src_rect,
-      &dst_rect,
-      TextureSampling::Linear,
-      Some(&paint),
-    );
+    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&paint));
   }
 }
 
@@ -85,11 +76,26 @@ impl Measurable for Texture {
 impl Texture {
   // Source id and crop rect feed measurement, so all affect layout. None clears
   // the texture; the null-vs-number decoding happens in the binding layer.
-  pub fn set_src(&mut self, id: Option<u64>) -> bool { self.texture_id = id; true }
-  pub fn set_src_x(&mut self, v: f32) -> bool { self.src_x = Some(v); true }
-  pub fn set_src_y(&mut self, v: f32) -> bool { self.src_y = Some(v); true }
-  pub fn set_src_w(&mut self, v: f32) -> bool { self.src_w = Some(v); true }
-  pub fn set_src_h(&mut self, v: f32) -> bool { self.src_h = Some(v); true }
+  pub fn set_src(&mut self, id: Option<u64>) -> bool {
+    self.texture_id = id;
+    true
+  }
+  pub fn set_src_x(&mut self, v: f32) -> bool {
+    self.src_x = Some(v);
+    true
+  }
+  pub fn set_src_y(&mut self, v: f32) -> bool {
+    self.src_y = Some(v);
+    true
+  }
+  pub fn set_src_w(&mut self, v: f32) -> bool {
+    self.src_w = Some(v);
+    true
+  }
+  pub fn set_src_h(&mut self, v: f32) -> bool {
+    self.src_h = Some(v);
+    true
+  }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(

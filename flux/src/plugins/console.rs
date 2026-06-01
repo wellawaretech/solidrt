@@ -3,11 +3,7 @@ use rquickjs::{Ctx, Function, Object, Value};
 use crate::logger::CtxLogger;
 
 fn format_args<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> String {
-  args
-    .iter()
-    .map(|v| format_value(ctx, v))
-    .collect::<Vec<_>>()
-    .join(" ")
+  args.iter().map(|v| format_value(ctx, v)).collect::<Vec<_>>().join(" ")
 }
 
 fn format_value<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
@@ -20,12 +16,7 @@ fn format_value<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
   } else if let Some(b) = val.as_bool() {
     b.to_string()
   } else {
-    ctx
-      .json_stringify(val.clone())
-      .ok()
-      .flatten()
-      .and_then(|s| s.to_string().ok())
-      .unwrap_or_else(|| "[object]".into())
+    ctx.json_stringify(val.clone()).ok().flatten().and_then(|s| s.to_string().ok()).unwrap_or_else(|| "[object]".into())
   }
 }
 

@@ -3,10 +3,7 @@
 use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
-fn capture_log() -> (
-  Arc<Mutex<Vec<(LogLevel, String)>>>,
-  impl Fn(LogLevel, &str) + Send + Sync + 'static,
-) {
+fn capture_log() -> (Arc<Mutex<Vec<(LogLevel, String)>>>, impl Fn(LogLevel, &str) + Send + Sync + 'static) {
   let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
   let log2 = log.clone();
   let f = move |level: LogLevel, msg: &str| {
@@ -16,11 +13,7 @@ fn capture_log() -> (
 }
 
 fn messages_at(log: &[(LogLevel, String)], level: LogLevel) -> Vec<&str> {
-  log
-    .iter()
-    .filter(|(l, _)| *l == level)
-    .map(|(_, m)| m.as_str())
-    .collect()
+  log.iter().filter(|(l, _)| *l == level).map(|(_, m)| m.as_str()).collect()
 }
 
 #[tokio::test]
@@ -71,13 +64,8 @@ async fn console_log_multiple_args() {
 async fn console_log_mixed_types() {
   let (log, log_fn) = capture_log();
   let engine = FluxEngine::builder().logger(log_fn).build();
-  engine
-    .eval_source("console.log('count:', 42, true, null)")
-    .await;
+  engine.eval_source("console.log('count:', 42, true, null)").await;
 
   let log = log.lock().unwrap();
-  assert_eq!(
-    messages_at(&log, LogLevel::Log),
-    vec!["count: 42 true null"]
-  );
+  assert_eq!(messages_at(&log, LogLevel::Log), vec!["count: 42 true null"]);
 }

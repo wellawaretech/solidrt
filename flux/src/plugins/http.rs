@@ -12,11 +12,7 @@ pub(crate) fn reqwest_err(e: reqwest::Error) -> rquickjs::Error {
 }
 
 pub(crate) fn init_http(ctx: &Ctx<'_>) {
-  let client = HttpClient(Rc::new(
-    reqwest::Client::builder()
-      .user_agent(USER_AGENT)
-      .build()
-      .expect("build http client"),
-  ));
+  let client =
+    HttpClient(Rc::new(reqwest::Client::builder().user_agent(USER_AGENT).build().expect("build http client")));
   ctx.store_userdata(client).expect("store http client");
 }

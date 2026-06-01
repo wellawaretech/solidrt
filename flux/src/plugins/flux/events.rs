@@ -35,11 +35,7 @@ struct ListenerMap(#[qjs(skip_trace)] Rc<RefCell<ListenerMapInner>>);
 
 impl Default for ListenerMap {
   fn default() -> Self {
-    Self(Rc::new(RefCell::new(ListenerMapInner {
-      map: HashMap::new(),
-      sticky: HashMap::new(),
-      next_id: 1,
-    })))
+    Self(Rc::new(RefCell::new(ListenerMapInner { map: HashMap::new(), sticky: HashMap::new(), next_id: 1 })))
   }
 }
 
@@ -160,9 +156,7 @@ fn register<'js>(
 // Dispatches an event to all registered JS listeners.
 // Called from closures pushed via ExecHandle, so it always runs on the JS thread.
 pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
-  let arg = data
-    .into_js(ctx)
-    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+  let arg = data.into_js(ctx).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
 
   // Snapshot before calling into JS so a listener that mutates the map
   // (e.g. calls its own unsubscribe) does not invalidate iteration.

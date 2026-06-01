@@ -61,53 +61,17 @@ pub enum AlloyEvent {
   Quit,
   WindowFocus,
   WindowBlur,
-  KeyDown {
-    keycode: Option<sdl3::keyboard::Keycode>,
-    scancode: Option<sdl3::keyboard::Scancode>,
-    modifiers: Modifiers,
-  },
-  KeyUp {
-    keycode: Option<sdl3::keyboard::Keycode>,
-    scancode: Option<sdl3::keyboard::Scancode>,
-    modifiers: Modifiers,
-  },
-  Resize {
-    size: ISize,
-    safe_area: Rect,
-    display_scale: f32,
-  },
+  KeyDown { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
+  KeyUp { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
+  Resize { size: ISize, safe_area: Rect, display_scale: f32 },
   // `time` is seconds since render-thread start, sampled right after the
   // frame is presented (vsync-adjacent), so JS gets a steady per-frame clock.
   FrameRendered { frame: u64, fps: u32, time: f64 },
-  PointerMove {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  PointerDown {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    button: u8,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  PointerUp {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    button: u8,
-    x: f32,
-    y: f32,
-    modifiers: Modifiers,
-  },
-  TextInput {
-    text: String,
-  },
-  PowerStatus {
-    info: sdl_utils::PowerInfo,
-  },
+  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
+  PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  TextInput { text: String },
+  PowerStatus { info: sdl_utils::PowerInfo },
   // Emitted when the on-screen keyboard visibility changes. SDL does not
   // provide an event for this, so it is detected by polling
   // SDL_ScreenKeyboardShown each loop iteration.
@@ -115,15 +79,7 @@ pub enum AlloyEvent {
   // delta_x / delta_y use browser convention: positive delta_y means
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.
-  Wheel {
-    pointer_id: u64,
-    pointer_type: PointerType,
-    x: f32,
-    y: f32,
-    delta_x: f32,
-    delta_y: f32,
-    modifiers: Modifiers,
-  },
+  Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
 }
 
 pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -132,10 +88,7 @@ pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   let r = sdl_utils::window_safe_area(window);
   AlloyEvent::Resize {
     size: ISize::new((w as f32 / scale) as i64, (h as f32 / scale) as i64),
-    safe_area: Rect::new(
-      impellers::Point::new(r.x as f32, r.y as f32),
-      impellers::Size::new(r.w as f32, r.h as f32),
-    ),
+    safe_area: Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32)),
     display_scale: scale,
   }
 }
@@ -164,23 +117,14 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     SdlEvent::KeyUp { keycode, scancode, keymod, .. } => {
       Some(AlloyEvent::KeyUp { keycode, scancode, modifiers: keymod.into() })
     }
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => {
-      Some(AlloyEvent::WindowFocus)
-    }
-    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => {
-      Some(AlloyEvent::WindowBlur)
-    }
-    SdlEvent::Window {
-      win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h),
-      ..
-    } => {
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => Some(AlloyEvent::WindowFocus),
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => Some(AlloyEvent::WindowBlur),
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {
       let display_scale = sdl_utils::window_display_scale(window);
       let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);
       let r = sdl_utils::window_safe_area(window);
-      let safe_area = Rect::new(
-        impellers::Point::new(r.x as f32, r.y as f32),
-        impellers::Size::new(r.w as f32, r.h as f32),
-      );
+      let safe_area =
+        Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32));
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
     SdlEvent::MouseMotion { which, x, y, .. } => {

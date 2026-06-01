@@ -1,6 +1,4 @@
-use rquickjs::{
-  function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value,
-};
+use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::io;
@@ -14,15 +12,11 @@ pub(crate) struct BodyState {
 
 impl BodyState {
   pub(crate) fn new(bytes: Vec<u8>) -> Self {
-    Self {
-      bytes: RefCell::new(Some(bytes)),
-    }
+    Self { bytes: RefCell::new(Some(bytes)) }
   }
 
   pub(crate) fn empty() -> Self {
-    Self {
-      bytes: RefCell::new(Some(Vec::new())),
-    }
+    Self { bytes: RefCell::new(Some(Vec::new())) }
   }
 
   /// Peek a copy of the bytes without consuming. Returns None if already consumed.
@@ -52,10 +46,7 @@ pub(crate) fn body_json(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<Js
 }
 
 /// Extract bytes from a JS value (string, Uint8Array, null/undefined).
-pub(crate) fn extract_body_value<'js>(
-  val: &Value<'js>,
-  for_class: &'static str,
-) -> rquickjs::Result<Vec<u8>> {
+pub(crate) fn extract_body_value<'js>(val: &Value<'js>, for_class: &'static str) -> rquickjs::Result<Vec<u8>> {
   if val.is_null() || val.is_undefined() {
     return Ok(Vec::new());
   }
@@ -65,11 +56,7 @@ pub(crate) fn extract_body_value<'js>(
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
     return Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default());
   }
-  Err(rquickjs::Error::new_from_js_message(
-    "body",
-    for_class,
-    "must be string, Uint8Array, null, or undefined",
-  ))
+  Err(rquickjs::Error::new_from_js_message("body", for_class, "must be string, Uint8Array, null, or undefined"))
 }
 
 pub struct JsBytes(pub Vec<u8>);
@@ -89,11 +76,7 @@ impl<'js> IntoJs<'js> for JsonValue {
 }
 
 pub(crate) fn throw_consumed(ctx: &Ctx<'_>) -> rquickjs::Error {
-  ctx.throw(
-    rquickjs::String::from_str(ctx.clone(), "Body already consumed")
-      .expect("create error string")
-      .into(),
-  )
+  ctx.throw(rquickjs::String::from_str(ctx.clone(), "Body already consumed").expect("create error string").into())
 }
 
 fn utf8_err(e: std::string::FromUtf8Error) -> rquickjs::Error {

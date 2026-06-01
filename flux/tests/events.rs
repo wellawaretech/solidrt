@@ -3,10 +3,7 @@
 use flux::{emit_event, FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
-fn capture_log() -> (
-  Arc<Mutex<Vec<(LogLevel, String)>>>,
-  impl Fn(LogLevel, &str) + Send + Sync + 'static,
-) {
+fn capture_log() -> (Arc<Mutex<Vec<(LogLevel, String)>>>, impl Fn(LogLevel, &str) + Send + Sync + 'static) {
   let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
   let log2 = log.clone();
   let f = move |level: LogLevel, msg: &str| {
@@ -16,12 +13,7 @@ fn capture_log() -> (
 }
 
 fn log_output(log: &[(LogLevel, String)]) -> String {
-  log
-    .iter()
-    .filter(|(l, _)| *l == LogLevel::Log)
-    .map(|(_, m)| m.as_str())
-    .collect::<Vec<_>>()
-    .join("\n")
+  log.iter().filter(|(l, _)| *l == LogLevel::Log).map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("\n")
 }
 
 fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> String {
@@ -31,12 +23,7 @@ fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> Strin
 
   let code = code.to_string();
   let channel = channel.to_string();
-  let rt = Arc::new(
-    tokio::runtime::Builder::new_multi_thread()
-      .enable_all()
-      .build()
-      .unwrap(),
-  );
+  let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap());
   let rt2 = rt.clone();
   let engine_thread = std::thread::spawn(move || {
     rt2.block_on(engine.eval_source(&code));
@@ -92,10 +79,7 @@ fn event_delivery_with_set_interval() {
     "render",
     vec![("{}", 50), ("{}", 50), ("{}", 50)],
   );
-  assert!(
-    output.contains("render:3"),
-    "expected 3 render events, got: {output}"
-  );
+  assert!(output.contains("render:3"), "expected 3 render events, got: {output}");
 }
 
 #[test]
@@ -121,8 +105,5 @@ fn microtask_registered_listener_with_set_interval() {
     "render",
     vec![("{}", 50), ("{}", 50), ("{}", 50)],
   );
-  assert!(
-    output.contains("render:3"),
-    "expected 3 render events with microtask-deferred listener, got: {output}"
-  );
+  assert!(output.contains("render:3"), "expected 3 render events with microtask-deferred listener, got: {output}");
 }

@@ -3,10 +3,7 @@
 use flux::{FluxEngine, LogLevel};
 use std::sync::{Arc, Mutex};
 
-fn capture_log() -> (
-  Arc<Mutex<Vec<(LogLevel, String)>>>,
-  impl Fn(LogLevel, &str) + Send + Sync + 'static,
-) {
+fn capture_log() -> (Arc<Mutex<Vec<(LogLevel, String)>>>, impl Fn(LogLevel, &str) + Send + Sync + 'static) {
   let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
   let log2 = log.clone();
   let f = move |level: LogLevel, msg: &str| {
@@ -16,12 +13,7 @@ fn capture_log() -> (
 }
 
 fn log_output(log: &[(LogLevel, String)]) -> String {
-  log
-    .iter()
-    .filter(|(l, _)| *l == LogLevel::Log)
-    .map(|(_, m)| m.as_str())
-    .collect::<Vec<_>>()
-    .join("\n")
+  log.iter().filter(|(l, _)| *l == LogLevel::Log).map(|(_, m)| m.as_str()).collect::<Vec<_>>().join("\n")
 }
 
 fn has_error(log: &[(LogLevel, String)]) -> bool {
@@ -62,19 +54,16 @@ async fn clear_timeout_on_unknown_id_caught() {
   let (log, log_fn) = capture_log();
   let engine = FluxEngine::builder().logger(log_fn).build();
   engine
-        .eval_source(
-            r#"
+    .eval_source(
+      r#"
             try { clearTimeout(999); console.log('no error') } catch (e) { console.log('caught: ' + e.message) }
             "#,
-        )
-        .await;
+    )
+    .await;
 
   let log = log.lock().unwrap();
   let output = log_output(&log);
-  assert!(
-    output.starts_with("caught:"),
-    "expected caught error, got: {output}"
-  );
+  assert!(output.starts_with("caught:"), "expected caught error, got: {output}");
 }
 
 #[tokio::test]
@@ -133,12 +122,20 @@ async fn queue_microtask_runs_before_timers() {
 }
 
 #[tokio::test]
+async fn queue_microtask_throw_is_reported() {
+  let (log, log_fn) = capture_log();
+  let engine = FluxEngine::builder().logger(log_fn).build();
+  engine.eval_source(r#"queueMicrotask(() => { throw new Error("boom"); });"#).await;
+
+  let log = log.lock().unwrap();
+  assert!(has_error(&log), "expected throwing microtask to be reported as uncaught");
+}
+
+#[tokio::test]
 async fn set_timeout_fires() {
   let (log, log_fn) = capture_log();
   let engine = FluxEngine::builder().logger(log_fn).build();
-  engine
-    .eval_source("setTimeout(() => console.log('fired'), 10);")
-    .await;
+  engine.eval_source("setTimeout(() => console.log('fired'), 10);").await;
 
   let log = log.lock().unwrap();
   assert_eq!(log_output(&log), "fired");

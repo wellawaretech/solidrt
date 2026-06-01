@@ -19,9 +19,7 @@ pub struct HitConfig {
 
 impl Default for HitConfig {
   fn default() -> Self {
-    Self {
-      pointer_events: PointerEvents::Auto,
-    }
+    Self { pointer_events: PointerEvents::Auto }
   }
 }
 
@@ -70,7 +68,9 @@ pub struct DefaultHitTester;
 
 impl HitTester for DefaultHitTester {
   fn hit_test(&self, tree: &RenderTree, point: XY) -> Vec<HitEntry> {
-    let Some(root_id) = tree.root else { return vec![] };
+    let Some(root_id) = tree.root else {
+      return vec![];
+    };
     let size = tree
       .node(root_id)
       .layout
@@ -86,9 +86,7 @@ impl HitTester for DefaultHitTester {
 fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mut Vec<HitEntry>) -> bool {
   let element = tree.node(node_id);
 
-  let pointer_events = element.interaction.as_ref()
-    .map(|i| i.pointer_events)
-    .unwrap_or(PointerEvents::Auto);
+  let pointer_events = element.interaction.as_ref().map(|i| i.pointer_events).unwrap_or(PointerEvents::Auto);
 
   let ctx = HitContext { size };
   let local = element.kind.transform_to_local(point, &ctx);
@@ -101,8 +99,7 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
     .as_ref()
     .map(|l| (l.style.overflow.x, l.style.overflow.y))
     .unwrap_or((Overflow::Visible, Overflow::Visible));
-  let clipped_out = (overflow_x != Overflow::Visible
-    && (local.x < 0.0 || local.x >= size.w))
+  let clipped_out = (overflow_x != Overflow::Visible && (local.x < 0.0 || local.x >= size.w))
     || (overflow_y != Overflow::Visible && (local.y < 0.0 || local.y >= size.h));
   if clipped_out {
     return false;
@@ -129,16 +126,10 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
 
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
-    let child_size = child
-      .layout
-      .as_ref()
-      .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
-      .unwrap_or(size);
-    let child_pos = child
-      .layout
-      .as_ref()
-      .map(|l| XY::new(l.computed.location.x, l.computed.location.y))
-      .unwrap_or_default();
+    let child_size =
+      child.layout.as_ref().map(|l| WH::new(l.computed.size.width, l.computed.size.height)).unwrap_or(size);
+    let child_pos =
+      child.layout.as_ref().map(|l| XY::new(l.computed.location.x, l.computed.location.y)).unwrap_or_default();
     let child_point = XY::new(local.x - child_pos.x + scroll.x, local.y - child_pos.y + scroll.y);
     if hit_recursive(tree, child_id, child_point, child_size, path) {
       if pointer_events == PointerEvents::None {

@@ -6,11 +6,8 @@ pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {
     "src" => {
       // null/undefined clears, number sets the id.
-      let id = if value.is_null() {
-        None
-      } else {
-        Some(value.as_f64().expect("src must be a texture id (number)") as u64)
-      };
+      let id =
+        if value.is_null() { None } else { Some(value.as_f64().expect("src must be a texture id (number)") as u64) };
       tex.set_src(id)
     }
     "srcX" => tex.set_src_x(f32_of(value, "srcX")),

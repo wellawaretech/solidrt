@@ -1,7 +1,5 @@
 use super::PaintState;
-use crate::rendertree::{
-  BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
-};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use alloy::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
 };
@@ -65,10 +63,7 @@ impl Buildable for Text {
 impl Measurable for Text {
   fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
-      return Size {
-        width: w,
-        height: h,
-      };
+      return Size { width: w, height: h };
     }
 
     let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
@@ -93,13 +88,11 @@ impl Measurable for Text {
     let max_intrinsic_width = paragraph.get_max_intrinsic_width();
     let min_intrinsic_width = paragraph.get_min_intrinsic_width();
 
-    let width = ctx.known
-      .width
-      .unwrap_or_else(|| match ctx.available.width {
-        AvailableSpace::Definite(w) => max_intrinsic_width.min(w),
-        AvailableSpace::MaxContent => max_intrinsic_width,
-        AvailableSpace::MinContent => min_intrinsic_width,
-      });
+    let width = ctx.known.width.unwrap_or_else(|| match ctx.available.width {
+      AvailableSpace::Definite(w) => max_intrinsic_width.min(w),
+      AvailableSpace::MaxContent => max_intrinsic_width,
+      AvailableSpace::MinContent => min_intrinsic_width,
+    });
 
     let Some(mut para_builder) = ParagraphBuilder::new(&ctx.platform.typography) else {
       return Size::ZERO;
@@ -111,9 +104,7 @@ impl Measurable for Text {
       return Size::ZERO;
     };
 
-    let height = ctx.known
-      .height
-      .unwrap_or_else(|| paragraph.get_height());
+    let height = ctx.known.height.unwrap_or_else(|| paragraph.get_height());
 
     Size { width, height }
   }
@@ -122,20 +113,29 @@ impl Measurable for Text {
 impl Text {
   // All text properties feed measurement, so every change affects layout. The
   // resolved font family name and FontWeight come in already decoded.
-  pub fn set_font_family(&mut self, family: String) -> bool { self.font_family = family; true }
-  pub fn set_font_size(&mut self, v: f32) -> bool { self.font_size = v; true }
-  pub fn set_line_height(&mut self, v: f32) -> bool { self.line_height = v; true }
-  pub fn set_max_lines(&mut self, v: u32) -> bool { self.max_lines = v; true }
-  pub fn set_font_weight(&mut self, weight: FontWeight) -> bool { self.font_weight = weight; true }
+  pub fn set_font_family(&mut self, family: String) -> bool {
+    self.font_family = family;
+    true
+  }
+  pub fn set_font_size(&mut self, v: f32) -> bool {
+    self.font_size = v;
+    true
+  }
+  pub fn set_line_height(&mut self, v: f32) -> bool {
+    self.line_height = v;
+    true
+  }
+  pub fn set_max_lines(&mut self, v: u32) -> bool {
+    self.max_lines = v;
+    true
+  }
+  pub fn set_font_weight(&mut self, weight: FontWeight) -> bool {
+    self.font_weight = weight;
+    true
+  }
 
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Text(self),
-      Style {
-        display: Display::Block,
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Text(self), Style { display: Display::Block, ..Default::default() })
   }
 
   pub fn no_layout(self) -> Element {
@@ -150,7 +150,10 @@ pub struct Span {
 
 impl Span {
   // Span text feeds the parent paragraph's measurement, so it affects layout.
-  pub fn set_text(&mut self, text: String) -> bool { self.text = text; true }
+  pub fn set_text(&mut self, text: String) -> bool {
+    self.text = text;
+    true
+  }
 
   pub fn no_layout(self) -> Element {
     Element::no_layout(ElementKind::Span(self))

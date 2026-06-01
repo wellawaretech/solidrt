@@ -16,9 +16,7 @@ pub struct ShutdownHooks {
 
 impl ShutdownHooks {
   fn new() -> Self {
-    Self {
-      inner: Arc::new(Mutex::new(Vec::new())),
-    }
+    Self { inner: Arc::new(Mutex::new(Vec::new())) }
   }
 
   pub fn add<F: FnOnce(&Logger) + Send + 'static>(&self, f: F) {
@@ -96,14 +94,7 @@ impl FluxEngineBuilder {
       None => default_logger(),
     };
     let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
-    FluxEngine {
-      setups: self.plugins,
-      userdata: self.userdata,
-      exec_tx,
-      exec_rx,
-      logger,
-      stack_size: self.stack_size,
-    }
+    FluxEngine { setups: self.plugins, userdata: self.userdata, exec_tx, exec_rx, logger, stack_size: self.stack_size }
   }
 }
 
@@ -118,12 +109,7 @@ pub struct FluxEngine {
 
 impl FluxEngine {
   pub fn builder() -> FluxEngineBuilder {
-    FluxEngineBuilder {
-      plugins: Vec::new(),
-      userdata: Vec::new(),
-      logger: None,
-      stack_size: None,
-    }
+    FluxEngineBuilder { plugins: Vec::new(), userdata: Vec::new(), logger: None, stack_size: None }
   }
 
   pub fn new() -> Self {
@@ -132,9 +118,7 @@ impl FluxEngine {
 
   /// Returns a Send-safe handle for pushing closures into the engine from other threads.
   pub fn exec_handle(&self) -> ExecHandle {
-    ExecHandle {
-      tx: self.exec_tx.clone(),
-    }
+    ExecHandle { tx: self.exec_tx.clone() }
   }
 
   /// Evaluate pre-compiled bytecode as a module and run the event loop.
@@ -177,14 +161,8 @@ impl FluxEngine {
     let logger = self.logger.clone();
     let mut exec_rx = self.exec_rx;
 
-    let (runtime, context, pending) = plugins::init_context(
-      self.setups,
-      self.userdata,
-      self.logger,
-      self.stack_size,
-      shutdown_hooks.clone(),
-    )
-    .await;
+    let (runtime, context, pending) =
+      plugins::init_context(self.setups, self.userdata, self.logger, self.stack_size, shutdown_hooks.clone()).await;
 
     context.with(|ctx| task(ctx)).await;
 

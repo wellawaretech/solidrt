@@ -3,9 +3,7 @@ use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 
-use crate::plugins::body::{
-  body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue,
-};
+use crate::plugins::body::{body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue};
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
 #[derive(JsLifetime)]
@@ -30,37 +28,19 @@ impl<'js> Trace<'js> for Response<'js> {
 #[rquickjs::methods]
 impl<'js> Response<'js> {
   #[qjs(constructor)]
-  pub fn new(
-    ctx: Ctx<'js>,
-    body: Opt<Value<'js>>,
-    init: Opt<Object<'js>>,
-  ) -> rquickjs::Result<Self> {
+  pub fn new(ctx: Ctx<'js>, body: Opt<Value<'js>>, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
     let body_bytes = match body.0 {
       Some(v) => extract_body_value(&v, "Response")?,
       None => Vec::new(),
     };
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
-    Ok(Response {
-      body: BodyState::new(body_bytes),
-      status,
-      status_text,
-      headers,
-      url: String::new(),
-    })
+    Ok(Response { body: BodyState::new(body_bytes), status, status_text, headers, url: String::new() })
   }
 
   #[qjs(static, rename = "json")]
-  pub fn json_static(
-    ctx: Ctx<'js>,
-    val: Value<'js>,
-    init: Opt<Object<'js>>,
-  ) -> rquickjs::Result<Self> {
-    let json = ctx
-      .json_stringify(val)?
-      .map(|s| s.to_string())
-      .transpose()?
-      .unwrap_or_else(|| "null".to_string());
+  pub fn json_static(ctx: Ctx<'js>, val: Value<'js>, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
+    let json = ctx.json_stringify(val)?.map(|s| s.to_string()).transpose()?.unwrap_or_else(|| "null".to_string());
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
     {
@@ -69,13 +49,7 @@ impl<'js> Response<'js> {
         h.set("Content-Type".to_string(), "application/json".to_string());
       }
     }
-    Ok(Response {
-      body: BodyState::new(json.into_bytes()),
-      status,
-      status_text,
-      headers,
-      url: String::new(),
-    })
+    Ok(Response { body: BodyState::new(json.into_bytes()), status, status_text, headers, url: String::new() })
   }
 
   #[qjs(get)]
@@ -103,26 +77,17 @@ impl<'js> Response<'js> {
     self.headers.clone()
   }
 
-  pub fn text(
-    &self,
-    ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<String>>>> {
+  pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<String>>>> {
     let text = body_text(&self.body, &ctx)?;
     Ok(Promised(std::future::ready(Ok(text))))
   }
 
-  pub fn bytes(
-    &self,
-    ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsBytes>>>> {
+  pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsBytes>>>> {
     let bytes = body_bytes(&self.body, &ctx)?;
     Ok(Promised(std::future::ready(Ok(bytes))))
   }
 
-  pub fn json(
-    &self,
-    ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsonValue>>>> {
+  pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsonValue>>>> {
     let json = body_json(&self.body, &ctx)?;
     Ok(Promised(std::future::ready(Ok(json))))
   }
@@ -138,25 +103,12 @@ pub(crate) fn response_from_parts<'js>(
   headers: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Response<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
-  Class::instance(
-    ctx.clone(),
-    Response {
-      body: BodyState::new(body),
-      status,
-      status_text,
-      headers,
-      url,
-    },
-  )
+  Class::instance(ctx.clone(), Response { body: BodyState::new(body), status, status_text, headers, url })
 }
 
-fn parse_init<'js>(
-  init: Option<&Object<'js>>,
-) -> rquickjs::Result<(u16, String, Option<Value<'js>>)> {
+fn parse_init<'js>(init: Option<&Object<'js>>) -> rquickjs::Result<(u16, String, Option<Value<'js>>)> {
   let status: u16 = init.and_then(|o| o.get("status").ok()).unwrap_or(200);
-  let status_text: String = init
-    .and_then(|o| o.get("statusText").ok())
-    .unwrap_or_default();
+  let status_text: String = init.and_then(|o| o.get("statusText").ok()).unwrap_or_default();
   let headers_val = init.and_then(|o| o.get::<_, Value>("headers").ok());
   Ok((status, status_text, headers_val))
 }

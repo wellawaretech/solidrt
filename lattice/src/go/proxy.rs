@@ -80,14 +80,8 @@ fn entry_type_from_num(t: u64) -> String {
   }
 }
 
-fn build_proxy_file<'js>(
-  ctx: Ctx<'js>,
-  path: String,
-) -> flux::rquickjs::Result<Object<'js>> {
-  let state = ctx
-    .userdata::<ProxyState>()
-    .expect("proxy state")
-    .clone();
+fn build_proxy_file<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<Object<'js>> {
+  let state = ctx.userdata::<ProxyState>().expect("proxy state").clone();
   let url = Rc::new(url_for(&state.base, &path));
   let client = state.client.clone();
   let obj = Object::new(ctx.clone())?;
@@ -105,11 +99,7 @@ fn build_proxy_file<'js>(
         let resp = client.get(&*url).send().await.map_err(http_err)?;
         let status = resp.status();
         if !status.is_success() {
-          return Err(http_err(format!(
-            "HTTP {} for {}",
-            status.as_u16(),
-            &*url
-          )));
+          return Err(http_err(format!("HTTP {} for {}", status.as_u16(), &*url)));
         }
         resp.bytes().await.map(|b| b.to_vec()).map_err(http_err)
       }
@@ -127,9 +117,7 @@ fn build_proxy_file<'js>(
         let client = client.clone();
         Ok(Promised(async move {
           let ok = match client.head(&*url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-              header_str(&resp, SRT_TYPE_HEADER) != Some("directory")
-            }
+            Ok(resp) if resp.status().is_success() => header_str(&resp, SRT_TYPE_HEADER) != Some("directory"),
             _ => false,
           };
           Ok::<bool, flux::rquickjs::Error>(ok)
@@ -151,15 +139,9 @@ fn build_proxy_file<'js>(
         Ok(Promised(async move {
           let resp = client.head(&*url).send().await.map_err(http_err)?;
           if !resp.status().is_success() {
-            return Err(http_err(format!(
-              "stat HTTP {} for {}",
-              resp.status().as_u16(),
-              &*url
-            )));
+            return Err(http_err(format!("stat HTTP {} for {}", resp.status().as_u16(), &*url)));
           }
-          let size = header_str(&resp, "content-length")
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
+          let size = header_str(&resp, "content-length").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
           Ok::<ProxyStat, flux::rquickjs::Error>(ProxyStat { size })
         }))
       }
@@ -171,14 +153,8 @@ fn build_proxy_file<'js>(
   Ok(obj)
 }
 
-fn build_proxy_dir<'js>(
-  ctx: Ctx<'js>,
-  path: String,
-) -> flux::rquickjs::Result<Object<'js>> {
-  let state = ctx
-    .userdata::<ProxyState>()
-    .expect("proxy state")
-    .clone();
+fn build_proxy_dir<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<Object<'js>> {
+  let state = ctx.userdata::<ProxyState>().expect("proxy state").clone();
   let url = Rc::new(url_for(&state.base, &path));
   let client = state.client.clone();
   let obj = Object::new(ctx.clone())?;
@@ -195,15 +171,11 @@ fn build_proxy_dir<'js>(
         Ok(Promised(async move {
           let resp = client.get(&*url).send().await.map_err(http_err)?;
           if !resp.status().is_success() {
-            return Err(http_err(format!(
-              "entries HTTP {} for {}",
-              resp.status().as_u16(),
-              &*url
-            )));
+            return Err(http_err(format!("entries HTTP {} for {}", resp.status().as_u16(), &*url)));
           }
           let body = resp.bytes().await.map_err(http_err)?;
-          let arr: Vec<serde_json::Value> = serde_json::from_slice(&body)
-            .map_err(|e| http_err(format!("invalid dir listing: {e}")))?;
+          let arr: Vec<serde_json::Value> =
+            serde_json::from_slice(&body).map_err(|e| http_err(format!("invalid dir listing: {e}")))?;
           let items: Vec<(String, String)> = arr
             .into_iter()
             .filter_map(|v| {
@@ -230,9 +202,7 @@ fn build_proxy_dir<'js>(
         let client = client.clone();
         Ok(Promised(async move {
           let ok = match client.head(&*url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-              header_str(&resp, SRT_TYPE_HEADER) == Some("directory")
-            }
+            Ok(resp) if resp.status().is_success() => header_str(&resp, SRT_TYPE_HEADER) == Some("directory"),
             _ => false,
           };
           Ok::<bool, flux::rquickjs::Error>(ok)
@@ -250,42 +220,28 @@ fn build_proxy_write<'js>(
   ctx: Ctx<'js>,
   path: String,
   data: Value<'js>,
-) -> flux::rquickjs::Result<Promised<impl std::future::Future<Output = flux::rquickjs::Result<()>>>>
-{
+) -> flux::rquickjs::Result<Promised<impl std::future::Future<Output = flux::rquickjs::Result<()>>>> {
   let bytes = if let Some(s) = data.as_string() {
     s.to_string()?.into_bytes()
   } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
     ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
   } else {
-    return Err(ctx.throw(
-      flux::rquickjs::String::from_str(
-        ctx.clone(),
-        "Flux.write: data must be string or Uint8Array",
-      )
-      .expect("create error string")
-      .into(),
-    ));
+    return Err(
+      ctx.throw(
+        flux::rquickjs::String::from_str(ctx.clone(), "Flux.write: data must be string or Uint8Array")
+          .expect("create error string")
+          .into(),
+      ),
+    );
   };
-  let state = ctx
-    .userdata::<ProxyState>()
-    .expect("proxy state")
-    .clone();
+  let state = ctx.userdata::<ProxyState>().expect("proxy state").clone();
   let url = url_for(&state.base, &path);
   let client = state.client.clone();
   Ok(Promised(async move {
-    let resp = client
-      .put(&url)
-      .body(bytes)
-      .send()
-      .await
-      .map_err(http_err)?;
+    let resp = client.put(&url).body(bytes).send().await.map_err(http_err)?;
     let status = resp.status();
     if !status.is_success() {
-      return Err(http_err(format!(
-        "write HTTP {} for {}",
-        status.as_u16(),
-        url
-      )));
+      return Err(http_err(format!("write HTTP {} for {}", status.as_u16(), url)));
     }
     Ok::<(), flux::rquickjs::Error>(())
   }))
@@ -321,35 +277,21 @@ fn extract_fetch_headers<'js>(opts: &Object<'js>) -> Vec<(String, String)> {
 }
 
 pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) {
-  let client = reqwest::Client::builder()
-    .user_agent("lattice-go-proxy")
-    .build()
-    .expect("build proxy http client");
+  let client = reqwest::Client::builder().user_agent("lattice-go-proxy").build().expect("build proxy http client");
 
   let base = Rc::new(dev_server);
-  ctx
-    .store_userdata(ProxyState {
-      base: base.clone(),
-      client: Rc::new(client),
-    })
-    .expect("store proxy state");
+  ctx.store_userdata(ProxyState { base: base.clone(), client: Rc::new(client) }).expect("store proxy state");
 
   if files {
-    let flux: Object = ctx
-      .globals()
-      .get("Flux")
-      .expect("Flux global must be set before installing proxy");
+    let flux: Object = ctx.globals().get("Flux").expect("Flux global must be set before installing proxy");
 
-    let file_fn =
-      Function::new(ctx.clone(), build_proxy_file).expect("create proxy Flux.file");
+    let file_fn = Function::new(ctx.clone(), build_proxy_file).expect("create proxy Flux.file");
     flux.set("file", file_fn).expect("override Flux.file");
 
-    let dir_fn =
-      Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
+    let dir_fn = Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
     flux.set("dir", dir_fn).expect("override Flux.dir");
 
-    let write_fn =
-      Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
+    let write_fn = Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
     flux.set("write", write_fn).expect("override Flux.write");
   }
 
@@ -359,14 +301,8 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) 
       ctx.clone(),
       MutFn::from({
         let proxy_url = proxy_url.clone();
-        move |ctx: Ctx<'_>,
-              url: String,
-              opts: Opt<Object<'_>>|
-              -> flux::rquickjs::Result<Promised<_>> {
-          let state = ctx
-            .userdata::<ProxyState>()
-            .expect("proxy state")
-            .clone();
+        move |ctx: Ctx<'_>, url: String, opts: Opt<Object<'_>>| -> flux::rquickjs::Result<Promised<_>> {
+          let state = ctx.userdata::<ProxyState>().expect("proxy state").clone();
 
           let method = opts
             .0
@@ -375,36 +311,20 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) 
             .unwrap_or_else(|| "GET".to_string())
             .to_uppercase();
 
-          let body = opts
-            .0
-            .as_ref()
-            .and_then(|o| o.get::<_, Value>("body").ok())
-            .and_then(|v| extract_fetch_body(&v));
+          let body = opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()).and_then(|v| extract_fetch_body(&v));
 
-          let mut headers = opts
-            .0
-            .as_ref()
-            .map(extract_fetch_headers)
-            .unwrap_or_default();
+          let mut headers = opts.0.as_ref().map(extract_fetch_headers).unwrap_or_default();
           headers.push(("x-srt-proxy-url".to_string(), url));
 
           let proxy_url = (*proxy_url).clone();
           let client = state.client.clone();
-          Ok(Promised(async move {
-            do_fetch(client, &method, &proxy_url, headers, body).await
-          }))
+          Ok(Promised(async move { do_fetch(client, &method, &proxy_url, headers, body).await }))
         }
       }),
     )
     .expect("create proxy fetch");
-    ctx
-      .globals()
-      .set("fetch", fetch_fn)
-      .expect("override fetch global");
+    ctx.globals().set("fetch", fetch_fn).expect("override fetch global");
   }
 
-  log::info!(
-    "[sgo] Installed proxy (files={files} http={http}) -> http://{}/",
-    &*base
-  );
+  log::info!("[sgo] Installed proxy (files={files} http={http}) -> http://{}/", &*base);
 }

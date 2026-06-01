@@ -60,11 +60,7 @@ pub struct BuildContext<'a> {
 
 impl<'a> BuildContext<'a> {
   pub fn new(platform: &'a PlatformContext, alloy: &'a alloy::Context) -> Self {
-    Self {
-      platform,
-      alloy,
-      size: WH::default(),
-    }
+    Self { platform, alloy, size: WH::default() }
   }
 }
 
@@ -197,13 +193,7 @@ impl Element {
   }
 
   pub fn no_layout(kind: ElementKind) -> Self {
-    Self {
-      kind,
-      children: vec![],
-      parent: None,
-      layout: None,
-      interaction: Some(HitConfig::default()),
-    }
+    Self { kind, children: vec![], parent: None, layout: None, interaction: Some(HitConfig::default()) }
   }
 
   /// Builds an element from its JSX tag name. The root Window is created via

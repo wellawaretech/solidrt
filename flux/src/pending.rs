@@ -16,12 +16,7 @@ struct PendingOpsInner {
 
 impl PendingOps {
   pub(crate) fn new() -> Self {
-    Self {
-      inner: Arc::new(PendingOpsInner {
-        count: AtomicU32::new(0),
-        notify: tokio::sync::Notify::new(),
-      }),
-    }
+    Self { inner: Arc::new(PendingOpsInner { count: AtomicU32::new(0), notify: tokio::sync::Notify::new() }) }
   }
 
   pub(crate) fn hold(&self) {

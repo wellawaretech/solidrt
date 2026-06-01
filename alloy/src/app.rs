@@ -45,27 +45,14 @@ pub fn setup(title: &str, size: ISize) -> App {
 
   let (w, h) = window.size_in_pixels();
   let window_size = ISize::new(w as i64, h as i64);
-  let render_surface =
-    create_render_surface(&platform, window_size).expect("Failed to create render surface");
+  let render_surface = create_render_surface(&platform, window_size).expect("Failed to create render surface");
 
-  App {
-    sdl_context,
-    window,
-    platform,
-    render_surface,
-    record: None,
-  }
+  App { sdl_context, window, platform, render_surface, record: None }
 }
 
-fn apply_main_thread_effects(
-  event: &AlloyEvent,
-  render_surface: &mut Box<dyn RenderSurface>,
-) {
+fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>) {
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
-    let phys = ISize::new(
-      (size.width as f32 * display_scale) as i64,
-      (size.height as f32 * display_scale) as i64,
-    );
+    let phys = ISize::new((size.width as f32 * display_scale) as i64, (size.height as f32 * display_scale) as i64);
     render_surface.resize(phys);
   }
 }
@@ -81,13 +68,7 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
   ) {
-    let App {
-      sdl_context,
-      mut window,
-      platform,
-      mut render_surface,
-      record,
-    } = self;
+    let App { sdl_context, mut window, platform, mut render_surface, record } = self;
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
@@ -140,9 +121,7 @@ impl App {
             fps_frame_count = 0;
             fps_last_second = frame_time;
           }
-          render_surface
-            .draw_display_list(&dl)
-            .expect("Failed to draw display list");
+          render_surface.draw_display_list(&dl).expect("Failed to draw display list");
           render_surface.present();
           let time = frame as f64 * frame_period;
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
@@ -174,19 +153,21 @@ impl App {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
-          AlloyCommand::SetCursor(cursor) => {
-            match sdl3::mouse::Cursor::from_system(cursor) {
-              Ok(c) => c.set(),
-              Err(e) => log::warn!("set_cursor failed: {e}"),
-            }
-          }
+          AlloyCommand::SetCursor(cursor) => match sdl3::mouse::Cursor::from_system(cursor) {
+            Ok(c) => c.set(),
+            Err(e) => log::warn!("set_cursor failed: {e}"),
+          },
           AlloyCommand::SetCursorVisible(visible) => {
             sdl_context.mouse().show_cursor(visible);
           }
           AlloyCommand::SetTextInputActive(active) => {
             if let Ok(video) = sdl_context.video() {
               let ti = video.text_input();
-              if active { ti.start(&window); } else { ti.stop(&window); }
+              if active {
+                ti.start(&window);
+              } else {
+                ti.stop(&window);
+              }
             }
           }
         }

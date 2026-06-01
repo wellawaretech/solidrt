@@ -24,19 +24,13 @@ impl Headers {
       Some(v) => entries_from_init(&v)?,
       None => Vec::new(),
     };
-    Ok(Headers {
-      entries: RefCell::new(entries),
-    })
+    Ok(Headers { entries: RefCell::new(entries) })
   }
 
   pub fn get(&self, name: String) -> Option<String> {
     let name = name.to_ascii_lowercase();
     let entries = self.entries.borrow();
-    let mut found: Vec<&str> = entries
-      .iter()
-      .filter(|(k, _)| k == &name)
-      .map(|(_, v)| v.as_str())
-      .collect();
+    let mut found: Vec<&str> = entries.iter().filter(|(k, _)| k == &name).map(|(_, v)| v.as_str()).collect();
     if found.is_empty() {
       None
     } else if found.len() == 1 {
@@ -64,10 +58,7 @@ impl Headers {
   }
 
   pub fn append(&self, name: String, value: String) {
-    self
-      .entries
-      .borrow_mut()
-      .push((name.to_ascii_lowercase(), value));
+    self.entries.borrow_mut().push((name.to_ascii_lowercase(), value));
   }
 }
 
@@ -109,16 +100,8 @@ pub(crate) fn headers_from_pairs<'js>(
   ctx: &Ctx<'js>,
   pairs: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Headers>> {
-  let lowered = pairs
-    .into_iter()
-    .map(|(k, v)| (k.to_ascii_lowercase(), v))
-    .collect();
-  Class::instance(
-    ctx.clone(),
-    Headers {
-      entries: RefCell::new(lowered),
-    },
-  )
+  let lowered = pairs.into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v)).collect();
+  Class::instance(ctx.clone(), Headers { entries: RefCell::new(lowered) })
 }
 
 /// Build a Headers instance from a JS init value (plain object, Headers, null/undef).
@@ -130,12 +113,7 @@ pub(crate) fn headers_from_init<'js>(
     Some(v) => entries_from_init(v)?,
     None => Vec::new(),
   };
-  Class::instance(
-    ctx.clone(),
-    Headers {
-      entries: RefCell::new(entries),
-    },
-  )
+  Class::instance(ctx.clone(), Headers { entries: RefCell::new(entries) })
 }
 
 pub(crate) fn init_headers(ctx: &Ctx<'_>) {

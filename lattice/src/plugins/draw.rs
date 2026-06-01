@@ -1,11 +1,18 @@
 use crate::frame::{EngineState, InputEvent, InputState};
 use crate::overlay;
-use crate::rendertree::{self, hit::{DefaultHitTester, HitEntry, HitTester}, PlatformContext, XY};
-use crate::AlloyContext;
 use crate::plugins;
+use crate::rendertree::{
+  self,
+  hit::{DefaultHitTester, HitEntry, HitTester},
+  PlatformContext, XY,
+};
+use crate::AlloyContext;
 use alloy::impellers::DisplayListBuilder;
 use alloy::{Modifiers, PointerType};
-use flux::{emit_event, rquickjs::{Array, Ctx as QuickJsContext, Function, Object}};
+use flux::{
+  emit_event,
+  rquickjs::{Array, Ctx as QuickJsContext, Function, Object},
+};
 use std::sync::Arc;
 
 fn build_pointer_obj<'js>(
@@ -74,7 +81,9 @@ pub fn init(
         }
         InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
           let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
-          if path.is_empty() { continue; }
+          if path.is_empty() {
+            continue;
+          }
           let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
           let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, x, y, modifiers, &ids);
           obj.set("button", button).expect("set button");

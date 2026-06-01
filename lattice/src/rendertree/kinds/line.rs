@@ -21,8 +21,12 @@ impl Buildable for Line {
     let to = Point::new(self.x2, self.y2);
     let paint = self.paint.to_paint();
     match (self.on_length, self.off_length) {
-      (Some(on), Some(off)) => { builder.draw_dashed_line(from, to, on, off, &paint); }
-      _ => { builder.draw_line(from, to, &paint); }
+      (Some(on), Some(off)) => {
+        builder.draw_dashed_line(from, to, on, off, &paint);
+      }
+      _ => {
+        builder.draw_line(from, to, &paint);
+      }
     }
   }
 }
@@ -37,21 +41,33 @@ impl Measurable for Line {
 }
 
 impl Line {
-  pub fn set_x1(&mut self, v: f32) -> bool { self.x1 = v; false }
-  pub fn set_y1(&mut self, v: f32) -> bool { self.y1 = v; false }
-  pub fn set_x2(&mut self, v: f32) -> bool { self.x2 = v; false }
-  pub fn set_y2(&mut self, v: f32) -> bool { self.y2 = v; false }
-  pub fn set_on_length(&mut self, v: f32) -> bool { self.on_length = Some(v); false }
-  pub fn set_off_length(&mut self, v: f32) -> bool { self.off_length = Some(v); false }
+  pub fn set_x1(&mut self, v: f32) -> bool {
+    self.x1 = v;
+    false
+  }
+  pub fn set_y1(&mut self, v: f32) -> bool {
+    self.y1 = v;
+    false
+  }
+  pub fn set_x2(&mut self, v: f32) -> bool {
+    self.x2 = v;
+    false
+  }
+  pub fn set_y2(&mut self, v: f32) -> bool {
+    self.y2 = v;
+    false
+  }
+  pub fn set_on_length(&mut self, v: f32) -> bool {
+    self.on_length = Some(v);
+    false
+  }
+  pub fn set_off_length(&mut self, v: f32) -> bool {
+    self.off_length = Some(v);
+    false
+  }
 
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Line(self),
-      taffy::Style {
-        display: taffy::Display::Block,
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Line(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
   }
 
   pub fn no_layout(self) -> Element {

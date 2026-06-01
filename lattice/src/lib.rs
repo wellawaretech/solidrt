@@ -1,9 +1,9 @@
 mod frame;
+#[cfg(feature = "go")]
+mod go;
 mod overlay;
 mod plugins;
 mod rendertree;
-#[cfg(feature = "go")]
-mod go;
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
@@ -12,9 +12,9 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
-use frame::{EngineState, InputEvent, InputState};
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
+use frame::{EngineState, InputEvent, InputState};
 use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,10 +27,7 @@ use std::sync::Arc;
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
-  let rt = tokio::runtime::Builder::new_multi_thread()
-    .enable_all()
-    .build()
-    .unwrap();
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
   start(&rt, None, None, (1280, 720));
   0
 }
@@ -221,17 +218,17 @@ fn ui_thread(
               use alloy::sdl_utils::PowerState;
               let state = match info.state {
                 PowerState::OnBattery => "onBattery",
-                PowerState::Charging  => "charging",
-                PowerState::Charged   => "charged",
+                PowerState::Charging => "charging",
+                PowerState::Charged => "charged",
                 PowerState::NoBattery => "noBattery",
-                PowerState::Unknown   => "unknown",
+                PowerState::Unknown => "unknown",
               };
               eh.exec(move |ctx| {
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                 obj.set("state", state).expect("set state");
                 match info.percent {
                   Some(p) => obj.set("percent", p).expect("set percent"),
-                  None    => obj.set("percent", rquickjs::Null).expect("set percent null"),
+                  None => obj.set("percent", rquickjs::Null).expect("set percent null"),
                 }
                 emit_event(&ctx, "powerStatus", obj);
               });
@@ -325,7 +322,9 @@ fn ui_thread(
           }
         })
         .await;
-      if let Some(src) = next_src { current_src = src; }
+      if let Some(src) = next_src {
+        current_src = src;
+      }
     }
   });
 }
