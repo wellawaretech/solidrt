@@ -106,7 +106,18 @@ impl App {
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     let mut frame: u64 = 0;
 
-    let start_time = Instant::now();
+    // Pace the frame clock by present count, not by the swap-return wall clock:
+    // the swap returns at a jittery time relative to scanout, but the compositor
+    // displays one present per vblank, so frame * period is a steady tick.
+    let frame_period = window
+      .get_display()
+      .and_then(|d| d.get_mode())
+      .map(|m| m.refresh_rate)
+      .ok()
+      .filter(|&hz| hz > 0.0)
+      .map(|hz| 1.0 / hz as f64)
+      .unwrap_or(1.0 / 60.0);
+
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut fps: u32 = 0;
@@ -133,7 +144,7 @@ impl App {
             .draw_display_list(&dl)
             .expect("Failed to draw display list");
           render_surface.present();
-          let time = start_time.elapsed().as_secs_f64();
+          let time = frame as f64 * frame_period;
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
           frame += 1;
         }
