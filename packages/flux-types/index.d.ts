@@ -58,8 +58,12 @@ declare module "flux:sqlite" {
     run(params?: SqlParam[]): Promise<RunResult>
   }
 
+  // Open mode: "ro" (default, read-only, must exist), "rw" (read-write, must
+  // exist), "rw+" (read-write, create if missing).
+  type OpenMode = "ro" | "rw" | "rw+"
+
   export class Database {
-    static connect(path: string): Promise<Database>
+    static connect(path: string, mode?: OpenMode): Promise<Database>
     // Create a reusable prepared statement (synchronous; compiles on first run).
     query(sql: string): Statement
     // One-shot write; uses plain prepare (no caching).

@@ -32,9 +32,14 @@
 //! `Statement` borrows the Connection and cannot be stored as a long-lived JS
 //! object, so our Statement holds only the SQL and recompiles via the cache.
 //!
+//! Open mode is a positional second arg to `connect`: `"ro"` (DEFAULT,
+//! read-only, file must exist), `"rw"` (read-write, must exist), `"rw+"`
+//! (read-write, create if missing). Note this differs from Bun, which defaults
+//! to read-write+create; we default to read-only as a safe default, so writing
+//! or creating a database is an explicit opt-in (`"rw"` / `"rw+"`).
+//!
 //! Matches Bun:
 //! - Named export `Database`, in-memory (`:memory:`) databases.
-//! - Creates the file if missing.
 //! - `db.query(sql)` -> reusable Statement; `stmt.all/get/run`.
 //! - `db.run(sql, params)` -> `{ changes, lastInsertRowid }`.
 //! - `db.exec(sql)` runs a multi-statement script (no params).
@@ -67,7 +72,7 @@ use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, IntoJs, JsLifetime, Object, TypedArray, Value};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use tokio::sync::oneshot;
 
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
@@ -141,15 +146,20 @@ impl Database {
     ))
   }
 
+  /// Open a database. `mode` selects access: `"ro"` (default, read-only, file
+  /// must exist), `"rw"` (read-write, must exist), `"rw+"` (read-write, create
+  /// if missing).
   #[qjs(static)]
   pub fn connect<'js>(
     ctx: Ctx<'js>,
     path: String,
+    mode: Opt<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<Database>>>> {
+    let flags = open_flags(mode.0)?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
-      let r = spawn_database(path).await;
+      let r = spawn_database(path, flags).await;
       pending.release();
       r
     }))
@@ -306,13 +316,30 @@ impl Statement {
   }
 }
 
+/// Map a JS `mode` string to open flags. Default (`None`/`"ro"`) is read-only.
+fn open_flags(mode: Option<String>) -> rquickjs::Result<OpenFlags> {
+  let base = OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
+  let access = match mode.as_deref() {
+    None | Some("ro") => OpenFlags::SQLITE_OPEN_READ_ONLY,
+    Some("rw") => OpenFlags::SQLITE_OPEN_READ_WRITE,
+    Some("rw+") => OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+    Some(other) => {
+      return Err(rquickjs::Error::Io(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("unknown database mode {other:?}, expected \"ro\", \"rw\", or \"rw+\""),
+      )))
+    }
+  };
+  Ok(base | access)
+}
+
 /// Spawn the connection thread and wait for it to open the database.
-async fn spawn_database(path: String) -> rquickjs::Result<Database> {
+async fn spawn_database(path: String, flags: OpenFlags) -> rquickjs::Result<Database> {
   let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Command>();
   let (open_tx, open_rx) = oneshot::channel::<rusqlite::Result<()>>();
   std::thread::Builder::new()
     .name("flux-sqlite".to_string())
-    .spawn(move || actor_main(path, cmd_rx, open_tx))
+    .spawn(move || actor_main(path, flags, cmd_rx, open_tx))
     .map_err(sqlite_err)?;
   match open_rx.await {
     Ok(Ok(())) => Ok(Database { cmd_tx }),
@@ -322,8 +349,13 @@ async fn spawn_database(path: String) -> rquickjs::Result<Database> {
 }
 
 /// The connection thread: owns the `Connection` and serves commands serially.
-fn actor_main(path: String, cmd_rx: Receiver<Command>, open_tx: oneshot::Sender<rusqlite::Result<()>>) {
-  let mut conn = match Connection::open(&path) {
+fn actor_main(
+  path: String,
+  flags: OpenFlags,
+  cmd_rx: Receiver<Command>,
+  open_tx: oneshot::Sender<rusqlite::Result<()>>,
+) {
+  let mut conn = match Connection::open_with_flags(&path, flags) {
     Ok(c) => c,
     Err(e) => {
       let _ = open_tx.send(Err(e));
