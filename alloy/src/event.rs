@@ -76,7 +76,9 @@ pub enum AlloyEvent {
     safe_area: Rect,
     display_scale: f32,
   },
-  FrameRendered { frame: u64, fps: u32 },
+  // `time` is seconds since render-thread start, sampled right after the
+  // frame is presented (vsync-adjacent), so JS gets a steady per-frame clock.
+  FrameRendered { frame: u64, fps: u32, time: f64 },
   PointerMove {
     pointer_id: u64,
     pointer_type: PointerType,

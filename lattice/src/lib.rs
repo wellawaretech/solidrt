@@ -80,7 +80,6 @@ fn ui_thread(
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
-  let start_time = std::time::Instant::now();
 
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
@@ -227,7 +226,7 @@ fn ui_thread(
                 });
               }
             }
-            alloy::AlloyEvent::FrameRendered { frame, fps } => {
+            alloy::AlloyEvent::FrameRendered { frame, fps, time } => {
               platform_events.set_fps(fps);
               if let Some(eh) = current_exec_events.borrow().as_ref() {
                 // FrameRendered reports the frame native just finished
@@ -236,9 +235,11 @@ fn ui_thread(
                 // bootstrap owns frame 0; without the shift, record mode
                 // re-runs frame 0 at tick 0 and duplicates a PNG.
                 let next_frame = frame + 1;
+                // Record mode recomputes a deterministic virtual time so PNGs
+                // stay reproducible; live mode forwards the render-thread stamp.
                 let time = match record_fps {
                   Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
-                  _ => start_time.elapsed().as_secs_f64(),
+                  _ => time,
                 };
                 eh.exec(move |ctx| {
                   let obj = rquickjs::Object::new(ctx.clone()).expect("create object");

@@ -106,6 +106,7 @@ impl App {
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     let mut frame: u64 = 0;
 
+    let start_time = Instant::now();
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut fps: u32 = 0;
@@ -132,7 +133,8 @@ impl App {
             .draw_display_list(&dl)
             .expect("Failed to draw display list");
           render_surface.present();
-          event_tx.send(AlloyEvent::FrameRendered { frame, fps }).ok();
+          let time = start_time.elapsed().as_secs_f64();
+          event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
           frame += 1;
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

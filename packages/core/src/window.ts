@@ -100,7 +100,7 @@ export function attachWindow(_nodeId: number) {
 
   onSettled(() => {
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number; frame: number }) => {
-      runFrame((time * 1000) | 0, frame)
+      runFrame(time * 1000, frame)
     })
 
     unsubDown = Flux.on(

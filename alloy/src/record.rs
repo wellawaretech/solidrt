@@ -71,8 +71,9 @@ pub(crate) fn run_record_loop(
 
     write_png(&record.output_prefix, frame, width, height, &rgba);
 
+    let time = frame as f64 / record.fps as f64;
     event_tx
-      .send(AlloyEvent::FrameRendered { frame, fps: record.fps })
+      .send(AlloyEvent::FrameRendered { frame, fps: record.fps, time })
       .ok();
 
     let frame_number = frame + 1;
