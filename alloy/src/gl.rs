@@ -232,6 +232,8 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   let gl_attr = video.gl_attr();
   gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
   gl_attr.set_context_version(3, 0);
+  gl_attr.set_stencil_size(8);
+
   // Request 4x MSAA for path anti-aliasing. Drivers that cannot satisfy this
   // silently fall back to 0 samples (no MSAA).
   gl_attr.set_multisample_buffers(1);
