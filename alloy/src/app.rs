@@ -8,6 +8,12 @@ use crate::event::{current_resize_event, translate_event, AlloyCommand, AlloyEve
 use crate::gl;
 use crate::record::{run_record_loop, RecordConfig};
 
+// Per-present fraction by which the frame clock is pulled toward real elapsed
+// time. Higher converges faster after a framerate drop but leaks more
+// present-timestamp jitter into the animation; lower stays smoother but lags
+// longer before reaching real-time speed.
+const CLOCK_CORRECTION_GAIN: f64 = 0.05;
+
 pub struct App {
   sdl_context: sdl3::Sdl,
   window: sdl3::video::Window,
@@ -36,7 +42,7 @@ pub fn setup(title: &str, size: ISize) -> App {
     .opengl()
     .position_centered()
     // .fullscreen()
-    // .resizable()
+    .resizable()
     .high_pixel_density()
     .build()
     .expect("Failed to create window");
@@ -55,6 +61,18 @@ fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn Re
     let phys = ISize::new((size.width as f32 * display_scale) as i64, (size.height as f32 * display_scale) as i64);
     render_surface.resize(phys);
   }
+}
+
+// Seconds per refresh of the window's current display, with a 60Hz fallback.
+fn display_period(window: &sdl3::video::Window) -> f64 {
+  window
+    .get_display()
+    .and_then(|d| d.get_mode())
+    .map(|m| m.refresh_rate)
+    .ok()
+    .filter(|&hz| hz > 0.0)
+    .map(|hz| 1.0 / hz as f64)
+    .unwrap_or(1.0 / 60.0)
 }
 
 impl App {
@@ -89,15 +107,13 @@ impl App {
 
     // Pace the frame clock by present count, not by the swap-return wall clock:
     // the swap returns at a jittery time relative to scanout, but the compositor
-    // displays one present per vblank, so frame * period is a steady tick.
-    let frame_period = window
-      .get_display()
-      .and_then(|d| d.get_mode())
-      .map(|m| m.refresh_rate)
-      .ok()
-      .filter(|&hz| hz > 0.0)
-      .map(|hz| 1.0 / hz as f64)
-      .unwrap_or(1.0 / 60.0);
+    // displays one present per vblank, so a fixed step per present is steady.
+    // Accumulate rather than compute frame * period, because the refresh rate can
+    // change at runtime (e.g. Android 90 <-> 60Hz); each present advances by the
+    // period current at that moment, keeping the clock continuous across a change.
+    let mut frame_period = display_period(&window);
+    let mut clock: f64 = 0.0;
+    let clock_start = Instant::now();
 
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
@@ -120,17 +136,31 @@ impl App {
             fps = fps_frame_count;
             fps_frame_count = 0;
             fps_last_second = frame_time;
+            // Safety net for refresh-rate changes the display event might miss.
+            frame_period = display_period(&window);
           }
           render_surface.draw_display_list(&dl).expect("Failed to draw display list");
           render_surface.present();
-          let time = frame as f64 * frame_period;
+          let time = clock;
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+          // Advance one refresh period, then gently pull the clock toward real
+          // elapsed time so a sustained framerate drop (one present spanning
+          // several vblanks) keeps real-time speed without leaking per-frame jitter.
+          clock += frame_period;
+          let drift = clock_start.elapsed().as_secs_f64() - clock;
+          clock += drift * CLOCK_CORRECTION_GAIN;
           frame += 1;
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
       }
       for sdl_event in event_pump.poll_iter() {
+        if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
+          use sdl3::event::DisplayEvent;
+          if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {
+            frame_period = display_period(&window);
+          }
+        }
         if let Some(e) = translate_event(sdl_event, &window) {
           apply_main_thread_effects(&e, &mut render_surface);
           event_tx.send(e).ok();
