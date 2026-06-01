@@ -1,4 +1,4 @@
-import { onCleanup, onSettled, flush } from "@solidjs/signals"
+import { onCleanup, onSettled, flush, createSignal } from "@solidjs/signals"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
 // ------ Animation frames ----------------
@@ -6,16 +6,22 @@ import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 let nextFrameId = 1
 let animationFrames = new Map<number, Function>()
 
+// Latest display refresh rate (Hz) reported by the runtime, passed to onFrame
+// callbacks. Defaults to 60 until the first displayRefreshRate event arrives.
+let refreshRate = 60
+
 /**
- * Calls `fn` before every frame is painted. The first call receives tick=0 (game time).
- * Returns a cleanup function to stop updates. When called within a reactive scope
- * (e.g. a component or createEffect), cleanup is also automatic.
+ * Calls `fn` before every frame is painted, with the raw runtime signals: `tick`
+ * is the unsmoothed wall-clock time in ms sampled at present, `frame` is the
+ * present count, and `rate` is the current refresh rate in Hz. No pacing is
+ * applied; see createPacedClock for an opt-in smooth clock.
+ * Returns a cleanup function; also auto-cleans within a reactive scope.
  */
-export function onFrame(fn: (tick: number, frame: number) => void) {
+export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
   let frameId: number = null!
 
-  let extendedFn = (tick: number, frame: number) => {
-    fn(tick, frame)
+  let extendedFn = (tick: number, frame: number, rate: number) => {
+    fn(tick, frame, rate)
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
   }
@@ -26,6 +32,26 @@ export function onFrame(fn: (tick: number, frame: number) => void) {
   let cleanup = () => animationFrames.delete(frameId)
   onCleanup(cleanup)
   return cleanup
+}
+
+/**
+ * Opt-in smooth clock built on the raw onFrame signals. Paces by present count
+ * (one refresh period per frame) and slowly corrects toward the raw wall-clock
+ * tick, so it stays smooth while keeping up and tracks real time when the
+ * framerate drops. `gain` (0..1) trades convergence speed for jitter. Returns an
+ * accessor for the paced time in milliseconds.
+ */
+export function createPacedClock(opts?: { gain?: number }) {
+  let gain = opts?.gain ?? 0.05
+  let [time, setTime] = createSignal(0)
+  let clock = 0
+  onFrame((tick, _frame, rate) => {
+    let period = 1000 / rate
+    clock += period
+    clock += (tick - clock) * gain
+    setTime(clock)
+  })
+  return time
 }
 
 // ------ Resize ----------------
@@ -86,19 +112,25 @@ export function attachWindow(_nodeId: number) {
   let unsubKeyUp: () => void = null!
   let unsubTextInput: () => void = null!
   let unsubKeyboardVisibility: () => void = null!
+  let unsubRefreshRate: () => void = null!
   let unsubFirstResize: (() => void) | null = null
 
   function runFrame(t: number, frame: number) {
     if (animationFrames.size > 0) {
       let frames = animationFrames
       animationFrames = new Map()
-      for (let fn of frames.values()) fn(t, frame)
+      for (let fn of frames.values()) fn(t, frame, refreshRate)
     }
     flush()
     draw()
   }
 
   onSettled(() => {
+    // Sticky event: a late subscriber still receives the current rate.
+    unsubRefreshRate = Flux.on("displayRefreshRate", ({ hz }: { hz: number }) => {
+      if (hz > 0) refreshRate = hz
+    })
+
     unsubscribe = Flux.on("render", ({ time, frame }: { time: number; frame: number }) => {
       runFrame(time * 1000, frame)
     })
@@ -208,6 +240,7 @@ export function attachWindow(_nodeId: number) {
     if (unsubKeyUp) unsubKeyUp()
     if (unsubTextInput) unsubTextInput()
     if (unsubKeyboardVisibility) unsubKeyboardVisibility()
+    if (unsubRefreshRate) unsubRefreshRate()
     if (unsubFirstResize) unsubFirstResize()
   })
 }

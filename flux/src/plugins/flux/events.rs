@@ -9,8 +9,9 @@ use std::rc::Rc;
 // Events whose latest value is cached and replayed to any new subscriber.
 // Resize is sticky because it represents window state that JS code may need
 // to consume after the initial dispatch happened (engine reload, top-level
-// await before render(), late subscribe, etc.).
-const STICKY_EVENTS: &[&str] = &["resize"];
+// await before render(), late subscribe, etc.). displayRefreshRate is sticky
+// for the same reason: a late subscriber must still learn the current rate.
+const STICKY_EVENTS: &[&str] = &["resize", "displayRefreshRate"];
 
 fn is_sticky(event: &str) -> bool {
   STICKY_EVENTS.contains(&event)

@@ -64,9 +64,12 @@ pub enum AlloyEvent {
   KeyDown { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
   KeyUp { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
   Resize { size: ISize, safe_area: Rect, display_scale: f32 },
-  // `time` is seconds since render-thread start, sampled right after the
-  // frame is presented (vsync-adjacent), so JS gets a steady per-frame clock.
+  // `time` is raw wall-clock seconds since render-thread start, sampled right
+  // after present. Intentionally unsmoothed: pacing is userspace policy.
   FrameRendered { frame: u64, fps: u32, time: f64 },
+  // Display refresh rate in Hz. Its own event (independent of frames): emitted
+  // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).
+  DisplayRefreshRate { hz: f32 },
   PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
   PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },

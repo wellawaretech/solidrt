@@ -257,6 +257,15 @@ fn ui_thread(
               });
             }
           }
+          alloy::AlloyEvent::DisplayRefreshRate { hz } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("hz", hz).expect("set hz");
+                emit_event(&ctx, "displayRefreshRate", obj);
+              });
+            }
+          }
         }
       }
     });
