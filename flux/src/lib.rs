@@ -8,6 +8,7 @@ pub use logger::{CtxLogger, LogLevel, Logger};
 pub use plugins::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::fetch::{do_fetch, ResponseData};
 pub use plugins::flux::events::emit_event;
+pub use plugins::performance::Clock;
 pub use rquickjs;
 
 #[cfg(feature = "compile")]

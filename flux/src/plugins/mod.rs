@@ -4,6 +4,7 @@ pub mod fetch;
 pub mod flux;
 pub mod headers;
 pub mod http;
+pub mod performance;
 pub mod request;
 pub mod response;
 pub mod timer;
@@ -60,6 +61,7 @@ pub(crate) async fn init_context(
       timer::init_timers(&ctx);
       fetch::init_fetch(&ctx);
       console::init_console(&ctx);
+      performance::init_performance(&ctx);
       flux::events::init_events(&ctx, &flux_obj);
       flux::file::init_file(&ctx, &flux_obj);
       flux::dir::init_dir(&ctx, &flux_obj);
