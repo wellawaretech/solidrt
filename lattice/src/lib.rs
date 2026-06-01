@@ -81,6 +81,18 @@ fn ui_thread(
   let input_state = Arc::new(InputState::new());
   let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
 
+  // Bridge the synchronous Alloy event channel onto an async one: a blocking
+  // recv on a dedicated thread forwards each event, so the event loop can await
+  // events instead of polling on a timer.
+  let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<alloy::AlloyEvent>();
+  std::thread::spawn(move || {
+    while let Ok(event) = event_rx.recv() {
+      if ev_tx.send(event).is_err() {
+        break;
+      }
+    }
+  });
+
   handle.block_on(async {
     let local = tokio::task::LocalSet::new();
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
@@ -94,164 +106,161 @@ fn ui_thread(
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
     local.spawn_local(async move {
-      loop {
-        while let Ok(event) = event_rx.try_recv() {
-          match event {
-            alloy::AlloyEvent::Quit => std::process::exit(0),
-            alloy::AlloyEvent::WindowFocus => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  emit_event(&ctx, "windowFocus", obj);
-                });
-              }
+      while let Some(event) = ev_rx.recv().await {
+        match event {
+          alloy::AlloyEvent::Quit => std::process::exit(0),
+          alloy::AlloyEvent::WindowFocus => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                emit_event(&ctx, "windowFocus", obj);
+              });
             }
-            alloy::AlloyEvent::WindowBlur => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  emit_event(&ctx, "windowBlur", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::WindowBlur => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                emit_event(&ctx, "windowBlur", obj);
+              });
             }
-            alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
-              platform_events.set_window_size(size.width as f32, size.height as f32);
-              platform_events.set_display_scale(display_scale);
-              platform_events.set_safe_area(safe_area);
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                emit_resize(eh, size, safe_area, display_scale);
-              }
+          }
+          alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
+            platform_events.set_window_size(size.width as f32, size.height as f32);
+            platform_events.set_display_scale(display_scale);
+            platform_events.set_safe_area(safe_area);
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              emit_resize(eh, size, safe_area, display_scale);
             }
-            alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-              input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-              input_state_events.set_modifiers(modifiers);
-              if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
-              }
+          }
+          alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
+            input_state_events.set_modifiers(modifiers);
+            if let Some(es) = current_engine_state_events.borrow().as_ref() {
+              es.push_input(InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
             }
-            alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
-              input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-              input_state_events.set_modifiers(modifiers);
-              if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers });
-              }
+          }
+          alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
+            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
+            input_state_events.set_modifiers(modifiers);
+            if let Some(es) = current_engine_state_events.borrow().as_ref() {
+              es.push_input(InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers });
             }
-            alloy::AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-              input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-              input_state_events.set_modifiers(modifiers);
-              if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers });
-              }
-              // Touch pointers end at release; mouse pointers persist.
-              if pointer_type == alloy::PointerType::Touch {
-                input_state_events.remove_pointer((pointer_type, pointer_id));
-              }
+          }
+          alloy::AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
+            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
+            input_state_events.set_modifiers(modifiers);
+            if let Some(es) = current_engine_state_events.borrow().as_ref() {
+              es.push_input(InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers });
             }
-            alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
-              input_state_events.set_modifiers(modifiers);
-              if let Some(es) = current_engine_state_events.borrow().as_ref() {
-                es.push_input(InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers });
-              }
+            // Touch pointers end at release; mouse pointers persist.
+            if pointer_type == alloy::PointerType::Touch {
+              input_state_events.remove_pointer((pointer_type, pointer_id));
             }
-            alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
-              input_state_events.set_modifiers(modifiers);
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let key = keycode.map(|k| k.name()).unwrap_or_default();
-                let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("key", key).expect("set key");
-                  obj.set("code", code).expect("set code");
-                  obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
-                  obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
-                  obj.set("altKey", modifiers.alt).expect("set altKey");
-                  obj.set("metaKey", modifiers.meta).expect("set metaKey");
-                  emit_event(&ctx, "keydown", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
+            input_state_events.set_modifiers(modifiers);
+            if let Some(es) = current_engine_state_events.borrow().as_ref() {
+              es.push_input(InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers });
             }
-            alloy::AlloyEvent::KeyUp { keycode, scancode, modifiers } => {
-              input_state_events.set_modifiers(modifiers);
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                let key = keycode.map(|k| k.name()).unwrap_or_default();
-                let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("key", key).expect("set key");
-                  obj.set("code", code).expect("set code");
-                  obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
-                  obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
-                  obj.set("altKey", modifiers.alt).expect("set altKey");
-                  obj.set("metaKey", modifiers.meta).expect("set metaKey");
-                  emit_event(&ctx, "keyup", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
+            input_state_events.set_modifiers(modifiers);
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              let key = keycode.map(|k| k.name()).unwrap_or_default();
+              let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("key", key).expect("set key");
+                obj.set("code", code).expect("set code");
+                obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
+                obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
+                obj.set("altKey", modifiers.alt).expect("set altKey");
+                obj.set("metaKey", modifiers.meta).expect("set metaKey");
+                emit_event(&ctx, "keydown", obj);
+              });
             }
-            alloy::AlloyEvent::TextInput { text } => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("text", text).expect("set text");
-                  emit_event(&ctx, "textInput", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::KeyUp { keycode, scancode, modifiers } => {
+            input_state_events.set_modifiers(modifiers);
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              let key = keycode.map(|k| k.name()).unwrap_or_default();
+              let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("key", key).expect("set key");
+                obj.set("code", code).expect("set code");
+                obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
+                obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
+                obj.set("altKey", modifiers.alt).expect("set altKey");
+                obj.set("metaKey", modifiers.meta).expect("set metaKey");
+                emit_event(&ctx, "keyup", obj);
+              });
             }
-            alloy::AlloyEvent::KeyboardVisibility { shown } => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("shown", shown).expect("set shown");
-                  emit_event(&ctx, "keyboardVisibility", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::TextInput { text } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("text", text).expect("set text");
+                emit_event(&ctx, "textInput", obj);
+              });
             }
-            alloy::AlloyEvent::PowerStatus { info } => {
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                use alloy::sdl_utils::PowerState;
-                let state = match info.state {
-                  PowerState::OnBattery => "onBattery",
-                  PowerState::Charging  => "charging",
-                  PowerState::Charged   => "charged",
-                  PowerState::NoBattery => "noBattery",
-                  PowerState::Unknown   => "unknown",
-                };
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("state", state).expect("set state");
-                  match info.percent {
-                    Some(p) => obj.set("percent", p).expect("set percent"),
-                    None    => obj.set("percent", rquickjs::Null).expect("set percent null"),
-                  }
-                  emit_event(&ctx, "powerStatus", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::KeyboardVisibility { shown } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("shown", shown).expect("set shown");
+                emit_event(&ctx, "keyboardVisibility", obj);
+              });
             }
-            alloy::AlloyEvent::FrameRendered { frame, fps, time } => {
-              platform_events.set_fps(fps);
-              if let Some(eh) = current_exec_events.borrow().as_ref() {
-                // FrameRendered reports the frame native just finished
-                // drawing. JS uses the "render" event to compute the NEXT
-                // frame's state, so shift both fields by +1. The JS-side
-                // bootstrap owns frame 0; without the shift, record mode
-                // re-runs frame 0 at tick 0 and duplicates a PNG.
-                let next_frame = frame + 1;
-                // Record mode recomputes a deterministic virtual time so PNGs
-                // stay reproducible; live mode forwards the render-thread stamp.
-                let time = match record_fps {
-                  Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
-                  _ => time,
-                };
-                eh.exec(move |ctx| {
-                  let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                  obj.set("frame", next_frame).expect("set frame");
-                  obj.set("time", time).expect("set time");
-                  emit_event(&ctx, "render", obj);
-                });
-              }
+          }
+          alloy::AlloyEvent::PowerStatus { info } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              use alloy::sdl_utils::PowerState;
+              let state = match info.state {
+                PowerState::OnBattery => "onBattery",
+                PowerState::Charging  => "charging",
+                PowerState::Charged   => "charged",
+                PowerState::NoBattery => "noBattery",
+                PowerState::Unknown   => "unknown",
+              };
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("state", state).expect("set state");
+                match info.percent {
+                  Some(p) => obj.set("percent", p).expect("set percent"),
+                  None    => obj.set("percent", rquickjs::Null).expect("set percent null"),
+                }
+                emit_event(&ctx, "powerStatus", obj);
+              });
+            }
+          }
+          alloy::AlloyEvent::FrameRendered { frame, fps, time } => {
+            platform_events.set_fps(fps);
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              // FrameRendered reports the frame native just finished
+              // drawing. JS uses the "render" event to compute the NEXT
+              // frame's state, so shift both fields by +1. The JS-side
+              // bootstrap owns frame 0; without the shift, record mode
+              // re-runs frame 0 at tick 0 and duplicates a PNG.
+              let next_frame = frame + 1;
+              // Record mode recomputes a deterministic virtual time so PNGs
+              // stay reproducible; live mode forwards the render-thread stamp.
+              let time = match record_fps {
+                Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
+                _ => time,
+              };
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("frame", next_frame).expect("set frame");
+                obj.set("time", time).expect("set time");
+                emit_event(&ctx, "render", obj);
+              });
             }
           }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(8)).await;
       }
     });
 
