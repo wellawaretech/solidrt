@@ -33,7 +33,8 @@ define ndk-stage
 	mkdir -p $(ANDROID_DIST)
 	cp target/go/$(ANDROID_TARGET)/$(1)/liblattice.so $(ANDROID_DIST)/libmain.so
 	cp target/go/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
-	cp target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so $(ANDROID_DIST)/
+	# copy newest if there are multiple
+	cp "$$(ls -t target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_DIST)/
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 

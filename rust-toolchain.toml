@@ -1,0 +1,12 @@
+# rusqlite 0.40 (-> libsqlite3-sys 0.38) has a build.rs that uses the cfg_select!
+# macro, stabilized in Rust 1.96. Pinning here makes rustup auto-install a known
+# good toolchain so older local Rust versions upgrade instead of failing to build
+# flux with an obscure "unstable feature cfg_select" error. Bump when adopting a
+# newer Rust across the project.
+#
+# aarch64-linux-android is the default Android ABI (arm64-v8a); listing it here so
+# `make dist-android` (cargo ndk) works on a fresh checkout without a manual
+# `rustup target add`. Other ABIs in Makefile.x-android still need adding by hand.
+[toolchain]
+channel = "1.96.0"
+targets = ["aarch64-linux-android"]
