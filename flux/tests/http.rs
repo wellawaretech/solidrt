@@ -274,3 +274,84 @@ fn serve_passes_server_arg() {
   let lines = serve_and_capture(&code);
   assert_eq!(lines, vec![format!("arg http://127.0.0.1:{port}/ port={port}")]);
 }
+
+#[test]
+fn serve_routes() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            routes: {{
+                "/":          () => "root",
+                "/version":   Response.json({{ v: 1 }}),          // static Response
+                "/users/me":  () => "me",                        // exact beats :id
+                "/users/:id": (req) => "user " + req.params.id,  // path param
+                "/files/*":   () => "wild",                      // trailing wildcard
+            }},
+            fetch(req) {{ return "fallback " + req.url; }},
+        }});
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            console.log("root", await (await fetch(base + "/")).text());
+            let v = await fetch(base + "/version");
+            console.log("version", v.headers.get("content-type"), (await v.json()).v);
+            console.log("me", await (await fetch(base + "/users/me")).text());
+            console.log("id", await (await fetch(base + "/users/42")).text());
+            console.log("wild", await (await fetch(base + "/files/a/b/c")).text());
+            console.log("fallback", await (await fetch(base + "/nope")).text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec![
+      "root root".to_string(),
+      // static Response keeps its content-type and body across requests
+      "version application/json 1".to_string(),
+      // exact "/users/me" wins over "/users/:id"
+      "me me".to_string(),
+      // :id is captured into req.params
+      "id user 42".to_string(),
+      // "/files/*" matches the remaining segments
+      "wild wild".to_string(),
+      // unmatched paths fall through to fetch (label + handler body)
+      "fallback fallback /nope".to_string(),
+    ]
+  );
+}
+
+#[test]
+fn serve_routes_404_without_fetch() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        // routes but no fetch: an unmatched path is a 404.
+        let server = Flux.serve({{
+            port: {port},
+            routes: {{ "/hit": () => "hit" }},
+        }});
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            let r1 = await fetch(base + "/hit");
+            console.log("hit", r1.status, await r1.text());
+            let r2 = await fetch(base + "/miss");
+            console.log("miss", r2.status, await r2.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec!["hit 200 hit".to_string(), "miss 404 Not Found".to_string()]
+  );
+}

@@ -16,11 +16,14 @@ pub struct Request<'js> {
   #[qjs(skip_trace)]
   pub(crate) url: String,
   pub(crate) headers: Class<'js, Headers>,
+  // Matched path parameters, populated by the router (empty object otherwise).
+  pub(crate) params: Object<'js>,
 }
 
 impl<'js> Trace<'js> for Request<'js> {
   fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
     self.headers.trace(tracer);
+    self.params.trace(tracer);
   }
 }
 
@@ -40,7 +43,8 @@ impl<'js> Request<'js> {
     };
     let headers_val = init.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok());
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
-    Ok(Request { body: BodyState::new(body_bytes), method, url, headers })
+    let params = Object::new(ctx.clone())?;
+    Ok(Request { body: BodyState::new(body_bytes), method, url, headers, params })
   }
 
   #[qjs(get)]
@@ -56,6 +60,11 @@ impl<'js> Request<'js> {
   #[qjs(get)]
   pub fn headers(&self) -> Class<'js, Headers> {
     self.headers.clone()
+  }
+
+  #[qjs(get)]
+  pub fn params(&self) -> Object<'js> {
+    self.params.clone()
   }
 
   pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<String>>>> {
@@ -75,15 +84,21 @@ impl<'js> Request<'js> {
 }
 
 /// Build a Request directly from Rust state (used by serve.rs after reading the incoming body).
+/// `params` are matched route path parameters; pass an empty Vec when there is no route match.
 pub(crate) fn request_from_parts<'js>(
   ctx: &Ctx<'js>,
   method: String,
   url: String,
   body: Vec<u8>,
   headers: Vec<(String, String)>,
+  params: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
-  Class::instance(ctx.clone(), Request { body: BodyState::new(body), method, url, headers })
+  let params_obj = Object::new(ctx.clone())?;
+  for (k, v) in params {
+    params_obj.set(k, v)?;
+  }
+  Class::instance(ctx.clone(), Request { body: BodyState::new(body), method, url, headers, params: params_obj })
 }
 
 pub(crate) fn init_request(ctx: &Ctx<'_>) {
