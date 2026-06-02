@@ -364,7 +364,7 @@ pub fn start(
 
   let handle = rt.handle().clone();
   let record_fps = record.as_ref().map(|r| r.fps);
-  let mut app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64));
+  let mut app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), record.is_some());
   if let Some(record) = record {
     app = app.with_recording(record);
   }

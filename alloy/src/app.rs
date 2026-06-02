@@ -16,7 +16,7 @@ pub struct App {
   record: Option<RecordConfig>,
 }
 
-pub fn setup(title: &str, size: ISize) -> App {
+pub fn setup(title: &str, size: ISize, recording: bool) -> App {
   let (width, height) = (size.width as u32, size.height as u32);
 
   // Keep touch and mouse streams separate. Without this, SDL synthesizes
@@ -25,21 +25,26 @@ pub fn setup(title: &str, size: ISize) -> App {
   // as PointerType::Mouse with a sentinel pointer_id.
   sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
   sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
+  // For recording, force 1:1 pixel mapping so the window is exactly the
+  // requested size in physical pixels regardless of display scale.
+  if recording {
+    sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
+  }
 
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
   let video = sdl_context.video().expect("Failed to get video subsystem");
 
   gl::configure_opengl(&video);
 
-  let window = video
-    .window(title, width, height)
-    .opengl()
-    .position_centered()
-    // .fullscreen()
-    .resizable()
-    .high_pixel_density()
-    .build()
-    .expect("Failed to create window");
+  let mut builder = video.window(title, width, height);
+  builder.opengl().position_centered().high_pixel_density();
+  // A recording window is hidden and fixed-size: keeping it non-resizable stops
+  // the compositor from negotiating a different surface size on a scaled display,
+  // which would diverge from the requested capture dimensions.
+  if !recording {
+    builder.resizable();
+  }
+  let window = builder.build().expect("Failed to create window");
 
   let platform = DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
@@ -50,7 +55,12 @@ pub fn setup(title: &str, size: ISize) -> App {
   App { sdl_context, window, platform, render_surface, record: None }
 }
 
-fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>) {
+fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>, recording: bool) {
+  // In record mode the surface is fixed at the size captured in setup, which is
+  // exactly what the frame readback assumes; ignore resize events.
+  if recording {
+    return;
+  }
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let phys = ISize::new((size.width as f32 * display_scale) as i64, (size.height as f32 * display_scale) as i64);
     render_surface.resize(phys);
@@ -81,7 +91,7 @@ impl App {
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
 
     let initial = current_resize_event(&window);
-    apply_main_thread_effects(&initial, &mut render_surface);
+    apply_main_thread_effects(&initial, &mut render_surface, record.is_some());
     event_tx.send(initial).ok();
 
     if let Some(record) = record {
@@ -147,7 +157,7 @@ impl App {
           }
         }
         if let Some(e) = translate_event(sdl_event, &window) {
-          apply_main_thread_effects(&e, &mut render_surface);
+          apply_main_thread_effects(&e, &mut render_surface, false);
           event_tx.send(e).ok();
         }
       }
@@ -155,7 +165,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &mut render_surface);
+            apply_main_thread_effects(&e, &mut render_surface, false);
             event_tx.send(e).ok();
             event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
           }
