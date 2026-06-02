@@ -1,71 +1,64 @@
 #![cfg(feature = "compile")]
 
-use flux::{FluxEngine, LogLevel};
-use std::sync::{Arc, Mutex};
+mod common;
 
-fn capture_log() -> (Arc<Mutex<Vec<(LogLevel, String)>>>, impl Fn(LogLevel, &str) + Send + Sync + 'static) {
-  let log = Arc::new(Mutex::new(Vec::<(LogLevel, String)>::new()));
-  let log2 = log.clone();
-  let f = move |level: LogLevel, msg: &str| {
-    log2.lock().unwrap().push((level, msg.to_string()));
-  };
-  (log, f)
-}
-
-fn messages_at(log: &[(LogLevel, String)], level: LogLevel) -> Vec<&str> {
-  log.iter().filter(|(l, _)| *l == level).map(|(_, m)| m.as_str()).collect()
-}
+use common::run_source;
+use flux::LogLevel;
 
 #[tokio::test]
 async fn console_log_prints_to_stdout() {
-  let (log, log_fn) = capture_log();
-  let engine = FluxEngine::builder().logger(log_fn).build();
-  engine.eval_source("console.log('hello')").await;
-
-  let log = log.lock().unwrap();
-  let info = messages_at(&log, LogLevel::Log);
-  assert_eq!(info, vec!["hello"]);
-  assert!(messages_at(&log, LogLevel::Error).is_empty());
+  let out = run_source("console.log('hello')").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec!["hello"]);
+  assert!(out.lines_at(LogLevel::Error).is_empty());
 }
 
 #[tokio::test]
 async fn console_warn_prints_to_stderr() {
-  let (log, log_fn) = capture_log();
-  let engine = FluxEngine::builder().logger(log_fn).build();
-  engine.eval_source("console.warn('warning')").await;
-
-  let log = log.lock().unwrap();
-  assert!(messages_at(&log, LogLevel::Log).is_empty());
-  assert_eq!(messages_at(&log, LogLevel::Warn), vec!["warning"]);
+  let out = run_source("console.warn('warning')").await;
+  assert!(out.lines_at(LogLevel::Log).is_empty());
+  assert_eq!(out.lines_at(LogLevel::Warn), vec!["warning"]);
 }
 
 #[tokio::test]
 async fn console_error_prints_to_stderr() {
-  let (log, log_fn) = capture_log();
-  let engine = FluxEngine::builder().logger(log_fn).build();
-  engine.eval_source("console.error('oops')").await;
+  let out = run_source("console.error('oops')").await;
+  assert!(out.lines_at(LogLevel::Log).is_empty());
+  assert_eq!(out.lines_at(LogLevel::Error), vec!["oops"]);
+}
 
-  let log = log.lock().unwrap();
-  assert!(messages_at(&log, LogLevel::Log).is_empty());
-  assert_eq!(messages_at(&log, LogLevel::Error), vec!["oops"]);
+#[tokio::test]
+async fn console_debug_prints_at_debug_level() {
+  let out = run_source("console.debug('details')").await;
+  assert!(out.lines_at(LogLevel::Log).is_empty());
+  assert_eq!(out.lines_at(LogLevel::Debug), vec!["details"]);
 }
 
 #[tokio::test]
 async fn console_log_multiple_args() {
-  let (log, log_fn) = capture_log();
-  let engine = FluxEngine::builder().logger(log_fn).build();
-  engine.eval_source("console.log('a', 'b', 'c')").await;
-
-  let log = log.lock().unwrap();
-  assert_eq!(messages_at(&log, LogLevel::Log), vec!["a b c"]);
+  let out = run_source("console.log('a', 'b', 'c')").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec!["a b c"]);
 }
 
 #[tokio::test]
 async fn console_log_mixed_types() {
-  let (log, log_fn) = capture_log();
-  let engine = FluxEngine::builder().logger(log_fn).build();
-  engine.eval_source("console.log('count:', 42, true, null)").await;
+  let out = run_source("console.log('count:', 42, true, null)").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec!["count: 42 true null"]);
+}
 
-  let log = log.lock().unwrap();
-  assert_eq!(messages_at(&log, LogLevel::Log), vec!["count: 42 true null"]);
+#[tokio::test]
+async fn console_log_no_args() {
+  let out = run_source("console.log()").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec![""]);
+}
+
+#[tokio::test]
+async fn console_log_object_is_json() {
+  let out = run_source("console.log({ a: 1 })").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec![r#"{"a":1}"#]);
+}
+
+#[tokio::test]
+async fn console_log_array_is_json() {
+  let out = run_source("console.log([1, 2, 3])").await;
+  assert_eq!(out.lines_at(LogLevel::Log), vec!["[1,2,3]"]);
 }
