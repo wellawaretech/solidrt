@@ -420,6 +420,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "log",
+ "percent-encoding",
  "reqwest",
  "rquickjs",
  "rusqlite",

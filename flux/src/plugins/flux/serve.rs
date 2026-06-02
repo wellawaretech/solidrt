@@ -5,6 +5,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
+use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
@@ -152,8 +153,10 @@ fn match_segments(segments: &[Segment], path: &[&str]) -> Option<Vec<(String, St
         i += 1;
       }
       Segment::Param(name) => {
-        let value = path.get(i)?;
-        params.push((name.clone(), (*value).to_string()));
+        // Decode per-segment so an encoded %2F stays inside the value rather
+        // than acting as a path separator. Lossy: invalid UTF-8 won't reject.
+        let value = percent_decode_str(path.get(i)?).decode_utf8_lossy().into_owned();
+        params.push((name.clone(), value));
         i += 1;
       }
     }

@@ -327,6 +327,35 @@ fn serve_routes() {
 }
 
 #[test]
+fn serve_routes_decodes_params() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            routes: {{
+                "/users/:id":  (req) => req.params.id,
+                "/files/:name": (req) => req.params.name,
+            }},
+        }});
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            // %20 -> space
+            console.log("space", await (await fetch(base + "/users/john%20doe")).text());
+            // %2F stays inside the param value; still one segment matching :name
+            console.log("slash", await (await fetch(base + "/files/a%2Fb")).text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec!["space john doe".to_string(), "slash a/b".to_string()]);
+}
+
+#[test]
 fn serve_routes_404_without_fetch() {
   let port = free_port();
   let code = format!(
