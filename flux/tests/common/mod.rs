@@ -4,6 +4,8 @@
 #![allow(dead_code)]
 
 use flux::{FluxEngine, LogLevel};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A log sink that records every (level, message) the engine emits. Wire it
@@ -72,4 +74,43 @@ pub async fn run_source(code: &str) -> Captured {
   let engine = FluxEngine::builder().logger(sink.logger()).build();
   engine.eval_source(code).await;
   sink.captured()
+}
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// A unique temporary directory, removed on drop so tests clean up even on
+/// panic. Paths are handed out as strings for embedding into JS source.
+pub struct TempDir {
+  path: PathBuf,
+}
+
+impl TempDir {
+  pub fn new() -> Self {
+    let mut path = std::env::temp_dir();
+    let n = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    path.push(format!("flux-test-{}-{}", std::process::id(), n));
+    std::fs::create_dir_all(&path).expect("create temp dir");
+    Self { path }
+  }
+
+  /// The directory path as a string.
+  pub fn path(&self) -> String {
+    self.path.to_string_lossy().into_owned()
+  }
+
+  /// A child path inside the directory, as a string.
+  pub fn join(&self, name: &str) -> String {
+    self.path.join(name).to_string_lossy().into_owned()
+  }
+
+  /// The underlying path, for direct std::fs use in setup and assertions.
+  pub fn as_path(&self) -> &Path {
+    &self.path
+  }
+}
+
+impl Drop for TempDir {
+  fn drop(&mut self) {
+    let _ = std::fs::remove_dir_all(&self.path);
+  }
 }
