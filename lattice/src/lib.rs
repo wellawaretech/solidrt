@@ -234,7 +234,7 @@ fn ui_thread(
               });
             }
           }
-          alloy::AlloyEvent::FrameRendered { frame, fps, time } => {
+          alloy::AlloyEvent::FrameRendered { frame, fps, time: _ } => {
             platform_events.set_fps(fps);
             if let Some(eh) = current_exec_events.borrow().as_ref() {
               // FrameRendered reports the frame native just finished
@@ -243,15 +243,18 @@ fn ui_thread(
               // bootstrap owns frame 0; without the shift, record mode
               // re-runs frame 0 at tick 0 and duplicates a PNG.
               let next_frame = frame + 1;
-              // Record mode recomputes a deterministic virtual time so PNGs
-              // stay reproducible; live mode forwards the render-thread stamp.
-              let time = match record_fps {
-                Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
-                _ => time,
-              };
               eh.exec(move |ctx| {
                 let ts = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
                 plugins::raf::flush(&ctx, ts);
+                // One clock across the JS time surface: the render event, rAF,
+                // and performance.now() all read flux::Clock so they share a
+                // zero point. Record mode instead recomputes a deterministic
+                // virtual time (frame/fps) so PNGs stay reproducible. The
+                // render event carries seconds; JS scales to ms.
+                let time = match record_fps {
+                  Some(rfps) if rfps > 0 => next_frame as f64 / rfps as f64,
+                  _ => ts / 1000.0,
+                };
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                 obj.set("frame", next_frame).expect("set frame");
                 obj.set("time", time).expect("set time");
