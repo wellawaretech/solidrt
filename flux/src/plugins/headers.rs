@@ -27,16 +27,16 @@ impl Headers {
     Ok(Headers { entries: RefCell::new(entries) })
   }
 
-  pub fn get(&self, name: String) -> Option<String> {
+  pub fn get<'js>(&self, ctx: Ctx<'js>, name: String) -> rquickjs::Result<Value<'js>> {
     let name = name.to_ascii_lowercase();
     let entries = self.entries.borrow();
-    let mut found: Vec<&str> = entries.iter().filter(|(k, _)| k == &name).map(|(_, v)| v.as_str()).collect();
+    let found: Vec<&str> = entries.iter().filter(|(k, _)| k == &name).map(|(_, v)| v.as_str()).collect();
     if found.is_empty() {
-      None
-    } else if found.len() == 1 {
-      Some(found.remove(0).to_string())
+      // Per WHATWG, Headers.get returns null (not undefined) for a missing name.
+      Ok(Value::new_null(ctx))
     } else {
-      Some(found.join(", "))
+      // A single value joins to itself; multiple values are comma-joined.
+      Ok(rquickjs::String::from_str(ctx, &found.join(", "))?.into_value())
     }
   }
 

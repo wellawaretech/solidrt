@@ -2,7 +2,8 @@
 
 mod common;
 
-use common::run_source;
+use common::{run_source, LogSink};
+use flux::{Clock, FluxEngine};
 
 #[tokio::test]
 async fn clear_timeout_on_unknown_id_throws() {
@@ -209,4 +210,47 @@ async fn async_await_after_timer() {
   )
   .await;
   assert_eq!(out.log(), "step1,step2,step3");
+}
+
+// ----- performance.now() / Clock -----
+
+#[tokio::test]
+async fn performance_now_returns_number() {
+  let out = run_source("console.log(typeof performance.now())").await;
+  assert_eq!(out.log(), "number");
+}
+
+#[tokio::test]
+async fn performance_now_is_monotonic() {
+  let out = run_source(
+    r#"
+            let a = performance.now();
+            let b = performance.now();
+            console.log(b >= a);
+            "#,
+  )
+  .await;
+  assert_eq!(out.log(), "true");
+}
+
+#[tokio::test]
+async fn performance_now_advances_after_timeout() {
+  let out = run_source(
+    r#"
+            let start = performance.now();
+            setTimeout(() => console.log(performance.now() > start), 20);
+            "#,
+  )
+  .await;
+  assert_eq!(out.log(), "true");
+}
+
+#[tokio::test]
+async fn injected_clock_drives_performance_now() {
+  // An embedder can inject a Clock via the builder; performance.now() then
+  // reports through it instead of the default monotonic origin.
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).userdata(Clock::new(|| 1234.5)).build();
+  engine.eval_source("console.log(performance.now())").await;
+  assert_eq!(sink.captured().log(), "1234.5");
 }

@@ -21,28 +21,6 @@ fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String
     .collect()
 }
 
-fn status_text(status: reqwest::StatusCode) -> &'static str {
-  match status.as_u16() {
-    200 => "OK",
-    201 => "Created",
-    204 => "No Content",
-    301 => "Moved Permanently",
-    302 => "Found",
-    304 => "Not Modified",
-    400 => "Bad Request",
-    401 => "Unauthorized",
-    403 => "Forbidden",
-    404 => "Not Found",
-    405 => "Method Not Allowed",
-    409 => "Conflict",
-    429 => "Too Many Requests",
-    500 => "Internal Server Error",
-    502 => "Bad Gateway",
-    503 => "Service Unavailable",
-    _ => "",
-  }
-}
-
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let globals = ctx.globals();
 
@@ -146,7 +124,10 @@ pub async fn do_fetch(
 
   Ok(ResponseData {
     status: status.as_u16(),
-    status_text: status_text(status).to_string(),
+    // The canonical reason phrase for the code. reqwest/http does not retain the
+    // wire reason phrase, so this is derived from the status (covers all standard
+    // codes; empty for non-standard ones).
+    status_text: status.canonical_reason().unwrap_or("").to_string(),
     url: resp_url,
     headers: resp_headers,
     body: resp_body.to_vec(),
