@@ -57,9 +57,49 @@ fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<F
   text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
 }
 
+/// Build the response for a failed `fetch`: either the callback threw or its
+/// returned promise rejected. In both cases rquickjs re-throws the value into
+/// the context, so `ctx.catch()` yields the JS error to hand to the user's
+/// `error(err)` handler. With no handler (or if the handler itself throws or
+/// rejects) we fall back to a plaintext 500. The handler is never re-entered on
+/// its own failure, so there is no error loop.
+async fn error_response<'js>(
+  ctx: &Ctx<'js>,
+  err: rquickjs::Error,
+  error_fn: Option<&Function<'js>>,
+  logger: &Logger,
+) -> HyperResponse<Full<Bytes>> {
+  let exception = ctx.catch();
+  logger.warn(&format!("[flux] serve fetch error: {err}"));
+
+  let ef = match error_fn {
+    Some(f) => f,
+    None => return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
+  };
+
+  let val = match ef.call::<(Value<'_>,), Value<'_>>((exception,)) {
+    Ok(v) => v,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve error handler threw: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
+
+  let resolved = match MaybePromise::from_value(val).into_future::<Value<'_>>().await {
+    Ok(v) => v,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve error handler rejected: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
+
+  response_from_value(resolved, logger)
+}
+
 async fn handle_request<'js>(
   req: HyperRequest<Incoming>,
   fetch_fn: Option<&Function<'js>>,
+  error_fn: Option<&Function<'js>>,
   logger: &Logger,
 ) -> HyperResponse<Full<Bytes>> {
   let method = req.method().as_str().to_string();
@@ -95,18 +135,12 @@ async fn handle_request<'js>(
 
   let val = match f.call::<(Class<'_, Request<'_>>,), Value<'_>>((req_class,)) {
     Ok(v) => v,
-    Err(e) => {
-      logger.warn(&format!("[flux] serve fetch callback error: {e}"));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
-    }
+    Err(e) => return error_response(&ctx, e, error_fn, logger).await,
   };
 
   let resolved = match MaybePromise::from_value(val).into_future::<Value<'_>>().await {
     Ok(v) => v,
-    Err(e) => {
-      logger.warn(&format!("[flux] serve fetch rejected: {e}"));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
-    }
+    Err(e) => return error_response(&ctx, e, error_fn, logger).await,
   };
 
   response_from_value(resolved, logger)
@@ -171,14 +205,18 @@ async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
 async fn serve_one_connection<'js>(
   sock: TcpStream,
   fetch_fn: Option<Function<'js>>,
+  error_fn: Option<Function<'js>>,
   logger: Logger,
   mut shutdown_rx: watch::Receiver<bool>,
 ) {
   let io = TokioIo::new(sock);
   let service = service_fn(|req: HyperRequest<Incoming>| {
     let fetch_fn = fetch_fn.clone();
+    let error_fn = error_fn.clone();
     let logger = logger.clone();
-    async move { Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), &logger).await) }
+    async move {
+      Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), error_fn.as_ref(), &logger).await)
+    }
   });
 
   let conn = http1::Builder::new().serve_connection(io, service);
@@ -205,6 +243,7 @@ async fn run_server<'js>(
   ctx: Ctx<'js>,
   listener: TcpListener,
   fetch_fn: Option<Function<'js>>,
+  error_fn: Option<Function<'js>>,
   logger: Logger,
   shared: Arc<ServerShared>,
   pending: PendingOps,
@@ -221,10 +260,11 @@ async fn run_server<'js>(
           }
         };
         let fetch_fn = fetch_fn.clone();
+        let error_fn = error_fn.clone();
         let logger = logger.clone();
         let conn_rx = shared.shutdown.subscribe();
         ctx.spawn(async move {
-          serve_one_connection(sock, fetch_fn, logger, conn_rx).await;
+          serve_one_connection(sock, fetch_fn, error_fn, logger, conn_rx).await;
         });
       }
       _ = wait_for_stop(&mut shutdown_rx) => break,
@@ -241,6 +281,7 @@ async fn run_server<'js>(
 fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'js, Server>> {
   let port: u16 = opts.get("port")?;
   let fetch_fn: Option<Function<'js>> = opts.get("fetch").ok();
+  let error_fn: Option<Function<'js>> = opts.get("error").ok();
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
   let logger = ctx.logger();
 
@@ -259,7 +300,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let shared_for_loop = shared.clone();
   let pending_for_loop = pending.clone();
   ctx.spawn(async move {
-    run_server(ctx_for_server, listener, fetch_fn, logger, shared_for_loop, pending_for_loop).await;
+    run_server(ctx_for_server, listener, fetch_fn, error_fn, logger, shared_for_loop, pending_for_loop).await;
   });
 
   Class::instance(ctx.clone(), Server { shared, port, hostname })

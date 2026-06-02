@@ -179,3 +179,72 @@ fn serve_honors_hostname() {
     ]
   );
 }
+
+#[test]
+fn serve_error_handler() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            fetch(req) {{
+                if (req.url === "/throw") throw new Error("boom");
+                if (req.url === "/reject") return Promise.reject(new Error("async boom"));
+                return "ok";
+            }},
+            // Receives the thrown value; its returned Response (status included)
+            // is sent instead of the default 500.
+            error(err) {{ return new Response("handled: " + err.message, {{ status: 502 }}); }},
+        }});
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            let r1 = await fetch(base + "/throw");
+            console.log("throw", r1.status, await r1.text());
+            let r2 = await fetch(base + "/reject");
+            console.log("reject", r2.status, await r2.text());
+            let r3 = await fetch(base + "/");
+            console.log("ok", r3.status, await r3.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec![
+      // sync throw routes through error(); custom status passes through
+      "throw 502 handled: boom".to_string(),
+      // a rejected promise reaches error() the same way
+      "reject 502 handled: async boom".to_string(),
+      // a successful request is untouched by error()
+      "ok 200 ok".to_string(),
+    ]
+  );
+}
+
+#[test]
+fn serve_error_default_500() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        // No error() handler: a thrown fetch falls back to a plaintext 500.
+        let server = Flux.serve({{
+            port: {port},
+            fetch(req) {{ throw new Error("nope"); }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/");
+            console.log("fallback", r.status, await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec!["fallback 500 Internal Server Error".to_string()]);
+}
