@@ -4,7 +4,7 @@ pub(crate) mod pending;
 mod plugins;
 
 pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
-pub use logger::{CtxLogger, LogLevel, Logger};
+pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::fetch::{do_fetch, ResponseData};
 pub use plugins::flux::events::emit_event;

@@ -250,6 +250,8 @@ fn ui_thread(
                 _ => time,
               };
               eh.exec(move |ctx| {
+                let ts = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
+                plugins::raf::flush(&ctx, ts);
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                 obj.set("frame", next_frame).expect("set frame");
                 obj.set("time", time).expect("set time");
@@ -279,6 +281,12 @@ fn ui_thread(
       go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_files_enabled.clone(), proxy_http_enabled.clone());
     }
 
+    // One monotonic clock for the runtime, injected into each engine so
+    // performance.now() and the requestAnimationFrame timestamp share an origin.
+    // Persists across reloads for continuous time.
+    let raf_start = std::time::Instant::now();
+    let clock = flux::Clock::new(move || raf_start.elapsed().as_secs_f64() * 1000.0);
+
     loop {
       let render_tree = RenderTree::new();
       let platform = platform.clone();
@@ -301,7 +309,9 @@ fn ui_thread(
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
-        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx));
+        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
+        .plugin(|ctx| plugins::raf::init(&ctx))
+        .userdata(clock.clone());
       #[cfg(feature = "go")]
       {
         let proxy_files = proxy_files_enabled.load(Ordering::Relaxed);
