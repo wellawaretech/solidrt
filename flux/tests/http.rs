@@ -248,3 +248,29 @@ fn serve_error_default_500() {
   let lines = serve_and_capture(&code);
   assert_eq!(lines, vec!["fallback 500 Internal Server Error".to_string()]);
 }
+
+#[test]
+fn serve_passes_server_arg() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            hostname: "127.0.0.1",
+            // The second arg is the Server handle: same introspection as the
+            // value Flux.serve returned.
+            fetch(req, srv) {{ return srv.url + " port=" + srv.port; }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/");
+            console.log("arg", await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec![format!("arg http://127.0.0.1:{port}/ port={port}")]);
+}

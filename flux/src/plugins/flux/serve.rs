@@ -100,6 +100,7 @@ async fn handle_request<'js>(
   req: HyperRequest<Incoming>,
   fetch_fn: Option<&Function<'js>>,
   error_fn: Option<&Function<'js>>,
+  server: &Class<'js, Server>,
   logger: &Logger,
 ) -> HyperResponse<Full<Bytes>> {
   let method = req.method().as_str().to_string();
@@ -133,7 +134,7 @@ async fn handle_request<'js>(
     }
   };
 
-  let val = match f.call::<(Class<'_, Request<'_>>,), Value<'_>>((req_class,)) {
+  let val = match f.call::<(Class<'_, Request<'_>>, Class<'_, Server>), Value<'_>>((req_class, server.clone())) {
     Ok(v) => v,
     Err(e) => return error_response(&ctx, e, error_fn, logger).await,
   };
@@ -206,6 +207,7 @@ async fn serve_one_connection<'js>(
   sock: TcpStream,
   fetch_fn: Option<Function<'js>>,
   error_fn: Option<Function<'js>>,
+  server: Class<'js, Server>,
   logger: Logger,
   mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -213,9 +215,12 @@ async fn serve_one_connection<'js>(
   let service = service_fn(|req: HyperRequest<Incoming>| {
     let fetch_fn = fetch_fn.clone();
     let error_fn = error_fn.clone();
+    let server = server.clone();
     let logger = logger.clone();
     async move {
-      Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), error_fn.as_ref(), &logger).await)
+      Ok::<_, std::convert::Infallible>(
+        handle_request(req, fetch_fn.as_ref(), error_fn.as_ref(), &server, &logger).await,
+      )
     }
   });
 
@@ -244,6 +249,7 @@ async fn run_server<'js>(
   listener: TcpListener,
   fetch_fn: Option<Function<'js>>,
   error_fn: Option<Function<'js>>,
+  server: Class<'js, Server>,
   logger: Logger,
   shared: Arc<ServerShared>,
   pending: PendingOps,
@@ -261,10 +267,11 @@ async fn run_server<'js>(
         };
         let fetch_fn = fetch_fn.clone();
         let error_fn = error_fn.clone();
+        let server = server.clone();
         let logger = logger.clone();
         let conn_rx = shared.shutdown.subscribe();
         ctx.spawn(async move {
-          serve_one_connection(sock, fetch_fn, error_fn, logger, conn_rx).await;
+          serve_one_connection(sock, fetch_fn, error_fn, server, logger, conn_rx).await;
         });
       }
       _ = wait_for_stop(&mut shutdown_rx) => break,
@@ -295,15 +302,19 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let (shutdown_tx, _) = watch::channel(false);
   let shared = Arc::new(ServerShared { shutdown: shutdown_tx });
 
+  // Build the handle up front so the same `Server` is both returned to the
+  // caller and passed as the second `fetch(req, server)` argument.
+  let server = Class::instance(ctx.clone(), Server { shared: shared.clone(), port, hostname })?;
+
   pending.hold();
   let ctx_for_server = ctx.clone();
-  let shared_for_loop = shared.clone();
+  let server_for_loop = server.clone();
   let pending_for_loop = pending.clone();
   ctx.spawn(async move {
-    run_server(ctx_for_server, listener, fetch_fn, error_fn, logger, shared_for_loop, pending_for_loop).await;
+    run_server(ctx_for_server, listener, fetch_fn, error_fn, server_for_loop, logger, shared, pending_for_loop).await;
   });
 
-  Class::instance(ctx.clone(), Server { shared, port, hostname })
+  Ok(server)
 }
 
 pub(crate) fn init_serve<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
