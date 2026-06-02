@@ -35,23 +35,17 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
 }
 
 fn main() {
-  alloy::setup("Alloy demo", ISize::new(1200, 800), false).run(
-    |ctx| {
-      let mut t = 0.0f32;
-      loop {
-        let builder = DisplayListBuilder::new(None);
-        let dl = draw(builder, &ctx, t);
-        if ctx.submit(dl).is_err() {
-          break;
-        }
-
-        t += 0.05;
-        std::thread::sleep(Duration::from_millis(16));
+  alloy::setup("Alloy demo", ISize::new(1200, 800), alloy::Mode::Run).run(|ctx, _cmd_tx, _event_rx| {
+    let mut t = 0.0f32;
+    loop {
+      let builder = DisplayListBuilder::new(None);
+      let dl = draw(builder, &ctx, t);
+      if ctx.submit(dl).is_err() {
+        break;
       }
-    },
-    |display, dl| {
-      display.draw_display_list(dl).expect("Failed to draw display list");
-      display.present();
-    },
-  );
+
+      t += 0.05;
+      std::thread::sleep(Duration::from_millis(16));
+    }
+  });
 }

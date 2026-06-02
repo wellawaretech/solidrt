@@ -355,7 +355,7 @@ fn ui_thread(
 pub fn start(
   rt: &tokio::runtime::Runtime,
   source: Option<String>,
-  record: Option<alloy::RecordConfig>,
+  mode: alloy::Mode,
   size: (u32, u32),
 ) {
   alloy::install_logger();
@@ -363,11 +363,11 @@ pub fn start(
   log::info!("[srt] SolidRT version {version}");
 
   let handle = rt.handle().clone();
-  let record_fps = record.as_ref().map(|r| r.fps);
-  let mut app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), record.is_some());
-  if let Some(record) = record {
-    app = app.with_recording(record);
-  }
+  let record_fps = match &mode {
+    alloy::Mode::Record(record) => Some(record.fps),
+    _ => None,
+  };
+  let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps);

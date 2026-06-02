@@ -26,11 +26,11 @@ fn main() {
   }
   let source =
     source_path.map(|path| std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}")));
-  let record_config = if record {
-    Some(alloy::RecordConfig { fps, frames: (duration * fps) as u64, output_prefix: "frame".to_string() })
+  let mode = if record {
+    alloy::Mode::Record(alloy::RecordConfig { fps, frames: (duration * fps) as u64, output_prefix: "frame".to_string() })
   } else {
-    None
+    alloy::Mode::Run
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, source, record_config, size);
+  lattice::start(&rt, source, mode, size);
 }

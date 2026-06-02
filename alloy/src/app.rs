@@ -6,17 +6,18 @@ use crate::backend::{create_render_surface, DisplayContext, RenderSurface};
 use crate::context::Context;
 use crate::event::{current_resize_event, translate_event, AlloyCommand, AlloyEvent};
 use crate::gl;
-use crate::record::{run_record_loop, RecordConfig};
+use crate::mode::Mode;
+use crate::record::run_record_loop;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
   window: sdl3::video::Window,
   platform: DisplayContext,
   render_surface: Box<dyn RenderSurface>,
-  record: Option<RecordConfig>,
+  mode: Mode,
 }
 
-pub fn setup(title: &str, size: ISize, recording: bool) -> App {
+pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   let (width, height) = (size.width as u32, size.height as u32);
 
   // Keep touch and mouse streams separate. Without this, SDL synthesizes
@@ -27,7 +28,7 @@ pub fn setup(title: &str, size: ISize, recording: bool) -> App {
   sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
   // For recording, force 1:1 pixel mapping so the window is exactly the
   // requested size in physical pixels regardless of display scale.
-  if recording {
+  if mode.is_record() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
   }
 
@@ -41,10 +42,13 @@ pub fn setup(title: &str, size: ISize, recording: bool) -> App {
   // A recording window is hidden and fixed-size: keeping it non-resizable stops
   // the compositor from negotiating a different surface size on a scaled display,
   // which would diverge from the requested capture dimensions.
-  if !recording {
+  if !mode.is_record() {
     builder.resizable();
   }
-  let window = builder.build().expect("Failed to create window");
+  let mut window = builder.build().expect("Failed to create window");
+  if mode.is_record() {
+    window.hide();
+  }
 
   let platform = DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
 
@@ -52,13 +56,13 @@ pub fn setup(title: &str, size: ISize, recording: bool) -> App {
   let window_size = ISize::new(w as i64, h as i64);
   let render_surface = create_render_surface(&platform, window_size).expect("Failed to create render surface");
 
-  App { sdl_context, window, platform, render_surface, record: None }
+  App { sdl_context, window, platform, render_surface, mode }
 }
 
-fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>, recording: bool) {
+fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>, mode: &Mode) {
   // In record mode the surface is fixed at the size captured in setup, which is
   // exactly what the frame readback assumes; ignore resize events.
-  if recording {
+  if mode.is_record() {
     return;
   }
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
@@ -73,17 +77,11 @@ fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
 }
 
 impl App {
-  pub fn with_recording(mut self, config: RecordConfig) -> Self {
-    self.window.hide();
-    self.record = Some(config);
-    self
-  }
-
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
   ) {
-    let App { sdl_context, mut window, platform, mut render_surface, record } = self;
+    let App { sdl_context, mut window, platform, mut render_surface, mode } = self;
 
     let (tx, rx) = mpsc::channel::<DisplayList>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
@@ -91,10 +89,10 @@ impl App {
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
 
     let initial = current_resize_event(&window);
-    apply_main_thread_effects(&initial, &mut render_surface, record.is_some());
+    apply_main_thread_effects(&initial, &mut render_surface, &mode);
     event_tx.send(initial).ok();
 
-    if let Some(record) = record {
+    if let Mode::Record(record) = mode {
       run_record_loop(window, render_surface, rx, event_tx, record);
       return;
     }
@@ -157,7 +155,7 @@ impl App {
           }
         }
         if let Some(e) = translate_event(sdl_event, &window) {
-          apply_main_thread_effects(&e, &mut render_surface, false);
+          apply_main_thread_effects(&e, &mut render_surface, &mode);
           event_tx.send(e).ok();
         }
       }
@@ -165,7 +163,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &mut render_surface, false);
+            apply_main_thread_effects(&e, &mut render_surface, &mode);
             event_tx.send(e).ok();
             event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
           }
