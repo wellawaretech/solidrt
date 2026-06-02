@@ -5,9 +5,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
+use rquickjs::class::Trace;
 use rquickjs::promise::MaybePromise;
-use rquickjs::{function::MutFn, Class, Ctx, Function, Object, Value};
+use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
@@ -109,7 +112,68 @@ async fn handle_request<'js>(
   response_from_value(resolved, logger)
 }
 
-async fn serve_one_connection<'js>(sock: TcpStream, fetch_fn: Option<Function<'js>>, logger: Logger) {
+/// Shutdown signal shared between the JS `Server` handle, its accept loop, and
+/// each connection task. A `watch` channel latches (once set true it stays true)
+/// and broadcasts to every subscriber. The sender lives inside the `Arc`, which
+/// the accept loop also holds, so it stays alive independent of the JS handle's
+/// lifetime: dropping the handle (e.g. an unsaved `Flux.serve(...)`) leaves the
+/// server running, matching the previous behavior.
+struct ServerShared {
+  shutdown: watch::Sender<bool>,
+}
+
+/// Handle returned by `Flux.serve`. Loosely models Bun's `Server`: `stop()` plus
+/// `port`/`hostname`/`url` introspection. `stop()` is synchronous and graceful:
+/// it stops accepting and asks each open connection to shut down gracefully, so
+/// in-flight requests finish and idle keep-alive connections close promptly.
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class(rename = "Server")]
+pub struct Server {
+  #[qjs(skip_trace)]
+  shared: Arc<ServerShared>,
+  #[qjs(skip_trace)]
+  port: u16,
+  #[qjs(skip_trace)]
+  hostname: String,
+}
+
+#[rquickjs::methods]
+impl Server {
+  /// Stop accepting new connections and gracefully shut down open ones. Safe to
+  /// call more than once. A send error means there are no live subscribers (the
+  /// loop already exited), i.e. already stopped.
+  pub fn stop(&self) {
+    let _ = self.shared.shutdown.send(true);
+  }
+
+  #[qjs(get)]
+  pub fn port(&self) -> u16 {
+    self.port
+  }
+
+  #[qjs(get)]
+  pub fn hostname(&self) -> String {
+    self.hostname.clone()
+  }
+
+  #[qjs(get)]
+  pub fn url(&self) -> String {
+    format!("http://{}:{}/", self.hostname, self.port)
+  }
+}
+
+/// Resolve once a stop has been signalled (value `true`). A dropped sender also
+/// resolves it: nothing can signal a stop anymore, so treat it as one.
+async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
+  let _ = rx.wait_for(|&stop| stop).await;
+}
+
+async fn serve_one_connection<'js>(
+  sock: TcpStream,
+  fetch_fn: Option<Function<'js>>,
+  logger: Logger,
+  mut shutdown_rx: watch::Receiver<bool>,
+) {
   let io = TokioIo::new(sock);
   let service = service_fn(|req: HyperRequest<Incoming>| {
     let fetch_fn = fetch_fn.clone();
@@ -117,51 +181,90 @@ async fn serve_one_connection<'js>(sock: TcpStream, fetch_fn: Option<Function<'j
     async move { Ok::<_, std::convert::Infallible>(handle_request(req, fetch_fn.as_ref(), &logger).await) }
   });
 
-  if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-    logger.warn(&format!("[flux] serve connection error: {e}"));
+  let conn = http1::Builder::new().serve_connection(io, service);
+  tokio::pin!(conn);
+
+  tokio::select! {
+    res = conn.as_mut() => {
+      if let Err(e) = res {
+        logger.warn(&format!("[flux] serve connection error: {e}"));
+      }
+    }
+    // On stop, finish any in-flight request then close. An idle keep-alive
+    // connection has nothing in flight, so it closes promptly and the task ends.
+    _ = wait_for_stop(&mut shutdown_rx) => {
+      conn.as_mut().graceful_shutdown();
+      if let Err(e) = conn.as_mut().await {
+        logger.warn(&format!("[flux] serve connection error: {e}"));
+      }
+    }
   }
 }
 
-async fn run_server<'js>(ctx: Ctx<'js>, listener: TcpListener, fetch_fn: Option<Function<'js>>, logger: Logger) {
+async fn run_server<'js>(
+  ctx: Ctx<'js>,
+  listener: TcpListener,
+  fetch_fn: Option<Function<'js>>,
+  logger: Logger,
+  shared: Arc<ServerShared>,
+  pending: PendingOps,
+) {
+  let mut shutdown_rx = shared.shutdown.subscribe();
   loop {
-    let (sock, _) = match listener.accept().await {
-      Ok(v) => v,
-      Err(e) => {
-        logger.warn(&format!("[flux] serve accept error: {e}"));
-        continue;
+    tokio::select! {
+      accepted = listener.accept() => {
+        let (sock, _) = match accepted {
+          Ok(v) => v,
+          Err(e) => {
+            logger.warn(&format!("[flux] serve accept error: {e}"));
+            continue;
+          }
+        };
+        let fetch_fn = fetch_fn.clone();
+        let logger = logger.clone();
+        let conn_rx = shared.shutdown.subscribe();
+        ctx.spawn(async move {
+          serve_one_connection(sock, fetch_fn, logger, conn_rx).await;
+        });
       }
-    };
-    let fetch_fn = fetch_fn.clone();
-    let logger = logger.clone();
-    ctx.spawn(async move {
-      serve_one_connection(sock, fetch_fn, logger).await;
-    });
+      _ = wait_for_stop(&mut shutdown_rx) => break,
+    }
   }
+  // Paired with the hold() taken at startup. Connection tasks shut themselves
+  // down on the same signal, so the runtime drains and the engine can exit.
+  pending.release();
+}
+
+/// `Flux.serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
+/// A free function (not a closure) so its `'js` is properly higher-ranked, which
+/// the invariant `Class<'js, Server>` return type requires.
+fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'js, Server>> {
+  let port: u16 = opts.get("port")?;
+  let fetch_fn: Option<Function<'js>> = opts.get("fetch").ok();
+  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+  let logger = ctx.logger();
+
+  let hostname = "0.0.0.0".to_string();
+  let addr = format!("{hostname}:{port}");
+  let listener = std::net::TcpListener::bind(&addr).map_err(rquickjs::Error::Io)?;
+  listener.set_nonblocking(true).map_err(rquickjs::Error::Io)?;
+  let listener = TcpListener::from_std(listener).map_err(rquickjs::Error::Io)?;
+
+  let (shutdown_tx, _) = watch::channel(false);
+  let shared = Arc::new(ServerShared { shutdown: shutdown_tx });
+
+  pending.hold();
+  let ctx_for_server = ctx.clone();
+  let shared_for_loop = shared.clone();
+  let pending_for_loop = pending.clone();
+  ctx.spawn(async move {
+    run_server(ctx_for_server, listener, fetch_fn, logger, shared_for_loop, pending_for_loop).await;
+  });
+
+  Class::instance(ctx.clone(), Server { shared, port, hostname })
 }
 
 pub(crate) fn init_serve<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
-  let serve_fn = Function::new(
-    ctx.clone(),
-    MutFn::from(|opts: Object<'_>| -> rquickjs::Result<()> {
-      let ctx = opts.ctx().clone();
-      let port: u16 = opts.get("port")?;
-      let fetch_fn: Option<Function<'_>> = opts.get("fetch").ok();
-      let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-      let logger = ctx.logger();
-
-      let addr = format!("0.0.0.0:{port}");
-      let listener = std::net::TcpListener::bind(&addr).map_err(rquickjs::Error::Io)?;
-      listener.set_nonblocking(true).map_err(rquickjs::Error::Io)?;
-      let listener = TcpListener::from_std(listener).map_err(rquickjs::Error::Io)?;
-
-      pending.hold();
-      let ctx_for_server = ctx.clone();
-      ctx.spawn(async move {
-        run_server(ctx_for_server, listener, fetch_fn, logger).await;
-      });
-      Ok(())
-    }),
-  )
-  .expect("create Flux.serve function");
+  let serve_fn = Function::new(ctx.clone(), serve_impl).expect("create Flux.serve function");
   flux.set("serve", serve_fn).expect("set Flux.serve");
 }

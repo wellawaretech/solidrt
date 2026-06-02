@@ -4,7 +4,7 @@ mod common;
 
 use common::LogSink;
 use flux::{FluxEngine, LogLevel};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Grab a currently-free TCP port by binding an ephemeral one and releasing it.
 /// There is a small race before the engine rebinds it, acceptable for tests.
@@ -13,36 +13,32 @@ fn free_port() -> u16 {
   listener.local_addr().expect("local addr").port()
 }
 
-/// Run a server script on a detached engine thread and poll the captured log
-/// until the script logs the "DONE" sentinel (or an error is reported), or the
-/// timeout elapses. `Flux.serve` holds the engine's pending count open forever,
-/// so `eval_source` never returns and the thread is intentionally left running;
-/// it dies when the test process exits.
+/// Run a server script to completion and return its captured log lines. The
+/// script is expected to call `server.stop()` once its work is done: that lets
+/// the engine go idle and `eval_source` return, so we just wait for the thread
+/// to finish (with a watchdog timeout so a broken stop fails instead of hangs).
 fn serve_and_capture(code: &str) -> Vec<String> {
   let sink = LogSink::new();
   let engine = FluxEngine::builder().logger(sink.logger()).build();
   let code = code.to_string();
+  let (done_tx, done_rx) = std::sync::mpsc::channel();
   std::thread::spawn(move || {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
     rt.block_on(engine.eval_source(&code));
+    let _ = done_tx.send(());
   });
 
-  let deadline = Instant::now() + Duration::from_secs(10);
-  loop {
-    let cap = sink.captured();
-    let done = cap.lines_at(LogLevel::Log).iter().any(|l| *l == "DONE");
-    if done || cap.has_error() || Instant::now() >= deadline {
-      // Application log lines only; drop the "[flux] serve ..." access log.
-      let mut lines: Vec<String> =
-        cap.lines_at(LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(|l| l.to_string()).collect();
-      // Surface any reported errors so a failing assert shows them.
-      for e in cap.lines_at(LogLevel::Error) {
-        lines.push(format!("ERROR: {e}"));
-      }
-      return lines;
-    }
-    std::thread::sleep(Duration::from_millis(20));
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit; did the script call server.stop()?");
+
+  let cap = sink.captured();
+  // Application log lines only; drop the "[flux] serve ..." access log.
+  let mut lines: Vec<String> =
+    cap.lines_at(LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(|l| l.to_string()).collect();
+  // Surface any reported errors so a failing assert shows them.
+  for e in cap.lines_at(LogLevel::Error) {
+    lines.push(format!("ERROR: {e}"));
   }
+  lines
 }
 
 #[test]
@@ -50,7 +46,7 @@ fn serve_and_fetch_round_trip() {
   let port = free_port();
   let code = format!(
     r#"
-        Flux.serve({{
+        let server = Flux.serve({{
             port: {port},
             async fetch(req) {{
                 if (req.url === "/json") return Response.json({{ ok: true, where: req.url }});
@@ -79,9 +75,10 @@ fn serve_and_fetch_round_trip() {
 
             let r4 = await fetch(base + "/echo", {{ method: "POST", body: "hi", headers: {{ "X-Demo": "abc" }} }});
             console.log("echo", await r4.text());
-
-            console.log("DONE");
-        }})().catch(e => console.error("test error: " + (e && e.message || e)));
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            // Stopping lets the engine go idle so the test thread finishes.
+            .finally(() => server.stop());
         "#,
   );
 
@@ -98,7 +95,55 @@ fn serve_and_fetch_round_trip() {
       "custom 418 I'm a teapot false flux made",
       // POST body and a request header reach the handler; method is uppercased
       "echo POST:hi:abc",
-      "DONE",
+    ]
+  );
+}
+
+#[test]
+fn serve_returns_handle_and_stops() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            fetch(req) {{ return "up"; }},
+        }});
+        // The handle exposes Bun-like introspection.
+        console.log("meta", server.port, server.hostname, server.url);
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            let r1 = await fetch(base + "/");
+            console.log("before", r1.status, await r1.text());
+
+            server.stop();
+            // Let the accept loop drop the listener and connections drain.
+            await new Promise(r => setTimeout(r, 200));
+
+            // After stop() the listener is closed and the pooled keep-alive
+            // connection was gracefully shut down, so a fresh dial is refused.
+            let refused = false;
+            try {{
+                let r2 = await fetch(base + "/");
+                await r2.text();
+            }} catch (e) {{
+                refused = true;
+            }}
+            console.log("after", refused);
+        }})().catch(e => console.error("test error: " + (e && e.message || e)));
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec![
+      // port echoes the bound port; hostname is what we bind; url is derived
+      format!("meta {port} 0.0.0.0 http://0.0.0.0:{port}/"),
+      // server is up before stop()
+      "before 200 up".to_string(),
+      // after stop() the connection is refused, so fetch rejects
+      "after true".to_string(),
     ]
   );
 }
