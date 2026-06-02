@@ -33,4 +33,4 @@ jobs:
         run: cargo check --workspace
 
       - name: Test
-        run: cargo test -p lattice
+        run: cargo test -p lattice -p flux
