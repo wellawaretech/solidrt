@@ -244,7 +244,8 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
   let logger = ctx.logger();
 
-  let hostname = "0.0.0.0".to_string();
+  let hostname: Option<String> = opts.get("hostname")?;
+  let hostname = hostname.unwrap_or_else(|| "0.0.0.0".to_string());
   let addr = format!("{hostname}:{port}");
   let listener = std::net::TcpListener::bind(&addr).map_err(rquickjs::Error::Io)?;
   listener.set_nonblocking(true).map_err(rquickjs::Error::Io)?;

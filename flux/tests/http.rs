@@ -147,3 +147,35 @@ fn serve_returns_handle_and_stops() {
     ]
   );
 }
+
+#[test]
+fn serve_honors_hostname() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        let server = Flux.serve({{
+            port: {port},
+            hostname: "127.0.0.1",
+            fetch(req) {{ return "up"; }},
+        }});
+        // The configured hostname is reflected back, not the "0.0.0.0" default.
+        console.log("meta", server.hostname, server.url);
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/");
+            console.log("body", r.status, await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec![
+      format!("meta 127.0.0.1 http://127.0.0.1:{port}/"),
+      "body 200 up".to_string(),
+    ]
+  );
+}
