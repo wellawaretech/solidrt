@@ -283,8 +283,9 @@ fn ui_thread(
 
     // One monotonic clock for the runtime, injected into each engine so
     // performance.now() and the requestAnimationFrame timestamp share an origin.
-    // Persists across reloads for continuous time.
-    let raf_start = std::time::Instant::now();
+    // Built on tokio's Instant so the time surface stays controllable under
+    // tokio's test clock. Persists across reloads for continuous time.
+    let raf_start = tokio::time::Instant::now();
     let clock = flux::Clock::new(move || raf_start.elapsed().as_secs_f64() * 1000.0);
 
     loop {
