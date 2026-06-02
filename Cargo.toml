@@ -10,7 +10,7 @@ resolver = "2"
 alloy = { path = "alloy" }
 flux = { path = "flux" }
 log = "0.4"
-rquickjs = { version = "0.11.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
+rquickjs = { version = "0.12.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
 
 [profile.release]
