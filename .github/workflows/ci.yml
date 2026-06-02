@@ -31,3 +31,6 @@ jobs:
 
       - name: Check
         run: cargo check --workspace
+
+      - name: Test
+        run: cargo test -p lattice
