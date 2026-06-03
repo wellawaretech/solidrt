@@ -7,25 +7,18 @@ use std::pin::Pin;
 
 use crate::pending::PendingOps;
 use crate::plugins::body::{
-  buffered_async_iterable, collect_bytes, collect_json, collect_text, extract_streaming_body, make_response_stream,
-  throw_msg, BodySource, BodyState, ByteStream, IncomingBody, JsBytes, JsonValue,
+  collect_bytes, collect_json, collect_text, extract_streaming_body, throw_msg, BodySource, ByteStream, JsBytes,
+  JsonValue, MessageBody,
 };
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
-
-/// A `Response`'s readable body. The OUTGOING (server `async function*`) case is
-/// not here: it lives in `Response::stream` and is handled by serve.rs.
-pub(crate) enum ResponseBody {
-  /// Fully buffered bytes (new Response(string/bytes), Response.json, server-built).
-  Buffered(BodyState),
-  /// A live stream read from the network (a fetch response body).
-  Incoming(IncomingBody),
-}
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]
 pub struct Response<'js> {
+  /// The readable body: buffered bytes or a streamed (incoming) network body. The
+  /// OUTGOING `async function*` case lives in `stream`, not here.
   #[qjs(skip_trace)]
-  pub(crate) body: ResponseBody,
+  pub(crate) body: MessageBody,
   /// An async-iterable body source (e.g. an `async function*`). When `Some`, the
   /// buffered `body` is unused and the response is streamed to the client.
   pub(crate) stream: Option<Object<'js>>,
@@ -35,19 +28,6 @@ pub struct Response<'js> {
   pub(crate) headers: Class<'js, Headers>,
   #[qjs(skip_trace)]
   pub(crate) url: String,
-}
-
-impl ResponseBody {
-  /// Consume the body once into a drainable source. An OUTGOING stream is passed
-  /// in via `stream` (handled by the caller before this is reached).
-  fn take_source(&self, ctx: &Ctx<'_>) -> rquickjs::Result<BodySource> {
-    match self {
-      ResponseBody::Buffered(state) => state.take().map(BodySource::Bytes).ok_or_else(|| throw_msg(ctx, "Body already consumed")),
-      ResponseBody::Incoming(incoming) => {
-        incoming.take().map(BodySource::Stream).ok_or_else(|| throw_msg(ctx, "Body already consumed"))
-      }
-    }
-  }
 }
 
 type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<T>>>>>;
@@ -71,7 +51,7 @@ impl<'js> Response<'js> {
     };
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
-    let body = ResponseBody::Buffered(BodyState::new(body_bytes));
+    let body = MessageBody::buffered(body_bytes);
     Ok(Response { body, stream, status, status_text, headers, url: String::new() })
   }
 
@@ -86,7 +66,7 @@ impl<'js> Response<'js> {
         h.set("Content-Type".to_string(), "application/json".to_string());
       }
     }
-    let body = ResponseBody::Buffered(BodyState::new(json.into_bytes()));
+    let body = MessageBody::buffered(json.into_bytes());
     Ok(Response { body, stream: None, status, status_text, headers, url: String::new() })
   }
 
@@ -123,17 +103,8 @@ impl<'js> Response<'js> {
     if let Some(stream) = &self.stream {
       return Ok(stream.clone().into_value());
     }
-    match &self.body {
-      ResponseBody::Incoming(incoming) => {
-        let stream = incoming.take().ok_or_else(|| throw_msg(&ctx, "Body already consumed"))?;
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
-        Ok(make_response_stream(&ctx, stream, pending)?.into_value())
-      }
-      ResponseBody::Buffered(state) => {
-        let bytes = state.take().ok_or_else(|| throw_msg(&ctx, "Body already consumed"))?;
-        buffered_async_iterable(&ctx, bytes)
-      }
-    }
+    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    self.body.as_async_iterable(&ctx, pending)
   }
 
   pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<String>> {
@@ -177,7 +148,7 @@ pub(crate) fn response_from_parts<'js>(
   headers: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Response<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
-  let body = ResponseBody::Incoming(IncomingBody::new(body));
+  let body = MessageBody::incoming(body);
   Class::instance(ctx.clone(), Response { body, stream: None, status, status_text, headers, url })
 }
 

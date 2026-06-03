@@ -2,15 +2,25 @@ use rquickjs::class::Trace;
 use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
+use std::future::Future;
+use std::pin::Pin;
 
-use crate::plugins::body::{body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue};
+use crate::pending::PendingOps;
+use crate::plugins::body::{
+  collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream, JsBytes, JsonValue,
+  MessageBody,
+};
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+
+type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<T>>>>>;
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Request")]
 pub struct Request<'js> {
+  /// The readable body: buffered (a JS-constructed Request) or a streamed network
+  /// body (an incoming server request, read incrementally). Shared with Response.
   #[qjs(skip_trace)]
-  pub(crate) body: BodyState,
+  pub(crate) body: MessageBody,
   #[qjs(skip_trace)]
   pub(crate) method: String,
   #[qjs(skip_trace)]
@@ -44,7 +54,7 @@ impl<'js> Request<'js> {
     let headers_val = init.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok());
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
     let params = Object::new(ctx.clone())?;
-    Ok(Request { body: BodyState::new(body_bytes), method, url, headers, params })
+    Ok(Request { body: MessageBody::buffered(body_bytes), method, url, headers, params })
   }
 
   #[qjs(get)]
@@ -67,29 +77,50 @@ impl<'js> Request<'js> {
     self.params.clone()
   }
 
-  pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<String>>>> {
-    let text = body_text(&self.body, &ctx)?;
-    Ok(Promised(std::future::ready(Ok(text))))
+  /// The body as an async-iterable of `Uint8Array` chunks. An incoming request
+  /// iterates its network stream (read incrementally, constant-memory for large
+  /// uploads); a buffered one yields its bytes as one chunk. `for await` ready.
+  #[qjs(get)]
+  pub fn body(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    self.body.as_async_iterable(&ctx, pending)
   }
 
-  pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsBytes>>>> {
-    let bytes = body_bytes(&self.body, &ctx)?;
-    Ok(Promised(std::future::ready(Ok(bytes))))
+  pub fn text(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<String>> {
+    let (source, pending) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_text(source, pending))))
   }
 
-  pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<std::future::Ready<rquickjs::Result<JsonValue>>>> {
-    let json = body_json(&self.body, &ctx)?;
-    Ok(Promised(std::future::ready(Ok(json))))
+  pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsBytes>> {
+    let (source, pending) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_bytes(source, pending))))
+  }
+
+  pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsonValue>> {
+    let (source, pending) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_json(source, pending))))
   }
 }
 
-/// Build a Request directly from Rust state (used by serve.rs after reading the incoming body).
-/// `params` are matched route path parameters; pass an empty Vec when there is no route match.
+impl<'js> Request<'js> {
+  /// Consume the body once for a reader (`text`/`bytes`/`json`), returning the
+  /// drainable source and a `PendingOps` handle.
+  fn reader(&self, ctx: &Ctx<'js>) -> rquickjs::Result<(BodySource, PendingOps)> {
+    let source = self.body.take_source(ctx)?;
+    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    Ok((source, pending))
+  }
+}
+
+/// Build a Request directly from Rust state (used by serve.rs). `body` is the
+/// incoming request body stream, read incrementally by the handler rather than
+/// buffered up front. `params` are matched route path parameters; pass an empty
+/// Vec when there is no route match.
 pub(crate) fn request_from_parts<'js>(
   ctx: &Ctx<'js>,
   method: String,
   url: String,
-  body: Vec<u8>,
+  body: ByteStream,
   headers: Vec<(String, String)>,
   params: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
@@ -98,7 +129,7 @@ pub(crate) fn request_from_parts<'js>(
   for (k, v) in params {
     params_obj.set(k, v)?;
   }
-  Class::instance(ctx.clone(), Request { body: BodyState::new(body), method, url, headers, params: params_obj })
+  Class::instance(ctx.clone(), Request { body: MessageBody::incoming(body), method, url, headers, params: params_obj })
 }
 
 pub(crate) fn init_request(ctx: &Ctx<'_>) {

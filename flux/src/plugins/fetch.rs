@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::body::{is_async_iterable, pump_async_iterable, ByteStream};
+use crate::plugins::body::{is_async_iterable, pump_async_iterable, to_byte_stream, ByteStream};
 use crate::plugins::http::{reqwest_err, HttpClient};
 use crate::plugins::response::response_from_parts;
 
@@ -25,25 +25,6 @@ impl Stream for ChunkStream {
 
   fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
     self.rx.poll_recv(cx).map(|chunk| chunk.map(Ok))
-  }
-}
-
-/// Adapts reqwest's response byte stream, flattening its error to `io::Error` so
-/// the response body type stays reqwest-free past the fetch boundary. The read
-/// counterpart to `ChunkStream` (which adapts a channel into a request body).
-struct IncomingStream {
-  inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>>>>,
-}
-
-impl Stream for IncomingStream {
-  type Item = Result<Bytes, io::Error>;
-
-  fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    self
-      .inner
-      .as_mut()
-      .poll_next(cx)
-      .map(|chunk| chunk.map(|r| r.map_err(io::Error::other)))
   }
 }
 
@@ -180,7 +161,7 @@ pub async fn do_fetch(
   let resp_headers = headers_to_pairs(resp.headers());
   // Streamed by default: the body is read lazily as JS consumes it (text/bytes/
   // json drain it; response.body iterates it), rather than buffered up front.
-  let body: ByteStream = Box::pin(IncomingStream { inner: Box::pin(resp.bytes_stream()) });
+  let body: ByteStream = to_byte_stream(resp.bytes_stream());
 
   Ok(ResponseData {
     status: status.as_u16(),

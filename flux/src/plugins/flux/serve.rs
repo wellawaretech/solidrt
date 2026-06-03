@@ -21,9 +21,9 @@ use tokio::sync::{mpsc, watch};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::body::pump_async_iterable;
+use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
 use crate::plugins::request::{request_from_parts, Request};
-use crate::plugins::response::{Response, ResponseBody};
+use crate::plugins::response::Response;
 
 /// One boxed body type for every serve response, so buffered (`Full`) and
 /// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
@@ -87,8 +87,8 @@ fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> H
 /// `Incoming`, so a non-buffered body just yields nothing here.
 fn buffered_bytes(r: &Response<'_>) -> Bytes {
   match &r.body {
-    ResponseBody::Buffered(state) => Bytes::from(state.take().unwrap_or_default()),
-    ResponseBody::Incoming(_) => Bytes::new(),
+    MessageBody::Buffered(state) => Bytes::from(state.take().unwrap_or_default()),
+    MessageBody::Incoming(_) => Bytes::new(),
   }
 }
 
@@ -339,11 +339,12 @@ async fn error_response<'js>(
 
 /// The parts of an incoming request, extracted once up front and then consumed by
 /// whichever handler serves it (a route fn, a per-method fn, or the `fetch`
-/// fallback). Bundling them keeps `dispatch_fn` under clippy's argument limit.
+/// fallback). Bundling them keeps `dispatch_fn` under clippy's argument limit. The
+/// `body` is the request stream, read incrementally by the handler (not buffered).
 struct RequestParts {
   method: String,
   url: String,
-  body: Vec<u8>,
+  body: ByteStream,
   headers: Vec<(String, String)>,
 }
 
@@ -388,13 +389,11 @@ async fn handle_request<'js>(
     .collect();
   logger.log(&format!("[flux] serve {} {}", method, url));
 
-  let body = match req.into_body().collect().await {
-    Ok(collected) => collected.to_bytes().to_vec(),
-    Err(e) => {
-      logger.warn(&format!("[flux] serve request body read error: {e}"));
-      return text_response(StatusCode::BAD_REQUEST, "Bad Request");
-    }
-  };
+  // Stream the request body to the handler rather than buffering it up front, so
+  // large uploads stay constant-memory: the handler reads it on demand via
+  // req.text()/req.json()/req.bytes() or by iterating req.body. A handler that
+  // never reads it (e.g. a static route) just drops the unread stream.
+  let body = to_byte_stream(req.into_body().into_data_stream());
   let parts = RequestParts { method, url, body, headers };
 
   // Try the route table first; a match dispatches to its handler. Static routes

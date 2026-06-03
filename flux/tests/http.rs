@@ -545,3 +545,43 @@ fn fetch_iterates_response_body_stream() {
   let lines = serve_and_capture(&code);
   assert_eq!(lines, vec!["iterated Hello, streamed world".to_string()]);
 }
+
+#[test]
+fn serve_iterates_request_body_stream() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        // The client streams a request body; the server reads it incrementally by
+        // iterating `req.body` (a Rust-backed async-iterable of Uint8Array chunks)
+        // rather than the framework buffering the whole upload up front.
+        async function* parts() {{
+            yield "incre";
+            yield "mental ";
+            yield "upload";
+        }}
+
+        let server = serve({{
+            port: {port},
+            async fetch(req) {{
+                let text = "";
+                for await (const chunk of req.body) {{
+                    text += String.fromCharCode(...chunk);
+                }}
+                return new Response("got:" + text);
+            }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/upload", {{ method: "POST", body: parts() }});
+            console.log("resp", await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec!["resp got:incremental upload".to_string()]);
+}

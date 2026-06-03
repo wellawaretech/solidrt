@@ -45,24 +45,10 @@ impl BodyState {
   }
 }
 
-pub(crate) fn body_text(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<String> {
-  let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
-  String::from_utf8(bytes).map_err(utf8_err)
-}
-
-pub(crate) fn body_bytes(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<JsBytes> {
-  let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
-  Ok(JsBytes(bytes))
-}
-
-pub(crate) fn body_json(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<JsonValue> {
-  let text = body_text(state, ctx)?;
-  Ok(JsonValue(text))
-}
-
-/// A streamed response body read from the network. Consume-once: the first reader
-/// `take`s the stream (drained by text/bytes/json, or iterated by `response.body`);
-/// later access sees `None` and throws "Body already consumed".
+/// A streamed message body read from the network (a fetch response, or an
+/// incoming server request). Consume-once: the first reader `take`s the stream
+/// (drained by text/bytes/json, or iterated by `.body`); later access sees `None`
+/// and throws "Body already consumed".
 pub(crate) struct IncomingBody {
   stream: Rc<RefCell<Option<ByteStream>>>,
 }
@@ -74,6 +60,50 @@ impl IncomingBody {
 
   pub(crate) fn take(&self) -> Option<ByteStream> {
     self.stream.borrow_mut().take()
+  }
+}
+
+/// The body of a `Request` or `Response`: either buffered bytes (a JS-constructed
+/// body, a server static response) or a live network stream (a fetch response, an
+/// incoming server request). Shared so both message types read bodies identically;
+/// the only extra case is a `Response`'s outgoing `async function*`, which lives in
+/// `Response::stream`, not here.
+pub(crate) enum MessageBody {
+  Buffered(BodyState),
+  Incoming(IncomingBody),
+}
+
+impl MessageBody {
+  pub(crate) fn buffered(bytes: Vec<u8>) -> Self {
+    MessageBody::Buffered(BodyState::new(bytes))
+  }
+
+  pub(crate) fn incoming(stream: ByteStream) -> Self {
+    MessageBody::Incoming(IncomingBody::new(stream))
+  }
+
+  /// Consume the body once into a drainable source for `text`/`bytes`/`json`.
+  pub(crate) fn take_source(&self, ctx: &Ctx<'_>) -> rquickjs::Result<BodySource> {
+    match self {
+      MessageBody::Buffered(state) => state.take().map(BodySource::Bytes).ok_or_else(|| throw_consumed(ctx)),
+      MessageBody::Incoming(incoming) => incoming.take().map(BodySource::Stream).ok_or_else(|| throw_consumed(ctx)),
+    }
+  }
+
+  /// Consume the body once into an async-iterable of Uint8Array chunks (`.body`).
+  /// A streamed body iterates the network stream; a buffered one yields its bytes
+  /// as a single chunk, so `for await (const c of msg.body)` works uniformly.
+  pub(crate) fn as_async_iterable<'js>(&self, ctx: &Ctx<'js>, pending: PendingOps) -> rquickjs::Result<Value<'js>> {
+    match self {
+      MessageBody::Incoming(incoming) => {
+        let stream = incoming.take().ok_or_else(|| throw_consumed(ctx))?;
+        Ok(byte_stream_iterable(ctx, stream, pending)?.into_value())
+      }
+      MessageBody::Buffered(state) => {
+        let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
+        buffered_async_iterable(ctx, bytes)
+      }
+    }
   }
 }
 
@@ -163,7 +193,7 @@ impl<'js> IntoJs<'js> for IterStep {
 /// here Rust produces and JS consumes. Pull-based, so the network only advances
 /// as JS pulls; a `pending` op is held only across each in-flight read, so an
 /// abandoned iterator leaks nothing.
-pub(crate) fn make_response_stream<'js>(
+pub(crate) fn byte_stream_iterable<'js>(
   ctx: &Ctx<'js>,
   stream: ByteStream,
   pending: PendingOps,
@@ -211,6 +241,30 @@ pub(crate) fn buffered_async_iterable<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>) -> rq
   let ta = TypedArray::<u8>::new(ctx.clone(), bytes)?;
   let wrap: Function = ctx.eval("(b) => (async function* () { if (b.length) yield b; })()")?;
   wrap.call((ta,))
+}
+
+/// Adapts a foreign byte stream into the common `ByteStream`, flattening its error
+/// to `io::Error`. The single bridge from a producer crate's stream (reqwest for
+/// fetch responses, hyper for incoming request bodies) into our engine-internal
+/// body type, so the rest of the code stays producer-agnostic.
+struct MapErrStream<E> {
+  inner: Pin<Box<dyn Stream<Item = Result<Bytes, E>>>>,
+}
+
+impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> Stream for MapErrStream<E> {
+  type Item = Result<Bytes, io::Error>;
+
+  fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+    self.inner.as_mut().poll_next(cx).map(|chunk| chunk.map(|r| r.map_err(io::Error::other)))
+  }
+}
+
+pub(crate) fn to_byte_stream<S, E>(stream: S) -> ByteStream
+where
+  S: Stream<Item = Result<Bytes, E>> + 'static,
+  E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+{
+  Box::pin(MapErrStream { inner: Box::pin(stream) })
 }
 
 /// Extract bytes from a JS value (string, Uint8Array, null/undefined).
