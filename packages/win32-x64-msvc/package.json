@@ -7,6 +7,8 @@
   "cpu": ["x64"],
   "files": [
     "solidrt-go.exe",
+    "flux.exe",
+    "fluxc.exe",
     "libEGL.dll",
     "libGLESv2.dll",
     "LICENSE"

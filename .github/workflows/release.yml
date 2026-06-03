@@ -58,7 +58,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-x64-gnu
-          path: packages/linux-x64-gnu/solidrt-go
+          path: |
+            packages/linux-x64-gnu/solidrt-go
+            packages/linux-x64-gnu/flux
+            packages/linux-x64-gnu/fluxc
 
   build-darwin:
     runs-on: macos-14
@@ -84,6 +87,8 @@ jobs:
           name: darwin-arm64
           path: |
             packages/darwin-arm64/solidrt-go
+            packages/darwin-arm64/flux
+            packages/darwin-arm64/fluxc
             packages/darwin-arm64/libimpeller.dylib
             packages/darwin-arm64/libEGL.dylib
             packages/darwin-arm64/libGLESv2.dylib
@@ -153,6 +158,8 @@ jobs:
           name: win32-x64-msvc
           path: |
             packages/win32-x64-msvc/solidrt-go.exe
+            packages/win32-x64-msvc/flux.exe
+            packages/win32-x64-msvc/fluxc.exe
             packages/win32-x64-msvc/libEGL.dll
             packages/win32-x64-msvc/libGLESv2.dll
 
@@ -247,7 +254,11 @@ jobs:
       - name: Restore executable bit on binaries
         run: |
           chmod +x packages/linux-x64-gnu/solidrt-go
+          chmod +x packages/linux-x64-gnu/flux
+          chmod +x packages/linux-x64-gnu/fluxc
           chmod +x packages/darwin-arm64/solidrt-go
+          chmod +x packages/darwin-arm64/flux
+          chmod +x packages/darwin-arm64/fluxc
 
       - name: Publish @solidrt/core
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}

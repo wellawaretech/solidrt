@@ -64,5 +64,8 @@ dist-darwin:
 	$(MAKE) solidrt-go
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
 	cp $(HOST_DIST)/libimpeller.dylib $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
+	$(MAKE) -C $(SRT_HOME)/flux flux fluxc
+	cp $(HOST_DIST)/flux $(PKG_DARWIN)/flux
+	cp $(HOST_DIST)/fluxc $(PKG_DARWIN)/fluxc
 #	$(MAKE) runtime
 #	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner
