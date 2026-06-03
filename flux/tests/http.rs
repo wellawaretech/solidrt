@@ -474,3 +474,36 @@ fn serve_streams_async_iterable() {
     vec!["ct text/plain".to_string(), "body Hello, streamed world".to_string()]
   );
 }
+
+#[test]
+fn serve_receives_streamed_request_body() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        // fetch can stream a request body from an async generator; the server
+        // collects the chunked body and sees the full payload.
+        async function* parts() {{
+            yield "strea";
+            yield "med ";
+            yield "request";
+        }}
+
+        let server = serve({{
+            port: {port},
+            async fetch(req) {{ return new Response(req.method + ":" + await req.text()); }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/upload", {{ method: "POST", body: parts() }});
+            console.log("echo", await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec!["echo POST:streamed request".to_string()]);
+}

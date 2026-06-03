@@ -1,10 +1,32 @@
+use bytes::Bytes;
+use futures_core::Stream;
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 use std::io;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
+use tokio::sync::mpsc;
 
+use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
+use crate::plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::http::{reqwest_err, HttpClient};
 use crate::plugins::response::response_from_parts;
+
+/// Bridges the mpsc receiver fed by `pump_async_iterable` into a `futures` stream
+/// so reqwest can send it as a streamed (chunked) request body. The mirror of
+/// serve.rs's `ChannelBody`, but for `futures::Stream` rather than `hyper::Body`.
+struct ChunkStream {
+  rx: mpsc::Receiver<Bytes>,
+}
+
+impl Stream for ChunkStream {
+  type Item = Result<Bytes, io::Error>;
+
+  fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    self.rx.poll_recv(cx).map(|chunk| chunk.map(Ok))
+  }
+}
 
 pub struct ResponseData {
   pub status: u16,
@@ -38,19 +60,33 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           .unwrap_or_else(|| "GET".to_string())
           .to_uppercase();
 
-        let body: Option<Vec<u8>> = opts.0.as_ref().and_then(|o| {
-          let val: Value = o.get("body").ok()?;
-          if val.is_null() || val.is_undefined() {
-            return None;
+        // Buffered bodies (string, Uint8Array) are checked first so they pay no
+        // eval. An async-iterable body is streamed: a task drives it into a
+        // channel that reqwest sends as a chunked body (see `pump_async_iterable`).
+        let body: Option<reqwest::Body> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()) {
+          Some(val) if !(val.is_null() || val.is_undefined()) => {
+            if let Some(s) = val.as_string() {
+              Some(reqwest::Body::from(s.to_string()?.into_bytes()))
+            } else if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
+              Some(reqwest::Body::from(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()))
+            } else if is_async_iterable(val.ctx(), &val)? {
+              // Use the value's own context so its lifetime unifies (the closure
+              // gives `ctx` and `opts` independent lifetimes).
+              let stream_ctx = val.ctx().clone();
+              let logger = stream_ctx.logger();
+              let iterable = val.into_object().expect("async iterable is an object");
+              let (tx, rx) = mpsc::channel::<Bytes>(16);
+              let pump_ctx = stream_ctx.clone();
+              stream_ctx.spawn(async move {
+                pump_async_iterable(pump_ctx, iterable, tx, logger).await;
+              });
+              Some(reqwest::Body::wrap_stream(ChunkStream { rx }))
+            } else {
+              None
+            }
           }
-          if let Some(s) = val.as_string() {
-            Some(s.to_string().ok()?.into_bytes())
-          } else if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-            Some(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
-          } else {
-            None
-          }
-        });
+          _ => None,
+        };
 
         let headers: Vec<(String, String)> = opts
           .0
@@ -86,12 +122,15 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   globals.set("fetch", fetch_fn).expect("set fetch global");
 }
 
+/// Send an HTTP request and read the response into a `ResponseData`. The `body`
+/// may be buffered (`reqwest::Body::from(bytes)`) or streamed
+/// (`reqwest::Body::wrap_stream(..)`); `None` sends no body.
 pub async fn do_fetch(
   client: Rc<reqwest::Client>,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
-  body: Option<Vec<u8>>,
+  body: Option<reqwest::Body>,
 ) -> rquickjs::Result<ResponseData> {
   let mut req = match method {
     "GET" => client.get(url),

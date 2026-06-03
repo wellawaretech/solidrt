@@ -318,7 +318,9 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) 
 
           let proxy_url = (*proxy_url).clone();
           let client = state.client.clone();
-          Ok(Promised(async move { do_fetch(client, &method, &proxy_url, headers, body).await }))
+          Ok(Promised(async move {
+            do_fetch(client, &method, &proxy_url, headers, body.map(reqwest::Body::from)).await
+          }))
         }
       }),
     )
