@@ -143,3 +143,77 @@ async fn response_rejects_invalid_body_type() {
   .await;
   assert!(out.log().contains("must be string"), "got: {}", out.log());
 }
+
+#[tokio::test]
+async fn text_encoder_encodes_utf8() {
+  let out = run_source(
+    r#"
+            let enc = new TextEncoder();
+            console.log(enc.encoding);
+            // "A" is one byte; the euro sign is three (E2 82 AC = 226,130,172).
+            let bytes = enc.encode("A€");
+            console.log(bytes.length);
+            console.log(Array.from(bytes).join(","));
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "utf-8\n4\n65,226,130,172");
+}
+
+#[tokio::test]
+async fn text_decoder_streams_split_multibyte() {
+  let out = run_source(
+    r#"
+            let bytes = new TextEncoder().encode("a€b"); // 61, E2 82 AC, 62
+            let dec = new TextDecoder();
+            // Split mid euro-sign: the first chunk ends one byte into it.
+            let p1 = dec.decode(bytes.slice(0, 2), { stream: true });
+            let p2 = dec.decode(bytes.slice(2), { stream: true });
+            console.log(p1 + p2);
+            console.log(dec.encoding);
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "a\u{20ac}b\nutf-8");
+}
+
+#[tokio::test]
+async fn text_decoder_fatal_and_replacement() {
+  let out = run_source(
+    r#"
+            // Non-fatal: an invalid byte becomes the replacement char U+FFFD.
+            let lenient = new TextDecoder().decode(new Uint8Array([0xff]));
+            console.log(lenient === "�");
+            // Fatal: the same input throws instead.
+            let threw = false;
+            try { new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array([0xff])); }
+            catch (e) { threw = true; }
+            console.log(threw);
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "true\ntrue");
+}
+
+#[tokio::test]
+async fn text_decoder_bom_and_label() {
+  let out = run_source(
+    r#"
+            let bom = new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]); // BOM + "hi"
+            // A leading BOM is stripped by default.
+            console.log(new TextDecoder().decode(bom));
+            // ...and kept with ignoreBOM (length 3: U+FEFF, h, i).
+            console.log(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bom).length);
+            // A non-utf-8 label is rejected.
+            let msg = "no throw";
+            try { new TextDecoder("utf-16"); } catch (e) { msg = String(e.message || e); }
+            console.log(msg.includes("utf-8"));
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "hi\n3\ntrue");
+}

@@ -531,10 +531,12 @@ fn fetch_iterates_response_body_stream() {
 
         (async () => {{
             let r = await fetch("http://127.0.0.1:{port}/");
+            let dec = new TextDecoder();
             let text = "";
             for await (const chunk of r.body) {{
-                text += String.fromCharCode(...chunk);
+                text += dec.decode(chunk, {{ stream: true }});
             }}
+            text += dec.decode();
             console.log("iterated", text);
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
@@ -565,10 +567,12 @@ fn serve_iterates_request_body_stream() {
         let server = serve({{
             port: {port},
             async fetch(req) {{
+                let dec = new TextDecoder();
                 let text = "";
                 for await (const chunk of req.body) {{
-                    text += String.fromCharCode(...chunk);
+                    text += dec.decode(chunk, {{ stream: true }});
                 }}
+                text += dec.decode();
                 return new Response("got:" + text);
             }},
         }});

@@ -6,6 +6,7 @@ pub mod headers;
 pub mod http;
 pub mod request;
 pub mod response;
+pub mod text;
 pub mod time;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
@@ -76,6 +77,7 @@ pub(crate) async fn init_context(
       headers::init_headers(&ctx);
       request::init_request(&ctx);
       response::init_response(&ctx);
+      text::init_text(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 
