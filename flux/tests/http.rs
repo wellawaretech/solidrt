@@ -384,3 +384,44 @@ fn serve_routes_404_without_fetch() {
     vec!["hit 200 hit".to_string(), "miss 404 Not Found".to_string()]
   );
 }
+
+#[test]
+fn serve_routes_per_method() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        // A route value can be a per-method object; the request method picks the
+        // handler, and an unlisted method is a 405 with an Allow header.
+        let server = Flux.serve({{
+            port: {port},
+            routes: {{
+                "/api": {{
+                    GET:  () => "got",
+                    POST: () => "posted",
+                }},
+            }},
+        }});
+
+        (async () => {{
+            let base = "http://127.0.0.1:{port}";
+            console.log("get", await (await fetch(base + "/api")).text());
+            console.log("post", await (await fetch(base + "/api", {{ method: "POST" }})).text());
+            let d = await fetch(base + "/api", {{ method: "DELETE" }});
+            console.log("delete", d.status, d.headers.get("allow"), await d.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec![
+      "get got".to_string(),
+      "post posted".to_string(),
+      // unlisted method -> 405 with Allow listing the registered methods in order
+      "delete 405 GET, POST Method Not Allowed".to_string(),
+    ]
+  );
+}

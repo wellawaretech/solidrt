@@ -91,6 +91,8 @@ enum Segment {
 enum RouteHandler<'js> {
   Fn(Function<'js>),
   Static(StaticResponse),
+  /// Per-method object, e.g. `{ GET, POST }`. Keys are uppercased HTTP methods.
+  Methods(Vec<(String, Function<'js>)>),
 }
 
 /// A registered route: its compiled pattern, a match `tier` (0 = exact, 1 = has a
@@ -176,12 +178,24 @@ fn parse_routes<'js>(opts: &Object<'js>, logger: &Logger) -> rquickjs::Result<Op
   let mut routes = Vec::new();
   for key in routes_obj.keys::<String>().flatten() {
     let value: Value<'js> = routes_obj.get(&key)?;
+    // Order matters: a Function is also an object, so check it first; a Response
+    // class instance is also an object, so check it before the per-method object.
     let handler = if let Some(f) = value.as_function() {
       RouteHandler::Fn(f.clone())
     } else if let Ok(resp) = Class::<Response>::from_value(&value) {
       RouteHandler::Static(snapshot_response(&resp.borrow()))
+    } else if let Some(obj) = value.as_object() {
+      let mut methods = Vec::new();
+      for method in obj.keys::<String>().flatten() {
+        let mv: Value<'js> = obj.get(&method)?;
+        match mv.as_function() {
+          Some(f) => methods.push((method.to_uppercase(), f.clone())),
+          None => logger.warn(&format!("[flux] serve route {key} method {method} ignored: value must be a function")),
+        }
+      }
+      RouteHandler::Methods(methods)
     } else {
-      logger.warn(&format!("[flux] serve route {key} ignored: value must be a function or a Response"));
+      logger.warn(&format!("[flux] serve route {key} ignored: value must be a function, Response, or method object"));
       continue;
     };
     let (segments, tier) = parse_pattern(&key);
@@ -262,6 +276,38 @@ async fn error_response<'js>(
   response_from_value(resolved, logger)
 }
 
+/// The parts of an incoming request, extracted once up front and then consumed by
+/// whichever handler serves it (a route fn, a per-method fn, or the `fetch`
+/// fallback). Bundling them keeps `dispatch_fn` under clippy's argument limit.
+struct RequestParts {
+  method: String,
+  url: String,
+  body: Vec<u8>,
+  headers: Vec<(String, String)>,
+}
+
+/// Build the JS `Request` from `parts` (plus any captured path `params`) and run
+/// it through the handler function. Shared by route fns, per-method fns, and the
+/// `fetch` fallback.
+async fn dispatch_fn<'js>(
+  f: &Function<'js>,
+  parts: RequestParts,
+  params: Vec<(String, String)>,
+  server: &Class<'js, Server>,
+  error_fn: Option<&Function<'js>>,
+  logger: &Logger,
+) -> HyperResponse<Full<Bytes>> {
+  let ctx = f.ctx().clone();
+  let req_class = match request_from_parts(&ctx, parts.method, parts.url, parts.body, parts.headers, params) {
+    Ok(c) => c,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve build Request error: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
+  call_handler(f, req_class, server, error_fn, logger).await
+}
+
 async fn handle_request<'js>(
   req: HyperRequest<Incoming>,
   handlers: &Handlers<'js>,
@@ -281,50 +327,42 @@ async fn handle_request<'js>(
     .collect();
   logger.log(&format!("[flux] serve {} {}", method, url));
 
-  let body_bytes = match req.into_body().collect().await {
+  let body = match req.into_body().collect().await {
     Ok(collected) => collected.to_bytes().to_vec(),
     Err(e) => {
       logger.warn(&format!("[flux] serve request body read error: {e}"));
       return text_response(StatusCode::BAD_REQUEST, "Bad Request");
     }
   };
+  let parts = RequestParts { method, url, body, headers };
 
   // Try the route table first; a match dispatches to its handler. Static routes
   // need neither the body nor a Request, so they serve their snapshot directly.
   if let Some(table) = routes {
-    let path = url.split('?').next().unwrap_or(url.as_str());
+    let path = parts.url.split('?').next().unwrap_or(parts.url.as_str());
     if let Some((handler, params)) = table.lookup(path) {
       match handler {
         RouteHandler::Static(s) => return build_response(s.status, &s.headers, s.body.clone()),
-        RouteHandler::Fn(f) => {
-          let ctx = f.ctx().clone();
-          let req_class = match request_from_parts(&ctx, method, url, body_bytes, headers, params) {
-            Ok(c) => c,
-            Err(e) => {
-              logger.warn(&format!("[flux] serve build Request error: {e}"));
-              return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+        RouteHandler::Fn(f) => return dispatch_fn(f, parts, params, server, error_fn, logger).await,
+        // Per-method object: dispatch on the request method, else 405 + Allow.
+        RouteHandler::Methods(methods) => {
+          return match methods.iter().find(|(m, _)| *m == parts.method) {
+            Some((_, f)) => dispatch_fn(f, parts, params, server, error_fn, logger).await,
+            None => {
+              let allow = methods.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>().join(", ");
+              build_response(405, &[("Allow".to_string(), allow)], Bytes::from_static(b"Method Not Allowed"))
             }
           };
-          return call_handler(f, req_class, server, error_fn, logger).await;
         }
       }
     }
   }
 
   // No route matched: fall through to the `fetch` handler, or 404 without one.
-  let f = match fetch_fn {
-    Some(f) => f,
-    None => return text_response(StatusCode::NOT_FOUND, "Not Found"),
-  };
-  let ctx = f.ctx().clone();
-  let req_class = match request_from_parts(&ctx, method, url, body_bytes, headers, Vec::new()) {
-    Ok(c) => c,
-    Err(e) => {
-      logger.warn(&format!("[flux] serve build Request error: {e}"));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
-    }
-  };
-  call_handler(f, req_class, server, error_fn, logger).await
+  match fetch_fn {
+    Some(f) => dispatch_fn(f, parts, Vec::new(), server, error_fn, logger).await,
+    None => text_response(StatusCode::NOT_FOUND, "Not Found"),
+  }
 }
 
 /// Shutdown signal shared between the JS `Server` handle, its accept loop, and
