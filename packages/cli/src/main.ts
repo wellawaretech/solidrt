@@ -15,7 +15,7 @@
 import pkg from "../package.json"
 import { values, command, source, isTsx, isTs, isPrebuilt, printUsage } from "./args"
 import { state, requireBinary, run, shutdown } from "./util"
-import { bundle, bundleTo, runBuildCommand } from "./build"
+import { bundle, bundleTo, runBundleCommand } from "./bundle"
 import { runPackCommand } from "./pack"
 import { startServer } from "./server"
 import { spawnClient } from "./client"
@@ -72,7 +72,7 @@ if (isProdBuild && process.env.NODE_ENV !== "production") {
 // -- Bundle command --
 
 if (command === "bundle") {
-  await runBuildCommand()
+  await runBundleCommand()
 }
 
 if (command === "pack") {

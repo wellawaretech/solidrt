@@ -74,7 +74,7 @@ async function compileFromStdin(jsCode: string, outfile: string) {
   return compileJs(jsCode, outfile)
 }
 
-export async function runBuildCommand() {
+export async function runBundleCommand() {
   if (isPrebuilt) {
     if (!source!.endsWith(".srt.js")) {
       console.error("Can only compile .srt.js files. .srt.bin is already compiled.")
