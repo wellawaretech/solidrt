@@ -1,6 +1,7 @@
 use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
+use hyper::body::{Body, Frame, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
@@ -9,27 +10,60 @@ use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
+use std::convert::Infallible;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::body::pump_async_iterable;
 use crate::plugins::request::{request_from_parts, Request};
 use crate::plugins::response::Response;
 
-fn text_response(status: StatusCode, body: &str) -> HyperResponse<Full<Bytes>> {
+/// One boxed body type for every serve response, so buffered (`Full`) and
+/// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
+/// never produce an error, hence `Infallible`.
+type ResBody = BoxBody<Bytes, Infallible>;
+
+fn full_body(bytes: Bytes) -> ResBody {
+  Full::new(bytes).boxed()
+}
+
+/// A streamed response body: hyper pulls frames as the producer task sends bytes.
+/// The stream ends (EOF) when the sender is dropped (producer finished or errored).
+struct ChannelBody {
+  rx: mpsc::Receiver<Bytes>,
+}
+
+impl Body for ChannelBody {
+  type Data = Bytes;
+  type Error = Infallible;
+
+  fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+    match self.rx.poll_recv(cx) {
+      Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
+      Poll::Ready(None) => Poll::Ready(None),
+      Poll::Pending => Poll::Pending,
+    }
+  }
+}
+
+fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
   HyperResponse::builder()
     .status(status)
     .header("Content-Type", "text/plain")
-    .body(Full::new(Bytes::copy_from_slice(body.as_bytes())))
+    .body(full_body(Bytes::copy_from_slice(body.as_bytes())))
     .expect("build response")
 }
 
-/// Assemble a hyper response from already-extracted parts. Defaults the
-/// Content-Type to text/plain when the headers don't set one.
-fn build_response(status: u16, headers: &[(String, String)], body: Bytes) -> HyperResponse<Full<Bytes>> {
+/// Assemble a hyper response from already-extracted parts and an (already boxed)
+/// body. Defaults the Content-Type to text/plain when the headers don't set one.
+/// Shared by buffered and streamed responses alike.
+fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
   let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
   let mut builder = HyperResponse::builder().status(status);
   let mut has_content_type = false;
@@ -43,22 +77,43 @@ fn build_response(status: u16, headers: &[(String, String)], body: Bytes) -> Hyp
     builder = builder.header("Content-Type", "text/plain");
   }
   builder
-    .body(Full::new(body))
+    .body(body)
     .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
 }
 
-fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<Full<Bytes>> {
+fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<ResBody> {
   let body = Bytes::from(r.body.take().unwrap_or_default());
-  build_response(r.status, &r.headers.borrow().entries(), body)
+  build_response(r.status, &r.headers.borrow().entries(), full_body(body))
 }
 
-fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<Full<Bytes>> {
+/// Build a streamed response: spawn a task that drives the JS async-iterable body
+/// (`resp.stream`), feeding its chunks into the response over chunked transfer
+/// encoding (no Content-Length). The handler has already returned, so production
+/// continues on the executor while hyper flushes frames as they arrive.
+fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> HyperResponse<ResBody> {
+  let iterable = resp.stream.clone().expect("stream_response called without a stream");
+  let (tx, rx) = mpsc::channel::<Bytes>(16);
+
+  let pump_ctx = ctx.clone();
+  let logger = ctx.logger();
+  ctx.spawn(async move {
+    pump_async_iterable(pump_ctx, iterable, tx, logger).await;
+  });
+
+  build_response(resp.status, &resp.headers.borrow().entries(), ChannelBody { rx }.boxed())
+}
+
+fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<ResBody> {
   if let Some(s) = val.as_string() {
     let s = s.to_string().unwrap_or_default();
     return text_response(StatusCode::OK, &s);
   }
   if let Ok(class) = Class::<Response>::from_value(&val) {
-    return response_from_native(&class.borrow());
+    let resp = class.borrow();
+    if resp.stream.is_some() {
+      return stream_response(val.ctx(), &resp);
+    }
+    return response_from_native(&resp);
   }
   logger.warn("[flux] serve fetch must return a string or a Response");
   text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
@@ -224,7 +279,7 @@ async fn call_handler<'js>(
   server: &Class<'js, Server>,
   error_fn: Option<&Function<'js>>,
   logger: &Logger,
-) -> HyperResponse<Full<Bytes>> {
+) -> HyperResponse<ResBody> {
   let ctx = f.ctx().clone();
   let val = match f.call::<(Class<'_, Request<'_>>, Class<'_, Server>), Value<'_>>((req_class, server.clone())) {
     Ok(v) => v,
@@ -248,7 +303,7 @@ async fn error_response<'js>(
   err: rquickjs::Error,
   error_fn: Option<&Function<'js>>,
   logger: &Logger,
-) -> HyperResponse<Full<Bytes>> {
+) -> HyperResponse<ResBody> {
   let exception = ctx.catch();
   logger.warn(&format!("[flux] serve fetch error: {err}"));
 
@@ -296,7 +351,7 @@ async fn dispatch_fn<'js>(
   server: &Class<'js, Server>,
   error_fn: Option<&Function<'js>>,
   logger: &Logger,
-) -> HyperResponse<Full<Bytes>> {
+) -> HyperResponse<ResBody> {
   let ctx = f.ctx().clone();
   let req_class = match request_from_parts(&ctx, parts.method, parts.url, parts.body, parts.headers, params) {
     Ok(c) => c,
@@ -312,7 +367,7 @@ async fn handle_request<'js>(
   req: HyperRequest<Incoming>,
   handlers: &Handlers<'js>,
   logger: &Logger,
-) -> HyperResponse<Full<Bytes>> {
+) -> HyperResponse<ResBody> {
   let fetch_fn = handlers.fetch_fn.as_ref();
   let error_fn = handlers.error_fn.as_ref();
   let routes = handlers.routes.as_deref();
@@ -342,7 +397,7 @@ async fn handle_request<'js>(
     let path = parts.url.split('?').next().unwrap_or(parts.url.as_str());
     if let Some((handler, params)) = table.lookup(path) {
       match handler {
-        RouteHandler::Static(s) => return build_response(s.status, &s.headers, s.body.clone()),
+        RouteHandler::Static(s) => return build_response(s.status, &s.headers, full_body(s.body.clone())),
         RouteHandler::Fn(f) => return dispatch_fn(f, parts, params, server, error_fn, logger).await,
         // Per-method object: dispatch on the request method, else 405 + Allow.
         RouteHandler::Methods(methods) => {
@@ -350,7 +405,7 @@ async fn handle_request<'js>(
             Some((_, f)) => dispatch_fn(f, parts, params, server, error_fn, logger).await,
             None => {
               let allow = methods.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>().join(", ");
-              build_response(405, &[("Allow".to_string(), allow)], Bytes::from_static(b"Method Not Allowed"))
+              build_response(405, &[("Allow".to_string(), allow)], full_body(Bytes::from_static(b"Method Not Allowed")))
             }
           };
         }

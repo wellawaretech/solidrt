@@ -3,7 +3,7 @@ use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 
-use crate::plugins::body::{body_bytes, body_json, body_text, extract_body_value, BodyState, JsBytes, JsonValue};
+use crate::plugins::body::{body_bytes, body_json, body_text, extract_streaming_body, BodyState, JsBytes, JsonValue};
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
 #[derive(JsLifetime)]
@@ -11,6 +11,9 @@ use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 pub struct Response<'js> {
   #[qjs(skip_trace)]
   pub(crate) body: BodyState,
+  /// An async-iterable body source (e.g. an `async function*`). When `Some`, the
+  /// buffered `body` is unused and the response is streamed to the client.
+  pub(crate) stream: Option<Object<'js>>,
   pub(crate) status: u16,
   #[qjs(skip_trace)]
   pub(crate) status_text: String,
@@ -22,6 +25,9 @@ pub struct Response<'js> {
 impl<'js> Trace<'js> for Response<'js> {
   fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
     self.headers.trace(tracer);
+    if let Some(stream) = &self.stream {
+      stream.trace(tracer);
+    }
   }
 }
 
@@ -29,13 +35,13 @@ impl<'js> Trace<'js> for Response<'js> {
 impl<'js> Response<'js> {
   #[qjs(constructor)]
   pub fn new(ctx: Ctx<'js>, body: Opt<Value<'js>>, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
-    let body_bytes = match body.0 {
-      Some(v) => extract_body_value(&v, "Response")?,
-      None => Vec::new(),
+    let (body_bytes, stream) = match body.0 {
+      Some(v) => extract_streaming_body(&ctx, &v)?,
+      None => (Vec::new(), None),
     };
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
-    Ok(Response { body: BodyState::new(body_bytes), status, status_text, headers, url: String::new() })
+    Ok(Response { body: BodyState::new(body_bytes), stream, status, status_text, headers, url: String::new() })
   }
 
   #[qjs(static, rename = "json")]
@@ -49,7 +55,7 @@ impl<'js> Response<'js> {
         h.set("Content-Type".to_string(), "application/json".to_string());
       }
     }
-    Ok(Response { body: BodyState::new(json.into_bytes()), status, status_text, headers, url: String::new() })
+    Ok(Response { body: BodyState::new(json.into_bytes()), stream: None, status, status_text, headers, url: String::new() })
   }
 
   #[qjs(get)]
@@ -103,7 +109,7 @@ pub(crate) fn response_from_parts<'js>(
   headers: Vec<(String, String)>,
 ) -> rquickjs::Result<Class<'js, Response<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
-  Class::instance(ctx.clone(), Response { body: BodyState::new(body), status, status_text, headers, url })
+  Class::instance(ctx.clone(), Response { body: BodyState::new(body), stream: None, status, status_text, headers, url })
 }
 
 fn parse_init<'js>(init: Option<&Object<'js>>) -> rquickjs::Result<(u16, String, Option<Value<'js>>)> {

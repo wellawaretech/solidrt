@@ -425,3 +425,41 @@ fn serve_routes_per_method() {
     ]
   );
 }
+
+#[test]
+fn serve_streams_async_iterable() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        // A handler can return a Response whose body is an async generator; each
+        // yielded chunk is streamed to the client (chunked transfer encoding).
+        async function* chunks() {{
+            yield "Hello, ";
+            yield "streamed ";
+            yield "world";
+        }}
+
+        let server = Flux.serve({{
+            port: {port},
+            fetch() {{
+                return new Response(chunks(), {{ headers: {{ "Content-Type": "text/plain" }} }});
+            }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/");
+            console.log("ct", r.headers.get("content-type"));
+            // The client reassembles the streamed chunks into the full body.
+            console.log("body", await r.text());
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(
+    lines,
+    vec!["ct text/plain".to_string(), "body Hello, streamed world".to_string()]
+  );
+}
