@@ -2,8 +2,10 @@ use rquickjs::{Ctx, JsLifetime};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
+use rquickjs::module::ModuleDef;
+
 use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
-use crate::plugins::{self, PluginFn, UserdataFn};
+use crate::plugins::{self, ModuleOverrideFn, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
 pub(crate) type ExecFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
@@ -52,6 +54,7 @@ impl ExecHandle {
 pub struct FluxEngineBuilder {
   plugins: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
+  module_overrides: Vec<ModuleOverrideFn>,
   logger: Option<LogFn>,
   stack_size: Option<usize>,
 }
@@ -83,6 +86,14 @@ impl FluxEngineBuilder {
     self
   }
 
+  pub fn module_override<D: ModuleDef + Send + 'static>(mut self, name: &'static str, def: D) -> Self {
+    self.module_overrides.push(Box::new(move |resolver, loader| {
+      resolver.add_module(name);
+      loader.add_module(name, def);
+    }));
+    self
+  }
+
   pub fn stack_size(mut self, limit: usize) -> Self {
     self.stack_size = Some(limit);
     self
@@ -94,13 +105,22 @@ impl FluxEngineBuilder {
       None => default_logger(),
     };
     let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
-    FluxEngine { setups: self.plugins, userdata: self.userdata, exec_tx, exec_rx, logger, stack_size: self.stack_size }
+    FluxEngine {
+      setups: self.plugins,
+      userdata: self.userdata,
+      module_overrides: self.module_overrides,
+      exec_tx,
+      exec_rx,
+      logger,
+      stack_size: self.stack_size,
+    }
   }
 }
 
 pub struct FluxEngine {
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
+  module_overrides: Vec<ModuleOverrideFn>,
   exec_tx: tokio::sync::mpsc::UnboundedSender<ExecFn>,
   exec_rx: tokio::sync::mpsc::UnboundedReceiver<ExecFn>,
   logger: Logger,
@@ -109,7 +129,7 @@ pub struct FluxEngine {
 
 impl FluxEngine {
   pub fn builder() -> FluxEngineBuilder {
-    FluxEngineBuilder { plugins: Vec::new(), userdata: Vec::new(), logger: None, stack_size: None }
+    FluxEngineBuilder { plugins: Vec::new(), userdata: Vec::new(), module_overrides: Vec::new(), logger: None, stack_size: None }
   }
 
   pub fn new() -> Self {
@@ -162,7 +182,7 @@ impl FluxEngine {
     let mut exec_rx = self.exec_rx;
 
     let (runtime, context, pending) =
-      plugins::init_context(self.setups, self.userdata, self.logger, self.stack_size, shutdown_hooks.clone()).await;
+      plugins::init_context(self.setups, self.userdata, self.module_overrides, self.logger, self.stack_size, shutdown_hooks.clone()).await;
 
     context.with(|ctx| task(ctx)).await;
 

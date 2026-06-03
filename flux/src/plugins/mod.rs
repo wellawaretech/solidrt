@@ -17,10 +17,12 @@ use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 pub(crate) type UserdataFn = Box<dyn for<'js> FnOnce(&Ctx<'js>) + Send>;
+pub(crate) type ModuleOverrideFn = Box<dyn FnOnce(&mut BuiltinResolver, &mut ModuleLoader) + Send>;
 
 pub(crate) async fn init_context(
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
+  module_overrides: Vec<ModuleOverrideFn>,
   logger: Logger,
   stack_size: Option<usize>,
   shutdown_hooks: ShutdownHooks,
@@ -45,6 +47,10 @@ pub(crate) async fn init_context(
 
   resolver.add_module("flux:http");
   loader.add_module("flux:http", flux::serve::HttpModule);
+
+  for f in module_overrides {
+    f(&mut resolver, &mut loader);
+  }
 
   runtime.set_loader(resolver, loader).await;
 

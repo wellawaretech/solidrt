@@ -1,7 +1,7 @@
-// Replaces Flux.file, Flux.dir, Flux.write and the global fetch with
-// HTTP-backed versions that route through the cli's dev server.
+// Provides HTTP-backed flux:fs and fetch implementations that route through
+// the cli's dev server.
 //
-// File/dir reads use GET on the cli; Flux.write uses PUT (cli writes the body
+// File/dir reads use GET on the cli; file.write uses PUT (cli writes the body
 // into state.sourceDir). Global fetch is rewritten to call the cli's
 // /__proxy__ endpoint with the original URL in the X-SRT-Proxy-Url header;
 // the cli forwards the request and relays the response.
@@ -11,6 +11,7 @@
 
 use flux::rquickjs::{
   function::{MutFn, Opt},
+  module::{Declarations, Exports, ModuleDef},
   promise::Promised,
   Array, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
 };
@@ -150,6 +151,39 @@ fn build_proxy_file<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<
   .expect("create file.stat");
   obj.set("stat", stat_fn)?;
 
+  let write_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let url = url.clone();
+      let client = client.clone();
+      move |ctx: Ctx<'_>, data: Value<'_>| -> flux::rquickjs::Result<Promised<_>> {
+        let bytes = if let Some(s) = data.as_string() {
+          s.to_string()?.into_bytes()
+        } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+          ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
+        } else {
+          return Err(ctx.throw(
+            flux::rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+              .expect("create error string")
+              .into(),
+          ));
+        };
+        let url = url.clone();
+        let client = client.clone();
+        Ok(Promised(async move {
+          let resp = client.put(&*url).body(bytes).send().await.map_err(http_err)?;
+          let status = resp.status();
+          if !status.is_success() {
+            return Err(http_err(format!("write HTTP {} for {}", status.as_u16(), &*url)));
+          }
+          Ok::<(), flux::rquickjs::Error>(())
+        }))
+      }
+    }),
+  )
+  .expect("create file.write");
+  obj.set("write", write_fn)?;
+
   Ok(obj)
 }
 
@@ -216,35 +250,22 @@ fn build_proxy_dir<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<O
   Ok(obj)
 }
 
-fn build_proxy_write<'js>(
-  ctx: Ctx<'js>,
-  path: String,
-  data: Value<'js>,
-) -> flux::rquickjs::Result<Promised<impl std::future::Future<Output = flux::rquickjs::Result<()>>>> {
-  let bytes = if let Some(s) = data.as_string() {
-    s.to_string()?.into_bytes()
-  } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
-    ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
-  } else {
-    return Err(
-      ctx.throw(
-        flux::rquickjs::String::from_str(ctx.clone(), "Flux.write: data must be string or Uint8Array")
-          .expect("create error string")
-          .into(),
-      ),
-    );
-  };
-  let state = ctx.userdata::<ProxyState>().expect("proxy state").clone();
-  let url = url_for(&state.base, &path);
-  let client = state.client.clone();
-  Ok(Promised(async move {
-    let resp = client.put(&url).body(bytes).send().await.map_err(http_err)?;
-    let status = resp.status();
-    if !status.is_success() {
-      return Err(http_err(format!("write HTTP {} for {}", status.as_u16(), url)));
-    }
-    Ok::<(), flux::rquickjs::Error>(())
-  }))
+pub struct ProxyFsModule;
+
+impl ModuleDef for ProxyFsModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
+    decl.declare("file")?;
+    decl.declare("dir")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
+    let file_fn = Function::new(ctx.clone(), build_proxy_file).expect("create proxy file function");
+    let dir_fn = Function::new(ctx.clone(), build_proxy_dir).expect("create proxy dir function");
+    exports.export("file", file_fn)?;
+    exports.export("dir", dir_fn)?;
+    Ok(())
+  }
 }
 
 fn extract_fetch_body<'js>(val: &Value<'js>) -> Option<Vec<u8>> {
@@ -276,24 +297,11 @@ fn extract_fetch_headers<'js>(opts: &Object<'js>) -> Vec<(String, String)> {
   out
 }
 
-pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) {
+pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String, http: bool) {
   let client = reqwest::Client::builder().user_agent("lattice-go-proxy").build().expect("build proxy http client");
 
   let base = Rc::new(dev_server);
   ctx.store_userdata(ProxyState { base: base.clone(), client: Rc::new(client) }).expect("store proxy state");
-
-  if files {
-    let flux: Object = ctx.globals().get("Flux").expect("Flux global must be set before installing proxy");
-
-    let file_fn = Function::new(ctx.clone(), build_proxy_file).expect("create proxy Flux.file");
-    flux.set("file", file_fn).expect("override Flux.file");
-
-    let dir_fn = Function::new(ctx.clone(), build_proxy_dir).expect("create proxy Flux.dir");
-    flux.set("dir", dir_fn).expect("override Flux.dir");
-
-    let write_fn = Function::new(ctx.clone(), build_proxy_write).expect("create proxy Flux.write");
-    flux.set("write", write_fn).expect("override Flux.write");
-  }
 
   if http {
     let proxy_url = Rc::new(format!("http://{}/__proxy__", &*base));
@@ -328,5 +336,5 @@ pub fn install_proxy(ctx: Ctx<'_>, dev_server: String, files: bool, http: bool) 
     ctx.globals().set("fetch", fetch_fn).expect("override fetch global");
   }
 
-  log::info!("[sgo] Installed proxy (files={files} http={http}) -> http://{}/", &*base);
+  log::info!("[sgo] Installed proxy (http={http}) -> http://{}/", &*base);
 }

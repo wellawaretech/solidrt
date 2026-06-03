@@ -342,7 +342,10 @@ fn ui_thread(
         let proxy_http = proxy_http_enabled.load(Ordering::Relaxed);
         if proxy_files || proxy_http {
           if let Some(url) = dev_server.get().cloned() {
-            builder = builder.plugin(move |ctx| go::install_proxy(ctx, url, proxy_files, proxy_http));
+            if proxy_files {
+              builder = builder.module_override("flux:fs", go::ProxyFsModule);
+            }
+            builder = builder.plugin(move |ctx| go::install_proxy_state(ctx, url, proxy_http));
           }
         }
       }
