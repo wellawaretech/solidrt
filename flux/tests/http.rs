@@ -507,3 +507,41 @@ fn serve_receives_streamed_request_body() {
   let lines = serve_and_capture(&code);
   assert_eq!(lines, vec!["echo POST:streamed request".to_string()]);
 }
+
+#[test]
+fn fetch_iterates_response_body_stream() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        // The server streams a chunked response; the client consumes it lazily by
+        // iterating `response.body` (a Rust-backed async-iterable of Uint8Array
+        // chunks), reassembling the payload as the chunks arrive.
+        async function* chunks() {{
+            yield "Hello, ";
+            yield "streamed ";
+            yield "world";
+        }}
+
+        let server = serve({{
+            port: {port},
+            fetch() {{ return new Response(chunks()); }},
+        }});
+
+        (async () => {{
+            let r = await fetch("http://127.0.0.1:{port}/");
+            let text = "";
+            for await (const chunk of r.body) {{
+                text += String.fromCharCode(...chunk);
+            }}
+            console.log("iterated", text);
+        }})()
+            .catch(e => console.error("test error: " + (e && e.message || e)))
+            .finally(() => server.stop());
+        "#,
+  );
+
+  let lines = serve_and_capture(&code);
+  assert_eq!(lines, vec!["iterated Hello, streamed world".to_string()]);
+}

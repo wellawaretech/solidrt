@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use futures_core::Stream;
 use rquickjs::{
   function::{MutFn, This},
   promise::{MaybePromise, Promised},
@@ -7,10 +8,16 @@ use rquickjs::{
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::rc::Rc;
 use tokio::sync::mpsc;
 
 use crate::logger::Logger;
+use crate::pending::PendingOps;
+
+/// A network-sourced response body stream (e.g. a fetch response), with its error
+/// flattened to `io::Error` so consumers stay reqwest-free.
+pub(crate) type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>>>>;
 
 /// In-memory body buffer shared by Response and Request. Consume-once semantics:
 /// `take` returns the bytes once, then subsequent calls return None.
@@ -51,6 +58,159 @@ pub(crate) fn body_bytes(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<J
 pub(crate) fn body_json(state: &BodyState, ctx: &Ctx<'_>) -> rquickjs::Result<JsonValue> {
   let text = body_text(state, ctx)?;
   Ok(JsonValue(text))
+}
+
+/// A streamed response body read from the network. Consume-once: the first reader
+/// `take`s the stream (drained by text/bytes/json, or iterated by `response.body`);
+/// later access sees `None` and throws "Body already consumed".
+pub(crate) struct IncomingBody {
+  stream: Rc<RefCell<Option<ByteStream>>>,
+}
+
+impl IncomingBody {
+  pub(crate) fn new(stream: ByteStream) -> Self {
+    Self { stream: Rc::new(RefCell::new(Some(stream))) }
+  }
+
+  pub(crate) fn take(&self) -> Option<ByteStream> {
+    self.stream.borrow_mut().take()
+  }
+}
+
+/// The drainable source behind a body reader (`text`/`bytes`/`json`): either
+/// already-buffered bytes or a live network stream.
+pub(crate) enum BodySource {
+  Bytes(Vec<u8>),
+  Stream(ByteStream),
+}
+
+impl BodySource {
+  async fn collect(self, pending: PendingOps) -> rquickjs::Result<Vec<u8>> {
+    match self {
+      BodySource::Bytes(bytes) => Ok(bytes),
+      BodySource::Stream(stream) => drain_stream(stream, pending).await,
+    }
+  }
+}
+
+/// Read a byte stream to EOF, concatenating chunks. Holds a pending op across the
+/// network reads so the engine stays alive until the body is fully drained.
+async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> rquickjs::Result<Vec<u8>> {
+  pending.hold();
+  let mut buf = Vec::new();
+  let mut error = None;
+  while let Some(item) = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
+    match item {
+      Ok(chunk) => buf.extend_from_slice(&chunk),
+      Err(e) => {
+        error = Some(e);
+        break;
+      }
+    }
+  }
+  pending.release();
+  match error {
+    Some(e) => Err(rquickjs::Error::Io(e)),
+    None => Ok(buf),
+  }
+}
+
+pub(crate) async fn collect_text(source: BodySource, pending: PendingOps) -> rquickjs::Result<String> {
+  let bytes = source.collect(pending).await?;
+  String::from_utf8(bytes).map_err(utf8_err)
+}
+
+pub(crate) async fn collect_bytes(source: BodySource, pending: PendingOps) -> rquickjs::Result<JsBytes> {
+  Ok(JsBytes(source.collect(pending).await?))
+}
+
+pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> rquickjs::Result<JsonValue> {
+  Ok(JsonValue(collect_text(source, pending).await?))
+}
+
+/// One step of a Rust-backed byte async-iterator. Returned owned (not as a JS
+/// `Object` tied to a borrowed `Ctx`) so the iterator future stays `'static` and
+/// dodges the lifetime tangle of returning a `Ctx`-bound value (mirrors how
+/// `attach_body`'s closures return owned `JsBytes`/`JsonValue`).
+enum IterStep {
+  Chunk(Vec<u8>),
+  Done,
+}
+
+/// Return type of the iterator's `next()`: a promise resolving to one `IterStep`.
+type IterStepFuture = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<IterStep>>>>>;
+
+impl<'js> IntoJs<'js> for IterStep {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    match self {
+      IterStep::Chunk(bytes) => {
+        obj.set("value", TypedArray::<u8>::new(ctx.clone(), bytes)?)?;
+        obj.set("done", false)?;
+      }
+      IterStep::Done => {
+        obj.set("done", true)?;
+      }
+    }
+    Ok(obj.into_value())
+  }
+}
+
+/// Build a Rust-backed JS async-iterable over a network byte stream. Each `next()`
+/// pulls one chunk (a Uint8Array) from `stream`, resolving `{ value, done }`;
+/// `[Symbol.asyncIterator]()` returns the object itself, so `for await` works.
+/// The structural dual of `pump_async_iterable` (JS-produces -> Rust-consumes):
+/// here Rust produces and JS consumes. Pull-based, so the network only advances
+/// as JS pulls; a `pending` op is held only across each in-flight read, so an
+/// abandoned iterator leaks nothing.
+pub(crate) fn make_response_stream<'js>(
+  ctx: &Ctx<'js>,
+  stream: ByteStream,
+  pending: PendingOps,
+) -> rquickjs::Result<Object<'js>> {
+  let cell = Rc::new(RefCell::new(Some(stream)));
+  let iter = Object::new(ctx.clone())?;
+
+  let next_fn = Function::new(
+    ctx.clone(),
+    MutFn::from(move |_ctx: Ctx<'_>| -> rquickjs::Result<IterStepFuture> {
+      let cell = cell.clone();
+      let pending = pending.clone();
+      Ok(Promised(Box::pin(async move {
+        // Take the stream out so no RefCell borrow is held across the await. A
+        // concurrent (un-awaited) next() finding it gone just reports done.
+        let Some(mut stream) = cell.borrow_mut().take() else {
+          return Ok(IterStep::Done);
+        };
+        pending.hold();
+        let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
+        pending.release();
+        match item {
+          Some(Ok(chunk)) => {
+            *cell.borrow_mut() = Some(stream);
+            Ok(IterStep::Chunk(chunk.to_vec()))
+          }
+          Some(Err(e)) => Err(rquickjs::Error::Io(e)),
+          None => Ok(IterStep::Done),
+        }
+      })))
+    }),
+  )?;
+  iter.set("next", next_fn)?;
+
+  let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
+  attach.call::<_, ()>((iter.clone(),))?;
+
+  Ok(iter)
+}
+
+/// Wrap already-buffered bytes in a single-chunk async-iterable, so `response.body`
+/// behaves uniformly for buffered and streamed responses. An empty body yields
+/// nothing.
+pub(crate) fn buffered_async_iterable<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>) -> rquickjs::Result<Value<'js>> {
+  let ta = TypedArray::<u8>::new(ctx.clone(), bytes)?;
+  let wrap: Function = ctx.eval("(b) => (async function* () { if (b.length) yield b; })()")?;
+  wrap.call((ta,))
 }
 
 /// Extract bytes from a JS value (string, Uint8Array, null/undefined).
@@ -191,7 +351,11 @@ impl<'js> IntoJs<'js> for JsonValue {
 }
 
 pub(crate) fn throw_consumed(ctx: &Ctx<'_>) -> rquickjs::Error {
-  ctx.throw(rquickjs::String::from_str(ctx.clone(), "Body already consumed").expect("create error string").into())
+  throw_msg(ctx, "Body already consumed")
+}
+
+pub(crate) fn throw_msg(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
+  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
 fn utf8_err(e: std::string::FromUtf8Error) -> rquickjs::Error {

@@ -23,7 +23,7 @@ use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::pump_async_iterable;
 use crate::plugins::request::{request_from_parts, Request};
-use crate::plugins::response::Response;
+use crate::plugins::response::{Response, ResponseBody};
 
 /// One boxed body type for every serve response, so buffered (`Full`) and
 /// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
@@ -82,9 +82,18 @@ fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> H
     .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
 }
 
+/// Read a server-built Response's buffered bytes. Server responses are buffered
+/// (`new Response(string/bytes)`) or outgoing streams (handled separately), never
+/// `Incoming`, so a non-buffered body just yields nothing here.
+fn buffered_bytes(r: &Response<'_>) -> Bytes {
+  match &r.body {
+    ResponseBody::Buffered(state) => Bytes::from(state.take().unwrap_or_default()),
+    ResponseBody::Incoming(_) => Bytes::new(),
+  }
+}
+
 fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<ResBody> {
-  let body = Bytes::from(r.body.take().unwrap_or_default());
-  build_response(r.status, &r.headers.borrow().entries(), full_body(body))
+  build_response(r.status, &r.headers.borrow().entries(), full_body(buffered_bytes(r)))
 }
 
 /// Build a streamed response: spawn a task that drives the JS async-iterable body
@@ -130,11 +139,7 @@ struct StaticResponse {
 }
 
 fn snapshot_response<'js>(r: &Response<'js>) -> StaticResponse {
-  StaticResponse {
-    status: r.status,
-    headers: r.headers.borrow().entries(),
-    body: Bytes::from(r.body.take().unwrap_or_default()),
-  }
+  StaticResponse { status: r.status, headers: r.headers.borrow().entries(), body: buffered_bytes(r) }
 }
 
 /// One `/`-delimited segment of a route pattern.
