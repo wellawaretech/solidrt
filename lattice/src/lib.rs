@@ -2,6 +2,7 @@ mod frame;
 #[cfg(feature = "go")]
 mod go;
 mod overlay;
+mod paced_clock;
 mod plugins;
 mod rendertree;
 
@@ -103,13 +104,16 @@ fn ui_thread(
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
-    // Virtual present counter shared with the injected clock. In record mode the
-    // clock derives time from this (frame/fps) instead of the wall clock, so the
-    // rAF timestamp and performance.now() stay reproducible across recordings.
-    // The FrameRendered handler publishes the present here before flushing rAF.
-    // Unused in run mode, where the clock stays wall-clock.
+    // Virtual present counter the record-mode clock derives time from (frame/fps),
+    // published by the FrameRendered handler. Unused in run mode.
     let record_frame = Arc::new(AtomicU64::new(0));
     let record_frame_events = record_frame.clone();
+    // Run-mode pacing for the animation timestamps (see paced_clock). None in
+    // record mode, which uses the deterministic frame/fps clock.
+    let paced_clock_events = match record_fps {
+      Some(rfps) if rfps > 0 => None,
+      _ => Some(paced_clock::PacedClock::new()),
+    };
     local.spawn_local(async move {
       while let Some(event) = ev_rx.recv().await {
         match event {
@@ -252,16 +256,22 @@ fn ui_thread(
               // re-runs frame 0 at tick 0 and duplicates a PNG.
               let next_frame = frame + 1;
               let record_frame = record_frame_events.clone();
+              let paced = paced_clock_events.clone();
               eh.exec(move |ctx| {
                 // Publish the present being computed before reading the clock, so
                 // in record mode the clock reports this frame's virtual time.
                 record_frame.store(next_frame as u64, Ordering::Relaxed);
-                // One clock across the JS time surface: the render event, rAF,
-                // and performance.now() all read flux::Clock so they share a zero
-                // point. In record mode that clock is frame-counting (frame/fps),
-                // so all three stay deterministic and PNGs reproducible. The
-                // render event carries seconds; JS scales to ms.
-                let ts = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
+                // rAF and the render event use the paced clock in run mode (see
+                // paced_clock); record mode and performance.now() read flux::Clock
+                // directly. Render event carries seconds; JS scales to ms.
+                let raw = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
+                let ts = match &paced {
+                  Some(pc) => {
+                    pc.tick(raw);
+                    pc.now_ms()
+                  }
+                  None => raw,
+                };
                 plugins::raf::flush(&ctx, ts);
                 let time = ts / 1000.0;
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
@@ -272,6 +282,9 @@ fn ui_thread(
             }
           }
           alloy::AlloyEvent::DisplayRefreshRate { hz } => {
+            if let Some(pc) = &paced_clock_events {
+              pc.set_hz(hz);
+            }
             if let Some(eh) = current_exec_events.borrow().as_ref() {
               eh.exec(move |ctx| {
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
@@ -293,9 +306,9 @@ fn ui_thread(
       go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_files_enabled.clone(), proxy_http_enabled.clone());
     }
 
-    // One clock for the runtime, injected into each engine so the render event,
-    // requestAnimationFrame timestamp, and performance.now() share an origin.
-    // Persists across reloads for continuous time.
+    // flux::Clock backs performance.now() (and the run-mode paced clock corrects
+    // toward it). Injected into each engine; persists across reloads for continuous
+    // time.
     let clock = match record_fps {
       // Record mode: derive time from the present counter (frame/fps) so the
       // whole JS time surface is deterministic and recordings reproducible.

@@ -1,4 +1,4 @@
-import { onCleanup, onSettled, flush, createSignal } from "@solidjs/signals"
+import { onCleanup, onSettled, flush } from "@solidjs/signals"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
 // ------ Animation frames ----------------
@@ -11,10 +11,12 @@ let animationFrames = new Map<number, Function>()
 let refreshRate = 60
 
 /**
- * Calls `fn` before every frame is painted, with the raw runtime signals: `tick`
- * is the unsmoothed wall-clock time in ms sampled at present, `frame` is the
- * present count, and `rate` is the current refresh rate in Hz. No pacing is
- * applied; see createPacedClock for an opt-in smooth clock.
+ * Calls `fn` before every frame is painted: `tick` is the time in ms, `frame` is
+ * the present count, and `rate` is the current refresh rate in Hz. `tick` is paced
+ * by the runtime (one refresh period per present, slow-corrected toward the wall
+ * clock) so animations driven off it stay smooth even when swap-return times
+ * jitter. For raw, continuous wall-clock time (e.g. measuring code), use
+ * performance.now() instead.
  * Returns a cleanup function; also auto-cleans within a reactive scope.
  */
 export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
@@ -32,26 +34,6 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
   let cleanup = () => animationFrames.delete(frameId)
   onCleanup(cleanup)
   return cleanup
-}
-
-/**
- * Opt-in smooth clock built on the raw onFrame signals. Paces by present count
- * (one refresh period per frame) and slowly corrects toward the raw wall-clock
- * tick, so it stays smooth while keeping up and tracks real time when the
- * framerate drops. `gain` (0..1) trades convergence speed for jitter. Returns an
- * accessor for the paced time in milliseconds.
- */
-export function createPacedClock(opts?: { gain?: number }) {
-  let gain = opts?.gain ?? 0.05
-  let [time, setTime] = createSignal(0)
-  let clock = 0
-  onFrame((tick, _frame, rate) => {
-    let period = 1000 / rate
-    clock += period
-    clock += (tick - clock) * gain
-    setTime(clock)
-  })
-  return time
 }
 
 // ------ Resize ----------------

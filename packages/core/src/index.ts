@@ -1,7 +1,7 @@
 export * from "./renderer"
 export { setFocus, getFocusedNodeId, measureText, getBoundingBox } from "./core"
 export type { BoundingBox } from "./core"
-export { onFrame, createPacedClock, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
+export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { createTexture, decodeImage } from "./gpu"
 export type { DecodedImage } from "./gpu"
 export type {
