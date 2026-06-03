@@ -1,16 +1,17 @@
 declare global {
-  type FluxDirEntry = {
+  let Flux: {
+    on(event: string, callback: (data: any) => void): () => void
+    once(event: string, callback: (data: any) => void): () => void
+  }
+}
+
+declare module "flux:fs" {
+  type DirEntry = {
     name: string
     type: "file" | "directory" | "symlink" | "other"
   }
 
-  type FluxDir = {
-    path: string
-    entries(): Promise<FluxDirEntry[]>
-    exists(): Promise<boolean>
-  }
-
-  type FluxFileStat = {
+  type FileStat = {
     size: number
     type: string
     mtime?: number
@@ -22,22 +23,18 @@ declare global {
     bytes(): Promise<Uint8Array>
     json(): Promise<any>
     exists(): Promise<boolean>
-    stat(): Promise<FluxFileStat>
+    stat(): Promise<FileStat>
+    write(data: string | Uint8Array): Promise<void>
   }
 
-  type FluxServeOptions = {
-    port: number
-    fetch?: (req: Request) => Response | string | Promise<Response | string>
+  type FluxDir = {
+    path: string
+    entries(): Promise<DirEntry[]>
+    exists(): Promise<boolean>
   }
 
-  let Flux: {
-    on(event: string, callback: (data: any) => void): () => void
-    once(event: string, callback: (data: any) => void): () => void
-    dir(path: string): FluxDir
-    file(path: string): FluxFile
-    write(path: string, data: string | Uint8Array): Promise<void>
-    serve(options: FluxServeOptions): void
-  }
+  export function file(path: string): FluxFile
+  export function dir(path: string): FluxDir
 }
 
 declare module "flux:sqlite" {

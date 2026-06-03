@@ -87,7 +87,6 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
   Ok(obj)
 }
 
-pub(crate) fn init_dir<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
-  let dir_fn = Function::new(ctx.clone(), build_dir).expect("create Flux.dir function");
-  flux.set("dir", dir_fn).expect("set Flux.dir");
+pub(crate) fn dir_fn<'js>(ctx: &Ctx<'js>) -> Function<'js> {
+  Function::new(ctx.clone(), build_dir).expect("create dir function")
 }

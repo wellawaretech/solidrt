@@ -1,4 +1,4 @@
-use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, Value};
+use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
@@ -109,10 +109,39 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   .expect("create stat function");
   obj.set("stat", stat_fn)?;
 
+  let write_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+        let bytes = if let Some(s) = data.as_string() {
+          s.to_string()?.into_bytes()
+        } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+          ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
+        } else {
+          return Err(ctx.throw(
+            rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+              .expect("create error string")
+              .into(),
+          ));
+        };
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+        let path = path.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let r = tokio::fs::write(&**path, &bytes).await.map_err(rquickjs::Error::Io);
+          pending.release();
+          r
+        }))
+      }
+    }),
+  )
+  .expect("create write function");
+  obj.set("write", write_fn)?;
+
   Ok(obj)
 }
 
-pub(crate) fn init_file<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
-  let file_fn = Function::new(ctx.clone(), build_file).expect("create Flux.file function");
-  flux.set("file", file_fn).expect("set Flux.file");
+pub(crate) fn file_fn<'js>(ctx: &Ctx<'js>) -> Function<'js> {
+  Function::new(ctx.clone(), build_file).expect("create file function")
 }

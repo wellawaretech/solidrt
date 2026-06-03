@@ -40,6 +40,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:sqlite");
   loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
 
+  resolver.add_module("flux:fs");
+  loader.add_module("flux:fs", flux::fs::FsModule);
+
   resolver.add_module("flux:http");
   loader.add_module("flux:http", flux::serve::HttpModule);
 
@@ -64,9 +67,6 @@ pub(crate) async fn init_context(
       fetch::init_fetch(&ctx);
       console::init_console(&ctx);
       flux::events::init_events(&ctx, &flux_obj);
-      flux::file::init_file(&ctx, &flux_obj);
-      flux::dir::init_dir(&ctx, &flux_obj);
-      flux::write::init_write(&ctx, &flux_obj);
       headers::init_headers(&ctx);
       request::init_request(&ctx);
       response::init_response(&ctx);
