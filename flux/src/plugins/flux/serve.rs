@@ -8,6 +8,7 @@ use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
 use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
+use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
 use std::convert::Infallible;
@@ -543,7 +544,7 @@ async fn run_server<'js>(
   pending.release();
 }
 
-/// `Flux.serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
+/// `serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
 /// A free function (not a closure) so its `'js` is properly higher-ranked, which
 /// the invariant `Class<'js, Server>` return type requires.
 fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'js, Server>> {
@@ -579,7 +580,18 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   Ok(server)
 }
 
-pub(crate) fn init_serve<'js>(ctx: &Ctx<'js>, flux: &Object<'js>) {
-  let serve_fn = Function::new(ctx.clone(), serve_impl).expect("create Flux.serve function");
-  flux.set("serve", serve_fn).expect("set Flux.serve");
+/// The `flux:http` module. Exports `serve`, the HTTP server entry point.
+pub struct HttpModule;
+
+impl ModuleDef for HttpModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+    decl.declare("serve")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    let serve_fn = Function::new(ctx.clone(), serve_impl)?;
+    exports.export("serve", serve_fn)?;
+    Ok(())
+  }
 }

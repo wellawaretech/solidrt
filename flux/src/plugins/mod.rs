@@ -40,6 +40,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:sqlite");
   loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
 
+  resolver.add_module("flux:http");
+  loader.add_module("flux:http", flux::serve::HttpModule);
+
   runtime.set_loader(resolver, loader).await;
 
   let context = AsyncContext::full(&runtime).await.expect("failed to create JS context");
@@ -67,7 +70,6 @@ pub(crate) async fn init_context(
       headers::init_headers(&ctx);
       request::init_request(&ctx);
       response::init_response(&ctx);
-      flux::serve::init_serve(&ctx, &flux_obj);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 

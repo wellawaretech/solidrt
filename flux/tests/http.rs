@@ -46,7 +46,8 @@ fn serve_and_fetch_round_trip() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             async fetch(req) {{
                 if (req.url === "/json") return Response.json({{ ok: true, where: req.url }});
@@ -104,7 +105,8 @@ fn serve_returns_handle_and_stops() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             fetch(req) {{ return "up"; }},
         }});
@@ -153,7 +155,8 @@ fn serve_honors_hostname() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             hostname: "127.0.0.1",
             fetch(req) {{ return "up"; }},
@@ -185,7 +188,8 @@ fn serve_error_handler() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             fetch(req) {{
                 if (req.url === "/throw") throw new Error("boom");
@@ -230,8 +234,9 @@ fn serve_error_default_500() {
   let port = free_port();
   let code = format!(
     r#"
+        import {{ serve }} from "flux:http";
         // No error() handler: a thrown fetch falls back to a plaintext 500.
-        let server = Flux.serve({{
+        let server = serve({{
             port: {port},
             fetch(req) {{ throw new Error("nope"); }},
         }});
@@ -254,11 +259,12 @@ fn serve_passes_server_arg() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             hostname: "127.0.0.1",
             // The second arg is the Server handle: same introspection as the
-            // value Flux.serve returned.
+            // value serve() returned.
             fetch(req, srv) {{ return srv.url + " port=" + srv.port; }},
         }});
 
@@ -280,7 +286,8 @@ fn serve_routes() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             routes: {{
                 "/":          () => "root",
@@ -331,7 +338,8 @@ fn serve_routes_decodes_params() {
   let port = free_port();
   let code = format!(
     r#"
-        let server = Flux.serve({{
+        import {{ serve }} from "flux:http";
+        let server = serve({{
             port: {port},
             routes: {{
                 "/users/:id":  (req) => req.params.id,
@@ -360,8 +368,9 @@ fn serve_routes_404_without_fetch() {
   let port = free_port();
   let code = format!(
     r#"
+        import {{ serve }} from "flux:http";
         // routes but no fetch: an unmatched path is a 404.
-        let server = Flux.serve({{
+        let server = serve({{
             port: {port},
             routes: {{ "/hit": () => "hit" }},
         }});
@@ -390,9 +399,10 @@ fn serve_routes_per_method() {
   let port = free_port();
   let code = format!(
     r#"
+        import {{ serve }} from "flux:http";
         // A route value can be a per-method object; the request method picks the
         // handler, and an unlisted method is a 405 with an Allow header.
-        let server = Flux.serve({{
+        let server = serve({{
             port: {port},
             routes: {{
                 "/api": {{
@@ -431,6 +441,7 @@ fn serve_streams_async_iterable() {
   let port = free_port();
   let code = format!(
     r#"
+        import {{ serve }} from "flux:http";
         // A handler can return a Response whose body is an async generator; each
         // yielded chunk is streamed to the client (chunked transfer encoding).
         async function* chunks() {{
@@ -439,7 +450,7 @@ fn serve_streams_async_iterable() {
             yield "world";
         }}
 
-        let server = Flux.serve({{
+        let server = serve({{
             port: {port},
             fetch() {{
                 return new Response(chunks(), {{ headers: {{ "Content-Type": "text/plain" }} }});
