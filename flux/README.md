@@ -44,14 +44,15 @@ echo 'console.log("hello")' | fluxc > app.bin
 
 ### Web-standard globals
 
-| API                                | Notes                                |
-| ---------------------------------- | ------------------------------------ |
-| `console.log/warn/error`           | routed through the configured logger |
-| `setTimeout` / `clearTimeout`      |                                      |
-| `setInterval` / `clearInterval`    |                                      |
-| `fetch(url, opts?)`                | returns a `Response`                 |
-| `Request` / `Response` / `Headers` | web-standard                         |
-| `TextEncoder` / `TextDecoder`      |                                      |
+| API                                | Notes                                                         |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `console.log/warn/error`           | routed through the configured logger                          |
+| `setTimeout` / `clearTimeout`      |                                                               |
+| `setInterval` / `clearInterval`    |                                                               |
+| `performance.now()`                | ms since process start; host-overridable via `Clock` userdata |
+| `fetch(url, opts?)`                | returns a `Response`                                          |
+| `Request` / `Response` / `Headers` | web-standard                                                  |
+| `TextEncoder` / `TextDecoder`      |                                                               |
 
 ### `Flux` global
 
