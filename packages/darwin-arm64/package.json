@@ -9,6 +9,7 @@
     "solidrt-go",
     "flux",
     "fluxc",
+    "fluxrt",
     "libimpeller.dylib",
     "libEGL.dylib",
     "libGLESv2.dylib",

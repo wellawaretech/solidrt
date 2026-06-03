@@ -9,6 +9,7 @@
     "solidrt-go",
     "flux",
     "fluxc",
+    "fluxrt",
     "LICENSE"
   ]
 }

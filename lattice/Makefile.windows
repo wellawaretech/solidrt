@@ -51,5 +51,7 @@ dist-windows:
 	cp $(HOST_DIST)/solidrt-go.exe $(PKG_WIN)/solidrt-go.exe
 	cp $(ANGLE_EGL) $(ANGLE_GLES) $(PKG_WIN)/
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc
+	$(MAKE) -C $(SRT_HOME)/flux fluxrt PROFILE=release-opt
 	cp $(HOST_DIST)/flux.exe $(PKG_WIN)/flux.exe
 	cp $(HOST_DIST)/fluxc.exe $(PKG_WIN)/fluxc.exe
+	cp $(HOST_DIST)/fluxrt.exe $(PKG_WIN)/fluxrt.exe

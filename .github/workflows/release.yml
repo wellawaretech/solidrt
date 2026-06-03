@@ -62,6 +62,7 @@ jobs:
             packages/linux-x64-gnu/solidrt-go
             packages/linux-x64-gnu/flux
             packages/linux-x64-gnu/fluxc
+            packages/linux-x64-gnu/fluxrt
 
   build-darwin:
     runs-on: macos-14
@@ -89,6 +90,7 @@ jobs:
             packages/darwin-arm64/solidrt-go
             packages/darwin-arm64/flux
             packages/darwin-arm64/fluxc
+            packages/darwin-arm64/fluxrt
             packages/darwin-arm64/libimpeller.dylib
             packages/darwin-arm64/libEGL.dylib
             packages/darwin-arm64/libGLESv2.dylib
@@ -160,6 +162,7 @@ jobs:
             packages/win32-x64-msvc/solidrt-go.exe
             packages/win32-x64-msvc/flux.exe
             packages/win32-x64-msvc/fluxc.exe
+            packages/win32-x64-msvc/fluxrt.exe
             packages/win32-x64-msvc/libEGL.dll
             packages/win32-x64-msvc/libGLESv2.dll
 
@@ -256,9 +259,11 @@ jobs:
           chmod +x packages/linux-x64-gnu/solidrt-go
           chmod +x packages/linux-x64-gnu/flux
           chmod +x packages/linux-x64-gnu/fluxc
+          chmod +x packages/linux-x64-gnu/fluxrt
           chmod +x packages/darwin-arm64/solidrt-go
           chmod +x packages/darwin-arm64/flux
           chmod +x packages/darwin-arm64/fluxc
+          chmod +x packages/darwin-arm64/fluxrt
 
       - name: Publish @solidrt/core
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}

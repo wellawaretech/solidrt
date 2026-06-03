@@ -9,6 +9,7 @@
     "solidrt-go.exe",
     "flux.exe",
     "fluxc.exe",
+    "fluxrt.exe",
     "libEGL.dll",
     "libGLESv2.dll",
     "LICENSE"
