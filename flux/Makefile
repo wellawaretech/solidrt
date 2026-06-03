@@ -28,9 +28,9 @@ define stage-bin
 	@echo "Staged $(1)$(HOST_EXT) into $(HOST_DIST)/"
 endef
 
-.PHONY: build build-opt flux fluxc test clean
+.PHONY: build build-opt flux fluxc fluxrt test clean
 
-build: flux fluxc
+build: flux fluxc fluxrt
 
 # Stripped + fat LTO + single codegen unit. Slower build, optimised binary.
 build-opt:
@@ -43,6 +43,10 @@ flux:
 fluxc:
 	cargo build $(CARGO_PROFILE_FLAG) --bin fluxc
 	$(call stage-bin,fluxc)
+
+fluxrt:
+	cargo build $(CARGO_PROFILE_FLAG) --bin fluxrt
+	$(call stage-bin,fluxrt)
 
 test:
 	cargo test

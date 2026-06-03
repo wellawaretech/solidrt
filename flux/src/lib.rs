@@ -16,7 +16,23 @@ use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOpti
 
 #[cfg(feature = "compile")]
 pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
+  use plugins::flux;
+  use rquickjs::loader::{BuiltinResolver, ModuleLoader};
+
   let rt = Runtime::new().expect("failed to create QuickJS runtime");
+
+  let mut resolver = BuiltinResolver::default();
+  let mut loader = ModuleLoader::default();
+  // resolver.add_module("flux:memory");
+  // loader.add_module("flux:memory", flux::memory::MemoryModule);
+  resolver.add_module("flux:sqlite");
+  loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
+  resolver.add_module("flux:fs");
+  loader.add_module("flux:fs", flux::fs::FsModule);
+  resolver.add_module("flux:http");
+  loader.add_module("flux:http", flux::serve::HttpModule);
+  rt.set_loader(resolver, loader);
+
   let ctx = Context::full(&rt).expect("failed to create QuickJS context");
 
   let result = ctx.with(|ctx| {

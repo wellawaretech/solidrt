@@ -13,9 +13,10 @@
 //   srt record examples/hello.tsx       - bundle TSX and run with frame capture
 
 import pkg from "../package.json"
-import { values, command, source, isTsx, isPrebuilt, printUsage } from "./args"
+import { values, command, source, isTsx, isTs, isPrebuilt, printUsage } from "./args"
 import { state, requireBinary, run, shutdown } from "./util"
 import { bundle, bundleTo, runBuildCommand } from "./build"
+import { runPackCommand } from "./pack"
 import { startServer } from "./server"
 import { spawnClient } from "./client"
 import { startRepl } from "./repl"
@@ -25,7 +26,7 @@ import { resolve, dirname } from "path"
 
 // -- Validate args --
 
-let COMMANDS = ["run", "server", "client", "bundle", "record"]
+let COMMANDS = ["run", "server", "client", "bundle", "record", "pack"]
 
 if (!command || !COMMANDS.includes(command)) {
   printUsage()
@@ -42,6 +43,11 @@ if (command === "record" && (!source || !isTsx)) {
   process.exit(1)
 }
 
+if (command === "pack" && (!source || !isTs)) {
+  console.error("Usage: srt pack [options] <entry.[ts|js]>")
+  process.exit(1)
+}
+
 // Force the production export condition for prod bundles. Bun auto-activates the
 // "development" condition whenever NODE_ENV != "production" (read once at startup),
 // and an auto-active condition cannot be turned off via Bun.build({ conditions }).
@@ -51,7 +57,7 @@ if (command === "record" && (!source || !isTsx)) {
 // the auto-activation by setting NODE_ENV=production. Since that is read at startup,
 // we re-exec rather than mutate process.env. Assumes srt runs via bun (argv is
 // [bun, script, ...]); would need rework if ever shipped as a compiled binary.
-let isProdBuild = (command === "bundle" || command === "record") && !values.dev
+let isProdBuild = (command === "bundle" || command === "record" || command === "pack") && !values.dev
 if (isProdBuild && process.env.NODE_ENV !== "production") {
   let proc = Bun.spawnSync({
     cmd: [process.execPath, ...process.argv.slice(1)],
@@ -67,6 +73,10 @@ if (isProdBuild && process.env.NODE_ENV !== "production") {
 
 if (command === "bundle") {
   await runBuildCommand()
+}
+
+if (command === "pack") {
+  await runPackCommand()
 }
 
 // -- Record command --

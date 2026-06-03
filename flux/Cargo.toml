@@ -18,6 +18,10 @@ name = "fluxc"
 path = "src/bin/fluxc.rs"
 required-features = ["compile"]
 
+[[bin]]
+name = "fluxrt"
+path = "src/bin/fluxrt.rs"
+
 [features]
 default = ["compile"]
 compile = []

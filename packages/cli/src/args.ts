@@ -19,6 +19,7 @@ export let { values, positionals } = parseArgs({
 export let command = positionals[0]
 export let source = positionals[1]
 export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
+export let isTs = source?.endsWith(".ts") || source?.endsWith(".js")
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
 export function printUsage() {
@@ -30,6 +31,7 @@ Commands:
   client                 Start solidrt-go client only
   bundle <file.tsx|jsx>  Transpile TSX/JSX to JS or bytecode
   record <file.tsx|jsx>  Capture frames for video generation
+  pack <file.ts|js>      Bundle + compile to a standalone executable (experimental, Flux only)
 
 run/server options:
       --proxy-files      Route file/dir access through the dev server
