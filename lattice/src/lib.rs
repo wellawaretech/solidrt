@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[no_mangle]
 pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
-  start(&rt, None, None, (1280, 720));
+  start(&rt, None, alloy::Mode::Run, (1280, 720));
   0
 }
 
