@@ -7,101 +7,112 @@ An embeddable, extensible cross-platform JavaScript runtime in Rust built on [Qu
 ```rs
 use flux::FluxEngine;
 
-let bytecode = std::fs::read("app.bin").unwrap();
+let bytecode = std::fs::read("app.bin").expect("read bytecode");
 FluxEngine::new().eval(bytecode).await;
 ```
 
-For custom plugins and loggers, see the [examples/](examples/) directory.
-
-### Logger
-
-All console output flows through a `Logger`. By default, `console.log` writes to stdout and `console.warn`/`console.error` write to stderr. Use `.log()` on the builder to provide a custom handler that receives a `LogLevel` and message:
+### Builder options
 
 ```rs
-use flux::LogLevel;
-
-let engine = FluxEngine::builder(runtime)
-    .log(|level, msg| match level {
-        LogLevel::Debug => { /* silenced */ }
-        LogLevel::Log => println!("{msg}"),
-        LogLevel::Warn => eprintln!("[WARN] {msg}"),
-        LogLevel::Error => eprintln!("[ERROR] {msg}"),
-    })
-    .build();
+FluxEngine::builder()
+    .logger(|level, msg| eprintln!("[{level:?}] {msg}"))
+    .plugin(|ctx| { /* register extra globals */ })
+    .userdata(my_value)          // store Rust data accessible inside plugins
+    .module_override("flux:fs", MyFsModule)
+    .stack_size(2 * 1024 * 1024)
+    .build()
 ```
 
-### Evaluation methods
+### Evaluation
 
-`FluxEngine` provides two ways to evaluate code. All evaluation runs as ES modules.
+All evaluation runs as ES modules.
 
-- **`eval(bytecode).await`** - loads and evaluates precompiled bytecode. Waits for all async work to complete.
-- **`eval_source(code).await`** - evaluates JS source as an ES module (supports `import`/`export`). Requires the `compile` feature. Waits for all async work to complete.
-
-```rs
-// run precompiled bytecode
-let bytes = std::fs::read("app.bin").unwrap();
-engine.eval(bytes).await;
-
-// run JS source (requires `compile` feature)
-engine.eval_source(r#"console.log("hello")"#).await;
-```
+- `eval(bytecode).await` - run precompiled bytecode
+- `eval_source(code).await` - run JS source directly (requires `compile` feature)
 
 ## Compiling to bytecode
 
-Enable the `compile` feature to build the `flux` binary, which compiles JS source from stdin to bytecode on stdout:
+Build `fluxc` with `make fluxc`, then pipe JS source to it:
 
 ```
-cargo build --features compile
-echo 'console.log("hello")' | ./target/debug/flux > app.bin
+echo 'console.log("hello")' | fluxc > app.bin
 ```
 
-The `compile_source()` library function is also available behind this feature flag.
+`compile_source(source, module_name)` is also available as a library function.
 
-## Platform bindings
+## JavaScript API
 
-### I/O
+### Web-standard globals
 
-`io.source(target)` creates a source object from a file path or HTTP URL.
+| API                                | Notes                                |
+| ---------------------------------- | ------------------------------------ |
+| `console.log/warn/error`           | routed through the configured logger |
+| `setTimeout` / `clearTimeout`      |                                      |
+| `setInterval` / `clearInterval`    |                                      |
+| `fetch(url, opts?)`                | returns a `Response`                 |
+| `Request` / `Response` / `Headers` | web-standard                         |
+| `TextEncoder` / `TextDecoder`      |                                      |
+
+### `Flux` global
+
+`Flux.on(event, handler)` - subscribe to events emitted by the host.
+
+### `flux:http`
 
 ```js
-let src = io.source("data.json");   // file
-let src = io.source("https://api.example.com/data");  // HTTP GET
+import { serve } from "flux:http"
+
+let server = serve({
+  port: 3000,
+  fetch(req) {
+    return new Response("ok")
+  },
+  routes: {
+    "/health": new Response("ok"),
+    "GET /users/:id": (req) => new Response(req.params.id),
+  },
+  error(err) {
+    return new Response("error", { status: 500 })
+  },
+})
+
+server.stop()
 ```
 
-The source object has three body methods, each returning a Promise. The body can only be consumed once (web `Response`-style):
+### `flux:fs`
 
 ```js
-let text = await src.text();    // string
-let bytes = await src.bytes();  // Uint8Array
-let obj = await src.json();     // parsed JSON
+import { file, dir } from "flux:fs"
+
+let text = await file("data.txt").text()
+let bytes = await file("img.png").bytes()
+await file("out.txt").write("hello")
+let stat = await file("data.txt").stat()
+
+let entries = await dir("./src").list()
 ```
 
-The source also exposes its target as a `path` (file) or `url` (HTTP) property.
-
-### Timers
+### `flux:sqlite`
 
 ```js
-let id = setTimeout(cb, ms);
-clearTimeout(id);
+import { Database } from "flux:sqlite"
 
-let id = setInterval(cb, ms);
-clearInterval(id);
-```
-
-### Console
-
-```js
-console.log("info");     // print to stdout
-console.warn("warning"); // print to stderr
-console.error("error");  // print to stderr
+let db = await Database.connect("app.db")
+let stmt = db.query("SELECT * FROM users WHERE id = ?")
+let rows = await stmt.all(42)
+let row = await stmt.first(42)
+await stmt.run(42)
+db.close()
 ```
 
 ## Building
 
+Run from `flux/`:
+
 ```
-cargo build                      # library only
-cargo build --features compile   # library + compiler binary
-cargo test
+make build    # flux + fluxc + fluxrt binaries (release)
+make test     # run tests
+make clean
 ```
 
-Requires Rust 2021 edition. Licensed under MIT.
+Use `PROFILE=debug` for debug builds. `make build-opt` produces a stripped, LTO-optimised binary.
