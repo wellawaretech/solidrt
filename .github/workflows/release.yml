@@ -227,6 +227,14 @@ jobs:
             (cd "$dir" && npm pkg set version="$VERSION")
           done
 
+      - name: Bump Rust crate versions
+        run: |
+          VERSION="${{ steps.flags.outputs.version }}"
+          cargo install cargo-edit --no-default-features --features set-version
+          for crate in flux alloy lattice; do
+            (cd "$crate" && cargo set-version "$VERSION")
+          done
+
       - name: Refresh lockfile with bumped versions
         run: bun update
 

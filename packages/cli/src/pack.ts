@@ -9,7 +9,7 @@ async function bundleFlux(entry: string): Promise<string> {
     target: "browser",
     format: "esm",
     minify: values.minify,
-    external: ["qjs:*", "flux:*"],
+    external: ["flux:*"],
   })
   if (!result.success) {
     for (let msg of result.logs) console.error(msg)

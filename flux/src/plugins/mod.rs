@@ -74,6 +74,7 @@ pub(crate) async fn init_context(
       fetch::init_fetch(&ctx);
       console::init_console(&ctx);
       flux::events::init_events(&ctx, &flux_obj);
+      flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       headers::init_headers(&ctx);
       request::init_request(&ctx);
       response::init_response(&ctx);
