@@ -3,6 +3,9 @@
 import type { JSX as SolidJSX } from "@solidjs/signals"
 
 declare global {
+  function requestAnimationFrame(callback: (time: number) => void): number
+  function cancelAnimationFrame(id: number): void
+
   let ffi: {
     createRoot(id: number): void
     createNode(id: number, kind: string): void
