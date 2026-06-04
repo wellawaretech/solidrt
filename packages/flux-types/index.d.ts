@@ -4,6 +4,14 @@ declare global {
   }
 }
 
+declare module "flux:process" {
+  // Listen for an OS signal (e.g. "SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT",
+  // "SIGUSR1", "SIGUSR2"). The callback receives the signal name. Returns an
+  // unsubscribe function. Unix only; a no-op elsewhere.
+  export function on(signal: string, callback: (signal: string) => void): () => void
+  export function once(signal: string, callback: (signal: string) => void): () => void
+}
+
 declare module "flux:fs" {
   type DirEntry = {
     name: string

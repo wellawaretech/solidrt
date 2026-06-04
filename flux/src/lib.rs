@@ -7,7 +7,7 @@ pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, Shutdow
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::fetch::{do_fetch, ResponseData};
-pub use plugins::flux::events::{emit_event, register_listener};
+pub use plugins::flux::events::{emit_event, has_listeners, register_listener};
 pub use plugins::time::Clock;
 pub use rquickjs;
 
@@ -31,6 +31,8 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   loader.add_module("flux:fs", flux::fs::FsModule);
   resolver.add_module("flux:http");
   loader.add_module("flux:http", flux::serve::HttpModule);
+  resolver.add_module("flux:process");
+  loader.add_module("flux:process", flux::process::ProcessModule);
   rt.set_loader(resolver, loader);
 
   let ctx = Context::full(&rt).expect("failed to create QuickJS context");

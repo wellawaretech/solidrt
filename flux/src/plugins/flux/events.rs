@@ -91,6 +91,15 @@ pub fn register_listener<'js>(
   )
 }
 
+// Whether `event` currently has any registered listeners. Lets a consumer tear
+// down an external resource (e.g. an OS signal watcher) once the last listener
+// for an event is gone.
+pub fn has_listeners(ctx: &Ctx<'_>, event: &str) -> bool {
+  let store = ctx.userdata::<ListenerMap>().unwrap();
+  let inner = store.0.borrow();
+  inner.map.get(event).is_some_and(|cbs| !cbs.is_empty())
+}
+
 // Dispatches an event to all registered listeners.
 // Called from closures pushed via ExecHandle, so it always runs on the JS thread.
 pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {

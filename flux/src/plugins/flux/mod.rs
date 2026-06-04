@@ -3,5 +3,6 @@ pub mod events;
 pub mod file;
 pub mod fs;
 pub mod memory;
+pub mod process;
 pub mod serve;
 pub mod sqlite;
