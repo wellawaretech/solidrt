@@ -37,12 +37,12 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
       Ok(id)
     },
   )
-  .unwrap();
+  .expect("create createTexture");
 
-  let decode_image = Function::new(ctx.clone(), decode_image_impl).unwrap();
+  let decode_image = Function::new(ctx.clone(), decode_image_impl).expect("create decodeImage");
 
-  let gpu = Object::new(ctx.clone()).unwrap();
-  gpu.set("createTexture", create_texture).unwrap();
-  gpu.set("decodeImage", decode_image).unwrap();
-  ctx.globals().set("gpu", gpu).unwrap();
+  let gpu = Object::new(ctx.clone()).expect("create gpu object");
+  gpu.set("createTexture", create_texture).expect("set gpu.createTexture");
+  gpu.set("decodeImage", decode_image).expect("set gpu.decodeImage");
+  ctx.globals().set("gpu", gpu).expect("set gpu global");
 }

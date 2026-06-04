@@ -1,4 +1,5 @@
 pub mod draw;
+pub mod events;
 mod properties;
 pub mod raf;
 pub mod texture;

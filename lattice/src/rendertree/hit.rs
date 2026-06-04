@@ -60,6 +60,21 @@ impl Hittable for ElementKind {
 /// (node_id, parent-space point, local point after element's transform)
 pub type HitEntry = (u64, XY, XY);
 
+/// Diffs a previously-hovered hit path against a freshly computed one, both
+/// ordered root->leaf, relative to their longest shared prefix. Returns:
+/// - `left`: ids no longer in the path, deepest-first (leaf->root), so a
+///   consumer dispatches leave events from the innermost element outward.
+/// - `entered`: newly present ids, root->leaf, for enter events outermost-in.
+pub fn path_diff(old_ids: &[u64], new_ids: &[u64]) -> (Vec<u64>, Vec<u64>) {
+  let mut diverge = 0;
+  while diverge < old_ids.len() && diverge < new_ids.len() && old_ids[diverge] == new_ids[diverge] {
+    diverge += 1;
+  }
+  let left: Vec<u64> = old_ids[diverge..].iter().rev().copied().collect();
+  let entered: Vec<u64> = new_ids[diverge..].to_vec();
+  (left, entered)
+}
+
 pub trait HitTester {
   fn hit_test(&self, tree: &RenderTree, point: XY) -> Vec<HitEntry>;
 }

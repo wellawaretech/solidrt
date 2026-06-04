@@ -49,7 +49,7 @@ pub fn init(
   engine_state: Arc<EngineState>,
 ) {
   let draw_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
-    let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().unwrap();
+    let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
     let mut builder = DisplayListBuilder::new(None);
     let scale = platform.display_scale();
     builder.scale(scale, scale);
@@ -130,18 +130,11 @@ pub fn init(
       let old_ids = engine_state.hovered_path(key);
 
       if new_ids != old_ids {
-        let mut diverge = 0;
-        while diverge < old_ids.len() && diverge < new_ids.len() && old_ids[diverge] == new_ids[diverge] {
-          diverge += 1;
-        }
-
-        let left: Vec<u64> = old_ids[diverge..].iter().rev().copied().collect();
+        let (left, entered) = rendertree::hit::path_diff(&old_ids, &new_ids);
         if !left.is_empty() {
           let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, px, py, modifiers, &left);
           emit_event(&qtx, "pointerLeave", obj);
         }
-
-        let entered: Vec<u64> = new_ids[diverge..].to_vec();
         if !entered.is_empty() {
           let obj = build_pointer_obj(&qtx, pointer_id, pointer_type, px, py, modifiers, &entered);
           emit_event(&qtx, "pointerEnter", obj);
@@ -157,8 +150,8 @@ pub fn init(
       atx.submit(dl).expect("Failed to submit display list");
     }
   })
-  .unwrap();
+  .expect("create draw");
 
   let globals = qtx.globals();
-  globals.set("draw", draw_fn).unwrap();
+  globals.set("draw", draw_fn).expect("set draw");
 }

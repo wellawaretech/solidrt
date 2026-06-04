@@ -6,6 +6,12 @@ declare global {
   function requestAnimationFrame(callback: (time: number) => void): number
   function cancelAnimationFrame(id: number): void
 
+  // UI event bus (lattice). on/once return an unsubscribe function.
+  let srt: {
+    on(event: string, callback: (data: any) => void): () => void
+    once(event: string, callback: (data: any) => void): () => void
+  }
+
   let ffi: {
     createRoot(id: number): void
     createNode(id: number, kind: string): void

@@ -69,7 +69,7 @@ pub fn init(
   atx: AlloyContext,
 ) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
-  ctx.store_userdata(shared.clone()).unwrap();
+  ctx.store_userdata(shared.clone()).expect("store render tree");
 
   let tree_ref = shared.0.clone();
   let create_root = Function::new(ctx.clone(), move |id: u64| {
@@ -77,25 +77,25 @@ pub fn init(
     tree.create_node(id, Window::default().with_layout());
     tree.root = Some(id);
   })
-  .unwrap();
+  .expect("create createRoot");
 
   let tree_ref = shared.0.clone();
   let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
     tree_ref.borrow_mut().create_node(id, Element::from_kind(&kind));
   })
-  .unwrap();
+  .expect("create createNode");
 
   let tree_ref = shared.0.clone();
   let delete_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
     tree_ref.borrow_mut().delete_node(parent_id, node_id);
   })
-  .unwrap();
+  .expect("create deleteNode");
 
   let tree_ref = shared.0.clone();
   let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
     tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
   })
-  .unwrap();
+  .expect("create insertNode");
 
   let tree_ref = shared.0.clone();
   let cmd_tx = alloy_cmd_tx.clone();
@@ -107,17 +107,18 @@ pub fn init(
       tree.invalidate_cache(node_id);
     }
   })
-  .unwrap();
+  .expect("create setProperty");
 
   let tree_ref = shared.0.clone();
   let get_bounding_box =
-    Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> { tree_ref.borrow().bounding_box(id) }).unwrap();
+    Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> { tree_ref.borrow().bounding_box(id) })
+      .expect("create getBoundingBox");
 
   let cmd_tx = alloy_cmd_tx.clone();
   let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
     cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
   })
-  .unwrap();
+  .expect("create setTextInputActive");
 
   let measure_platform = platform.clone();
   let measure_atx = atx.clone();
@@ -168,17 +169,17 @@ pub fn init(
     });
     TextSize { width: size.width, height: size.height }
   })
-  .unwrap();
+  .expect("create measureText");
 
-  let ffi = Object::new(ctx.clone()).unwrap();
-  ffi.set("createRoot", create_root).unwrap();
-  ffi.set("createNode", create_node).unwrap();
-  ffi.set("deleteNode", delete_node).unwrap();
-  ffi.set("insertNode", insert_node).unwrap();
-  ffi.set("setProperty", set_property).unwrap();
-  ffi.set("setTextInputActive", set_text_input_active).unwrap();
-  ffi.set("measureText", measure_text).unwrap();
-  ffi.set("getBoundingBox", get_bounding_box).unwrap();
+  let ffi = Object::new(ctx.clone()).expect("create ffi object");
+  ffi.set("createRoot", create_root).expect("set ffi.createRoot");
+  ffi.set("createNode", create_node).expect("set ffi.createNode");
+  ffi.set("deleteNode", delete_node).expect("set ffi.deleteNode");
+  ffi.set("insertNode", insert_node).expect("set ffi.insertNode");
+  ffi.set("setProperty", set_property).expect("set ffi.setProperty");
+  ffi.set("setTextInputActive", set_text_input_active).expect("set ffi.setTextInputActive");
+  ffi.set("measureText", measure_text).expect("set ffi.measureText");
+  ffi.set("getBoundingBox", get_bounding_box).expect("set ffi.getBoundingBox");
 
-  ctx.globals().set("ffi", ffi).unwrap();
+  ctx.globals().set("ffi", ffi).expect("set ffi global");
 }

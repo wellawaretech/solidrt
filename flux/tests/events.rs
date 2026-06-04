@@ -3,9 +3,22 @@
 mod common;
 
 use common::{Captured, LogSink};
-use flux::rquickjs::Value;
-use flux::{emit_event, FluxEngine, LogLevel};
+use flux::rquickjs::{Ctx, Function, Value};
+use flux::{emit_event, register_listener, FluxEngine, LogLevel};
 use std::sync::Arc;
+
+// flux ships no JS event surface (consumers build their own on top of
+// register_listener). The tests install a minimal `on(event, cb)` global the
+// same way a real consumer would, then exercise the bus through it.
+fn on_impl<'js>(event: String, callback: Function<'js>) -> flux::rquickjs::Result<Function<'js>> {
+  let ctx = callback.ctx().clone();
+  register_listener(&ctx, event, callback, false)
+}
+
+fn install_on(ctx: Ctx<'_>) {
+  let on = Function::new(ctx.clone(), on_impl).expect("create on");
+  ctx.globals().set("on", on).expect("set on");
+}
 
 /// Run `code` on a background engine thread, then emit `events` on `channel`
 /// from the main thread through the engine's exec handle, each after its given
@@ -16,7 +29,7 @@ use std::sync::Arc;
 /// (an `Object`, not a bare string).
 fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> Captured {
   let sink = LogSink::new();
-  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let engine = FluxEngine::builder().logger(sink.logger()).plugin(install_on).build();
   let handle = engine.exec_handle();
 
   let code = code.to_string();
@@ -49,7 +62,7 @@ fn run_with_events(code: &str, channel: &str, events: Vec<(&str, u64)>) -> Captu
 fn emit_triggers_listener() {
   let out = run_with_events(
     r#"
-        let unsub = Flux.on("test", (data) => {
+        let unsub = on("test", (data) => {
             console.log("received:" + data.value);
             unsub();
         });
@@ -67,7 +80,7 @@ fn event_delivery_with_set_interval() {
         let count = 0;
         let intervalId = setInterval(() => {}, 100);
 
-        let unsub = Flux.on("render", () => {
+        let unsub = on("render", () => {
             count++;
             console.log("render:" + count);
             if (count >= 3) {
@@ -94,7 +107,7 @@ fn microtask_registered_listener_with_set_interval() {
 
         // Register the event listener inside a microtask, like Solid.js onSettled does
         queueMicrotask(() => {
-            unsub = Flux.on("render", () => {
+            unsub = on("render", () => {
                 count++;
                 console.log("render:" + count);
                 if (count >= 3) {

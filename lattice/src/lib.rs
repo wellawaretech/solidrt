@@ -60,7 +60,7 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
     obj.set("height", size.height).expect("set height");
     obj.set("safeArea", sa).expect("set safeArea");
     obj.set("displayScale", display_scale).expect("set displayScale");
-    emit_event(&ctx, "resize", obj);
+    plugins::events::emit_sticky(&ctx, "resize", obj);
   });
 }
 
@@ -289,7 +289,7 @@ fn ui_thread(
               eh.exec(move |ctx| {
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                 obj.set("hz", hz).expect("set hz");
-                emit_event(&ctx, "displayRefreshRate", obj);
+                plugins::events::emit_sticky(&ctx, "displayRefreshRate", obj);
               });
             }
           }
@@ -347,6 +347,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
+        .plugin(|ctx| plugins::events::init(&ctx))
         .plugin(|ctx| plugins::raf::init(&ctx))
         .userdata(clock.clone());
       #[cfg(feature = "go")]

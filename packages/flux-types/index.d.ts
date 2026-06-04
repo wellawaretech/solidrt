@@ -1,8 +1,6 @@
 declare global {
   let Flux: {
     version: string
-    on(event: string, callback: (data: any) => void): () => void
-    once(event: string, callback: (data: any) => void): () => void
   }
 }
 
