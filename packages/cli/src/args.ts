@@ -20,16 +20,17 @@ export let command = positionals[0]
 export let source = positionals[1]
 export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
 export let isTs = source?.endsWith(".ts") || source?.endsWith(".js")
+export let isSource = isTsx || isTs
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
 export function printUsage() {
   console.error(`Usage: srt <command> [options] [file]
 
 Commands:
-  run [file.tsx|jsx]     Start dev server + local solidrt-go client
-  server [file.tsx|jsx]  Start dev server only
+  run [file]             Start dev server + local solidrt-go client
+  server [file]          Start dev server only
   client                 Start solidrt-go client only
-  bundle <file.tsx|jsx>  Transpile TSX/JSX to JS or bytecode
+  bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
   record <file.tsx|jsx>  Capture frames for video generation
   pack <file.ts|js>      Bundle + compile to a standalone executable (experimental, Flux only)
 

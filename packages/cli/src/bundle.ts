@@ -86,7 +86,7 @@ export async function runBundleCommand() {
     process.exit()
   }
 
-  let baseName = values.output ?? source!.replace(/\.[jt]sx$/, "")
+  let baseName = values.output ?? source!.replace(/\.[jt]sx?$/, "")
 
   if (values.stdout) {
     let result = await bundle()

@@ -13,7 +13,7 @@
 //   srt record examples/hello.tsx       - bundle TSX and run with frame capture
 
 import pkg from "../package.json"
-import { values, command, source, isTsx, isTs, isPrebuilt, printUsage } from "./args"
+import { values, command, source, isTsx, isTs, isSource, isPrebuilt, printUsage } from "./args"
 import { state, requireBinary, run, shutdown } from "./util"
 import { bundle, bundleTo, runBundleCommand } from "./bundle"
 import { runPackCommand } from "./pack"
@@ -33,8 +33,8 @@ if (!command || !COMMANDS.includes(command)) {
   process.exit(1)
 }
 
-if (command === "bundle" && (!source || (!isTsx && !isPrebuilt))) {
-  console.error("Usage: srt bundle [options] <entry.[tsx|jsx|srt.js|srt.bin]>")
+if (command === "bundle" && (!source || (!isSource && !isPrebuilt))) {
+  console.error("Usage: srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
   process.exit(1)
 }
 
@@ -120,7 +120,7 @@ startServer()
 
 // Bundle initial code if source file given (after server start so the
 // dev base URL is available to the bundler).
-if (source && isTsx) {
+if (source && isSource) {
   let initialResult = await bundle()
   if (initialResult) {
     for (let output of initialResult.outputs) {
