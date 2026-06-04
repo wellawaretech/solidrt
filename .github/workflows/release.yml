@@ -228,6 +228,7 @@ jobs:
           done
 
       - name: Bump Rust crate versions
+        if: ${{ !inputs.dry_run }}
         run: |
           VERSION="${{ steps.flags.outputs.version }}"
           cargo install cargo-edit --no-default-features --features set-version
