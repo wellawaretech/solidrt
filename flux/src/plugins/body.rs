@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use tokio::sync::mpsc;
 
-use crate::logger::Logger;
+use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 
 /// A network-sourced response body stream (e.g. a fetch response), with its error
@@ -330,7 +330,7 @@ pub(crate) async fn pump_async_iterable<'js>(
   let iter: Object<'js> = match get_iter.call((iterable,)) {
     Ok(i) => i,
     Err(e) => {
-      logger.warn(&format!("[flux] stream: could not get async iterator: {e}"));
+      logger.warn(&format!("[flux] stream: could not get async iterator: {}", format_js_error(&ctx, e)));
       return;
     }
   };
@@ -346,14 +346,14 @@ pub(crate) async fn pump_async_iterable<'js>(
     let step: Value<'js> = match next.call((This(iter.clone()),)) {
       Ok(v) => v,
       Err(e) => {
-        logger.warn(&format!("[flux] stream: iterator next() threw: {e}"));
+        logger.warn(&format!("[flux] stream: iterator next() threw: {}", format_js_error(&ctx, e)));
         break;
       }
     };
     let result = match MaybePromise::from_value(step).into_future::<Value<'js>>().await {
       Ok(v) => v,
       Err(e) => {
-        logger.warn(&format!("[flux] stream: iterator rejected: {e}"));
+        logger.warn(&format!("[flux] stream: iterator rejected: {}", format_js_error(&ctx, e)));
         break;
       }
     };

@@ -19,7 +19,7 @@ use std::task::{Context, Poll};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 
-use crate::logger::{CtxLogger, Logger};
+use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
 use crate::plugins::request::{request_from_parts, Request};
@@ -311,7 +311,10 @@ async fn error_response<'js>(
   logger: &Logger,
 ) -> HyperResponse<ResBody> {
   let exception = ctx.catch();
-  logger.warn(&format!("[flux] serve fetch error: {err}"));
+  logger.warn(&format!(
+    "[flux] serve fetch error: {}",
+    exception.as_exception().map_or_else(|| format!("{exception:?}"), |e| e.to_string())
+  ));
 
   let ef = match error_fn {
     Some(f) => f,
@@ -321,7 +324,7 @@ async fn error_response<'js>(
   let val = match ef.call::<(Value<'_>,), Value<'_>>((exception,)) {
     Ok(v) => v,
     Err(e) => {
-      logger.warn(&format!("[flux] serve error handler threw: {e}"));
+      logger.warn(&format!("[flux] serve error handler threw: {}", format_js_error(ctx, e)));
       return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
     }
   };
@@ -329,7 +332,7 @@ async fn error_response<'js>(
   let resolved = match MaybePromise::from_value(val).into_future::<Value<'_>>().await {
     Ok(v) => v,
     Err(e) => {
-      logger.warn(&format!("[flux] serve error handler rejected: {e}"));
+      logger.warn(&format!("[flux] serve error handler rejected: {}", format_js_error(ctx, e)));
       return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
     }
   };

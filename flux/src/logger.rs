@@ -51,6 +51,18 @@ impl CtxLogger for Ctx<'_> {
   }
 }
 
+/// Formats a `rquickjs::Error` for display. When it is a pending JS exception,
+/// clears it from the context and returns the exception message and stack;
+/// otherwise returns the Rust error string.
+pub fn format_js_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
+  if err.is_exception() {
+    let caught = ctx.catch();
+    caught.as_exception().map_or_else(|| format!("{caught:?}"), |e| e.to_string())
+  } else {
+    err.to_string()
+  }
+}
+
 /// Reports an error from invoking a JS callback (event listener, timer, etc.)
 /// to the logger. When the error is a thrown JS exception, the pending
 /// exception is retrieved from the context with `ctx.catch()` so the message
@@ -58,17 +70,8 @@ impl CtxLogger for Ctx<'_> {
 /// Use this anywhere a JS callback is called fire-and-forget, so throws are
 /// not silently swallowed.
 pub fn report_uncaught(ctx: &Ctx<'_>, err: rquickjs::Error, context: &str) {
-  let logger = ctx.logger();
-  if err.is_exception() {
-    let caught = ctx.catch();
-    if let Some(exc) = caught.as_exception() {
-      logger.error(&format!("[flux] uncaught exception in {context}: {exc}"));
-    } else {
-      logger.error(&format!("[flux] uncaught throw in {context}: {caught:?}"));
-    }
-  } else {
-    logger.error(&format!("[flux] error in {context}: {err}"));
-  }
+  let msg = format_js_error(ctx, err);
+  ctx.logger().error(&format!("[flux] uncaught exception in {context}: {msg}"));
 }
 
 /// Logging function type: receives a log level and message string.
