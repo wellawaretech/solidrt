@@ -52,7 +52,7 @@ impl DisplayContext {
 #[allow(dead_code)]
 pub trait RenderSurface {
   fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>>;
-  fn present(&mut self);
+  fn present(&mut self, window: &sdl3::video::Window);
   fn resize(&mut self, size: ISize);
 }
 

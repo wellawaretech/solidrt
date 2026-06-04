@@ -121,17 +121,16 @@ pub fn adopt_texture(gpu_texture: &GpuTexture, impeller_ctx: &ImpellerContext, s
 pub struct GlSurface {
   ctx: ImpellerContext,
   surface: impellers::Surface,
-  window_raw: usize,
 }
 
 impl GlSurface {
-  pub fn create(window: &sdl3::video::Window, size: ISize) -> Result<Self, Box<dyn std::error::Error>> {
+  pub fn create(_window: &sdl3::video::Window, size: ISize) -> Result<Self, Box<dyn std::error::Error>> {
     let mut ctx = create_impeller_context();
 
     let surface = unsafe { ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }
       .ok_or_else(|| Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>)?;
 
-    Ok(GlSurface { ctx, surface, window_raw: window.raw() as usize })
+    Ok(GlSurface { ctx, surface })
   }
 }
 
@@ -143,10 +142,8 @@ impl RenderSurface for GlSurface {
       .map_err(|_| Box::new(std::io::Error::other("Failed to draw display list")) as Box<dyn std::error::Error>)
   }
 
-  fn present(&mut self) {
-    unsafe {
-      sdl3::sys::video::SDL_GL_SwapWindow(self.window_raw as *mut _);
-    }
+  fn present(&mut self, window: &sdl3::video::Window) {
+    window.gl_swap_window();
   }
 
   fn resize(&mut self, size: ISize) {

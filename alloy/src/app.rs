@@ -135,7 +135,7 @@ impl App {
             }
           }
           render_surface.draw_display_list(&dl).expect("Failed to draw display list");
-          render_surface.present();
+          render_surface.present(&window);
           let time = start_time.elapsed().as_secs_f64();
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
           frame += 1;
