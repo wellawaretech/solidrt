@@ -1,6 +1,6 @@
 // flux - run a JS source file via FluxEngine
 
-use flux::{FluxEngine, LogLevel};
+use flux::{FluxEngine, LogLevel, ProcessArgs};
 
 fn log_fn(_level: LogLevel, msg: &str) {
   println!("{msg}");
@@ -8,8 +8,10 @@ fn log_fn(_level: LogLevel, msg: &str) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-  let mut args = std::env::args().skip(1);
-  let path = args.next();
+  // argv[0] is the executable, argv[1] the script path (Node/Bun parity); the
+  // rest are forwarded to JS through flux:process.
+  let argv: Vec<String> = std::env::args().collect();
+  let path = argv.get(1).cloned();
 
   let source = match path.as_deref() {
     Some("-") | None => {
@@ -26,6 +28,6 @@ async fn main() {
     }),
   };
 
-  let engine = FluxEngine::builder().logger(log_fn).build();
+  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
   engine.eval_source(&source).await;
 }

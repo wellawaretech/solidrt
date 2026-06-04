@@ -8,6 +8,7 @@ pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::fetch::{do_fetch, ResponseData};
 pub use plugins::flux::events::{emit_event, has_listeners, register_listener};
+pub use plugins::flux::process::ProcessArgs;
 pub use plugins::time::Clock;
 pub use rquickjs;
 

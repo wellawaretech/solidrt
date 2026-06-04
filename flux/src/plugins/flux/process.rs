@@ -1,5 +1,5 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, Function};
+use rquickjs::{Array, Ctx, Function, JsLifetime};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -20,6 +20,16 @@ use super::events::register_listener;
 // (a fired once(), or the final unsubscribe followed by a delivery) - otherwise
 // it would keep the engine from ever going idle.
 
+// flux:process also exposes the process argument vector:
+//
+//   import { argv } from "flux:process"
+//
+// The host sets it with FluxEngine::builder().userdata(ProcessArgs(...)); when
+// unset, argv is an empty array. Node/Bun parity: argv[0] is the executable,
+// argv[1] the script path, and the rest are the user-supplied arguments.
+#[derive(Clone, JsLifetime, Default)]
+pub struct ProcessArgs(#[qjs(skip_trace)] pub Vec<String>);
+
 // Signals that already have an OS watcher installed for this context, so
 // repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
 // its own entry when it stops, so a later subscribe reinstalls it.
@@ -32,6 +42,7 @@ impl ModuleDef for ProcessModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("on")?;
     decl.declare("once")?;
+    decl.declare("argv")?;
     Ok(())
   }
 
@@ -39,6 +50,14 @@ impl ModuleDef for ProcessModule {
     let _ = ctx.store_userdata(InstalledSignals::default());
     exports.export("on", Function::new(ctx.clone(), on_impl)?)?;
     exports.export("once", Function::new(ctx.clone(), once_impl)?)?;
+
+    let argv = Array::new(ctx.clone())?;
+    if let Some(args) = ctx.userdata::<ProcessArgs>() {
+      for (i, arg) in args.0.iter().enumerate() {
+        argv.set(i, arg.as_str())?;
+      }
+    }
+    exports.export("argv", argv)?;
     Ok(())
   }
 }

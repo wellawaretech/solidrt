@@ -1,8 +1,8 @@
 // fluxrt - self-contained flux runtime; runs bytecode appended to this binary
 
-use flux::{FluxEngine, LogLevel};
+use flux::{FluxEngine, LogLevel, ProcessArgs};
 
-const MAGIC: &[u8; 8] = b"FLUXRT\x00\x01";
+const MAGIC: &[u8; 8] = b"FLUXRT\x88\x44";
 const TRAILER_LEN: usize = 16; // u64 offset (8 bytes) + magic (8 bytes)
 
 fn log_fn(_level: LogLevel, msg: &str) {
@@ -34,6 +34,8 @@ async fn main() {
     std::process::exit(1);
   });
 
-  let engine = FluxEngine::builder().logger(log_fn).build();
+  let argv: Vec<String> = std::env::args().collect();
+
+  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
   engine.eval(bytecode).await;
 }

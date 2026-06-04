@@ -3,7 +3,7 @@
 mod common;
 
 use common::{Captured, LogSink};
-use flux::{FluxEngine, LogLevel};
+use flux::{FluxEngine, LogLevel, ProcessArgs};
 use std::sync::mpsc;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
@@ -113,4 +113,31 @@ fn once_does_not_refire_after_teardown() {
   );
   let onces: Vec<&str> = out.lines_at(LogLevel::Log).into_iter().filter(|l| l.starts_with("once:")).collect();
   assert_eq!(onces, vec!["once:SIGUSR1"], "once must fire exactly once even across repeated signals");
+}
+
+#[test]
+fn argv_reflects_process_args() {
+  let sink = LogSink::new();
+  let args = vec!["flux".to_string(), "script.js".to_string(), "hello".to_string(), "--name=foo".to_string()];
+  let engine = FluxEngine::builder().logger(sink.logger()).userdata(ProcessArgs(args)).build();
+  let code = r#"
+        import { argv } from "flux:process"
+        console.log(JSON.stringify(argv))
+        "#;
+  let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("build runtime");
+  rt.block_on(engine.eval_source(code));
+  assert_eq!(sink.captured().at(LogLevel::Log), r#"["flux","script.js","hello","--name=foo"]"#);
+}
+
+#[test]
+fn argv_is_empty_when_host_sets_none() {
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let code = r#"
+        import { argv } from "flux:process"
+        console.log(JSON.stringify(argv))
+        "#;
+  let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("build runtime");
+  rt.block_on(engine.eval_source(code));
+  assert_eq!(sink.captured().at(LogLevel::Log), "[]");
 }
