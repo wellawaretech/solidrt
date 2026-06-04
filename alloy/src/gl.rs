@@ -61,7 +61,7 @@ pub fn create_wgpu_device() -> (wgpu::Device, wgpu::Queue) {
   let hal_exposed = unsafe {
     gles::Adapter::new_external(
       |name| {
-        let cname = std::ffi::CString::new(name).unwrap();
+        let cname = std::ffi::CString::new(name).expect("GL proc name contains null byte");
         sdl3::sys::video::SDL_GL_GetProcAddress(cname.as_ptr())
           .map(|f| f as *const std::ffi::c_void)
           .unwrap_or(std::ptr::null())
@@ -157,7 +157,7 @@ pub fn run_context(
   tx: mpsc::Sender<DisplayList>,
 ) {
   let gl_context_ptr =
-    Box::new(SendablePtr(unsafe { std::mem::transmute_copy::<_, *mut std::ffi::c_void>(ui_context) }));
+    Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
 
   std::thread::spawn(move || {
     let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
