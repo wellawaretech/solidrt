@@ -38,6 +38,7 @@ bytes = "1"
 futures-core = "0.3"
 percent-encoding = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
+path-clean = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

@@ -52,6 +52,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:process");
   loader.add_module("flux:process", flux::process::ProcessModule);
 
+  resolver.add_module("flux:path");
+  loader.add_module("flux:path", flux::path::PathModule);
+
   for f in module_overrides {
     f(&mut resolver, &mut loader);
   }
