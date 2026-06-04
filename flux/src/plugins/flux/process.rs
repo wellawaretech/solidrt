@@ -23,7 +23,6 @@ use super::events::register_listener;
 // Signals that already have an OS watcher installed for this context, so
 // repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
 // its own entry when it stops, so a later subscribe reinstalls it.
-#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, rquickjs::JsLifetime, Default)]
 struct InstalledSignals(#[qjs(skip_trace)] Rc<RefCell<HashSet<String>>>);
 
@@ -54,20 +53,32 @@ fn once_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rqu
   register_listener(&ctx, signal, callback, true)
 }
 
+const KNOWN_SIGNALS: &[&str] = &["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
+
 // Installs a once-per-context OS watcher for `signal` that emits the signal name
 // through the event bus on each delivery, stopping when the signal has no more
 // listeners. Unknown signal names install no watcher (their listeners simply
 // never fire).
-#[cfg(unix)]
 fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
-  use super::events::{emit_event, has_listeners};
   use crate::logger::CtxLogger;
-  use tokio::signal::unix::SignalKind;
 
+  if !KNOWN_SIGNALS.contains(&signal) {
+    ctx.logger().error(&format!("[flux:process] unrecognized signal: {signal}"));
+    return;
+  }
   let installed = ctx.userdata::<InstalledSignals>().expect("installed signals userdata");
   if installed.0.borrow().contains(signal) {
     return;
   }
+  install_watcher(ctx, signal, &installed);
+}
+
+#[cfg(unix)]
+fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
+  use super::events::{emit_event, has_listeners};
+  use crate::logger::CtxLogger;
+  use tokio::signal::unix::SignalKind;
+
   let kind = match signal {
     "SIGINT" => SignalKind::interrupt(),
     "SIGTERM" => SignalKind::terminate(),
@@ -75,7 +86,7 @@ fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
     "SIGQUIT" => SignalKind::quit(),
     "SIGUSR1" => SignalKind::user_defined1(),
     "SIGUSR2" => SignalKind::user_defined2(),
-    _ => return,
+    _ => unreachable!(),
   };
   let mut stream = match tokio::signal::unix::signal(kind) {
     Ok(stream) => stream,
@@ -103,7 +114,32 @@ fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
   });
 }
 
-// Signals are a Unix concept; on other platforms on/once register listeners
-// that simply never fire (no watcher, no error).
+// On non-Unix platforms only SIGINT (Ctrl+C) is supported via tokio's ctrl_c().
 #[cfg(not(unix))]
-fn ensure_watcher(_ctx: &Ctx<'_>, _signal: &str) {}
+fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
+  use super::events::{emit_event, has_listeners};
+  use crate::logger::CtxLogger;
+
+  if signal != "SIGINT" {
+    ctx.logger().error(&format!("[flux:process] unsupported signal on this platform: {signal}"));
+    return;
+  }
+  installed.0.borrow_mut().insert(signal.to_string());
+
+  let ctx_cb = ctx.clone();
+  ctx.spawn(async move {
+    loop {
+      if let Err(e) = tokio::signal::ctrl_c().await {
+        ctx_cb.logger().error(&format!("[flux:process] failed to install SIGINT handler: {e}"));
+        break;
+      }
+      emit_event(&ctx_cb, "SIGINT", "SIGINT".to_string());
+      if !has_listeners(&ctx_cb, "SIGINT") {
+        break;
+      }
+    }
+    if let Some(installed) = ctx_cb.userdata::<InstalledSignals>() {
+      installed.0.borrow_mut().remove("SIGINT");
+    }
+  });
+}
