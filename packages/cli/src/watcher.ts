@@ -1,6 +1,7 @@
 import { watch } from "node:fs"
 import { resolve, dirname } from "path"
-import { state, print, printErr, buildReload } from "./util"
+import { state, print, printErr } from "./util"
+import { buildReload } from "./dev-server"
 import { bundle } from "./bundler"
 
 let currentWatcher: ReturnType<typeof watch> | null = null

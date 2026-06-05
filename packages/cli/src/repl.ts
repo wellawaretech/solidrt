@@ -1,7 +1,8 @@
 import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
-import { state, print, printErr, broadcastStop, buildReload, shutdown } from "./util"
+import { state, print, printErr, shutdown } from "./util"
+import { buildReload, broadcastStop } from "./dev-server"
 import { bundle } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 

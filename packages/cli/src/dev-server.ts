@@ -3,8 +3,23 @@ import { stat as fsStat, readdir } from "node:fs/promises"
 import { networkInterfaces } from "node:os"
 import { createSocket } from "node:dgram"
 import qrcode from "qrcode-generator"
-import { DEV_HOST, DEV_PORT, state, print, buildReload } from "./util"
+import { state, print } from "./util"
+import { values } from "./args"
 import * as cache from "./cache"
+
+export const DEV_HOST = "127.0.0.1"
+export const DEV_PORT = 15194
+
+// Dev-server WS protocol helpers: the reload message shape and the stop broadcast.
+export function buildReload(payload: { code?: string | null; bytecode?: string }) {
+  return JSON.stringify({ type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload })
+}
+
+export function broadcastStop() {
+  for (let ws of state.clients.keys()) {
+    ws.send(JSON.stringify({ type: "stop" }))
+  }
+}
 
 function headersToObject(h: Headers): Record<string, string> {
   let out: Record<string, string> = {}

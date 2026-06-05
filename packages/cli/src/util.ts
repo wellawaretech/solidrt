@@ -1,10 +1,6 @@
 import { resolveBinary } from "./native"
-import { values } from "./args"
 import type { Interface as ReadlineInterface } from "node:readline"
 import type { Server as BunServer } from "bun"
-
-export const DEV_HOST = "127.0.0.1"
-export const DEV_PORT = 15194
 
 export let state = {
   clients: new Map<any, { platform: string; version: string }>(),
@@ -40,16 +36,6 @@ export function printErr(...args: any[]) {
   process.stdout.write("\r\x1b[K")
   console.error(...args)
   state.rl?.prompt(true)
-}
-
-export function buildReload(payload: { code?: string | null; bytecode?: string }) {
-  return JSON.stringify({ type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload })
-}
-
-export function broadcastStop() {
-  for (let ws of state.clients.keys()) {
-    ws.send(JSON.stringify({ type: "stop" }))
-  }
 }
 
 export function shutdown() {

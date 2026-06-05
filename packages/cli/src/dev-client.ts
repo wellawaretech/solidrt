@@ -1,4 +1,5 @@
-import { DEV_HOST, DEV_PORT, state, print, requireBinary } from "./util"
+import { state, print, requireBinary } from "./util"
+import { DEV_HOST, DEV_PORT } from "./dev-server"
 import { values } from "./args"
 
 function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream) {

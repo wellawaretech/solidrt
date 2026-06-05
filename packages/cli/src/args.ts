@@ -24,6 +24,31 @@ export let isTs = source?.endsWith(".ts") || source?.endsWith(".js")
 export let isSource = isTsx || isTs
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
 
+function usage(line: string): never {
+  console.error("Usage: " + line)
+  process.exit(1)
+}
+
+// Per-command argument requirements. Called once before dispatch.
+export function validateArgs() {
+  switch (command) {
+    case "bundle":
+      if (!source || (!isSource && !isPrebuilt))
+        usage("srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
+      break
+    case "record":
+      if (!source || !isTsx) usage("srt record <entry.[tsx|jsx]>")
+      break
+    case "pack":
+      if (values.flux) {
+        if (!source || !isTs) usage("srt pack --flux [options] <entry.[ts|js]>")
+      } else if (!source || !isSource) {
+        usage("srt pack [options] <entry.[tsx|jsx|ts|js]>")
+      }
+      break
+  }
+}
+
 export function printUsage() {
   console.error(`Usage: srt <command> [options] [file]
 

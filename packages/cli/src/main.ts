@@ -1,36 +1,16 @@
 #!/usr/bin/env bun
 
-import { values, command, source, isTsx, isTs, isSource, isPrebuilt, printUsage } from "./args"
+import { values, command, validateArgs, printUsage } from "./args"
 import { runBundleCommand } from "./commands/bundle"
 import { runPackCommand } from "./commands/pack"
 import { runRecordCommand } from "./commands/record"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
-import { spawnClient } from "./client"
+import { spawnClient } from "./dev-client"
 
 // -- Validate args --
 
-if (command === "bundle" && (!source || (!isSource && !isPrebuilt))) {
-  console.error("Usage: srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
-  process.exit(1)
-}
-
-if (command === "record" && (!source || !isTsx)) {
-  console.error("Usage: srt record <entry.[tsx|jsx]>")
-  process.exit(1)
-}
-
-if (command === "pack") {
-  if (values.flux) {
-    if (!source || !isTs) {
-      console.error("Usage: srt pack --flux [options] <entry.[ts|js]>")
-      process.exit(1)
-    }
-  } else if (!source || !isSource) {
-    console.error("Usage: srt pack [options] <entry.[tsx|jsx|ts|js]>")
-    process.exit(1)
-  }
-}
+validateArgs()
 
 // Force the production export condition for prod bundles. Bun auto-activates the
 // "development" condition whenever NODE_ENV != "production" (read once at startup),
@@ -66,8 +46,8 @@ if (command === "bundle") {
 } else if (command === "server") {
   await runServerCommand()
 } else if (command === "run") {
-  spawnClient()
   await runServerCommand()
+  spawnClient()
 } else {
   printUsage()
   process.exit(1)
