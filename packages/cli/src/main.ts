@@ -7,6 +7,7 @@ import { runRecordCommand } from "./commands/record"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
 import { spawnClient } from "./dev-client"
+import { spawnAndroidClient } from "./dev-android"
 
 // -- Validate args --
 
@@ -47,7 +48,8 @@ if (command === "bundle") {
   await runServerCommand()
 } else if (command === "run") {
   await runServerCommand()
-  spawnClient()
+  if (values.android) spawnAndroidClient()
+  else spawnClient()
 } else {
   printUsage()
   process.exit(1)

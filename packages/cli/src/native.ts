@@ -43,3 +43,24 @@ export function resolveBinary(name: string) {
 
   return null
 }
+
+// The Android client APK is host-independent (it runs on the device, not the
+// host), so it is resolved by name rather than through the host triple map.
+export function resolveApk() {
+  // 1. SRT_HOME: contributors pointing at their local solidrt checkout, where
+  //    `make dist-android` stages the APK.
+  let srtRoot = process.env.SRT_HOME
+  if (srtRoot) {
+    let apk = resolve(srtRoot, "packages/android-arm64-v8a", "solidrt-dev.apk")
+    if (existsSync(apk)) return apk
+  }
+
+  // 2. Platform npm package
+  try {
+    let pkgDir = dirname(require.resolve("@solidrt/android-arm64-v8a/package.json"))
+    let apk = resolve(pkgDir, "solidrt-dev.apk")
+    if (existsSync(apk)) return apk
+  } catch {}
+
+  return null
+}

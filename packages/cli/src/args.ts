@@ -13,6 +13,8 @@ export let { values, positionals } = parseArgs({
     fps: { type: "string" },
     duration: { type: "string" },
     size: { type: "string" },
+    android: { type: "boolean", default: false },
+    device: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -47,6 +49,12 @@ export function validateArgs() {
       }
       break
   }
+
+  // --android installs/launches the client on a device, which needs a running
+  // dev server, so it is only meaningful for `run`.
+  if (values.android && command !== "run") {
+    usage("srt run --android [file]  (--android is only valid with the run command)")
+  }
 }
 
 export function printUsage() {
@@ -66,6 +74,10 @@ run/server options:
 
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
+
+run options:
+      --android          Install and launch the client on a connected Android device
+      --device <serial>  Target a specific adb device (when several are connected)
 
 bundle options:
   -d, --dev              Use development build of SolidJS (default: production)
