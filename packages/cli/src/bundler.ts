@@ -1,6 +1,28 @@
-import { solidPlugin } from "./bun-plugin-solid"
+import { transformAsync } from "@babel/core"
+import ts from "@babel/preset-typescript"
+import solid from "babel-preset-solid"
+import { type BunPlugin } from "bun"
 import { values, source } from "./args"
 import { state, print } from "./util"
+
+// Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
+// generate, targeting @solidrt/core) plus the TS preset.
+function solidPlugin(): BunPlugin {
+  return {
+    name: "bun-plugin-solid",
+    setup: (build) => {
+      build.onLoad({ filter: /\.(js|ts)x$/ }, async (args) => {
+        let file = Bun.file(args.path)
+        let code = await file.text()
+        let transforms = await transformAsync(code, {
+          filename: args.path,
+          presets: [[solid, { moduleName: "@solidrt/core", generate: "universal" }], [ts]],
+        })
+        return { contents: transforms?.code ?? "", loader: "js" }
+      })
+    },
+  }
+}
 
 export async function bundle(entry = source) {
   let result = null
