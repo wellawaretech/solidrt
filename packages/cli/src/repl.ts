@@ -2,7 +2,7 @@ import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, broadcastStop, buildReload, shutdown } from "./util"
-import { bundle } from "./bundle"
+import { bundle } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
 function cmdStop(args: string) {

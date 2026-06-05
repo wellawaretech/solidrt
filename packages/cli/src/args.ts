@@ -5,6 +5,7 @@ export let { values, positionals } = parseArgs({
     dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", short: "c", default: false },
+    flux: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
     "proxy-files": { type: "boolean", default: false },
@@ -32,7 +33,7 @@ Commands:
   client                 Start solidrt-go client only
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
   record <file.tsx|jsx>  Capture frames for video generation
-  pack <file.ts|js>      Bundle + compile to a standalone executable (experimental, Flux only)
+  pack <file>            Bundle + compile to a standalone executable (experimental)
 
 run/server options:
       --proxy-files      Route file/dir access through the dev server
@@ -47,6 +48,11 @@ bundle options:
   -c, --compile          Compile to bytecode
   -o, --output <name>    Output filename
       --stdout           Write bundle to stdout
+
+pack options:
+      --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
+  -m, --minify           Minify the output
+  -o, --output <name>    Output filename
 
 record options:
       --fps <N>          Frames per second (default: 60)

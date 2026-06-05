@@ -48,6 +48,12 @@ impl std::ops::Deref for AlloyContext {
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
+/// The app to run: either JS source (dev/default) or precompiled bytecode (packed binary).
+pub enum AppSource {
+  Text(String),
+  Bytecode(Vec<u8>),
+}
+
 fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32) {
   eh.exec(move |ctx| {
     let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
@@ -69,7 +75,7 @@ fn ui_thread(
   atx: Arc<alloy::Context>,
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
-  source: Option<String>,
+  app: Option<AppSource>,
   record_fps: Option<u32>,
 ) {
   #[cfg(feature = "go")]
@@ -78,7 +84,7 @@ fn ui_thread(
   let proxy_http_enabled = Arc::new(AtomicBool::new(false));
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
-  let mut current_src = source.unwrap_or_else(|| DEFAULT_SOURCE.to_string());
+  let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
 
   // Bridge the synchronous Alloy event channel onto an async one: a blocking
   // recv on a dedicated thread forwards each event, so the event loop can await
@@ -368,22 +374,27 @@ fn ui_thread(
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
 
       log::info!("[srt] flux engine start");
-      let mut next_src: Option<String> = None;
+      let mut next_app: Option<AppSource> = None;
       local
         .run_until(async {
           tokio::select! {
-            _ = engine.eval_source(&current_src) => {}
+            _ = async {
+              match &current_app {
+                AppSource::Text(src) => engine.eval_source(src).await,
+                AppSource::Bytecode(bytes) => engine.eval(bytes.clone()).await,
+              }
+            } => {}
             Some(cmd) = cmd_rx.recv() => {
               match cmd {
-                EngineCmd::Reload(src) => { next_src = Some(src); }
-                EngineCmd::Stop => { next_src = Some(DEFAULT_SOURCE.to_string()); }
+                EngineCmd::Reload(src) => { next_app = Some(AppSource::Text(src)); }
+                EngineCmd::Stop => { next_app = Some(AppSource::Text(DEFAULT_SOURCE.to_string())); }
               }
             }
           }
         })
         .await;
-      if let Some(src) = next_src {
-        current_src = src;
+      if let Some(app) = next_app {
+        current_app = app;
       }
     }
   });
@@ -391,7 +402,7 @@ fn ui_thread(
 
 pub fn start(
   rt: &tokio::runtime::Runtime,
-  source: Option<String>,
+  app_source: Option<AppSource>,
   mode: alloy::Mode,
   size: (u32, u32),
 ) {
@@ -407,6 +418,6 @@ pub fn start(
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, source, record_fps);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, app_source, record_fps);
   });
 }
