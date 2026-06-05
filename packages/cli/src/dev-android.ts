@@ -1,4 +1,4 @@
-import { print, printErr, requireAdb } from "./util"
+import { print, requireAdb } from "./util"
 import { resolveApk } from "./artifacts"
 import { values } from "./args"
 
@@ -20,8 +20,8 @@ export async function spawnAndroidClient() {
 
   let apk = resolveApk()
   if (!apk) {
-    printErr("[cli] Could not find the Android client APK.")
-    printErr("[cli] Add it with: bun add -d @solidrt/android-arm64-v8a")
+    console.error("Could not find the Android client APK.")
+    console.error("Add it with: bun add -d @solidrt/android-arm64-v8a")
     process.exit(1)
   }
 
@@ -39,11 +39,11 @@ export async function spawnAndroidClient() {
       .map((l) => l.split("\t")[0])
 
     if (devices.length === 0) {
-      printErr("[cli] No authorized Android device found. Enable USB debugging and check `adb devices`.")
+      console.error("No authorized Android device found. Enable USB debugging and check `adb devices`.")
       process.exit(1)
     }
     if (devices.length > 1) {
-      printErr(`[cli] Multiple devices connected (${devices.join(", ")}); pick one with --device <serial>.`)
+      console.error(`Multiple devices connected (${devices.join(", ")}); pick one with --device <serial>.`)
       process.exit(1)
     }
     target = devices[0]
@@ -52,7 +52,7 @@ export async function spawnAndroidClient() {
   print(`[cli] Installing Android client on ${target}`)
   let install = Bun.spawn([adb, ...adbArgs(["install", "-r", apk])], { stdout: "pipe", stderr: "pipe" })
   if ((await install.exited) !== 0) {
-    printErr("[cli] adb install failed:\n" + (await new Response(install.stderr).text()))
+    console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
     process.exit(1)
   }
 
@@ -61,7 +61,7 @@ export async function spawnAndroidClient() {
     stderr: "pipe",
   })
   if ((await start.exited) !== 0) {
-    printErr("[cli] adb start failed:\n" + (await new Response(start.stderr).text()))
+    console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)
   }
 

@@ -15,11 +15,25 @@ export let state = {
   rl: null as ReadlineInterface | null,
 }
 
+// Build target per binary, for the "not found" hint. Run from the repo root.
+let BUILD_HINTS: Record<string, string> = {
+  "solidrt-go": "make solidrt-go",
+  "solidrt-runner": "make runtime",
+  flux: "make -C flux flux",
+  fluxc: "make -C flux fluxc",
+  fluxrt: "make -C flux fluxrt PROFILE=release-opt",
+}
+
 export function requireBinary(name: string) {
   let path = resolveBinary(name)
   if (path) return path
+  let hint = BUILD_HINTS[name]
   console.error(`Could not find ${name} binary.`)
-  console.error("Build from source: run make solidrt-go, then set SRT_HOME=<SolidRT project home>")
+  if (hint) {
+    console.error(`Build it from source: run ${hint}, with SRT_HOME pointing at your SolidRT checkout.`)
+  } else {
+    console.error("Build it from source, with SRT_HOME pointing at your SolidRT checkout.")
+  }
   process.exit(1)
 }
 
