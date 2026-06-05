@@ -1,29 +1,13 @@
 import { values, source, isPrebuilt } from "../args"
-import { requireBinary } from "../util"
-import { bundle, bundleTo } from "../bundler"
+import { bundle, bundleTo, compileToBytecode } from "../bundler"
 import { resolve } from "path"
 
-async function compileJs(jsCode: string, outfile: string) {
-  let compiler = requireBinary("fluxc")
-  let proc = Bun.spawn([compiler], {
-    stdin: new Blob([jsCode]),
-    stdout: "pipe",
-    stderr: "inherit",
-  })
-  let [bytecode, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited])
-  if (code !== 0) process.exit(code)
+// Compile JS to a .srt.bin file and report its size.
+async function writeBytecode(jsCode: string, outfile: string) {
+  let bytecode = await compileToBytecode(jsCode)
   await Bun.write(outfile, bytecode)
-  return outfile
-}
-
-async function compileToBytecode(jsFile: string, outFile?: string) {
-  let jsCode = await Bun.file(jsFile).text()
-  let dest = outFile ?? jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
-  return compileJs(jsCode, dest)
-}
-
-async function compileFromStdin(jsCode: string, outfile: string) {
-  return compileJs(jsCode, outfile)
+  let binSize = (await Bun.file(outfile).stat()).size
+  console.log(`>> wrote ${binSize} bytes to ${outfile}`)
 }
 
 export async function runBundleCommand() {
@@ -32,9 +16,9 @@ export async function runBundleCommand() {
       console.error("Can only compile .srt.js files. .srt.bin is already compiled.")
       process.exit(1)
     }
-    let binOut = await compileToBytecode(resolve(source!))
-    let binSize = (await Bun.file(binOut).stat()).size
-    console.log(`>> wrote ${binSize} bytes to ${binOut}`)
+    let jsFile = resolve(source!)
+    let binOut = jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
+    await writeBytecode(await Bun.file(jsFile).text(), binOut)
     process.exit()
   }
 
@@ -62,10 +46,7 @@ export async function runBundleCommand() {
     for (let output of result.outputs) {
       jsCode += await output.text()
     }
-    let binOutfile = baseName + ".srt.bin"
-    await compileFromStdin(jsCode, binOutfile)
-    let binSize = (await Bun.file(binOutfile).stat()).size
-    console.log(`>> wrote ${binSize} bytes to ${binOutfile}`)
+    await writeBytecode(jsCode, baseName + ".srt.bin")
     process.exit()
   }
 

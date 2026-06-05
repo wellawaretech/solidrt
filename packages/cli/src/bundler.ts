@@ -3,7 +3,7 @@ import ts from "@babel/preset-typescript"
 import solid from "babel-preset-solid"
 import { type BunPlugin } from "bun"
 import { values, source } from "./args"
-import { state, print } from "./util"
+import { state, print, requireBinary } from "./util"
 
 // Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
 // generate, targeting @solidrt/core) plus the TS preset.
@@ -70,4 +70,48 @@ export async function bundleTo(outfile: string) {
     await Bun.write(outfile, output)
   }
   return result
+}
+
+// Bundle for the bare Flux runtime: no Solid plugin, flux: modules stay external.
+export async function bundleFlux(entry: string): Promise<string> {
+  let result = await Bun.build({
+    entrypoints: [entry],
+    target: "browser",
+    format: "esm",
+    minify: values.minify,
+    external: ["flux:*"],
+  })
+  if (!result.success) {
+    for (let msg of result.logs) console.error(msg)
+    console.error("Build failed")
+    process.exit(1)
+  }
+  let jsCode = ""
+  for (let output of result.outputs) jsCode += await output.text()
+  return jsCode
+}
+
+// Bundle for the SolidRT runtime via the standard Solid-aware bundler.
+export async function bundleSolid(): Promise<string> {
+  let result = await bundle()
+  if (!result) {
+    console.error("Build failed")
+    process.exit(1)
+  }
+  let jsCode = ""
+  for (let output of result.outputs) jsCode += await output.text()
+  return jsCode
+}
+
+// Compile JS source to QuickJS bytecode via the fluxc binary.
+export async function compileToBytecode(jsCode: string): Promise<Buffer> {
+  let compiler = requireBinary("fluxc")
+  let proc = Bun.spawn([compiler], {
+    stdin: new Blob([jsCode]),
+    stdout: "pipe",
+    stderr: "inherit",
+  })
+  let [bytecode, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), proc.exited])
+  if (code !== 0) process.exit(code)
+  return Buffer.from(bytecode)
 }
