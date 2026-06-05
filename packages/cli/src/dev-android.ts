@@ -20,7 +20,7 @@ export async function spawnAndroidClient() {
 
   let apk = resolveApk()
   if (!apk) {
-    console.error("Could not find the Android client APK.")
+    console.error("Could not find the SolidRT-Go APK.")
     console.error("Add it with: bun add -d @solidrt/android-arm64-v8a")
     process.exit(1)
   }
@@ -49,7 +49,7 @@ export async function spawnAndroidClient() {
     target = devices[0]
   }
 
-  print(`[cli] Installing Android client on ${target}`)
+  print(`[cli] Installing SolidRT-Go on ${target}`)
   let install = Bun.spawn([adb, ...adbArgs(["install", "-r", apk])], { stdout: "pipe", stderr: "pipe" })
   if ((await install.exited) !== 0) {
     console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
@@ -65,5 +65,5 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  print(`[cli] Launched Android client on ${target}; waiting for it to discover the dev server...`)
+  print(`[cli] Launched SolidRT-Go on ${target}; waiting for it to discover the dev server...`)
 }
