@@ -1,32 +1,14 @@
 #!/usr/bin/env bun
 
-// Build/run script that bundles/runs a Solid-RT app for the QuickJS runtime.
-//
-// Usage:
-//   srt run                             - start dev server + client
-//   srt run examples/hello.tsx          - start dev server + client, bundle + push via WS
-//   srt server examples/hello.tsx       - start dev server only, no client
-//   srt client                          - start dev client only (connects to WS server)
-//   srt bundle examples/hello.tsx       - bundle TSX to .srt.js
-//   srt bundle -c examples/hello.tsx    - bundle TSX to .srt.js + compile to .srt.bin
-//   srt bundle examples/hello.srt.js   - compile .srt.js to .srt.bin
-//   srt record examples/hello.tsx       - bundle TSX and run with frame capture
-
 import { values, command, source, isTsx, isTs, isSource, isPrebuilt, printUsage } from "./args"
 import { runBundleCommand } from "./commands/bundle"
 import { runPackCommand } from "./commands/pack"
 import { runRecordCommand } from "./commands/record"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
+import { spawnClient } from "./client"
 
 // -- Validate args --
-
-let COMMANDS = ["run", "server", "client", "bundle", "record", "pack"]
-
-if (!command || !COMMANDS.includes(command)) {
-  printUsage()
-  process.exit(1)
-}
 
 if (command === "bundle" && (!source || (!isSource && !isPrebuilt))) {
   console.error("Usage: srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
@@ -83,7 +65,10 @@ if (command === "bundle") {
   await runClientCommand()
 } else if (command === "server") {
   await runServerCommand()
+} else if (command === "run") {
+  spawnClient()
+  await runServerCommand()
 } else {
-  // run = server + local client
-  await runServerCommand({ withClient: true })
+  printUsage()
+  process.exit(1)
 }

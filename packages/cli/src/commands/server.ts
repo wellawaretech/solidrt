@@ -3,17 +3,14 @@ import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
 import { bundle } from "../bundler"
 import { startServer } from "../server"
-import { spawnClient } from "../client"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
 import * as cache from "../cache"
 import { resolve, dirname } from "path"
 
-// Brings up the dev server (HTTP/WS + initial bundle + repl + watcher). When
-// `withClient` is set (the `run` command) it also spawns a local client wired
-// into the dev-server lifecycle via spawnClient(); this is distinct from the
-// standalone `client` command.
-export async function runServerCommand({ withClient = false } = {}) {
+// Brings up the dev server (HTTP/WS + initial bundle + repl + watcher). The
+// `run` command spawns a local client on top of this from main.ts.
+export async function runServerCommand() {
   // Initialize state from args
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
@@ -36,10 +33,6 @@ export async function runServerCommand({ withClient = false } = {}) {
     }
   } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(resolve(source)).text()
-  }
-
-  if (withClient) {
-    spawnClient()
   }
 
   process.on("SIGINT", shutdown)
