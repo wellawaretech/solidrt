@@ -1,4 +1,4 @@
-import { resolveBinary } from "./native"
+import { resolveBinary } from "./artifacts"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Interface as ReadlineInterface } from "node:readline"

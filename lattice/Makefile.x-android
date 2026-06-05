@@ -62,5 +62,7 @@ x-run-android: x-solidrt-go-android $(GRADLE_WRAPPER_JAR)
 
 dist-android: x-solidrt-go-android $(GRADLE_WRAPPER_JAR)
 	cd android && ./gradlew assembleGoDebug
-	cp $(APK_GO_DEBUG) $(PKG_ANDROID)/solidrt-dev.apk
-	@echo "Staged solidrt-dev.apk into $(PKG_ANDROID)/"
+	mkdir -p $(ANDROID_DIST)
+	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
+	cp $(ANDROID_DIST)/solidrt-go.apk $(PKG_ANDROID)/solidrt-go.apk
+	@echo "Staged solidrt-go.apk into $(ANDROID_DIST)/ and $(PKG_ANDROID)/"

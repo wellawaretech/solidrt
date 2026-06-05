@@ -4,7 +4,7 @@
   "license": "MIT",
   "description": "SolidRT platform package for Android arm64-v8a",
   "files": [
-    "solidrt-dev.apk",
+    "solidrt-go.apk",
     "LICENSE"
   ]
 }

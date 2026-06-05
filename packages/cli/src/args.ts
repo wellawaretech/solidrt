@@ -50,10 +50,10 @@ export function validateArgs() {
       break
   }
 
-  // --android installs/launches the client on a device, which needs a running
-  // dev server, so it is only meaningful for `run`.
-  if (values.android && command !== "run") {
-    usage("srt run --android [file]  (--android is only valid with the run command)")
+  // --android installs/launches the client on a device; it is a client action,
+  // so it is only valid for `client`.
+  if (values.android && command !== "client") {
+    usage("srt client --android  (--android is only valid with the client command)")
   }
 }
 
@@ -75,7 +75,7 @@ run/server options:
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
 
-run options:
+client options:
       --android          Install and launch the client on a connected Android device
       --device <serial>  Target a specific adb device (when several are connected)
 

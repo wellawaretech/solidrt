@@ -44,21 +44,25 @@ export function resolveBinary(name: string) {
   return null
 }
 
-// The Android client APK is host-independent (it runs on the device, not the
-// host), so it is resolved by name rather than through the host triple map.
+// The Android client APK is per-ABI (it bundles native .so for one architecture)
+// and host-independent, so it lives under dist/android/<abi>/ rather than the
+// host triple map. Only arm64-v8a is supported for now.
+let ANDROID_ABI = "arm64-v8a"
+let ANDROID_PKG = "@solidrt/android-arm64-v8a"
+
 export function resolveApk() {
-  // 1. SRT_HOME: contributors pointing at their local solidrt checkout, where
-  //    `make dist-android` stages the APK.
+  // 1. SRT_HOME: contributor checkout, where `make dist-android` stages the APK
+  //    under dist/android/<abi>/.
   let srtRoot = process.env.SRT_HOME
   if (srtRoot) {
-    let apk = resolve(srtRoot, "packages/android-arm64-v8a", "solidrt-dev.apk")
+    let apk = resolve(srtRoot, "dist/android", ANDROID_ABI, "solidrt-go.apk")
     if (existsSync(apk)) return apk
   }
 
   // 2. Platform npm package
   try {
-    let pkgDir = dirname(require.resolve("@solidrt/android-arm64-v8a/package.json"))
-    let apk = resolve(pkgDir, "solidrt-dev.apk")
+    let pkgDir = dirname(require.resolve(`${ANDROID_PKG}/package.json`))
+    let apk = resolve(pkgDir, "solidrt-go.apk")
     if (existsSync(apk)) return apk
   } catch {}
 

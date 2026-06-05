@@ -1,5 +1,5 @@
 import { print, printErr, requireAdb } from "./util"
-import { resolveApk } from "./native"
+import { resolveApk } from "./artifacts"
 import { values } from "./args"
 
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.x-android).
