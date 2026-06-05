@@ -57,8 +57,8 @@ solidrt-go: $(DEFAULT_APP_JS) angle-darwin
 
 runtime: angle-darwin
 	@echo "Building RUNTIME macOS ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
-	$(call stage-darwin,runtime,$(PROFILE),solidrt-runner)
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt --target-dir target/runtime
+	$(call stage-darwin,runtime,$(PROFILE),solidrt)
 
 dist-darwin:
 	$(MAKE) solidrt-go
@@ -69,5 +69,5 @@ dist-darwin:
 	cp $(HOST_DIST)/flux $(PKG_DARWIN)/flux
 	cp $(HOST_DIST)/fluxc $(PKG_DARWIN)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_DARWIN)/fluxrt
-#	$(MAKE) runtime
-#	cp $(HOST_DIST)/solidrt-runner $(PKG_DARWIN)/solidrt-runner
+	$(MAKE) runtime
+	cp $(HOST_DIST)/solidrt $(PKG_DARWIN)/solidrt

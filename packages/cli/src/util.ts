@@ -18,7 +18,7 @@ export let state = {
 // Build target per binary, for the "not found" hint. Run from the repo root.
 let BUILD_HINTS: Record<string, string> = {
   "solidrt-go": "make solidrt-go",
-  "solidrt-runner": "make runtime",
+  solidrt: "make runtime",
   flux: "make -C flux flux",
   fluxc: "make -C flux fluxc",
   fluxrt: "make -C flux fluxrt PROFILE=release-opt",

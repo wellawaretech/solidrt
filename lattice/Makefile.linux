@@ -19,8 +19,8 @@ solidrt-go: $(DEFAULT_APP_JS)
 
 runtime:
 	@echo "Building RUNTIME ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt-runner --target-dir target/runtime
-	$(call stage-bin,runtime,$(PROFILE),solidrt-runner)
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt --target-dir target/runtime
+	$(call stage-bin,runtime,$(PROFILE),solidrt)
 
 dist-linux:
 	$(MAKE) solidrt-go
@@ -31,4 +31,4 @@ dist-linux:
 	cp $(HOST_DIST)/fluxc $(PKG_LINUX)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_LINUX)/fluxrt
 	$(MAKE) runtime
-	cp $(HOST_DIST)/solidrt-runner $(PKG_LINUX)/solidrt-runner
+	cp $(HOST_DIST)/solidrt $(PKG_LINUX)/solidrt

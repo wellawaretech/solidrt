@@ -7,6 +7,7 @@
   "cpu": ["x64"],
   "files": [
     "solidrt-go.exe",
+    "solidrt.exe",
     "flux.exe",
     "fluxc.exe",
     "fluxrt.exe",

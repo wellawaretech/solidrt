@@ -13,9 +13,13 @@ async function writeExecutable(packed: Buffer, outfile: string) {
 
 export async function runPackCommand() {
   let outfile = values.output ?? source!.replace(/\.[jt]sx?$/, "")
+  // On Windows the packed image is a PE executable; it needs a .exe name to run.
+  if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
+    outfile += ".exe"
+  }
   let packed = values.flux
     ? await packRunner("fluxrt", await bundleFlux(source!))
-    : await packRunner("solidrt-runner", await bundleSolid())
+    : await packRunner("solidrt", await bundleSolid())
   await writeExecutable(packed, outfile)
   process.exit()
 }
