@@ -30,7 +30,10 @@ endif
 
 .DEFAULT_GOAL := solidrt-go
 
-.PHONY: help default-app-bundle dist-clean clean
+.PHONY: all help default-app-bundle dist-clean clean
+
+# Build both host binaries (client + runtime).
+all: solidrt-go runtime
 
 $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 	@echo "Bundling default app (app.tsx -> app.srt.js)..."
@@ -40,6 +43,7 @@ help:
 	@echo "Host ($(HOST_TARGET)):"
 	@echo "  solidrt-go           Build SolidRT Go (default)"
 	@echo "  runtime              Build production runtime"
+	@echo "  all                  Build both solidrt-go and runtime"
 	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
 	@echo "Android (ABI=$(ANDROID_ABI)):"

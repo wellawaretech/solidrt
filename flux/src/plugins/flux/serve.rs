@@ -10,7 +10,7 @@ use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
-use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
+use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -565,9 +565,13 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let hostname: Option<String> = opts.get("hostname")?;
   let hostname = hostname.unwrap_or_else(|| "0.0.0.0".to_string());
   let addr = format!("{hostname}:{port}");
-  let listener = std::net::TcpListener::bind(&addr).map_err(rquickjs::Error::Io)?;
-  listener.set_nonblocking(true).map_err(rquickjs::Error::Io)?;
-  let listener = TcpListener::from_std(listener).map_err(rquickjs::Error::Io)?;
+  let listener = std::net::TcpListener::bind(&addr)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to bind {addr}: {e}")))?;
+  listener
+    .set_nonblocking(true)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to configure listener on {addr}: {e}")))?;
+  let listener = TcpListener::from_std(listener)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to register listener on {addr}: {e}")))?;
 
   let (shutdown_tx, _) = watch::channel(false);
   let shared = Arc::new(ServerShared { shutdown: shutdown_tx });

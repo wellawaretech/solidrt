@@ -149,7 +149,7 @@ impl FluxEngine {
         let loaded = unsafe { Module::load(ctx.clone(), &bytecode) };
         match loaded {
           Ok(module) => match module.eval().map(|(_, promise)| promise).catch(&ctx) {
-            Ok(promise) => log_rejected(&ctx, promise.into_value()),
+            Ok(promise) => report_rejection(&ctx, promise),
             Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
           },
           Err(e) => ctx.logger().error(&format!("bytecode load error: {e}")),
@@ -166,7 +166,7 @@ impl FluxEngine {
       .run(move |ctx| {
         use rquickjs::{CatchResultExt, Module};
         match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
-          Ok(promise) => log_rejected(&ctx, promise.into_value()),
+          Ok(promise) => report_rejection(&ctx, promise),
           Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
         }
       })
@@ -206,17 +206,44 @@ impl FluxEngine {
   }
 }
 
-fn log_rejected<'js>(ctx: &Ctx<'js>, val: rquickjs::Value<'js>) {
-  use rquickjs::promise::PromiseState;
-  use rquickjs::Value;
-  if let Some(promise) = val.as_promise() {
-    if let PromiseState::Rejected = promise.state() {
-      let err: Value = promise.result().unwrap().unwrap_or_else(|_| ctx.catch());
+/// Attach a rejection handler to the entry module promise so a rejection is
+/// reported even when it occurs after a top-level `await`. At that point the
+/// promise is still pending when `eval`/`eval_source` returns, so inspecting its
+/// state once is not enough: a later rejection (for example a synchronous throw
+/// from `serve()` running after an awaited import) would otherwise be swallowed
+/// and the process would exit cleanly with no diagnostic. The handler also fires
+/// for an already-rejected promise, since `then` schedules it as a microtask the
+/// run loop drains.
+fn report_rejection<'js>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>) {
+  use rquickjs::function::{MutFn, This};
+  use rquickjs::{Function, Undefined, Value};
+
+  let logger = ctx.logger();
+  let on_rejected = match Function::new(
+    ctx.clone(),
+    MutFn::from(move |err: Value<'_>| {
       if let Some(exc) = err.as_exception() {
-        ctx.logger().error(&format!("{exc}"));
+        logger.error(&format!("{exc}"));
       } else {
-        ctx.logger().error(&format!("{err:?}"));
+        logger.error(&format!("{err:?}"));
       }
+    }),
+  ) {
+    Ok(f) => f,
+    Err(e) => {
+      ctx.logger().error(&format!("failed to build rejection handler: {e}"));
+      return;
     }
+  };
+
+  let then = match promise.then() {
+    Ok(then) => then,
+    Err(e) => {
+      ctx.logger().error(&format!("failed to attach rejection handler: {e}"));
+      return;
+    }
+  };
+  if let Err(e) = then.call::<_, ()>((This(promise), Undefined, on_rejected)) {
+    ctx.logger().error(&format!("failed to attach rejection handler: {e}"));
   }
 }
