@@ -106,8 +106,7 @@ impl TextDecoder {
     input: Opt<Value<'js>>,
     options: Opt<Object<'js>>,
   ) -> rquickjs::Result<String> {
-    let stream =
-      options.0.as_ref().and_then(|o| o.get::<_, Option<bool>>("stream").ok().flatten()).unwrap_or(false);
+    let stream = options.0.as_ref().and_then(|o| o.get::<_, Option<bool>>("stream").ok().flatten()).unwrap_or(false);
     let bytes = match input.0 {
       Some(v) => input_bytes(&ctx, &v)?,
       None => Vec::new(),

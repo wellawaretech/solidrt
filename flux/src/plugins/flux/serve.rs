@@ -44,7 +44,10 @@ impl Body for ChannelBody {
   type Data = Bytes;
   type Error = Infallible;
 
-  fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+  fn poll_frame(
+    mut self: Pin<&mut Self>,
+    cx: &mut Context<'_>,
+  ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
     match self.rx.poll_recv(cx) {
       Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
       Poll::Ready(None) => Poll::Ready(None),
@@ -77,9 +80,7 @@ fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> H
   if !has_content_type {
     builder = builder.header("Content-Type", "text/plain");
   }
-  builder
-    .body(body)
-    .unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
+  builder.body(body).unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
 }
 
 /// Read a server-built Response's buffered bytes. Server responses are buffered

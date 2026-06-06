@@ -65,7 +65,11 @@ fn main() {
     }),
   };
   let mode = if record {
-    alloy::Mode::Record(alloy::RecordConfig { fps, frames: (duration * fps) as u64, output_prefix: "frame".to_string() })
+    alloy::Mode::Record(alloy::RecordConfig {
+      fps,
+      frames: (duration * fps) as u64,
+      output_prefix: "frame".to_string(),
+    })
   } else {
     alloy::Mode::Run
   };

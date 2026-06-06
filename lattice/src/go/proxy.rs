@@ -162,11 +162,13 @@ fn build_proxy_file<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<
         } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
           ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
         } else {
-          return Err(ctx.throw(
-            flux::rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
-              .expect("create error string")
-              .into(),
-          ));
+          return Err(
+            ctx.throw(
+              flux::rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+                .expect("create error string")
+                .into(),
+            ),
+          );
         };
         let url = url.clone();
         let client = client.clone();
@@ -326,9 +328,9 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String, http: bool) {
 
           let proxy_url = (*proxy_url).clone();
           let client = state.client.clone();
-          Ok(Promised(async move {
-            do_fetch(client, &method, &proxy_url, headers, body.map(reqwest::Body::from)).await
-          }))
+          Ok(Promised(
+            async move { do_fetch(client, &method, &proxy_url, headers, body.map(reqwest::Body::from)).await },
+          ))
         }
       }),
     )

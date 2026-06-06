@@ -174,13 +174,7 @@ fn serve_honors_hostname() {
   );
 
   let lines = serve_and_capture(&code);
-  assert_eq!(
-    lines,
-    vec![
-      format!("meta 127.0.0.1 http://127.0.0.1:{port}/"),
-      "body 200 up".to_string(),
-    ]
-  );
+  assert_eq!(lines, vec![format!("meta 127.0.0.1 http://127.0.0.1:{port}/"), "body 200 up".to_string(),]);
 }
 
 #[test]
@@ -388,10 +382,7 @@ fn serve_routes_404_without_fetch() {
   );
 
   let lines = serve_and_capture(&code);
-  assert_eq!(
-    lines,
-    vec!["hit 200 hit".to_string(), "miss 404 Not Found".to_string()]
-  );
+  assert_eq!(lines, vec!["hit 200 hit".to_string(), "miss 404 Not Found".to_string()]);
 }
 
 #[test]
@@ -469,10 +460,7 @@ fn serve_streams_async_iterable() {
   );
 
   let lines = serve_and_capture(&code);
-  assert_eq!(
-    lines,
-    vec!["ct text/plain".to_string(), "body Hello, streamed world".to_string()]
-  );
+  assert_eq!(lines, vec!["ct text/plain".to_string(), "body Hello, streamed world".to_string()]);
 }
 
 #[test]

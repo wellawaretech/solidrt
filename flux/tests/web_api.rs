@@ -28,10 +28,7 @@ async fn headers_case_insensitive_and_multi_value() {
   .await;
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
   // A missing header returns null (WHATWG Headers.get semantics), logged as "null".
-  assert_eq!(
-    out.lines_at(flux::LogLevel::Log),
-    vec!["text/plain", "1", "true false", "2", "2, 3", "null", "null"]
-  );
+  assert_eq!(out.lines_at(flux::LogLevel::Log), vec!["text/plain", "1", "true false", "2", "2, 3", "null", "null"]);
 }
 
 #[tokio::test]

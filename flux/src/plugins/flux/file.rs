@@ -119,11 +119,13 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
         } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
           ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
         } else {
-          return Err(ctx.throw(
-            rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
-              .expect("create error string")
-              .into(),
-          ));
+          return Err(
+            ctx.throw(
+              rquickjs::String::from_str(ctx.clone(), "write: data must be string or Uint8Array")
+                .expect("create error string")
+                .into(),
+            ),
+          );
         };
         let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();

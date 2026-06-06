@@ -4,4 +4,7 @@ all solidrt-go runtime default-app-bundle dist-linux dist-darwin dist-windows di
 test:
 	cargo test --workspace
 
-.PHONY: all solidrt-go runtime default-app-bundle dist-linux dist-darwin dist-windows dist-android clean dist-clean download-fonts test
+format:
+	cargo fmt --all
+
+.PHONY: all solidrt-go runtime default-app-bundle dist-linux dist-darwin dist-windows dist-android clean dist-clean download-fonts test format

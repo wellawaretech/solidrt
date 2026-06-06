@@ -19,9 +19,9 @@ use frame::{EngineState, InputEvent, InputState};
 use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "go")]
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
@@ -400,12 +400,7 @@ fn ui_thread(
   });
 }
 
-pub fn start(
-  rt: &tokio::runtime::Runtime,
-  app_source: Option<AppSource>,
-  mode: alloy::Mode,
-  size: (u32, u32),
-) {
+pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: alloy::Mode, size: (u32, u32)) {
   alloy::install_logger();
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
   log::info!("[srt] SolidRT version {version}");

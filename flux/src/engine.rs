@@ -129,7 +129,13 @@ pub struct FluxEngine {
 
 impl FluxEngine {
   pub fn builder() -> FluxEngineBuilder {
-    FluxEngineBuilder { plugins: Vec::new(), userdata: Vec::new(), module_overrides: Vec::new(), logger: None, stack_size: None }
+    FluxEngineBuilder {
+      plugins: Vec::new(),
+      userdata: Vec::new(),
+      module_overrides: Vec::new(),
+      logger: None,
+      stack_size: None,
+    }
   }
 
   pub fn new() -> Self {
@@ -181,8 +187,15 @@ impl FluxEngine {
     let logger = self.logger.clone();
     let mut exec_rx = self.exec_rx;
 
-    let (runtime, context, pending) =
-      plugins::init_context(self.setups, self.userdata, self.module_overrides, self.logger, self.stack_size, shutdown_hooks.clone()).await;
+    let (runtime, context, pending) = plugins::init_context(
+      self.setups,
+      self.userdata,
+      self.module_overrides,
+      self.logger,
+      self.stack_size,
+      shutdown_hooks.clone(),
+    )
+    .await;
 
     context.with(|ctx| task(ctx)).await;
 

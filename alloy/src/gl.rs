@@ -156,8 +156,7 @@ pub fn run_context(
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<DisplayList>,
 ) {
-  let gl_context_ptr =
-    Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
+  let gl_context_ptr = Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
 
   std::thread::spawn(move || {
     let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
