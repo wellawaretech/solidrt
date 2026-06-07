@@ -1,5 +1,5 @@
 import { values, source, isPrebuilt } from "../args"
-import { bundle, bundleTo, compileToBytecode } from "../bundler"
+import { bundle, bundleTo, bundleFlux, compileToBytecode } from "../bundler"
 import { resolve } from "path"
 
 // Compile JS to a .srt.bin file and report its size.
@@ -11,6 +11,22 @@ async function writeBytecode(jsCode: string, outfile: string) {
 }
 
 export async function runBundleCommand() {
+  if (values.flux) {
+    let baseName = values.output ?? source!.replace(/\.[jt]s$/, "")
+    let jsCode = await bundleFlux(source!)
+
+    if (values.stdout) {
+      process.stdout.write(jsCode)
+    } else if (values.compile) {
+      await writeBytecode(jsCode, baseName + ".flux.bin")
+    } else {
+      let outfile = baseName + ".flux.js"
+      await Bun.write(outfile, jsCode)
+      console.log(`>> wrote ${jsCode.length} bytes to ${outfile}`)
+    }
+    process.exit()
+  }
+
   if (isPrebuilt) {
     if (!source!.endsWith(".srt.js")) {
       console.error("Can only compile .srt.js files. .srt.bin is already compiled.")

@@ -5,7 +5,7 @@ export let { values, positionals } = parseArgs({
     dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", short: "c", default: false },
-    flux: { type: "boolean", default: false },
+    flux: { type: "boolean", short: "f", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
     "proxy-files": { type: "boolean", default: false },
@@ -35,8 +35,11 @@ function usage(line: string): never {
 export function validateArgs() {
   switch (command) {
     case "bundle":
-      if (!source || (!isSource && !isPrebuilt))
+      if (values.flux) {
+        if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")
+      } else if (!source || (!isSource && !isPrebuilt)) {
         usage("srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
+      }
       break
     case "record":
       if (!source || !isTsx) usage("srt record <entry.[tsx|jsx]>")
@@ -80,6 +83,7 @@ client options:
       --device <serial>  Target a specific adb device (when several are connected)
 
 bundle options:
+  -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
   -d, --dev              Use development build of SolidJS (default: production)
   -m, --minify           Minify the output
   -c, --compile          Compile to bytecode
@@ -87,7 +91,7 @@ bundle options:
       --stdout           Write bundle to stdout
 
 pack options:
-      --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
+  -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename
 
