@@ -1,0 +1,10 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- faceted logo wrapped onto the sphere: straight diamond edges become circle arcs -->
+  <path d="M50 50L0 50A50 50 0 0 1 50 0Z"                       fill="rgb(26,51,128)"/>
+  <path d="M50 50L50 100A50 50 0 0 1 0 50Z"                     fill="rgb(51,102,179)"/>
+  <path d="M50 14.64L50 0A50 50 0 0 1 85.36 14.64Z"            fill="rgb(102,153,230)"/>
+  <path d="M50 14.64L85.36 14.64L85.36 50L50 50Z"             fill="rgb(51,102,179)"/>
+  <path d="M50 50L85.36 50L50 85.36Z"                          fill="rgb(102,153,230)"/>
+  <path d="M85.36 50L85.36 85.36A50 50 0 0 1 50 100L50 85.36Z" fill="rgb(26,51,128)"/>
+  <path d="M85.36 14.64A50 50 0 0 1 100 50A50 50 0 0 1 85.36 85.36Z" fill="rgb(102,153,230)"/>
+</svg>
