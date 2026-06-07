@@ -1,0 +1,9 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M50 50L0 50L50 0Z"            fill="rgb(26,51,128)"/>
+  <path d="M50 50L50 100L0 50Z"          fill="rgb(51,102,179)"/>
+  <path d="M50 25L50 0L75 25Z"           fill="rgb(102,153,230)"/>
+  <path d="M50 25L75 25L75 50L50 50Z"    fill="rgb(51,102,179)"/>
+  <path d="M50 50L75 50L50 75Z"          fill="rgb(102,153,230)"/>
+  <path d="M75 50L75 75L50 100L50 75Z"   fill="rgb(26,51,128)"/>
+  <path d="M100 50L75 75L75 25Z"         fill="rgb(102,153,230)"/>
+</svg>
