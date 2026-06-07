@@ -2,6 +2,15 @@ import { values, source, isPrebuilt } from "../args"
 import { bundle, bundleTo, bundleFlux, compileToBytecode } from "../bundler"
 import { resolve } from "path"
 
+// Write to stdout and resolve only once the whole payload is flushed.
+// process.stdout.write to a pipe is async and applies backpressure; the
+// callback fires after every byte is drained, so it is safe to exit after.
+function writeStdout(data: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(data, (err) => (err ? reject(err) : resolve()))
+  })
+}
+
 // Compile JS to a .srt.bin file and report its size.
 async function writeBytecode(jsCode: string, outfile: string) {
   let bytecode = await compileToBytecode(jsCode)
@@ -16,7 +25,7 @@ export async function runBundleCommand() {
     let jsCode = await bundleFlux(source!)
 
     if (values.stdout) {
-      process.stdout.write(jsCode)
+      await writeStdout(jsCode)
     } else if (values.compile) {
       await writeBytecode(jsCode, baseName + ".flux.bin")
     } else {
@@ -47,7 +56,7 @@ export async function runBundleCommand() {
       process.exit(1)
     }
     for (let output of result.outputs) {
-      process.stdout.write(await output.text())
+      await writeStdout(await output.text())
     }
     process.exit()
   }
