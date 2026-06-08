@@ -48,6 +48,11 @@ impl std::ops::Deref for AlloyContext {
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
+/// QuickJS call-stack soft limit. Sits below the UI thread's native stack (see
+/// alloy gl::run_context) so deep recursion throws a clean "Maximum call stack
+/// size exceeded" instead of overflowing the OS stack. Tunable down per-app later.
+const JS_STACK_SIZE: usize = 64 * 1024 * 1024;
+
 /// The app to run: either JS source (dev/default) or precompiled bytecode (packed binary).
 pub enum AppSource {
   Text(String),
@@ -344,6 +349,7 @@ fn ui_thread(
       let texture_atx = AlloyContext(atx.clone());
       #[cfg_attr(not(feature = "go"), allow(unused_mut))]
       let mut builder = FluxEngine::builder()
+        .stack_size(JS_STACK_SIZE)
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
           flux::LogLevel::Log => log::info!("{msg}"),

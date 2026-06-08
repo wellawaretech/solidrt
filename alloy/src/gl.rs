@@ -151,6 +151,13 @@ impl RenderSurface for GlSurface {
   }
 }
 
+// Native stack for the UI/JS thread. Large and identical on every platform so
+// deep JS recursion behaves the same everywhere (the SDL main thread's stack is
+// irrelevant: the engine runs here, not there). This is virtual address space,
+// committed only as it is used; it is the hard ceiling under which QuickJS's own
+// (smaller, tunable) soft limit sits.
+const UI_THREAD_STACK_SIZE: usize = 1024 * 1024 * 1024;
+
 pub fn run_context(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
@@ -158,7 +165,7 @@ pub fn run_context(
 ) {
   let gl_context_ptr = Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
 
-  std::thread::spawn(move || {
+  let spawn_result = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
     let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
     assert!(!egl_display.is_null(), "no EGL display");
     log::info!("[alloy] EGL display obtained");
@@ -176,6 +183,7 @@ pub fn run_context(
     let gpu_ctx = Arc::new(Context::new(Backend::Gl, device, queue, impeller_ctx, tx));
     closure(gpu_ctx);
   });
+  spawn_result.expect("failed to spawn UI thread");
 }
 
 /// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.
