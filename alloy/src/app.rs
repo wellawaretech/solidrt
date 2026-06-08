@@ -37,15 +37,29 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
 
   gl::configure_opengl(&video);
 
-  let mut builder = video.window(title, width, height);
-  builder.opengl().position_centered().high_pixel_density();
-  // A recording window is hidden and fixed-size: keeping it non-resizable stops
-  // the compositor from negotiating a different surface size on a scaled display,
-  // which would diverge from the requested capture dimensions.
-  if !mode.is_record() {
-    builder.resizable();
-  }
-  let mut window = builder.build().expect("Failed to create window");
+  // MSAA is requested in configure_opengl. Some drivers (notably the Android
+  // emulator's GLES translator) expose no multisampled EGL config, which makes
+  // window creation fail outright instead of silently dropping MSAA. Retry once
+  // without MSAA so rendering proceeds (losing path anti-aliasing).
+  let build_window = |video: &sdl3::VideoSubsystem| {
+    let mut builder = video.window(title, width, height);
+    builder.opengl().position_centered().high_pixel_density();
+    // A recording window is hidden and fixed-size: keeping it non-resizable stops
+    // the compositor from negotiating a different surface size on a scaled display,
+    // which would diverge from the requested capture dimensions.
+    if !mode.is_record() {
+      builder.resizable();
+    }
+    builder.build()
+  };
+  let mut window = match build_window(&video) {
+    Ok(window) => window,
+    Err(e) => {
+      log::warn!("[alloy] GL window creation failed ({e}); retrying without MSAA");
+      gl::disable_msaa(&video);
+      build_window(&video).expect("Failed to create window")
+    }
+  };
   if mode.is_record() {
     window.hide();
   }

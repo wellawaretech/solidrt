@@ -186,10 +186,20 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   gl_attr.set_context_version(3, 0);
   gl_attr.set_stencil_size(8);
 
-  // Request 4x MSAA for path anti-aliasing. Drivers that cannot satisfy this
-  // silently fall back to 0 samples (no MSAA).
+  // Request 4x MSAA for path anti-aliasing. Not all drivers expose a
+  // multisampled config; on those, window creation retries without MSAA
+  // (see disable_msaa and app::setup).
   gl_attr.set_multisample_buffers(1);
   gl_attr.set_multisample_samples(4);
+}
+
+/// Drop the MSAA request so window and GL-context creation can succeed on
+/// drivers that expose no multisampled EGL config (notably the Android
+/// emulator's GLES translator). Path anti-aliasing is lost; rendering proceeds.
+pub(crate) fn disable_msaa(video: &sdl3::VideoSubsystem) {
+  let gl_attr = video.gl_attr();
+  gl_attr.set_multisample_buffers(0);
+  gl_attr.set_multisample_samples(0);
 }
 
 pub(crate) fn setup_opengl_platform(
