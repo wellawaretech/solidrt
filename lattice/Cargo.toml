@@ -38,3 +38,8 @@ futures-util = { version = "0.3", features = ["sink"], optional = true }
 http = { version = "1", optional = true }
 serde_json = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Reads the debug.solidrt.devserver system property for the dev-server override
+# (see src/go/connection.rs). Safe wrapper over bionic's __system_property_get.
+android_system_properties = "0.1"

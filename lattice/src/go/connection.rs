@@ -12,7 +12,29 @@ pub fn start(
   proxy_files_enabled: Arc<AtomicBool>,
   proxy_http_enabled: Arc<AtomicBool>,
 ) {
-  handle.spawn(async move { spawn_go_udp_discovery(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await });
+  handle.spawn(async move {
+    match configured_dev_server() {
+      Some(addr) => spawn_go_ws(addr, tx, dev_server, proxy_files_enabled, proxy_http_enabled).await,
+      None => spawn_go_udp_discovery(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await,
+    }
+  });
+}
+
+/// A runtime dev-server override (host:port). When set, LAN discovery is skipped
+/// and the client connects straight to it -- for environments where UDP
+/// broadcast cannot reach the dev server, e.g. the Android emulator's NAT:
+/// `adb shell setprop debug.solidrt.devserver 10.0.2.2:15194`. Unset on real
+/// devices, which fall back to UDP discovery.
+fn configured_dev_server() -> Option<String> {
+  #[cfg(target_os = "android")]
+  {
+    let props = android_system_properties::AndroidSystemProperties::new();
+    props.get("debug.solidrt.devserver").filter(|s| !s.is_empty())
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    None
+  }
 }
 
 async fn spawn_go_ws(

@@ -80,7 +80,7 @@ run/client options:
 
 client options:
       --android          Install and launch the client on a connected Android device
-      --device <serial>  Target a specific adb device (when several are connected)
+      --device <serial>  Target a specific adb device by serial or unique prefix
 
 bundle options:
   -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
