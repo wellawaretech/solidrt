@@ -41,9 +41,19 @@ function App() {
   let isAndroid = dev?.platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
-  if (dev) srt.on("devServer", (e: { state: DevState }) => setState(e.state))
+  let [address, setAddress] = createSignal<string | null>(null)
+  if (dev) {
+    srt.on("devServer", (e: { state: DevState; address: string | null }) => {
+      setState(e.state)
+      setAddress(e.address)
+    })
+  }
 
-  let busy = () => state() !== "idle" && state() !== "connected"
+  let idle = () => state() === "idle"
+  let busy = () => state() === "searching" || state() === "connecting"
+  let connected = () => state() === "connected"
+
+  let status = () => (connected() ? `connected to ${address()}` : STATUS_TEXT[state()])
 
   return (
     <window title="solidrt-go">
@@ -56,11 +66,12 @@ function App() {
         gap={40}
       >
         <view flexDirection="column" alignItems="center" gap={16}>
-          <text color="lightgrey">{STATUS_TEXT[state()]}</text>
+          <text color="lightgrey">{status()}</text>
           <view flexDirection="row" gap={12}>
-            {caps.discover && <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />}
-            {isAndroid && <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />}
+            {idle() && caps.discover && <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />}
+            {idle() && isAndroid && <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />}
             {busy() && <Button label="Cancel" color="#555" onTap={() => dev.stop()} />}
+            {connected() && <Button label="Disconnect" color="#555" onTap={() => dev.stop()} />}
           </view>
         </view>
         <Logo />

@@ -3909,9 +3909,17 @@ function App() {
   };
   let isAndroid = dev?.platform === "android";
   let [state, setState] = createSignal("idle");
-  if (dev)
-    srt.on("devServer", (e2) => setState(e2.state));
-  let busy = () => state() !== "idle" && state() !== "connected";
+  let [address, setAddress] = createSignal(null);
+  if (dev) {
+    srt.on("devServer", (e2) => {
+      setState(e2.state);
+      setAddress(e2.address);
+    });
+  }
+  let idle = () => state() === "idle";
+  let busy = () => state() === "searching" || state() === "connecting";
+  let connected = () => state() === "connected";
+  let status = () => connected() ? `connected to ${address()}` : STATUS_TEXT[state()];
   var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
   insertNode(_el$4, _el$5);
   insertNode(_el$4, _el$6);
@@ -3929,26 +3937,37 @@ function App() {
   setProp(_el$7, "alignItems", "center");
   setProp(_el$7, "gap", 16);
   setProp(_el$8, "color", "lightgrey");
-  insert(_el$8, () => STATUS_TEXT[state()]);
+  insert(_el$8, status);
   setProp(_el$9, "flexDirection", "row");
   setProp(_el$9, "gap", 12);
   insert(_el$9, (() => {
-    var _c$ = memo2(() => !!caps.discover);
+    var _c$ = memo2(() => !!(idle() && caps.discover));
     return () => _c$() && createComponent2(Button, {
       label: "Discover",
       color: "#3366b3",
       onTap: () => dev.discover()
     });
   })(), null);
-  insert(_el$9, isAndroid && createComponent2(Button, {
-    label: "Connect (adb)",
-    color: "#3366b3",
-    onTap: () => dev.connect(LOOPBACK)
-  }), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!busy());
+    var _c$2 = memo2(() => !!(idle() && isAndroid));
     return () => _c$2() && createComponent2(Button, {
+      label: "Connect (adb)",
+      color: "#3366b3",
+      onTap: () => dev.connect(LOOPBACK)
+    });
+  })(), null);
+  insert(_el$9, (() => {
+    var _c$3 = memo2(() => !!busy());
+    return () => _c$3() && createComponent2(Button, {
       label: "Cancel",
+      color: "#555",
+      onTap: () => dev.stop()
+    });
+  })(), null);
+  insert(_el$9, (() => {
+    var _c$4 = memo2(() => !!connected());
+    return () => _c$4() && createComponent2(Button, {
+      label: "Disconnect",
       color: "#555",
       onTap: () => dev.stop()
     });
