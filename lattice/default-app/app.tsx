@@ -1,5 +1,6 @@
 import { render } from "@solidrt/core"
-import { createSignal } from "@solidjs/signals"
+import { createMemo, createSignal } from "@solidjs/signals"
+import { For, Show } from "solid-js"
 import { Logo } from "./logo"
 
 // The dev-server control surface installed by the runtime (srt.devServer). It
@@ -39,14 +40,19 @@ function App() {
   let dev = typeof srt !== "undefined" ? srt.devServer : undefined
   let caps = dev?.capabilities ?? { connect: false, discover: false, scanQr: false }
   let isAndroid = dev?.platform === "android"
-  let recents: string[] = dev?.recents ?? []
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
+  let [recents, setRecents] = createSignal<string[]>(dev?.recents ?? [])
+
   if (dev) {
-    srt.on("devServer", (e: { state: DevState; address: string | null }) => {
+    srt.on("devServer", (e: { state: DevState; address: string | null; recents?: string[] }) => {
       setState(e.state)
       setAddress(e.address)
+      if (e.recents) {
+        setRecents(e.recents)
+        console.log("got recents", e.recents)
+      }
     })
   }
 
@@ -68,20 +74,26 @@ function App() {
       >
         <view flexDirection="column" alignItems="center" gap={16}>
           <text color="lightgrey">{status()}</text>
+
           <view flexDirection="row" gap={12}>
-            {idle() && caps.discover && <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />}
-            {idle() && isAndroid && <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />}
+            {idle() && caps.discover && (
+              <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
+            )}
+            {idle() && isAndroid && (
+              <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />
+            )}
             {busy() && <Button label="Cancel" color="#555" onTap={() => dev.stop()} />}
             {connected() && <Button label="Disconnect" color="#555" onTap={() => dev.stop()} />}
           </view>
-          {idle() && recents.length > 0 && (
+
+          <Show when={idle() && recents().length > 0}>
             <view flexDirection="column" alignItems="center" gap={8}>
               <text color="grey">recent</text>
-              {recents.map((addr) => (
-                <Button label={addr} color="#333" onTap={() => dev.connect(addr)} />
-              ))}
+              <For each={recents()}>
+                {(addr) => <Button label={addr} color="#333" onTap={() => dev.connect(addr)} />}
+              </For>
             </view>
-          )}
+          </Show>
         </view>
         <Logo />
       </view>

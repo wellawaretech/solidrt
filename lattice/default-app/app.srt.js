@@ -2653,7 +2653,9 @@ function flattenArray(e, t = [], n) {
     throw i;
   return r;
 }
+
 // node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/solid.js
+var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 var NoHydrateContext = {
   id: Symbol("NoHydrateContext"),
@@ -2683,6 +2685,7 @@ var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffec
 function createComponent(Comp, props) {
   return untrack(() => Comp(props || {}));
 }
+var narrowedError = (name) => `Stale read from <${name}>.`;
 function For(props) {
   const options = "fallback" in props ? {
     keyed: props.keyed,
@@ -2691,6 +2694,29 @@ function For(props) {
     keyed: props.keyed
   };
   return mapArray(() => props.each, props.children, options);
+}
+function Show(props) {
+  const keyed = props.keyed;
+  const conditionValue = createMemo(() => props.when, undefined);
+  const condition = keyed ? conditionValue : createMemo(conditionValue, {
+    equals: (a, b) => !a === !b,
+    sync: true
+  });
+  return createMemo(() => {
+    const c = condition();
+    if (c) {
+      const child = props.children;
+      const fn = typeof child === "function" && child.length > 0;
+      return fn ? keyed ? untrack(() => child(c), IS_DEV) : untrack(() => child(() => {
+        if (!untrack(condition))
+          throw narrowedError("Show");
+        return conditionValue();
+      }), IS_DEV) : child;
+    }
+    return props.fallback;
+  }, {
+    sync: true
+  });
 }
 
 // node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
@@ -4042,19 +4068,27 @@ function App() {
     scanQr: false
   };
   let isAndroid = dev?.platform === "android";
-  let recents = createSignal(dev?.recents ?? []);
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
+  let [recents, setRecents] = createSignal(dev?.recents ?? []);
   if (dev) {
     srt.on("devServer", (e2) => {
       setState(e2.state);
       setAddress(e2.address);
+      if (e2.recents) {
+        setRecents(e2.recents);
+        console.log("got recents", e2.recents);
+      }
     });
   }
   let idle = () => state() === "idle";
   let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
   let status = () => connected() ? `connected to ${address()}` : STATUS_TEXT[state()];
+  let showRecents = createMemo(() => {
+    let i2 = state();
+    return recents().length > 0 && i2 === "idle";
+  });
   var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
   insertNode(_el$4, _el$5);
   insertNode(_el$4, _el$6);
@@ -4107,9 +4141,11 @@ function App() {
       onTap: () => dev.stop()
     });
   })(), null);
-  insert(_el$7, (() => {
-    var _c$5 = memo2(() => !!(idle() && recents.length > 0));
-    return () => _c$5() && (() => {
+  insert(_el$7, createComponent2(Show, {
+    get when() {
+      return memo2(() => !!idle())() && recents().length > 0;
+    },
+    get children() {
       var _el$0 = createElement("view"), _el$1 = createElement("text");
       insertNode(_el$0, _el$1);
       setProp(_el$0, "flexDirection", "column");
@@ -4118,18 +4154,18 @@ function App() {
       insertNode(_el$1, createTextNode(`recent`));
       setProp(_el$1, "color", "grey");
       insert(_el$0, createComponent2(For, {
-        each: recents,
+        get each() {
+          return recents();
+        },
         children: (addr) => createComponent2(Button, {
-          get label() {
-            return addr();
-          },
+          label: addr,
           color: "#333",
-          onTap: () => dev.connect(addr())
+          onTap: () => dev.connect(addr)
         })
       }), null);
       return _el$0;
-    })();
-  })(), null);
+    }
+  }), null);
   insert(_el$6, createComponent2(Logo, {}), null);
   return _el$4;
 }

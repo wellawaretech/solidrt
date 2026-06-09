@@ -94,7 +94,7 @@ fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) {
 // which keeps the "connected" indicator across a server stop (the stop reloads
 // the default app but leaves the websocket up).
 #[cfg(feature = "go")]
-fn emit_dev_state(eh: &ExecHandle, st: go::ConnState) {
+fn emit_dev_state(eh: &ExecHandle, st: go::ConnState, recents: Vec<String>) {
   eh.exec(move |ctx| {
     let (state, addr) = st.parts();
     let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
@@ -103,6 +103,11 @@ fn emit_dev_state(eh: &ExecHandle, st: go::ConnState) {
       Some(a) => obj.set("address", a).expect("set address"),
       None => obj.set("address", rquickjs::Null).expect("set address null"),
     }
+    let arr = rquickjs::Array::new(ctx.clone()).expect("create recents array");
+    for (i, a) in recents.into_iter().enumerate() {
+      arr.set(i, a).expect("set recent");
+    }
+    obj.set("recents", arr).expect("set recents");
     plugins::events::emit_sticky(&ctx, "devServer", obj);
   });
 }
@@ -378,7 +383,7 @@ fn ui_thread(
           }
           *dev_state_task.borrow_mut() = st.clone();
           if let Some(eh) = current_exec_dev.borrow().as_ref() {
-            emit_dev_state(eh, st);
+            emit_dev_state(eh, st, dev_recents_task.borrow().clone());
           }
         }
       });
@@ -457,7 +462,7 @@ fn ui_thread(
       // Replay the current connection state into this engine so a reload (e.g.
       // a server stop returning to the default app) keeps the right indicator.
       #[cfg(feature = "go")]
-      emit_dev_state(&engine.exec_handle(), dev_state.borrow().clone());
+      emit_dev_state(&engine.exec_handle(), dev_state.borrow().clone(), dev_recents.borrow().clone());
 
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
