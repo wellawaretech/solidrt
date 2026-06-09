@@ -327,8 +327,8 @@ async fn try_serve(
   // previous address so reconnecting to a different server repoints the proxy.
   *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
-  let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
-  let info = format!(r#"{{"type":"info","platform":"{}","version":"{version}"}}"#, std::env::consts::OS,);
+  let info =
+    format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, std::env::consts::OS, crate::VERSION);
   let _ = client.send(tokio_websockets::Message::text(info)).await;
 
   while let Some(Ok(msg)) = client.next().await {

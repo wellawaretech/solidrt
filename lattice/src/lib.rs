@@ -46,6 +46,11 @@ impl std::ops::Deref for AlloyContext {
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
+pub(crate) const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
+  Some(v) => v,
+  None => "0.0.0-dev",
+};
+
 /// QuickJS call-stack soft limit. Sits below the UI thread's native stack (see
 /// alloy gl::run_context) so deep recursion throws a clean "Maximum call stack
 /// size exceeded" instead of overflowing the OS stack. Tunable down per-app later.
@@ -399,8 +404,7 @@ fn ui_thread(
 
 pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: alloy::Mode, size: (u32, u32)) {
   alloy::install_logger();
-  let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
-  log::info!("[srt] SolidRT version {version}");
+  log::info!("[srt] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();
   let record_fps = match &mode {
