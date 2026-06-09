@@ -3867,21 +3867,93 @@ function Logo() {
 }
 
 // lattice/default-app/app.tsx
-function App() {
-  var _el$ = createElement("window"), _el$2 = createElement("d-rect"), _el$3 = createElement("view"), _el$4 = createElement("text");
+var LOOPBACK = "127.0.0.1:15194";
+var STATUS_TEXT = {
+  idle: "not connected",
+  searching: "searching...",
+  scanning: "scanning...",
+  connecting: "connecting...",
+  connected: "connected"
+};
+function Button(props) {
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("text");
   insertNode(_el$, _el$2);
   insertNode(_el$, _el$3);
-  setProp(_el$, "title", "solidrt-go");
-  setProp(_el$2, "color", "#111");
-  insertNode(_el$3, _el$4);
-  setProp(_el$3, "flexGrow", 1);
-  setProp(_el$3, "justifyContent", "center");
-  setProp(_el$3, "alignItems", "center");
-  setProp(_el$3, "flexDirection", "column-reverse");
-  setProp(_el$3, "gap", 20);
-  insertNode(_el$4, createTextNode(`waiting for connection...`));
-  setProp(_el$4, "color", "lightgrey");
-  insert(_el$3, createComponent2(Logo, {}), null);
+  setProp(_el$, "paddingLeft", 18);
+  setProp(_el$, "paddingRight", 18);
+  setProp(_el$, "paddingTop", 10);
+  setProp(_el$, "paddingBottom", 10);
+  setProp(_el$, "justifyContent", "center");
+  setProp(_el$, "alignItems", "center");
+  setProp(_el$2, "radius", 8);
+  setProp(_el$3, "color", "white");
+  insert(_el$3, () => props.label);
+  effect3(() => ({
+    e: props.onTap,
+    t: props.color
+  }), ({
+    e: e2,
+    t: t2
+  }, _p$) => {
+    e2 !== _p$?.e && setProp(_el$, "onPointerDown", e2, _p$?.e);
+    t2 !== _p$?.t && setProp(_el$2, "color", t2, _p$?.t);
+  });
   return _el$;
+}
+function App() {
+  let dev = typeof srt !== "undefined" ? srt.devServer : undefined;
+  let caps = dev?.capabilities ?? {
+    connect: false,
+    discover: false,
+    scanQr: false
+  };
+  let isAndroid = dev?.platform === "android";
+  let [state, setState] = createSignal("idle");
+  if (dev)
+    srt.on("devServer", (e2) => setState(e2.state));
+  let busy = () => state() !== "idle" && state() !== "connected";
+  var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
+  insertNode(_el$4, _el$5);
+  insertNode(_el$4, _el$6);
+  setProp(_el$4, "title", "solidrt-go");
+  setProp(_el$5, "color", "#111");
+  insertNode(_el$6, _el$7);
+  setProp(_el$6, "flexGrow", 1);
+  setProp(_el$6, "justifyContent", "center");
+  setProp(_el$6, "alignItems", "center");
+  setProp(_el$6, "flexDirection", "column-reverse");
+  setProp(_el$6, "gap", 40);
+  insertNode(_el$7, _el$8);
+  insertNode(_el$7, _el$9);
+  setProp(_el$7, "flexDirection", "column");
+  setProp(_el$7, "alignItems", "center");
+  setProp(_el$7, "gap", 16);
+  setProp(_el$8, "color", "lightgrey");
+  insert(_el$8, () => STATUS_TEXT[state()]);
+  setProp(_el$9, "flexDirection", "row");
+  setProp(_el$9, "gap", 12);
+  insert(_el$9, (() => {
+    var _c$ = memo2(() => !!caps.discover);
+    return () => _c$() && createComponent2(Button, {
+      label: "Discover",
+      color: "#3366b3",
+      onTap: () => dev.discover()
+    });
+  })(), null);
+  insert(_el$9, isAndroid && createComponent2(Button, {
+    label: "Connect (adb)",
+    color: "#3366b3",
+    onTap: () => dev.connect(LOOPBACK)
+  }), null);
+  insert(_el$9, (() => {
+    var _c$2 = memo2(() => !!busy());
+    return () => _c$2() && createComponent2(Button, {
+      label: "Cancel",
+      color: "#555",
+      onTap: () => dev.stop()
+    });
+  })(), null);
+  insert(_el$6, createComponent2(Logo, {}), null);
+  return _el$4;
 }
 render(() => createComponent2(App, {}));

@@ -312,10 +312,42 @@ fn ui_thread(
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    // Control channel into the dev-server connection supervisor, exposed to JS
+    // via the srt.devServer plugin. None in record mode (no dev connection).
     #[cfg(feature = "go")]
-    if record_fps.is_none() {
-      go::start(&handle, cmd_tx.clone(), dev_server.clone(), proxy_files_enabled.clone(), proxy_http_enabled.clone());
-    }
+    let dev_cmd_tx = if record_fps.is_none() {
+      let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<go::ConnState>();
+      let dev_cmd_tx = go::start(
+        &handle,
+        cmd_tx.clone(),
+        state_tx,
+        dev_server.clone(),
+        proxy_files_enabled.clone(),
+        proxy_http_enabled.clone(),
+      );
+      // Forward connection-state changes to JS as the sticky `devServer` event,
+      // targeting whichever engine is currently live.
+      let current_exec_dev = current_exec.clone();
+      local.spawn_local(async move {
+        while let Some(st) = state_rx.recv().await {
+          if let Some(eh) = current_exec_dev.borrow().as_ref() {
+            eh.exec(move |ctx| {
+              let (state, addr) = st.parts();
+              let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
+              obj.set("state", state).expect("set state");
+              match addr {
+                Some(a) => obj.set("address", a).expect("set address"),
+                None => obj.set("address", rquickjs::Null).expect("set address null"),
+              }
+              plugins::events::emit_sticky(&ctx, "devServer", obj);
+            });
+          }
+        }
+      });
+      Some(dev_cmd_tx)
+    } else {
+      None
+    };
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
     // toward it). Injected into each engine; persists across reloads for continuous
@@ -374,6 +406,11 @@ fn ui_thread(
             builder = builder.plugin(move |ctx| go::install_proxy_state(ctx, url, proxy_http));
           }
         }
+      }
+      #[cfg(feature = "go")]
+      if let Some(ref dev_cmd_tx) = dev_cmd_tx {
+        let dev_cmd_tx = dev_cmd_tx.clone();
+        builder = builder.plugin(move |ctx| go::install_devserver_control(ctx, dev_cmd_tx));
       }
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());

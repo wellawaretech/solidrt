@@ -1,74 +1,168 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
+use std::time::Duration;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::OnceCell;
 
 pub type DevServerCell = Arc<OnceCell<String>>;
 
-const DEV_SERVER_PORT: u16 = 15194;
-
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
 
-pub fn start(
-  handle: &tokio::runtime::Handle,
-  tx: UnboundedSender<crate::EngineCmd>,
-  dev_server: DevServerCell,
-  proxy_files_enabled: Arc<AtomicBool>,
-  proxy_http_enabled: Arc<AtomicBool>,
-) {
-  handle.spawn(async move {
-    // Android reaches the host dev server through the adb-reverse loopback that
-    // `srt run` / dev-android sets up (`adb reverse tcp:DEV_PORT`). This covers
-    // the emulator (behind NAT) and USB-tethered devices.
-    #[cfg(target_os = "android")]
-    loopback_loop(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await;
-
-    // Other platforms discover the dev server on the LAN via mDNS / DNS-SD.
-    #[cfg(not(target_os = "android"))]
-    discovery_loop(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await;
-  });
+/// Commands the JS `srt.devServer` surface sends into the supervisor. The
+/// connection is opt-in: nothing happens until one of these arrives.
+pub enum DevCmd {
+  /// Connect to a known `host:port` and keep retrying/reconnecting. Covers the
+  /// adb-reverse loopback (`127.0.0.1:DEV_PORT`), manual entry and recents.
+  Connect(String),
+  /// Browse the LAN for a dev server via mDNS, then connect.
+  Discover,
+  /// Stop searching and drop any connection, back to idle.
+  Stop,
 }
 
-#[cfg(target_os = "android")]
-async fn loopback_loop(
-  tx: UnboundedSender<crate::EngineCmd>,
+/// Connection state reported back to JS as the sticky `devServer` event.
+#[derive(Clone)]
+pub enum ConnState {
+  Idle,
+  Searching,
+  Connecting(String),
+  Connected(String),
+}
+
+impl ConnState {
+  /// (state string, optional address) for the JS event payload.
+  pub fn parts(&self) -> (&'static str, Option<&str>) {
+    match self {
+      ConnState::Idle => ("idle", None),
+      ConnState::Searching => ("searching", None),
+      ConnState::Connecting(addr) => ("connecting", Some(addr)),
+      ConnState::Connected(addr) => ("connected", Some(addr)),
+    }
+  }
+}
+
+/// Spawn the dev-server connection supervisor. It parks until JS sends a
+/// `DevCmd` (via the returned sender), so an idle app never browses or connects.
+pub fn start(
+  handle: &tokio::runtime::Handle,
+  engine_tx: UnboundedSender<crate::EngineCmd>,
+  state_tx: UnboundedSender<ConnState>,
+  dev_server: DevServerCell,
+  proxy_files_enabled: Arc<AtomicBool>,
+  proxy_http_enabled: Arc<AtomicBool>,
+) -> UnboundedSender<DevCmd> {
+  let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
+  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled));
+  cmd_tx
+}
+
+/// Drives one mechanism at a time. Each `run_*` returns the command that
+/// interrupted it (so we switch mechanism), or `None` when the command channel
+/// closes (so we exit).
+async fn supervisor(
+  mut cmd_rx: UnboundedReceiver<DevCmd>,
+  engine_tx: UnboundedSender<crate::EngineCmd>,
+  state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
   proxy_files_enabled: Arc<AtomicBool>,
   proxy_http_enabled: Arc<AtomicBool>,
 ) {
-  let addr = format!("127.0.0.1:{DEV_SERVER_PORT}");
+  let mut pending: Option<DevCmd> = None;
   loop {
-    try_serve(&addr, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await;
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let cmd = match pending.take() {
+      Some(c) => c,
+      None => match cmd_rx.recv().await {
+        Some(c) => c,
+        None => return,
+      },
+    };
+    match cmd {
+      DevCmd::Stop => {
+        let _ = state_tx.send(ConnState::Idle);
+      }
+      DevCmd::Connect(addr) => {
+        pending =
+          run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled)
+            .await;
+      }
+      DevCmd::Discover => {
+        #[cfg(not(target_os = "android"))]
+        {
+          pending =
+            run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled)
+              .await;
+        }
+        #[cfg(target_os = "android")]
+        {
+          log::warn!("[sgo] discover() is not supported on this platform");
+          let _ = state_tx.send(ConnState::Idle);
+        }
+      }
+    }
+  }
+}
+
+/// Connect to a fixed address, retrying until reachable and reconnecting after
+/// drops. Returns when a new command interrupts (or the channel closes).
+async fn run_direct(
+  addr: String,
+  cmd_rx: &mut UnboundedReceiver<DevCmd>,
+  engine_tx: &UnboundedSender<crate::EngineCmd>,
+  state_tx: &UnboundedSender<ConnState>,
+  dev_server: &DevServerCell,
+  proxy_files_enabled: &Arc<AtomicBool>,
+  proxy_http_enabled: &Arc<AtomicBool>,
+) -> Option<DevCmd> {
+  loop {
+    let _ = state_tx.send(ConnState::Connecting(addr.clone()));
+    tokio::select! {
+      cmd = cmd_rx.recv() => return cmd,
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled) => {
+        // Failed to connect or the connection dropped; pause before retrying,
+        // but let a new command interrupt the wait.
+        tokio::select! {
+          cmd = cmd_rx.recv() => return cmd,
+          _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+        }
+      }
+    }
   }
 }
 
 /// Browse for the dev server via mDNS, then connect and serve. Once a server is
 /// resolved we keep reconnecting to that address (so dev-server restarts on the
 /// same host reconnect without waiting for a fresh announcement); only after
-/// repeated connect failures do we go back to browsing, in case it moved.
+/// repeated connect failures do we go back to browsing, in case it moved. The
+/// mDNS daemon is dropped when this returns, so an interrupting command (e.g.
+/// Stop) actually stops browsing.
 #[cfg(not(target_os = "android"))]
-async fn discovery_loop(
-  tx: UnboundedSender<crate::EngineCmd>,
-  dev_server: DevServerCell,
-  proxy_files_enabled: Arc<AtomicBool>,
-  proxy_http_enabled: Arc<AtomicBool>,
-) {
+async fn run_discover(
+  cmd_rx: &mut UnboundedReceiver<DevCmd>,
+  engine_tx: &UnboundedSender<crate::EngineCmd>,
+  state_tx: &UnboundedSender<ConnState>,
+  dev_server: &DevServerCell,
+  proxy_files_enabled: &Arc<AtomicBool>,
+  proxy_http_enabled: &Arc<AtomicBool>,
+) -> Option<DevCmd> {
   use mdns_sd::ServiceDaemon;
+
+  let _ = state_tx.send(ConnState::Searching);
 
   let mdns = match ServiceDaemon::new() {
     Ok(d) => d,
     Err(e) => {
       log::error!("[sgo] mDNS init failed: {e}");
-      return;
+      let _ = state_tx.send(ConnState::Idle);
+      return cmd_rx.recv().await;
     }
   };
   let receiver = match mdns.browse(SERVICE_TYPE) {
     Ok(r) => r,
     Err(e) => {
       log::error!("[sgo] mDNS browse failed: {e}");
-      return;
+      let _ = state_tx.send(ConnState::Idle);
+      return cmd_rx.recv().await;
     }
   };
   log::info!("[sgo] Browsing for {SERVICE_TYPE} via mDNS...");
@@ -80,16 +174,26 @@ async fn discovery_loop(
   loop {
     // Block for the next resolved service whenever we have no address to try.
     if addr.is_none() {
-      addr = recv_resolved(&receiver).await;
-      failures = 0;
-      if addr.is_none() {
-        // Receiver closed; nothing more will arrive.
-        return;
+      let _ = state_tx.send(ConnState::Searching);
+      tokio::select! {
+        cmd = cmd_rx.recv() => return cmd,
+        resolved = recv_resolved(&receiver) => {
+          match resolved {
+            Some(a) => { addr = Some(a); failures = 0; }
+            // Receiver closed; go idle and wait for the next command.
+            None => { let _ = state_tx.send(ConnState::Idle); return cmd_rx.recv().await; }
+          }
+        }
       }
     }
 
     if let Some(server) = addr.clone() {
-      if try_serve(&server, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await {
+      let _ = state_tx.send(ConnState::Connecting(server.clone()));
+      let connected = tokio::select! {
+        cmd = cmd_rx.recv() => return cmd,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled) => c,
+      };
+      if connected {
         // Was connected, then dropped: retry the same address.
         failures = 0;
       } else {
@@ -97,9 +201,13 @@ async fn discovery_loop(
         if failures >= MAX_FAILURES {
           log::info!("[sgo] {server} unreachable; re-discovering");
           addr = None;
+          continue;
         }
       }
-      tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+      tokio::select! {
+        cmd = cmd_rx.recv() => return cmd,
+        _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+      }
     }
   }
 }
@@ -149,6 +257,7 @@ fn service_addr(info: &mdns_sd::ResolvedService) -> Option<String> {
 async fn try_serve(
   addr: &str,
   tx: &UnboundedSender<crate::EngineCmd>,
+  state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   proxy_files_enabled: &Arc<AtomicBool>,
   proxy_http_enabled: &Arc<AtomicBool>,
@@ -171,6 +280,7 @@ async fn try_serve(
   };
 
   log::info!("[sgo] Connected to ws://{addr}");
+  let _ = state_tx.send(ConnState::Connected(addr.to_string()));
 
   // Publish the dev server address so the next engine build can install the
   // file/dir proxy. set() returns Err if already set; ignore.

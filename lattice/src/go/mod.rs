@@ -1,5 +1,7 @@
 mod connection;
+mod control;
 mod proxy;
 
-pub use connection::{start, DevServerCell};
+pub use connection::{start, ConnState, DevServerCell};
+pub use control::install_devserver_control;
 pub use proxy::{install_proxy_state, ProxyFsModule};
