@@ -6,25 +6,21 @@ import { DEV_PORT } from "./dev-server"
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.x-android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
 
-// The emulator reaches the host loopback at 10.0.2.2; the dev server binds
-// 0.0.0.0:DEV_PORT so it is reachable there. The client reads this address from
-// the system property below (see lattice/src/go/connection.rs).
-let DEV_SERVER_PROP = "debug.solidrt.devserver"
-let EMULATOR_DEV_SERVER = `10.0.2.2:${DEV_PORT}`
-
-// Emulators sit behind a NAT and cannot reach the dev server via LAN UDP
-// discovery, so point them straight at the host via the runtime override
-// property the client reads on startup. Real devices are left alone and keep
-// using discovery.
-function configureEmulatorDevServer(adb: string, target: string) {
-  let qemu = Bun.spawnSync([adb, "-s", target, "shell", "getprop", "ro.boot.qemu"], { stdout: "pipe" })
-    .stdout.toString()
-    .trim()
-  let isEmulator = target.startsWith("emulator-") || qemu === "1"
-  if (!isEmulator) return
-
-  print(`[cli] Emulator target; setting ${DEV_SERVER_PROP}=${EMULATOR_DEV_SERVER}`)
-  Bun.spawnSync([adb, "-s", target, "shell", "setprop", DEV_SERVER_PROP, EMULATOR_DEV_SERVER])
+// Forward the device's loopback DEV_PORT to the host dev server, so the client
+// reaches it at 127.0.0.1:DEV_PORT (see lattice/src/go/connection.rs). This is
+// the adb-reverse path: it works for the emulator (behind NAT, cannot reach the
+// host via LAN UDP discovery) and for USB-tethered devices alike, and is
+// harmless on any adb connection. Devices not launched via adb fall back to the
+// client's standard discovery flow.
+function setupAdbReverse(adb: string, target: string) {
+  print(`[cli] Forwarding 127.0.0.1:${DEV_PORT} on ${target} to host dev server`)
+  let res = Bun.spawnSync([adb, "-s", target, "reverse", `tcp:${DEV_PORT}`, `tcp:${DEV_PORT}`], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  if (res.exitCode !== 0) {
+    print(`[cli] adb reverse failed (client will fall back to discovery):\n${res.stderr.toString()}`)
+  }
 }
 
 // Serials of connected, authorized devices (excludes offline/unauthorized).
@@ -74,10 +70,10 @@ function resolveTarget(adb: string): string {
   return only
 }
 
-// Install + launch the Android client on a connected device over adb, then let
-// the device discover the running dev server over LAN UDP (the same path as a
-// manually launched client). Fire-and-forget: the client's lifecycle is tracked
-// via WS connect/disconnect in dev-server.ts, not as a child process here.
+// Install + launch the Android client on a connected device over adb, forwarding
+// its loopback to the host dev server so the client connects at 127.0.0.1 (see
+// setupAdbReverse). Fire-and-forget: the client's lifecycle is tracked via WS
+// connect/disconnect in dev-server.ts, not as a child process here.
 export async function spawnAndroidClient() {
   let adb = requireAdb()
 
@@ -97,7 +93,7 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  configureEmulatorDevServer(adb, target)
+  setupAdbReverse(adb, target)
 
   let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY], {
     stdout: "pipe",
@@ -108,5 +104,5 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  print(`[cli] Launched SolidRT-Go on ${target}; waiting for it to discover the dev server...`)
+  print(`[cli] Launched SolidRT-Go on ${target}; waiting for it to connect to the dev server...`)
 }

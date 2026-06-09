@@ -1025,7 +1025,6 @@ name = "lattice"
 version = "0.0.0"
 dependencies = [
  "alloy",
- "android_system_properties",
  "flux",
  "futures-util",
  "half",
