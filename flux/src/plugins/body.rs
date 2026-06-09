@@ -30,15 +30,6 @@ impl BodyState {
     Self { bytes: RefCell::new(Some(bytes)) }
   }
 
-  pub(crate) fn empty() -> Self {
-    Self { bytes: RefCell::new(Some(Vec::new())) }
-  }
-
-  /// Peek a copy of the bytes without consuming. Returns None if already consumed.
-  pub(crate) fn peek(&self) -> Option<Vec<u8>> {
-    self.bytes.borrow().clone()
-  }
-
   /// Consume the bytes. Returns None if already consumed.
   pub(crate) fn take(&self) -> Option<Vec<u8>> {
     self.bytes.borrow_mut().take()

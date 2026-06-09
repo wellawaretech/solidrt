@@ -307,7 +307,7 @@ async fn call_handler<'js>(
 /// its own failure, so there is no error loop.
 async fn error_response<'js>(
   ctx: &Ctx<'js>,
-  err: rquickjs::Error,
+  _err: rquickjs::Error,
   error_fn: Option<&Function<'js>>,
   logger: &Logger,
 ) -> HyperResponse<ResBody> {
