@@ -75,6 +75,24 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
   });
 }
 
+// Emit the dev-server connection state to JS as the sticky `devServer` event.
+// Sticky so it replays to the default app's subscriber on each engine rebuild,
+// which keeps the "connected" indicator across a server stop (the stop reloads
+// the default app but leaves the websocket up).
+#[cfg(feature = "go")]
+fn emit_dev_state(eh: &ExecHandle, st: go::ConnState) {
+  eh.exec(move |ctx| {
+    let (state, addr) = st.parts();
+    let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
+    obj.set("state", state).expect("set state");
+    match addr {
+      Some(a) => obj.set("address", a).expect("set address"),
+      None => obj.set("address", rquickjs::Null).expect("set address null"),
+    }
+    plugins::events::emit_sticky(&ctx, "devServer", obj);
+  });
+}
+
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -312,6 +330,10 @@ fn ui_thread(
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
     let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    // Latest connection state, held natively so it can be re-emitted to each
+    // newly built engine (the sticky cache itself is per-engine).
+    #[cfg(feature = "go")]
+    let dev_state: Rc<RefCell<go::ConnState>> = Rc::new(RefCell::new(go::ConnState::Idle));
     // Control channel into the dev-server connection supervisor, exposed to JS
     // via the srt.devServer plugin. None in record mode (no dev connection).
     #[cfg(feature = "go")]
@@ -326,21 +348,15 @@ fn ui_thread(
         proxy_http_enabled.clone(),
       );
       // Forward connection-state changes to JS as the sticky `devServer` event,
-      // targeting whichever engine is currently live.
+      // targeting whichever engine is currently live, and keep the held copy in
+      // sync so a later engine rebuild can replay it.
       let current_exec_dev = current_exec.clone();
+      let dev_state_task = dev_state.clone();
       local.spawn_local(async move {
         while let Some(st) = state_rx.recv().await {
+          *dev_state_task.borrow_mut() = st.clone();
           if let Some(eh) = current_exec_dev.borrow().as_ref() {
-            eh.exec(move |ctx| {
-              let (state, addr) = st.parts();
-              let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
-              obj.set("state", state).expect("set state");
-              match addr {
-                Some(a) => obj.set("address", a).expect("set address"),
-                None => obj.set("address", rquickjs::Null).expect("set address null"),
-              }
-              plugins::events::emit_sticky(&ctx, "devServer", obj);
-            });
+            emit_dev_state(eh, st);
           }
         }
       });
@@ -415,6 +431,10 @@ fn ui_thread(
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
+      // Replay the current connection state into this engine so a reload (e.g.
+      // a server stop returning to the default app) keeps the right indicator.
+      #[cfg(feature = "go")]
+      emit_dev_state(&engine.exec_handle(), dev_state.borrow().clone());
 
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
