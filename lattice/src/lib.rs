@@ -19,8 +19,6 @@ use frame::{EngineState, InputEvent, InputState};
 use rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
-#[cfg(feature = "go")]
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -75,43 +73,6 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
   });
 }
 
-// Record a successfully connected address as the most-recent entry. Loopback /
-// tunnel addresses are skipped since they aren't reconnectable on their own.
-// In-memory only for now (lost on process exit); disk persistence is TODO.
-#[cfg(feature = "go")]
-fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) {
-  if addr.starts_with("127.") || addr.starts_with("localhost") || addr.starts_with("[::1]") {
-    return;
-  }
-  let mut r = recents.borrow_mut();
-  r.retain(|a| a != addr);
-  r.insert(0, addr.to_string());
-  r.truncate(8);
-}
-
-// Emit the dev-server connection state to JS as the sticky `devServer` event.
-// Sticky so it replays to the default app's subscriber on each engine rebuild,
-// which keeps the "connected" indicator across a server stop (the stop reloads
-// the default app but leaves the websocket up).
-#[cfg(feature = "go")]
-fn emit_dev_state(eh: &ExecHandle, st: go::ConnState, recents: Vec<String>) {
-  eh.exec(move |ctx| {
-    let (state, addr) = st.parts();
-    let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
-    obj.set("state", state).expect("set state");
-    match addr {
-      Some(a) => obj.set("address", a).expect("set address"),
-      None => obj.set("address", rquickjs::Null).expect("set address null"),
-    }
-    let arr = rquickjs::Array::new(ctx.clone()).expect("create recents array");
-    for (i, a) in recents.into_iter().enumerate() {
-      arr.set(i, a).expect("set recent");
-    }
-    obj.set("recents", arr).expect("set recents");
-    plugins::events::emit_sticky(&ctx, "devServer", obj);
-  });
-}
-
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -120,10 +81,6 @@ fn ui_thread(
   app: Option<AppSource>,
   record_fps: Option<u32>,
 ) {
-  #[cfg(feature = "go")]
-  let proxy_files_enabled = Arc::new(AtomicBool::new(false));
-  #[cfg(feature = "go")]
-  let proxy_http_enabled = Arc::new(AtomicBool::new(false));
   let platform = Arc::new(PlatformContext::new());
   let input_state = Arc::new(InputState::new());
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
@@ -347,50 +304,11 @@ fn ui_thread(
 
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
+    // The dev-server client: connection supervisor, recents, proxy state and the
+    // srt.devServer surface. None in record mode (and entirely absent without the
+    // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
-    let dev_server: go::DevServerCell = std::sync::Arc::new(std::sync::Mutex::new(None));
-    // Latest connection state, held natively so it can be re-emitted to each
-    // newly built engine (the sticky cache itself is per-engine).
-    #[cfg(feature = "go")]
-    let dev_state: Rc<RefCell<go::ConnState>> = Rc::new(RefCell::new(go::ConnState::Idle));
-    // Recently connected dev-server addresses, most-recent-first. Held natively
-    // so they survive engine rebuilds within a run; snapshotted into each engine.
-    #[cfg(feature = "go")]
-    let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    // Control channel into the dev-server connection supervisor, exposed to JS
-    // via the srt.devServer plugin. None in record mode (no dev connection).
-    #[cfg(feature = "go")]
-    let dev_cmd_tx = if record_fps.is_none() {
-      let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<go::ConnState>();
-      let dev_cmd_tx = go::start(
-        &handle,
-        cmd_tx.clone(),
-        state_tx,
-        dev_server.clone(),
-        proxy_files_enabled.clone(),
-        proxy_http_enabled.clone(),
-      );
-      // Forward connection-state changes to JS as the sticky `devServer` event,
-      // targeting whichever engine is currently live, and keep the held copy in
-      // sync so a later engine rebuild can replay it.
-      let current_exec_dev = current_exec.clone();
-      let dev_state_task = dev_state.clone();
-      let dev_recents_task = dev_recents.clone();
-      local.spawn_local(async move {
-        while let Some(st) = state_rx.recv().await {
-          if let go::ConnState::Connected(addr) = &st {
-            add_recent(&dev_recents_task, addr);
-          }
-          *dev_state_task.borrow_mut() = st.clone();
-          if let Some(eh) = current_exec_dev.borrow().as_ref() {
-            emit_dev_state(eh, st, dev_recents_task.borrow().clone());
-          }
-        }
-      });
-      Some(dev_cmd_tx)
-    } else {
-      None
-    };
+    let dev_session = go::DevSession::start(&handle, cmd_tx.clone(), record_fps, &local, current_exec.clone());
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
     // toward it). Injected into each engine; persists across reloads for continuous
@@ -422,8 +340,7 @@ fn ui_thread(
       let tree_platform = platform.clone();
       let tree_atx = AlloyContext(atx.clone());
       let texture_atx = AlloyContext(atx.clone());
-      #[cfg_attr(not(feature = "go"), allow(unused_mut))]
-      let mut builder = FluxEngine::builder()
+      let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .logger(|level, msg| match level {
           flux::LogLevel::Debug => log::debug!("{msg}"),
@@ -437,32 +354,21 @@ fn ui_thread(
         .plugin(|ctx| plugins::events::init(&ctx))
         .plugin(|ctx| plugins::raf::init(&ctx))
         .userdata(clock.clone());
+      // Install the dev-server control surface and (when enabled) the proxy.
       #[cfg(feature = "go")]
-      {
-        let proxy_files = proxy_files_enabled.load(Ordering::Relaxed);
-        let proxy_http = proxy_http_enabled.load(Ordering::Relaxed);
-        if proxy_files || proxy_http {
-          if let Some(url) = dev_server.lock().expect("dev_server lock poisoned").clone() {
-            if proxy_files {
-              builder = builder.module_override("flux:fs", go::ProxyFsModule);
-            }
-            builder = builder.plugin(move |ctx| go::install_proxy_state(ctx, url, proxy_http));
-          }
-        }
-      }
-      #[cfg(feature = "go")]
-      if let Some(ref dev_cmd_tx) = dev_cmd_tx {
-        let dev_cmd_tx = dev_cmd_tx.clone();
-        let recents = dev_recents.borrow().clone();
-        builder = builder.plugin(move |ctx| go::install_devserver_control(ctx, dev_cmd_tx, recents));
-      }
+      let builder = match &dev_session {
+        Some(dev) => dev.augment_builder(builder),
+        None => builder,
+      };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // Replay the current connection state into this engine so a reload (e.g.
       // a server stop returning to the default app) keeps the right indicator.
       #[cfg(feature = "go")]
-      emit_dev_state(&engine.exec_handle(), dev_state.borrow().clone(), dev_recents.borrow().clone());
+      if let Some(dev) = &dev_session {
+        dev.replay_state(&engine.exec_handle());
+      }
 
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
