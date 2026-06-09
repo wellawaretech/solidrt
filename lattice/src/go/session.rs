@@ -57,7 +57,7 @@ impl DevSession {
     let proxy_http_enabled = Arc::new(AtomicBool::new(false));
     let dev_server: DevServerCell = Arc::new(std::sync::Mutex::new(None));
     let dev_state = Rc::new(RefCell::new(ConnState::Idle));
-    let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(super::config::load().recents));
 
     let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<ConnState>();
     let dev_cmd_tx = connection::start(
@@ -77,7 +77,9 @@ impl DevSession {
     local.spawn_local(async move {
       while let Some(st) = state_rx.recv().await {
         if let ConnState::Connected(addr) = &st {
-          add_recent(&dev_recents_task, addr);
+          if add_recent(&dev_recents_task, addr) {
+            super::config::save_recents(&dev_recents_task.borrow());
+          }
         }
         *dev_state_task.borrow_mut() = st.clone();
         if let Some(eh) = current_exec.borrow().as_ref() {
@@ -116,15 +118,17 @@ impl DevSession {
 
 // Record a successfully connected address as the most-recent entry. Loopback /
 // tunnel addresses are skipped since they aren't reconnectable on their own.
-// In-memory only for now (lost on process exit); disk persistence is TODO.
-fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) {
+// Returns true if the list changed (so the caller can persist it), false for a
+// skipped address.
+fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) -> bool {
   if addr.starts_with("127.") || addr.starts_with("localhost") || addr.starts_with("[::1]") {
-    return;
+    return false;
   }
   let mut r = recents.borrow_mut();
   r.retain(|a| a != addr);
   r.insert(0, addr.to_string());
   r.truncate(8);
+  true
 }
 
 // Emit the dev-server connection state to JS as the sticky `devServer` event.

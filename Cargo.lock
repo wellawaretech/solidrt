@@ -1090,6 +1090,7 @@ dependencies = [
  "mdns-sd",
  "reqwest",
  "rquickjs",
+ "serde",
  "serde_json",
  "svgtypes",
  "taffy",
