@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::OnceCell;
 
-pub type DevServerCell = Arc<OnceCell<String>>;
+/// The dialed address of the dev server the proxy should route to. Resettable
+/// (not write-once) so reconnecting to a different server repoints the proxy;
+/// `None` until the first successful connect.
+pub type DevServerCell = Arc<Mutex<Option<String>>>;
 
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
@@ -320,9 +322,10 @@ async fn try_serve(
   log::info!("[sgo] Connected to ws://{addr}");
   let _ = state_tx.send(ConnState::Connected(addr.to_string()));
 
-  // Publish the dev server address so the next engine build can install the
-  // file/dir proxy. set() returns Err if already set; ignore.
-  let _ = dev_server.set(addr.to_string());
+  // Publish the dialed dev server address so the next engine build installs the
+  // file/dir proxy against the server we are actually talking to. Overwrites any
+  // previous address so reconnecting to a different server repoints the proxy.
+  *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
   let version = option_env!("SOLIDRT_VERSION").unwrap_or("0.0.0-dev");
   let info = format!(r#"{{"type":"info","platform":"{}","version":"{version}"}}"#, std::env::consts::OS,);

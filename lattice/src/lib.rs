@@ -348,7 +348,7 @@ fn ui_thread(
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     #[cfg(feature = "go")]
-    let dev_server: go::DevServerCell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    let dev_server: go::DevServerCell = std::sync::Arc::new(std::sync::Mutex::new(None));
     // Latest connection state, held natively so it can be re-emitted to each
     // newly built engine (the sticky cache itself is per-engine).
     #[cfg(feature = "go")]
@@ -442,7 +442,7 @@ fn ui_thread(
         let proxy_files = proxy_files_enabled.load(Ordering::Relaxed);
         let proxy_http = proxy_http_enabled.load(Ordering::Relaxed);
         if proxy_files || proxy_http {
-          if let Some(url) = dev_server.get().cloned() {
+          if let Some(url) = dev_server.lock().expect("dev_server lock poisoned").clone() {
             if proxy_files {
               builder = builder.module_override("flux:fs", go::ProxyFsModule);
             }
