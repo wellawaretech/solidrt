@@ -2254,6 +2254,131 @@ function merge(...e) {
   s[$SOURCES] = n;
   return s;
 }
+function mapArray(e, t, n) {
+  const i = typeof n?.keyed === "function" ? n.keyed : undefined;
+  const r = t.length > 1;
+  const o = t;
+  const s = {
+    Ze: createOwner(),
+    qe: 0,
+    Be: e,
+    ze: [],
+    Xe: o,
+    Je: [],
+    et: [],
+    tt: i,
+    nt: i || n?.keyed === false ? [] : undefined,
+    it: r && n?.keyed !== false ? [] : undefined,
+    rt: n?.keyed === false,
+    ot: n?.fallback
+  };
+  const u = computed(updateKeyedMap.bind(s));
+  s.Ze.u = u;
+  u.Oe &= ~CONFIG_AUTO_DISPOSE;
+  return accessor(u);
+}
+var pureOptions = { ownedWrite: true };
+function updateKeyedMap() {
+  const e = this.Be() || [], t = e.length;
+  e[$TRACK];
+  runWithOwner(this.Ze, () => {
+    let n, i, r = this.nt ? this.rt ? () => {
+      this.nt[i] = signal(e[i], pureOptions);
+      return this.Xe(accessor(this.nt[i]), i);
+    } : () => {
+      this.nt[i] = signal(e[i], pureOptions);
+      this.it && (this.it[i] = signal(i, pureOptions));
+      return this.Xe(accessor(this.nt[i]), this.it ? accessor(this.it[i]) : undefined);
+    } : this.it ? () => {
+      const t2 = e[i];
+      this.it[i] = signal(i, pureOptions);
+      return this.Xe(t2, accessor(this.it[i]));
+    } : () => {
+      const t2 = e[i];
+      return this.Xe(t2);
+    };
+    if (t === 0) {
+      if (this.qe !== 0) {
+        this.Ze.dispose(false);
+        this.et = [];
+        this.ze = [];
+        this.Je = [];
+        this.qe = 0;
+        this.nt && (this.nt = []);
+        this.it && (this.it = []);
+      }
+      if (this.ot && !this.Je[0]) {
+        this.Je[0] = runWithOwner(this.et[0] = createOwner(), this.ot);
+      }
+    } else if (this.qe === 0) {
+      if (this.et[0])
+        this.et[0].dispose();
+      this.Je = new Array(t);
+      for (i = 0;i < t; i++) {
+        this.ze[i] = e[i];
+        this.Je[i] = runWithOwner(this.et[i] = createOwner(), r);
+      }
+      this.qe = t;
+    } else {
+      let o, s, u, c, l, a, f, E = new Array(t), S = new Array(t), T = this.nt ? new Array(t) : undefined, d = this.it ? new Array(t) : undefined;
+      for (o = 0, s = Math.min(this.qe, t);o < s && (this.ze[o] === e[o] || this.nt && compare(this.tt, this.ze[o], e[o])); o++) {
+        if (this.nt)
+          setSignal(this.nt[o], e[o]);
+      }
+      for (s = this.qe - 1, u = t - 1;s >= o && u >= o && (this.ze[s] === e[u] || this.nt && compare(this.tt, this.ze[s], e[u])); s--, u--) {
+        E[u] = this.Je[s];
+        S[u] = this.et[s];
+        T && (T[u] = this.nt[s]);
+        d && (d[u] = this.it[s]);
+      }
+      a = new Map;
+      f = new Array(u + 1);
+      for (i = u;i >= o; i--) {
+        c = e[i];
+        l = this.tt ? this.tt(c) : c;
+        n = a.get(l);
+        f[i] = n === undefined ? -1 : n;
+        a.set(l, i);
+      }
+      for (n = o;n <= s; n++) {
+        c = this.ze[n];
+        l = this.tt ? this.tt(c) : c;
+        i = a.get(l);
+        if (i !== undefined && i !== -1) {
+          E[i] = this.Je[n];
+          S[i] = this.et[n];
+          T && (T[i] = this.nt[n]);
+          d && (d[i] = this.it[n]);
+          i = f[i];
+          a.set(l, i);
+        } else
+          this.et[n].dispose();
+      }
+      for (i = o;i < t; i++) {
+        if (i in E) {
+          this.Je[i] = E[i];
+          this.et[i] = S[i];
+          if (T) {
+            this.nt[i] = T[i];
+            setSignal(this.nt[i], e[i]);
+          }
+          if (d) {
+            this.it[i] = d[i];
+            setSignal(this.it[i], i);
+          }
+        } else {
+          this.Je[i] = runWithOwner(this.et[i] = createOwner(), r);
+        }
+      }
+      this.Je = this.Je.slice(0, this.qe = t);
+      this.ze = e.slice(0);
+    }
+  });
+  return this.Je;
+}
+function compare(e, t, n) {
+  return e ? e(t) === e(n) : true;
+}
 var ON_INIT = Symbol();
 var RevealControllerContext = createContext(null);
 var _revealUsed = false;
@@ -2557,6 +2682,15 @@ var createMemo2 = (...args) => (_createMemo || createMemo)(...args);
 var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffect)(...args);
 function createComponent(Comp, props) {
   return untrack(() => Comp(props || {}));
+}
+function For(props) {
+  const options = "fallback" in props ? {
+    keyed: props.keyed,
+    fallback: () => props.fallback
+  } : {
+    keyed: props.keyed
+  };
+  return mapArray(() => props.each, props.children, options);
 }
 
 // node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
@@ -3908,6 +4042,7 @@ function App() {
     scanQr: false
   };
   let isAndroid = dev?.platform === "android";
+  let recents = createSignal(dev?.recents ?? []);
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
   if (dev) {
@@ -3971,6 +4106,29 @@ function App() {
       color: "#555",
       onTap: () => dev.stop()
     });
+  })(), null);
+  insert(_el$7, (() => {
+    var _c$5 = memo2(() => !!(idle() && recents.length > 0));
+    return () => _c$5() && (() => {
+      var _el$0 = createElement("view"), _el$1 = createElement("text");
+      insertNode(_el$0, _el$1);
+      setProp(_el$0, "flexDirection", "column");
+      setProp(_el$0, "alignItems", "center");
+      setProp(_el$0, "gap", 8);
+      insertNode(_el$1, createTextNode(`recent`));
+      setProp(_el$1, "color", "grey");
+      insert(_el$0, createComponent2(For, {
+        each: recents,
+        children: (addr) => createComponent2(Button, {
+          get label() {
+            return addr();
+          },
+          color: "#333",
+          onTap: () => dev.connect(addr())
+        })
+      }), null);
+      return _el$0;
+    })();
   })(), null);
   insert(_el$6, createComponent2(Logo, {}), null);
   return _el$4;

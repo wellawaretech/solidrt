@@ -294,6 +294,16 @@ async fn try_serve(
     if let Some(text) = msg.as_text() {
       if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
         match json.get("type").and_then(|t| t.as_str()) {
+          Some("welcome") => {
+            // The server's self-reported LAN address. Report it as the connected
+            // address (for display/recents) even though the socket may be the adb
+            // loopback tunnel; the dev_server proxy base stays on the dialed addr.
+            if let Some(server_addr) = json.get("address").and_then(|a| a.as_str()) {
+              if !server_addr.is_empty() && server_addr != addr {
+                let _ = state_tx.send(ConnState::Connected(server_addr.to_string()));
+              }
+            }
+          }
           Some("reload") => {
             let proxy_files = json.get("proxyFiles").and_then(|p| p.as_bool()).unwrap_or(false);
             let proxy_http = json.get("proxyHttp").and_then(|p| p.as_bool()).unwrap_or(false);

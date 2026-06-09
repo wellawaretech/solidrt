@@ -39,6 +39,7 @@ function App() {
   let dev = typeof srt !== "undefined" ? srt.devServer : undefined
   let caps = dev?.capabilities ?? { connect: false, discover: false, scanQr: false }
   let isAndroid = dev?.platform === "android"
+  let recents: string[] = dev?.recents ?? []
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
@@ -73,6 +74,14 @@ function App() {
             {busy() && <Button label="Cancel" color="#555" onTap={() => dev.stop()} />}
             {connected() && <Button label="Disconnect" color="#555" onTap={() => dev.stop()} />}
           </view>
+          {idle() && recents.length > 0 && (
+            <view flexDirection="column" alignItems="center" gap={8}>
+              <text color="grey">recent</text>
+              {recents.map((addr) => (
+                <Button label={addr} color="#333" onTap={() => dev.connect(addr)} />
+              ))}
+            </view>
+          )}
         </view>
         <Logo />
       </view>

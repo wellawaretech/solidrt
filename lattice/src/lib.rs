@@ -75,6 +75,20 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
   });
 }
 
+// Record a successfully connected address as the most-recent entry. Loopback /
+// tunnel addresses are skipped since they aren't reconnectable on their own.
+// In-memory only for now (lost on process exit); disk persistence is TODO.
+#[cfg(feature = "go")]
+fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) {
+  if addr.starts_with("127.") || addr.starts_with("localhost") || addr.starts_with("[::1]") {
+    return;
+  }
+  let mut r = recents.borrow_mut();
+  r.retain(|a| a != addr);
+  r.insert(0, addr.to_string());
+  r.truncate(8);
+}
+
 // Emit the dev-server connection state to JS as the sticky `devServer` event.
 // Sticky so it replays to the default app's subscriber on each engine rebuild,
 // which keeps the "connected" indicator across a server stop (the stop reloads
@@ -334,6 +348,10 @@ fn ui_thread(
     // newly built engine (the sticky cache itself is per-engine).
     #[cfg(feature = "go")]
     let dev_state: Rc<RefCell<go::ConnState>> = Rc::new(RefCell::new(go::ConnState::Idle));
+    // Recently connected dev-server addresses, most-recent-first. Held natively
+    // so they survive engine rebuilds within a run; snapshotted into each engine.
+    #[cfg(feature = "go")]
+    let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     // Control channel into the dev-server connection supervisor, exposed to JS
     // via the srt.devServer plugin. None in record mode (no dev connection).
     #[cfg(feature = "go")]
@@ -352,8 +370,12 @@ fn ui_thread(
       // sync so a later engine rebuild can replay it.
       let current_exec_dev = current_exec.clone();
       let dev_state_task = dev_state.clone();
+      let dev_recents_task = dev_recents.clone();
       local.spawn_local(async move {
         while let Some(st) = state_rx.recv().await {
+          if let go::ConnState::Connected(addr) = &st {
+            add_recent(&dev_recents_task, addr);
+          }
           *dev_state_task.borrow_mut() = st.clone();
           if let Some(eh) = current_exec_dev.borrow().as_ref() {
             emit_dev_state(eh, st);
@@ -426,7 +448,8 @@ fn ui_thread(
       #[cfg(feature = "go")]
       if let Some(ref dev_cmd_tx) = dev_cmd_tx {
         let dev_cmd_tx = dev_cmd_tx.clone();
-        builder = builder.plugin(move |ctx| go::install_devserver_control(ctx, dev_cmd_tx));
+        let recents = dev_recents.borrow().clone();
+        builder = builder.plugin(move |ctx| go::install_devserver_control(ctx, dev_cmd_tx, recents));
       }
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());

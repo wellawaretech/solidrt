@@ -2,15 +2,16 @@
 // connection supervisor's command channel. The actual connect/discover logic
 // lives in connection.rs.
 
-use flux::rquickjs::{function::MutFn, Ctx, Function, Object};
+use flux::rquickjs::{function::MutFn, Array, Ctx, Function, Object};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::connection::DevCmd;
 
 /// Install `srt.devServer` with connect/discover/stop methods plus capability
-/// and platform hints. Augments the existing `srt` global (created by the
+/// and platform hints. `recents` is a snapshot of recently connected addresses
+/// (most-recent-first). Augments the existing `srt` global (created by the
 /// events plugin), so this must run after `plugins::events::init`.
-pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>) {
+pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, recents: Vec<String>) {
   let srt: Object = ctx.globals().get("srt").expect("srt global must exist before devServer control");
   let dev = Object::new(ctx.clone()).expect("create devServer object");
 
@@ -43,6 +44,12 @@ pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>) 
   caps.set("scanQr", false).expect("set cap.scanQr");
   dev.set("capabilities", caps).expect("set devServer.capabilities");
   dev.set("platform", std::env::consts::OS).expect("set devServer.platform");
+
+  let recents_arr = Array::new(ctx.clone()).expect("create recents array");
+  for (i, addr) in recents.into_iter().enumerate() {
+    recents_arr.set(i, addr).expect("set recent");
+  }
+  dev.set("recents", recents_arr).expect("set devServer.recents");
 
   srt.set("devServer", dev).expect("set srt.devServer");
 }
