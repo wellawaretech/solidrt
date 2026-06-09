@@ -25,7 +25,11 @@ concurrency:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-24.04
+    # Build on the oldest supported runner so the binary's glibc baseline stays
+    # low enough to run on older distros. ubuntu-22.04 ships glibc 2.35 (Ubuntu
+    # 22.04+, Debian 12+). Building on a newer image (e.g. 24.04 = 2.39) raises
+    # the baseline and breaks on older targets.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
