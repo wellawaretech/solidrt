@@ -3,6 +3,7 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Interface as ReadlineInterface } from "node:readline"
 import type { Server as BunServer } from "bun"
+import type { Bonjour } from "bonjour-service"
 
 export let state = {
   clients: new Map<any, { platform: string; version: string }>(),
@@ -13,6 +14,7 @@ export let state = {
   server: null as BunServer<undefined> | null,
   serverUrl: null as string | null,
   rl: null as ReadlineInterface | null,
+  bonjour: null as Bonjour | null,
 }
 
 // Build target per binary, for the "not found" hint. Run from the repo root.
@@ -82,5 +84,6 @@ export function printErr(...args: any[]) {
 export function shutdown() {
   if (state.child) state.child.kill()
   if (state.server) state.server.stop()
+  if (state.bonjour) state.bonjour.destroy()
   process.exit(0)
 }

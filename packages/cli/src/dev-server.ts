@@ -1,7 +1,7 @@
 import { resolve } from "path"
 import { stat as fsStat, readdir } from "node:fs/promises"
 import { networkInterfaces } from "node:os"
-import { createSocket } from "node:dgram"
+import { Bonjour } from "bonjour-service"
 import qrcode from "qrcode-generator"
 import { state, print } from "./util"
 import { values } from "./args"
@@ -212,18 +212,12 @@ export function startServer() {
   console.log("")
   console.log(`[cli] WebSocket server on ws://${serverUrl}`)
 
-  // UDP discovery
-  let udp = createSocket("udp4")
-  udp.on("message", (msg, rinfo) => {
-    if (msg.toString() === "SRT_DISCOVER") {
-      print(`[cli] Discovery request from ${rinfo.address}:${rinfo.port}`)
-      udp.send("SRT_SERVER", rinfo.port, rinfo.address)
-    }
-  })
-  udp.bind(DEV_PORT, () => {
-    udp.setBroadcast(true)
-    print("[cli] UDP discovery listener on port " + DEV_PORT)
-  })
+  // LAN discovery: advertise the dev server as a DNS-SD service so go clients on
+  // the same network can find it (see lattice/src/go/connection.rs). Stored on
+  // state so shutdown() can send the mDNS goodbye.
+  state.bonjour = new Bonjour()
+  state.bonjour.publish({ name: "SolidRT Dev Server", type: "solidrt", protocol: "tcp", port: DEV_PORT })
+  print(`[cli] Advertising _solidrt._tcp on port ${DEV_PORT} via mDNS`)
 
   // Keepalive
   setInterval(() => {

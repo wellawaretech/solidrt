@@ -7,6 +7,9 @@ pub type DevServerCell = Arc<OnceCell<String>>;
 
 const DEV_SERVER_PORT: u16 = 15194;
 
+#[cfg(not(target_os = "android"))]
+const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
+
 pub fn start(
   handle: &tokio::runtime::Handle,
   tx: UnboundedSender<crate::EngineCmd>,
@@ -15,33 +18,129 @@ pub fn start(
   proxy_http_enabled: Arc<AtomicBool>,
 ) {
   handle.spawn(async move {
-    loop {
-      let mut connected = false;
+    // Android reaches the host dev server through the adb-reverse loopback that
+    // `srt run` / dev-android sets up (`adb reverse tcp:DEV_PORT`). This covers
+    // the emulator (behind NAT) and USB-tethered devices.
+    #[cfg(target_os = "android")]
+    loopback_loop(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await;
 
-      // Android prefers the adb-reverse loopback: `srt run` / dev-android sets up
-      // `adb reverse tcp:DEV_PORT` so the device reaches the host dev server at
-      // 127.0.0.1. This covers the emulator (behind NAT) and USB-tethered devices.
-      #[cfg(target_os = "android")]
-      {
-        let addr = format!("127.0.0.1:{DEV_SERVER_PORT}");
-        connected = try_serve(&addr, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await;
+    // Other platforms discover the dev server on the LAN via mDNS / DNS-SD.
+    #[cfg(not(target_os = "android"))]
+    discovery_loop(tx, dev_server, proxy_files_enabled, proxy_http_enabled).await;
+  });
+}
+
+#[cfg(target_os = "android")]
+async fn loopback_loop(
+  tx: UnboundedSender<crate::EngineCmd>,
+  dev_server: DevServerCell,
+  proxy_files_enabled: Arc<AtomicBool>,
+  proxy_http_enabled: Arc<AtomicBool>,
+) {
+  let addr = format!("127.0.0.1:{DEV_SERVER_PORT}");
+  loop {
+    try_serve(&addr, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+  }
+}
+
+/// Browse for the dev server via mDNS, then connect and serve. Once a server is
+/// resolved we keep reconnecting to that address (so dev-server restarts on the
+/// same host reconnect without waiting for a fresh announcement); only after
+/// repeated connect failures do we go back to browsing, in case it moved.
+#[cfg(not(target_os = "android"))]
+async fn discovery_loop(
+  tx: UnboundedSender<crate::EngineCmd>,
+  dev_server: DevServerCell,
+  proxy_files_enabled: Arc<AtomicBool>,
+  proxy_http_enabled: Arc<AtomicBool>,
+) {
+  use mdns_sd::ServiceDaemon;
+
+  let mdns = match ServiceDaemon::new() {
+    Ok(d) => d,
+    Err(e) => {
+      log::error!("[sgo] mDNS init failed: {e}");
+      return;
+    }
+  };
+  let receiver = match mdns.browse(SERVICE_TYPE) {
+    Ok(r) => r,
+    Err(e) => {
+      log::error!("[sgo] mDNS browse failed: {e}");
+      return;
+    }
+  };
+  log::info!("[sgo] Browsing for {SERVICE_TYPE} via mDNS...");
+
+  const MAX_FAILURES: u32 = 5;
+  let mut addr: Option<String> = None;
+  let mut failures = 0u32;
+
+  loop {
+    // Block for the next resolved service whenever we have no address to try.
+    if addr.is_none() {
+      addr = recv_resolved(&receiver).await;
+      failures = 0;
+      if addr.is_none() {
+        // Receiver closed; nothing more will arrive.
+        return;
       }
+    }
 
-      // Standard flow: when no loopback is set up (e.g. a device on the LAN), fall
-      // back to LAN discovery. This is where QR-scan and recent connections will
-      // slot in later, and where raw UDP broadcast will become mDNS.
-      if !connected {
-        if let Some(addr) = discover_udp().await {
-          connected = try_serve(&addr, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await;
+    if let Some(server) = addr.clone() {
+      if try_serve(&server, &tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled).await {
+        // Was connected, then dropped: retry the same address.
+        failures = 0;
+      } else {
+        failures += 1;
+        if failures >= MAX_FAILURES {
+          log::info!("[sgo] {server} unreachable; re-discovering");
+          addr = None;
         }
       }
-
-      let _ = connected;
-      // Back off before the next attempt, whether the connection dropped or
-      // nothing was found, to avoid hammering.
       tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
-  });
+  }
+}
+
+/// Wait for the next resolved service and return its `host:port`. Returns None
+/// only when the mDNS receiver is closed.
+#[cfg(not(target_os = "android"))]
+async fn recv_resolved(receiver: &mdns_sd::Receiver<mdns_sd::ServiceEvent>) -> Option<String> {
+  use mdns_sd::ServiceEvent;
+
+  loop {
+    match receiver.recv_async().await {
+      Ok(ServiceEvent::ServiceResolved(info)) => {
+        if let Some(addr) = service_addr(&info) {
+          log::info!("[sgo] Discovered dev server at {addr}");
+          return Some(addr);
+        }
+      }
+      Ok(_) => {}
+      Err(e) => {
+        log::warn!("[sgo] mDNS receiver closed: {e}");
+        return None;
+      }
+    }
+  }
+}
+
+/// Pick a connectable `host:port` from a resolved service, preferring IPv4.
+#[cfg(not(target_os = "android"))]
+fn service_addr(info: &mdns_sd::ResolvedService) -> Option<String> {
+  let port = info.get_port();
+  // Prefer a routable IPv4 address.
+  if let Some(v4) = info.get_addresses_v4().into_iter().find(|a| !a.is_loopback()) {
+    return Some(format!("{v4}:{port}"));
+  }
+  // Otherwise take the first non-loopback address (bracket IPv6 for the URI).
+  let ip = info.get_addresses().iter().find(|a| !a.is_loopback())?.to_ip_addr();
+  match ip {
+    std::net::IpAddr::V4(v4) => Some(format!("{v4}:{port}")),
+    std::net::IpAddr::V6(v6) => Some(format!("[{v6}]:{port}")),
+  }
 }
 
 /// Connect to a dev server at `addr` and serve until the connection drops.
@@ -105,49 +204,4 @@ async fn try_serve(
 
   log::warn!("[sgo] Connection to ws://{addr} lost");
   true
-}
-
-/// One round of LAN discovery: broadcast a probe and wait briefly for a dev
-/// server to answer. Returns its address, or None if none replied in time.
-async fn discover_udp() -> Option<String> {
-  use tokio::net::UdpSocket;
-
-  let sock = match UdpSocket::bind("0.0.0.0:0").await {
-    Ok(s) => s,
-    Err(e) => {
-      log::error!("[sgo] UDP bind failed: {e}");
-      return None;
-    }
-  };
-  if let Err(e) = sock.set_broadcast(true) {
-    log::error!("[sgo] UDP set_broadcast failed: {e}");
-    return None;
-  }
-
-  let dest = format!("255.255.255.255:{DEV_SERVER_PORT}");
-  if let Err(e) = sock.send_to(b"SRT_DISCOVER", &dest).await {
-    log::warn!("[sgo] UDP send failed: {e}");
-    return None;
-  }
-
-  let mut buf = [0u8; 64];
-  match tokio::time::timeout(std::time::Duration::from_secs(2), sock.recv_from(&mut buf)).await {
-    Ok(Ok((len, addr))) => {
-      let msg = std::str::from_utf8(&buf[..len]).unwrap_or("");
-      if msg == "SRT_SERVER" {
-        let server_addr = format!("{}:{DEV_SERVER_PORT}", addr.ip());
-        log::info!("[sgo] Discovered dev server at {server_addr}");
-        return Some(server_addr);
-      }
-      None
-    }
-    Ok(Err(e)) => {
-      log::warn!("[sgo] UDP recv error: {e}");
-      None
-    }
-    Err(_) => {
-      log::debug!("[sgo] No dev server found");
-      None
-    }
-  }
 }

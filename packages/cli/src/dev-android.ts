@@ -9,9 +9,9 @@ let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
 // Forward the device's loopback DEV_PORT to the host dev server, so the client
 // reaches it at 127.0.0.1:DEV_PORT (see lattice/src/go/connection.rs). This is
 // the adb-reverse path: it works for the emulator (behind NAT, cannot reach the
-// host via LAN UDP discovery) and for USB-tethered devices alike, and is
-// harmless on any adb connection. Devices not launched via adb fall back to the
-// client's standard discovery flow.
+// host via LAN mDNS discovery) and for USB-tethered devices alike, and is
+// harmless on any adb connection. (Android only uses this path; the client's
+// mDNS discovery is desktop-only -- see lattice/src/go/connection.rs.)
 function setupAdbReverse(adb: string, target: string) {
   print(`[cli] Forwarding 127.0.0.1:${DEV_PORT} on ${target} to host dev server`)
   let res = Bun.spawnSync([adb, "-s", target, "reverse", `tcp:${DEV_PORT}`, `tcp:${DEV_PORT}`], {

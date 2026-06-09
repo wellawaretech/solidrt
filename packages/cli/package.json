@@ -16,6 +16,7 @@
     "@babel/core": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
     "babel-preset-solid": "2.0.0-beta.14",
+    "bonjour-service": "^1.4.0",
     "qrcode-generator": "^2.0.4"
   },
   "optionalDependencies": {
