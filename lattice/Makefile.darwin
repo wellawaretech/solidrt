@@ -13,7 +13,7 @@ ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
 
 PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
 
-.PHONY: solidrt-go runtime dist-darwin angle-darwin
+.PHONY: client runtime dist-darwin angle-darwin
 
 angle-darwin:
 	@mkdir -p $(DARWIN_DIST)
@@ -50,7 +50,7 @@ define stage-darwin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-solidrt-go: $(DEFAULT_APP_JS) angle-darwin
+client: $(DEFAULT_APP_JS) angle-darwin
 	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(VERSION)"
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,$(PROFILE),solidrt-go)
@@ -61,7 +61,7 @@ runtime: angle-darwin
 	$(call stage-darwin,runtime,$(PROFILE),solidrt)
 
 dist-darwin:
-	$(MAKE) solidrt-go
+	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
 	cp $(HOST_DIST)/libimpeller.dylib $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc

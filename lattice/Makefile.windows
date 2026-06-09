@@ -10,7 +10,7 @@ ANGLE_GLES    = $(HOST_DIST)/libGLESv2.dll
 
 PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
 
-.PHONY: solidrt-go runtime dist-windows angle-windows
+.PHONY: client runtime dist-windows angle-windows
 
 angle-windows:
 	@mkdir -p $(HOST_DIST)
@@ -34,7 +34,7 @@ define stage-windows
 	@echo "Staged $(3).exe into $(HOST_DIST)/"
 endef
 
-solidrt-go: $(DEFAULT_APP_JS) angle-windows
+client: $(DEFAULT_APP_JS) angle-windows
 	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
 	RUSTFLAGS="-Clink-arg=/OPT:NOREF,NOICF" \
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
@@ -47,7 +47,7 @@ runtime: angle-windows
 	$(call stage-windows,runtime,$(PROFILE),solidrt)
 
 dist-windows:
-	$(MAKE) solidrt-go
+	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go.exe $(PKG_WIN)/solidrt-go.exe
 	cp $(ANGLE_EGL) $(ANGLE_GLES) $(PKG_WIN)/
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc

@@ -19,7 +19,7 @@ PLATFORM_x86_64-pc-windows-msvc   = win32-x64-msvc
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
 HOST_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
 
-include Makefile.x-android
+include Makefile.android
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
 include Makefile.darwin
 else ifeq ($(findstring windows,$(HOST_TARGET)),windows)
@@ -28,12 +28,12 @@ else
 include Makefile.linux
 endif
 
-.DEFAULT_GOAL := solidrt-go
+.DEFAULT_GOAL := client
 
 .PHONY: all help default-app-bundle dist-clean clean
 
 # Build both host binaries (client + runtime).
-all: solidrt-go runtime
+all: client runtime
 
 $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 	@echo "Bundling default app (app.tsx -> app.srt.js)..."
@@ -41,15 +41,17 @@ $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
-	@echo "  solidrt-go           Build SolidRT Go (default)"
+	@echo "  client               Build the client (default)"
 	@echo "  runtime              Build production runtime"
-	@echo "  all                  Build both solidrt-go and runtime"
+	@echo "  all                  Build both client and runtime"
 	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
 	@echo ""
-	@echo "Android (ABI=$(ANDROID_ABI)):"
-	@echo "  x-solidrt-go-android   Build .so"
-	@echo "  x-run-android          Build, install, launch, tail logcat"
-	@echo "  dist-android           Build APK into packages/android-arm64-v8a/"
+	@echo "Android dev (single ABI=$(ANDROID_ABI)):"
+	@echo "  client-android       Build the client .so"
+	@echo "  run-android          Build, install, launch, tail logcat"
+	@echo ""
+	@echo "Android dist (fat: all ABIs):"
+	@echo "  dist-android         Build fat APK into packages/android-arm64-v8a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo ""

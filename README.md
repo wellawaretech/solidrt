@@ -60,8 +60,8 @@ Run from the repo root:
 
 | Command                         | Description                   |
 | ------------------------------- | ----------------------------- |
-| `make solidrt-go`               | Build the `solidrt-go` binary |
-| `make solidrt-go PROFILE=debug` | Build with debug symbols      |
+| `make client`                   | Build the `solidrt-go` binary |
+| `make client PROFILE=debug`     | Build with debug symbols      |
 
 Binaries are staged into `dist/<platform>/` after a successful build.
 

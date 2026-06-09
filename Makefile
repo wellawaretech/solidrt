@@ -1,4 +1,4 @@
-all solidrt-go runtime default-app-bundle dist-linux dist-darwin dist-windows dist-android clean dist-clean download-fonts:
+all client runtime default-app-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android clean dist-clean download-fonts:
 	$(MAKE) -C lattice $@
 
 test:
@@ -7,4 +7,4 @@ test:
 format:
 	cargo fmt --all
 
-.PHONY: all solidrt-go runtime default-app-bundle dist-linux dist-darwin dist-windows dist-android clean dist-clean download-fonts test format
+.PHONY: all client runtime default-app-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android clean dist-clean download-fonts test format

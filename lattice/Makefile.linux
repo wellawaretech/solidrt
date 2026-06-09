@@ -2,7 +2,7 @@
 
 PKG_LINUX := $(CURDIR)/../packages/linux-x64-gnu
 
-.PHONY: solidrt-go runtime dist-linux
+.PHONY: client runtime dist-linux
 
 # Stage a binary into dist/<host-platform>/.
 # $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
@@ -12,7 +12,7 @@ define stage-bin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-solidrt-go: $(DEFAULT_APP_JS)
+client: $(DEFAULT_APP_JS)
 	@echo "Building SOLIDRT-GO ($(PROFILE)) $(VERSION)"
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
 	$(call stage-bin,go,$(PROFILE),solidrt-go)
@@ -23,7 +23,7 @@ runtime:
 	$(call stage-bin,runtime,$(PROFILE),solidrt)
 
 dist-linux:
-	$(MAKE) solidrt-go
+	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_LINUX)/solidrt-go
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc
 	$(MAKE) -C $(SRT_HOME)/flux fluxrt PROFILE=release-opt

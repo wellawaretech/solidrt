@@ -3,7 +3,7 @@ import { resolveApk } from "./artifacts"
 import { values } from "./args"
 import { DEV_PORT } from "./dev-server"
 
-// Launch component of the "go" dev-client flavor (see lattice/Makefile.x-android).
+// Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
 
 // Forward the device's loopback DEV_PORT to the host dev server, so the client
