@@ -57,7 +57,7 @@ function App() {
   }
 
   let idle = () => state() === "idle"
-  let busy = () => state() === "searching" || state() === "connecting"
+  let busy = () => state() === "searching" || state() === "scanning" || state() === "connecting"
   let connected = () => state() === "connected"
 
   let status = () => (connected() ? `connected to ${address()}` : STATUS_TEXT[state()])
@@ -78,6 +78,9 @@ function App() {
           <view flexDirection="row" gap={12}>
             {idle() && caps.discover && (
               <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
+            )}
+            {idle() && caps.scanQr && (
+              <Button label="Scan QR" color="#3366b3" onTap={() => dev.scanQr()} />
             )}
             {idle() && isAndroid && (
               <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />

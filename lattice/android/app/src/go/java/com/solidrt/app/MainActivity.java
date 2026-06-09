@@ -34,40 +34,47 @@ public class MainActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         extractAssets();
         super.onCreate(savedInstanceState);
-
-        // if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-        //     Log.i(TAG, "Camera permission already granted");
-        //     startQrScanner();
-        // } else {
-        //     Log.i(TAG, "Requesting camera permission");
-        //     requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
-        // }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        // if (requestCode == CAMERA_PERMISSION_REQUEST
-        //         && grantResults.length > 0
-        //         && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-        //     startQrScanner();
-        // } else {
-        //     Log.w(TAG, "Camera permission denied");
-        // }
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                beginScan();
+            } else {
+                Log.w(TAG, "Camera permission denied");
+            }
+        }
+    }
+
+    @SuppressWarnings("unused") // Called from native code via JNI
+    public void startQrScanner() {
+        runOnUiThread(() -> {
+            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                beginScan();
+            } else {
+                Log.i(TAG, "Requesting camera permission");
+                requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
+            }
+        });
     }
 
     @SuppressWarnings("unused") // Called from native code via JNI
     public void stopQrScanner() {
         runOnUiThread(() -> {
             if (qrScanner != null) {
-                Log.i(TAG, "Stopping QR scanner (dev server found)");
+                Log.i(TAG, "Stopping QR scanner");
                 qrScanner.stop();
                 qrScanner = null;
             }
         });
     }
 
-    private void startQrScanner() {
+    // Runs on the UI thread (camera binding requires it). Idempotent so a second
+    // start request while already scanning is a no-op.
+    private void beginScan() {
+        if (qrScanner != null) return;
         qrScanner = new QrScanner(this, content -> {
             Log.i(TAG, "QR scanned: " + content);
             nativeOnQrScanned(content);

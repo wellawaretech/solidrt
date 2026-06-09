@@ -4082,13 +4082,9 @@ function App() {
     });
   }
   let idle = () => state() === "idle";
-  let busy = () => state() === "searching" || state() === "connecting";
+  let busy = () => state() === "searching" || state() === "scanning" || state() === "connecting";
   let connected = () => state() === "connected";
   let status = () => connected() ? `connected to ${address()}` : STATUS_TEXT[state()];
-  let showRecents = createMemo(() => {
-    let i2 = state();
-    return recents().length > 0 && i2 === "idle";
-  });
   var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
   insertNode(_el$4, _el$5);
   insertNode(_el$4, _el$6);
@@ -4118,24 +4114,32 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!(idle() && isAndroid));
+    var _c$2 = memo2(() => !!(idle() && caps.scanQr));
     return () => _c$2() && createComponent2(Button, {
+      label: "Scan QR",
+      color: "#3366b3",
+      onTap: () => dev.scanQr()
+    });
+  })(), null);
+  insert(_el$9, (() => {
+    var _c$3 = memo2(() => !!(idle() && isAndroid));
+    return () => _c$3() && createComponent2(Button, {
       label: "Connect (adb)",
       color: "#3366b3",
       onTap: () => dev.connect(LOOPBACK)
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$3 = memo2(() => !!busy());
-    return () => _c$3() && createComponent2(Button, {
+    var _c$4 = memo2(() => !!busy());
+    return () => _c$4() && createComponent2(Button, {
       label: "Cancel",
       color: "#555",
       onTap: () => dev.stop()
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$4 = memo2(() => !!connected());
-    return () => _c$4() && createComponent2(Button, {
+    var _c$5 = memo2(() => !!connected());
+    return () => _c$5() && createComponent2(Button, {
       label: "Disconnect",
       color: "#555",
       onTap: () => dev.stop()
