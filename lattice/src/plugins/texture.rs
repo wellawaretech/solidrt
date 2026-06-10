@@ -1,4 +1,9 @@
-use flux::rquickjs::{Ctx, Function, Object, TypedArray};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use flux::rquickjs::function::Opt;
+use flux::rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 
 use crate::AlloyContext;
 
@@ -39,10 +44,62 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   )
   .expect("create createTexture");
 
+  // Mutable textures pin their JS pixel buffer (a GC anchor per texture id) so
+  // uploadTexture can re-read it in place instead of marshaling bytes per call.
+  let pinned: Rc<RefCell<HashMap<u64, Persistent<Value<'static>>>>> = Rc::new(RefCell::new(HashMap::new()));
+
+  let mutable_atx = atx.clone();
+  let pinned_create = pinned.clone();
+  let create_mutable_texture = Function::new(
+    ctx.clone(),
+    move |data: TypedArray<'_, u8>, width: u32, height: u32| -> flux::rquickjs::Result<u64> {
+      // Derive the Ctx from the array itself: closure parameters get independent
+      // elided lifetimes, but Persistent::save needs ctx and value unified.
+      let ctx = data.as_value().ctx().clone();
+      let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
+      let frame_size = (width as usize) * (height as usize) * 4;
+      // The buffer may be larger than one frame (uploadTexture takes an offset),
+      // so only require that at least the first frame fits.
+      if raw.len < frame_size {
+        return Err(throw_str(
+          &ctx,
+          &format!("createMutableTexture: need at least {frame_size} RGBA8 bytes, got {}", raw.len),
+        ));
+      }
+      let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
+      let id = mutable_atx.create_texture_from_pixels(width, height, pixels);
+      pinned_create.borrow_mut().insert(id, Persistent::save(&ctx, data.into_value()));
+      Ok(id)
+    },
+  )
+  .expect("create createMutableTexture");
+
+  let upload_atx = atx.clone();
+  let upload_texture = Function::new(
+    ctx.clone(),
+    move |ctx: Ctx<'_>, id: u64, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
+      let anchor = pinned
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| throw_str(&ctx, &format!("uploadTexture: texture {id} is not a mutable texture")))?;
+      let value = anchor.restore(&ctx)?;
+      let data = TypedArray::<u8>::from_value(value).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+      let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "uploadTexture: detached buffer"))?;
+      let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+      upload_atx
+        .update_texture(id, pixels, offset.0.unwrap_or(0))
+        .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))
+    },
+  )
+  .expect("create uploadTexture");
+
   let decode_image = Function::new(ctx.clone(), decode_image_impl).expect("create decodeImage");
 
   let gpu = Object::new(ctx.clone()).expect("create gpu object");
   gpu.set("createTexture", create_texture).expect("set gpu.createTexture");
+  gpu.set("createMutableTexture", create_mutable_texture).expect("set gpu.createMutableTexture");
+  gpu.set("uploadTexture", upload_texture).expect("set gpu.uploadTexture");
   gpu.set("decodeImage", decode_image).expect("set gpu.decodeImage");
   ctx.globals().set("gpu", gpu).expect("set gpu global");
 }

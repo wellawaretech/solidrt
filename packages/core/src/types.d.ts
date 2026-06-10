@@ -25,6 +25,8 @@ declare global {
 
   let gpu: {
     createTexture(data: Uint8Array, width: number, height: number): number
+    createMutableTexture(data: Uint8Array, width: number, height: number): number
+    uploadTexture(textureId: number, offset?: number): void
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }
 }

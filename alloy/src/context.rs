@@ -75,6 +75,25 @@ impl Context {
     id
   }
 
+  /// Re-upload RGBA8 pixels into an existing texture. `pixels` may be a larger
+  /// buffer holding multiple frames; `offset` selects the frame start. The
+  /// frame must match the texture's dimensions exactly.
+  pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
+    let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
+    let (width, height) = (entry.width(), entry.height());
+    let frame_size = (width as usize) * (height as usize) * 4;
+    let end = offset.checked_add(frame_size).ok_or_else(|| "offset overflow".to_string())?;
+    if end > pixels.len() {
+      return Err(format!(
+        "need {frame_size} bytes at offset {offset} for {width}x{height}, buffer has {}",
+        pixels.len()
+      ));
+    }
+    let size = ISize::new(width as i64, height as i64);
+    entry.gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels[offset..end], size);
+    Ok(())
+  }
+
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
     match gpu_texture.backend {
       Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, size),
