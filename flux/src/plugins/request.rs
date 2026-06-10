@@ -1,7 +1,9 @@
+use hyper::upgrade::OnUpgrade;
 use rquickjs::class::Trace;
 use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -10,6 +12,7 @@ use crate::plugins::body::{
   collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream, JsBytes, JsonValue,
   MessageBody,
 };
+use crate::plugins::flux::websocket::ServeUpgrade;
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
 type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<T>>>>>;
@@ -28,6 +31,10 @@ pub struct Request<'js> {
   pub(crate) headers: Class<'js, Headers>,
   // Matched path parameters, populated by the router (empty object otherwise).
   pub(crate) params: Object<'js>,
+  /// WebSocket upgrade capability, set only on requests built by the flux:http
+  /// server (None for JS-constructed Requests). Consumed by `server.upgrade(req)`.
+  #[qjs(skip_trace)]
+  pub(crate) upgrade: RefCell<Option<ServeUpgrade>>,
 }
 
 impl<'js> Trace<'js> for Request<'js> {
@@ -54,7 +61,7 @@ impl<'js> Request<'js> {
     let headers_val = init.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok());
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
     let params = Object::new(ctx.clone())?;
-    Ok(Request { body: MessageBody::buffered(body_bytes), method, url, headers, params })
+    Ok(Request { body: MessageBody::buffered(body_bytes), method, url, headers, params, upgrade: RefCell::new(None) })
   }
 
   #[qjs(get)]
@@ -123,13 +130,24 @@ pub(crate) fn request_from_parts<'js>(
   body: ByteStream,
   headers: Vec<(String, String)>,
   params: Vec<(String, String)>,
+  upgrade: Option<OnUpgrade>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
   let params_obj = Object::new(ctx.clone())?;
   for (k, v) in params {
     params_obj.set(k, v)?;
   }
-  Class::instance(ctx.clone(), Request { body: MessageBody::incoming(body), method, url, headers, params: params_obj })
+  Class::instance(
+    ctx.clone(),
+    Request {
+      body: MessageBody::incoming(body),
+      method,
+      url,
+      headers,
+      params: params_obj,
+      upgrade: RefCell::new(upgrade.map(ServeUpgrade::Ready)),
+    },
+  )
 }
 
 pub(crate) fn init_request(ctx: &Ctx<'_>) {

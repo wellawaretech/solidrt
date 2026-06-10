@@ -577,3 +577,135 @@ fn serve_iterates_request_body_stream() {
   let lines = serve_and_capture(&code);
   assert_eq!(lines, vec!["resp got:incremental upload".to_string()]);
 }
+
+/// Minimal raw WebSocket client for driving the server's websocket path without
+/// pulling a client crate into the dev-dependencies. Frames are small (< 126
+/// bytes) so only the short length form is implemented.
+mod ws_client {
+  use std::io::{Read, Write};
+  use std::net::TcpStream;
+  use std::time::Duration;
+
+  pub fn connect(port: u16) -> TcpStream {
+    // The engine thread binds the listener; retry until it is up.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+      match TcpStream::connect(("127.0.0.1", port)) {
+        Ok(s) => {
+          s.set_read_timeout(Some(Duration::from_secs(5))).expect("set read timeout");
+          return s;
+        }
+        Err(e) if std::time::Instant::now() < deadline => {
+          let _ = e;
+          std::thread::sleep(Duration::from_millis(20));
+        }
+        Err(e) => panic!("connect to server: {e}"),
+      }
+    }
+  }
+
+  pub fn handshake(s: &mut TcpStream, port: u16) {
+    let req = format!(
+      "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+       Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).expect("write handshake");
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+      s.read_exact(&mut byte).expect("read handshake response");
+      buf.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&buf);
+    assert!(head.starts_with("HTTP/1.1 101"), "expected 101, got: {head}");
+  }
+
+  /// Send one masked frame (client frames must be masked).
+  pub fn send(s: &mut TcpStream, opcode: u8, payload: &[u8]) {
+    assert!(payload.len() < 126, "test frames use the short length form");
+    let mask = [0x12u8, 0x34, 0x56, 0x78];
+    let mut frame = vec![0x80 | opcode, 0x80 | payload.len() as u8];
+    frame.extend_from_slice(&mask);
+    frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    s.write_all(&frame).expect("write frame");
+  }
+
+  /// Read one (unmasked) server frame, returning (opcode, payload).
+  pub fn read(s: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut head = [0u8; 2];
+    s.read_exact(&mut head).expect("read frame header");
+    let len = (head[1] & 0x7F) as usize;
+    assert!(len < 126, "test frames use the short length form");
+    let mut payload = vec![0u8; len];
+    s.read_exact(&mut payload).expect("read frame payload");
+    (head[0] & 0x0F, payload)
+  }
+}
+
+#[test]
+fn serve_websocket_echo_and_close() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        let server = serve({{
+            port: {port},
+            fetch(req, server) {{
+                if (server.upgrade(req)) return;
+                return "not a websocket";
+            }},
+            websocket: {{
+                open(ws) {{
+                    console.log("open", ws.readyState);
+                    ws.send("welcome");
+                }},
+                message(ws, m) {{
+                    if (m === "bye") {{ ws.close(4001, "done"); return; }}
+                    if (typeof m === "string") ws.send("echo:" + m);
+                    else ws.send(m);
+                }},
+                close(ws, code, reason) {{
+                    console.log("close", code, reason, ws.readyState);
+                    server.stop();
+                }},
+            }},
+        }});
+        "#,
+  );
+
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let (done_tx, done_rx) = std::sync::mpsc::channel();
+  std::thread::spawn(move || {
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+    rt.block_on(engine.eval_source(&code));
+    let _ = done_tx.send(());
+  });
+
+  let mut s = ws_client::connect(port);
+  ws_client::handshake(&mut s, port);
+
+  assert_eq!(ws_client::read(&mut s), (0x1, b"welcome".to_vec()));
+
+  ws_client::send(&mut s, 0x1, b"hello");
+  assert_eq!(ws_client::read(&mut s), (0x1, b"echo:hello".to_vec()));
+
+  ws_client::send(&mut s, 0x2, &[1, 2, 3, 250]);
+  assert_eq!(ws_client::read(&mut s), (0x2, vec![1, 2, 3, 250]));
+
+  ws_client::send(&mut s, 0x1, b"bye");
+  let (opcode, payload) = ws_client::read(&mut s);
+  assert_eq!(opcode, 0x8, "expected a close frame");
+  assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 4001);
+  assert_eq!(&payload[2..], b"done");
+  // Echo the close so the server sees a clean shutdown, then stop().
+  ws_client::send(&mut s, 0x8, &payload);
+
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+
+  let cap = sink.captured();
+  let lines: Vec<String> =
+    cap.lines_at(flux::LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(String::from).collect();
+  assert_eq!(lines, vec!["open 1".to_string(), "close 4001 done 3".to_string()]);
+}

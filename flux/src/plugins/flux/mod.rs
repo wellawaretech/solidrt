@@ -7,3 +7,4 @@ pub mod path;
 pub mod process;
 pub mod serve;
 pub mod sqlite;
+pub mod websocket;

@@ -39,6 +39,7 @@ futures-core = "0.3"
 percent-encoding = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 path-clean = "1"
+fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
