@@ -34,6 +34,7 @@ GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 define ndk-build
 	@echo "Building ANDROID $(1) $(VERSION)"
 	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
+	  CMAKE_TOOLCHAIN_FILE_$(subst -,_,$(ANDROID_TARGET))=$(NDK_HOME)/build/cmake/android.toolchain.cmake \
 	  $(2) \
 	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
 endef
