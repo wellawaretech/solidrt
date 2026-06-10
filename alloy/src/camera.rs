@@ -1,9 +1,10 @@
 //! Camera capture via the SDL camera subsystem.
 //!
-//! A session opens an SDL camera requesting RGBA32 frames and exposes them
-//! through a registry texture (see `Context::pump_cameras`), so a camera view
-//! is just a texture draw for whatever sits on top. Opening triggers the OS
-//! permission prompt; sessions start `Pending` and become `Ready` (texture
+//! A session opens an SDL camera at an uncompressed native format near the
+//! requested size (frames are converted to RGBA32 in the pump) and exposes
+//! them through a registry texture (see `Context::pump_cameras`), so a camera
+//! view is just a texture draw for whatever sits on top. Opening triggers the
+//! OS permission prompt; sessions start `Pending` and become `Ready` (texture
 //! created at the delivered format) or `Denied`. The pump is driven once per
 //! frame from the UI thread; `SDL_AcquireCameraFrame` is non-blocking, so no
 //! camera thread is needed.
@@ -13,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use sdl3::sys::camera::{SDL_Camera, SDL_CameraPosition, SDL_CameraSpec};
-use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_RGBA32};
+use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_MJPG, SDL_PIXELFORMAT_RGBA32};
 
 use crate::sdl_utils;
 
@@ -50,6 +51,8 @@ struct Session {
   texture_id: u64,
   /// Upright-frame buffer (pitch repack and/or rotation output).
   scratch: Vec<u8>,
+  /// RGBA32 conversion buffer for frames delivered in a native format.
+  convert: Vec<u8>,
   /// Decode QR codes from the stream (opt-in at open).
   scan_qr: bool,
   /// Greyscale scratch for the QR decoder.
@@ -82,6 +85,24 @@ fn ensure_init() -> Result<(), String> {
   } else {
     Err(format!("camera subsystem init failed: {}", sdl_utils::sdl_error()))
   }
+}
+
+/// The uncompressed native spec closest to the requested size (ties broken by
+/// framerate closest to 30), or None when the camera only offers compressed
+/// formats (e.g. MJPG-only at every size).
+fn native_spec(id: u32, width: u32, height: u32) -> Option<SDL_CameraSpec> {
+  let target = (width as i64) * (height as i64);
+  sdl_utils::camera_supported_formats(id)
+    .into_iter()
+    .filter(|s| s.format != SDL_PIXELFORMAT_MJPG)
+    .min_by_key(|s| {
+      let area = (s.width as i64) * (s.height as i64);
+      let fps_milli = match s.framerate_denominator {
+        0 => 0,
+        d => 1000 * (s.framerate_numerator as i64) / (d as i64),
+      };
+      ((area - target).abs(), (fps_milli - 30_000).abs())
+    })
 }
 
 fn facing_of(position: SDL_CameraPosition) -> CameraFacing {
@@ -128,17 +149,21 @@ impl crate::context::Context {
       }
     };
 
-    // Ask SDL for RGBA32 directly; it converts from the native format when
-    // needed, and the delivered spec is re-read on approval either way.
+    // Prefer an uncompressed native spec near the requested size; the pump
+    // converts frames to RGBA32. Asking SDL for RGBA32 lets it pick the
+    // native format itself, and that choice can land on MJPG, whose
+    // stb-based decode emits green/grey garbage for the table-less MJPEG
+    // many UVC cameras produce. Only fall back to SDL-converted RGBA32 when
+    // the camera offers nothing but compressed formats.
     let (width, height) = size.unwrap_or((640, 480));
-    let spec = SDL_CameraSpec {
+    let spec = native_spec(id, width, height).unwrap_or(SDL_CameraSpec {
       format: SDL_PIXELFORMAT_RGBA32,
       colorspace: SDL_COLORSPACE_SRGB,
       width: width as i32,
       height: height as i32,
       framerate_numerator: 30,
       framerate_denominator: 1,
-    };
+    });
     let camera = sdl_utils::camera_open(id, &spec);
     if camera.is_null() {
       return Err(format!("failed to open camera {id}: {}", sdl_utils::sdl_error()));
@@ -157,6 +182,7 @@ impl crate::context::Context {
         approved: false,
         texture_id: self.textures.allocate_id(),
         scratch: Vec::new(),
+        convert: Vec::new(),
         scan_qr,
         gray: Vec::new(),
         frames_since_scan: 0,
@@ -239,25 +265,29 @@ impl crate::context::Context {
       return;
     }
     let surface = unsafe { &*frame };
-    if surface.format != SDL_PIXELFORMAT_RGBA32 {
-      log::warn!("[camera] unexpected frame format {:#x}, expected RGBA32", surface.format.0);
-      sdl_utils::camera_release_frame(session.camera, frame);
-      return;
-    }
-
     let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
     let rotation = sdl_utils::surface_rotation_degrees(frame);
     let (width, height) = if rotation == 90 || rotation == 270 { (frame_h, frame_w) } else { (frame_w, frame_h) };
 
     let pitch = surface.pitch as usize;
     let row_bytes = (frame_w as usize) * 4;
-    let direct = rotation == 0 && pitch == row_bytes;
-    if !direct {
-      upright_into(surface, rotation, &mut session.scratch);
+    let rgba_src = surface.format == SDL_PIXELFORMAT_RGBA32;
+    if !rgba_src {
+      // Camera opened at a native format (e.g. YUY2); convert to RGBA32.
+      session.convert.resize(row_bytes * frame_h as usize, 0);
+      if !sdl_utils::surface_to_rgba(surface, &mut session.convert) {
+        log::warn!("[camera] frame conversion failed: {}", sdl_utils::sdl_error());
+        sdl_utils::camera_release_frame(session.camera, frame);
+        return;
+      }
     }
-    let pixels: &[u8] = if direct {
+    let pixels: &[u8] = if rgba_src && rotation == 0 && pitch == row_bytes {
       unsafe { std::slice::from_raw_parts(surface.pixels as *const u8, row_bytes * frame_h as usize) }
+    } else if !rgba_src && rotation == 0 {
+      &session.convert
     } else {
+      let (src, src_pitch) = if rgba_src { (surface.pixels as *const u8, pitch) } else { (session.convert.as_ptr(), row_bytes) };
+      upright_into(src, src_pitch, frame_w as usize, frame_h as usize, rotation, &mut session.scratch);
       &session.scratch
     };
 
@@ -293,12 +323,9 @@ impl crate::context::Context {
   }
 }
 
-/// Copy `surface` into `dst` rotated clockwise by `rotation` degrees, tightly
-/// packed RGBA8 (also flattens any pitch padding).
-fn upright_into(surface: &sdl3::sys::surface::SDL_Surface, rotation: u32, dst: &mut Vec<u8>) {
-  let (w, h) = (surface.w as usize, surface.h as usize);
-  let pitch = surface.pitch as usize;
-  let base = surface.pixels as *const u8;
+/// Copy a `pitch`-strided RGBA8 image into `dst` rotated clockwise by
+/// `rotation` degrees, tightly packed (also flattens any pitch padding).
+fn upright_into(base: *const u8, pitch: usize, w: usize, h: usize, rotation: u32, dst: &mut Vec<u8>) {
   dst.resize(w * h * 4, 0);
   for r in 0..h {
     let row = unsafe { std::slice::from_raw_parts(base.add(r * pitch), w * 4) };

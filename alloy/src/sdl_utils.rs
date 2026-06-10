@@ -61,11 +61,12 @@ pub fn mod_state() -> sdl3::keyboard::Mod {
 use sdl3::sys::camera::{
   SDL_AcquireCameraFrame, SDL_Camera, SDL_CameraID, SDL_CameraPermissionState, SDL_CameraPosition, SDL_CameraSpec,
   SDL_CloseCamera, SDL_GetCameraFormat, SDL_GetCameraName, SDL_GetCameraPermissionState, SDL_GetCameraPosition,
-  SDL_GetCameras, SDL_OpenCamera, SDL_ReleaseCameraFrame,
+  SDL_GetCameraSupportedFormats, SDL_GetCameras, SDL_OpenCamera, SDL_ReleaseCameraFrame,
 };
 use sdl3::sys::init::{SDL_InitSubSystem, SDL_INIT_CAMERA};
+use sdl3::sys::pixels::SDL_PIXELFORMAT_RGBA32;
 use sdl3::sys::stdinc::SDL_free;
-use sdl3::sys::surface::SDL_Surface;
+use sdl3::sys::surface::{SDL_ConvertPixels, SDL_Surface};
 
 pub fn camera_subsystem_init() -> bool {
   // Force the v4l2 camera backend on desktop Linux. Device removal is broken in
@@ -108,8 +109,38 @@ pub fn camera_position(id: u32) -> SDL_CameraPosition {
   unsafe { SDL_GetCameraPosition(SDL_CameraID(id)) }
 }
 
+/// The native capture specs the camera offers (format/size/framerate combos).
+pub fn camera_supported_formats(id: u32) -> Vec<SDL_CameraSpec> {
+  let mut count: std::ffi::c_int = 0;
+  let specs = unsafe { SDL_GetCameraSupportedFormats(SDL_CameraID(id), &mut count) };
+  if specs.is_null() {
+    return Vec::new();
+  }
+  let result = (0..count as usize).map(|i| unsafe { *(*specs.add(i)) }).collect();
+  unsafe { SDL_free(specs as *mut std::ffi::c_void) };
+  result
+}
+
 pub fn camera_open(id: u32, spec: &SDL_CameraSpec) -> *mut SDL_Camera {
   unsafe { SDL_OpenCamera(SDL_CameraID(id), spec) }
+}
+
+/// Convert a frame surface into tightly packed RGBA32; `dst` must hold
+/// exactly `w * h * 4` bytes.
+pub fn surface_to_rgba(surface: &SDL_Surface, dst: &mut [u8]) -> bool {
+  debug_assert_eq!(dst.len(), (surface.w as usize) * (surface.h as usize) * 4);
+  unsafe {
+    SDL_ConvertPixels(
+      surface.w,
+      surface.h,
+      surface.format,
+      surface.pixels,
+      surface.pitch,
+      SDL_PIXELFORMAT_RGBA32,
+      dst.as_mut_ptr() as *mut std::ffi::c_void,
+      surface.w * 4,
+    )
+  }
 }
 
 pub fn camera_permission(camera: *mut SDL_Camera) -> SDL_CameraPermissionState {
