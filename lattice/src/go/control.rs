@@ -1,4 +1,4 @@
-// Thin FFI layer for the `srt.devServer` surface: marshals JS calls onto the
+// Thin FFI layer for the `srt.dev` surface: marshals JS calls onto the
 // connection supervisor's command channel. The actual connect/discover logic
 // lives in connection.rs.
 
@@ -7,51 +7,44 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::connection::DevCmd;
 
-/// Install `srt.devServer` with connect/discover/stop methods plus capability
-/// and platform hints. `recents` is a snapshot of recently connected addresses
-/// (most-recent-first). Augments the existing `srt` global (created by the
-/// events plugin), so this must run after `plugins::events::init`.
-pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, recents: Vec<String>) {
-  let srt: Object = ctx.globals().get("srt").expect("srt global must exist before devServer control");
-  let dev = Object::new(ctx.clone()).expect("create devServer object");
+/// Install `srt.dev` with connect/discover/stop methods. `recents` is a
+/// snapshot of recently connected addresses (most-recent-first). Augments the
+/// existing `srt` global (created by the events plugin), so this must run
+/// after `plugins::events::init`.
+pub fn install_dev_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, recents: Vec<String>) {
+  let srt: Object = ctx.globals().get("srt").expect("srt global must exist before dev control");
+  let dev = Object::new(ctx.clone()).expect("create dev object");
 
   let tx = cmd_tx.clone();
   let connect = Function::new(ctx.clone(), MutFn::from(move |addr: String| {
     let _ = tx.send(DevCmd::Connect(addr));
   }))
-  .expect("create devServer.connect");
+  .expect("create dev.connect");
 
   let tx = cmd_tx.clone();
   let discover = Function::new(ctx.clone(), MutFn::from(move || {
     let _ = tx.send(DevCmd::Discover);
   }))
-  .expect("create devServer.discover");
+  .expect("create dev.discover");
 
   let stop = Function::new(ctx.clone(), MutFn::from(move || {
     let _ = cmd_tx.send(DevCmd::Stop);
   }))
-  .expect("create devServer.stop");
+  .expect("create dev.stop");
 
-  dev.set("connect", connect).expect("set devServer.connect");
-  dev.set("discover", discover).expect("set devServer.discover");
-  dev.set("stop", stop).expect("set devServer.stop");
+  dev.set("connect", connect).expect("set dev.connect");
+  dev.set("discover", discover).expect("set dev.discover");
+  dev.set("stop", stop).expect("set dev.stop");
 
-  // Capability hints so the default app shows only the buttons that apply.
-  // discover is mDNS (desktop only). camera is a pure UI hint: the app scans
-  // via the camera module itself and connect()s with the decoded address;
-  // offered wherever a camera is actually available.
-  let caps = Object::new(ctx.clone()).expect("create capabilities");
-  caps.set("connect", true).expect("set cap.connect");
-  caps.set("discover", cfg!(not(target_os = "android"))).expect("set cap.discover");
-  caps.set("camera", !alloy::camera::list_cameras().is_empty()).expect("set cap.camera");
-  dev.set("capabilities", caps).expect("set devServer.capabilities");
-  dev.set("platform", std::env::consts::OS).expect("set devServer.platform");
+  // discover is mDNS (desktop only); the flag lets the default app show only
+  // the buttons that apply.
+  dev.set("canDiscover", cfg!(not(target_os = "android"))).expect("set dev.canDiscover");
 
   let recents_arr = Array::new(ctx.clone()).expect("create recents array");
   for (i, addr) in recents.into_iter().enumerate() {
     recents_arr.set(i, addr).expect("set recent");
   }
-  dev.set("recents", recents_arr).expect("set devServer.recents");
+  dev.set("recents", recents_arr).expect("set dev.recents");
 
-  srt.set("devServer", dev).expect("set srt.devServer");
+  srt.set("dev", dev).expect("set srt.dev");
 }

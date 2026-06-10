@@ -30,6 +30,29 @@ use super::events::register_listener;
 #[derive(Clone, JsLifetime, Default)]
 pub struct ProcessArgs(#[qjs(skip_trace)] pub Vec<String>);
 
+// flux:process also exposes the host OS and CPU architecture:
+//
+//   import { platform, arch } from "flux:process"
+
+/// The host OS ("darwin", "win32", "linux", "android", ...).
+pub fn platform() -> &'static str {
+  match std::env::consts::OS {
+    "macos" => "darwin",
+    "windows" => "win32",
+    other => other,
+  }
+}
+
+/// The CPU architecture ("x64", "arm64", ...).
+pub fn arch() -> &'static str {
+  match std::env::consts::ARCH {
+    "x86_64" => "x64",
+    "aarch64" => "arm64",
+    "x86" => "ia32",
+    other => other,
+  }
+}
+
 // Signals that already have an OS watcher installed for this context, so
 // repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
 // its own entry when it stops, so a later subscribe reinstalls it.
@@ -43,6 +66,8 @@ impl ModuleDef for ProcessModule {
     decl.declare("on")?;
     decl.declare("once")?;
     decl.declare("argv")?;
+    decl.declare("platform")?;
+    decl.declare("arch")?;
     Ok(())
   }
 
@@ -58,6 +83,8 @@ impl ModuleDef for ProcessModule {
       }
     }
     exports.export("argv", argv)?;
+    exports.export("platform", platform())?;
+    exports.export("arch", arch())?;
     Ok(())
   }
 }

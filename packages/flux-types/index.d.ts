@@ -8,6 +8,10 @@ declare module "flux:process" {
    * `argv[1]` onward are the user-supplied arguments.
    */
   export let argv: string[]
+  /** The host OS: "darwin", "win32", "linux", "android", ... */
+  export let platform: string
+  /** The CPU architecture: "x64", "arm64", ... */
+  export let arch: string
   /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.

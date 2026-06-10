@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::LocalSet;
 
 use super::connection::{self, ConnState, DevCmd, DevServerCell};
-use super::control::install_devserver_control;
+use super::control::install_dev_control;
 use super::proxy::{install_proxy_state, ProxyFsModule};
 
 /// Bundles the dev-server connection state held natively across engine rebuilds.
@@ -33,7 +33,7 @@ pub struct DevSession {
   // within a run and are snapshotted into each engine.
   dev_recents: Rc<RefCell<Vec<String>>>,
   // Control channel into the connection supervisor, exposed to JS via the
-  // srt.devServer plugin.
+  // srt.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
 }
 
@@ -69,7 +69,7 @@ impl DevSession {
       proxy_http_enabled.clone(),
     );
 
-    // Forward connection-state changes to JS as the sticky `devServer` event,
+    // Forward connection-state changes to JS as the sticky `dev` event,
     // targeting whichever engine is currently live, and keep the held copy in
     // sync so a later engine rebuild can replay it.
     let dev_state_task = dev_state.clone();
@@ -106,7 +106,7 @@ impl DevSession {
     }
     let dev_cmd_tx = self.dev_cmd_tx.clone();
     let recents = self.dev_recents.borrow().clone();
-    builder.plugin(move |ctx| install_devserver_control(ctx, dev_cmd_tx, recents))
+    builder.plugin(move |ctx| install_dev_control(ctx, dev_cmd_tx, recents))
   }
 
   /// Replay the latest connection state into a freshly built engine so a reload
@@ -131,14 +131,14 @@ fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) -> bool {
   true
 }
 
-// Emit the dev-server connection state to JS as the sticky `devServer` event.
+// Emit the dev-server connection state to JS as the sticky `dev` event.
 // Sticky so it replays to the default app's subscriber on each engine rebuild,
 // which keeps the "connected" indicator across a server stop (the stop reloads
 // the default app but leaves the websocket up).
 fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
   eh.exec(move |ctx| {
     let (state, addr) = st.parts();
-    let obj = rquickjs::Object::new(ctx.clone()).expect("create devServer object");
+    let obj = rquickjs::Object::new(ctx.clone()).expect("create dev event object");
     obj.set("state", state).expect("set state");
     match addr {
       Some(a) => obj.set("address", a).expect("set address"),
@@ -149,6 +149,6 @@ fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
       arr.set(i, a).expect("set recent");
     }
     obj.set("recents", arr).expect("set recents");
-    crate::plugins::events::emit_sticky(&ctx, "devServer", obj);
+    crate::plugins::events::emit_sticky(&ctx, "dev", obj);
   });
 }

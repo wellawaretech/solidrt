@@ -1,11 +1,12 @@
 import { render } from "@solidrt/core"
-import { CameraView } from "@solidrt/core/camera"
+import { CameraView, listCameras } from "@solidrt/core/camera"
 import { createSignal } from "@solidjs/signals"
 import { For, Show } from "solid-js"
+import { platform } from "flux:process"
 import { Logo } from "./logo"
 
-// The dev-server control surface installed by the runtime (srt.devServer). It
-// is absent in non-go / record builds, so everything below guards on it.
+// The dev-server control surface installed by the runtime (srt.dev). It is
+// absent in non-go / record builds, so everything below guards on it.
 declare const srt: any
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
@@ -43,9 +44,9 @@ function Button(props: { label: string; color: string; onTap: () => void }) {
 }
 
 function App() {
-  let dev = typeof srt !== "undefined" ? srt.devServer : undefined
-  let caps = dev?.capabilities ?? { connect: false, discover: false, camera: false }
-  let isAndroid = dev?.platform === "android"
+  let dev = typeof srt !== "undefined" ? srt.dev : undefined
+  let hasCamera = listCameras().length > 0
+  let isAndroid = platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
@@ -56,7 +57,7 @@ function App() {
   let [scanError, setScanError] = createSignal<string | null>(null)
 
   if (dev) {
-    srt.on("devServer", (e: { state: DevState; address: string | null; recents?: string[] }) => {
+    srt.on("dev", (e: { state: DevState; address: string | null; recents?: string[] }) => {
       setState(e.state)
       setAddress(e.address)
       if (e.recents) {
@@ -113,10 +114,10 @@ function App() {
           <text color="lightgrey">{status()}</text>
 
           <view flexDirection="row" gap={12}>
-            {idle() && !scanning() && caps.discover && (
+            {idle() && !scanning() && dev?.canDiscover && (
               <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
             )}
-            {idle() && !scanning() && caps.camera && (
+            {idle() && !scanning() && dev && hasCamera && (
               <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
             {idle() && !scanning() && isAndroid && (

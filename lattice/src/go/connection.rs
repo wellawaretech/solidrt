@@ -11,7 +11,7 @@ pub type DevServerCell = Arc<Mutex<Option<String>>>;
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
 
-/// Commands the JS `srt.devServer` surface sends into the supervisor. The
+/// Commands the JS `srt.dev` surface sends into the supervisor. The
 /// connection is opt-in: nothing happens until one of these arrives.
 pub enum DevCmd {
   /// Connect to a known `host:port` and keep retrying/reconnecting. Covers the
@@ -23,7 +23,7 @@ pub enum DevCmd {
   Stop,
 }
 
-/// Connection state reported back to JS as the sticky `devServer` event.
+/// Connection state reported back to JS as the sticky `dev` event.
 #[derive(Clone)]
 pub enum ConnState {
   Idle,
@@ -295,7 +295,7 @@ async fn try_serve(
   *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
   let info =
-    format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, std::env::consts::OS, crate::VERSION);
+    format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, flux::platform(), crate::VERSION);
   let _ = client.send(tokio_websockets::Message::text(info)).await;
 
   while let Some(Ok(msg)) = client.next().await {

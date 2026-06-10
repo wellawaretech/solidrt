@@ -311,7 +311,7 @@ fn ui_thread(
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     // The dev-server client: connection supervisor, recents, proxy state and the
-    // srt.devServer surface. None in record mode (and entirely absent without the
+    // srt.dev surface. None in record mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
     let dev_session = go::DevSession::start(&handle, cmd_tx.clone(), record_fps, &local, current_exec.clone());

@@ -3569,7 +3569,11 @@ function CameraView(props) {
   });
   return _el$;
 }
+
 // packages/core/src/camera.ts
+function listCameras() {
+  return camera.listCameras();
+}
 async function openCamera(options = {}) {
   let opened = await camera.open(options);
   return {
@@ -3580,6 +3584,9 @@ async function openCamera(options = {}) {
     close: () => camera.close(opened.handle)
   };
 }
+
+// lattice/default-app/app.tsx
+import { platform } from "flux:process";
 
 // lattice/default-app/logo.tsx
 var EXPLODE_DIST = 3;
@@ -4119,20 +4126,16 @@ function Button(props) {
   return _el$;
 }
 function App() {
-  let dev = typeof srt !== "undefined" ? srt.devServer : undefined;
-  let caps = dev?.capabilities ?? {
-    connect: false,
-    discover: false,
-    camera: false
-  };
-  let isAndroid = dev?.platform === "android";
+  let dev = typeof srt !== "undefined" ? srt.dev : undefined;
+  let hasCamera = listCameras().length > 0;
+  let isAndroid = platform === "android";
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
   let [recents, setRecents] = createSignal(dev?.recents ?? []);
   let [scanning, setScanning] = createSignal(false);
   let [scanError, setScanError] = createSignal(null);
   if (dev) {
-    srt.on("devServer", (e2) => {
+    srt.on("dev", (e2) => {
       setState(e2.state);
       setAddress(e2.address);
       if (e2.recents) {
@@ -4190,7 +4193,7 @@ function App() {
   setProp(_el$9, "flexDirection", "row");
   setProp(_el$9, "gap", 12);
   insert(_el$9, (() => {
-    var _c$ = memo2(() => !!(idle() && !scanning() && caps.discover));
+    var _c$ = memo2(() => !!(idle() && !scanning() && dev?.canDiscover));
     return () => _c$() && createComponent2(Button, {
       label: "Discover",
       color: "#3366b3",
@@ -4198,7 +4201,7 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!(idle() && !scanning() && caps.camera));
+    var _c$2 = memo2(() => !!(idle() && !scanning() && dev && hasCamera));
     return () => _c$2() && createComponent2(Button, {
       label: "Scan QR",
       color: "#3366b3",
