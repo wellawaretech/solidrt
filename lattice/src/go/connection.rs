@@ -19,9 +19,6 @@ pub enum DevCmd {
   Connect(String),
   /// Browse the LAN for a dev server via mDNS, then connect.
   Discover,
-  /// Scan a QR code for a `host:port` (Android only; the camera scanner runs in
-  /// the Java shell and feeds the decoded address back as a `Connect`).
-  ScanQr,
   /// Stop searching and drop any connection, back to idle.
   Stop,
 }
@@ -30,13 +27,12 @@ pub enum DevCmd {
 #[derive(Clone)]
 pub enum ConnState {
   Idle,
-  // Searching is mDNS (desktop only); Scanning is QR (Android only). The
-  // variants + JS states exist everywhere so the event payload mapping stays
-  // uniform, but each is constructed on only one platform.
+  // Searching is mDNS (desktop only); the variant + JS state exist everywhere
+  // so the event payload mapping stays uniform. (QR scanning is no longer a
+  // supervisor state: the app scans via the camera module and sends a plain
+  // Connect with the decoded address.)
   #[cfg_attr(target_os = "android", allow(dead_code))]
   Searching,
-  #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-  Scanning,
   Connecting(String),
   Connected(String),
 }
@@ -47,7 +43,6 @@ impl ConnState {
     match self {
       ConnState::Idle => ("idle", None),
       ConnState::Searching => ("searching", None),
-      ConnState::Scanning => ("scanning", None),
       ConnState::Connecting(addr) => ("connecting", Some(addr)),
       ConnState::Connected(addr) => ("connected", Some(addr)),
     }
@@ -65,10 +60,6 @@ pub fn start(
   proxy_http_enabled: Arc<AtomicBool>,
 ) -> UnboundedSender<DevCmd> {
   let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
-  // The Android QR scanner runs in the Java shell and reaches back through a JNI
-  // callback that has no handle to this channel, so publish a clone globally.
-  #[cfg(target_os = "android")]
-  super::android::set_dev_cmd_tx(cmd_tx.clone());
   handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled));
   cmd_tx
 }
@@ -115,32 +106,8 @@ async fn supervisor(
           let _ = state_tx.send(ConnState::Idle);
         }
       }
-      DevCmd::ScanQr => {
-        #[cfg(target_os = "android")]
-        {
-          pending = run_scan(&mut cmd_rx, &state_tx).await;
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-          log::warn!("[sgo] scanQr() is not supported on this platform");
-          let _ = state_tx.send(ConnState::Idle);
-        }
-      }
     }
   }
-}
-
-/// Start the Java QR scanner and wait. A successful scan arrives as a separate
-/// `Connect` command (pushed by the JNI callback), which interrupts this wait
-/// and is returned so the supervisor switches to a direct connection. Any other
-/// command (e.g. Stop) also interrupts; either way we tear the scanner down.
-#[cfg(target_os = "android")]
-async fn run_scan(cmd_rx: &mut UnboundedReceiver<DevCmd>, state_tx: &UnboundedSender<ConnState>) -> Option<DevCmd> {
-  let _ = state_tx.send(ConnState::Scanning);
-  super::android::start_scanner();
-  let cmd = cmd_rx.recv().await;
-  super::android::stop_scanner();
-  cmd
 }
 
 /// Connect to a fixed address, retrying until reachable and reconnecting after

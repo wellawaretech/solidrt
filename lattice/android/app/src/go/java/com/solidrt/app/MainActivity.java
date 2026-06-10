@@ -1,7 +1,5 @@
 package com.solidrt.app;
 
-import android.Manifest;
-import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.util.Log;
@@ -15,11 +13,6 @@ import org.libsdl.app.SDLActivity;
 
 public class MainActivity extends SDLActivity {
     private static final String TAG = "SolidRT";
-    private static final int CAMERA_PERMISSION_REQUEST = 100;
-
-    private QrScanner qrScanner;
-
-    private static native void nativeOnQrScanned(String content);
 
     @Override
     protected String[] getLibraries() {
@@ -34,68 +27,6 @@ public class MainActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         extractAssets();
         super.onCreate(savedInstanceState);
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_REQUEST) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                beginScan();
-            } else {
-                Log.w(TAG, "Camera permission denied");
-            }
-        }
-    }
-
-    @SuppressWarnings("unused") // Called from native code via JNI
-    public void startQrScanner() {
-        runOnUiThread(() -> {
-            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                beginScan();
-            } else {
-                Log.i(TAG, "Requesting camera permission");
-                requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
-            }
-        });
-    }
-
-    @SuppressWarnings("unused") // Called from native code via JNI
-    public void stopQrScanner() {
-        runOnUiThread(() -> {
-            if (qrScanner != null) {
-                Log.i(TAG, "Stopping QR scanner");
-                qrScanner.stop();
-                qrScanner = null;
-            }
-        });
-    }
-
-    // Runs on the UI thread (camera binding requires it). Idempotent so a second
-    // start request while already scanning is a no-op.
-    private void beginScan() {
-        if (qrScanner != null) return;
-        qrScanner = new QrScanner(this, content -> {
-            Log.i(TAG, "QR scanned: " + content);
-            nativeOnQrScanned(content);
-            runOnUiThread(() -> {
-                if (qrScanner != null) {
-                    Log.i(TAG, "Stopping QR scanner after successful scan");
-                    qrScanner.stop();
-                    qrScanner = null;
-                }
-            });
-        });
-        qrScanner.start();
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (qrScanner != null) {
-            qrScanner.stop();
-            qrScanner = null;
-        }
-        super.onDestroy();
     }
 
     private void extractAssets() {

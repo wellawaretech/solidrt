@@ -27,12 +27,6 @@ pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, 
   }))
   .expect("create devServer.discover");
 
-  let tx = cmd_tx.clone();
-  let scan_qr = Function::new(ctx.clone(), MutFn::from(move || {
-    let _ = tx.send(DevCmd::ScanQr);
-  }))
-  .expect("create devServer.scanQr");
-
   let stop = Function::new(ctx.clone(), MutFn::from(move || {
     let _ = cmd_tx.send(DevCmd::Stop);
   }))
@@ -40,11 +34,12 @@ pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, 
 
   dev.set("connect", connect).expect("set devServer.connect");
   dev.set("discover", discover).expect("set devServer.discover");
-  dev.set("scanQr", scan_qr).expect("set devServer.scanQr");
   dev.set("stop", stop).expect("set devServer.stop");
 
   // Capability hints so the default app shows only the buttons that apply.
-  // discover is mDNS (desktop only); scanQr uses the Android camera shell.
+  // discover is mDNS (desktop only). scanQr is a pure UI hint: the app scans
+  // via the camera module itself and connect()s with the decoded address;
+  // phones are where camera pairing makes sense.
   let caps = Object::new(ctx.clone()).expect("create capabilities");
   caps.set("connect", true).expect("set cap.connect");
   caps.set("discover", cfg!(not(target_os = "android"))).expect("set cap.discover");

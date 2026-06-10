@@ -1,5 +1,6 @@
 import { render } from "@solidrt/core"
-import { createMemo, createSignal } from "@solidjs/signals"
+import { CameraView } from "@solidrt/core/camera"
+import { createSignal } from "@solidjs/signals"
 import { For, Show } from "solid-js"
 import { Logo } from "./logo"
 
@@ -7,16 +8,21 @@ import { Logo } from "./logo"
 // is absent in non-go / record builds, so everything below guards on it.
 declare const srt: any
 
-type DevState = "idle" | "searching" | "scanning" | "connecting" | "connected"
+type DevState = "idle" | "searching" | "connecting" | "connected"
 
 const LOOPBACK = "127.0.0.1:15194"
 
 const STATUS_TEXT: Record<DevState, string> = {
   idle: "not connected",
   searching: "searching...",
-  scanning: "scanning...",
   connecting: "connecting...",
   connected: "connected",
+}
+
+// The dev server QR encodes a bare host:port; tolerate a scheme prefix and a
+// trailing slash in case the encoded value ever changes.
+function normalizeAddress(raw: string): string {
+  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "")
 }
 
 function Button(props: { label: string; color: string; onTap: () => void }) {
@@ -44,6 +50,10 @@ function App() {
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
   let [recents, setRecents] = createSignal<string[]>(dev?.recents ?? [])
+  // QR pairing is app-local: a camera scan view that feeds connect() with the
+  // decoded address (the supervisor only ever sees a plain Connect).
+  let [scanning, setScanning] = createSignal(false)
+  let [scanError, setScanError] = createSignal<string | null>(null)
 
   if (dev) {
     srt.on("devServer", (e: { state: DevState; address: string | null; recents?: string[] }) => {
@@ -57,10 +67,25 @@ function App() {
   }
 
   let idle = () => state() === "idle"
-  let busy = () => state() === "searching" || state() === "scanning" || state() === "connecting"
+  let busy = () => state() === "searching" || state() === "connecting"
   let connected = () => state() === "connected"
 
-  let status = () => (connected() ? `connected to ${address()}` : STATUS_TEXT[state()])
+  let status = () =>
+    scanning()
+      ? "scan the dev server QR code"
+      : connected()
+        ? `connected to ${address()}`
+        : (scanError() ?? STATUS_TEXT[state()])
+
+  let startScan = () => {
+    setScanError(null)
+    setScanning(true)
+  }
+
+  let onScanned = (data: string) => {
+    setScanning(false)
+    dev.connect(normalizeAddress(data))
+  }
 
   return (
     <window title="solidrt-go">
@@ -73,23 +98,36 @@ function App() {
         gap={40}
       >
         <view flexDirection="column" alignItems="center" gap={16}>
+          <Show when={scanning()}>
+            <CameraView
+              width={280}
+              scan={["qr"]}
+              onBarcode={(r) => onScanned(r.data)}
+              onError={(e) => {
+                setScanError(`camera: ${e.message}`)
+                setScanning(false)
+              }}
+            />
+          </Show>
+
           <text color="lightgrey">{status()}</text>
 
           <view flexDirection="row" gap={12}>
-            {idle() && caps.discover && (
+            {idle() && !scanning() && caps.discover && (
               <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
             )}
-            {idle() && caps.scanQr && (
-              <Button label="Scan QR" color="#3366b3" onTap={() => dev.scanQr()} />
+            {idle() && !scanning() && caps.scanQr && (
+              <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
-            {idle() && isAndroid && (
+            {idle() && !scanning() && isAndroid && (
               <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />
             )}
+            {scanning() && <Button label="Cancel" color="#555" onTap={() => setScanning(false)} />}
             {busy() && <Button label="Cancel" color="#555" onTap={() => dev.stop()} />}
             {connected() && <Button label="Disconnect" color="#555" onTap={() => dev.stop()} />}
           </view>
 
-          <Show when={idle() && recents().length > 0}>
+          <Show when={idle() && !scanning() && recents().length > 0}>
             <view flexDirection="column" alignItems="center" gap={8}>
               <text color="grey">recent</text>
               <For each={recents()}>

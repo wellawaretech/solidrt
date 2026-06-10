@@ -3526,6 +3526,61 @@ function render(code) {
     insert(null, root);
   });
 }
+// packages/core/src/camera-view.tsx
+function CameraView(props) {
+  let [texture, setTexture] = createSignal(undefined);
+  let cam;
+  let disposed = false;
+  openCamera({
+    camera: props.camera,
+    facing: props.facing,
+    width: props.width,
+    height: props.height,
+    scan: props.scan
+  }).then((opened) => {
+    if (disposed) {
+      opened.close();
+      return;
+    }
+    cam = opened;
+    if (props.onBarcode)
+      opened.onBarcode(props.onBarcode);
+    setTexture(opened.texture);
+    props.onReady?.(opened);
+  }).catch((e2) => props.onError?.(e2 instanceof Error ? e2 : new Error(String(e2))));
+  onCleanup(() => {
+    disposed = true;
+    cam?.close();
+    cam = undefined;
+  });
+  var _el$ = createElement("texture");
+  effect3(() => ({
+    e: texture(),
+    t: props.width,
+    a: props.height
+  }), ({
+    e: e2,
+    t: t2,
+    a: a2
+  }, _p$) => {
+    e2 !== _p$?.e && setProp(_el$, "src", e2, _p$?.e);
+    t2 !== _p$?.t && setProp(_el$, "width", t2, _p$?.t);
+    a2 !== _p$?.a && setProp(_el$, "height", a2, _p$?.a);
+  });
+  return _el$;
+}
+// packages/core/src/camera.ts
+async function openCamera(options = {}) {
+  let opened = await camera.open(options);
+  return {
+    texture: opened.texture,
+    width: opened.width,
+    height: opened.height,
+    onBarcode: (callback) => camera.setBarcodeCallback(opened.handle, callback),
+    close: () => camera.close(opened.handle)
+  };
+}
+
 // lattice/default-app/logo.tsx
 var SOLID_COLORS = {
   dark: "rgba(26,51,128)",
@@ -4031,10 +4086,12 @@ var LOOPBACK = "127.0.0.1:15194";
 var STATUS_TEXT = {
   idle: "not connected",
   searching: "searching...",
-  scanning: "scanning...",
   connecting: "connecting...",
   connected: "connected"
 };
+function normalizeAddress(raw) {
+  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
+}
 function Button(props) {
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("text");
   insertNode(_el$, _el$2);
@@ -4071,6 +4128,8 @@ function App() {
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
   let [recents, setRecents] = createSignal(dev?.recents ?? []);
+  let [scanning, setScanning] = createSignal(false);
+  let [scanError, setScanError] = createSignal(null);
   if (dev) {
     srt.on("devServer", (e2) => {
       setState(e2.state);
@@ -4082,9 +4141,17 @@ function App() {
     });
   }
   let idle = () => state() === "idle";
-  let busy = () => state() === "searching" || state() === "scanning" || state() === "connecting";
+  let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
-  let status = () => connected() ? `connected to ${address()}` : STATUS_TEXT[state()];
+  let status = () => scanning() ? "scan the dev server QR code" : connected() ? `connected to ${address()}` : scanError() ?? STATUS_TEXT[state()];
+  let startScan = () => {
+    setScanError(null);
+    setScanning(true);
+  };
+  let onScanned = (data) => {
+    setScanning(false);
+    dev.connect(normalizeAddress(data));
+  };
   var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
   insertNode(_el$4, _el$5);
   insertNode(_el$4, _el$6);
@@ -4101,12 +4168,28 @@ function App() {
   setProp(_el$7, "flexDirection", "column");
   setProp(_el$7, "alignItems", "center");
   setProp(_el$7, "gap", 16);
+  insert(_el$7, createComponent2(Show, {
+    get when() {
+      return scanning();
+    },
+    get children() {
+      return createComponent2(CameraView, {
+        width: 280,
+        scan: ["qr"],
+        onBarcode: (r2) => onScanned(r2.data),
+        onError: (e2) => {
+          setScanError(`camera: ${e2.message}`);
+          setScanning(false);
+        }
+      });
+    }
+  }), _el$8);
   setProp(_el$8, "color", "lightgrey");
   insert(_el$8, status);
   setProp(_el$9, "flexDirection", "row");
   setProp(_el$9, "gap", 12);
   insert(_el$9, (() => {
-    var _c$ = memo2(() => !!(idle() && caps.discover));
+    var _c$ = memo2(() => !!(idle() && !scanning() && caps.discover));
     return () => _c$() && createComponent2(Button, {
       label: "Discover",
       color: "#3366b3",
@@ -4114,15 +4197,15 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!(idle() && caps.scanQr));
+    var _c$2 = memo2(() => !!(idle() && !scanning() && caps.scanQr));
     return () => _c$2() && createComponent2(Button, {
       label: "Scan QR",
       color: "#3366b3",
-      onTap: () => dev.scanQr()
+      onTap: startScan
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$3 = memo2(() => !!(idle() && isAndroid));
+    var _c$3 = memo2(() => !!(idle() && !scanning() && isAndroid));
     return () => _c$3() && createComponent2(Button, {
       label: "Connect (adb)",
       color: "#3366b3",
@@ -4130,16 +4213,24 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$4 = memo2(() => !!busy());
+    var _c$4 = memo2(() => !!scanning());
     return () => _c$4() && createComponent2(Button, {
+      label: "Cancel",
+      color: "#555",
+      onTap: () => setScanning(false)
+    });
+  })(), null);
+  insert(_el$9, (() => {
+    var _c$5 = memo2(() => !!busy());
+    return () => _c$5() && createComponent2(Button, {
       label: "Cancel",
       color: "#555",
       onTap: () => dev.stop()
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$5 = memo2(() => !!connected());
-    return () => _c$5() && createComponent2(Button, {
+    var _c$6 = memo2(() => !!connected());
+    return () => _c$6() && createComponent2(Button, {
       label: "Disconnect",
       color: "#555",
       onTap: () => dev.stop()
@@ -4147,7 +4238,7 @@ function App() {
   })(), null);
   insert(_el$7, createComponent2(Show, {
     get when() {
-      return memo2(() => !!idle())() && recents().length > 0;
+      return memo2(() => !!(idle() && !scanning()))() && recents().length > 0;
     },
     get children() {
       var _el$0 = createElement("view"), _el$1 = createElement("text");

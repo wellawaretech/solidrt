@@ -45,7 +45,3 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 mdns-sd = "0.20"
-
-# JNI bridge to the Java shell's camera QR scanner (see src/go/android.rs).
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"

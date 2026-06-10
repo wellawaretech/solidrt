@@ -42,9 +42,4 @@ android {
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
-    // CameraX + ML Kit — go flavor only (QR scanner)
-    goImplementation 'androidx.camera:camera-core:1.4.1'
-    goImplementation 'androidx.camera:camera-camera2:1.4.1'
-    goImplementation 'androidx.camera:camera-lifecycle:1.4.1'
-    goImplementation 'com.google.mlkit:barcode-scanning:17.3.0'
 }
