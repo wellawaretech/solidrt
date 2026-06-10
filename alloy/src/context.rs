@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use crate::backend::Backend;
 use crate::camera::CameraRegistry;
 use crate::gl;
+use crate::microphone::MicrophoneRegistry;
 use crate::texture::{GpuTexture, TextureEntry, TextureRegistry};
 
 pub struct Context {
@@ -14,6 +15,7 @@ pub struct Context {
   impeller_ctx: ImpellerContext,
   pub textures: TextureRegistry,
   pub(crate) cameras: CameraRegistry,
+  pub(crate) microphones: MicrophoneRegistry,
   tx: mpsc::Sender<DisplayList>,
 }
 
@@ -40,6 +42,7 @@ impl Context {
       impeller_ctx,
       textures: TextureRegistry::new(),
       cameras: CameraRegistry::default(),
+      microphones: MicrophoneRegistry::default(),
       tx,
     }
   }

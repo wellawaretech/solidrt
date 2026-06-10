@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./camera": "./src/camera.ts",
     "./gpu": "./src/gpu.ts",
+    "./microphone": "./src/microphone.ts",
     "./jsx-runtime": "./jsx-runtime.d.ts",
     "./jsx-runtime-dev": "./jsx-runtime.d.ts"
   },

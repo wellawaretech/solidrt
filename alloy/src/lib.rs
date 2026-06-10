@@ -8,6 +8,7 @@ pub mod camera;
 mod context;
 mod event;
 mod logging;
+pub mod microphone;
 mod mode;
 mod record;
 mod texture;

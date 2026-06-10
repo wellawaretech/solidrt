@@ -51,8 +51,9 @@ export function listCameras(): CameraInfo[] {
 // Camera hotplug. Re-enumerate with listCameras() to see the new device set.
 // Events only flow once the camera subsystem is up, i.e. after the first
 // listCameras() or openCamera() call. Returns an unsubscribe function.
-// Caveat (SDL 3.4.8): on Linux only added=true currently fires; removal is
-// broken upstream, so expect added=false only after a fixed SDL ships.
+// Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
+// Linux you get added=true but not added=false (removal is broken upstream);
+// on macOS/Windows there is no camera hotplug at all, so nothing fires.
 export function onDeviceChange(callback: (event: { added: boolean }) => void): () => void {
   return on("cameraDeviceChange", callback)
 }

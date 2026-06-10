@@ -350,6 +350,7 @@ fn ui_thread(
       // A reloaded app must not inherit (or leak) the previous app's open
       // capture devices; their JS handles died with the old engine.
       atx.close_all_cameras();
+      atx.close_all_microphones();
       let input_state = input_state.clone();
       let engine_state = Arc::new(EngineState::new());
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
@@ -359,6 +360,7 @@ fn ui_thread(
       let tree_atx = AlloyContext(atx.clone());
       let texture_atx = AlloyContext(atx.clone());
       let camera_atx = AlloyContext(atx.clone());
+      let microphone_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .logger(|level, msg| match level {
@@ -371,6 +373,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
         .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
+        .plugin(move |ctx| plugins::microphone::init(ctx, microphone_atx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)

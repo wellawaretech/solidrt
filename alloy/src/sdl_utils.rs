@@ -171,6 +171,79 @@ pub fn camera_close(camera: *mut SDL_Camera) {
   unsafe { SDL_CloseCamera(camera) };
 }
 
+// --- Audio recording (the sdl3 crate's safe audio API is unusable here:
+// AudioSubsystem is !Send and main-thread-bound, while capture sessions live
+// on the UI thread) --------------------------------------------------------
+//
+// Thin unsafe-call wrappers only; microphone session logic lives in
+// crate::microphone.
+
+use sdl3::sys::audio::{
+  SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_DestroyAudioStream, SDL_GetAudioDeviceName,
+  SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData, SDL_OpenAudioDeviceStream,
+  SDL_ResumeAudioStreamDevice, SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
+};
+use sdl3::sys::init::SDL_INIT_AUDIO;
+
+pub fn audio_subsystem_init() -> bool {
+  unsafe { SDL_InitSubSystem(SDL_INIT_AUDIO) }
+}
+
+pub fn audio_recording_ids() -> Vec<u32> {
+  let mut count: std::ffi::c_int = 0;
+  let ids = unsafe { SDL_GetAudioRecordingDevices(&mut count) };
+  if ids.is_null() {
+    return Vec::new();
+  }
+  let result = (0..count as usize).map(|i| unsafe { (*ids.add(i)).0 }).collect();
+  unsafe { SDL_free(ids as *mut std::ffi::c_void) };
+  result
+}
+
+pub fn audio_device_name(id: u32) -> String {
+  let name = unsafe { SDL_GetAudioDeviceName(SDL_AudioDeviceID(id)) };
+  if name.is_null() {
+    return String::new();
+  }
+  unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()
+}
+
+/// Open a recording device (None = system default) bound to a new stream
+/// delivering mono f32 at `sample_rate` on the app side (SDL converts from
+/// the device format). The stream starts paused; destroying it also closes
+/// the device it opened.
+pub fn audio_open_recording_stream(device: Option<u32>, sample_rate: u32) -> *mut SDL_AudioStream {
+  let spec = SDL_AudioSpec { format: SDL_AUDIO_F32, channels: 1, freq: sample_rate as std::ffi::c_int };
+  let devid = device.map(SDL_AudioDeviceID).unwrap_or(SDL_AUDIO_DEVICE_DEFAULT_RECORDING);
+  unsafe { SDL_OpenAudioDeviceStream(devid, &spec, None, std::ptr::null_mut()) }
+}
+
+pub fn audio_stream_resume(stream: *mut SDL_AudioStream) -> bool {
+  unsafe { SDL_ResumeAudioStreamDevice(stream) }
+}
+
+/// Bytes buffered in the stream, already converted to the app-side spec.
+pub fn audio_stream_available(stream: *mut SDL_AudioStream) -> i32 {
+  unsafe { SDL_GetAudioStreamAvailable(stream) }
+}
+
+/// Drain converted samples into `dst` (non-blocking); returns the number of
+/// samples written, or -1 on error.
+pub fn audio_stream_read_f32(stream: *mut SDL_AudioStream, dst: &mut [f32]) -> i32 {
+  let bytes = unsafe {
+    SDL_GetAudioStreamData(stream, dst.as_mut_ptr() as *mut std::ffi::c_void, (dst.len() * 4) as std::ffi::c_int)
+  };
+  if bytes < 0 {
+    -1
+  } else {
+    bytes / 4
+  }
+}
+
+pub fn audio_stream_destroy(stream: *mut SDL_AudioStream) {
+  unsafe { SDL_DestroyAudioStream(stream) };
+}
+
 pub fn sdl_error() -> String {
   sdl3::get_error().to_string()
 }

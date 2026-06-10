@@ -2,6 +2,7 @@ pub mod camera;
 pub mod dev;
 pub mod draw;
 pub mod events;
+pub mod microphone;
 mod properties;
 pub mod raf;
 pub mod texture;

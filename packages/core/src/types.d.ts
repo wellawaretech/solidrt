@@ -50,6 +50,13 @@ declare global {
     scanImage(data: Uint8Array, width: number, height: number): { data: string, format: "qr" }[]
     close(handle: number): void
   }
+
+  let microphone: {
+    listMicrophones(): { id: number, name: string }[]
+    open(options: { microphone?: number, sampleRate?: number }): { handle: number, sampleRate: number }
+    read(handle: number): Float32Array
+    close(handle: number): void
+  }
 }
 
 export interface MeasureTextOptions {

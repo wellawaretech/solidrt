@@ -36,7 +36,11 @@ pub enum CameraStatus {
   /// Waiting for the OS permission prompt.
   Pending,
   /// Streaming into `texture_id` at the delivered size.
-  Ready { texture_id: u64, width: u32, height: u32 },
+  Ready {
+    texture_id: u64,
+    width: u32,
+    height: u32,
+  },
   Denied,
 }
 
@@ -92,17 +96,14 @@ fn ensure_init() -> Result<(), String> {
 /// formats (e.g. MJPG-only at every size).
 fn native_spec(id: u32, width: u32, height: u32) -> Option<SDL_CameraSpec> {
   let target = (width as i64) * (height as i64);
-  sdl_utils::camera_supported_formats(id)
-    .into_iter()
-    .filter(|s| s.format != SDL_PIXELFORMAT_MJPG)
-    .min_by_key(|s| {
-      let area = (s.width as i64) * (s.height as i64);
-      let fps_milli = match s.framerate_denominator {
-        0 => 0,
-        d => 1000 * (s.framerate_numerator as i64) / (d as i64),
-      };
-      ((area - target).abs(), (fps_milli - 30_000).abs())
-    })
+  sdl_utils::camera_supported_formats(id).into_iter().filter(|s| s.format != SDL_PIXELFORMAT_MJPG).min_by_key(|s| {
+    let area = (s.width as i64) * (s.height as i64);
+    let fps_milli = match s.framerate_denominator {
+      0 => 0,
+      d => 1000 * (s.framerate_numerator as i64) / (d as i64),
+    };
+    ((area - target).abs(), (fps_milli - 30_000).abs())
+  })
 }
 
 fn facing_of(position: SDL_CameraPosition) -> CameraFacing {
@@ -265,6 +266,21 @@ impl crate::context::Context {
       return;
     }
     let surface = unsafe { &*frame };
+    let delivered = match sdl_utils::camera_format(session.camera) {
+      Some(s) => format!(
+        "format={:#x} {}x{} @{}/{}",
+        s.format.0, s.width, s.height, s.framerate_numerator, s.framerate_denominator
+      ),
+      None => "none".to_string(),
+    };
+    log::info!(
+      "[camera] frame format={:#x} {}x{} pitch={} delivered={}",
+      surface.format.0,
+      surface.w,
+      surface.h,
+      surface.pitch,
+      delivered
+    );
     let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
     let rotation = sdl_utils::surface_rotation_degrees(frame);
     let (width, height) = if rotation == 90 || rotation == 270 { (frame_h, frame_w) } else { (frame_w, frame_h) };
@@ -286,7 +302,8 @@ impl crate::context::Context {
     } else if !rgba_src && rotation == 0 {
       &session.convert
     } else {
-      let (src, src_pitch) = if rgba_src { (surface.pixels as *const u8, pitch) } else { (session.convert.as_ptr(), row_bytes) };
+      let (src, src_pitch) =
+        if rgba_src { (surface.pixels as *const u8, pitch) } else { (session.convert.as_ptr(), row_bytes) };
       upright_into(src, src_pitch, frame_w as usize, frame_h as usize, rotation, &mut session.scratch);
       &session.scratch
     };
