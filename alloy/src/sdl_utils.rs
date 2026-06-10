@@ -68,13 +68,15 @@ use sdl3::sys::stdinc::SDL_free;
 use sdl3::sys::surface::SDL_Surface;
 
 pub fn camera_subsystem_init() -> bool {
-  // Prefer the v4l2 camera backend on desktop Linux. SDL 3.4.8's pipewire
-  // backend (the default on Wayland) never reports device removals -- its
-  // hotplug remove callback is empty and it never calls SDL_CameraDisconnected
-  // -- so cameras vanish without an event and stay in SDL_GetCameras() forever.
-  // v4l2 handles both add and remove via udev. Normal priority, so an explicit
-  // SDL_CAMERA_DRIVER env var still wins as an escape hatch. Must run before
-  // SDL_INIT_CAMERA. Not Android (its own backend); not other OSes.
+  // Force the v4l2 camera backend on desktop Linux. Device removal is broken in
+  // both SDL 3.4.8 Linux backends, but for different reasons: pipewire (the
+  // Wayland default) never calls SDL_CameraDisconnected at all (empty
+  // global_remove), while v4l2 only mis-gates it (its udev callback drops
+  // removals because device_event reports class 0 on remove). The v4l2 bug is a
+  // one-liner we filed upstream, so we sit on v4l2 to pick up the fix the moment
+  // it ships; until then add works and removal is silently missed on both.
+  // Normal priority, so an explicit SDL_CAMERA_DRIVER env var still overrides.
+  // Must run before SDL_INIT_CAMERA. Not Android (own backend) or other OSes.
   #[cfg(target_os = "linux")]
   unsafe {
     use sdl3::sys::hints::{SDL_SetHint, SDL_HINT_CAMERA_DRIVER};
