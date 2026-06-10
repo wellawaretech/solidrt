@@ -62,8 +62,9 @@ struct Session {
   barcodes: Vec<String>,
 }
 
-/// Try a QR decode every Nth uploaded frame (~3/s at 30fps); rqrr costs
-/// multiple ms per attempt and runs on the UI thread.
+/// Try a QR decode every Nth uploaded frame (~3/s at 30fps); decoding costs
+/// around a millisecond per attempt (several when a code is present) and runs
+/// on the UI thread.
 const SCAN_INTERVAL_FRAMES: u32 = 10;
 
 #[derive(Default)]
@@ -338,16 +339,14 @@ fn to_greyscale(pixels: &[u8], gray: &mut Vec<u8>) {
   }));
 }
 
-/// First decodable QR grid in the frame, if any.
+/// First decodable QR code in the frame, if any.
 fn decode_qr(gray: &[u8], width: u32, height: u32) -> Option<String> {
-  let (w, h) = (width as usize, height as usize);
-  let mut img = rqrr::PreparedImage::prepare_from_greyscale(w, h, |x, y| gray[y * w + x]);
-  for grid in img.detect_grids() {
-    match grid.decode() {
-      Ok((_meta, content)) if !content.is_empty() => return Some(content),
-      Ok(_) => {}
-      Err(e) => log::debug!("[camera] QR decode failed: {e}"),
+  match rxing::helpers::detect_in_luma(gray.to_vec(), width, height, Some(rxing::BarcodeFormat::QR_CODE)) {
+    Ok(result) => Some(result.getText().to_string()),
+    // The overwhelmingly common case is simply "no code in this frame".
+    Err(e) => {
+      log::trace!("[camera] no QR in frame: {e}");
+      None
     }
   }
-  None
 }

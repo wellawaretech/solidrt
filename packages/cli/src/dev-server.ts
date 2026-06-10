@@ -202,14 +202,22 @@ export function startServer() {
   qr.addData(serverUrl)
   qr.make()
   let modCount = qr.getModuleCount()
-  for (let y = 0; y < modCount; y += 2) {
-    let row = "  "
-    for (let x = 0; x < modCount; x++) {
-      let top = qr.isDark(y, x)
-      let bot = y + 1 < modCount && qr.isDark(y + 1, x)
+  // Render as a white tile with black modules (explicit ANSI colors) plus the
+  // 4-module quiet zone the QR spec requires. Drawing with the terminal's
+  // default foreground inverts the code on dark themes, which standard
+  // decoders reject.
+  const QR_INK = "\x1b[30;107m" // black on bright white
+  const QR_RESET = "\x1b[0m"
+  const QUIET_ZONE = 2 // modules (spec says 4, but scanners cope and it reads tighter)
+  let dark = (y: number, x: number) => y >= 0 && y < modCount && x >= 0 && x < modCount && qr.isDark(y, x)
+  for (let y = -QUIET_ZONE; y < modCount + QUIET_ZONE; y += 2) {
+    let row = "  " + QR_INK
+    for (let x = -QUIET_ZONE; x < modCount + QUIET_ZONE; x++) {
+      let top = dark(y, x)
+      let bot = dark(y + 1, x)
       row += top && bot ? "\u2588" : top ? "\u2580" : bot ? "\u2584" : " "
     }
-    console.log(row)
+    console.log(row + QR_RESET)
   }
 
   console.log("")
