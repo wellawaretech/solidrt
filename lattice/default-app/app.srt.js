@@ -3582,6 +3582,11 @@ async function openCamera(options = {}) {
 }
 
 // lattice/default-app/logo.tsx
+var EXPLODE_DIST = 3;
+var STAGGER_DELAY = 100;
+var ANIM_DURATION = 600;
+var HOLD_ASSEMBLED = 5000;
+var HOLD_EXPLODED = 0;
 var SOLID_COLORS = {
   dark: "rgba(26,51,128)",
   mid: "rgba(51,102,179)",
@@ -3966,11 +3971,6 @@ var letters = [
     }]
   }
 ];
-var EXPLODE_DIST = 10;
-var STAGGER_DELAY = 50;
-var ANIM_DURATION = 600;
-var HOLD_ASSEMBLED = 5000;
-var HOLD_EXPLODED = 0;
 function TangramLetter(props) {
   let [dist, setDist] = createSignal(EXPLODE_DIST);
   let letterCx = props.letter.width / 2;
@@ -4123,7 +4123,7 @@ function App() {
   let caps = dev?.capabilities ?? {
     connect: false,
     discover: false,
-    scanQr: false
+    camera: false
   };
   let isAndroid = dev?.platform === "android";
   let [state, setState] = createSignal("idle");
@@ -4198,7 +4198,7 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!(idle() && !scanning() && caps.scanQr));
+    var _c$2 = memo2(() => !!(idle() && !scanning() && caps.camera));
     return () => _c$2() && createComponent2(Button, {
       label: "Scan QR",
       color: "#3366b3",

@@ -44,7 +44,7 @@ function Button(props: { label: string; color: string; onTap: () => void }) {
 
 function App() {
   let dev = typeof srt !== "undefined" ? srt.devServer : undefined
-  let caps = dev?.capabilities ?? { connect: false, discover: false, scanQr: false }
+  let caps = dev?.capabilities ?? { connect: false, discover: false, camera: false }
   let isAndroid = dev?.platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
@@ -116,7 +116,7 @@ function App() {
             {idle() && !scanning() && caps.discover && (
               <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
             )}
-            {idle() && !scanning() && caps.scanQr && (
+            {idle() && !scanning() && caps.camera && (
               <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
             {idle() && !scanning() && isAndroid && (

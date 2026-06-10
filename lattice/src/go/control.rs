@@ -37,13 +37,13 @@ pub fn install_devserver_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, 
   dev.set("stop", stop).expect("set devServer.stop");
 
   // Capability hints so the default app shows only the buttons that apply.
-  // discover is mDNS (desktop only). scanQr is a pure UI hint: the app scans
+  // discover is mDNS (desktop only). camera is a pure UI hint: the app scans
   // via the camera module itself and connect()s with the decoded address;
-  // phones are where camera pairing makes sense.
+  // offered wherever a camera is actually available.
   let caps = Object::new(ctx.clone()).expect("create capabilities");
   caps.set("connect", true).expect("set cap.connect");
   caps.set("discover", cfg!(not(target_os = "android"))).expect("set cap.discover");
-  caps.set("scanQr", cfg!(target_os = "android")).expect("set cap.scanQr");
+  caps.set("camera", !alloy::camera::list_cameras().is_empty()).expect("set cap.camera");
   dev.set("capabilities", caps).expect("set devServer.capabilities");
   dev.set("platform", std::env::consts::OS).expect("set devServer.platform");
 
