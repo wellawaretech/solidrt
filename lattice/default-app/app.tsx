@@ -3,11 +3,9 @@ import { CameraView, listCameras, onDeviceChange } from "@solidrt/core/camera"
 import { createSignal } from "@solidjs/signals"
 import { For, Show } from "solid-js"
 import { platform } from "flux:process"
+import { on } from "srt:events"
+import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev"
 import { Logo } from "./logo"
-
-// The dev-server control surface installed by the runtime (srt.dev). It is
-// absent in non-go / record builds, so everything below guards on it.
-declare const srt: any
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
 
@@ -44,21 +42,21 @@ function Button(props: { label: string; color: string; onTap: () => void }) {
 }
 
 function App() {
-  let dev = typeof srt !== "undefined" ? srt.dev : undefined
+  let dev = devAvailable
   let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0)
   onDeviceChange(() => setHasCamera(listCameras().length > 0))
   let isAndroid = platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
-  let [recents, setRecents] = createSignal<string[]>(dev?.recents ?? [])
+  let [recents, setRecents] = createSignal<string[]>(initialRecents)
   // QR pairing is app-local: a camera scan view that feeds connect() with the
   // decoded address (the supervisor only ever sees a plain Connect).
   let [scanning, setScanning] = createSignal(false)
   let [scanError, setScanError] = createSignal<string | null>(null)
 
   if (dev) {
-    srt.on("dev", (e: { state: DevState; address: string | null; recents?: string[] }) => {
+    on("dev", (e: { state: DevState; address: string | null; recents?: string[] }) => {
       setState(e.state)
       setAddress(e.address)
       if (e.recents) {
@@ -86,7 +84,7 @@ function App() {
 
   let onScanned = (data: string) => {
     setScanning(false)
-    dev.connect(normalizeAddress(data))
+    connect(normalizeAddress(data))
   }
 
   return (
@@ -115,25 +113,25 @@ function App() {
           <text color="lightgrey">{status()}</text>
 
           <view flexDirection="row" gap={12}>
-            {idle() && !scanning() && dev?.canDiscover && (
-              <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
+            {idle() && !scanning() && canDiscover && (
+              <Button label="Discover" color="#3366b3" onTap={() => discover()} />
             )}
             {idle() && !scanning() && dev && hasCamera() && (
               <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
             {idle() && !scanning() && isAndroid && (
-              <Button label="Connect (adb)" color="#3366b3" onTap={() => dev.connect(LOOPBACK)} />
+              <Button label="Connect (adb)" color="#3366b3" onTap={() => connect(LOOPBACK)} />
             )}
             {scanning() && <Button label="Cancel" color="#555" onTap={() => setScanning(false)} />}
-            {busy() && <Button label="Cancel" color="#555" onTap={() => dev.stop()} />}
-            {connected() && <Button label="Disconnect" color="#555" onTap={() => dev.stop()} />}
+            {busy() && <Button label="Cancel" color="#555" onTap={() => stop()} />}
+            {connected() && <Button label="Disconnect" color="#555" onTap={() => stop()} />}
           </view>
 
           <Show when={idle() && !scanning() && recents().length > 0}>
             <view flexDirection="column" alignItems="center" gap={8}>
               <text color="grey">recent</text>
               <For each={recents()}>
-                {(addr) => <Button label={addr} color="#333" onTap={() => dev.connect(addr)} />}
+                {(addr) => <Button label={addr} color="#333" onTap={() => connect(addr)} />}
               </For>
             </view>
           </Show>

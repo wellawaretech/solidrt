@@ -3020,6 +3020,9 @@ function createRenderer(options) {
   };
 }
 
+// packages/core/src/window.ts
+import { on, once } from "srt:events";
+
 // node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
 var r = { grad: 0.9, turn: 360, rad: 360 / (2 * Math.PI) };
 var t = function(r2) {
@@ -3284,7 +3287,7 @@ function onFrame(fn) {
   return cleanup2;
 }
 function onResize(fn) {
-  let unsubscribe = srt.on("resize", fn);
+  let unsubscribe = on("resize", fn);
   onCleanup(unsubscribe);
   return unsubscribe;
 }
@@ -3313,14 +3316,14 @@ function attachWindow(_nodeId) {
     draw();
   }
   onSettled(() => {
-    unsubRefreshRate = srt.on("displayRefreshRate", ({ hz }) => {
+    unsubRefreshRate = on("displayRefreshRate", ({ hz }) => {
       if (hz > 0)
         refreshRate = hz;
     });
-    unsubscribe = srt.on("render", ({ time, frame }) => {
+    unsubscribe = on("render", ({ time, frame }) => {
       runFrame(time * 1000, frame);
     });
-    unsubDown = srt.on("pointerDown", ({ targets, ...e2 }) => {
+    unsubDown = on("pointerDown", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerDown")?.(e2);
       }
@@ -3329,54 +3332,54 @@ function attachWindow(_nodeId) {
         setFocus(null);
       }
     });
-    unsubUp = srt.on("pointerUp", ({ targets, ...e2 }) => {
+    unsubUp = on("pointerUp", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerUp")?.(e2);
       }
     });
-    unsubMove = srt.on("pointerMove", ({ targets, ...e2 }) => {
+    unsubMove = on("pointerMove", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerMove")?.(e2);
       }
     });
-    unsubEnter = srt.on("pointerEnter", ({ targets, ...e2 }) => {
+    unsubEnter = on("pointerEnter", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerEnter")?.(e2);
       }
     });
-    unsubLeave = srt.on("pointerLeave", ({ targets, ...e2 }) => {
+    unsubLeave = on("pointerLeave", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerLeave")?.(e2);
       }
     });
-    unsubWheel = srt.on("wheel", ({ targets, ...e2 }) => {
+    unsubWheel = on("wheel", ({ targets, ...e2 }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onWheel")?.(e2);
       }
     });
-    unsubKeyDown = srt.on("keydown", (e2) => {
+    unsubKeyDown = on("keydown", (e2) => {
       let id = getFocusedNodeId();
       if (id != null) {
         getEventHandler(id, "onKeyDown")?.(e2);
       }
     });
-    unsubKeyUp = srt.on("keyup", (e2) => {
+    unsubKeyUp = on("keyup", (e2) => {
       let id = getFocusedNodeId();
       if (id != null) {
         getEventHandler(id, "onKeyUp")?.(e2);
       }
     });
-    unsubTextInput = srt.on("textInput", (e2) => {
+    unsubTextInput = on("textInput", (e2) => {
       let id = getFocusedNodeId();
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e2);
       }
     });
-    unsubKeyboardVisibility = srt.on("keyboardVisibility", ({ shown }) => {
+    unsubKeyboardVisibility = on("keyboardVisibility", ({ shown }) => {
       if (!shown)
         setFocus(null);
     });
-    unsubFirstResize = srt.once("resize", () => {
+    unsubFirstResize = once("resize", () => {
       queueMicrotask(() => runFrame(0, 0));
     });
   });
@@ -3526,6 +3529,9 @@ function render(code) {
     insert(null, root);
   });
 }
+// packages/core/src/camera.ts
+import { on as on2 } from "srt:events";
+
 // packages/core/src/camera-view.tsx
 function CameraView(props) {
   let [texture, setTexture] = createSignal(undefined);
@@ -3575,7 +3581,7 @@ function listCameras() {
   return camera.listCameras();
 }
 function onDeviceChange(callback) {
-  return srt.on("cameraDeviceChange", callback);
+  return on2("cameraDeviceChange", callback);
 }
 async function openCamera(options = {}) {
   let opened = await camera.open(options);
@@ -3590,6 +3596,8 @@ async function openCamera(options = {}) {
 
 // lattice/default-app/app.tsx
 import { platform } from "flux:process";
+import { on as on3 } from "srt:events";
+import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev";
 
 // lattice/default-app/logo.tsx
 var EXPLODE_DIST = 3;
@@ -4129,17 +4137,17 @@ function Button(props) {
   return _el$;
 }
 function App() {
-  let dev = typeof srt !== "undefined" ? srt.dev : undefined;
+  let dev = devAvailable;
   let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0);
   onDeviceChange(() => setHasCamera(listCameras().length > 0));
   let isAndroid = platform === "android";
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
-  let [recents, setRecents] = createSignal(dev?.recents ?? []);
+  let [recents, setRecents] = createSignal(initialRecents);
   let [scanning, setScanning] = createSignal(false);
   let [scanError, setScanError] = createSignal(null);
   if (dev) {
-    srt.on("dev", (e2) => {
+    on3("dev", (e2) => {
       setState(e2.state);
       setAddress(e2.address);
       if (e2.recents) {
@@ -4158,7 +4166,7 @@ function App() {
   };
   let onScanned = (data) => {
     setScanning(false);
-    dev.connect(normalizeAddress(data));
+    connect(normalizeAddress(data));
   };
   var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
   insertNode(_el$4, _el$5);
@@ -4197,11 +4205,11 @@ function App() {
   setProp(_el$9, "flexDirection", "row");
   setProp(_el$9, "gap", 12);
   insert(_el$9, (() => {
-    var _c$ = memo2(() => !!(idle() && !scanning() && dev?.canDiscover));
+    var _c$ = memo2(() => !!(idle() && !scanning() && canDiscover));
     return () => _c$() && createComponent2(Button, {
       label: "Discover",
       color: "#3366b3",
-      onTap: () => dev.discover()
+      onTap: () => discover()
     });
   })(), null);
   insert(_el$9, (() => {
@@ -4217,7 +4225,7 @@ function App() {
     return () => _c$3() && createComponent2(Button, {
       label: "Connect (adb)",
       color: "#3366b3",
-      onTap: () => dev.connect(LOOPBACK)
+      onTap: () => connect(LOOPBACK)
     });
   })(), null);
   insert(_el$9, (() => {
@@ -4233,7 +4241,7 @@ function App() {
     return () => _c$5() && createComponent2(Button, {
       label: "Cancel",
       color: "#555",
-      onTap: () => dev.stop()
+      onTap: () => stop()
     });
   })(), null);
   insert(_el$9, (() => {
@@ -4241,7 +4249,7 @@ function App() {
     return () => _c$6() && createComponent2(Button, {
       label: "Disconnect",
       color: "#555",
-      onTap: () => dev.stop()
+      onTap: () => stop()
     });
   })(), null);
   insert(_el$7, createComponent2(Show, {
@@ -4263,7 +4271,7 @@ function App() {
         children: (addr) => createComponent2(Button, {
           label: addr,
           color: "#333",
-          onTap: () => dev.connect(addr)
+          onTap: () => connect(addr)
         })
       }), null);
       return _el$0;

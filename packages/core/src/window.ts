@@ -1,4 +1,5 @@
 import { onCleanup, onSettled, flush } from "@solidjs/signals"
+import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
 // ------ Animation frames ----------------
@@ -53,7 +54,7 @@ interface ResizeEvent {
 }
 
 export function onResize(fn: (data: ResizeEvent) => void) {
-  let unsubscribe = srt.on("resize", fn)
+  let unsubscribe = on("resize", fn)
   onCleanup(unsubscribe)
   return unsubscribe
 }
@@ -63,19 +64,19 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 // by a re-layout pass before painting (one extra pass; cascades beyond that
 // paint stale).
 export function onLayout(fn: () => void) {
-  let unsubscribe = srt.on("postLayout", fn)
+  let unsubscribe = on("postLayout", fn)
   onCleanup(unsubscribe)
   return unsubscribe
 }
 
 export function onWindowFocus(fn: () => void) {
-  let unsubscribe = srt.on("windowFocus", fn)
+  let unsubscribe = on("windowFocus", fn)
   onCleanup(unsubscribe)
   return unsubscribe
 }
 
 export function onWindowBlur(fn: () => void) {
-  let unsubscribe = srt.on("windowBlur", fn)
+  let unsubscribe = on("windowBlur", fn)
   onCleanup(unsubscribe)
   return unsubscribe
 }
@@ -109,15 +110,15 @@ export function attachWindow(_nodeId: number) {
 
   onSettled(() => {
     // Sticky event: a late subscriber still receives the current rate.
-    unsubRefreshRate = srt.on("displayRefreshRate", ({ hz }: { hz: number }) => {
+    unsubRefreshRate = on("displayRefreshRate", ({ hz }: { hz: number }) => {
       if (hz > 0) refreshRate = hz
     })
 
-    unsubscribe = srt.on("render", ({ time, frame }: { time: number; frame: number }) => {
+    unsubscribe = on("render", ({ time, frame }: { time: number; frame: number }) => {
       runFrame(time * 1000, frame)
     })
 
-    unsubDown = srt.on(
+    unsubDown = on(
       "pointerDown",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
         for (let nodeId of targets) {
@@ -132,13 +133,13 @@ export function attachWindow(_nodeId: number) {
       },
     )
 
-    unsubUp = srt.on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+    unsubUp = on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onPointerUp")?.(e)
       }
     })
 
-    unsubMove = srt.on(
+    unsubMove = on(
       "pointerMove",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
         for (let nodeId of targets) {
@@ -147,7 +148,7 @@ export function attachWindow(_nodeId: number) {
       },
     )
 
-    unsubEnter = srt.on(
+    unsubEnter = on(
       "pointerEnter",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
         for (let nodeId of targets) {
@@ -156,7 +157,7 @@ export function attachWindow(_nodeId: number) {
       },
     )
 
-    unsubLeave = srt.on(
+    unsubLeave = on(
       "pointerLeave",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
         for (let nodeId of targets) {
@@ -165,27 +166,27 @@ export function attachWindow(_nodeId: number) {
       },
     )
 
-    unsubWheel = srt.on("wheel", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+    unsubWheel = on("wheel", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
       for (let nodeId of targets) {
         getEventHandler(nodeId, "onWheel")?.(e)
       }
     })
 
-    unsubKeyDown = srt.on("keydown", (e: any) => {
+    unsubKeyDown = on("keydown", (e: any) => {
       let id = getFocusedNodeId()
       if (id != null) {
         getEventHandler(id, "onKeyDown")?.(e)
       }
     })
 
-    unsubKeyUp = srt.on("keyup", (e: any) => {
+    unsubKeyUp = on("keyup", (e: any) => {
       let id = getFocusedNodeId()
       if (id != null) {
         getEventHandler(id, "onKeyUp")?.(e)
       }
     })
 
-    unsubTextInput = srt.on("textInput", (e: any) => {
+    unsubTextInput = on("textInput", (e: any) => {
       let id = getFocusedNodeId()
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e)
@@ -194,7 +195,7 @@ export function attachWindow(_nodeId: number) {
 
     // When the user dismisses the on-screen keyboard (swipe down, "Done",
     // back button), blur the focused node so the app's UI state catches up.
-    unsubKeyboardVisibility = srt.on("keyboardVisibility", ({ shown }: { shown: boolean }) => {
+    unsubKeyboardVisibility = on("keyboardVisibility", ({ shown }: { shown: boolean }) => {
       if (!shown) setFocus(null)
     })
 
@@ -205,7 +206,7 @@ export function attachWindow(_nodeId: number) {
     // synchronously here, while we are still inside this onSettled callback
     // where flush() is illegal (not reentrant). Defer runFrame to a microtask
     // so the first frame always runs after this callback returns.
-    unsubFirstResize = srt.once("resize", () => {
+    unsubFirstResize = once("resize", () => {
       queueMicrotask(() => runFrame(0, 0))
     })
   })

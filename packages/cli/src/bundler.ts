@@ -41,7 +41,7 @@ export async function bundle(entry = source) {
       target: "browser",
       format: "esm",
       minify: values.minify,
-      external: ["flux:*"],
+      external: ["flux:*", "srt:*"],
       define,
       plugins: [solidPlugin()],
     })

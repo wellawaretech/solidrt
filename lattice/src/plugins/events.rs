@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use flux::report_uncaught;
-use flux::rquickjs::{function::MutFn, Ctx, Function, IntoJs, JsLifetime, Object, Persistent, Value};
+use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
+use flux::rquickjs::{function::MutFn, Ctx, Function, IntoJs, JsLifetime, Persistent, Value};
 
-// The UI event surface: the `srt.on` / `srt.once` globals plus sticky-event
-// policy. This sits on top of flux's neutral event bus (register_listener +
-// emit_event); flux itself has no notion of which events exist or of
-// stickiness. A future flux:process would expose its own surface the same way.
+// The UI event surface: the `on` / `once` exports of the `srt:events` module
+// plus sticky-event policy. This sits on top of flux's neutral event bus
+// (register_listener + emit_event); flux itself has no notion of which events
+// exist or of stickiness. A future flux:process would expose its own surface
+// the same way.
 
 // Sticky events cache their most recent value and replay it to any new
 // subscriber on subscribe. resize and displayRefreshRate are sticky because a
@@ -17,16 +19,30 @@ use flux::rquickjs::{function::MutFn, Ctx, Function, IntoJs, JsLifetime, Object,
 #[derive(Clone, JsLifetime, Default)]
 struct StickyCache(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Value<'static>>>>>);
 
+// Stores the sticky-cache userdata. Runs as an engine plugin so the cache is
+// present before any event is emitted, independent of whether JS has imported
+// `srt:events` yet (native code emits regardless).
 pub fn init(ctx: &Ctx<'_>) {
   ctx.store_userdata(StickyCache::default()).expect("store sticky cache");
+}
 
-  let on = Function::new(ctx.clone(), on_impl).expect("create srt.on");
-  let once = Function::new(ctx.clone(), once_impl).expect("create srt.once");
+// The `srt:events` module: the `on` / `once` subscription surface. Reads the
+// sticky cache and flux's listener registry from userdata, both installed
+// eagerly by `init`, so the module body carries no state of its own.
+pub struct SrtEventsModule;
 
-  let srt = Object::new(ctx.clone()).expect("create srt object");
-  srt.set("on", on).expect("set srt.on");
-  srt.set("once", once).expect("set srt.once");
-  ctx.globals().set("srt", srt).expect("set srt global");
+impl ModuleDef for SrtEventsModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
+    decl.declare("on")?;
+    decl.declare("once")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
+    exports.export("on", Function::new(ctx.clone(), on_impl)?)?;
+    exports.export("once", Function::new(ctx.clone(), once_impl)?)?;
+    Ok(())
+  }
 }
 
 // Returns the cached sticky value for `event` restored into the current
@@ -37,7 +53,7 @@ fn cached<'js>(ctx: &Ctx<'js>, event: &str) -> Option<Value<'js>> {
   persistent.restore(ctx).ok()
 }
 
-// srt.on(event, callback) -> unsubscribe
+// on(event, callback) -> unsubscribe
 // For a sticky event with a cached value, the callback fires synchronously with
 // that value before the listener is registered, so the value is observed
 // exactly once on subscribe and not duplicated by a later natural emit.
@@ -45,20 +61,20 @@ fn on_impl<'js>(event: String, callback: Function<'js>) -> flux::rquickjs::Resul
   let ctx = callback.ctx().clone();
   if let Some(value) = cached(&ctx, &event) {
     if let Err(e) = callback.call::<_, ()>((value,)) {
-      report_uncaught(&ctx, e, &format!("srt.on(\"{event}\") listener"));
+      report_uncaught(&ctx, e, &format!("on(\"{event}\") listener"));
     }
   }
   flux::register_listener(&ctx, event, callback, false)
 }
 
-// srt.once(event, callback) -> unsubscribe
+// once(event, callback) -> unsubscribe
 // For a sticky event with a cached value, the callback fires synchronously and
 // no persistent listener is registered; the returned unsubscribe is a no-op.
 fn once_impl<'js>(event: String, callback: Function<'js>) -> flux::rquickjs::Result<Function<'js>> {
   let ctx = callback.ctx().clone();
   if let Some(value) = cached(&ctx, &event) {
     if let Err(e) = callback.call::<_, ()>((value,)) {
-      report_uncaught(&ctx, e, &format!("srt.once(\"{event}\") listener"));
+      report_uncaught(&ctx, e, &format!("once(\"{event}\") listener"));
     }
     return Function::new(ctx, MutFn::from(|_: Ctx<'_>| {}));
   }

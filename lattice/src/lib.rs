@@ -372,6 +372,8 @@ fn ui_thread(
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
         .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
         .plugin(|ctx| plugins::events::init(&ctx))
+        .module_override("srt:events", plugins::events::SrtEventsModule)
+        .module_override("srt:dev", plugins::dev::SrtDevModule)
         .plugin(|ctx| plugins::raf::init(&ctx))
         .userdata(clock.clone());
       // Install the dev-server control surface and (when enabled) the proxy.

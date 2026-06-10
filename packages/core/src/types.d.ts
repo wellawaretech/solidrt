@@ -2,15 +2,27 @@
 
 import type { JSX as SolidJSX } from "@solidjs/signals"
 
+// UI event bus (lattice), provided by the runtime as a builtin module.
+// on/once return an unsubscribe function.
+declare module "srt:events" {
+  export function on(event: string, callback: (data: any) => void): () => void
+  export function once(event: string, callback: (data: any) => void): () => void
+}
+
+// Dev-server control surface (lattice). Present only in dev/go builds; in other
+// builds `available` is false and the functions are no-ops.
+declare module "srt:dev" {
+  export const available: boolean
+  export const canDiscover: boolean
+  export const recents: string[]
+  export function connect(address: string): void
+  export function discover(): void
+  export function stop(): void
+}
+
 declare global {
   function requestAnimationFrame(callback: (time: number) => void): number
   function cancelAnimationFrame(id: number): void
-
-  // UI event bus (lattice). on/once return an unsubscribe function.
-  let srt: {
-    on(event: string, callback: (data: any) => void): () => void
-    once(event: string, callback: (data: any) => void): () => void
-  }
 
   let ffi: {
     createRoot(id: number): void

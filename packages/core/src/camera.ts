@@ -3,6 +3,8 @@
 // (SDL semantics): the promise resolves once the stream is configured and
 // rejects if the user denies access.
 
+import { on } from "srt:events"
+
 export type CameraFacing = "front" | "back" | "unknown"
 
 export type CameraInfo = {
@@ -50,7 +52,7 @@ export function listCameras(): CameraInfo[] {
 // Events only flow once the camera subsystem is up, i.e. after the first
 // listCameras() or openCamera() call. Returns an unsubscribe function.
 export function onDeviceChange(callback: (event: { added: boolean }) => void): () => void {
-  return srt.on("cameraDeviceChange", callback)
+  return on("cameraDeviceChange", callback)
 }
 
 // One-shot scan of an RGBA8 pixel buffer for QR codes; composes with
