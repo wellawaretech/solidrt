@@ -296,12 +296,12 @@ export function Logo() {
   let [scale, setScale] = createSignal(1)
 
   onResize(({ width }) => {
-    setScale((width * 0.8) / 1500)
+    setScale((width * 1.12) / 1500)
   })
 
   return (
-    <view justifyContent="center" width={1500} height={LOGO_HEIGHT * scale()} scale={scale()}>
-      <view gap={50} flexDirection="row" alignItems="flex-end">
+    <view justifyContent="center" alignItems="center" width={1500} height={LOGO_HEIGHT * scale()} scale={scale()}>
+      <view gap={30} flexDirection="row" alignItems="flex-end">
         {letters.map((letter, i) => (
           <TangramLetter letter={letter} colors={i < 5 ? SOLID_COLORS : RT_COLORS} delay={i * STAGGER_DELAY} />
         ))}

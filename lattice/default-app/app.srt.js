@@ -4054,13 +4054,14 @@ function Logo() {
   onResize(({
     width
   }) => {
-    setScale(width * 0.8 / 1500);
+    setScale(width * 1.12 / 1500);
   });
   var _el$4 = createElement("view"), _el$5 = createElement("view");
   insertNode(_el$4, _el$5);
   setProp(_el$4, "justifyContent", "center");
+  setProp(_el$4, "alignItems", "center");
   setProp(_el$4, "width", 1500);
-  setProp(_el$5, "gap", 50);
+  setProp(_el$5, "gap", 30);
   setProp(_el$5, "flexDirection", "row");
   setProp(_el$5, "alignItems", "flex-end");
   insert(_el$5, () => letters.map((letter, i2) => createComponent2(TangramLetter, {
