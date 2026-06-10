@@ -76,13 +76,21 @@ impl Context {
   /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller.
   /// Returns the registry id assigned to the new texture.
   pub fn create_texture_from_pixels(&self, width: u32, height: u32, pixels: &[u8]) -> u64 {
+    let id = self.textures.allocate_id();
+    self.create_texture_at(id, width, height, pixels);
+    id
+  }
+
+  /// Create (or replace) the texture stored at `id`, e.g. to resize a stream
+  /// texture without invalidating the id handed out to consumers. Lookups pick
+  /// up the new texture immediately; in-flight users of the old entry keep it
+  /// alive until released.
+  pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
     gpu.upload(&self.wgpu_device, &self.wgpu_queue, pixels, size);
     let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
-    let id = self.textures.allocate_id();
     self.textures.insert(id, TextureEntry { gpu, impeller });
-    id
   }
 
   /// Re-upload RGBA8 pixels into an existing texture. `pixels` may be a larger

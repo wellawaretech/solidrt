@@ -33,3 +33,4 @@ wgpu = { version = "29", features = ["gles"] }
 log = { workspace = true }
 pollster = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
+rqrr = { version = "0.10.1", default-features = false }

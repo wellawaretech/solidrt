@@ -32,8 +32,9 @@ declare global {
 
   let camera: {
     listCameras(): { id: number, name: string, facing: "front" | "back" | "unknown" }[]
-    open(options: { camera?: number, facing?: "front" | "back", width?: number, height?: number }):
+    open(options: { camera?: number, facing?: "front" | "back", width?: number, height?: number, scan?: string[] }):
       Promise<{ handle: number, texture: number, width: number, height: number }>
+    setBarcodeCallback(handle: number, callback: (result: { data: string, format: "qr" }) => void): void
     close(handle: number): void
   }
 }

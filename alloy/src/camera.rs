@@ -42,9 +42,29 @@ pub enum CameraStatus {
 struct Session {
   camera: *mut SDL_Camera,
   status: CameraStatus,
-  /// Row-repack buffer for frames whose pitch exceeds width * 4.
+  /// Permission granted; streaming starts and the texture is created on the
+  /// first frame, since the upright size depends on the per-frame rotation.
+  approved: bool,
+  /// Registry id the stream texture is (re)created at, allocated up front so
+  /// it survives size changes when the device rotates.
+  texture_id: u64,
+  /// Upright-frame buffer (pitch repack and/or rotation output).
   scratch: Vec<u8>,
+  /// Decode QR codes from the stream (opt-in at open).
+  scan_qr: bool,
+  /// Greyscale scratch for the QR decoder.
+  gray: Vec<u8>,
+  /// Uploaded frames since the last decode attempt (decode every Nth frame).
+  frames_since_scan: u32,
+  /// Last time a decode was reported, for the 1s re-report throttle.
+  last_emit: Option<std::time::Instant>,
+  /// Decoded payloads waiting for `take_camera_barcodes`.
+  barcodes: Vec<String>,
 }
+
+/// Try a QR decode every Nth uploaded frame (~3/s at 30fps); rqrr costs
+/// multiple ms per attempt and runs on the UI thread.
+const SCAN_INTERVAL_FRAMES: u32 = 10;
 
 #[derive(Default)]
 pub struct CameraRegistry {
@@ -91,13 +111,18 @@ impl crate::context::Context {
     device: Option<u32>,
     facing: Option<CameraFacing>,
     size: Option<(u32, u32)>,
+    scan_qr: bool,
   ) -> Result<u64, String> {
     ensure_init()?;
     let id = match device {
       Some(d) => d,
       None => {
         let cams = list_cameras();
-        let preferred = facing.and_then(|f| cams.iter().find(|c| c.facing == f));
+        // Default to the back camera: viewfinders and scanning overwhelmingly
+        // want it on phones, and desktop webcams (facing Unknown) fall through
+        // to "first camera" either way.
+        let want = facing.unwrap_or(CameraFacing::Back);
+        let preferred = cams.iter().find(|c| c.facing == want);
         preferred.or_else(|| cams.first()).map(|c| c.id).ok_or_else(|| "no cameras available".to_string())?
       }
     };
@@ -123,12 +148,30 @@ impl crate::context::Context {
       *next += 1;
       *next
     };
-    self
-      .cameras
-      .sessions
-      .borrow_mut()
-      .insert(sid, Session { camera, status: CameraStatus::Pending, scratch: Vec::new() });
+    self.cameras.sessions.borrow_mut().insert(
+      sid,
+      Session {
+        camera,
+        status: CameraStatus::Pending,
+        approved: false,
+        texture_id: self.textures.allocate_id(),
+        scratch: Vec::new(),
+        scan_qr,
+        gray: Vec::new(),
+        frames_since_scan: 0,
+        last_emit: None,
+        barcodes: Vec::new(),
+      },
+    );
     Ok(sid)
+  }
+
+  /// Drain the QR payloads decoded since the last call.
+  pub fn take_camera_barcodes(&self, sid: u64) -> Vec<String> {
+    match self.cameras.sessions.borrow_mut().get_mut(&sid) {
+      Some(session) => std::mem::take(&mut session.barcodes),
+      None => Vec::new(),
+    }
   }
 
   pub fn camera_status(&self, sid: u64) -> Option<CameraStatus> {
@@ -158,33 +201,24 @@ impl crate::context::Context {
     let mut sessions = self.cameras.sessions.borrow_mut();
     for session in sessions.values_mut() {
       match session.status {
-        CameraStatus::Pending => self.pump_pending(session),
-        CameraStatus::Ready { texture_id, width, height } => self.pump_frame(session, texture_id, width, height),
+        CameraStatus::Pending => {
+          if !session.approved {
+            Self::pump_permission(session);
+          }
+          if session.approved {
+            self.pump_frame(session);
+          }
+        }
+        CameraStatus::Ready { .. } => self.pump_frame(session),
         CameraStatus::Denied => {}
       }
     }
   }
 
-  fn pump_pending(&self, session: &mut Session) {
+  fn pump_permission(session: &mut Session) {
     use sdl3::sys::camera::SDL_CameraPermissionState as P;
     match sdl_utils::camera_permission(session.camera) {
-      P::APPROVED => {
-        let Some(spec) = sdl_utils::camera_format(session.camera) else {
-          log::error!("[camera] approved but no format: {}", sdl_utils::sdl_error());
-          sdl_utils::camera_close(session.camera);
-          session.status = CameraStatus::Denied;
-          return;
-        };
-        let (width, height) = (spec.width as u32, spec.height as u32);
-        // Opaque black placeholder until the first frame arrives.
-        let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
-        for px in pixels.chunks_exact_mut(4) {
-          px[3] = 255;
-        }
-        let texture_id = self.create_texture_from_pixels(width, height, &pixels);
-        log::info!("[camera] ready: {width}x{height} -> texture {texture_id}");
-        session.status = CameraStatus::Ready { texture_id, width, height };
-      }
+      P::APPROVED => session.approved = true,
       P::DENIED => {
         log::warn!("[camera] permission denied");
         sdl_utils::camera_close(session.camera);
@@ -194,36 +228,126 @@ impl crate::context::Context {
     }
   }
 
-  fn pump_frame(&self, session: &mut Session, texture_id: u64, width: u32, height: u32) {
+  /// Upload the latest frame, rotated upright per SDL's per-frame rotation
+  /// (mobile sensor + display orientation). The texture is created on the
+  /// first frame and recreated at the same id when the upright size changes
+  /// (device rotated between portrait and landscape).
+  fn pump_frame(&self, session: &mut Session) {
     let frame = sdl_utils::camera_acquire_frame(session.camera);
     if frame.is_null() {
       return;
     }
     let surface = unsafe { &*frame };
-    let row_bytes = (width as usize) * 4;
-    if surface.format != SDL_PIXELFORMAT_RGBA32 || surface.w as u32 != width || surface.h as u32 != height {
-      log::warn!(
-        "[camera] unexpected frame {}x{} format {:#x}, expected {width}x{height} RGBA32",
-        surface.w,
-        surface.h,
-        surface.format.0
-      );
+    if surface.format != SDL_PIXELFORMAT_RGBA32 {
+      log::warn!("[camera] unexpected frame format {:#x}, expected RGBA32", surface.format.0);
       sdl_utils::camera_release_frame(session.camera, frame);
       return;
     }
 
+    let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
+    let rotation = sdl_utils::surface_rotation_degrees(frame);
+    let (width, height) = if rotation == 90 || rotation == 270 { (frame_h, frame_w) } else { (frame_w, frame_h) };
+
     let pitch = surface.pitch as usize;
-    if pitch == row_bytes {
-      let pixels = unsafe { std::slice::from_raw_parts(surface.pixels as *const u8, row_bytes * height as usize) };
-      let _ = self.update_texture(texture_id, pixels, 0);
+    let row_bytes = (frame_w as usize) * 4;
+    let direct = rotation == 0 && pitch == row_bytes;
+    if !direct {
+      upright_into(surface, rotation, &mut session.scratch);
+    }
+    let pixels: &[u8] = if direct {
+      unsafe { std::slice::from_raw_parts(surface.pixels as *const u8, row_bytes * frame_h as usize) }
     } else {
-      session.scratch.resize(row_bytes * height as usize, 0);
-      for row in 0..height as usize {
-        let src = unsafe { std::slice::from_raw_parts((surface.pixels as *const u8).add(row * pitch), row_bytes) };
-        session.scratch[row * row_bytes..(row + 1) * row_bytes].copy_from_slice(src);
+      &session.scratch
+    };
+
+    let recreate = match session.status {
+      CameraStatus::Ready { width: w, height: h, .. } => w != width || h != height,
+      _ => true,
+    };
+    if recreate {
+      self.create_texture_at(session.texture_id, width, height, pixels);
+      log::info!("[camera] streaming {width}x{height} (rotation {rotation}) -> texture {}", session.texture_id);
+      session.status = CameraStatus::Ready { texture_id: session.texture_id, width, height };
+    } else {
+      let _ = self.update_texture(session.texture_id, pixels, 0);
+    }
+
+    if session.scan_qr {
+      session.frames_since_scan += 1;
+      if session.frames_since_scan >= SCAN_INTERVAL_FRAMES {
+        session.frames_since_scan = 0;
+        to_greyscale(pixels, &mut session.gray);
+        if let Some(content) = decode_qr(&session.gray, width, height) {
+          // Re-report the (still visible) code at most once a second, matching
+          // typical scanner behavior; consumers connect/dedupe on their side.
+          let due = session.last_emit.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(1));
+          if due {
+            session.last_emit = Some(std::time::Instant::now());
+            session.barcodes.push(content);
+          }
+        }
       }
-      let _ = self.update_texture(texture_id, &session.scratch, 0);
     }
     sdl_utils::camera_release_frame(session.camera, frame);
   }
+}
+
+/// Copy `surface` into `dst` rotated clockwise by `rotation` degrees, tightly
+/// packed RGBA8 (also flattens any pitch padding).
+fn upright_into(surface: &sdl3::sys::surface::SDL_Surface, rotation: u32, dst: &mut Vec<u8>) {
+  let (w, h) = (surface.w as usize, surface.h as usize);
+  let pitch = surface.pitch as usize;
+  let base = surface.pixels as *const u8;
+  dst.resize(w * h * 4, 0);
+  for r in 0..h {
+    let row = unsafe { std::slice::from_raw_parts(base.add(r * pitch), w * 4) };
+    match rotation {
+      // (r, c) -> (c, h-1-r); rotated row length is h
+      90 => {
+        for c in 0..w {
+          let di = (c * h + (h - 1 - r)) * 4;
+          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
+        }
+      }
+      // (r, c) -> (h-1-r, w-1-c)
+      180 => {
+        for c in 0..w {
+          let di = ((h - 1 - r) * w + (w - 1 - c)) * 4;
+          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
+        }
+      }
+      // (r, c) -> (w-1-c, r); rotated row length is h
+      270 => {
+        for c in 0..w {
+          let di = ((w - 1 - c) * h + r) * 4;
+          dst[di..di + 4].copy_from_slice(&row[c * 4..c * 4 + 4]);
+        }
+      }
+      // Pitch repack only.
+      _ => dst[r * w * 4..(r + 1) * w * 4].copy_from_slice(row),
+    }
+  }
+}
+
+/// RGBA8 -> luma, reusing `gray`. Cheap (r + 2g + b) / 4 approximation.
+fn to_greyscale(pixels: &[u8], gray: &mut Vec<u8>) {
+  gray.clear();
+  gray.extend(pixels.chunks_exact(4).map(|px| {
+    let (r, g, b) = (px[0] as u16, px[1] as u16, px[2] as u16);
+    ((r + 2 * g + b) / 4) as u8
+  }));
+}
+
+/// First decodable QR grid in the frame, if any.
+fn decode_qr(gray: &[u8], width: u32, height: u32) -> Option<String> {
+  let (w, h) = (width as usize, height as usize);
+  let mut img = rqrr::PreparedImage::prepare_from_greyscale(w, h, |x, y| gray[y * w + x]);
+  for grid in img.detect_grids() {
+    match grid.decode() {
+      Ok((_meta, content)) if !content.is_empty() => return Some(content),
+      Ok(_) => {}
+      Err(e) => log::debug!("[camera] QR decode failed: {e}"),
+    }
+  }
+  None
 }

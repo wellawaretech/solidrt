@@ -129,3 +129,23 @@ pub fn camera_close(camera: *mut SDL_Camera) {
 pub fn sdl_error() -> String {
   sdl3::get_error().to_string()
 }
+
+/// Degrees (clockwise, snapped to 0/90/180/270) to rotate an acquired camera
+/// frame for an upright image; SDL sets this per frame on mobile (sensor
+/// orientation + current display rotation), absent means 0.
+pub fn surface_rotation_degrees(frame: *mut SDL_Surface) -> u32 {
+  use sdl3::sys::properties::SDL_GetFloatProperty;
+  use sdl3::sys::surface::{SDL_GetSurfaceProperties, SDL_PROP_SURFACE_ROTATION_FLOAT};
+
+  let props = unsafe { SDL_GetSurfaceProperties(frame) };
+  let degrees = unsafe { SDL_GetFloatProperty(props, SDL_PROP_SURFACE_ROTATION_FLOAT, 0.0) };
+  let normalized = ((degrees.round() as i32 % 360) + 360) % 360;
+  match normalized {
+    90 | 180 | 270 => normalized as u32,
+    0 => 0,
+    other => {
+      log::warn!("[camera] non-quadrant frame rotation {other}, treating as 0");
+      0
+    }
+  }
+}
