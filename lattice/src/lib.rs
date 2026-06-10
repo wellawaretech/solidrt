@@ -282,6 +282,7 @@ fn ui_thread(
                   }
                   None => raw,
                 };
+                plugins::camera::tick(&ctx);
                 plugins::raf::flush(&ctx, ts);
                 let time = ts / 1000.0;
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
@@ -337,6 +338,9 @@ fn ui_thread(
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
+      // A reloaded app must not inherit (or leak) the previous app's open
+      // capture devices; their JS handles died with the old engine.
+      atx.close_all_cameras();
       let input_state = input_state.clone();
       let engine_state = Arc::new(EngineState::new());
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
@@ -345,6 +349,7 @@ fn ui_thread(
       let tree_platform = platform.clone();
       let tree_atx = AlloyContext(atx.clone());
       let texture_atx = AlloyContext(atx.clone());
+      let camera_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .logger(|level, msg| match level {
@@ -356,6 +361,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
+        .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .plugin(|ctx| plugins::raf::init(&ctx))
         .userdata(clock.clone());

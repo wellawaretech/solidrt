@@ -53,3 +53,79 @@ pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {
 pub fn mod_state() -> sdl3::keyboard::Mod {
   unsafe { sdl3::keyboard::Mod::from_bits(SDL_GetModState().0).unwrap_or(sdl3::keyboard::Mod::NOMOD) }
 }
+
+// --- Camera (SDL camera subsystem; not exposed by the sdl3 crate) -----------
+//
+// Thin unsafe-call wrappers only; camera session logic lives in crate::camera.
+
+use sdl3::sys::camera::{
+  SDL_AcquireCameraFrame, SDL_Camera, SDL_CameraID, SDL_CameraPermissionState, SDL_CameraPosition, SDL_CameraSpec,
+  SDL_CloseCamera, SDL_GetCameraFormat, SDL_GetCameraName, SDL_GetCameraPermissionState, SDL_GetCameraPosition,
+  SDL_GetCameras, SDL_OpenCamera, SDL_ReleaseCameraFrame,
+};
+use sdl3::sys::init::{SDL_InitSubSystem, SDL_INIT_CAMERA};
+use sdl3::sys::stdinc::SDL_free;
+use sdl3::sys::surface::SDL_Surface;
+
+pub fn camera_subsystem_init() -> bool {
+  unsafe { SDL_InitSubSystem(SDL_INIT_CAMERA) }
+}
+
+pub fn camera_ids() -> Vec<u32> {
+  let mut count: std::ffi::c_int = 0;
+  let ids = unsafe { SDL_GetCameras(&mut count) };
+  if ids.is_null() {
+    return Vec::new();
+  }
+  let result = (0..count as usize).map(|i| unsafe { (*ids.add(i)).0 }).collect();
+  unsafe { SDL_free(ids as *mut std::ffi::c_void) };
+  result
+}
+
+pub fn camera_name(id: u32) -> String {
+  let name = unsafe { SDL_GetCameraName(SDL_CameraID(id)) };
+  if name.is_null() {
+    return String::new();
+  }
+  unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned()
+}
+
+pub fn camera_position(id: u32) -> SDL_CameraPosition {
+  unsafe { SDL_GetCameraPosition(SDL_CameraID(id)) }
+}
+
+pub fn camera_open(id: u32, spec: &SDL_CameraSpec) -> *mut SDL_Camera {
+  unsafe { SDL_OpenCamera(SDL_CameraID(id), spec) }
+}
+
+pub fn camera_permission(camera: *mut SDL_Camera) -> SDL_CameraPermissionState {
+  unsafe { SDL_GetCameraPermissionState(camera) }
+}
+
+/// The spec frames are delivered in (valid once permission is approved).
+pub fn camera_format(camera: *mut SDL_Camera) -> Option<SDL_CameraSpec> {
+  let mut spec = SDL_CameraSpec::default();
+  if unsafe { SDL_GetCameraFormat(camera, &mut spec) } {
+    Some(spec)
+  } else {
+    None
+  }
+}
+
+/// The latest frame, or null when no new frame is available. Must be returned
+/// with `camera_release_frame` (do not free or hold across pumps).
+pub fn camera_acquire_frame(camera: *mut SDL_Camera) -> *mut SDL_Surface {
+  unsafe { SDL_AcquireCameraFrame(camera, std::ptr::null_mut()) }
+}
+
+pub fn camera_release_frame(camera: *mut SDL_Camera, frame: *mut SDL_Surface) {
+  unsafe { SDL_ReleaseCameraFrame(camera, frame) };
+}
+
+pub fn camera_close(camera: *mut SDL_Camera) {
+  unsafe { SDL_CloseCamera(camera) };
+}
+
+pub fn sdl_error() -> String {
+  sdl3::get_error().to_string()
+}

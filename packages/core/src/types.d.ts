@@ -29,6 +29,13 @@ declare global {
     uploadTexture(textureId: number, offset?: number): void
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }
+
+  let camera: {
+    listCameras(): { id: number, name: string, facing: "front" | "back" | "unknown" }[]
+    open(options: { camera?: number, facing?: "front" | "back", width?: number, height?: number }):
+      Promise<{ handle: number, texture: number, width: number, height: number }>
+    close(handle: number): void
+  }
 }
 
 export interface MeasureTextOptions {

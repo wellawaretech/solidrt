@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::mpsc;
 
 use crate::backend::Backend;
+use crate::camera::CameraRegistry;
 use crate::gl;
 use crate::texture::{GpuTexture, TextureEntry, TextureRegistry};
 
@@ -12,6 +13,7 @@ pub struct Context {
   wgpu_queue: wgpu::Queue,
   impeller_ctx: ImpellerContext,
   pub textures: TextureRegistry,
+  pub(crate) cameras: CameraRegistry,
   tx: mpsc::Sender<DisplayList>,
 }
 
@@ -31,7 +33,15 @@ impl Context {
     impeller_ctx: ImpellerContext,
     tx: mpsc::Sender<DisplayList>,
   ) -> Self {
-    Context { backend, wgpu_device, wgpu_queue, impeller_ctx, textures: TextureRegistry::new(), tx }
+    Context {
+      backend,
+      wgpu_device,
+      wgpu_queue,
+      impeller_ctx,
+      textures: TextureRegistry::new(),
+      cameras: CameraRegistry::default(),
+      tx,
+    }
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {

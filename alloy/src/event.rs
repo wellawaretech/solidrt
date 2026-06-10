@@ -173,8 +173,8 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         pointer_type: PointerType::Mouse,
         x: mouse_x / scale,
         y: mouse_y / scale,
-        delta_x: sign * x,
-        delta_y: sign * y,
+        delta_x: sign * x * 100.0,
+        delta_y: sign * y * 100.0,
         modifiers: sdl_utils::mod_state().into(),
       })
     }
