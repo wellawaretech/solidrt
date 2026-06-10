@@ -277,8 +277,8 @@ impl crate::context::Context {
       session.frames_since_scan += 1;
       if session.frames_since_scan >= SCAN_INTERVAL_FRAMES {
         session.frames_since_scan = 0;
-        to_greyscale(pixels, &mut session.gray);
-        if let Some(content) = decode_qr(&session.gray, width, height) {
+        crate::barcode::to_greyscale(pixels, &mut session.gray);
+        if let Some(content) = crate::barcode::decode_qr(&session.gray, width, height) {
           // Re-report the (still visible) code at most once a second, matching
           // typical scanner behavior; consumers connect/dedupe on their side.
           let due = session.last_emit.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(1));
@@ -326,27 +326,6 @@ fn upright_into(surface: &sdl3::sys::surface::SDL_Surface, rotation: u32, dst: &
       }
       // Pitch repack only.
       _ => dst[r * w * 4..(r + 1) * w * 4].copy_from_slice(row),
-    }
-  }
-}
-
-/// RGBA8 -> luma, reusing `gray`. Cheap (r + 2g + b) / 4 approximation.
-fn to_greyscale(pixels: &[u8], gray: &mut Vec<u8>) {
-  gray.clear();
-  gray.extend(pixels.chunks_exact(4).map(|px| {
-    let (r, g, b) = (px[0] as u16, px[1] as u16, px[2] as u16);
-    ((r + 2 * g + b) / 4) as u8
-  }));
-}
-
-/// First decodable QR code in the frame, if any.
-fn decode_qr(gray: &[u8], width: u32, height: u32) -> Option<String> {
-  match rxing::helpers::detect_in_luma(gray.to_vec(), width, height, Some(rxing::BarcodeFormat::QR_CODE)) {
-    Ok(result) => Some(result.getText().to_string()),
-    // The overwhelmingly common case is simply "no code in this frame".
-    Err(e) => {
-      log::trace!("[camera] no QR in frame: {e}");
-      None
     }
   }
 }

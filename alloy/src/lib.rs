@@ -3,6 +3,7 @@ pub mod sdl_utils;
 
 mod app;
 mod backend;
+pub mod barcode;
 pub mod camera;
 mod context;
 mod event;

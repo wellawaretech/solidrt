@@ -35,6 +35,7 @@ declare global {
     open(options: { camera?: number, facing?: "front" | "back", width?: number, height?: number, scan?: string[] }):
       Promise<{ handle: number, texture: number, width: number, height: number }>
     setBarcodeCallback(handle: number, callback: (result: { data: string, format: "qr" }) => void): void
+    scanImage(data: Uint8Array, width: number, height: number): { data: string, format: "qr" }[]
     close(handle: number): void
   }
 }

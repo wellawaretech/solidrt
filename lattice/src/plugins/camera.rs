@@ -13,7 +13,7 @@ use std::rc::Rc;
 use alloy::camera::{CameraFacing, CameraStatus};
 use flux::rquickjs::function::Opt;
 use flux::rquickjs::promise::Promise;
-use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent};
+use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
 use crate::AlloyContext;
 
@@ -50,12 +50,14 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   let open = Function::new(ctx.clone(), open_impl).expect("create camera.open");
   let close = Function::new(ctx.clone(), close_impl).expect("create camera.close");
   let set_barcode = Function::new(ctx.clone(), set_barcode_impl).expect("create camera.setBarcodeCallback");
+  let scan_image = Function::new(ctx.clone(), scan_image_impl).expect("create camera.scanImage");
 
   let camera = Object::new(ctx.clone()).expect("create camera object");
   camera.set("listCameras", list).expect("set camera.listCameras");
   camera.set("open", open).expect("set camera.open");
   camera.set("close", close).expect("set camera.close");
   camera.set("setBarcodeCallback", set_barcode).expect("set camera.setBarcodeCallback");
+  camera.set("scanImage", scan_image).expect("set camera.scanImage");
   ctx.globals().set("camera", camera).expect("set camera global");
 }
 
@@ -137,6 +139,31 @@ fn close_impl(ctx: Ctx<'_>, session: u64) {
 fn set_barcode_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
   state.0.barcode_handlers.borrow_mut().insert(session, Persistent::save(&ctx, callback));
+}
+
+/// One-shot scan of an RGBA8 pixel buffer (e.g. decodeImage output); returns
+/// every decoded QR code as { data, format: "qr" }.
+fn scan_image_impl<'js>(
+  ctx: Ctx<'js>,
+  data: TypedArray<'js, u8>,
+  width: u32,
+  height: u32,
+) -> flux::rquickjs::Result<Array<'js>> {
+  let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "scanImage: detached buffer"))?;
+  let expected = (width as usize) * (height as usize) * 4;
+  if raw.len != expected {
+    return Err(throw_str(&ctx, &format!("scanImage: expected {expected} RGBA8 bytes, got {}", raw.len)));
+  }
+  let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+
+  let arr = Array::new(ctx.clone())?;
+  for (i, content) in alloy::barcode::scan_rgba(pixels, width, height).into_iter().enumerate() {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("data", content)?;
+    obj.set("format", "qr")?;
+    arr.set(i, obj)?;
+  }
+  Ok(arr)
 }
 
 /// Reject an open() promise with an Error carrying `msg`.
