@@ -1,6 +1,12 @@
 import { onFrame, onResize } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
+const EXPLODE_DIST = 3
+const STAGGER_DELAY = 100
+const ANIM_DURATION = 600
+const HOLD_ASSEMBLED = 5000
+const HOLD_EXPLODED = 0
+
 type LogoColors = {
   dark: string
   mid: string
@@ -222,13 +228,6 @@ let letters: Letter[] = [
     ],
   },
 ]
-
-const EXPLODE_DIST = 10
-
-const STAGGER_DELAY = 50
-const ANIM_DURATION = 600
-const HOLD_ASSEMBLED = 5000
-const HOLD_EXPLODED = 0
 
 function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: number }) {
   let [dist, setDist] = createSignal(EXPLODE_DIST)
