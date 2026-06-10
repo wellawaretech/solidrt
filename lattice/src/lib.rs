@@ -235,6 +235,15 @@ fn ui_thread(
               });
             }
           }
+          alloy::AlloyEvent::CameraDeviceChange { added } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("added", added).expect("set added");
+                emit_event(&ctx, "cameraDeviceChange", obj);
+              });
+            }
+          }
           alloy::AlloyEvent::PowerStatus { info } => {
             if let Some(eh) = current_exec_events.borrow().as_ref() {
               use alloy::sdl_utils::PowerState;

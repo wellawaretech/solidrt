@@ -83,6 +83,16 @@ pub enum AlloyEvent {
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.
   Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
+  // Camera hotplug. Carries no device id (subscribers re-enumerate via
+  // camera::list_cameras()). SDL only delivers these once the camera
+  // subsystem is initialized, i.e. after the first list/open call.
+  //
+  // KNOWN GAP (SDL 3.4.8): the pipewire camera backend (default on
+  // Wayland/Arch) never posts removals -- its global_remove callback is
+  // empty and it never calls SDL_CameraDisconnected, so added=false never
+  // arrives there and list_cameras() keeps reporting the unplugged device.
+  // The v4l2 backend handles both. Not worked around; revisit if SDL fixes it.
+  CameraDeviceChange { added: bool },
 }
 
 pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -216,6 +226,15 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
       })
     }
     SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
+    // The sdl3 crate has no Event variants for camera device events, so they
+    // arrive as Unknown and are recovered by raw type id. Approved/denied
+    // (0x1402/0x1403) stay ignored: open_camera polls permission state itself.
+    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_ADDED.0 => {
+      Some(AlloyEvent::CameraDeviceChange { added: true })
+    }
+    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_CAMERA_DEVICE_REMOVED.0 => {
+      Some(AlloyEvent::CameraDeviceChange { added: false })
+    }
     _ => None,
   }
 }

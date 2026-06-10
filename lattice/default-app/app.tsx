@@ -1,5 +1,5 @@
 import { render } from "@solidrt/core"
-import { CameraView, listCameras } from "@solidrt/core/camera"
+import { CameraView, listCameras, onDeviceChange } from "@solidrt/core/camera"
 import { createSignal } from "@solidjs/signals"
 import { For, Show } from "solid-js"
 import { platform } from "flux:process"
@@ -45,7 +45,8 @@ function Button(props: { label: string; color: string; onTap: () => void }) {
 
 function App() {
   let dev = typeof srt !== "undefined" ? srt.dev : undefined
-  let hasCamera = listCameras().length > 0
+  let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0)
+  onDeviceChange(() => setHasCamera(listCameras().length > 0))
   let isAndroid = platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
@@ -117,7 +118,7 @@ function App() {
             {idle() && !scanning() && dev?.canDiscover && (
               <Button label="Discover" color="#3366b3" onTap={() => dev.discover()} />
             )}
-            {idle() && !scanning() && dev && hasCamera && (
+            {idle() && !scanning() && dev && hasCamera() && (
               <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
             {idle() && !scanning() && isAndroid && (

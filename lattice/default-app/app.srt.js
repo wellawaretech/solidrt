@@ -3574,6 +3574,9 @@ function CameraView(props) {
 function listCameras() {
   return camera.listCameras();
 }
+function onDeviceChange(callback) {
+  return srt.on("cameraDeviceChange", callback);
+}
 async function openCamera(options = {}) {
   let opened = await camera.open(options);
   return {
@@ -4127,7 +4130,8 @@ function Button(props) {
 }
 function App() {
   let dev = typeof srt !== "undefined" ? srt.dev : undefined;
-  let hasCamera = listCameras().length > 0;
+  let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0);
+  onDeviceChange(() => setHasCamera(listCameras().length > 0));
   let isAndroid = platform === "android";
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
@@ -4201,7 +4205,7 @@ function App() {
     });
   })(), null);
   insert(_el$9, (() => {
-    var _c$2 = memo2(() => !!(idle() && !scanning() && dev && hasCamera));
+    var _c$2 = memo2(() => !!(idle() && !scanning() && dev && hasCamera()));
     return () => _c$2() && createComponent2(Button, {
       label: "Scan QR",
       color: "#3366b3",

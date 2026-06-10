@@ -46,6 +46,15 @@ export function listCameras(): CameraInfo[] {
   return camera.listCameras()
 }
 
+// Camera hotplug. Re-enumerate with listCameras() to see the new device set.
+// Events only flow once the camera subsystem is up, i.e. after the first
+// listCameras() or openCamera() call. Returns an unsubscribe function.
+// Caveat: on Linux/pipewire (SDL 3.4.8) removals are never reported, so
+// expect added=true events but not added=false ones there.
+export function onDeviceChange(callback: (event: { added: boolean }) => void): () => void {
+  return srt.on("cameraDeviceChange", callback)
+}
+
 // One-shot scan of an RGBA8 pixel buffer for QR codes; composes with
 // decodeImage: scanBarcodes(img.data, img.width, img.height).
 export function scanBarcodes(data: Uint8Array, width: number, height: number): BarcodeResult[] {
