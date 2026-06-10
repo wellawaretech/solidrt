@@ -49,8 +49,6 @@ export function listCameras(): CameraInfo[] {
 // Camera hotplug. Re-enumerate with listCameras() to see the new device set.
 // Events only flow once the camera subsystem is up, i.e. after the first
 // listCameras() or openCamera() call. Returns an unsubscribe function.
-// Caveat: on Linux/pipewire (SDL 3.4.8) removals are never reported, so
-// expect added=true events but not added=false ones there.
 export function onDeviceChange(callback: (event: { added: boolean }) => void): () => void {
   return srt.on("cameraDeviceChange", callback)
 }

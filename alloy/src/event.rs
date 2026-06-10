@@ -87,11 +87,11 @@ pub enum AlloyEvent {
   // camera::list_cameras()). SDL only delivers these once the camera
   // subsystem is initialized, i.e. after the first list/open call.
   //
-  // KNOWN GAP (SDL 3.4.8): the pipewire camera backend (default on
-  // Wayland/Arch) never posts removals -- its global_remove callback is
-  // empty and it never calls SDL_CameraDisconnected, so added=false never
-  // arrives there and list_cameras() keeps reporting the unplugged device.
-  // The v4l2 backend handles both. Not worked around; revisit if SDL fixes it.
+  // SDL 3.4.8's pipewire backend never posts removals (its hotplug remove
+  // callback is empty and it never calls SDL_CameraDisconnected), so on
+  // desktop Linux we force the v4l2 backend in camera_subsystem_init, which
+  // handles both. Removals are still lost if pipewire is forced back via the
+  // SDL_CAMERA_DRIVER env var.
   CameraDeviceChange { added: bool },
 }
 
