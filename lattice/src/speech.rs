@@ -47,6 +47,14 @@ pub struct RecognizerConfig {
   pub language: String,
   /// Also transcribe utterances while they are still being spoken (`Interim`).
   pub interim: bool,
+  /// Start armed: drop transcripts until an utterance contains this phrase,
+  /// then emit `Wake` (plus the text following the phrase as a `Final`) and
+  /// deliver normally. Matched on normalized words, so transcription
+  /// punctuation and casing do not matter.
+  pub wake_word: Option<String>,
+  /// With a wake word: re-arm after each delivered `Final` (one command per
+  /// wake). Without one this is the caller's concern (stop on first result).
+  pub single_utterance: bool,
 }
 
 pub enum RecognizerEvent {
@@ -59,6 +67,8 @@ pub enum RecognizerEvent {
   /// VAD detected the end of an utterance; its `Final` follows after
   /// transcription.
   SpeechEnd,
+  /// An armed recognizer heard the wake word.
+  Wake,
   /// Snapshot transcript of the utterance still being spoken (interim only).
   Interim(String),
   /// Transcript of a completed utterance.
@@ -123,6 +133,12 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
   let mut queue: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
   let mut speaking = false;
   let mut since_interim: usize = 0;
+  let wake_words: Option<Vec<String>> = config
+    .wake_word
+    .as_deref()
+    .map(|w| norm_words(w).into_iter().map(|(word, _)| word).collect())
+    .filter(|w: &Vec<String>| !w.is_empty());
+  let mut armed = wake_words.is_some();
 
   // Ingest exactly CHECK_INTERVAL samples per iteration so segmentation works
   // the same whether audio arrives in real time or all at once; the blocking
@@ -162,8 +178,9 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       };
       let cap = audio.len() >= MAX_UTTERANCE;
       if trailing < END_SILENCE && !cap {
-        // Utterance still in progress: optionally transcribe a snapshot of it.
-        if config.interim && since_interim >= INTERIM_INTERVAL {
+        // Utterance still in progress: optionally transcribe a snapshot of it
+        // (suppressed while armed; pre-wake speech must not leak).
+        if config.interim && !armed && since_interim >= INTERIM_INTERVAL {
           since_interim = 0;
           match transcribe(&mut state, &audio, &config.language) {
             Ok(text) => {
@@ -187,9 +204,30 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       }
       match transcribe(&mut state, &audio, &config.language) {
         Ok(text) => {
-          let text = text.trim().to_string();
-          if !text.is_empty() && events_tx.send(RecognizerEvent::Final(text)).is_err() {
-            return;
+          let text = text.trim();
+          // While armed, utterances only count if they contain the wake
+          // phrase; the text after it (if any) becomes the first result.
+          let deliver = match (&wake_words, armed) {
+            (Some(wake), true) => match match_wake(text, wake) {
+              Some(remainder) => {
+                armed = false;
+                if events_tx.send(RecognizerEvent::Wake).is_err() {
+                  return;
+                }
+                remainder.to_string()
+              }
+              None => String::new(),
+            },
+            _ => text.to_string(),
+          };
+          if !deliver.is_empty() {
+            if events_tx.send(RecognizerEvent::Final(deliver)).is_err() {
+              return;
+            }
+            // One command per wake: go back to sleep until the next wake word.
+            if config.single_utterance && wake_words.is_some() {
+              armed = true;
+            }
           }
         }
         Err(e) => return fail(format!("transcription failed: {e}")),
@@ -198,6 +236,45 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       speaking = false;
     }
   }
+}
+
+/// Lowercased alphanumeric words of `text`, each with the byte offset just
+/// past the word in the original string.
+fn norm_words(text: &str) -> Vec<(String, usize)> {
+  let mut words = Vec::new();
+  let mut current = String::new();
+  let mut end = 0;
+  for (i, c) in text.char_indices() {
+    if c.is_alphanumeric() {
+      current.extend(c.to_lowercase());
+      end = i + c.len_utf8();
+    } else if !current.is_empty() {
+      words.push((std::mem::take(&mut current), end));
+    }
+  }
+  if !current.is_empty() {
+    words.push((current, end));
+  }
+  words
+}
+
+/// If `text` contains `wake` as a contiguous normalized word sequence, the
+/// text following the match (possibly empty), with leading punctuation
+/// trimmed; None when the wake phrase does not occur.
+fn match_wake<'a>(text: &'a str, wake: &[String]) -> Option<&'a str> {
+  let words = norm_words(text);
+  if words.len() < wake.len() {
+    return None;
+  }
+  for start in 0..=(words.len() - wake.len()) {
+    if (0..wake.len()).all(|i| words[start + i].0 == wake[i]) {
+      let end = words[start + wake.len() - 1].1;
+      return Some(
+        text[end..].trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ':' | ';')),
+      );
+    }
+  }
+  None
 }
 
 /// Load the Silero VAD context from model bytes. whisper-rs wraps no

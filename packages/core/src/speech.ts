@@ -15,10 +15,16 @@ export type SpeechOptions = {
   language?: string
   /** Explicit microphone device id from listMicrophones(). */
   microphone?: number
-  /** Stop automatically after the first final result. */
+  /** Stop automatically after the first final result (with wakeWord: re-arm instead, one result per wake). */
   singleUtterance?: boolean
   /** Also deliver snapshot transcripts (final: false) while an utterance is still being spoken. */
   interimResults?: boolean
+  /**
+   * Start asleep: discard everything until an utterance contains this phrase,
+   * then fire onWake and deliver results (starting with any text following
+   * the phrase in the same utterance). Matching ignores casing/punctuation.
+   */
+  wakeWord?: string
 }
 
 export type SpeechResult = {
@@ -35,6 +41,8 @@ export type SpeechSession = {
   onSpeechStart(callback: () => void): void
   /** The utterance ended; its final result follows once transcribed. */
   onSpeechEnd(callback: () => void): void
+  /** The wake word was heard (wakeWord sessions only). */
+  onWake(callback: () => void): void
   /** Release the microphone and discard any utterance in progress. */
   stop(): void
 }
@@ -45,6 +53,7 @@ export async function startRecognition(options: SpeechOptions): Promise<SpeechSe
     onResult: (callback: (result: SpeechResult) => void) => speech.setResultCallback(started.handle, callback),
     onSpeechStart: (callback: () => void) => speech.setSpeechStartCallback(started.handle, callback),
     onSpeechEnd: (callback: () => void) => speech.setSpeechEndCallback(started.handle, callback),
+    onWake: (callback: () => void) => speech.setWakeCallback(started.handle, callback),
     stop: () => speech.stop(started.handle),
   }
 }

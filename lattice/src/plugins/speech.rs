@@ -23,12 +23,14 @@ struct Session {
   /// alloy microphone session feeding this recognizer.
   mic: u64,
   recognizer: Recognizer,
-  /// Stop after the first final result.
-  single: bool,
+  /// Close after the first final result (singleUtterance without a wake
+  /// word; with one, the worker re-arms instead and the session stays open).
+  close_on_final: bool,
   /// Receives `{ text, final }` results.
   callback: Option<Persistent<Function<'static>>>,
   on_speech_start: Option<Persistent<Function<'static>>>,
   on_speech_end: Option<Persistent<Function<'static>>>,
+  on_wake: Option<Persistent<Function<'static>>>,
 }
 
 struct PendingStart {
@@ -61,6 +63,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   let set_callback = Function::new(ctx.clone(), set_callback_impl).expect("create speech.setResultCallback");
   let set_start = Function::new(ctx.clone(), set_speech_start_impl).expect("create speech.setSpeechStartCallback");
   let set_end = Function::new(ctx.clone(), set_speech_end_impl).expect("create speech.setSpeechEndCallback");
+  let set_wake = Function::new(ctx.clone(), set_wake_impl).expect("create speech.setWakeCallback");
   let stop = Function::new(ctx.clone(), stop_impl).expect("create speech.stop");
 
   let speech = Object::new(ctx.clone()).expect("create speech object");
@@ -68,6 +71,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   speech.set("setResultCallback", set_callback).expect("set speech.setResultCallback");
   speech.set("setSpeechStartCallback", set_start).expect("set speech.setSpeechStartCallback");
   speech.set("setSpeechEndCallback", set_end).expect("set speech.setSpeechEndCallback");
+  speech.set("setWakeCallback", set_wake).expect("set speech.setWakeCallback");
   speech.set("stop", stop).expect("set speech.stop");
   ctx.globals().set("speech", speech).expect("set speech global");
 }
@@ -88,6 +92,7 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
   let microphone: Option<u32> = options.get("microphone")?;
   let single: Option<bool> = options.get("singleUtterance")?;
   let interim: Option<bool> = options.get("interimResults")?;
+  let wake_word: Option<String> = options.get("wakeWord")?;
 
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
   let mic = state
@@ -95,11 +100,15 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     .atx
     .open_microphone(microphone, SAMPLE_RATE)
     .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
+  let single = single.unwrap_or(false);
+  let close_on_final = single && wake_word.is_none();
   let recognizer = Recognizer::start(RecognizerConfig {
     model,
     vad_model,
     language: language.unwrap_or_else(|| "en".to_string()),
     interim: interim.unwrap_or(false),
+    wake_word,
+    single_utterance: single,
   });
 
   let sid = {
@@ -112,10 +121,11 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     Session {
       mic,
       recognizer,
-      single: single.unwrap_or(false),
+      close_on_final,
       callback: None,
       on_speech_start: None,
       on_speech_end: None,
+      on_wake: None,
     },
   );
 
@@ -150,6 +160,14 @@ fn set_speech_end_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>
   let mut sessions = state.0.sessions.borrow_mut();
   if let Some(s) = sessions.get_mut(&session) {
     s.on_speech_end = Some(Persistent::save(&ctx, callback));
+  }
+}
+
+fn set_wake_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  let mut sessions = state.0.sessions.borrow_mut();
+  if let Some(s) = sessions.get_mut(&session) {
+    s.on_wake = Some(Persistent::save(&ctx, callback));
   }
 }
 
@@ -213,11 +231,15 @@ pub fn tick(ctx: &Ctx<'_>) {
         let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_end.clone());
         notify(ctx, callback, "speech end");
       }
+      RecognizerEvent::Wake => {
+        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_wake.clone());
+        notify(ctx, callback, "wake");
+      }
       RecognizerEvent::Interim(text) => dispatch_result(ctx, &state, sid, &text, false),
       RecognizerEvent::Final(text) => {
         dispatch_result(ctx, &state, sid, &text, true);
-        let single = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.single);
-        if single {
+        let close = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.close_on_final);
+        if close {
           close_session(&state, sid);
         }
       }
