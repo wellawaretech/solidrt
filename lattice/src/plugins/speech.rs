@@ -1,0 +1,220 @@
+//! JS bindings for speech recognition: a thin marshaling layer over
+//! crate::speech. `speech.start()` opens a microphone session and spawns a
+//! Recognizer; the returned promise settles from `tick` once the worker
+//! reports Ready (models loaded) or Error. Each tick also pumps mic samples
+//! into the worker and forwards Final transcripts to the session's callback.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use flux::rquickjs::promise::Promise;
+use flux::rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
+
+use crate::speech::{Recognizer, RecognizerConfig, RecognizerEvent, SAMPLE_RATE};
+use crate::AlloyContext;
+
+fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
+  ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+}
+
+struct Session {
+  /// alloy microphone session feeding this recognizer.
+  mic: u64,
+  recognizer: Recognizer,
+  /// Stop after the first final result.
+  single: bool,
+  callback: Option<Persistent<Function<'static>>>,
+}
+
+struct PendingStart {
+  session: u64,
+  resolve: Persistent<Function<'static>>,
+  reject: Persistent<Function<'static>>,
+}
+
+struct Inner {
+  atx: AlloyContext,
+  sessions: RefCell<HashMap<u64, Session>>,
+  next_id: RefCell<u64>,
+  pending: RefCell<Vec<PendingStart>>,
+}
+
+#[derive(Clone, JsLifetime)]
+struct SpeechPluginState(#[qjs(skip_trace)] Rc<Inner>);
+
+pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
+  ctx
+    .store_userdata(SpeechPluginState(Rc::new(Inner {
+      atx,
+      sessions: RefCell::new(HashMap::new()),
+      next_id: RefCell::new(0),
+      pending: RefCell::new(Vec::new()),
+    })))
+    .expect("store speech state");
+
+  let start = Function::new(ctx.clone(), start_impl).expect("create speech.start");
+  let set_callback = Function::new(ctx.clone(), set_callback_impl).expect("create speech.setResultCallback");
+  let stop = Function::new(ctx.clone(), stop_impl).expect("create speech.stop");
+
+  let speech = Object::new(ctx.clone()).expect("create speech object");
+  speech.set("start", start).expect("set speech.start");
+  speech.set("setResultCallback", set_callback).expect("set speech.setResultCallback");
+  speech.set("stop", stop).expect("set speech.stop");
+  ctx.globals().set("speech", speech).expect("set speech global");
+}
+
+/// Copy a required Uint8Array option into an owned buffer (the bytes cross to
+/// the recognizer's worker thread, so they cannot borrow the JS heap).
+fn bytes_option(ctx: &Ctx<'_>, options: &Object<'_>, key: &str) -> flux::rquickjs::Result<Vec<u8>> {
+  let value: Option<TypedArray<u8>> = options.get(key)?;
+  let value = value.ok_or_else(|| throw_str(ctx, &format!("startRecognition: {key} must be a Uint8Array")))?;
+  let raw = value.as_raw().ok_or_else(|| throw_str(ctx, &format!("startRecognition: {key} buffer is detached")))?;
+  Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) }.to_vec())
+}
+
+fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Result<Promise<'js>> {
+  let model = bytes_option(&ctx, &options, "model")?;
+  let vad_model = bytes_option(&ctx, &options, "vadModel")?;
+  let language: Option<String> = options.get("language")?;
+  let microphone: Option<u32> = options.get("microphone")?;
+  let single: Option<bool> = options.get("singleUtterance")?;
+
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  let mic = state
+    .0
+    .atx
+    .open_microphone(microphone, SAMPLE_RATE)
+    .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
+  let recognizer =
+    Recognizer::start(RecognizerConfig { model, vad_model, language: language.unwrap_or_else(|| "en".to_string()) });
+
+  let sid = {
+    let mut next = state.0.next_id.borrow_mut();
+    *next += 1;
+    *next
+  };
+  state
+    .0
+    .sessions
+    .borrow_mut()
+    .insert(sid, Session { mic, recognizer, single: single.unwrap_or(false), callback: None });
+
+  let (promise, resolve, reject) = Promise::new(&ctx)?;
+  state.0.pending.borrow_mut().push(PendingStart {
+    session: sid,
+    resolve: Persistent::save(&ctx, resolve),
+    reject: Persistent::save(&ctx, reject),
+  });
+  Ok(promise)
+}
+
+/// Register (or replace) the JS callback receiving final transcripts.
+fn set_callback_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  let mut sessions = state.0.sessions.borrow_mut();
+  if let Some(s) = sessions.get_mut(&session) {
+    s.callback = Some(Persistent::save(&ctx, callback));
+  }
+}
+
+fn stop_impl(ctx: Ctx<'_>, session: u64) {
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  close_session(&state, session);
+}
+
+/// Release the mic and drop the session; dropping the Recognizer disconnects
+/// the sample channel and the worker exits.
+fn close_session(state: &SpeechPluginState, session: u64) {
+  if let Some(s) = state.0.sessions.borrow_mut().remove(&session) {
+    state.0.atx.close_microphone(s.mic);
+  }
+}
+
+fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) {
+  let (Ok(func), Ok(error)) = (reject.restore(ctx), Exception::from_message(ctx.clone(), msg)) else {
+    return;
+  };
+  if let Err(e) = func.call::<_, ()>((error,)) {
+    log::warn!("[speech] reject call failed: {e}");
+  }
+}
+
+/// Per-frame hook, called from the FrameRendered handler alongside raf::flush:
+/// pump mic samples into each worker, then dispatch worker events.
+pub fn tick(ctx: &Ctx<'_>) {
+  let Some(state) = ctx.userdata::<SpeechPluginState>() else {
+    return;
+  };
+  if state.0.sessions.borrow().is_empty() {
+    return;
+  }
+
+  // (session, event) pairs collected first: dispatching may close sessions,
+  // which needs the sessions map unborrowed.
+  let mut events: Vec<(u64, RecognizerEvent)> = Vec::new();
+  for (sid, session) in state.0.sessions.borrow().iter() {
+    match state.0.atx.read_microphone(session.mic) {
+      Ok(samples) => session.recognizer.feed(samples),
+      Err(e) => log::warn!("[speech] mic read failed: {e}"),
+    }
+    for event in session.recognizer.take_events() {
+      events.push((*sid, event));
+    }
+  }
+
+  for (sid, event) in events {
+    match event {
+      RecognizerEvent::Ready => settle_pending(ctx, &state, sid, Ok(())),
+      RecognizerEvent::Error(msg) => {
+        settle_pending(ctx, &state, sid, Err(msg.clone()));
+        close_session(&state, sid);
+      }
+      RecognizerEvent::Final(text) => {
+        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.callback.clone());
+        if let Some(callback) = callback {
+          let call = || -> flux::rquickjs::Result<()> {
+            let obj = Object::new(ctx.clone())?;
+            obj.set("text", text.as_str())?;
+            callback.restore(ctx)?.call::<_, ()>((obj,))
+          };
+          if let Err(e) = call() {
+            log::warn!("[speech] result callback failed: {e}");
+          }
+        }
+        let single = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.single);
+        if single {
+          close_session(&state, sid);
+        }
+      }
+    }
+  }
+}
+
+/// Settle the start() promise of `session`, if still pending: resolve with
+/// the session handle, or reject with the error message.
+fn settle_pending(ctx: &Ctx<'_>, state: &SpeechPluginState, session: u64, outcome: Result<(), String>) {
+  let mut pending = state.0.pending.borrow_mut();
+  let Some(pos) = pending.iter().position(|p| p.session == session) else {
+    // An Error event after Ready lands here; the session just closes.
+    if let Err(msg) = outcome {
+      log::warn!("[speech] session {session} failed: {msg}");
+    }
+    return;
+  };
+  let entry = pending.swap_remove(pos);
+  drop(pending);
+  match outcome {
+    Ok(()) => {
+      let settle = || -> flux::rquickjs::Result<()> {
+        let obj = Object::new(ctx.clone())?;
+        obj.set("handle", session)?;
+        entry.resolve.restore(ctx)?.call::<_, ()>((obj,))
+      };
+      if let Err(e) = settle() {
+        log::warn!("[speech] resolve call failed: {e}");
+      }
+    }
+    Err(msg) => reject_with(ctx, entry.reject, &format!("startRecognition: {msg}")),
+  }
+}

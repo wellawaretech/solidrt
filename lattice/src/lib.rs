@@ -5,6 +5,8 @@ mod overlay;
 mod paced_clock;
 mod plugins;
 mod rendertree;
+#[cfg(feature = "speech")]
+pub mod speech;
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
@@ -292,6 +294,8 @@ fn ui_thread(
                   None => raw,
                 };
                 plugins::camera::tick(&ctx);
+                #[cfg(feature = "speech")]
+                plugins::speech::tick(&ctx);
                 plugins::raf::flush(&ctx, ts);
                 let time = ts / 1000.0;
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
@@ -361,6 +365,8 @@ fn ui_thread(
       let texture_atx = AlloyContext(atx.clone());
       let camera_atx = AlloyContext(atx.clone());
       let microphone_atx = AlloyContext(atx.clone());
+      #[cfg(feature = "speech")]
+      let speech_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .logger(|level, msg| match level {
@@ -379,6 +385,8 @@ fn ui_thread(
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .plugin(|ctx| plugins::raf::init(&ctx))
         .userdata(clock.clone());
+      #[cfg(feature = "speech")]
+      let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // Install the dev-server control surface and (when enabled) the proxy.
       #[cfg(feature = "go")]
       let builder = match &dev_session {

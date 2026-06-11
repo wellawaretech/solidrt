@@ -57,6 +57,13 @@ declare global {
     read(handle: number): Float32Array
     close(handle: number): void
   }
+
+  let speech: {
+    start(options: { model: Uint8Array, vadModel: Uint8Array, language?: string, microphone?: number, singleUtterance?: boolean }):
+      Promise<{ handle: number }>
+    setResultCallback(handle: number, callback: (result: { text: string }) => void): void
+    stop(handle: number): void
+  }
 }
 
 export interface MeasureTextOptions {

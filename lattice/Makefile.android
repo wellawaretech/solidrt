@@ -22,6 +22,13 @@ RUST_TARGET_x86_64      = x86_64-linux-android
 RUST_TARGET_x86         = i686-linux-android
 ANDROID_TARGET          = $(RUST_TARGET_$(ANDROID_ABI))
 
+# NDK sysroot lib dir names (clang triples; armv7 and x86 differ from rust's).
+CLANG_TRIPLE_arm64-v8a   = aarch64-linux-android
+CLANG_TRIPLE_armeabi-v7a = arm-linux-androideabi
+CLANG_TRIPLE_x86_64      = x86_64-linux-android
+CLANG_TRIPLE_x86         = i686-linux-android
+ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))
+
 ANDROID_DIST  = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
 APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
@@ -34,7 +41,8 @@ GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 define ndk-build
 	@echo "Building ANDROID $(1) $(VERSION)"
 	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
-	  CMAKE_TOOLCHAIN_FILE_$(subst -,_,$(ANDROID_TARGET))=$(NDK_HOME)/build/cmake/android.toolchain.cmake \
+	  CMAKE_TOOLCHAIN_FILE_$(subst -,_,$(ANDROID_TARGET))=$(CURDIR)/android/cmake/android-abi.toolchain.cmake \
+	  CMAKE_ANDROID_ARCH_ABI=$(ANDROID_ABI) \
 	  $(2) \
 	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
 endef
@@ -47,6 +55,8 @@ define ndk-stage
 	cp target/go/$(ANDROID_TARGET)/$(1)/libSDL3.so $(ANDROID_DIST)/
 	# copy newest if there are multiple
 	cp "$$(ls -t target/go/$(ANDROID_TARGET)/$(1)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_DIST)/
+	# whisper-rs links the NDK's shared C++ runtime, so the APK must carry it
+	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_DIST)/
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 

@@ -5,6 +5,11 @@ impl log::Log for SdlLogger {
     let t = metadata.target();
     if t.starts_with("alloy") || t.starts_with("flux") || t.starts_with("lattice") {
       true
+    } else if t.starts_with("whisper_rs") {
+      // whisper.cpp/ggml route through the whisper_rs log hooks and are chatty
+      // at info: full model dumps on load plus several lines per VAD call
+      // (every 100ms while a recognizer listens).
+      metadata.level() <= log::Level::Warn
     } else {
       metadata.level() <= log::Level::Info
     }
