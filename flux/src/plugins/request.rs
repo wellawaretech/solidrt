@@ -34,13 +34,16 @@ pub struct Request<'js> {
   /// WebSocket upgrade capability, set only on requests built by the flux:http
   /// server (None for JS-constructed Requests). Consumed by `server.upgrade(req)`.
   #[qjs(skip_trace)]
-  pub(crate) upgrade: RefCell<Option<ServeUpgrade>>,
+  pub(crate) upgrade: RefCell<Option<ServeUpgrade<'js>>>,
 }
 
 impl<'js> Trace<'js> for Request<'js> {
   fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
     self.headers.trace(tracer);
     self.params.trace(tracer);
+    if let Some(upgrade) = &*self.upgrade.borrow() {
+      upgrade.trace(tracer);
+    }
   }
 }
 

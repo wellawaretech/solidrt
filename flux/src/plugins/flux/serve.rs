@@ -9,6 +9,7 @@ use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
 use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
+use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -24,6 +25,7 @@ use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
 use crate::plugins::flux::websocket::{parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers};
+use crate::plugins::headers::headers_from_init;
 use crate::plugins::request::{request_from_parts, Request};
 use crate::plugins::response::Response;
 
@@ -321,7 +323,7 @@ fn take_upgrade<'js>(
   logger: &Logger,
 ) -> Option<HyperResponse<ResBody>> {
   let slot = req_class.borrow().upgrade.borrow_mut().take();
-  let Some(ServeUpgrade::Accepted { response, socket }) = slot else {
+  let Some(ServeUpgrade::Accepted { response, socket, data }) = slot else {
     return None;
   };
   if !resolved.is_undefined() {
@@ -333,7 +335,7 @@ fn take_upgrade<'js>(
     return Some(text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
   };
   let shutdown_rx = handlers.server.borrow().shared.shutdown.subscribe();
-  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone());
+  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data);
   Some(response)
 }
 
@@ -506,20 +508,39 @@ impl Server {
   /// nothing: the held 101 response is sent when it returns, and the `websocket`
   /// callbacks take over the connection. False means the request cannot upgrade
   /// (not a websocket request, already upgraded, or no `websocket` option), so
-  /// the handler can serve a normal response instead.
-  pub fn upgrade<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>) -> bool {
+  /// the handler can serve a normal response instead. Options: `data` becomes
+  /// `ws.data` on the socket handle; `headers` (object or Headers) are added to
+  /// the 101 response (e.g. Set-Cookie).
+  pub fn upgrade<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>, opts: Opt<Object<'js>>) -> bool {
     let logger = ctx.logger();
     if !self.has_websocket {
       logger.warn("[flux] serve: upgrade() requires a websocket option on serve()");
       return false;
     }
+
+    let mut data: Option<Value<'js>> = None;
+    let mut extra_headers = Vec::new();
+    if let Some(o) = opts.0 {
+      data = o.get::<_, Value>("data").ok().filter(|v| !v.is_undefined() && !v.is_null());
+      let headers_val: Option<Value<'js>> = o.get("headers").ok();
+      if let Some(hv) = headers_val.filter(|v| !v.is_undefined() && !v.is_null()) {
+        match headers_from_init(&ctx, Some(&hv)) {
+          Ok(h) => extra_headers = h.borrow().entries(),
+          Err(e) => {
+            logger.warn(&format!("[flux] serve: upgrade failed: invalid headers option: {e}"));
+            return false;
+          }
+        }
+      }
+    }
+
     let req = req.borrow();
     let headers = req.headers.borrow().entries();
     let mut slot = req.upgrade.borrow_mut();
     let Some(ServeUpgrade::Ready(on_upgrade)) = slot.take() else {
       return false;
     };
-    match try_upgrade(&headers, on_upgrade) {
+    match try_upgrade(&headers, on_upgrade, &extra_headers, data) {
       Ok(accepted) => {
         *slot = Some(accepted);
         true

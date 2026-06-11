@@ -1,11 +1,12 @@
 use fastwebsockets::upgrade::{is_upgrade_request, upgrade as accept_upgrade, UpgradeFut};
 use fastwebsockets::{FragmentCollectorRead, Frame, OpCode, WebSocketError, WebSocketWrite};
 use http_body_util::BodyExt;
+use hyper::header::{HeaderName, HeaderValue};
 use hyper::Request as HyperRequest;
-use rquickjs::class::Trace;
+use rquickjs::class::{Trace, Tracer};
 use rquickjs::function::{IntoArgs, Opt};
-use rquickjs::{Class, Ctx, Function, JsLifetime, Object, Value};
-use std::cell::Cell;
+use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::io::AsyncWrite;
@@ -27,46 +28,81 @@ const CLOSED: u8 = 3;
 /// stall server shutdown.
 const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
+/// Bytes of queued-but-unwritten frames above which `send` reports backpressure
+/// (-1) and a later `drain` callback is armed. Matches Bun's default.
+const DEFAULT_BACKPRESSURE_LIMIT: usize = 1024 * 1024;
+
+/// Control frames (ping/pong) carry at most 125 payload bytes (RFC 6455 5.5).
+const MAX_CONTROL_PAYLOAD: usize = 125;
+
 /// The `websocket` option callbacks of `serve`. One set per server, shared by
-/// all sockets.
+/// all sockets. No `ping` callback: incoming pings are answered automatically
+/// by the protocol layer and never surface.
 pub(crate) struct WsHandlers<'js> {
   open: Option<Function<'js>>,
   message: Option<Function<'js>>,
+  drain: Option<Function<'js>>,
+  pong: Option<Function<'js>>,
   close: Option<Function<'js>>,
+  backpressure_limit: usize,
 }
 
-/// Parse the `websocket: { open?, message?, close? }` serve option.
+/// Parse the `websocket: { open?, message?, drain?, pong?, close?,
+/// backpressureLimit? }` serve option.
 pub(crate) fn parse_ws_handlers<'js>(opts: &Object<'js>) -> rquickjs::Result<Option<Rc<WsHandlers<'js>>>> {
   let Some(obj): Option<Object<'js>> = opts.get("websocket")? else {
     return Ok(None);
   };
+  let limit: Option<f64> = obj.get("backpressureLimit").ok();
   Ok(Some(Rc::new(WsHandlers {
     open: obj.get("open").ok(),
     message: obj.get("message").ok(),
+    drain: obj.get("drain").ok(),
+    pong: obj.get("pong").ok(),
     close: obj.get("close").ok(),
+    backpressure_limit: limit.map_or(DEFAULT_BACKPRESSURE_LIMIT, |l| l.max(0.0) as usize),
   })))
 }
 
 /// A serve Request's upgrade capability, stored on the Request while its handler
 /// runs. `server.upgrade(req)` moves it from `Ready` to `Accepted`; serve then
 /// sends the held 101 response once the handler returns.
-pub(crate) enum ServeUpgrade {
+pub(crate) enum ServeUpgrade<'js> {
   /// Not upgraded yet: the hyper upgrade handle taken from the incoming request.
   Ready(hyper::upgrade::OnUpgrade),
-  /// Handshake accepted: the 101 response to send, and the future resolving to
-  /// the raw socket once hyper releases the connection.
-  Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut },
+  /// Handshake accepted: the 101 response to send, the future resolving to the
+  /// raw socket once hyper releases the connection, and the user value destined
+  /// for `ws.data`.
+  Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut, data: Option<Value<'js>> },
+}
+
+unsafe impl<'js> JsLifetime<'js> for ServeUpgrade<'js> {
+  type Changed<'to> = ServeUpgrade<'to>;
+}
+
+impl<'js> ServeUpgrade<'js> {
+  /// Trace the held `data` value (called from the owning Request's Trace impl)
+  /// so it survives GC between `upgrade()` and the handler returning.
+  pub(crate) fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+    if let ServeUpgrade::Accepted { data: Some(d), .. } = self {
+      d.trace(tracer);
+    }
+  }
 }
 
 /// Validate a websocket upgrade and produce the 101 response plus the socket
 /// future. The original hyper request was already split into parts by serve, so
 /// rebuild a minimal one from the extracted headers (fastwebsockets validates
 /// `Sec-WebSocket-Key`/`-Version` from it) and re-attach the upgrade handle
-/// where `hyper::upgrade::on` looks for it.
-pub(crate) fn try_upgrade(
+/// where `hyper::upgrade::on` looks for it. `extra_headers` (from
+/// `upgrade(req, { headers })`) are appended to the 101; an invalid one fails
+/// the upgrade rather than silently dropping it.
+pub(crate) fn try_upgrade<'js>(
   headers: &[(String, String)],
   on_upgrade: hyper::upgrade::OnUpgrade,
-) -> Result<ServeUpgrade, String> {
+  extra_headers: &[(String, String)],
+  data: Option<Value<'js>>,
+) -> Result<ServeUpgrade<'js>, String> {
   let mut builder = HyperRequest::builder();
   for (k, v) in headers {
     builder = builder.header(k.as_str(), v.as_str());
@@ -77,7 +113,13 @@ pub(crate) fn try_upgrade(
   }
   req.extensions_mut().insert(on_upgrade);
   let (response, socket) = accept_upgrade(&mut req).map_err(|e| e.to_string())?;
-  Ok(ServeUpgrade::Accepted { response: response.map(BodyExt::boxed), socket })
+  let mut response = response.map(BodyExt::boxed);
+  for (k, v) in extra_headers {
+    let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| format!("invalid header name {k}: {e}"))?;
+    let value = HeaderValue::from_str(v).map_err(|e| format!("invalid header value for {k}: {e}"))?;
+    response.headers_mut().append(name, value);
+  }
+  Ok(ServeUpgrade::Accepted { response, socket, data })
 }
 
 /// A frame queued for the writer task: messages and closes from JS, plus the
@@ -90,39 +132,90 @@ enum OutMsg {
 }
 
 /// The per-connection handle passed to the `websocket` callbacks.
-#[derive(Trace, JsLifetime)]
+#[derive(JsLifetime)]
 #[rquickjs::class(rename = "ServerWebSocket")]
-pub(crate) struct ServerWebSocket {
-  #[qjs(skip_trace)]
+pub(crate) struct ServerWebSocket<'js> {
   tx: mpsc::UnboundedSender<OutMsg>,
-  #[qjs(skip_trace)]
   state: Rc<Cell<u8>>,
   /// Wakes the read loop when `close()` starts a close, so it can arm the
   /// close-grace deadline (`notify_one` stores a permit, so no race with a
   /// loop that is not currently waiting).
-  #[qjs(skip_trace)]
   closing: Rc<Notify>,
+  /// Total payload bytes queued for the writer but not yet written.
+  queued: Rc<Cell<usize>>,
+  /// True once a send exceeded `limit`; cleared (and `drain` fired) when the
+  /// writer empties the queue.
+  backpressured: Rc<Cell<bool>>,
+  limit: usize,
+  /// The user value from `upgrade(req, { data })`; undefined when not given.
+  data: RefCell<Value<'js>>,
+}
+
+impl<'js> Trace<'js> for ServerWebSocket<'js> {
+  fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+    self.data.borrow().trace(tracer);
+  }
+}
+
+impl<'js> ServerWebSocket<'js> {
+  /// Queue a frame for the writer, with Bun's send return values: -1 when the
+  /// queue exceeds the backpressure limit (frame still queued; `drain` will
+  /// fire once it empties), 0 when the socket is no longer open (dropped),
+  /// otherwise the number of payload bytes queued.
+  fn enqueue(&self, opcode: OpCode, payload: Vec<u8>) -> i32 {
+    if self.state.get() != OPEN {
+      return 0;
+    }
+    let len = payload.len();
+    if self.tx.send(OutMsg::Frame(opcode, payload)).is_err() {
+      return 0;
+    }
+    let queued = self.queued.get() + len;
+    self.queued.set(queued);
+    if queued > self.limit {
+      self.backpressured.set(true);
+      return -1;
+    }
+    len as i32
+  }
+
+  /// Extract an optional control-frame payload (string or Uint8Array) and
+  /// enforce the RFC 6455 control-frame size limit.
+  fn control_payload(ctx: &Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<Vec<u8>> {
+    let payload = match data.0 {
+      Some(v) => extract_body_value(&v, "ServerWebSocket")?,
+      None => Vec::new(),
+    };
+    if payload.len() > MAX_CONTROL_PAYLOAD {
+      return Err(Exception::throw_message(ctx, "ping/pong payload must be 125 bytes or fewer"));
+    }
+    Ok(payload)
+  }
 }
 
 #[rquickjs::methods]
-impl ServerWebSocket {
+impl<'js> ServerWebSocket<'js> {
   /// Queue a message: a string sends a text frame, a Uint8Array a binary frame.
-  /// Returns the number of payload bytes queued, or 0 when the socket is no
-  /// longer open. The queue is unbounded for now; backpressure reporting
-  /// (Bun's -1) is planned together with the `drain` callback.
-  pub fn send(&self, data: Value<'_>) -> rquickjs::Result<usize> {
-    if self.state.get() != OPEN {
-      return Ok(0);
-    }
+  /// Returns the bytes queued, 0 if the socket is no longer open, or -1 when
+  /// the queue exceeds backpressureLimit (the message is still queued and
+  /// `drain` fires once the queue empties).
+  pub fn send(&self, data: Value<'js>) -> rquickjs::Result<i32> {
     let (opcode, payload) = match data.as_string() {
       Some(s) => (OpCode::Text, s.to_string()?.into_bytes()),
       None => (OpCode::Binary, extract_body_value(&data, "ServerWebSocket")?),
     };
-    let len = payload.len();
-    if self.tx.send(OutMsg::Frame(opcode, payload)).is_err() {
-      return Ok(0);
-    }
-    Ok(len)
+    Ok(self.enqueue(opcode, payload))
+  }
+
+  /// Send a ping control frame (the peer's reply surfaces in the `pong`
+  /// callback). Same return values as `send`.
+  pub fn ping(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
+    Ok(self.enqueue(OpCode::Ping, Self::control_payload(&ctx, data)?))
+  }
+
+  /// Send an unsolicited pong control frame. Same return values as `send`.
+  pub fn pong(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
+    Ok(self.enqueue(OpCode::Pong, Self::control_payload(&ctx, data)?))
   }
 
   /// Send a close frame (default 1000). The connection finishes once the peer
@@ -140,6 +233,25 @@ impl ServerWebSocket {
   pub fn ready_state(&self) -> u8 {
     self.state.get()
   }
+
+  #[qjs(get)]
+  pub fn data(&self) -> Value<'js> {
+    self.data.borrow().clone()
+  }
+
+  #[qjs(set, rename = "data")]
+  pub fn set_data(&self, value: Value<'js>) {
+    *self.data.borrow_mut() = value;
+  }
+}
+
+/// The writer task's shared per-socket state and callbacks.
+struct WriterState<'js> {
+  state: Rc<Cell<u8>>,
+  queued: Rc<Cell<usize>>,
+  backpressured: Rc<Cell<bool>>,
+  drain: Option<Function<'js>>,
+  ws_class: Class<'js, ServerWebSocket<'js>>,
 }
 
 /// Run an accepted socket: spawn its writer, then drive the read loop until the
@@ -152,12 +264,13 @@ pub(crate) fn spawn_socket<'js>(
   handlers: Rc<WsHandlers<'js>>,
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
+  data: Option<Value<'js>>,
 ) {
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
   pending.hold();
   let ctx2 = ctx.clone();
   ctx.spawn(async move {
-    run_socket(ctx2, socket, handlers, shutdown_rx, &logger, &pending).await;
+    run_socket(ctx2, socket, handlers, shutdown_rx, &logger, &pending, data).await;
     pending.release();
   });
 }
@@ -169,6 +282,7 @@ async fn run_socket<'js>(
   mut shutdown_rx: watch::Receiver<bool>,
   logger: &Logger,
   pending: &PendingOps,
+  data: Option<Value<'js>>,
 ) {
   let ws = match socket.await {
     Ok(ws) => ws,
@@ -181,36 +295,54 @@ async fn run_socket<'js>(
   let mut reader = FragmentCollectorRead::new(read_half);
   let (tx, rx) = mpsc::unbounded_channel::<OutMsg>();
   let state = Rc::new(Cell::new(OPEN));
-
-  pending.hold();
-  let writer_state = state.clone();
-  let writer_logger = logger.clone();
-  let writer_pending = pending.clone();
-  ctx.spawn(async move {
-    run_writer(write_half, rx, writer_state, &writer_logger).await;
-    writer_pending.release();
-  });
-
+  let queued = Rc::new(Cell::new(0usize));
+  let backpressured = Rc::new(Cell::new(false));
   let close_notify = Rc::new(Notify::new());
-  let socket_handle = ServerWebSocket { tx: tx.clone(), state: state.clone(), closing: close_notify.clone() };
+
+  let socket_handle = ServerWebSocket {
+    tx: tx.clone(),
+    state: state.clone(),
+    closing: close_notify.clone(),
+    queued: queued.clone(),
+    backpressured: backpressured.clone(),
+    limit: handlers.backpressure_limit,
+    data: RefCell::new(data.unwrap_or_else(|| Value::new_undefined(ctx.clone()))),
+  };
   let ws_class = match Class::instance(ctx.clone(), socket_handle) {
     Ok(c) => c,
     Err(e) => {
       logger.warn(&format!("[flux] websocket: could not create socket handle: {e}"));
-      let _ = tx.send(OutMsg::End);
       return;
     }
   };
 
+  pending.hold();
+  let writer_state = WriterState {
+    state: state.clone(),
+    queued: queued.clone(),
+    backpressured: backpressured.clone(),
+    drain: handlers.drain.clone(),
+    ws_class: ws_class.clone(),
+  };
+  let writer_ctx = ctx.clone();
+  let writer_logger = logger.clone();
+  let writer_pending = pending.clone();
+  ctx.spawn(async move {
+    run_writer(writer_ctx, write_half, rx, writer_state, &writer_logger).await;
+    writer_pending.release();
+  });
+
   call_callback(&ctx, &handlers.open, (ws_class.clone(),), "open", logger);
 
   // Forward the read half's obligated sends (pong replies, close echoes) to the
-  // writer. A send error means the writer is gone, which ends the read loop.
+  // writer, counting their bytes like any other queued frame. A send error
+  // means the writer is gone, which ends the read loop.
   let obligated_tx = tx.clone();
+  let obligated_queued = queued.clone();
   let mut send_obligated = move |frame: Frame<'_>| {
-    let res = obligated_tx
-      .send(OutMsg::Frame(frame.opcode, frame.payload.into()))
-      .map_err(|_| WebSocketError::ConnectionClosed);
+    let payload: Vec<u8> = frame.payload.into();
+    obligated_queued.set(obligated_queued.get() + payload.len());
+    let res = obligated_tx.send(OutMsg::Frame(frame.opcode, payload)).map_err(|_| WebSocketError::ConnectionClosed);
     std::future::ready(res)
   };
 
@@ -242,6 +374,10 @@ async fn run_socket<'js>(
           OpCode::Binary => {
             let bytes = JsBytes(frame.payload.into());
             call_callback(&ctx, &handlers.message, (ws_class.clone(), bytes), "message", logger);
+          }
+          OpCode::Pong => {
+            let bytes = JsBytes(frame.payload.into());
+            call_callback(&ctx, &handlers.pong, (ws_class.clone(), bytes), "pong", logger);
           }
           OpCode::Close => {
             close_info = parse_close(&frame.payload);
@@ -275,24 +411,38 @@ async fn run_socket<'js>(
   call_callback(&ctx, &handlers.close, (ws_class, code, reason), "close", logger);
 }
 
-async fn run_writer<W: AsyncWrite + Unpin>(
+async fn run_writer<'js, W: AsyncWrite + Unpin>(
+  ctx: Ctx<'js>,
   mut ws: WebSocketWrite<W>,
   mut rx: mpsc::UnboundedReceiver<OutMsg>,
-  state: Rc<Cell<u8>>,
+  shared: WriterState<'js>,
   logger: &Logger,
 ) {
   // After a close frame goes out nothing more may be sent; queued frames that
-  // arrive later (including a redundant close echo) are dropped.
+  // arrive later (including a redundant close echo) are dropped, but their
+  // bytes still leave the queue accounting.
   let mut sent_close = false;
   while let Some(msg) = rx.recv().await {
     let res = match msg {
-      OutMsg::Frame(opcode, payload) if !sent_close => {
-        sent_close = opcode == OpCode::Close;
-        ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
+      OutMsg::Frame(opcode, payload) => {
+        let len = payload.len();
+        let res = if sent_close {
+          Ok(())
+        } else {
+          sent_close = opcode == OpCode::Close;
+          ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
+        };
+        let left = shared.queued.get().saturating_sub(len);
+        shared.queued.set(left);
+        if res.is_ok() && left == 0 && shared.backpressured.get() && shared.state.get() == OPEN {
+          shared.backpressured.set(false);
+          call_callback(&ctx, &shared.drain, (shared.ws_class.clone(),), "drain", logger);
+        }
+        res
       }
       OutMsg::Close(code, reason) if !sent_close => {
         sent_close = true;
-        state.set(CLOSING.max(state.get()));
+        shared.state.set(CLOSING.max(shared.state.get()));
         ws.write_frame(Frame::close(code, reason.as_bytes())).await
       }
       OutMsg::End => break,

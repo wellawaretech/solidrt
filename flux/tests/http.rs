@@ -604,7 +604,9 @@ mod ws_client {
     }
   }
 
-  pub fn handshake(s: &mut TcpStream, port: u16) {
+  /// Perform the upgrade handshake; returns the full 101 response head so
+  /// tests can assert on extra headers.
+  pub fn handshake(s: &mut TcpStream, port: u16) -> String {
     let req = format!(
       "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
        Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
@@ -616,8 +618,9 @@ mod ws_client {
       s.read_exact(&mut byte).expect("read handshake response");
       buf.push(byte[0]);
     }
-    let head = String::from_utf8_lossy(&buf);
+    let head = String::from_utf8_lossy(&buf).into_owned();
     assert!(head.starts_with("HTTP/1.1 101"), "expected 101, got: {head}");
+    head
   }
 
   /// Send one masked frame (client frames must be masked).
@@ -708,4 +711,92 @@ fn serve_websocket_echo_and_close() {
   let lines: Vec<String> =
     cap.lines_at(flux::LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(String::from).collect();
   assert_eq!(lines, vec!["open 1".to_string(), "close 4001 done 3".to_string()]);
+}
+
+#[test]
+fn serve_websocket_data_drain_ping() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        let server = serve({{
+            port: {port},
+            fetch(req, server) {{
+                if (server.upgrade(req, {{ data: {{ uid: 7 }}, headers: {{ "X-Extra": "yes" }} }})) return;
+                return "not a websocket";
+            }},
+            websocket: {{
+                // A tiny limit so the second send exceeds it (-1) and drain fires
+                // once the writer empties the queue.
+                backpressureLimit: 1,
+                open(ws) {{
+                    console.log("open", JSON.stringify(ws.data), ws.send("a"), ws.send("bb"));
+                }},
+                drain(ws) {{
+                    console.log("drain");
+                }},
+                message(ws, m) {{
+                    if (m === "ping-me") console.log("ping ret", ws.ping("xy"));
+                }},
+                pong(ws, payload) {{
+                    console.log("pong", new TextDecoder().decode(payload));
+                }},
+                close(ws, code, reason) {{
+                    console.log("close", code, reason);
+                    server.stop();
+                }},
+            }},
+        }});
+        "#,
+  );
+
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let (done_tx, done_rx) = std::sync::mpsc::channel();
+  std::thread::spawn(move || {
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+    rt.block_on(engine.eval_source(&code));
+    let _ = done_tx.send(());
+  });
+
+  let mut s = ws_client::connect(port);
+  let head = ws_client::handshake(&mut s, port);
+  assert!(head.to_lowercase().contains("x-extra: yes"), "missing upgrade header in: {head}");
+
+  // The two open() sends arrive in order; receiving them means the writer
+  // drained the queue, so the drain callback has fired.
+  assert_eq!(ws_client::read(&mut s), (0x1, b"a".to_vec()));
+  assert_eq!(ws_client::read(&mut s), (0x1, b"bb".to_vec()));
+
+  // ws.ping() goes out as a ping control frame; answer it and the pong
+  // callback fires server-side.
+  ws_client::send(&mut s, 0x1, b"ping-me");
+  assert_eq!(ws_client::read(&mut s), (0x9, b"xy".to_vec()));
+  ws_client::send(&mut s, 0xA, b"xy");
+
+  // A client ping is answered automatically (never surfaces to JS).
+  ws_client::send(&mut s, 0x9, b"pp");
+  assert_eq!(ws_client::read(&mut s), (0xA, b"pp".to_vec()));
+
+  // Client-initiated close: the protocol layer echoes it, close() fires.
+  let mut close_payload = 1000u16.to_be_bytes().to_vec();
+  close_payload.extend_from_slice(b"ok");
+  ws_client::send(&mut s, 0x8, &close_payload);
+  assert_eq!(ws_client::read(&mut s), (0x8, close_payload));
+
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+
+  let cap = sink.captured();
+  let lines: Vec<String> =
+    cap.lines_at(flux::LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(String::from).collect();
+  let expected = vec![
+    "open {\"uid\":7} 1 -1".to_string(),
+    "drain".to_string(),
+    "ping ret -1".to_string(),
+    "drain".to_string(),
+    "pong xy".to_string(),
+    "close 1000 ok".to_string(),
+  ];
+  assert_eq!(lines, expected);
 }
