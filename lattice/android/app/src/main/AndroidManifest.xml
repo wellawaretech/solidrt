@@ -29,11 +29,10 @@
         android:required="false" />
 
     <!-- Audio recording support -->
-    <!-- if you want to record audio, uncomment this. -->
-    <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
-    <!-- <uses-feature
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature
         android:name="android.hardware.microphone"
-        android:required="false" /> -->
+        android:required="false" />
 
     <!-- Allow downloading to the external storage on Android 5.1 and older -->
     <!-- <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="22" /> -->
