@@ -266,21 +266,6 @@ impl crate::context::Context {
       return;
     }
     let surface = unsafe { &*frame };
-    let delivered = match sdl_utils::camera_format(session.camera) {
-      Some(s) => format!(
-        "format={:#x} {}x{} @{}/{}",
-        s.format.0, s.width, s.height, s.framerate_numerator, s.framerate_denominator
-      ),
-      None => "none".to_string(),
-    };
-    log::info!(
-      "[camera] frame format={:#x} {}x{} pitch={} delivered={}",
-      surface.format.0,
-      surface.w,
-      surface.h,
-      surface.pitch,
-      delivered
-    );
     let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
     let rotation = sdl_utils::surface_rotation_degrees(frame);
     let (width, height) = if rotation == 90 || rotation == 270 { (frame_h, frame_w) } else { (frame_w, frame_h) };
