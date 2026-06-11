@@ -7,6 +7,7 @@ use rquickjs::class::{Trace, Tracer};
 use rquickjs::function::{IntoArgs, Opt};
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::io::AsyncWrite;
@@ -131,33 +132,23 @@ enum OutMsg {
   End,
 }
 
-/// The per-connection handle passed to the `websocket` callbacks.
-#[derive(JsLifetime)]
-#[rquickjs::class(rename = "ServerWebSocket")]
-pub(crate) struct ServerWebSocket<'js> {
+/// The plain-Rust outgoing half of one socket: the writer queue plus its
+/// accounting. Shared (`Rc`) between the JS handle, the reader and writer
+/// tasks, and the pub/sub topic registry, which must hold sockets without JS
+/// lifetimes.
+pub(crate) struct SocketSink {
+  id: u64,
   tx: mpsc::UnboundedSender<OutMsg>,
-  state: Rc<Cell<u8>>,
-  /// Wakes the read loop when `close()` starts a close, so it can arm the
-  /// close-grace deadline (`notify_one` stores a permit, so no race with a
-  /// loop that is not currently waiting).
-  closing: Rc<Notify>,
+  state: Cell<u8>,
   /// Total payload bytes queued for the writer but not yet written.
-  queued: Rc<Cell<usize>>,
+  queued: Cell<usize>,
   /// True once a send exceeded `limit`; cleared (and `drain` fired) when the
   /// writer empties the queue.
-  backpressured: Rc<Cell<bool>>,
+  backpressured: Cell<bool>,
   limit: usize,
-  /// The user value from `upgrade(req, { data })`; undefined when not given.
-  data: RefCell<Value<'js>>,
 }
 
-impl<'js> Trace<'js> for ServerWebSocket<'js> {
-  fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
-    self.data.borrow().trace(tracer);
-  }
-}
-
-impl<'js> ServerWebSocket<'js> {
+impl SocketSink {
   /// Queue a frame for the writer, with Bun's send return values: -1 when the
   /// queue exceeds the backpressure limit (frame still queued; `drain` will
   /// fire once it empties), 0 when the socket is no longer open (dropped),
@@ -178,7 +169,106 @@ impl<'js> ServerWebSocket<'js> {
     }
     len as i32
   }
+}
 
+/// The per-server pub/sub registry: topic name -> subscribed sockets by id.
+/// All access happens on the JS thread. Sockets are removed by `unsubscribe`
+/// and automatically when they close; an entry is dropped with its last
+/// subscriber.
+#[derive(Clone, Default)]
+pub(crate) struct Topics {
+  inner: Rc<TopicsInner>,
+}
+
+#[derive(Default)]
+struct TopicsInner {
+  map: RefCell<HashMap<String, HashMap<u64, Rc<SocketSink>>>>,
+  next_id: Cell<u64>,
+}
+
+impl Topics {
+  fn next_id(&self) -> u64 {
+    let id = self.inner.next_id.get();
+    self.inner.next_id.set(id + 1);
+    id
+  }
+
+  fn subscribe(&self, topic: &str, sink: &Rc<SocketSink>) {
+    self.inner.map.borrow_mut().entry(topic.to_string()).or_default().insert(sink.id, sink.clone());
+  }
+
+  fn unsubscribe(&self, topic: &str, id: u64) {
+    let mut map = self.inner.map.borrow_mut();
+    if let Some(subs) = map.get_mut(topic) {
+      subs.remove(&id);
+      if subs.is_empty() {
+        map.remove(topic);
+      }
+    }
+  }
+
+  pub(crate) fn subscriber_count(&self, topic: &str) -> usize {
+    self.inner.map.borrow().get(topic).map_or(0, HashMap::len)
+  }
+
+  /// Publish a message (string -> text frame, Uint8Array -> binary) to every
+  /// subscriber of `topic`, except the `exclude`d socket (the publisher, for
+  /// `ws.publish`). Returns the number of sockets the message was queued to;
+  /// closed sockets are skipped.
+  pub(crate) fn publish_value<'js>(
+    &self,
+    topic: &str,
+    data: &Value<'js>,
+    exclude: Option<u64>,
+  ) -> rquickjs::Result<i32> {
+    let (opcode, payload) = message_payload(data)?;
+    let mut delivered = 0;
+    if let Some(subs) = self.inner.map.borrow().get(topic) {
+      for (id, sink) in subs {
+        if Some(*id) == exclude {
+          continue;
+        }
+        if sink.enqueue(opcode, payload.clone()) != 0 {
+          delivered += 1;
+        }
+      }
+    }
+    Ok(delivered)
+  }
+}
+
+/// Split a message value into its frame opcode and payload bytes: a string
+/// sends a text frame, a Uint8Array a binary frame. Shared by send and publish.
+fn message_payload<'js>(data: &Value<'js>) -> rquickjs::Result<(OpCode, Vec<u8>)> {
+  match data.as_string() {
+    Some(s) => Ok((OpCode::Text, s.to_string()?.into_bytes())),
+    None => Ok((OpCode::Binary, extract_body_value(data, "ServerWebSocket")?)),
+  }
+}
+
+/// The per-connection handle passed to the `websocket` callbacks.
+#[derive(JsLifetime)]
+#[rquickjs::class(rename = "ServerWebSocket")]
+pub(crate) struct ServerWebSocket<'js> {
+  sink: Rc<SocketSink>,
+  /// Wakes the read loop when `close()` starts a close, so it can arm the
+  /// close-grace deadline (`notify_one` stores a permit, so no race with a
+  /// loop that is not currently waiting).
+  closing: Rc<Notify>,
+  topics: Topics,
+  /// The topics this socket joined, so closing can unsubscribe them all.
+  subscribed: RefCell<HashSet<String>>,
+  /// The user value from `upgrade(req, { data })`; undefined when not given.
+  data: RefCell<Value<'js>>,
+}
+
+impl<'js> Trace<'js> for ServerWebSocket<'js> {
+  fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+    self.data.borrow().trace(tracer);
+  }
+}
+
+impl<'js> ServerWebSocket<'js> {
   /// Extract an optional control-frame payload (string or Uint8Array) and
   /// enforce the RFC 6455 control-frame size limit.
   fn control_payload(ctx: &Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<Vec<u8>> {
@@ -191,6 +281,13 @@ impl<'js> ServerWebSocket<'js> {
     }
     Ok(payload)
   }
+
+  /// Drop all topic subscriptions (the socket closed).
+  fn unsubscribe_all(&self) {
+    for topic in self.subscribed.borrow_mut().drain() {
+      self.topics.unsubscribe(&topic, self.sink.id);
+    }
+  }
 }
 
 #[rquickjs::methods]
@@ -200,38 +297,62 @@ impl<'js> ServerWebSocket<'js> {
   /// the queue exceeds backpressureLimit (the message is still queued and
   /// `drain` fires once the queue empties).
   pub fn send(&self, data: Value<'js>) -> rquickjs::Result<i32> {
-    let (opcode, payload) = match data.as_string() {
-      Some(s) => (OpCode::Text, s.to_string()?.into_bytes()),
-      None => (OpCode::Binary, extract_body_value(&data, "ServerWebSocket")?),
-    };
-    Ok(self.enqueue(opcode, payload))
+    let (opcode, payload) = message_payload(&data)?;
+    Ok(self.sink.enqueue(opcode, payload))
   }
 
   /// Send a ping control frame (the peer's reply surfaces in the `pong`
   /// callback). Same return values as `send`.
   pub fn ping(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
-    Ok(self.enqueue(OpCode::Ping, Self::control_payload(&ctx, data)?))
+    Ok(self.sink.enqueue(OpCode::Ping, Self::control_payload(&ctx, data)?))
   }
 
   /// Send an unsolicited pong control frame. Same return values as `send`.
   pub fn pong(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
-    Ok(self.enqueue(OpCode::Pong, Self::control_payload(&ctx, data)?))
+    Ok(self.sink.enqueue(OpCode::Pong, Self::control_payload(&ctx, data)?))
+  }
+
+  /// Join a topic; `server.publish(topic)` and peers' `ws.publish(topic)` then
+  /// reach this socket. No-op on a closing or closed socket.
+  pub fn subscribe(&self, topic: String) {
+    if self.sink.state.get() != OPEN {
+      return;
+    }
+    self.topics.subscribe(&topic, &self.sink);
+    self.subscribed.borrow_mut().insert(topic);
+  }
+
+  /// Leave a topic. Closing the socket unsubscribes everything automatically.
+  pub fn unsubscribe(&self, topic: String) {
+    self.topics.unsubscribe(&topic, self.sink.id);
+    self.subscribed.borrow_mut().remove(&topic);
+  }
+
+  #[qjs(rename = "isSubscribed")]
+  pub fn is_subscribed(&self, topic: String) -> bool {
+    self.subscribed.borrow().contains(&topic)
+  }
+
+  /// Publish to every subscriber of `topic` except this socket. Returns the
+  /// number of sockets the message was queued to.
+  pub fn publish(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
+    self.topics.publish_value(&topic, &data, Some(self.sink.id))
   }
 
   /// Send a close frame (default 1000). The connection finishes once the peer
   /// echoes the close (or the grace period expires).
   pub fn close(&self, code: Opt<u16>, reason: Opt<String>) {
-    if self.state.get() >= CLOSING {
+    if self.sink.state.get() >= CLOSING {
       return;
     }
-    self.state.set(CLOSING);
-    let _ = self.tx.send(OutMsg::Close(code.0.unwrap_or(1000), reason.0.unwrap_or_default()));
+    self.sink.state.set(CLOSING);
+    let _ = self.sink.tx.send(OutMsg::Close(code.0.unwrap_or(1000), reason.0.unwrap_or_default()));
     self.closing.notify_one();
   }
 
   #[qjs(get, rename = "readyState")]
   pub fn ready_state(&self) -> u8 {
-    self.state.get()
+    self.sink.state.get()
   }
 
   #[qjs(get)]
@@ -247,9 +368,7 @@ impl<'js> ServerWebSocket<'js> {
 
 /// The writer task's shared per-socket state and callbacks.
 struct WriterState<'js> {
-  state: Rc<Cell<u8>>,
-  queued: Rc<Cell<usize>>,
-  backpressured: Rc<Cell<bool>>,
+  sink: Rc<SocketSink>,
   drain: Option<Function<'js>>,
   ws_class: Class<'js, ServerWebSocket<'js>>,
 }
@@ -265,16 +384,18 @@ pub(crate) fn spawn_socket<'js>(
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
   data: Option<Value<'js>>,
+  topics: Topics,
 ) {
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
   pending.hold();
   let ctx2 = ctx.clone();
   ctx.spawn(async move {
-    run_socket(ctx2, socket, handlers, shutdown_rx, &logger, &pending, data).await;
+    run_socket(ctx2, socket, handlers, shutdown_rx, &logger, &pending, data, topics).await;
     pending.release();
   });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_socket<'js>(
   ctx: Ctx<'js>,
   socket: UpgradeFut,
@@ -283,6 +404,7 @@ async fn run_socket<'js>(
   logger: &Logger,
   pending: &PendingOps,
   data: Option<Value<'js>>,
+  topics: Topics,
 ) {
   let ws = match socket.await {
     Ok(ws) => ws,
@@ -294,18 +416,21 @@ async fn run_socket<'js>(
   let (read_half, write_half) = ws.split(tokio::io::split);
   let mut reader = FragmentCollectorRead::new(read_half);
   let (tx, rx) = mpsc::unbounded_channel::<OutMsg>();
-  let state = Rc::new(Cell::new(OPEN));
-  let queued = Rc::new(Cell::new(0usize));
-  let backpressured = Rc::new(Cell::new(false));
+  let sink = Rc::new(SocketSink {
+    id: topics.next_id(),
+    tx: tx.clone(),
+    state: Cell::new(OPEN),
+    queued: Cell::new(0),
+    backpressured: Cell::new(false),
+    limit: handlers.backpressure_limit,
+  });
   let close_notify = Rc::new(Notify::new());
 
   let socket_handle = ServerWebSocket {
-    tx: tx.clone(),
-    state: state.clone(),
+    sink: sink.clone(),
     closing: close_notify.clone(),
-    queued: queued.clone(),
-    backpressured: backpressured.clone(),
-    limit: handlers.backpressure_limit,
+    topics,
+    subscribed: RefCell::new(HashSet::new()),
     data: RefCell::new(data.unwrap_or_else(|| Value::new_undefined(ctx.clone()))),
   };
   let ws_class = match Class::instance(ctx.clone(), socket_handle) {
@@ -317,13 +442,8 @@ async fn run_socket<'js>(
   };
 
   pending.hold();
-  let writer_state = WriterState {
-    state: state.clone(),
-    queued: queued.clone(),
-    backpressured: backpressured.clone(),
-    drain: handlers.drain.clone(),
-    ws_class: ws_class.clone(),
-  };
+  let writer_state =
+    WriterState { sink: sink.clone(), drain: handlers.drain.clone(), ws_class: ws_class.clone() };
   let writer_ctx = ctx.clone();
   let writer_logger = logger.clone();
   let writer_pending = pending.clone();
@@ -337,12 +457,12 @@ async fn run_socket<'js>(
   // Forward the read half's obligated sends (pong replies, close echoes) to the
   // writer, counting their bytes like any other queued frame. A send error
   // means the writer is gone, which ends the read loop.
-  let obligated_tx = tx.clone();
-  let obligated_queued = queued.clone();
+  let obligated_sink = sink.clone();
   let mut send_obligated = move |frame: Frame<'_>| {
     let payload: Vec<u8> = frame.payload.into();
-    obligated_queued.set(obligated_queued.get() + payload.len());
-    let res = obligated_tx.send(OutMsg::Frame(frame.opcode, payload)).map_err(|_| WebSocketError::ConnectionClosed);
+    obligated_sink.queued.set(obligated_sink.queued.get() + payload.len());
+    let res =
+      obligated_sink.tx.send(OutMsg::Frame(frame.opcode, payload)).map_err(|_| WebSocketError::ConnectionClosed);
     std::future::ready(res)
   };
 
@@ -388,7 +508,7 @@ async fn run_socket<'js>(
       }
       _ = wait_for_stop(&mut shutdown_rx), if !closing => {
         closing = true;
-        state.set(CLOSING);
+        sink.state.set(CLOSING);
         // 1001 Going Away: the server is shutting down.
         let _ = tx.send(OutMsg::Close(1001, String::new()));
         grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
@@ -405,8 +525,9 @@ async fn run_socket<'js>(
     }
   }
 
-  state.set(CLOSED);
+  sink.state.set(CLOSED);
   let _ = tx.send(OutMsg::End);
+  ws_class.borrow().unsubscribe_all();
   let (code, reason) = close_info;
   call_callback(&ctx, &handlers.close, (ws_class, code, reason), "close", logger);
 }
@@ -432,17 +553,17 @@ async fn run_writer<'js, W: AsyncWrite + Unpin>(
           sent_close = opcode == OpCode::Close;
           ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
         };
-        let left = shared.queued.get().saturating_sub(len);
-        shared.queued.set(left);
-        if res.is_ok() && left == 0 && shared.backpressured.get() && shared.state.get() == OPEN {
-          shared.backpressured.set(false);
+        let left = shared.sink.queued.get().saturating_sub(len);
+        shared.sink.queued.set(left);
+        if res.is_ok() && left == 0 && shared.sink.backpressured.get() && shared.sink.state.get() == OPEN {
+          shared.sink.backpressured.set(false);
           call_callback(&ctx, &shared.drain, (shared.ws_class.clone(),), "drain", logger);
         }
         res
       }
       OutMsg::Close(code, reason) if !sent_close => {
         sent_close = true;
-        shared.state.set(CLOSING.max(shared.state.get()));
+        shared.sink.state.set(CLOSING.max(shared.sink.state.get()));
         ws.write_frame(Frame::close(code, reason.as_bytes())).await
       }
       OutMsg::End => break,

@@ -800,3 +800,84 @@ fn serve_websocket_data_drain_ping() {
   ];
   assert_eq!(lines, expected);
 }
+
+#[test]
+fn serve_websocket_pubsub() {
+  let port = free_port();
+  let code = format!(
+    r#"
+        import {{ serve }} from "flux:http";
+
+        let closed = 0;
+        let server = serve({{
+            port: {port},
+            fetch(req, server) {{
+                if (server.upgrade(req)) return;
+                return "not a websocket";
+            }},
+            websocket: {{
+                message(ws, m) {{
+                    if (m === "join") {{
+                        ws.subscribe("room");
+                        ws.send("joined:" + server.subscriberCount("room"));
+                    }} else if (m === "shout") {{
+                        // ws.publish excludes the publisher; server.publish reaches all.
+                        console.log("pub", ws.publish("room", "from-peer"), server.publish("room", "to-all"), server.subscriberCount("room"));
+                    }} else if (m === "leave") {{
+                        ws.unsubscribe("room");
+                        ws.send("left:" + ws.isSubscribed("room") + ":" + server.subscriberCount("room"));
+                    }}
+                }},
+                close(ws, code, reason) {{
+                    closed += 1;
+                    console.log("closed", server.subscriberCount("room"));
+                    if (closed === 2) server.stop();
+                }},
+            }},
+        }});
+        "#,
+  );
+
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let (done_tx, done_rx) = std::sync::mpsc::channel();
+  std::thread::spawn(move || {
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+    rt.block_on(engine.eval_source(&code));
+    let _ = done_tx.send(());
+  });
+
+  let mut a = ws_client::connect(port);
+  ws_client::handshake(&mut a, port);
+  let mut b = ws_client::connect(port);
+  ws_client::handshake(&mut b, port);
+
+  ws_client::send(&mut a, 0x1, b"join");
+  assert_eq!(ws_client::read(&mut a), (0x1, b"joined:1".to_vec()));
+  ws_client::send(&mut b, 0x1, b"join");
+  assert_eq!(ws_client::read(&mut b), (0x1, b"joined:2".to_vec()));
+
+  // A publishes: A only sees the server-wide publish, B sees both.
+  ws_client::send(&mut a, 0x1, b"shout");
+  assert_eq!(ws_client::read(&mut a), (0x1, b"to-all".to_vec()));
+  assert_eq!(ws_client::read(&mut b), (0x1, b"from-peer".to_vec()));
+  assert_eq!(ws_client::read(&mut b), (0x1, b"to-all".to_vec()));
+
+  ws_client::send(&mut b, 0x1, b"leave");
+  assert_eq!(ws_client::read(&mut b), (0x1, b"left:false:1".to_vec()));
+
+  // A closes while still subscribed: the socket is auto-unsubscribed before
+  // the close callback runs, so it logs a count of 0.
+  ws_client::send(&mut a, 0x8, &1000u16.to_be_bytes());
+  assert_eq!(ws_client::read(&mut a).0, 0x8);
+  ws_client::send(&mut b, 0x8, &1000u16.to_be_bytes());
+  assert_eq!(ws_client::read(&mut b).0, 0x8);
+
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+
+  let cap = sink.captured();
+  let lines: Vec<String> =
+    cap.lines_at(flux::LogLevel::Log).into_iter().filter(|l| !l.starts_with("[flux]")).map(String::from).collect();
+  let expected = vec!["pub 1 2 2".to_string(), "closed 0".to_string(), "closed 0".to_string()];
+  assert_eq!(lines, expected);
+}

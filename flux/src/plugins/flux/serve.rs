@@ -24,7 +24,9 @@ use tokio::sync::{mpsc, watch};
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
-use crate::plugins::flux::websocket::{parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers};
+use crate::plugins::flux::websocket::{
+  parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, Topics, WsHandlers,
+};
 use crate::plugins::headers::headers_from_init;
 use crate::plugins::request::{request_from_parts, Request};
 use crate::plugins::response::Response;
@@ -334,8 +336,9 @@ fn take_upgrade<'js>(
     logger.warn("[flux] serve: upgraded request without websocket handlers");
     return Some(text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
   };
-  let shutdown_rx = handlers.server.borrow().shared.shutdown.subscribe();
-  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data);
+  let server = handlers.server.borrow();
+  let shutdown_rx = server.shared.shutdown.subscribe();
+  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data, server.topics.clone());
   Some(response)
 }
 
@@ -500,6 +503,9 @@ pub struct Server {
   /// Whether `serve` got a `websocket` option; without one `upgrade()` refuses.
   #[qjs(skip_trace)]
   has_websocket: bool,
+  /// The pub/sub topic registry shared with every socket of this server.
+  #[qjs(skip_trace)]
+  topics: Topics,
 }
 
 #[rquickjs::methods]
@@ -550,6 +556,18 @@ impl Server {
         false
       }
     }
+  }
+
+  /// Publish a message (string or Uint8Array) to every socket subscribed to
+  /// `topic`. Returns the number of sockets the message was queued to.
+  pub fn publish<'js>(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
+    self.topics.publish_value(&topic, &data, None)
+  }
+
+  /// How many sockets are currently subscribed to `topic`.
+  #[qjs(rename = "subscriberCount")]
+  pub fn subscriber_count(&self, topic: String) -> usize {
+    self.topics.subscriber_count(&topic)
   }
 
   /// Stop accepting new connections and gracefully shut down open ones. Safe to
@@ -680,7 +698,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   // caller and passed as the second `fetch(req, server)` argument.
   let server = Class::instance(
     ctx.clone(),
-    Server { shared: shared.clone(), port, hostname, has_websocket: websocket.is_some() },
+    Server { shared: shared.clone(), port, hostname, has_websocket: websocket.is_some(), topics: Topics::default() },
   )?;
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
 
