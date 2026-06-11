@@ -26,8 +26,8 @@ const CLOSED: u8 = 3;
 
 /// How long a closing socket waits for the peer's close echo (or remaining
 /// frames) before giving up and dropping the connection, so a dead peer cannot
-/// stall server shutdown.
-const CLOSE_GRACE: Duration = Duration::from_secs(3);
+/// stall server shutdown. Shared with the client (plugins::websocket).
+pub(crate) const CLOSE_GRACE: Duration = Duration::from_secs(3);
 
 /// Bytes of queued-but-unwritten frames above which `send` reports backpressure
 /// (-1) and a later `drain` callback is armed. Matches Bun's default.
@@ -124,8 +124,9 @@ pub(crate) fn try_upgrade<'js>(
 }
 
 /// A frame queued for the writer task: messages and closes from JS, plus the
-/// read half's obligated sends (pong replies, close echoes).
-enum OutMsg {
+/// read half's obligated sends (pong replies, close echoes). Shared with the
+/// client (plugins::websocket), which runs its own writer loop.
+pub(crate) enum OutMsg {
   Frame(OpCode, Vec<u8>),
   Close(u16, String),
   /// The reader finished; stop the writer.
@@ -238,8 +239,9 @@ impl Topics {
 }
 
 /// Split a message value into its frame opcode and payload bytes: a string
-/// sends a text frame, a Uint8Array a binary frame. Shared by send and publish.
-fn message_payload<'js>(data: &Value<'js>) -> rquickjs::Result<(OpCode, Vec<u8>)> {
+/// sends a text frame, a Uint8Array a binary frame. Shared by send and publish
+/// (and the client's send).
+pub(crate) fn message_payload<'js>(data: &Value<'js>) -> rquickjs::Result<(OpCode, Vec<u8>)> {
   match data.as_string() {
     Some(s) => Ok((OpCode::Text, s.to_string()?.into_bytes())),
     None => Ok((OpCode::Binary, extract_body_value(data, "ServerWebSocket")?)),
@@ -578,7 +580,7 @@ async fn run_writer<'js, W: AsyncWrite + Unpin>(
 
 /// Invoke an optional websocket callback, logging a throw instead of
 /// propagating it (there is no JS caller to propagate to).
-fn call_callback<'js, A: IntoArgs<'js>>(
+pub(crate) fn call_callback<'js, A: IntoArgs<'js>>(
   ctx: &Ctx<'js>,
   f: &Option<Function<'js>>,
   args: A,
@@ -595,7 +597,7 @@ fn call_callback<'js, A: IntoArgs<'js>>(
 
 /// Extract (code, reason) from a close frame payload: a big-endian u16 followed
 /// by an optional UTF-8 reason. An empty payload means no status (1005).
-fn parse_close(payload: &[u8]) -> (u16, String) {
+pub(crate) fn parse_close(payload: &[u8]) -> (u16, String) {
   if payload.len() >= 2 {
     (u16::from_be_bytes([payload[0], payload[1]]), String::from_utf8_lossy(&payload[2..]).into_owned())
   } else {

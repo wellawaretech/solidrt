@@ -8,6 +8,7 @@ pub mod request;
 pub mod response;
 pub mod text;
 pub mod time;
+pub mod websocket;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Object};
@@ -85,6 +86,7 @@ pub(crate) async fn init_context(
       request::init_request(&ctx);
       response::init_response(&ctx);
       text::init_text(&ctx);
+      websocket::init_websocket(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 
