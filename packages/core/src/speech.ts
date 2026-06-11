@@ -17,16 +17,24 @@ export type SpeechOptions = {
   microphone?: number
   /** Stop automatically after the first final result. */
   singleUtterance?: boolean
+  /** Also deliver snapshot transcripts (final: false) while an utterance is still being spoken. */
+  interimResults?: boolean
 }
 
 export type SpeechResult = {
-  /** Transcript of one completed utterance. */
+  /** Transcript of the utterance (a snapshot of it when final is false). */
   text: string
+  /** True for the completed utterance, false for interim snapshots. */
+  final: boolean
 }
 
 export type SpeechSession = {
-  /** Receive final transcripts (replaces any previous callback). */
+  /** Receive transcripts (replaces any previous callback). */
   onResult(callback: (result: SpeechResult) => void): void
+  /** The user started speaking (replaces any previous callback). */
+  onSpeechStart(callback: () => void): void
+  /** The utterance ended; its final result follows once transcribed. */
+  onSpeechEnd(callback: () => void): void
   /** Release the microphone and discard any utterance in progress. */
   stop(): void
 }
@@ -35,6 +43,8 @@ export async function startRecognition(options: SpeechOptions): Promise<SpeechSe
   let started = await speech.start(options)
   return {
     onResult: (callback: (result: SpeechResult) => void) => speech.setResultCallback(started.handle, callback),
+    onSpeechStart: (callback: () => void) => speech.setSpeechStartCallback(started.handle, callback),
+    onSpeechEnd: (callback: () => void) => speech.setSpeechEndCallback(started.handle, callback),
     stop: () => speech.stop(started.handle),
   }
 }

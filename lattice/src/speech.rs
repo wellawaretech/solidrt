@@ -34,6 +34,9 @@ const END_SILENCE: usize = 11_200;
 const KEEP_PAD: usize = 3_200;
 /// Force a cut when an utterance reaches this length (30 s).
 const MAX_UTTERANCE: usize = 16_000 * 30;
+/// With interim results on, re-transcribe the in-flight utterance at most
+/// once per this much new audio (1 s).
+const INTERIM_INTERVAL: usize = 16_000;
 
 pub struct RecognizerConfig {
   /// A ggml Whisper model (the file's bytes; callers fetch/read it themselves).
@@ -42,6 +45,8 @@ pub struct RecognizerConfig {
   pub vad_model: Vec<u8>,
   /// Whisper language code (e.g. "en", "auto" to detect).
   pub language: String,
+  /// Also transcribe utterances while they are still being spoken (`Interim`).
+  pub interim: bool,
 }
 
 pub enum RecognizerEvent {
@@ -49,6 +54,13 @@ pub enum RecognizerEvent {
   Ready,
   /// Loading or inference failed; the worker has exited.
   Error(String),
+  /// VAD detected the start of speech.
+  SpeechStart,
+  /// VAD detected the end of an utterance; its `Final` follows after
+  /// transcription.
+  SpeechEnd,
+  /// Snapshot transcript of the utterance still being spoken (interim only).
+  Interim(String),
   /// Transcript of a completed utterance.
   Final(String),
 }
@@ -110,6 +122,7 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
   let mut audio: Vec<f32> = Vec::new();
   let mut queue: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
   let mut speaking = false;
+  let mut since_interim: usize = 0;
 
   // Ingest exactly CHECK_INTERVAL samples per iteration so segmentation works
   // the same whether audio arrives in real time or all at once; the blocking
@@ -134,7 +147,14 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
         audio.drain(..audio.len() - PRE_ROLL);
       }
       speaking = vad_segments(&mut vad, &audio).map_or(false, |segs| !segs.is_empty());
+      if speaking {
+        since_interim = 0;
+        if events_tx.send(RecognizerEvent::SpeechStart).is_err() {
+          return;
+        }
+      }
     } else {
+      since_interim += CHECK_INTERVAL;
       let tail_start = audio.len().saturating_sub(TAIL_WINDOW);
       let trailing = match trailing_silence(&mut vad, &audio[tail_start..]) {
         Some(t) => t,
@@ -142,7 +162,25 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       };
       let cap = audio.len() >= MAX_UTTERANCE;
       if trailing < END_SILENCE && !cap {
+        // Utterance still in progress: optionally transcribe a snapshot of it.
+        if config.interim && since_interim >= INTERIM_INTERVAL {
+          since_interim = 0;
+          match transcribe(&mut state, &audio, &config.language) {
+            Ok(text) => {
+              let text = text.trim().to_string();
+              if !text.is_empty() && events_tx.send(RecognizerEvent::Interim(text)).is_err() {
+                return;
+              }
+            }
+            Err(e) => return fail(format!("transcription failed: {e}")),
+          }
+        }
         continue;
+      }
+      // SpeechEnd first, so consumers can show "processing" while the final
+      // transcription runs.
+      if events_tx.send(RecognizerEvent::SpeechEnd).is_err() {
+        return;
       }
       if trailing > KEEP_PAD {
         audio.truncate(audio.len() - (trailing - KEEP_PAD));

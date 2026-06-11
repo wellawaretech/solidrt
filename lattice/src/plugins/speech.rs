@@ -2,7 +2,8 @@
 //! crate::speech. `speech.start()` opens a microphone session and spawns a
 //! Recognizer; the returned promise settles from `tick` once the worker
 //! reports Ready (models loaded) or Error. Each tick also pumps mic samples
-//! into the worker and forwards Final transcripts to the session's callback.
+//! into the worker and forwards its events to the session's callbacks:
+//! results as `{ text, final }`, plus speech start/end notifications.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -24,7 +25,10 @@ struct Session {
   recognizer: Recognizer,
   /// Stop after the first final result.
   single: bool,
+  /// Receives `{ text, final }` results.
   callback: Option<Persistent<Function<'static>>>,
+  on_speech_start: Option<Persistent<Function<'static>>>,
+  on_speech_end: Option<Persistent<Function<'static>>>,
 }
 
 struct PendingStart {
@@ -55,11 +59,15 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
 
   let start = Function::new(ctx.clone(), start_impl).expect("create speech.start");
   let set_callback = Function::new(ctx.clone(), set_callback_impl).expect("create speech.setResultCallback");
+  let set_start = Function::new(ctx.clone(), set_speech_start_impl).expect("create speech.setSpeechStartCallback");
+  let set_end = Function::new(ctx.clone(), set_speech_end_impl).expect("create speech.setSpeechEndCallback");
   let stop = Function::new(ctx.clone(), stop_impl).expect("create speech.stop");
 
   let speech = Object::new(ctx.clone()).expect("create speech object");
   speech.set("start", start).expect("set speech.start");
   speech.set("setResultCallback", set_callback).expect("set speech.setResultCallback");
+  speech.set("setSpeechStartCallback", set_start).expect("set speech.setSpeechStartCallback");
+  speech.set("setSpeechEndCallback", set_end).expect("set speech.setSpeechEndCallback");
   speech.set("stop", stop).expect("set speech.stop");
   ctx.globals().set("speech", speech).expect("set speech global");
 }
@@ -79,6 +87,7 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
   let language: Option<String> = options.get("language")?;
   let microphone: Option<u32> = options.get("microphone")?;
   let single: Option<bool> = options.get("singleUtterance")?;
+  let interim: Option<bool> = options.get("interimResults")?;
 
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
   let mic = state
@@ -86,19 +95,29 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     .atx
     .open_microphone(microphone, SAMPLE_RATE)
     .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
-  let recognizer =
-    Recognizer::start(RecognizerConfig { model, vad_model, language: language.unwrap_or_else(|| "en".to_string()) });
+  let recognizer = Recognizer::start(RecognizerConfig {
+    model,
+    vad_model,
+    language: language.unwrap_or_else(|| "en".to_string()),
+    interim: interim.unwrap_or(false),
+  });
 
   let sid = {
     let mut next = state.0.next_id.borrow_mut();
     *next += 1;
     *next
   };
-  state
-    .0
-    .sessions
-    .borrow_mut()
-    .insert(sid, Session { mic, recognizer, single: single.unwrap_or(false), callback: None });
+  state.0.sessions.borrow_mut().insert(
+    sid,
+    Session {
+      mic,
+      recognizer,
+      single: single.unwrap_or(false),
+      callback: None,
+      on_speech_start: None,
+      on_speech_end: None,
+    },
+  );
 
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   state.0.pending.borrow_mut().push(PendingStart {
@@ -109,12 +128,28 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
   Ok(promise)
 }
 
-/// Register (or replace) the JS callback receiving final transcripts.
+/// Register (or replace) the JS callback receiving transcripts.
 fn set_callback_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
   let mut sessions = state.0.sessions.borrow_mut();
   if let Some(s) = sessions.get_mut(&session) {
     s.callback = Some(Persistent::save(&ctx, callback));
+  }
+}
+
+fn set_speech_start_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  let mut sessions = state.0.sessions.borrow_mut();
+  if let Some(s) = sessions.get_mut(&session) {
+    s.on_speech_start = Some(Persistent::save(&ctx, callback));
+  }
+}
+
+fn set_speech_end_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
+  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
+  let mut sessions = state.0.sessions.borrow_mut();
+  if let Some(s) = sessions.get_mut(&session) {
+    s.on_speech_end = Some(Persistent::save(&ctx, callback));
   }
 }
 
@@ -170,24 +205,50 @@ pub fn tick(ctx: &Ctx<'_>) {
         settle_pending(ctx, &state, sid, Err(msg.clone()));
         close_session(&state, sid);
       }
+      RecognizerEvent::SpeechStart => {
+        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_start.clone());
+        notify(ctx, callback, "speech start");
+      }
+      RecognizerEvent::SpeechEnd => {
+        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_speech_end.clone());
+        notify(ctx, callback, "speech end");
+      }
+      RecognizerEvent::Interim(text) => dispatch_result(ctx, &state, sid, &text, false),
       RecognizerEvent::Final(text) => {
-        let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.callback.clone());
-        if let Some(callback) = callback {
-          let call = || -> flux::rquickjs::Result<()> {
-            let obj = Object::new(ctx.clone())?;
-            obj.set("text", text.as_str())?;
-            callback.restore(ctx)?.call::<_, ()>((obj,))
-          };
-          if let Err(e) = call() {
-            log::warn!("[speech] result callback failed: {e}");
-          }
-        }
+        dispatch_result(ctx, &state, sid, &text, true);
         let single = state.0.sessions.borrow().get(&sid).map_or(false, |s| s.single);
         if single {
           close_session(&state, sid);
         }
       }
     }
+  }
+}
+
+/// Call a session's `{ text, final }` result callback, if registered.
+fn dispatch_result(ctx: &Ctx<'_>, state: &SpeechPluginState, sid: u64, text: &str, is_final: bool) {
+  let Some(callback) = state.0.sessions.borrow().get(&sid).and_then(|s| s.callback.clone()) else {
+    return;
+  };
+  let call = || -> flux::rquickjs::Result<()> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("text", text)?;
+    obj.set("final", is_final)?;
+    callback.restore(ctx)?.call::<_, ()>((obj,))
+  };
+  if let Err(e) = call() {
+    log::warn!("[speech] result callback failed: {e}");
+  }
+}
+
+/// Call an argument-less notification callback, if registered.
+fn notify(ctx: &Ctx<'_>, callback: Option<Persistent<Function<'static>>>, what: &str) {
+  let Some(callback) = callback else {
+    return;
+  };
+  let call = || -> flux::rquickjs::Result<()> { callback.restore(ctx)?.call::<_, ()>(()) };
+  if let Err(e) = call() {
+    log::warn!("[speech] {what} callback failed: {e}");
   }
 }
 

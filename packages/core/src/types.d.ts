@@ -59,9 +59,13 @@ declare global {
   }
 
   let speech: {
-    start(options: { model: Uint8Array, vadModel: Uint8Array, language?: string, microphone?: number, singleUtterance?: boolean }):
-      Promise<{ handle: number }>
-    setResultCallback(handle: number, callback: (result: { text: string }) => void): void
+    start(options: {
+      model: Uint8Array, vadModel: Uint8Array, language?: string,
+      microphone?: number, singleUtterance?: boolean, interimResults?: boolean,
+    }): Promise<{ handle: number }>
+    setResultCallback(handle: number, callback: (result: { text: string, final: boolean }) => void): void
+    setSpeechStartCallback(handle: number, callback: () => void): void
+    setSpeechEndCallback(handle: number, callback: () => void): void
     stop(handle: number): void
   }
 }
