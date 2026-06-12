@@ -47,13 +47,14 @@ pub struct RecognizerConfig {
   pub language: String,
   /// Also transcribe utterances while they are still being spoken (`Interim`).
   pub interim: bool,
-  /// Start armed: drop transcripts until an utterance contains this phrase,
-  /// then emit `Wake` (plus the text following the phrase as a `Final`) and
-  /// deliver normally. Matched on normalized words, so transcription
-  /// punctuation and casing do not matter.
-  pub wake_word: Option<String>,
-  /// With a wake word: re-arm after each delivered `Final` (one command per
-  /// wake). Without one this is the caller's concern (stop on first result).
+  /// Non-empty: start armed and drop transcripts until an utterance contains
+  /// one of these phrases (alternates, e.g. spelling variants the model
+  /// produces), then emit `Wake` (plus the text following the phrase as a
+  /// `Final`) and deliver normally. Matched on normalized words, so
+  /// transcription punctuation and casing do not matter.
+  pub wake_words: Vec<String>,
+  /// With wake words: re-arm after each delivered `Final` (one command per
+  /// wake). Without them this is the caller's concern (stop on first result).
   pub single_utterance: bool,
 }
 
@@ -67,8 +68,11 @@ pub enum RecognizerEvent {
   /// VAD detected the end of an utterance; its `Final` follows after
   /// transcription.
   SpeechEnd,
-  /// An armed recognizer heard the wake word.
+  /// An armed recognizer heard a wake phrase.
   Wake,
+  /// An armed recognizer transcribed an utterance without a wake phrase and
+  /// dropped it; carries the (discarded) transcript for UI/diagnostics.
+  NoMatch(String),
   /// Snapshot transcript of the utterance still being spoken (interim only).
   Interim(String),
   /// Transcript of a completed utterance.
@@ -133,12 +137,13 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
   let mut queue: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
   let mut speaking = false;
   let mut since_interim: usize = 0;
-  let wake_words: Option<Vec<String>> = config
-    .wake_word
-    .as_deref()
+  let wake_words: Vec<Vec<String>> = config
+    .wake_words
+    .iter()
     .map(|w| norm_words(w).into_iter().map(|(word, _)| word).collect())
-    .filter(|w: &Vec<String>| !w.is_empty());
-  let mut armed = wake_words.is_some();
+    .filter(|w: &Vec<String>| !w.is_empty())
+    .collect();
+  let mut armed = !wake_words.is_empty();
 
   // Ingest exactly CHECK_INTERVAL samples per iteration so segmentation works
   // the same whether audio arrives in real time or all at once; the blocking
@@ -205,10 +210,10 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       match transcribe(&mut state, &audio, &config.language) {
         Ok(text) => {
           let text = text.trim();
-          // While armed, utterances only count if they contain the wake
+          // While armed, utterances only count if they contain a wake
           // phrase; the text after it (if any) becomes the first result.
-          let deliver = match (&wake_words, armed) {
-            (Some(wake), true) => match match_wake(text, wake) {
+          let deliver = if armed {
+            match match_wake(text, &wake_words) {
               Some(remainder) => {
                 armed = false;
                 if events_tx.send(RecognizerEvent::Wake).is_err() {
@@ -216,16 +221,22 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
                 }
                 remainder.to_string()
               }
-              None => String::new(),
-            },
-            _ => text.to_string(),
+              None => {
+                if events_tx.send(RecognizerEvent::NoMatch(text.to_string())).is_err() {
+                  return;
+                }
+                String::new()
+              }
+            }
+          } else {
+            text.to_string()
           };
           if !deliver.is_empty() {
             if events_tx.send(RecognizerEvent::Final(deliver)).is_err() {
               return;
             }
             // One command per wake: go back to sleep until the next wake word.
-            if config.single_utterance && wake_words.is_some() {
+            if config.single_utterance && !wake_words.is_empty() {
               armed = true;
             }
           }
@@ -258,20 +269,22 @@ fn norm_words(text: &str) -> Vec<(String, usize)> {
   words
 }
 
-/// If `text` contains `wake` as a contiguous normalized word sequence, the
-/// text following the match (possibly empty), with leading punctuation
-/// trimmed; None when the wake phrase does not occur.
-fn match_wake<'a>(text: &'a str, wake: &[String]) -> Option<&'a str> {
+/// If `text` contains any of the wake `phrases` as a contiguous normalized
+/// word sequence, the text following the first matching phrase (possibly
+/// empty), with leading punctuation trimmed; None when no phrase occurs.
+fn match_wake<'a>(text: &'a str, phrases: &[Vec<String>]) -> Option<&'a str> {
   let words = norm_words(text);
-  if words.len() < wake.len() {
-    return None;
-  }
-  for start in 0..=(words.len() - wake.len()) {
-    if (0..wake.len()).all(|i| words[start + i].0 == wake[i]) {
-      let end = words[start + wake.len() - 1].1;
-      return Some(
-        text[end..].trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ':' | ';')),
-      );
+  for wake in phrases {
+    if words.len() < wake.len() {
+      continue;
+    }
+    for start in 0..=(words.len() - wake.len()) {
+      if (0..wake.len()).all(|i| words[start + i].0 == wake[i]) {
+        let end = words[start + wake.len() - 1].1;
+        return Some(
+          text[end..].trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ':' | ';')),
+        );
+      }
     }
   }
   None

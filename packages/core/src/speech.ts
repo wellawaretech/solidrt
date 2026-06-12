@@ -23,8 +23,10 @@ export type SpeechOptions = {
    * Start asleep: discard everything until an utterance contains this phrase,
    * then fire onWake and deliver results (starting with any text following
    * the phrase in the same utterance). Matching ignores casing/punctuation.
+   * An array lists alternates (e.g. spellings the model produces: ["ok
+   * google", "okay google"]); any of them wakes.
    */
-  wakeWord?: string
+  wakeWord?: string | string[]
 }
 
 export type SpeechResult = {
@@ -43,6 +45,8 @@ export type SpeechSession = {
   onSpeechEnd(callback: () => void): void
   /** The wake word was heard (wakeWord sessions only). */
   onWake(callback: () => void): void
+  /** An utterance was heard and dropped while waiting for the wake word; carries the discarded transcript. */
+  onNoMatch(callback: (result: { text: string }) => void): void
   /** Release the microphone and discard any utterance in progress. */
   stop(): void
 }
@@ -54,6 +58,7 @@ export async function startRecognition(options: SpeechOptions): Promise<SpeechSe
     onSpeechStart: (callback: () => void) => speech.setSpeechStartCallback(started.handle, callback),
     onSpeechEnd: (callback: () => void) => speech.setSpeechEndCallback(started.handle, callback),
     onWake: (callback: () => void) => speech.setWakeCallback(started.handle, callback),
+    onNoMatch: (callback: (result: { text: string }) => void) => speech.setNoMatchCallback(started.handle, callback),
     stop: () => speech.stop(started.handle),
   }
 }
