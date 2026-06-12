@@ -25,6 +25,26 @@ impl Default for PaintState {
   }
 }
 
+// Manual impl because impellers::Color has no PartialEq. Used as part of the
+// shaped-paragraph cache key in text.rs.
+impl PartialEq for PaintState {
+  fn eq(&self, other: &Self) -> bool {
+    let c = self.color;
+    let o = other.color;
+    c.red == o.red
+      && c.green == o.green
+      && c.blue == o.blue
+      && c.alpha == o.alpha
+      && c.color_space == o.color_space
+      && self.draw_style == other.draw_style
+      && self.blend_mode == other.blend_mode
+      && self.stroke_width == other.stroke_width
+      && self.stroke_cap == other.stroke_cap
+      && self.stroke_join == other.stroke_join
+      && self.stroke_miter == other.stroke_miter
+  }
+}
+
 impl PaintState {
   pub fn to_paint(&self) -> Paint {
     let mut paint = Paint::default();
