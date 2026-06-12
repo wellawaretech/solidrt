@@ -1,4 +1,5 @@
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -12,7 +13,9 @@ pub struct Context {
   backend: Backend,
   wgpu_device: wgpu::Device,
   wgpu_queue: wgpu::Queue,
-  impeller_ctx: ImpellerContext,
+  // RefCell because wrap_fbo needs &mut while Context is shared behind Arc;
+  // like the registries, it is only ever touched from the UI thread.
+  impeller_ctx: RefCell<ImpellerContext>,
   pub textures: TextureRegistry,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
@@ -39,7 +42,7 @@ impl Context {
       backend,
       wgpu_device,
       wgpu_queue,
-      impeller_ctx,
+      impeller_ctx: RefCell::new(impeller_ctx),
       textures: TextureRegistry::new(),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
@@ -115,9 +118,43 @@ impl Context {
     Ok(())
   }
 
+  /// Rasterize a display list into a new GPU texture of the given pixel size
+  /// and adopt it into Impeller for sampling. The texture is not placed in the
+  /// registry; the caller owns the returned entry.
+  pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<TextureEntry, String> {
+    let size = ISize::new(width as i64, height as i64);
+    let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
+    match self.backend {
+      Backend::Gl => {
+        // A wrapped FBO is treated like a window backbuffer, which GL stores
+        // bottom-up; pre-flip the content so the texture ends up upright.
+        let mut flipped = impellers::DisplayListBuilder::new(None);
+        flipped.translate(0.0, height as f32);
+        flipped.scale(1.0, -1.0);
+        flipped.draw_display_list(dl, 1.0);
+        let flipped = flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())?;
+        gl::render_display_list_to_texture(&gpu, &mut self.impeller_ctx.borrow_mut(), &flipped, size)?
+      }
+      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
+      Backend::Metal => panic!("Metal backend not yet implemented"),
+    }
+    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt texture failed".to_string())?;
+    Ok(TextureEntry { gpu, impeller })
+  }
+
+  /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).
+  pub fn read_texture(&self, entry: &TextureEntry) -> Result<Vec<u8>, String> {
+    let size = ISize::new(entry.width() as i64, entry.height() as i64);
+    match self.backend {
+      Backend::Gl => gl::read_texture_pixels(&entry.gpu, size),
+      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
+      Backend::Metal => panic!("Metal backend not yet implemented"),
+    }
+  }
+
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
     match gpu_texture.backend {
-      Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx, size),
+      Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx.borrow(), size),
       Backend::Vulkan => {
         panic!("Vulkan backend not yet implemented");
       }
