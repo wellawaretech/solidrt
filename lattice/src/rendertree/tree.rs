@@ -10,6 +10,11 @@ mod tests;
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,
+  // Content revision: bumped on structural changes and on element_mut (the
+  // property-mutation surface). Internal layout writes (node_mut) do not
+  // count. Lets a painter detect "tree unchanged since last build" and reuse
+  // its display list.
+  revision: u64,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -19,7 +24,15 @@ unsafe impl Send for RenderTree {}
 
 impl RenderTree {
   pub fn new() -> Self {
-    Self { nodes: HashMap::new(), root: None }
+    Self { nodes: HashMap::new(), root: None, revision: 0 }
+  }
+
+  pub fn revision(&self) -> u64 {
+    self.revision
+  }
+
+  fn bump_revision(&mut self) {
+    self.revision = self.revision.wrapping_add(1);
   }
 
   pub fn create_node(&mut self, id: u64, element: Element) -> u64 {
@@ -27,6 +40,7 @@ impl RenderTree {
       panic!("duplicate node id {}", id);
     }
     self.nodes.insert(id, element);
+    self.bump_revision();
     id
   }
 
@@ -82,6 +96,7 @@ impl RenderTree {
     }
 
     self.invalidate_cache(parent_id);
+    self.bump_revision();
   }
 
   pub fn delete_node(&mut self, parent_id: u64, node_id: u64) {
@@ -92,9 +107,11 @@ impl RenderTree {
     }
     self.delete_recursive(node_id);
     self.invalidate_cache(parent_id);
+    self.bump_revision();
   }
 
   pub fn element_mut(&mut self, id: u64) -> &mut Element {
+    self.bump_revision();
     self.node_mut(id)
   }
 

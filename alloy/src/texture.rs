@@ -1,5 +1,5 @@
 use impellers::{ISize, Texture};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -29,11 +29,15 @@ impl std::ops::Deref for TextureEntry {
 pub struct TextureRegistry {
   entries: RefCell<HashMap<u64, Rc<TextureEntry>>>,
   next_id: RefCell<u64>,
+  // Bumped on insert (create or replace at an id). Content uploads into an
+  // existing texture do not count. Lets a painter detect that a retained
+  // display list may reference replaced textures and must be rebuilt.
+  generation: Cell<u64>,
 }
 
 impl TextureRegistry {
   pub(crate) fn new() -> Self {
-    TextureRegistry { entries: RefCell::new(HashMap::new()), next_id: RefCell::new(1) }
+    TextureRegistry { entries: RefCell::new(HashMap::new()), next_id: RefCell::new(1), generation: Cell::new(0) }
   }
 
   pub fn get(&self, id: u64) -> Option<Rc<TextureEntry>> {
@@ -42,6 +46,11 @@ impl TextureRegistry {
 
   pub fn insert(&self, id: u64, entry: TextureEntry) {
     self.entries.borrow_mut().insert(id, Rc::new(entry));
+    self.generation.set(self.generation.get().wrapping_add(1));
+  }
+
+  pub fn generation(&self) -> u64 {
+    self.generation.get()
   }
 
   pub fn allocate_id(&self) -> u64 {
