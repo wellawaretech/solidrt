@@ -23,9 +23,8 @@ pub enum InputEvent {
 //
 // Rule of thumb: if you would be surprised that this still applied
 // after a reload, it belongs in EngineState. In particular, anything
-// carrying a node id, or a coordinate that was aimed at a specific
-// tree, is EngineState - node ids become dangling on reload, and
-// queued coordinates were aimed at a tree that no longer exists.
+// carrying a node id is EngineState - node ids become dangling on
+// reload.
 //
 // Pointer state is keyed by (PointerType, u64) so mouse / touch / pen
 // can coexist; nothing in this file assumes a single active pointer.
@@ -67,7 +66,6 @@ impl InputState {
 
 pub struct EngineState {
   hovered_paths: RefCell<HashMap<PointerKey, Vec<u64>>>,
-  input_queue: RefCell<Vec<InputEvent>>,
 }
 
 // Safety: EngineState is only accessed on the UI thread.
@@ -76,7 +74,7 @@ unsafe impl Sync for EngineState {}
 
 impl EngineState {
   pub fn new() -> Self {
-    Self { hovered_paths: RefCell::new(HashMap::new()), input_queue: RefCell::new(Vec::new()) }
+    Self { hovered_paths: RefCell::new(HashMap::new()) }
   }
 
   pub fn hovered_path(&self, key: PointerKey) -> Vec<u64> {
@@ -89,13 +87,5 @@ impl EngineState {
 
   pub fn remove_hovered_path(&self, key: PointerKey) {
     self.hovered_paths.borrow_mut().remove(&key);
-  }
-
-  pub fn push_input(&self, event: InputEvent) {
-    self.input_queue.borrow_mut().push(event);
-  }
-
-  pub fn drain_input(&self) -> Vec<InputEvent> {
-    self.input_queue.borrow_mut().drain(..).collect()
   }
 }

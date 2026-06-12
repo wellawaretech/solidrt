@@ -80,6 +80,22 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
   });
 }
 
+/// Queue a pointer event for dispatch on the JS thread against the current
+/// engine's tree. Drops the event when no engine is live (startup, mid-reload):
+/// it was aimed at a tree that does not exist.
+fn dispatch_input(
+  current_exec: &Rc<RefCell<Option<ExecHandle>>>,
+  current_engine_state: &Rc<RefCell<Option<Arc<EngineState>>>>,
+  event: InputEvent,
+) {
+  let Some(es) = current_engine_state.borrow().as_ref().cloned() else {
+    return;
+  };
+  if let Some(eh) = current_exec.borrow().as_ref() {
+    eh.exec(move |ctx| plugins::input::dispatch(&ctx, event, &es));
+  }
+}
+
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -109,7 +125,7 @@ fn ui_thread(
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
     // Holds the active engine's state. Replaced on every reload, which
-    // drops the previous EngineState (and any queued input aimed at the
+    // drops the previous EngineState (and any hover paths aimed at the
     // outgoing tree).
     let current_engine_state: Rc<RefCell<Option<Arc<EngineState>>>> = Rc::new(RefCell::new(None));
     let current_engine_state_events = current_engine_state.clone();
@@ -154,42 +170,48 @@ fn ui_thread(
               emit_resize(eh, size, safe_area, display_scale);
             }
           }
+          // Pointer events dispatch on arrival (hit test against the last
+          // computed layout, like Flutter): no frame is needed to deliver
+          // them. Handlers that mutate state request the next frame through
+          // their ffi calls.
           alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
             input_state_events.set_modifiers(modifiers);
-            if let Some(es) = current_engine_state_events.borrow().as_ref() {
-              es.push_input(InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
-            }
-            // Pointer events are dispatched (hit test, hover diff) inside the
-            // frame, so their arrival is a frame request.
-            platform_events.request_frame();
+            dispatch_input(
+              &current_exec_events,
+              &current_engine_state_events,
+              InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers },
+            );
           }
           alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
             input_state_events.set_modifiers(modifiers);
-            if let Some(es) = current_engine_state_events.borrow().as_ref() {
-              es.push_input(InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers });
-            }
-            platform_events.request_frame();
+            dispatch_input(
+              &current_exec_events,
+              &current_engine_state_events,
+              InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers },
+            );
           }
           alloy::AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
             input_state_events.set_modifiers(modifiers);
-            if let Some(es) = current_engine_state_events.borrow().as_ref() {
-              es.push_input(InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers });
-            }
             // Touch pointers end at release; mouse pointers persist.
             if pointer_type == alloy::PointerType::Touch {
               input_state_events.remove_pointer((pointer_type, pointer_id));
             }
-            platform_events.request_frame();
+            dispatch_input(
+              &current_exec_events,
+              &current_engine_state_events,
+              InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers },
+            );
           }
           alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
             input_state_events.set_modifiers(modifiers);
-            if let Some(es) = current_engine_state_events.borrow().as_ref() {
-              es.push_input(InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers });
-            }
-            platform_events.request_frame();
+            dispatch_input(
+              &current_exec_events,
+              &current_engine_state_events,
+              InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers },
+            );
           }
           alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
             input_state_events.set_modifiers(modifiers);
