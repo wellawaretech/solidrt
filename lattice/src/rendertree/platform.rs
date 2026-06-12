@@ -1,6 +1,8 @@
 use alloy::impellers::{Point, Rect, Size, TypographyContext};
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
 const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
@@ -12,6 +14,14 @@ pub struct PlatformContext {
   display_scale: Cell<f32>,
   safe_area: Cell<Rect>,
   fps: Cell<u32>,
+  // Frame-request latch (Flutter-style scheduleFrame). Atomic because change
+  // sources latch from both the UI thread (ffi mutations) and the alloy event
+  // thread (pointer input, resize). The per-second stats cells below are only
+  // touched by take_frame_requested on the UI thread.
+  frame_requested: AtomicBool,
+  req_window_start: Cell<Instant>,
+  req_window_count: Cell<u32>,
+  requests_per_second: Cell<u32>,
 }
 
 // Safety: PlatformContext is only used on the UI thread.
@@ -32,7 +42,39 @@ impl PlatformContext {
       display_scale: Cell::new(1.0),
       safe_area: Cell::new(Rect::new(Point::new(0.0, 0.0), Size::new(0.0, 0.0))),
       fps: Cell::new(0),
+      frame_requested: AtomicBool::new(false),
+      req_window_start: Cell::new(Instant::now()),
+      req_window_count: Cell::new(0),
+      requests_per_second: Cell::new(0),
     }
+  }
+
+  /// Latch a frame request. Idempotent; callable from any thread. Stage A of
+  /// demand-driven rendering: the loop still free-runs, the latch is only
+  /// counted (see take_frame_requested) to validate that every change source
+  /// requests a frame before the latch starts gating frames.
+  pub fn request_frame(&self) {
+    self.frame_requested.store(true, Ordering::Relaxed);
+  }
+
+  /// Consume the latch. Called once per produced frame (from draw); also rolls
+  /// the requested-frames-per-second window used by the debug overlay.
+  pub fn take_frame_requested(&self) -> bool {
+    let requested = self.frame_requested.swap(false, Ordering::Relaxed);
+    if requested {
+      self.req_window_count.set(self.req_window_count.get() + 1);
+    }
+    if self.req_window_start.get().elapsed().as_secs_f32() >= 1.0 {
+      self.requests_per_second.set(self.req_window_count.get());
+      self.req_window_count.set(0);
+      self.req_window_start.set(Instant::now());
+    }
+    requested
+  }
+
+  /// Requested frames in the last completed one-second window.
+  pub fn requests_per_second(&self) -> u32 {
+    self.requests_per_second.get()
   }
 
   pub fn window_size(&self) -> (f32, f32) {
@@ -42,6 +84,7 @@ impl PlatformContext {
   pub fn set_window_size(&self, width: f32, height: f32) {
     self.window_size.set((width, height));
     self.window_size_dirty.set(true);
+    self.request_frame();
   }
 
   pub fn take_window_size_dirty(&self) -> bool {

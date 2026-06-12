@@ -1,10 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use flux::rquickjs::function::Opt;
 use flux::rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 
+use crate::rendertree::PlatformContext;
 use crate::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
@@ -27,7 +29,7 @@ fn decode_image_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> flux::rqu
   Ok(result)
 }
 
-pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
+pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let create_atx = atx.clone();
   let create_texture = Function::new(
     ctx.clone(),
@@ -89,7 +91,10 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
       let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
       upload_atx
         .update_texture(id, pixels, offset.0.unwrap_or(0))
-        .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))
+        .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+      // New texture content changes the screen without any tree mutation.
+      platform.request_frame();
+      Ok(())
     },
   )
   .expect("create uploadTexture");

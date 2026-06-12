@@ -1,8 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use flux::report_uncaught;
 use flux::rquickjs::{Ctx, Function, JsLifetime, Persistent};
+
+use crate::rendertree::PlatformContext;
 
 // Per-engine requestAnimationFrame queue, stored in the JS context userdata so
 // it is recreated on engine reload. Callbacks are one-shot; flush() swaps the
@@ -16,11 +19,20 @@ struct RafInner {
   pending: Vec<(u32, Persistent<Function<'static>>)>,
 }
 
-pub fn init(ctx: &Ctx<'_>) {
+pub fn init(ctx: &Ctx<'_>, platform: Arc<PlatformContext>) {
   ctx.store_userdata(RafCallbacks::default()).expect("store raf callbacks");
 
   let globals = ctx.globals();
-  let raf = Function::new(ctx.clone(), request_animation_frame).expect("create requestAnimationFrame");
+  let raf = Function::new(ctx.clone(), move |callback: Function<'_>| {
+    // A pending animation callback is a standing request for the next frame.
+    platform.request_frame();
+    // Derive the Ctx from the callback itself: closure parameters get
+    // independent elided lifetimes, but request_animation_frame needs ctx and
+    // callback unified.
+    let ctx = callback.ctx().clone();
+    request_animation_frame(ctx, callback)
+  })
+  .expect("create requestAnimationFrame");
   let caf = Function::new(ctx.clone(), cancel_animation_frame).expect("create cancelAnimationFrame");
   globals.set("requestAnimationFrame", raf).expect("set requestAnimationFrame");
   globals.set("cancelAnimationFrame", caf).expect("set cancelAnimationFrame");

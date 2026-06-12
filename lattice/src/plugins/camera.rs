@@ -177,15 +177,17 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
 }
 
 /// Per-frame hook, called from the FrameRendered handler alongside raf::flush.
-pub fn tick(ctx: &Ctx<'_>) {
+/// Returns true when a camera uploaded a new frame into its texture, so the
+/// caller can request a redraw.
+pub fn tick(ctx: &Ctx<'_>) -> bool {
   let Some(state) = ctx.userdata::<CameraPluginState>() else {
-    return;
+    return false;
   };
-  state.0.atx.pump_cameras();
+  let uploaded = state.0.atx.pump_cameras();
   dispatch_barcodes(ctx, &state);
 
   if state.0.pending.borrow().is_empty() {
-    return;
+    return uploaded;
   }
   let pending = std::mem::take(&mut *state.0.pending.borrow_mut());
   for entry in pending {
@@ -208,6 +210,7 @@ pub fn tick(ctx: &Ctx<'_>) {
       None => reject_with(ctx, entry.reject, "camera closed"),
     }
   }
+  uploaded
 }
 
 /// Forward decoded barcodes to their session's JS callback as

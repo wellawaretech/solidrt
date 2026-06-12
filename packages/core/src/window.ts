@@ -27,10 +27,13 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
     fn(tick, frame, rate)
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
+    // A pending onFrame callback is a standing request for the next frame.
+    ffi.requestFrame()
   }
 
   frameId = nextFrameId++
   animationFrames.set(frameId, extendedFn)
+  ffi.requestFrame()
 
   let cleanup = () => animationFrames.delete(frameId)
   onCleanup(cleanup)

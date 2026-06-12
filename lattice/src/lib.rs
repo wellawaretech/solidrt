@@ -160,6 +160,9 @@ fn ui_thread(
             if let Some(es) = current_engine_state_events.borrow().as_ref() {
               es.push_input(InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
             }
+            // Pointer events are dispatched (hit test, hover diff) inside the
+            // frame, so their arrival is a frame request.
+            platform_events.request_frame();
           }
           alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
@@ -167,6 +170,7 @@ fn ui_thread(
             if let Some(es) = current_engine_state_events.borrow().as_ref() {
               es.push_input(InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers });
             }
+            platform_events.request_frame();
           }
           alloy::AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
@@ -178,12 +182,14 @@ fn ui_thread(
             if pointer_type == alloy::PointerType::Touch {
               input_state_events.remove_pointer((pointer_type, pointer_id));
             }
+            platform_events.request_frame();
           }
           alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
             input_state_events.set_modifiers(modifiers);
             if let Some(es) = current_engine_state_events.borrow().as_ref() {
               es.push_input(InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers });
             }
+            platform_events.request_frame();
           }
           alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
             input_state_events.set_modifiers(modifiers);
@@ -278,6 +284,7 @@ fn ui_thread(
               let next_frame = frame + 1;
               let record_frame = record_frame_events.clone();
               let paced = paced_clock_events.clone();
+              let platform_frame = platform_events.clone();
               eh.exec(move |ctx| {
                 // Publish the present being computed before reading the clock, so
                 // in record mode the clock reports this frame's virtual time.
@@ -293,7 +300,11 @@ fn ui_thread(
                   }
                   None => raw,
                 };
-                plugins::camera::tick(&ctx);
+                if plugins::camera::tick(&ctx) {
+                  // A camera frame landed in its texture; the screen content
+                  // changed even though the tree did not.
+                  platform_frame.request_frame();
+                }
                 #[cfg(feature = "speech")]
                 plugins::speech::tick(&ctx);
                 plugins::raf::flush(&ctx, ts);
@@ -361,6 +372,8 @@ fn ui_thread(
 
       let tree_cmd_tx = alloy_cmd_tx.clone();
       let tree_platform = platform.clone();
+      let texture_platform = platform.clone();
+      let raf_platform = platform.clone();
       let tree_atx = AlloyContext(atx.clone());
       let texture_atx = AlloyContext(atx.clone());
       let camera_atx = AlloyContext(atx.clone());
@@ -377,13 +390,13 @@ fn ui_thread(
         })
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
-        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx))
+        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx, texture_platform))
         .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
         .plugin(move |ctx| plugins::microphone::init(ctx, microphone_atx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
-        .plugin(|ctx| plugins::raf::init(&ctx))
+        .plugin(move |ctx| plugins::raf::init(&ctx, raf_platform))
         .userdata(clock.clone());
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));

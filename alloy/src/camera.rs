@@ -224,9 +224,12 @@ impl crate::context::Context {
 
   /// Advance all sessions: resolve pending permission prompts and upload the
   /// latest frame of each ready session into its texture. Run once per frame
-  /// on the UI thread; does nothing when no sessions are open.
-  pub fn pump_cameras(&self) {
+  /// on the UI thread; does nothing when no sessions are open. Returns true
+  /// when at least one texture received a new frame, so callers can schedule
+  /// a redraw.
+  pub fn pump_cameras(&self) -> bool {
     let mut sessions = self.cameras.sessions.borrow_mut();
+    let mut uploaded = false;
     for session in sessions.values_mut() {
       match session.status {
         CameraStatus::Pending => {
@@ -234,13 +237,14 @@ impl crate::context::Context {
             Self::pump_permission(session);
           }
           if session.approved {
-            self.pump_frame(session);
+            uploaded |= self.pump_frame(session);
           }
         }
-        CameraStatus::Ready { .. } => self.pump_frame(session),
+        CameraStatus::Ready { .. } => uploaded |= self.pump_frame(session),
         CameraStatus::Denied => {}
       }
     }
+    uploaded
   }
 
   fn pump_permission(session: &mut Session) {
@@ -259,11 +263,12 @@ impl crate::context::Context {
   /// Upload the latest frame, rotated upright per SDL's per-frame rotation
   /// (mobile sensor + display orientation). The texture is created on the
   /// first frame and recreated at the same id when the upright size changes
-  /// (device rotated between portrait and landscape).
-  fn pump_frame(&self, session: &mut Session) {
+  /// (device rotated between portrait and landscape). Returns true when a
+  /// frame was uploaded.
+  fn pump_frame(&self, session: &mut Session) -> bool {
     let frame = sdl_utils::camera_acquire_frame(session.camera);
     if frame.is_null() {
-      return;
+      return false;
     }
     let surface = unsafe { &*frame };
     let (frame_w, frame_h) = (surface.w as u32, surface.h as u32);
@@ -279,7 +284,7 @@ impl crate::context::Context {
       if !sdl_utils::surface_to_rgba(surface, &mut session.convert) {
         log::warn!("[camera] frame conversion failed: {}", sdl_utils::sdl_error());
         sdl_utils::camera_release_frame(session.camera, frame);
-        return;
+        return false;
       }
     }
     let pixels: &[u8] = if rgba_src && rotation == 0 && pitch == row_bytes {
@@ -322,6 +327,7 @@ impl crate::context::Context {
       }
     }
     sdl_utils::camera_release_frame(session.camera, frame);
+    true
   }
 }
 

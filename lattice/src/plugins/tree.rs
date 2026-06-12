@@ -72,32 +72,41 @@ pub fn init(
   ctx.store_userdata(shared.clone()).expect("store render tree");
 
   let tree_ref = shared.0.clone();
+  let platform_ref = platform.clone();
   let create_root = Function::new(ctx.clone(), move |id: u64| {
     let mut tree = tree_ref.borrow_mut();
     tree.create_node(id, Window::default().with_layout());
     tree.root = Some(id);
+    platform_ref.request_frame();
   })
   .expect("create createRoot");
 
   let tree_ref = shared.0.clone();
+  let platform_ref = platform.clone();
   let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
     tree_ref.borrow_mut().create_node(id, Element::from_kind(&kind));
+    platform_ref.request_frame();
   })
   .expect("create createNode");
 
   let tree_ref = shared.0.clone();
+  let platform_ref = platform.clone();
   let delete_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
     tree_ref.borrow_mut().delete_node(parent_id, node_id);
+    platform_ref.request_frame();
   })
   .expect("create deleteNode");
 
   let tree_ref = shared.0.clone();
+  let platform_ref = platform.clone();
   let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
     tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
+    platform_ref.request_frame();
   })
   .expect("create insertNode");
 
   let tree_ref = shared.0.clone();
+  let platform_ref = platform.clone();
   let cmd_tx = alloy_cmd_tx.clone();
   let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
     let value = to_prop_value(&value);
@@ -106,8 +115,12 @@ pub fn init(
     if invalidate {
       tree.invalidate_cache(node_id);
     }
+    platform_ref.request_frame();
   })
   .expect("create setProperty");
+
+  let platform_ref = platform.clone();
+  let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame()).expect("create requestFrame");
 
   let tree_ref = shared.0.clone();
   let get_bounding_box =
@@ -177,6 +190,7 @@ pub fn init(
   ffi.set("deleteNode", delete_node).expect("set ffi.deleteNode");
   ffi.set("insertNode", insert_node).expect("set ffi.insertNode");
   ffi.set("setProperty", set_property).expect("set ffi.setProperty");
+  ffi.set("requestFrame", request_frame).expect("set ffi.requestFrame");
   ffi.set("setTextInputActive", set_text_input_active).expect("set ffi.setTextInputActive");
   ffi.set("measureText", measure_text).expect("set ffi.measureText");
   ffi.set("getBoundingBox", get_bounding_box).expect("set ffi.getBoundingBox");

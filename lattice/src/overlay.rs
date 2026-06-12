@@ -79,6 +79,7 @@ impl Stats {
     typography: &TypographyContext,
     safe_area: Rect,
     fps: u32,
+    requested_fps: u32,
   ) {
     self.refresh();
 
@@ -96,7 +97,15 @@ impl Stats {
       return;
     };
     pb.push_style(&style);
-    let text = format!("{} FPS\n{:.0} MiB\n{:.0}% CPU", fps, self.proc_rss as f32 / MIB, self.proc_cpu);
+    // REQ counts frames requested per second (the demand-driven latch); FPS
+    // counts frames actually drawn. Once frames are gated the two converge.
+    let text = format!(
+      "{} FPS\n{} REQ\n{:.0} MiB\n{:.0}% CPU",
+      fps,
+      requested_fps,
+      self.proc_rss as f32 / MIB,
+      self.proc_cpu
+    );
     pb.add_text(&text);
 
     let Some(paragraph) = pb.build(PARA_WIDTH) else {
