@@ -60,14 +60,13 @@ declare global {
 
   let speech: {
     start(options: {
-      model: Uint8Array, vadModel: Uint8Array, language?: string,
-      microphone?: number, singleUtterance?: boolean, interimResults?: boolean, wakeWord?: string | string[],
+      model: Uint8Array, vadModel: Uint8Array, language?: string, microphone?: number,
+      singleUtterance?: boolean, interimResults?: boolean, wakeWord?: Uint8Array | string | string[], wakeThreshold?: number,
     }): Promise<{ handle: number }>
     setResultCallback(handle: number, callback: (result: { text: string, final: boolean }) => void): void
     setSpeechStartCallback(handle: number, callback: () => void): void
     setSpeechEndCallback(handle: number, callback: () => void): void
     setWakeCallback(handle: number, callback: () => void): void
-    setNoMatchCallback(handle: number, callback: (result: { text: string }) => void): void
     stop(handle: number): void
   }
 }

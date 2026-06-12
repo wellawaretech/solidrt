@@ -1,7 +1,9 @@
 // Speech recognition. A session captures the microphone, segments utterances
 // by silence (Silero VAD) and transcribes each one with Whisper, delivering
-// final transcripts through onResult. startRecognition resolves once the
-// models are loaded and listening has begun; it rejects when loading fails.
+// final transcripts through onResult. With wakeWord the session starts
+// asleep behind an efficient wake word detector (livekit-wakeword) and only
+// transcribes after the wake word. startRecognition resolves once the models
+// are loaded and listening has begun; it rejects when loading fails.
 // Models are passed as bytes so any source composes: flux:fs file(), fetch
 // (incl. the dev-server file proxy), or a download cache layered on top.
 // Requires a runtime built with speech support.
@@ -20,13 +22,17 @@ export type SpeechOptions = {
   /** Also deliver snapshot transcripts (final: false) while an utterance is still being spoken. */
   interimResults?: boolean
   /**
-   * Start asleep: discard everything until an utterance contains this phrase,
-   * then fire onWake and deliver results (starting with any text following
-   * the phrase in the same utterance). Matching ignores casing/punctuation.
-   * An array lists alternates (e.g. spellings the model produces: ["ok
-   * google", "okay google"]); any of them wakes.
+   * Wake word: start asleep, fire onWake when it is heard, then transcribe
+   * the speech that follows. How the wake word is specified depends on the
+   * engine. The current engine detects with a trained classifier and takes
+   * the model's bytes (livekit-wakeword ONNX, e.g. the pretrained "hey
+   * livekit"; custom phrases are trained offline with its toolkit). Phrase
+   * strings are reserved for engines that match text; passing them to this
+   * engine rejects with an error.
    */
-  wakeWord?: string | string[]
+  wakeWord?: Uint8Array | string | string[]
+  /** Detector confidence (0..1) that counts as a wake. Default 0.5. */
+  wakeThreshold?: number
 }
 
 export type SpeechResult = {
@@ -43,10 +49,8 @@ export type SpeechSession = {
   onSpeechStart(callback: () => void): void
   /** The utterance ended; its final result follows once transcribed. */
   onSpeechEnd(callback: () => void): void
-  /** The wake word was heard (wakeWord sessions only). */
+  /** The wake word was heard (wakeWordModel sessions only). */
   onWake(callback: () => void): void
-  /** An utterance was heard and dropped while waiting for the wake word; carries the discarded transcript. */
-  onNoMatch(callback: (result: { text: string }) => void): void
   /** Release the microphone and discard any utterance in progress. */
   stop(): void
 }
@@ -58,7 +62,6 @@ export async function startRecognition(options: SpeechOptions): Promise<SpeechSe
     onSpeechStart: (callback: () => void) => speech.setSpeechStartCallback(started.handle, callback),
     onSpeechEnd: (callback: () => void) => speech.setSpeechEndCallback(started.handle, callback),
     onWake: (callback: () => void) => speech.setWakeCallback(started.handle, callback),
-    onNoMatch: (callback: (result: { text: string }) => void) => speech.setNoMatchCallback(started.handle, callback),
     stop: () => speech.stop(started.handle),
   }
 }

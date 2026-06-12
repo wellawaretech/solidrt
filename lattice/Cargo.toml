@@ -20,8 +20,9 @@ path = "src/main.rs"
 #TODO drop the default compile
 default = ["flux/compile", "speech"]
 go = ["flux/compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:serde", "dep:serde_json", "dep:reqwest"]
-# Whisper speech recognition (whisper.cpp via whisper-rs, CPU inference).
-speech = ["dep:whisper-rs"]
+# Speech recognition: Whisper transcription (whisper.cpp via whisper-rs, CPU
+# inference) plus wake word detection (livekit-wakeword, ONNX via tract).
+speech = ["dep:whisper-rs", "dep:livekit-wakeword"]
 
 [dependencies]
 alloy = { workspace = true }
@@ -42,6 +43,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }
+livekit-wakeword = { version = "0.1", optional = true }
 
 # mDNS / DNS-SD dev-server discovery for the go client (see src/go/connection.rs).
 # Android reaches the dev server via the adb-reverse loopback instead, and

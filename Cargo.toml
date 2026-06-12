@@ -13,6 +13,11 @@ log = "0.4"
 rquickjs = { version = "0.12.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
 
+# Vendored with a session optimization-level fix (see vendor/.../README.md);
+# remove once upstream releases it.
+[patch.crates-io]
+livekit-wakeword = { path = "vendor/livekit-wakeword" }
+
 [profile.release]
 
 [profile.release-opt]

@@ -31,8 +31,6 @@ struct Session {
   on_speech_start: Option<Persistent<Function<'static>>>,
   on_speech_end: Option<Persistent<Function<'static>>>,
   on_wake: Option<Persistent<Function<'static>>>,
-  /// Receives `{ text }` heard (and dropped) while waiting for the wake word.
-  on_no_match: Option<Persistent<Function<'static>>>,
 }
 
 struct PendingStart {
@@ -66,7 +64,6 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   let set_start = Function::new(ctx.clone(), set_speech_start_impl).expect("create speech.setSpeechStartCallback");
   let set_end = Function::new(ctx.clone(), set_speech_end_impl).expect("create speech.setSpeechEndCallback");
   let set_wake = Function::new(ctx.clone(), set_wake_impl).expect("create speech.setWakeCallback");
-  let set_no_match = Function::new(ctx.clone(), set_no_match_impl).expect("create speech.setNoMatchCallback");
   let stop = Function::new(ctx.clone(), stop_impl).expect("create speech.stop");
 
   let speech = Object::new(ctx.clone()).expect("create speech object");
@@ -75,7 +72,6 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   speech.set("setSpeechStartCallback", set_start).expect("set speech.setSpeechStartCallback");
   speech.set("setSpeechEndCallback", set_end).expect("set speech.setSpeechEndCallback");
   speech.set("setWakeCallback", set_wake).expect("set speech.setWakeCallback");
-  speech.set("setNoMatchCallback", set_no_match).expect("set speech.setNoMatchCallback");
   speech.set("stop", stop).expect("set speech.stop");
   ctx.globals().set("speech", speech).expect("set speech global");
 }
@@ -92,19 +88,31 @@ fn bytes_option(ctx: &Ctx<'_>, options: &Object<'_>, key: &str) -> flux::rquickj
 fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Result<Promise<'js>> {
   let model = bytes_option(&ctx, &options, "model")?;
   let vad_model = bytes_option(&ctx, &options, "vadModel")?;
+  // wakeWord stays engine-agnostic in the API (string | string[] | bytes);
+  // this engine detects with a trained classifier, so only model bytes work
+  // and phrase strings are rejected rather than silently ignored.
+  let wake_value: Option<Value> = options.get("wakeWord")?;
+  let wake_model: Option<Vec<u8>> = match wake_value {
+    None => None,
+    Some(v) if v.is_undefined() || v.is_null() => None,
+    Some(v) if v.is_string() || v.is_array() => {
+      return Err(throw_str(
+        &ctx,
+        "startRecognition: this engine needs a trained wake word classifier (Uint8Array model bytes), not a phrase string",
+      ));
+    }
+    Some(v) => {
+      let arr = TypedArray::<u8>::from_js(&ctx, v)
+        .map_err(|_| throw_str(&ctx, "startRecognition: wakeWord must be a Uint8Array of classifier model bytes"))?;
+      let raw = arr.as_raw().ok_or_else(|| throw_str(&ctx, "startRecognition: wakeWord buffer is detached"))?;
+      Some(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) }.to_vec())
+    }
+  };
+  let wake_threshold: Option<f64> = options.get("wakeThreshold")?;
   let language: Option<String> = options.get("language")?;
   let microphone: Option<u32> = options.get("microphone")?;
   let single: Option<bool> = options.get("singleUtterance")?;
   let interim: Option<bool> = options.get("interimResults")?;
-  // wakeWord accepts a single phrase or an array of alternates.
-  let wake_value: Option<Value> = options.get("wakeWord")?;
-  let wake_words: Vec<String> = match wake_value {
-    None => Vec::new(),
-    Some(v) if v.is_undefined() || v.is_null() => Vec::new(),
-    Some(v) if v.is_string() => vec![String::from_js(&ctx, v)?],
-    Some(v) => Vec::<String>::from_js(&ctx, v)
-      .map_err(|_| throw_str(&ctx, "startRecognition: wakeWord must be a string or string[]"))?,
-  };
 
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
   let mic = state
@@ -113,13 +121,15 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     .open_microphone(microphone, SAMPLE_RATE)
     .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
   let single = single.unwrap_or(false);
-  let close_on_final = single && wake_words.is_empty();
+  let close_on_final = single && wake_model.is_none();
   let recognizer = Recognizer::start(RecognizerConfig {
     model,
     vad_model,
     language: language.unwrap_or_else(|| "en".to_string()),
     interim: interim.unwrap_or(false),
-    wake_words,
+    wake_model,
+    wake_threshold: wake_threshold.unwrap_or(0.5) as f32,
+    realtime: true,
     single_utterance: single,
   });
 
@@ -138,7 +148,6 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
       on_speech_start: None,
       on_speech_end: None,
       on_wake: None,
-      on_no_match: None,
     },
   );
 
@@ -181,14 +190,6 @@ fn set_wake_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
   let mut sessions = state.0.sessions.borrow_mut();
   if let Some(s) = sessions.get_mut(&session) {
     s.on_wake = Some(Persistent::save(&ctx, callback));
-  }
-}
-
-fn set_no_match_impl<'js>(ctx: Ctx<'js>, session: u64, callback: Function<'js>) {
-  let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
-  let mut sessions = state.0.sessions.borrow_mut();
-  if let Some(s) = sessions.get_mut(&session) {
-    s.on_no_match = Some(Persistent::save(&ctx, callback));
   }
 }
 
@@ -255,19 +256,6 @@ pub fn tick(ctx: &Ctx<'_>) {
       RecognizerEvent::Wake => {
         let callback = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_wake.clone());
         notify(ctx, callback, "wake");
-      }
-      RecognizerEvent::NoMatch(text) => {
-        let Some(callback) = state.0.sessions.borrow().get(&sid).and_then(|s| s.on_no_match.clone()) else {
-          continue;
-        };
-        let call = || -> flux::rquickjs::Result<()> {
-          let obj = Object::new(ctx.clone())?;
-          obj.set("text", text.as_str())?;
-          callback.restore(ctx)?.call::<_, ()>((obj,))
-        };
-        if let Err(e) = call() {
-          log::warn!("[speech] no-match callback failed: {e}");
-        }
       }
       RecognizerEvent::Interim(text) => dispatch_result(ctx, &state, sid, &text, false),
       RecognizerEvent::Final(text) => {

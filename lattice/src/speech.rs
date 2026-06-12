@@ -1,16 +1,21 @@
-//! Whisper speech recognition: utterance segmentation (Silero VAD) and
-//! transcription (whisper.cpp via whisper-rs) on a dedicated worker thread.
+//! Speech recognition: utterance segmentation (Silero VAD), transcription
+//! (whisper.cpp via whisper-rs) and wake word detection (livekit-wakeword)
+//! on a dedicated worker thread.
 //!
 //! The owner feeds mono f32 16 kHz samples through `feed` (e.g. once per
 //! frame from a microphone session) and polls `take_events`. The worker
 //! keeps a rolling pre-roll while idle; when VAD detects speech it
 //! accumulates the utterance, and once the tail goes silent (or the
 //! utterance hits the length cap) it transcribes the whole utterance and
-//! emits `Final`. Dropping the `Recognizer` disconnects the sample channel
-//! and the worker exits.
+//! emits `Final`. With a wake model the worker starts armed: only the wake
+//! detector runs (no VAD/Whisper) over a rolling window until a classifier
+//! score crosses the threshold, which emits `Wake` and switches to the
+//! recognition flow above. Dropping the `Recognizer` disconnects the sample
+//! channel and the worker exits.
 
 use std::sync::mpsc;
 
+use livekit_wakeword::WakeWordModel;
 use whisper_rs::{
   FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState, WhisperVadContext,
   WhisperVadContextParams, WhisperVadParams,
@@ -37,6 +42,10 @@ const MAX_UTTERANCE: usize = 16_000 * 30;
 /// With interim results on, re-transcribe the in-flight utterance at most
 /// once per this much new audio (1 s).
 const INTERIM_INTERVAL: usize = 16_000;
+/// Rolling window handed to the wake word detector each check. The detector
+/// is stateless and needs ~1.96 s to produce its full embedding sequence
+/// (shorter windows silently score zero), so stay safely above that (2.2 s).
+const WAKE_WINDOW: usize = 35_200;
 
 pub struct RecognizerConfig {
   /// A ggml Whisper model (the file's bytes; callers fetch/read it themselves).
@@ -47,14 +56,20 @@ pub struct RecognizerConfig {
   pub language: String,
   /// Also transcribe utterances while they are still being spoken (`Interim`).
   pub interim: bool,
-  /// Non-empty: start armed and drop transcripts until an utterance contains
-  /// one of these phrases (alternates, e.g. spelling variants the model
-  /// produces), then emit `Wake` (plus the text following the phrase as a
-  /// `Final`) and deliver normally. Matched on normalized words, so
-  /// transcription punctuation and casing do not matter.
-  pub wake_words: Vec<String>,
-  /// With wake words: re-arm after each delivered `Final` (one command per
-  /// wake). Without them this is the caller's concern (stop on first result).
+  /// An ONNX wake word classifier (livekit-wakeword; the file's bytes).
+  /// Start armed: run only the detector (no VAD/Whisper) and discard audio
+  /// until it fires, then emit `Wake` and deliver normally.
+  pub wake_model: Option<Vec<u8>>,
+  /// Classifier confidence (0..1) at which the wake word counts as detected.
+  pub wake_threshold: f32,
+  /// Samples arrive at real time from a live source (a microphone). While
+  /// armed, the worker then drops audio older than the detection window to
+  /// catch up after CPU starvation: a load spike costs that moment instead
+  /// of time-shifting everything after it. Leave off for recorded/batch
+  /// input, where every window must be scored.
+  pub realtime: bool,
+  /// With a wake model: re-arm after each delivered `Final` (one command per
+  /// wake). Without one this is the caller's concern (stop on first result).
   pub single_utterance: bool,
 }
 
@@ -68,11 +83,8 @@ pub enum RecognizerEvent {
   /// VAD detected the end of an utterance; its `Final` follows after
   /// transcription.
   SpeechEnd,
-  /// An armed recognizer heard a wake phrase.
+  /// An armed recognizer heard the wake word.
   Wake,
-  /// An armed recognizer transcribed an utterance without a wake phrase and
-  /// dropped it; carries the (discarded) transcript for UI/diagnostics.
-  NoMatch(String),
   /// Snapshot transcript of the utterance still being spoken (interim only).
   Interim(String),
   /// Transcript of a completed utterance.
@@ -129,6 +141,13 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
     Ok(vad) => vad,
     Err(e) => return fail(format!("failed to load VAD model: {e}")),
   };
+  let mut wake = match &config.wake_model {
+    Some(bytes) => match wake_from_bytes(bytes) {
+      Ok(wake) => Some(wake),
+      Err(e) => return fail(format!("failed to load wake word model: {e}")),
+    },
+    None => None,
+  };
   if events_tx.send(RecognizerEvent::Ready).is_err() {
     return;
   }
@@ -137,13 +156,7 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
   let mut queue: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
   let mut speaking = false;
   let mut since_interim: usize = 0;
-  let wake_words: Vec<Vec<String>> = config
-    .wake_words
-    .iter()
-    .map(|w| norm_words(w).into_iter().map(|(word, _)| word).collect())
-    .filter(|w: &Vec<String>| !w.is_empty())
-    .collect();
-  let mut armed = !wake_words.is_empty();
+  let mut armed = wake.is_some();
 
   // Ingest exactly CHECK_INTERVAL samples per iteration so segmentation works
   // the same whether audio arrives in real time or all at once; the blocking
@@ -159,6 +172,51 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       }
     }
     audio.extend(queue.drain(..CHECK_INTERVAL));
+
+    // Armed: only the wake detector runs. It is stateless, so each check
+    // rescores the rolling window; the models are small CNNs, far cheaper
+    // than Whisper. On detection the window is dropped (it must not retrigger
+    // or leak into the utterance) and recognition picks up the speech that
+    // follows.
+    if armed {
+      let detector = wake.as_mut().expect("armed without wake model");
+      // Live sources: only the freshest window can fire a wake, so backlog
+      // beyond it is history; drop it instead of scoring it. With a healthy
+      // worker the queue holds under a frame of audio and this is the normal
+      // window slide; after CPU starvation it erases the accumulated lag.
+      if config.realtime {
+        while let Ok(more) = samples_rx.try_recv() {
+          queue.extend(more);
+        }
+        if audio.len() + queue.len() > WAKE_WINDOW {
+          let dropped = audio.len() + queue.len() - WAKE_WINDOW;
+          if dropped > SAMPLE_RATE as usize {
+            log::debug!("[speech] armed catch-up: dropped {:.1}s of stale audio", dropped as f64 / SAMPLE_RATE as f64);
+          }
+          audio.extend(queue.drain(..));
+          audio.drain(..audio.len() - WAKE_WINDOW);
+        }
+      }
+      if audio.len() < WAKE_WINDOW {
+        continue;
+      }
+      audio.drain(..audio.len() - WAKE_WINDOW);
+      let pcm: Vec<i16> = audio.iter().map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16).collect();
+      match detector.predict(&pcm) {
+        Ok(scores) => {
+          if scores.values().any(|&score| score >= config.wake_threshold) {
+            armed = false;
+            audio.clear();
+            if events_tx.send(RecognizerEvent::Wake).is_err() {
+              return;
+            }
+          }
+        }
+        Err(e) => log::warn!("[speech] wake detection failed: {e}"),
+      }
+      continue;
+    }
+
     if audio.len() < MIN_CHECK {
       continue;
     }
@@ -183,9 +241,8 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       };
       let cap = audio.len() >= MAX_UTTERANCE;
       if trailing < END_SILENCE && !cap {
-        // Utterance still in progress: optionally transcribe a snapshot of it
-        // (suppressed while armed; pre-wake speech must not leak).
-        if config.interim && !armed && since_interim >= INTERIM_INTERVAL {
+        // Utterance still in progress: optionally transcribe a snapshot of it.
+        if config.interim && since_interim >= INTERIM_INTERVAL {
           since_interim = 0;
           match transcribe(&mut state, &audio, &config.language) {
             Ok(text) => {
@@ -210,33 +267,12 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
       match transcribe(&mut state, &audio, &config.language) {
         Ok(text) => {
           let text = text.trim();
-          // While armed, utterances only count if they contain a wake
-          // phrase; the text after it (if any) becomes the first result.
-          let deliver = if armed {
-            match match_wake(text, &wake_words) {
-              Some(remainder) => {
-                armed = false;
-                if events_tx.send(RecognizerEvent::Wake).is_err() {
-                  return;
-                }
-                remainder.to_string()
-              }
-              None => {
-                if events_tx.send(RecognizerEvent::NoMatch(text.to_string())).is_err() {
-                  return;
-                }
-                String::new()
-              }
-            }
-          } else {
-            text.to_string()
-          };
-          if !deliver.is_empty() {
-            if events_tx.send(RecognizerEvent::Final(deliver)).is_err() {
+          if !text.is_empty() {
+            if events_tx.send(RecognizerEvent::Final(text.to_string())).is_err() {
               return;
             }
             // One command per wake: go back to sleep until the next wake word.
-            if config.single_utterance && !wake_words.is_empty() {
+            if config.single_utterance && wake.is_some() {
               armed = true;
             }
           }
@@ -249,59 +285,34 @@ fn worker(config: RecognizerConfig, samples_rx: mpsc::Receiver<Vec<f32>>, events
   }
 }
 
-/// Lowercased alphanumeric words of `text`, each with the byte offset just
-/// past the word in the original string.
-fn norm_words(text: &str) -> Vec<(String, usize)> {
-  let mut words = Vec::new();
-  let mut current = String::new();
-  let mut end = 0;
-  for (i, c) in text.char_indices() {
-    if c.is_alphanumeric() {
-      current.extend(c.to_lowercase());
-      end = i + c.len_utf8();
-    } else if !current.is_empty() {
-      words.push((std::mem::take(&mut current), end));
-    }
-  }
-  if !current.is_empty() {
-    words.push((current, end));
-  }
-  words
-}
-
-/// If `text` contains any of the wake `phrases` as a contiguous normalized
-/// word sequence, the text following the first matching phrase (possibly
-/// empty), with leading punctuation trimmed; None when no phrase occurs.
-fn match_wake<'a>(text: &'a str, phrases: &[Vec<String>]) -> Option<&'a str> {
-  let words = norm_words(text);
-  for wake in phrases {
-    if words.len() < wake.len() {
-      continue;
-    }
-    for start in 0..=(words.len() - wake.len()) {
-      if (0..wake.len()).all(|i| words[start + i].0 == wake[i]) {
-        let end = words[start + wake.len() - 1].1;
-        return Some(
-          text[end..].trim_start_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ':' | ';')),
-        );
-      }
-    }
-  }
-  None
-}
-
-/// Load the Silero VAD context from model bytes. whisper-rs wraps no
-/// buffer-loading VAD init (whisper.cpp's loader variant is unexposed), so
-/// stage the small model through a temp file.
-fn vad_from_bytes(bytes: &[u8]) -> Result<WhisperVadContext, String> {
+/// Stage model bytes through a temp file for loaders that only take paths,
+/// then build with `load` and clean up.
+fn via_temp_file<T>(bytes: &[u8], load: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
   use std::sync::atomic::{AtomicU64, Ordering};
   static UNIQUE: AtomicU64 = AtomicU64::new(0);
-  let path =
-    std::env::temp_dir().join(format!("srt-vad-{}-{}.bin", std::process::id(), UNIQUE.fetch_add(1, Ordering::Relaxed)));
+  let path = std::env::temp_dir().join(format!(
+    "srt-model-{}-{}.bin",
+    std::process::id(),
+    UNIQUE.fetch_add(1, Ordering::Relaxed)
+  ));
   std::fs::write(&path, bytes).map_err(|e| format!("staging to {}: {e}", path.display()))?;
-  let vad = WhisperVadContext::new(&path.to_string_lossy(), WhisperVadContextParams::default());
+  let result = load(&path);
   let _ = std::fs::remove_file(&path);
-  vad.map_err(|e| e.to_string())
+  result
+}
+
+/// Load the Silero VAD context from model bytes (whisper-rs wraps no
+/// buffer-loading VAD init; whisper.cpp's loader variant is unexposed).
+fn vad_from_bytes(bytes: &[u8]) -> Result<WhisperVadContext, String> {
+  via_temp_file(bytes, |path| {
+    WhisperVadContext::new(&path.to_string_lossy(), WhisperVadContextParams::default()).map_err(|e| e.to_string())
+  })
+}
+
+/// Load a wake word classifier from ONNX model bytes (livekit-wakeword only
+/// loads classifiers from paths; its mel/embedding models are built in).
+fn wake_from_bytes(bytes: &[u8]) -> Result<WakeWordModel, String> {
+  via_temp_file(bytes, |path| WakeWordModel::new(&[path], SAMPLE_RATE).map_err(|e| e.to_string()))
 }
 
 /// Speech segments in `samples` (timestamps in centiseconds), or None when
