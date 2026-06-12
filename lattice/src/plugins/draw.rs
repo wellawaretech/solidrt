@@ -19,10 +19,15 @@ pub fn init(
 ) {
   let stats = std::cell::RefCell::new(overlay::Stats::new());
   let draw_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
-    // Stage A of demand-driven rendering: consume the frame-request latch so
-    // the overlay can show requested vs drawn frames. The result does not gate
-    // anything yet; the loop still draws unconditionally.
-    let _requested = platform.take_frame_requested();
+    // Demand-driven gate: when nothing requested a frame, skip it entirely
+    // (layout, paint, submit, hover refresh - elements only move when a frame
+    // is produced, so hover cannot have changed either). Record mode renders
+    // unconditionally: its capture loop blocks waiting for every frame's
+    // display list.
+    let requested = platform.take_frame_requested();
+    if !requested && !platform.always_render() {
+      return;
+    }
 
     let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
     let mut builder = DisplayListBuilder::new(None);

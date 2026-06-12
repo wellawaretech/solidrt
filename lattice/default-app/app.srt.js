@@ -3279,9 +3279,11 @@ function onFrame(fn) {
     fn(tick, frame, rate);
     frameId = nextFrameId++;
     animationFrames.set(frameId, extendedFn);
+    ffi.requestFrame();
   };
   frameId = nextFrameId++;
   animationFrames.set(frameId, extendedFn);
+  ffi.requestFrame();
   let cleanup2 = () => animationFrames.delete(frameId);
   onCleanup(cleanup2);
   return cleanup2;

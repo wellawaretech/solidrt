@@ -22,6 +22,8 @@ pub struct PlatformContext {
   req_window_start: Cell<Instant>,
   req_window_count: Cell<u32>,
   requests_per_second: Cell<u32>,
+  // Bypass the demand-driven gate and render every frame (record mode).
+  always_render: Cell<bool>,
 }
 
 // Safety: PlatformContext is only used on the UI thread.
@@ -46,18 +48,26 @@ impl PlatformContext {
       req_window_start: Cell::new(Instant::now()),
       req_window_count: Cell::new(0),
       requests_per_second: Cell::new(0),
+      always_render: Cell::new(false),
     }
   }
 
-  /// Latch a frame request. Idempotent; callable from any thread. Stage A of
-  /// demand-driven rendering: the loop still free-runs, the latch is only
-  /// counted (see take_frame_requested) to validate that every change source
-  /// requests a frame before the latch starts gating frames.
+  pub fn set_always_render(&self, always: bool) {
+    self.always_render.set(always);
+  }
+
+  pub fn always_render(&self) -> bool {
+    self.always_render.get()
+  }
+
+  /// Latch a frame request (Flutter's scheduleFrame). Idempotent; callable
+  /// from any thread. The draw gate consumes it via take_frame_requested:
+  /// no request, no frame.
   pub fn request_frame(&self) {
     self.frame_requested.store(true, Ordering::Relaxed);
   }
 
-  /// Consume the latch. Called once per produced frame (from draw); also rolls
+  /// Consume the latch. Called once per render tick (from draw); also rolls
   /// the requested-frames-per-second window used by the debug overlay.
   pub fn take_frame_requested(&self) -> bool {
     let requested = self.frame_requested.swap(false, Ordering::Relaxed);

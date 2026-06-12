@@ -80,6 +80,50 @@ fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32
   });
 }
 
+/// Run the per-frame JS work for one frame signal (FrameRendered or idle
+/// Tick): publish the frame index, advance the paced clock, pump cameras and
+/// speech, flush rAF callbacks, and emit the "render" event. `next_frame` is
+/// the present index the frame being computed would get.
+fn emit_render_event(
+  eh: &ExecHandle,
+  next_frame: u64,
+  record_frame: Arc<AtomicU64>,
+  paced: Option<paced_clock::PacedClock>,
+  platform: Arc<PlatformContext>,
+) {
+  eh.exec(move |ctx| {
+    // Publish the present being computed before reading the clock, so in
+    // record mode the clock reports this frame's virtual time.
+    record_frame.store(next_frame, Ordering::Relaxed);
+    // rAF and the render event use the paced clock in run mode (see
+    // paced_clock); record mode and performance.now() read flux::Clock
+    // directly. Idle Ticks arrive at the refresh cadence, so ticking the
+    // paced clock for them preserves its one-period-per-call model. Render
+    // event carries seconds; JS scales to ms.
+    let raw = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
+    let ts = match &paced {
+      Some(pc) => {
+        pc.tick(raw);
+        pc.now_ms()
+      }
+      None => raw,
+    };
+    if plugins::camera::tick(&ctx) {
+      // A camera frame landed in its texture; the screen content changed
+      // even though the tree did not.
+      platform.request_frame();
+    }
+    #[cfg(feature = "speech")]
+    plugins::speech::tick(&ctx);
+    plugins::raf::flush(&ctx, ts);
+    let time = ts / 1000.0;
+    let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+    obj.set("frame", next_frame).expect("set frame");
+    obj.set("time", time).expect("set time");
+    emit_event(&ctx, "render", obj);
+  });
+}
+
 /// Queue a pointer event for dispatch on the JS thread against the current
 /// engine's tree. Drops the event when no engine is live (startup, mid-reload):
 /// it was aimed at a tree that does not exist.
@@ -105,6 +149,10 @@ fn ui_thread(
   record_fps: Option<u32>,
 ) {
   let platform = Arc::new(PlatformContext::new());
+  // Record mode renders every frame unconditionally: the lockstep capture
+  // loop blocks waiting for each frame's display list, so a frame skipped by
+  // the demand-driven gate would deadlock it.
+  platform.set_always_render(matches!(record_fps, Some(rfps) if rfps > 0));
   let input_state = Arc::new(InputState::new());
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
 
@@ -300,42 +348,30 @@ fn ui_thread(
             if let Some(eh) = current_exec_events.borrow().as_ref() {
               // FrameRendered reports the frame native just finished
               // drawing. JS uses the "render" event to compute the NEXT
-              // frame's state, so shift both fields by +1. The JS-side
+              // frame's state, so shift the field by +1. The JS-side
               // bootstrap owns frame 0; without the shift, record mode
               // re-runs frame 0 at tick 0 and duplicates a PNG.
-              let next_frame = frame + 1;
-              let record_frame = record_frame_events.clone();
-              let paced = paced_clock_events.clone();
-              let platform_frame = platform_events.clone();
-              eh.exec(move |ctx| {
-                // Publish the present being computed before reading the clock, so
-                // in record mode the clock reports this frame's virtual time.
-                record_frame.store(next_frame as u64, Ordering::Relaxed);
-                // rAF and the render event use the paced clock in run mode (see
-                // paced_clock); record mode and performance.now() read flux::Clock
-                // directly. Render event carries seconds; JS scales to ms.
-                let raw = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
-                let ts = match &paced {
-                  Some(pc) => {
-                    pc.tick(raw);
-                    pc.now_ms()
-                  }
-                  None => raw,
-                };
-                if plugins::camera::tick(&ctx) {
-                  // A camera frame landed in its texture; the screen content
-                  // changed even though the tree did not.
-                  platform_frame.request_frame();
-                }
-                #[cfg(feature = "speech")]
-                plugins::speech::tick(&ctx);
-                plugins::raf::flush(&ctx, ts);
-                let time = ts / 1000.0;
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("frame", next_frame).expect("set frame");
-                obj.set("time", time).expect("set time");
-                emit_event(&ctx, "render", obj);
-              });
+              emit_render_event(
+                eh,
+                frame + 1,
+                record_frame_events.clone(),
+                paced_clock_events.clone(),
+                platform_events.clone(),
+              );
+            }
+          }
+          alloy::AlloyEvent::Tick { frame, fps } => {
+            platform_events.set_fps(fps);
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              // Tick's frame is already the next present index (one past the
+              // last FrameRendered), so no +1 here.
+              emit_render_event(
+                eh,
+                frame,
+                record_frame_events.clone(),
+                paced_clock_events.clone(),
+                platform_events.clone(),
+              );
             }
           }
           alloy::AlloyEvent::DisplayRefreshRate { hz } => {

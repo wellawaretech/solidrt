@@ -129,33 +129,52 @@ impl App {
     // JS side can react (auto-blur on hide, layout adjustments on show).
     let mut prev_keyboard_shown = false;
 
+    // Instant of the last frame signal (FrameRendered or Tick). When the UI
+    // thread submits nothing for a full refresh period, an idle Tick keeps its
+    // per-frame logic running while the GPU stays idle; presents reset the
+    // deadline so Ticks only fire when no frames are being produced.
+    let mut last_frame_signal = Instant::now();
+
     loop {
-      match rx.recv_timeout(std::time::Duration::from_millis(8)) {
+      let tick_period = std::time::Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
+      // Wait for a display list, but never past the next idle-tick deadline
+      // (capped at 8ms to keep SDL event polling responsive).
+      let timeout =
+        tick_period.saturating_sub(last_frame_signal.elapsed()).min(std::time::Duration::from_millis(8));
+      match rx.recv_timeout(timeout) {
         Ok(mut dl) => {
           while let Ok(newer) = rx.try_recv() {
             dl = newer;
           }
-          let frame_time = Instant::now();
           fps_frame_count += 1;
-          if frame_time.saturating_duration_since(fps_last_second).as_secs_f32() >= 1.0 {
-            fps = fps_frame_count;
-            fps_frame_count = 0;
-            fps_last_second = frame_time;
-            // Safety net: report a refresh-rate change the display event might miss.
-            let hz = display_refresh_rate(&window);
-            if hz != refresh_rate {
-              refresh_rate = hz;
-              event_tx.send(AlloyEvent::DisplayRefreshRate { hz }).ok();
-            }
-          }
           render_surface.draw_display_list(&dl).expect("Failed to draw display list");
           render_surface.present(&window);
           let time = start_time.elapsed().as_secs_f64();
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
           frame += 1;
+          last_frame_signal = Instant::now();
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+      }
+
+      // Rolled every iteration (not only on present) so fps decays to zero
+      // when no frames are produced.
+      if fps_last_second.elapsed().as_secs_f32() >= 1.0 {
+        fps = fps_frame_count;
+        fps_frame_count = 0;
+        fps_last_second = Instant::now();
+        // Safety net: report a refresh-rate change the display event might miss.
+        let hz = display_refresh_rate(&window);
+        if hz != refresh_rate {
+          refresh_rate = hz;
+          event_tx.send(AlloyEvent::DisplayRefreshRate { hz }).ok();
+        }
+      }
+
+      if last_frame_signal.elapsed() >= tick_period {
+        event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
+        last_frame_signal = Instant::now();
       }
       for sdl_event in event_pump.poll_iter() {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
