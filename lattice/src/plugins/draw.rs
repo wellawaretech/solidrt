@@ -48,6 +48,7 @@ pub fn init(
   input_state: Arc<InputState>,
   engine_state: Arc<EngineState>,
 ) {
+  let stats = std::cell::RefCell::new(overlay::Stats::new());
   let draw_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
     let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
     let mut builder = DisplayListBuilder::new(None);
@@ -144,7 +145,7 @@ pub fn init(
       engine_state.set_hovered_path(key, new_ids);
     }
 
-    overlay::fps(&mut builder, &platform.typography, platform.safe_area(), platform.fps());
+    stats.borrow_mut().draw(&mut builder, &platform.typography, platform.safe_area(), platform.fps());
 
     if let Some(dl) = builder.build() {
       atx.submit(dl).expect("Failed to submit display list");

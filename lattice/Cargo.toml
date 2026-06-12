@@ -45,6 +45,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }
 livekit-wakeword = { version = "0.1", optional = true }
 
+# Process stats for the debug overlay: RSS via sysinfo, CPU% via cpu_time.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+cpu-time = "1"
+
 # mDNS / DNS-SD dev-server discovery for the go client (see src/go/connection.rs).
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
