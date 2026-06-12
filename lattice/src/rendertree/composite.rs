@@ -24,14 +24,22 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &a
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
 }
 
+/// Repaint-boundary counts for one painted frame: subtrees drawn from their
+/// retained recording vs freshly recorded.
+#[derive(Clone, Copy, Default)]
+pub struct PaintStats {
+  pub boundaries_reused: u32,
+  pub boundaries_recorded: u32,
+}
+
 // Picks up any cache invalidations queued by onLayout handlers, then paints.
 pub fn paint_phase(
   builder: &mut DisplayListBuilder,
   tree: &mut RenderTree,
   platform: &PlatformContext,
   alloy: &alloy::Context,
-) {
-  let Some(root_id) = tree.root else { return };
+) -> PaintStats {
+  let Some(root_id) = tree.root else { return PaintStats::default() };
   let (width, height) = platform.window_size();
 
   layout_phase(tree, platform, alloy);
@@ -39,14 +47,40 @@ pub fn paint_phase(
   let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = WH::new(width, height);
   build_recursive(tree, root_id, &mut ctx, builder);
+  PaintStats { boundaries_reused: ctx.boundaries_reused, boundaries_recorded: ctx.boundaries_recorded }
 }
 
+// Repaint-boundary gate: a boundary subtree is recorded once into its own
+// display list (in node-local coordinates; the parent has already translated
+// the builder) and replayed from the cache until something inside it changes
+// (see RenderTree::invalidate_paint).
 fn build_recursive<'a>(
   scene: &'a RenderTree,
   node_id: u64,
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
 ) {
+  let element = scene.node(node_id);
+  if element.repaint_boundary {
+    let cached = element.paint_cache.borrow().clone();
+    if let Some(dl) = cached {
+      ctx.boundaries_reused += 1;
+      builder.draw_display_list(&dl, 1.0);
+      return;
+    }
+    let mut sub = DisplayListBuilder::new(None);
+    record_node(scene, node_id, ctx, &mut sub);
+    if let Some(dl) = sub.build() {
+      ctx.boundaries_recorded += 1;
+      builder.draw_display_list(&dl, 1.0);
+      *element.paint_cache.borrow_mut() = Some(dl);
+    }
+    return;
+  }
+  record_node(scene, node_id, ctx, builder);
+}
+
+fn record_node<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
   let element = scene.node(node_id);
 
   let (overflow_x, overflow_y) = element

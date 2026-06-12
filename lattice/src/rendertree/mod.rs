@@ -11,7 +11,8 @@ pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
 
-use alloy::impellers::DisplayListBuilder;
+use alloy::impellers::{DisplayList, DisplayListBuilder};
+use std::cell::RefCell;
 use taffy::prelude::*;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,11 +57,14 @@ pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
   pub alloy: &'a alloy::Context,
   pub size: WH,
+  // Repaint-boundary diagnostics for the frame being built (see composite.rs).
+  pub boundaries_reused: u32,
+  pub boundaries_recorded: u32,
 }
 
 impl<'a> BuildContext<'a> {
   pub fn new(platform: &'a PlatformContext, alloy: &'a alloy::Context) -> Self {
-    Self { platform, alloy, size: WH::default() }
+    Self { platform, alloy, size: WH::default(), boundaries_reused: 0, boundaries_recorded: 0 }
   }
 }
 
@@ -179,6 +183,13 @@ pub struct Element {
   pub parent: Option<u64>,
   pub layout: Option<LayoutData>,
   pub interaction: Option<HitConfig>,
+  // Explicit repaint boundary (Flutter's RepaintBoundary): the subtree is
+  // recorded into its own display list, reused while nothing inside changes.
+  pub repaint_boundary: bool,
+  // The boundary's retained recording, in node-local coordinates. Cleared by
+  // RenderTree::invalidate_paint on any content or layout change in the
+  // subtree. Interior-mutable because painting traverses a shared tree.
+  pub paint_cache: RefCell<Option<DisplayList>>,
 }
 
 impl Element {
@@ -189,11 +200,21 @@ impl Element {
       parent: None,
       layout: Some(LayoutData::new(style)),
       interaction: Some(HitConfig::default()),
+      repaint_boundary: false,
+      paint_cache: RefCell::new(None),
     }
   }
 
   pub fn no_layout(kind: ElementKind) -> Self {
-    Self { kind, children: vec![], parent: None, layout: None, interaction: Some(HitConfig::default()) }
+    Self {
+      kind,
+      children: vec![],
+      parent: None,
+      layout: None,
+      interaction: Some(HitConfig::default()),
+      repaint_boundary: false,
+      paint_cache: RefCell::new(None),
+    }
   }
 
   /// Builds an element from its JSX tag name. The root Window is created via

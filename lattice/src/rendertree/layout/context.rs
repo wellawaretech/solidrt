@@ -78,7 +78,15 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
   }
 
   fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-    self.render_tree.node_mut(u64::from(node_id)).layout_data_mut().computed = *layout;
+    let id = u64::from(node_id);
+    let data = self.render_tree.node_mut(id).layout_data_mut();
+    // A changed layout moves or resizes painted content without any element
+    // mutation (e.g. a sibling grew); retained boundary recordings above this
+    // node are stale.
+    if data.computed != *layout {
+      data.computed = *layout;
+      self.render_tree.invalidate_paint(id);
+    }
   }
 
   fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {

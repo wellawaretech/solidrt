@@ -79,10 +79,10 @@ pub fn init(
     // those changes.
     emit_event(&qtx, "postLayout", ());
 
-    {
+    let paint_stats = {
       let mut tree_b = tree.0.borrow_mut();
-      rendertree::composite::paint_phase(&mut builder, &mut tree_b, &platform, &*atx);
-    }
+      rendertree::composite::paint_phase(&mut builder, &mut tree_b, &platform, &*atx)
+    };
 
     // Input dispatch happens on event arrival (plugins::input::dispatch);
     // here we only re-check hover, since this frame's layout may have moved
@@ -95,6 +95,7 @@ pub fn init(
       platform.safe_area(),
       platform.fps(),
       platform.requests_per_second(),
+      paint_stats,
     );
 
     if let Some(dl) = builder.build() {

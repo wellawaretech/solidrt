@@ -96,6 +96,7 @@ impl RenderTree {
     }
 
     self.invalidate_cache(parent_id);
+    self.invalidate_paint(parent_id);
     self.bump_revision();
   }
 
@@ -107,12 +108,29 @@ impl RenderTree {
     }
     self.delete_recursive(node_id);
     self.invalidate_cache(parent_id);
+    self.invalidate_paint(parent_id);
     self.bump_revision();
   }
 
   pub fn element_mut(&mut self, id: u64) -> &mut Element {
     self.bump_revision();
+    self.invalidate_paint(id);
     self.node_mut(id)
+  }
+
+  /// Clear cached boundary recordings from `node_id` up to the root. A content
+  /// or layout change invalidates the enclosing boundary and - because
+  /// draw_display_list copies commands into the enclosing recording - every
+  /// boundary above it as well.
+  pub fn invalidate_paint(&self, node_id: u64) {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+      let Some(element) = self.try_node(id) else {
+        break;
+      };
+      element.paint_cache.borrow_mut().take();
+      current = element.parent;
+    }
   }
 
   pub(crate) fn node(&self, id: u64) -> &Element {

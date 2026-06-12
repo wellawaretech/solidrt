@@ -44,6 +44,14 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
     return true;
   }
 
+  // Element-level, kind-independent: marks a retained-recording boundary
+  // (see Element::repaint_boundary). Does not affect layout.
+  if name == "repaintBoundary" {
+    el.repaint_boundary = value.as_bool().unwrap_or_else(|| panic!("repaintBoundary must be a boolean"));
+    el.paint_cache.borrow_mut().take();
+    return false;
+  }
+
   let handled = match &mut el.kind {
     ElementKind::Window(win) => window::apply(win, name, value, cmd_tx),
     ElementKind::View(view) => view::apply(view, name, value),

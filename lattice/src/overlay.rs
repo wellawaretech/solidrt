@@ -80,6 +80,7 @@ impl Stats {
     safe_area: Rect,
     fps: u32,
     requested_fps: u32,
+    paint_stats: crate::rendertree::composite::PaintStats,
   ) {
     self.refresh();
 
@@ -99,13 +100,13 @@ impl Stats {
     pb.push_style(&style);
     // REQ counts frames requested per second (the demand-driven latch); FPS
     // counts frames actually drawn. Once frames are gated the two converge.
-    let text = format!(
-      "{} FPS\n{} REQ\n{:.0} MiB\n{:.0}% CPU",
-      fps,
-      requested_fps,
-      self.proc_rss as f32 / MIB,
-      self.proc_cpu
-    );
+    let mut text = format!("{} FPS\n{} REQ\n", fps, requested_fps);
+    // Repaint boundaries this frame: reused+recorded. Hidden when the app
+    // declares none.
+    if paint_stats.boundaries_reused + paint_stats.boundaries_recorded > 0 {
+      text.push_str(&format!("{}+{} BND\n", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
+    }
+    text.push_str(&format!("{:.0} MiB\n{:.0}% CPU", self.proc_rss as f32 / MIB, self.proc_cpu));
     pb.add_text(&text);
 
     let Some(paragraph) = pb.build(PARA_WIDTH) else {

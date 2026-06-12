@@ -223,6 +223,12 @@ export interface WindowProps extends LayoutProps {
 export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   children?: Children
   trace?: boolean
+  /**
+   * Marks a repaint boundary: the subtree is recorded into its own retained
+   * display list and reused until something inside it changes. Place around
+   * heavy static content that sits next to frequently changing content.
+   */
+  repaintBoundary?: boolean
 }
 
 export interface AudioProps {
