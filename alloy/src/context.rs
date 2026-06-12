@@ -118,12 +118,11 @@ impl Context {
     Ok(())
   }
 
-  /// Rasterize a display list into a new GPU texture of the given pixel size
-  /// and adopt it into Impeller for sampling. The texture is not placed in the
-  /// registry; the caller owns the returned entry.
-  pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<TextureEntry, String> {
+  /// Rasterize a display list into a new GPU texture of the given pixel size,
+  /// ready for sampling. The texture is owned by Impeller (and the caller's
+  /// handle), not by wgpu and not by the registry.
+  pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
     match self.backend {
       Backend::Gl => {
         // A wrapped FBO is treated like a window backbuffer, which GL stores
@@ -133,20 +132,18 @@ impl Context {
         flipped.scale(1.0, -1.0);
         flipped.draw_display_list(dl, 1.0);
         let flipped = flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())?;
-        gl::render_display_list_to_texture(&gpu, &mut self.impeller_ctx.borrow_mut(), &flipped, size)?
+        gl::render_display_list_to_texture(&mut self.impeller_ctx.borrow_mut(), &flipped, size)
       }
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
     }
-    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt texture failed".to_string())?;
-    Ok(TextureEntry { gpu, impeller })
   }
 
   /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).
-  pub fn read_texture(&self, entry: &TextureEntry) -> Result<Vec<u8>, String> {
-    let size = ISize::new(entry.width() as i64, entry.height() as i64);
+  pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let size = ISize::new(width as i64, height as i64);
     match self.backend {
-      Backend::Gl => gl::read_texture_pixels(&entry.gpu, size),
+      Backend::Gl => gl::read_texture_pixels(texture, size),
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
     }

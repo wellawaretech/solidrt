@@ -117,48 +117,100 @@ pub fn adopt_texture(gpu_texture: &GpuTexture, impeller_ctx: &ImpellerContext, s
   unsafe { impeller_ctx.adopt_opengl_texture(width, height, 1, gl_handle as u64) }
 }
 
-// GLES 3.0 framebuffer constants for offscreen rasterization.
+// GLES 3.0 constants for offscreen rasterization and readback.
 const GL_FRAMEBUFFER: u32 = 0x8D40;
 const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
 const GL_TEXTURE_2D: u32 = 0x0DE1;
 const GL_FRAMEBUFFER_COMPLETE: u32 = 0x8CD5;
 const GL_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
+const GL_TEXTURE_BINDING_2D: u32 = 0x8069;
+const GL_RGBA: u32 = 0x1908;
+const GL_RGBA8: u32 = 0x8058;
+const GL_UNSIGNED_BYTE: u32 = 0x1401;
+const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
+const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
+const GL_LINEAR: u32 = 0x2601;
+const GL_RENDERBUFFER: u32 = 0x8D41;
+const GL_DEPTH24_STENCIL8: u32 = 0x88F0;
+const GL_DEPTH_STENCIL_ATTACHMENT: u32 = 0x821A;
+const GL_RENDERBUFFER_BINDING: u32 = 0x8CA7;
 
-/// Rasterize a display list into a wgpu texture by attaching it to a temporary
-/// framebuffer and wrapping that as an Impeller surface. The calling thread
-/// must have a GL context current and `impeller_ctx` must have been created on
-/// it. The trailing glFlush makes the texture contents visible to the other
-/// shared context (the render thread samples what the UI thread rendered).
+fn gl_fn(name: &std::ffi::CStr) -> unsafe extern "C" fn() {
+  unsafe {
+    sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr()).unwrap_or_else(|| panic!("missing GL function {name:?}"))
+  }
+}
+
+/// Rasterize a display list into a new GL texture and adopt it into Impeller,
+/// which becomes the single owner of the GL name (adoption transfers handle
+/// ownership per the Impeller API; creating the texture through wgpu would
+/// end in a double glDeleteTextures). The calling thread must have a GL
+/// context current and `impeller_ctx` must have been created on it. The
+/// trailing glFlush makes the contents visible to the other shared context
+/// (the render thread samples what the UI thread rendered).
 pub fn render_display_list_to_texture(
-  gpu_texture: &GpuTexture,
   impeller_ctx: &mut ImpellerContext,
   dl: &DisplayList,
   size: ISize,
-) -> Result<(), String> {
-  let get = |name: &std::ffi::CStr| unsafe {
-    sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr()).unwrap_or_else(|| panic!("missing GL function {name:?}"))
-  };
-  let gen_framebuffers: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(get(c"glGenFramebuffers")) };
-  let bind_framebuffer: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(get(c"glBindFramebuffer")) };
+) -> Result<Texture, String> {
+  let gen_textures: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(gl_fn(c"glGenTextures")) };
+  let bind_texture: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(gl_fn(c"glBindTexture")) };
+  let tex_image_2d: extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32, *const std::ffi::c_void) =
+    unsafe { std::mem::transmute(gl_fn(c"glTexImage2D")) };
+  let tex_parameteri: extern "C" fn(u32, u32, i32) = unsafe { std::mem::transmute(gl_fn(c"glTexParameteri")) };
+  let delete_textures: extern "C" fn(i32, *const u32) = unsafe { std::mem::transmute(gl_fn(c"glDeleteTextures")) };
+  let gen_framebuffers: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(gl_fn(c"glGenFramebuffers")) };
+  let bind_framebuffer: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(gl_fn(c"glBindFramebuffer")) };
   let framebuffer_texture_2d: extern "C" fn(u32, u32, u32, u32, i32) =
-    unsafe { std::mem::transmute(get(c"glFramebufferTexture2D")) };
+    unsafe { std::mem::transmute(gl_fn(c"glFramebufferTexture2D")) };
   let check_framebuffer_status: extern "C" fn(u32) -> u32 =
-    unsafe { std::mem::transmute(get(c"glCheckFramebufferStatus")) };
+    unsafe { std::mem::transmute(gl_fn(c"glCheckFramebufferStatus")) };
   let delete_framebuffers: extern "C" fn(i32, *const u32) =
-    unsafe { std::mem::transmute(get(c"glDeleteFramebuffers")) };
-  let get_integerv: extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(get(c"glGetIntegerv")) };
-  let flush: extern "C" fn() = unsafe { std::mem::transmute(get(c"glFlush")) };
+    unsafe { std::mem::transmute(gl_fn(c"glDeleteFramebuffers")) };
+  let gen_renderbuffers: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(gl_fn(c"glGenRenderbuffers")) };
+  let bind_renderbuffer: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(gl_fn(c"glBindRenderbuffer")) };
+  let renderbuffer_storage: extern "C" fn(u32, u32, i32, i32) =
+    unsafe { std::mem::transmute(gl_fn(c"glRenderbufferStorage")) };
+  let framebuffer_renderbuffer: extern "C" fn(u32, u32, u32, u32) =
+    unsafe { std::mem::transmute(gl_fn(c"glFramebufferRenderbuffer")) };
+  let delete_renderbuffers: extern "C" fn(i32, *const u32) =
+    unsafe { std::mem::transmute(gl_fn(c"glDeleteRenderbuffers")) };
+  let get_integerv: extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(gl_fn(c"glGetIntegerv")) };
+  let flush: extern "C" fn() = unsafe { std::mem::transmute(gl_fn(c"glFlush")) };
 
-  let gl_handle = wgpu_texture_gl_handle(&gpu_texture.wgpu_texture);
+  let (width, height) = (size.width as i32, size.height as i32);
 
-  // Save the current binding so wgpu's cached GL state stays valid.
+  // Save the current bindings so wgpu's cached GL state stays valid.
   let mut prev_fbo: i32 = 0;
+  let mut prev_tex: i32 = 0;
+  let mut prev_rbo: i32 = 0;
   get_integerv(GL_FRAMEBUFFER_BINDING, &mut prev_fbo);
+  get_integerv(GL_TEXTURE_BINDING_2D, &mut prev_tex);
+  get_integerv(GL_RENDERBUFFER_BINDING, &mut prev_rbo);
+
+  let mut tex: u32 = 0;
+  gen_textures(1, &mut tex);
+  bind_texture(GL_TEXTURE_2D, tex);
+  tex_image_2d(GL_TEXTURE_2D, 0, GL_RGBA8 as i32, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, std::ptr::null());
+  // No mips exist: the default MIN_FILTER references mipmaps, which would
+  // make the texture sampling-incomplete (reads as black).
+  tex_parameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
+  tex_parameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR as i32);
+  bind_texture(GL_TEXTURE_2D, prev_tex as u32);
+
+  // Impeller fills non-convex paths with stencil-then-cover and culls clips
+  // via depth; without this attachment the cover pass floods the path bounds.
+  let mut rbo: u32 = 0;
+  gen_renderbuffers(1, &mut rbo);
+  bind_renderbuffer(GL_RENDERBUFFER, rbo);
+  renderbuffer_storage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+  bind_renderbuffer(GL_RENDERBUFFER, prev_rbo as u32);
 
   let mut fbo: u32 = 0;
   gen_framebuffers(1, &mut fbo);
   bind_framebuffer(GL_FRAMEBUFFER, fbo);
-  framebuffer_texture_2d(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl_handle, 0);
+  framebuffer_texture_2d(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+  framebuffer_renderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
   let status = check_framebuffer_status(GL_FRAMEBUFFER);
 
   let result = if status != GL_FRAMEBUFFER_COMPLETE {
@@ -173,36 +225,43 @@ pub fn render_display_list_to_texture(
 
   bind_framebuffer(GL_FRAMEBUFFER, prev_fbo as u32);
   delete_framebuffers(1, &fbo);
+  delete_renderbuffers(1, &rbo);
   flush();
-  result
+
+  match result {
+    Ok(()) => unsafe { impeller_ctx.adopt_opengl_texture(width as u32, height as u32, 1, tex as u64) }
+      .ok_or_else(|| "failed to adopt offscreen texture".to_string()),
+    Err(e) => {
+      delete_textures(1, &tex);
+      Err(e)
+    }
+  }
 }
 
-const GL_RGBA: u32 = 0x1908;
-const GL_UNSIGNED_BYTE: u32 = 0x1401;
-
-/// Read back a GL texture's RGBA8 pixels by attaching it to a temporary
-/// framebuffer and calling glReadPixels. Returns memory-order rows (row 0
-/// first), which is image top-to-bottom for every texture alloy produces.
-/// Goes through raw GL rather than wgpu: wgpu's lazy zero-initialization
-/// tracking does not know about Impeller's writes, so a wgpu copy from an
-/// offscreen-rendered texture would return (or even clear to) zeros.
-pub fn read_texture_pixels(gpu_texture: &GpuTexture, size: ISize) -> Result<Vec<u8>, String> {
-  let get = |name: &std::ffi::CStr| unsafe {
-    sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr()).unwrap_or_else(|| panic!("missing GL function {name:?}"))
-  };
-  let gen_framebuffers: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(get(c"glGenFramebuffers")) };
-  let bind_framebuffer: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(get(c"glBindFramebuffer")) };
+/// Read back an Impeller GL texture's RGBA8 pixels by attaching its handle to
+/// a temporary framebuffer and calling glReadPixels. Returns memory-order rows
+/// (row 0 first), which is image top-to-bottom for every texture alloy
+/// produces. Goes through raw GL rather than wgpu: wgpu's lazy
+/// zero-initialization tracking does not know about Impeller's writes, so a
+/// wgpu copy from an offscreen-rendered texture would return (or even clear
+/// to) zeros.
+pub fn read_texture_pixels(texture: &Texture, size: ISize) -> Result<Vec<u8>, String> {
+  let gen_framebuffers: extern "C" fn(i32, *mut u32) = unsafe { std::mem::transmute(gl_fn(c"glGenFramebuffers")) };
+  let bind_framebuffer: extern "C" fn(u32, u32) = unsafe { std::mem::transmute(gl_fn(c"glBindFramebuffer")) };
   let framebuffer_texture_2d: extern "C" fn(u32, u32, u32, u32, i32) =
-    unsafe { std::mem::transmute(get(c"glFramebufferTexture2D")) };
+    unsafe { std::mem::transmute(gl_fn(c"glFramebufferTexture2D")) };
   let check_framebuffer_status: extern "C" fn(u32) -> u32 =
-    unsafe { std::mem::transmute(get(c"glCheckFramebufferStatus")) };
+    unsafe { std::mem::transmute(gl_fn(c"glCheckFramebufferStatus")) };
   let delete_framebuffers: extern "C" fn(i32, *const u32) =
-    unsafe { std::mem::transmute(get(c"glDeleteFramebuffers")) };
-  let get_integerv: extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(get(c"glGetIntegerv")) };
+    unsafe { std::mem::transmute(gl_fn(c"glDeleteFramebuffers")) };
+  let get_integerv: extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(gl_fn(c"glGetIntegerv")) };
   let read_pixels: extern "C" fn(i32, i32, i32, i32, u32, u32, *mut std::ffi::c_void) =
-    unsafe { std::mem::transmute(get(c"glReadPixels")) };
+    unsafe { std::mem::transmute(gl_fn(c"glReadPixels")) };
 
-  let gl_handle = wgpu_texture_gl_handle(&gpu_texture.wgpu_texture);
+  let gl_handle = texture.get_opengl_handle();
+  if gl_handle == 0 {
+    return Err("texture has no GL handle".to_string());
+  }
   let (width, height) = (size.width as i32, size.height as i32);
 
   let mut prev_fbo: i32 = 0;
@@ -211,7 +270,7 @@ pub fn read_texture_pixels(gpu_texture: &GpuTexture, size: ISize) -> Result<Vec<
   let mut fbo: u32 = 0;
   gen_framebuffers(1, &mut fbo);
   bind_framebuffer(GL_FRAMEBUFFER, fbo);
-  framebuffer_texture_2d(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl_handle, 0);
+  framebuffer_texture_2d(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl_handle as u32, 0);
   let status = check_framebuffer_status(GL_FRAMEBUFFER);
 
   let result = if status != GL_FRAMEBUFFER_COMPLETE {

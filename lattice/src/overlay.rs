@@ -106,6 +106,10 @@ impl Stats {
     if paint_stats.boundaries_reused + paint_stats.boundaries_recorded > 0 {
       text.push_str(&format!("{}+{} BND\n", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
     }
+    // Snapshot boundaries this frame: reused+rasterized.
+    if paint_stats.snapshots_reused + paint_stats.snapshots_rasterized > 0 {
+      text.push_str(&format!("{}+{} SNP\n", paint_stats.snapshots_reused, paint_stats.snapshots_rasterized));
+    }
     text.push_str(&format!("{:.0} MiB\n{:.0}% CPU", self.proc_rss as f32 / MIB, self.proc_cpu));
     pb.add_text(&text);
 

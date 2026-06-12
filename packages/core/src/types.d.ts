@@ -227,8 +227,14 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
    * Marks a repaint boundary: the subtree is recorded into its own retained
    * display list and reused until something inside it changes. Place around
    * heavy static content that sits next to frequently changing content.
+   *
+   * "snapshot" additionally retains the rasterized pixels as a GPU texture,
+   * skipping rasterization entirely. Costs texture memory and re-rasterizes
+   * on layout-size or display-scale changes. Content painted outside the
+   * element's layout box is cropped, and ancestor scale animations smear the
+   * bitmap; best for screen-aligned, static, raster-expensive content.
    */
-  repaintBoundary?: boolean
+  repaintBoundary?: boolean | "snapshot"
 }
 
 export interface AudioProps {

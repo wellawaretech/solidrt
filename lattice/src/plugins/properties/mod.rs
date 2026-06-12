@@ -28,7 +28,7 @@ use alloy::AlloyCommand;
 use taffy::style::Position;
 
 use crate::plugins::value::PropValue;
-use crate::rendertree::{Element, ElementKind};
+use crate::rendertree::{BoundaryMode, Element, ElementKind};
 
 pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> bool {
   // `position` is decoded here rather than in the layout style adapter because
@@ -44,10 +44,15 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
     return true;
   }
 
-  // Element-level, kind-independent: marks a retained-recording boundary
+  // Element-level, kind-independent: marks a retained-paint boundary
   // (see Element::repaint_boundary). Does not affect layout.
   if name == "repaintBoundary" {
-    el.repaint_boundary = value.as_bool().unwrap_or_else(|| panic!("repaintBoundary must be a boolean"));
+    el.repaint_boundary = match value {
+      PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
+      PropValue::Bool(true) => BoundaryMode::Recording,
+      PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
+      _ => panic!("repaintBoundary must be a boolean or \"snapshot\""),
+    };
     el.paint_cache.borrow_mut().take();
     return false;
   }

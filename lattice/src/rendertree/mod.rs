@@ -11,7 +11,7 @@ pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
 
-use alloy::impellers::{DisplayList, DisplayListBuilder};
+use alloy::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
 use std::cell::RefCell;
 use taffy::prelude::*;
 
@@ -60,11 +60,21 @@ pub struct BuildContext<'a> {
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
+  pub snapshots_reused: u32,
+  pub snapshots_rasterized: u32,
 }
 
 impl<'a> BuildContext<'a> {
   pub fn new(platform: &'a PlatformContext, alloy: &'a alloy::Context) -> Self {
-    Self { platform, alloy, size: WH::default(), boundaries_reused: 0, boundaries_recorded: 0 }
+    Self {
+      platform,
+      alloy,
+      size: WH::default(),
+      boundaries_reused: 0,
+      boundaries_recorded: 0,
+      snapshots_reused: 0,
+      snapshots_rasterized: 0,
+    }
   }
 }
 
@@ -177,19 +187,39 @@ impl Measurable for ElementKind {
   }
 }
 
+/// What a repaint boundary retains across frames: nothing, the recorded
+/// display list (skips rebuilding), or rasterized pixels (skips rasterizing
+/// too, at the cost of GPU memory and resolution-dependence).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum BoundaryMode {
+  #[default]
+  None,
+  Recording,
+  Snapshot,
+}
+
+/// A boundary's retained paint result, in node-local coordinates. A snapshot
+/// remembers the logical size and display scale it was rasterized at: pixels
+/// are resolution-dependent, so a mismatch forces re-rasterization even when
+/// nothing inside the subtree changed.
+pub enum PaintCache {
+  Recording(DisplayList),
+  Snapshot { texture: ImpellerTexture, width: f32, height: f32, scale: f32 },
+}
+
 pub struct Element {
   pub kind: ElementKind,
   pub children: Vec<u64>,
   pub parent: Option<u64>,
   pub layout: Option<LayoutData>,
   pub interaction: Option<HitConfig>,
-  // Explicit repaint boundary (Flutter's RepaintBoundary): the subtree is
-  // recorded into its own display list, reused while nothing inside changes.
-  pub repaint_boundary: bool,
-  // The boundary's retained recording, in node-local coordinates. Cleared by
+  // Explicit repaint boundary (Flutter's RepaintBoundary / SnapshotWidget):
+  // the subtree's paint result is retained while nothing inside changes.
+  pub repaint_boundary: BoundaryMode,
+  // The boundary's retained paint result. Cleared by
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.
-  pub paint_cache: RefCell<Option<DisplayList>>,
+  pub paint_cache: RefCell<Option<PaintCache>>,
 }
 
 impl Element {
@@ -200,7 +230,7 @@ impl Element {
       parent: None,
       layout: Some(LayoutData::new(style)),
       interaction: Some(HitConfig::default()),
-      repaint_boundary: false,
+      repaint_boundary: BoundaryMode::None,
       paint_cache: RefCell::new(None),
     }
   }
@@ -212,7 +242,7 @@ impl Element {
       parent: None,
       layout: None,
       interaction: Some(HitConfig::default()),
-      repaint_boundary: false,
+      repaint_boundary: BoundaryMode::None,
       paint_cache: RefCell::new(None),
     }
   }
