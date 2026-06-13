@@ -13,6 +13,9 @@ pub struct View {
   // Positive values shift content leftward/upward (web convention: positive
   // scrollX means scrolled "into" the content from the left).
   pub scroll: Option<XY>,
+  // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
+  // clip applied when overflow is non-visible. None clips to a plain rect.
+  pub clip_radius: Option<[f32; 4]>,
 }
 
 impl View {
@@ -118,6 +121,10 @@ impl View {
   }
   pub fn set_scroll_y(&mut self, v: f32) -> bool {
     self.scroll.get_or_insert_with(XY::default).y = v;
+    false
+  }
+  pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> bool {
+    self.clip_radius = Some(radius);
     false
   }
 

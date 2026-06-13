@@ -224,6 +224,13 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   children?: Children
   trace?: boolean
   /**
+   * Corner radii for the clip applied when overflow is non-visible (hidden,
+   * clip, scroll on both axes). A single number rounds all four corners; an
+   * array is [top-left, top-right, bottom-right, bottom-left]. Without overflow
+   * clipping this has no effect.
+   */
+  clipRadius?: number | [number, number, number, number]
+  /**
    * Marks a repaint boundary: the subtree is recorded into its own retained
    * display list and reused until something inside it changes. Place around
    * heavy static content that sits next to frequently changing content.

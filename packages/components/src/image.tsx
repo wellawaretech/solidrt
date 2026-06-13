@@ -1,4 +1,4 @@
-import { createSignal, onCleanup } from "@solidjs/signals"
+import { createSignal, createEffect, onCleanup } from "@solidjs/signals"
 import { decodeImage, createTexture } from "@solidrt/core/gpu"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
@@ -12,21 +12,44 @@ export interface ImageProps extends PointerProps {
 //TODO onLoad, onError
 //TODO release texture in onCleanup
 export function Image(props: ImageProps) {
-  let [res] = createSignal(async () => {
-    let bytes: Uint8Array
-    if (typeof props.src === "string") {
-      let response = await fetch(props.src)
-      bytes = await response.bytes()
-    } else {
-      bytes = props.src
-    }
-    let { data, width, height } = decodeImage(bytes)
-    let id = createTexture(data, width, height)
-    return { id, width, height }
-  })
+  let [res, setRes] = createSignal<{ id: number; width: number; height: number }>()
+
+  // Load (and decode) whenever src changes. A url is fetched; bytes are used
+  // directly. The async result is pushed into the signal so the texture shows
+  // once ready; a stale flag drops results from a superseded src.
+  createEffect(
+    () => props.src,
+    (source) => {
+      let stale = false
+
+      ;(async () => {
+        let bytes: Uint8Array
+        if (typeof source === "string") {
+          let response = await fetch(source)
+          bytes = await response.bytes()
+        } else {
+          bytes = source
+        }
+        if (stale) return
+        let { data, width, height } = decodeImage(bytes)
+        let id = createTexture(data, width, height)
+        setRes({ id, width, height })
+      })()
+
+      return () => {
+        stale = true
+      }
+    },
+  )
 
   let src = () => res()?.id
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0
+
+  // A texture sizes from its own width/height (not the box around it), so the
+  // numeric layout dimensions are forwarded to it. Omitting height lets the
+  // texture follow the image's intrinsic aspect ratio.
+  let texW = () => (typeof props.layout?.width === "number" ? props.layout.width : undefined)
+  let texH = () => (typeof props.layout?.height === "number" ? props.layout.height : undefined)
 
   onCleanup(() => {
     //TODO release texture
@@ -35,6 +58,8 @@ export function Image(props: ImageProps) {
   return (
     <view
       {...props.layout}
+      overflow={props.style?.borderRadius != null ? "hidden" : props.layout?.overflow}
+      clipRadius={props.style?.borderRadius}
       x={props.style?.x}
       y={props.style?.y}
       scale={props.style?.scale}
@@ -53,9 +78,9 @@ export function Image(props: ImageProps) {
       pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
-        <d-rect color={props.style.backgroundColor} radius={props.style?.borderRadius} />
+        <d-rect color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
       ) : null}
-      <texture src={src()} />
+      <texture src={src()} width={texW()} height={texH()} />
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"

@@ -1,4 +1,6 @@
-use alloy::impellers::{ClipOperation, DisplayListBuilder, Point as IPoint, Rect, Size as ISize, TextureSampling};
+use alloy::impellers::{
+  ClipOperation, DisplayListBuilder, Point as IPoint, Rect, RoundingRadii, Size as ISize, TextureSampling,
+};
 use taffy::prelude::*;
 use taffy::style::Overflow;
 use taffy::Point;
@@ -181,12 +183,29 @@ fn record_node<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'
     if let Some(layout) = &element.layout {
       let w = layout.computed.size.width;
       let h = layout.computed.size.height;
-      let x_min = if clip_x { 0.0 } else { -CLIP_INF };
-      let y_min = if clip_y { 0.0 } else { -CLIP_INF };
-      let x_max = if clip_x { w } else { CLIP_INF };
-      let y_max = if clip_y { h } else { CLIP_INF };
-      let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
-      builder.clip_rect(&rect, ClipOperation::Intersect);
+      // Rounded clip only applies when the whole box is clipped (both axes);
+      // a single-axis clip has no meaningful corners to round.
+      let clip_radius = match &element.kind {
+        ElementKind::View(v) if clip_x && clip_y => v.clip_radius,
+        _ => None,
+      };
+      if let Some([tl, tr, br, bl]) = clip_radius {
+        let rect = Rect::new(IPoint::new(0.0, 0.0), ISize::new(w, h));
+        let radii = RoundingRadii {
+          top_left: IPoint::new(tl, tl),
+          top_right: IPoint::new(tr, tr),
+          bottom_right: IPoint::new(br, br),
+          bottom_left: IPoint::new(bl, bl),
+        };
+        builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
+      } else {
+        let x_min = if clip_x { 0.0 } else { -CLIP_INF };
+        let y_min = if clip_y { 0.0 } else { -CLIP_INF };
+        let x_max = if clip_x { w } else { CLIP_INF };
+        let y_max = if clip_y { h } else { CLIP_INF };
+        let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
+        builder.clip_rect(&rect, ClipOperation::Intersect);
+      }
     }
   }
 

@@ -1,4 +1,4 @@
-use super::f32_of;
+use super::{decode_radius, f32_of};
 use crate::plugins::value::PropValue;
 use crate::rendertree::View;
 
@@ -12,6 +12,7 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<bool> {
     "cy" => view.set_cy(f32_of(value, "cy")),
     "scrollX" => view.set_scroll_x(f32_of(value, "scrollX")),
     "scrollY" => view.set_scroll_y(f32_of(value, "scrollY")),
+    "clipRadius" => view.set_clip_radius(decode_radius(value)),
     _ => return None,
   })
 }
