@@ -8,6 +8,7 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<bool> {
     "scale" => view.set_scale(f32_of(value, "scale")),
     "scaleX" => view.set_scale_x(f32_of(value, "scaleX")),
     "scaleY" => view.set_scale_y(f32_of(value, "scaleY")),
+    "rotateX" => view.set_rotate_x(f32_of(value, "rotateX")),
     "rotateY" => view.set_rotate_y(f32_of(value, "rotateY")),
     "perspective" => view.set_perspective(f32_of(value, "perspective")),
     "x" => view.set_x(f32_of(value, "x")),

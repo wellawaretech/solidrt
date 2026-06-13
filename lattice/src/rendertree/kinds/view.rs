@@ -1,7 +1,19 @@
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, WH, XY};
 use alloy::impellers::{DisplayListBuilder, Matrix};
+use std::cell::Cell;
 use taffy::{FlexDirection, Size, Style};
+
+// Memoized transform for one layout size, holding both the paint matrix and its
+// (lazily fallible) inverse for hit testing. The pointer hit path is recomputed
+// every animation frame, so static Views on that path would otherwise recompose
+// and re-invert their matrix each frame for no reason.
+#[derive(Clone, Copy, Debug)]
+struct TransformCache {
+  size: WH,
+  matrix: Matrix,
+  inverse: Option<Matrix>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
@@ -11,6 +23,9 @@ pub struct View {
   pub scale: Option<f32>,
   pub scale_x: Option<f32>,
   pub scale_y: Option<f32>,
+  // 3D rotation about the horizontal (X) axis, in radians (a top/bottom tilt).
+  // Like rotate_y, reads as 3D only with a `perspective` set.
+  pub rotate_x: Option<f32>,
   // 3D rotation about the vertical (Y) axis, in radians, for a card-flip. With
   // a `perspective` set it reads as a real flip; without one it is orthographic.
   pub rotate_y: Option<f32>,
@@ -26,6 +41,9 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
+  // Memoized transform; invalidated by the setters when a transform prop
+  // changes, and recomputed by `transform` when the layout size differs.
+  cache: Cell<Option<TransformCache>>,
 }
 
 impl View {
@@ -37,14 +55,29 @@ impl View {
     self.center.unwrap_or(XY::new(size.w / 2.0, size.h / 2.0))
   }
 
+  // Returns the memoized transform for `size`, recomposing (and re-inverting)
+  // only on a cache miss: either the first call or a layout-size change. The
+  // setters clear the cache when a transform prop changes.
+  fn transform(&self, size: WH) -> TransformCache {
+    if let Some(c) = self.cache.get() {
+      if c.size.w == size.w && c.size.h == size.h {
+        return c;
+      }
+    }
+    let matrix = self.compose(size);
+    let entry = TransformCache { size, matrix, inverse: matrix.inverse() };
+    self.cache.set(Some(entry));
+    entry
+  }
+
   // Composes the full paint transform around the rotation center. The same
   // matrix drives both painting and (inverted) hit testing, so the forward and
   // inverse can never drift apart. euclid's `then` applies the left transform
   // first, so the chain reads in point-application order.
   //
-  // For the pure-2D case (no rotate_y/perspective) this reduces exactly to the
-  // previous translate/scale/rotate op sequence.
-  fn matrix(&self, size: WH) -> Matrix {
+  // For the pure-2D case (no rotate_x/rotate_y/perspective) this reduces exactly
+  // to the previous translate/scale/rotate op sequence.
+  fn compose(&self, size: WH) -> Matrix {
     let p = self.resolve_pos();
     let c = self.resolve_center(size);
 
@@ -64,7 +97,19 @@ impl View {
       m = m.then(&Matrix::scale(sx.unwrap_or(1.0), sy.unwrap_or(1.0), 1.0));
     }
 
-    // 3D Y-axis rotation about the centered card, then perspective foreshorten.
+    // 3D rotations about the centered card (X = top/bottom tilt, Y = card-flip),
+    // then the perspective foreshorten.
+    if let Some(rotx) = self.rotate_x {
+      let (s, co) = rotx.sin_cos();
+      #[rustfmt::skip]
+      let rx = Matrix::new(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, co,  s,   0.0,
+        0.0, -s,  co,  0.0,
+        0.0, 0.0, 0.0, 1.0,
+      );
+      m = m.then(&rx);
+    }
     if let Some(roty) = self.rotate_y {
       let (s, co) = roty.sin_cos();
       #[rustfmt::skip]
@@ -87,11 +132,16 @@ impl View {
     // in screen space (post-divide), which is what we want.
     m.then(&Matrix::translation(c.x + p.x, c.y + p.y, 0.0))
   }
+
+  // Clears the memoized transform; called by the setters on a prop change.
+  fn invalidate(&self) {
+    self.cache.set(None);
+  }
 }
 
 impl Buildable for View {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    builder.transform(&self.matrix(ctx.size));
+    builder.transform(&self.transform(ctx.size).matrix);
   }
 }
 
@@ -108,7 +158,7 @@ impl Hittable for View {
     // collapses (e.g. scaleX = 0 mid-flip): the element is then a clean miss.
     let miss = XY::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
-    let Some(inv) = self.matrix(ctx.size).inverse() else {
+    let Some(inv) = self.transform(ctx.size).inverse else {
       return miss;
     };
 
@@ -128,45 +178,61 @@ impl Hittable for View {
 
 impl View {
   // Setters return whether the change affects layout. View transforms (pos,
-  // scale, rotate, scroll) are paint-time only, so they never do.
+  // scale, rotate, scroll) are paint-time only, so they never do. Transform
+  // props invalidate the memoized matrix; scroll/clip_radius do not affect it.
   pub fn set_rotate(&mut self, v: f32) -> bool {
     self.rotate = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_scale(&mut self, v: f32) -> bool {
     self.scale = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_scale_x(&mut self, v: f32) -> bool {
     self.scale_x = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_scale_y(&mut self, v: f32) -> bool {
     self.scale_y = Some(v);
+    self.invalidate();
+    false
+  }
+  pub fn set_rotate_x(&mut self, v: f32) -> bool {
+    self.rotate_x = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_rotate_y(&mut self, v: f32) -> bool {
     self.rotate_y = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_perspective(&mut self, v: f32) -> bool {
     self.perspective = Some(v);
+    self.invalidate();
     false
   }
   pub fn set_x(&mut self, v: f32) -> bool {
     self.pos.get_or_insert_with(XY::default).x = v;
+    self.invalidate();
     false
   }
   pub fn set_y(&mut self, v: f32) -> bool {
     self.pos.get_or_insert_with(XY::default).y = v;
+    self.invalidate();
     false
   }
   pub fn set_cx(&mut self, v: f32) -> bool {
     self.center.get_or_insert_with(XY::default).x = v;
+    self.invalidate();
     false
   }
   pub fn set_cy(&mut self, v: f32) -> bool {
     self.center.get_or_insert_with(XY::default).y = v;
+    self.invalidate();
     false
   }
   pub fn set_scroll_x(&mut self, v: f32) -> bool {
