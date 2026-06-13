@@ -10,6 +10,15 @@ ANGLE_GLES    = $(HOST_DIST)/libGLESv2.dll
 
 PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
 
+# The prebuilt impeller libs link the static CRT (/MT). Force Rust std + cc-built
+# code (+crt-static) and whisper.cpp (built by whisper-rs-sys via its own cmake
+# project, which defaults to /MD) to /MT too, or link.exe rejects the
+# RuntimeLibrary mismatch. whisper-rs-sys forwards CMAKE_* env vars as cmake -D
+# defines; CMP0091=NEW is required so CMAKE_MSVC_RUNTIME_LIBRARY is honored on
+# whisper.cpp's old cmake_minimum_required.
+WIN_RUSTFLAGS := -Ctarget-feature=+crt-static -Clink-arg=/OPT:NOREF,NOICF
+WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
 .PHONY: client runtime dist-windows angle-windows
 
 angle-windows:
@@ -36,13 +45,13 @@ endef
 
 client: $(DEFAULT_APP_JS) angle-windows
 	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
-	RUSTFLAGS="-Clink-arg=/OPT:NOREF,NOICF" \
+	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-windows,go,$(PROFILE),solidrt-go)
 
 runtime: angle-windows
 	@echo "Building RUNTIME Windows ($(PROFILE)) $(VERSION)"
-	RUSTFLAGS="-Clink-arg=/OPT:NOREF,NOICF" \
+	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-windows,runtime,$(PROFILE),solidrt)
 
