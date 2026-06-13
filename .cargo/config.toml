@@ -3,3 +3,11 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+# The prebuilt impeller libs (static_link) are compiled with the static CRT
+# (/MT). Force every other C/C++ dep (whisper.cpp via cmake, SDL from source,
+# cc-compiled code, Rust std) to /MT too so the MSVC linker stops rejecting the
+# RuntimeLibrary mismatch. The cmake crate derives CMAKE_MSVC_RUNTIME_LIBRARY
+# from this same crt-static feature.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
