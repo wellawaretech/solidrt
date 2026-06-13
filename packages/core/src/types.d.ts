@@ -165,6 +165,13 @@ export interface TransformProps {
   // Per-axis scale; overrides `scale` on that axis (e.g. scaleX for a flip).
   scaleX?: number
   scaleY?: number
+  // 3D rotation about the vertical axis, in radians, for a card-flip. Reads as a
+  // real flip only with `perspective` set; on its own it is an orthographic
+  // squash (like scaleX).
+  rotateY?: number
+  // Perspective viewing distance in pixels (CSS `perspective`). Enables the 3D
+  // depth for rotateY; larger values give a shallower effect.
+  perspective?: number
   x?: number
   y?: number
   cx?: number

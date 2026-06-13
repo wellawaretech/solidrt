@@ -1,6 +1,6 @@
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, WH, XY};
-use alloy::impellers::DisplayListBuilder;
+use alloy::impellers::{DisplayListBuilder, Matrix};
 use taffy::{FlexDirection, Size, Style};
 
 #[derive(Clone, Debug, Default)]
@@ -11,6 +11,12 @@ pub struct View {
   pub scale: Option<f32>,
   pub scale_x: Option<f32>,
   pub scale_y: Option<f32>,
+  // 3D rotation about the vertical (Y) axis, in radians, for a card-flip. With
+  // a `perspective` set it reads as a real flip; without one it is orthographic.
+  pub rotate_y: Option<f32>,
+  // Perspective viewing distance in pixels (CSS `perspective`). Larger is a
+  // shallower, less dramatic 3D effect. Applied around the rotation center.
+  pub perspective: Option<f32>,
   pub pos: Option<XY>,
   pub center: Option<XY>,
   // Scroll offset applied to children at build time, after the clip is set.
@@ -30,23 +36,62 @@ impl View {
   fn resolve_center(&self, size: WH) -> XY {
     self.center.unwrap_or(XY::new(size.w / 2.0, size.h / 2.0))
   }
+
+  // Composes the full paint transform around the rotation center. The same
+  // matrix drives both painting and (inverted) hit testing, so the forward and
+  // inverse can never drift apart. euclid's `then` applies the left transform
+  // first, so the chain reads in point-application order.
+  //
+  // For the pure-2D case (no rotate_y/perspective) this reduces exactly to the
+  // previous translate/scale/rotate op sequence.
+  fn matrix(&self, size: WH) -> Matrix {
+    let p = self.resolve_pos();
+    let c = self.resolve_center(size);
+
+    // Move the rotation center to the origin.
+    let mut m = Matrix::translation(-c.x, -c.y, 0.0);
+
+    // Screen-clockwise z-rotation for a positive angle, matching the old
+    // builder.rotate path (y-down space).
+    if let Some(rot) = self.rotate {
+      let (s, co) = rot.sin_cos();
+      m = m.then(&Matrix::new_2d(co, s, -s, co, 0.0, 0.0));
+    }
+
+    let sx = self.scale_x.or(self.scale);
+    let sy = self.scale_y.or(self.scale);
+    if sx.is_some() || sy.is_some() {
+      m = m.then(&Matrix::scale(sx.unwrap_or(1.0), sy.unwrap_or(1.0), 1.0));
+    }
+
+    // 3D Y-axis rotation about the centered card, then perspective foreshorten.
+    if let Some(roty) = self.rotate_y {
+      let (s, co) = roty.sin_cos();
+      #[rustfmt::skip]
+      let ry = Matrix::new(
+        co,  0.0, -s,  0.0,
+        0.0, 1.0, 0.0, 0.0,
+        s,   0.0, co,  0.0,
+        0.0, 0.0, 0.0, 1.0,
+      );
+      m = m.then(&ry);
+    }
+    if let Some(d) = self.perspective {
+      if d != 0.0 {
+        m = m.then(&Matrix::perspective(d));
+      }
+    }
+
+    // Restore the center and apply the position offset. Both are pure
+    // translations, so they fold into one; applied after perspective they shift
+    // in screen space (post-divide), which is what we want.
+    m.then(&Matrix::translation(c.x + p.x, c.y + p.y, 0.0))
+  }
 }
 
 impl Buildable for View {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let p = self.resolve_pos();
-    let c = self.resolve_center(ctx.size);
-    builder.translate(p.x, p.y);
-    builder.translate(c.x, c.y);
-    let sx = self.scale_x.or(self.scale);
-    let sy = self.scale_y.or(self.scale);
-    if sx.is_some() || sy.is_some() {
-      builder.scale(sx.unwrap_or(1.0), sy.unwrap_or(1.0));
-    }
-    if let Some(value) = self.rotate {
-      builder.rotate(value.to_degrees());
-    }
-    builder.translate(-c.x, -c.y);
+    builder.transform(&self.matrix(ctx.size));
   }
 }
 
@@ -59,42 +104,25 @@ impl Bounded for View {
 
 impl Hittable for View {
   fn transform_to_local(&self, point: XY, ctx: &HitContext) -> XY {
-    let p = self.resolve_pos();
-    let c = self.resolve_center(ctx.size);
+    // A point guaranteed to fail the bounds/clip checks, used when the transform
+    // collapses (e.g. scaleX = 0 mid-flip): the element is then a clean miss.
+    let miss = XY::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
-    // Inverse of: T(pos) · T(c) · S(s) · R(θ) · T(-c)
-    // = T(c) · R(-θ) · S(1/s) · T(-c) · T(-pos)
+    let Some(inv) = self.matrix(ctx.size).inverse() else {
+      return miss;
+    };
 
-    let mut lx = point.x - p.x;
-    let mut ly = point.y - p.y;
-
-    lx -= c.x;
-    ly -= c.y;
-
-    if let Some(sx) = self.scale_x.or(self.scale) {
-      if sx != 0.0 {
-        lx /= sx;
-      }
+    // Apply the inverse to the screen point assuming local z = 0 (the content
+    // plane), with the homogeneous divide. Exact for affine transforms; an
+    // approximation under perspective, which is acceptable here since a flipped
+    // face carries no tap target of its own.
+    let x = point.x * inv.m11 + point.y * inv.m21 + inv.m41;
+    let y = point.x * inv.m12 + point.y * inv.m22 + inv.m42;
+    let w = point.x * inv.m14 + point.y * inv.m24 + inv.m44;
+    if w == 0.0 {
+      return miss;
     }
-    if let Some(sy) = self.scale_y.or(self.scale) {
-      if sy != 0.0 {
-        ly /= sy;
-      }
-    }
-
-    if let Some(angle) = self.rotate {
-      let cos_a = (-angle).cos();
-      let sin_a = (-angle).sin();
-      let rx = lx * cos_a - ly * sin_a;
-      let ry = lx * sin_a + ly * cos_a;
-      lx = rx;
-      ly = ry;
-    }
-
-    lx += c.x;
-    ly += c.y;
-
-    XY::new(lx, ly)
+    XY::new(x / w, y / w)
   }
 }
 
@@ -115,6 +143,14 @@ impl View {
   }
   pub fn set_scale_y(&mut self, v: f32) -> bool {
     self.scale_y = Some(v);
+    false
+  }
+  pub fn set_rotate_y(&mut self, v: f32) -> bool {
+    self.rotate_y = Some(v);
+    false
+  }
+  pub fn set_perspective(&mut self, v: f32) -> bool {
+    self.perspective = Some(v);
     false
   }
   pub fn set_x(&mut self, v: f32) -> bool {
