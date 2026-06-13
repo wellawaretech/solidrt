@@ -6,7 +6,11 @@ use taffy::{FlexDirection, Size, Style};
 #[derive(Clone, Debug, Default)]
 pub struct View {
   pub rotate: Option<f32>,
+  // Uniform scale; scale_x/scale_y override it per axis (anisotropic scaling,
+  // e.g. a horizontal squash for a card-flip animation).
   pub scale: Option<f32>,
+  pub scale_x: Option<f32>,
+  pub scale_y: Option<f32>,
   pub pos: Option<XY>,
   pub center: Option<XY>,
   // Scroll offset applied to children at build time, after the clip is set.
@@ -34,8 +38,10 @@ impl Buildable for View {
     let c = self.resolve_center(ctx.size);
     builder.translate(p.x, p.y);
     builder.translate(c.x, c.y);
-    if let Some(value) = self.scale {
-      builder.scale(value, value);
+    let sx = self.scale_x.or(self.scale);
+    let sy = self.scale_y.or(self.scale);
+    if sx.is_some() || sy.is_some() {
+      builder.scale(sx.unwrap_or(1.0), sy.unwrap_or(1.0));
     }
     if let Some(value) = self.rotate {
       builder.rotate(value.to_degrees());
@@ -65,10 +71,14 @@ impl Hittable for View {
     lx -= c.x;
     ly -= c.y;
 
-    if let Some(scale) = self.scale {
-      if scale != 0.0 {
-        lx /= scale;
-        ly /= scale;
+    if let Some(sx) = self.scale_x.or(self.scale) {
+      if sx != 0.0 {
+        lx /= sx;
+      }
+    }
+    if let Some(sy) = self.scale_y.or(self.scale) {
+      if sy != 0.0 {
+        ly /= sy;
       }
     }
 
@@ -97,6 +107,14 @@ impl View {
   }
   pub fn set_scale(&mut self, v: f32) -> bool {
     self.scale = Some(v);
+    false
+  }
+  pub fn set_scale_x(&mut self, v: f32) -> bool {
+    self.scale_x = Some(v);
+    false
+  }
+  pub fn set_scale_y(&mut self, v: f32) -> bool {
+    self.scale_y = Some(v);
     false
   }
   pub fn set_x(&mut self, v: f32) -> bool {

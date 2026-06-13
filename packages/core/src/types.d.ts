@@ -162,6 +162,9 @@ export interface PaintProps {
 export interface TransformProps {
   rotate?: number
   scale?: number
+  // Per-axis scale; overrides `scale` on that axis (e.g. scaleX for a flip).
+  scaleX?: number
+  scaleY?: number
   x?: number
   y?: number
   cx?: number
