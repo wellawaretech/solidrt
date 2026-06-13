@@ -148,6 +148,21 @@ fn ui_thread(
   app: Option<AppSource>,
   record_fps: Option<u32>,
 ) {
+  // Anchor the process to a writable directory before any app code runs, so
+  // relative paths (e.g. a flux:sqlite database) resolve to persistent storage.
+  // The launch cwd is unreliable: on Android it is "/" (read-only); on desktop
+  // it is wherever the client was spawned. SDL's pref path is writable and
+  // persistent on every platform (and on Android is the same internal-storage
+  // dir bundled assets are extracted into). The dev client and packed runtime
+  // share one directory. The dev server is a separate process and unaffected.
+  match alloy::sdl3::filesystem::get_pref_path("SolidRT", "go") {
+    Ok(dir) => match std::env::set_current_dir(&dir) {
+      Ok(()) => log::info!("[srt] working directory set to {}", dir.display()),
+      Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", dir.display()),
+    },
+    Err(e) => log::warn!("[srt] no writable pref path, leaving working directory unchanged: {e}"),
+  }
+
   let platform = Arc::new(PlatformContext::new());
   // Record mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
