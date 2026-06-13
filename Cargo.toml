@@ -13,10 +13,12 @@ log = "0.4"
 rquickjs = { version = "0.12.0", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
 
-# Vendored with a session optimization-level fix (see vendor/.../README.md);
-# remove once upstream releases it.
+# livekit-wakeword 0.1.3 + a session optimization-level fix (without it the
+# ort-tract backend runs unoptimized graphs, ~9x slower than real time).
+# Fork branch fix/wakeword-session-optimization-level; remove when upstream
+# ships the fix.
 [patch.crates-io]
-livekit-wakeword = { path = "vendor/livekit-wakeword" }
+livekit-wakeword = { git = "https://github.com/antoinevanwel/rust-sdks", rev = "20f6ca2c1b5ce87ebb208f639beadcdf34afc464" }
 
 [profile.release]
 

@@ -61,7 +61,7 @@ define ndk-stage
 endef
 
 client-android: $(DEFAULT_APP_JS)
-	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) --features go --target-dir target/go)
+	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(GO_FEATURES) --target-dir target/go)
 	$(call ndk-stage,$(PROFILE))
 
 # Bootstrap Gradle wrapper if missing.

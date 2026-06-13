@@ -14,12 +14,12 @@ endef
 
 client: $(DEFAULT_APP_JS)
 	@echo "Building SOLIDRT-GO ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --features go --bin solidrt-go --target-dir target/go
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-bin,go,$(PROFILE),solidrt-go)
 
 runtime:
 	@echo "Building RUNTIME ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) --bin solidrt --target-dir target/runtime
+	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-bin,runtime,$(PROFILE),solidrt)
 
 dist-linux:

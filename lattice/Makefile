@@ -6,6 +6,20 @@ SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 PROFILE            ?= release
 CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
 
+# Speech recognition (Whisper + wake word) ships in the default feature set.
+# SPEECH=0 drops it (no whisper-rs / livekit-wakeword), for builds that do not
+# want the voice stack -- e.g. the release flow for now. GO_FEATURES /
+# RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
+# (go = client, which already pulls flux/compile; runtime = default minus go).
+SPEECH ?= 1
+ifeq ($(SPEECH),0)
+GO_FEATURES      = --no-default-features --features go
+RUNTIME_FEATURES = --no-default-features --features flux/compile
+else
+GO_FEATURES      = --features go
+RUNTIME_FEATURES =
+endif
+
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 
@@ -54,6 +68,7 @@ help:
 	@echo "  dist-android         Build fat APK into packages/android-arm64-v8a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
+	@echo "Pass SPEECH=0 to build without speech recognition (default: on)."
 	@echo ""
 	@echo "Default app:"
 	@echo "  default-app-bundle   Regenerate app.srt.js from app.tsx"
