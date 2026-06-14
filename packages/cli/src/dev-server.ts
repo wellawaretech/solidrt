@@ -28,7 +28,6 @@ function headersToObject(h: Headers): Record<string, string> {
   })
   return out
 }
-
 async function handleProxy(req: Request): Promise<Response> {
   let target = req.headers.get("x-srt-proxy-url")
   if (!target) {

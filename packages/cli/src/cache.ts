@@ -46,6 +46,21 @@ export function isEnabled(): boolean {
   return enabled
 }
 
+// Strings returned by bun:sqlite carry an internal representation that
+// Headers.set() rejects, even when value-identical to an acceptable string
+// (Bun bug, present through 1.3.14). Rebuilding each char yields a clean string.
+function reflatten(s: string): string {
+  return Array.from(s, (c) => String.fromCharCode(c.charCodeAt(0))).join("")
+}
+
+function reflattenHeaders(obj: Record<string, string>): Record<string, string> {
+  let out: Record<string, string> = {}
+  for (let key in obj) {
+    out[reflatten(key)] = reflatten(obj[key]!)
+  }
+  return out
+}
+
 function keyFor(method: string, url: string): string {
   let h = createHash("sha256")
   h.update(method)
@@ -101,7 +116,7 @@ export function get(method: string, url: string): Entry | null {
     method: row.method,
     url: row.url,
     status: row.status,
-    headers: JSON.parse(row.headers),
+    headers: reflattenHeaders(JSON.parse(row.headers)),
     body: row.body,
     cachedAt: row.cached_at,
   }
