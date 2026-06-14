@@ -53,13 +53,15 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `d-path`, `d-texture`, `d-text`. NOTE: `<line>` has a LineProps type but is
   NOT a registered intrinsic - it will not typecheck.
 
-- Plain vs `d-` variant: a plain element (e.g. `rect`) is `RectProps &
-  LayoutProps` - it draws AND is a flex layout box. The `d-` variant (`d-rect`)
-  is `RectProps` only - it draws but is not a layout box, so the parent
-  positions it. Use `d-` for backgrounds/borders/overlays that should underlay
-  or overlay siblings without taking a flex slot. The `d-` variants also sit
-  OUTSIDE the layout engine (Taffy), so they are cheaper - prefer them for
-  draw-only content that does not need to participate in layout.
+- Plain vs `d-` variant (the `d-` prefix means "detached" - detached from the
+  layout engine, Taffy): a plain element (e.g. `rect`) is `RectProps &
+  LayoutProps`, so it draws AND is laid out by Taffy. The detached variant
+  (`d-rect`) is `RectProps` only - it draws but is NOT in the layout pass; you
+  place it yourself with `x`/`y` (omit them and it fills the parent, which is
+  how backgrounds work). Reach for `d-` whenever you want explicit coordinate
+  positioning instead of layout. It is also a performance lever: for many
+  directly-positioned, often-animating elements (e.g. hundreds of balls), `d-`
+  skips the per-element layout that plain elements would incur.
 
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
