@@ -1,5 +1,6 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, JsLifetime};
+use rquickjs::{Array, Ctx, Function, JsLifetime, Object};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -53,6 +54,32 @@ pub fn arch() -> &'static str {
   }
 }
 
+// flux:process also exposes current-process memory usage (Node/Bun parity):
+//
+//   import { memoryUsage } from "flux:process"
+//   memoryUsage() // { rss }  - resident set size in bytes
+//
+// Node returns { rss, heapTotal, heapUsed, external, arrayBuffers }; we expose
+// rss for now (the headline figure). A companion cpuUsage() is deferred until we
+// settle on a portable user/system CPU-time split (getrusage / GetProcessTimes).
+fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
+  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  let mut rss = 0u64;
+  if let Ok(pid) = sysinfo::get_current_pid() {
+    system.refresh_processes_specifics(
+      ProcessesToUpdate::Some(&[pid]),
+      true,
+      ProcessRefreshKind::nothing().with_memory(),
+    );
+    if let Some(proc) = system.process(pid) {
+      rss = proc.memory();
+    }
+  }
+  let obj = Object::new(ctx)?;
+  obj.set("rss", rss as f64)?;
+  Ok(obj)
+}
+
 // Signals that already have an OS watcher installed for this context, so
 // repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
 // its own entry when it stops, so a later subscribe reinstalls it.
@@ -68,6 +95,7 @@ impl ModuleDef for ProcessModule {
     decl.declare("argv")?;
     decl.declare("platform")?;
     decl.declare("arch")?;
+    decl.declare("memoryUsage")?;
     Ok(())
   }
 
@@ -85,6 +113,7 @@ impl ModuleDef for ProcessModule {
     exports.export("argv", argv)?;
     exports.export("platform", platform())?;
     exports.export("arch", arch())?;
+    exports.export("memoryUsage", Function::new(ctx.clone(), memory_usage)?)?;
     Ok(())
   }
 }

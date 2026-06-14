@@ -48,7 +48,8 @@ export function isEnabled(): boolean {
 
 // Strings returned by bun:sqlite carry an internal representation that
 // Headers.set() rejects, even when value-identical to an acceptable string
-// (Bun bug, present through 1.3.14). Rebuilding each char yields a clean string.
+// (Bun bug oven-sh/bun#28266, present through 1.3.14). Rebuilding each char
+// yields a clean string.
 function reflatten(s: string): string {
   return Array.from(s, (c) => String.fromCharCode(c.charCodeAt(0))).join("")
 }

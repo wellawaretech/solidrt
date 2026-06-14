@@ -39,6 +39,8 @@ futures-core = "0.3"
 percent-encoding = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 path-clean = "1"
+# Current-process stats for flux:process (memoryUsage rss). Same crate/features as lattice's overlay.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
 
 [dev-dependencies]

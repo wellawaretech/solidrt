@@ -141,3 +141,17 @@ fn argv_is_empty_when_host_sets_none() {
   rt.block_on(engine.eval_source(code));
   assert_eq!(sink.captured().at(LogLevel::Log), "[]");
 }
+
+#[test]
+fn memory_usage_reports_positive_rss() {
+  let sink = LogSink::new();
+  let engine = FluxEngine::builder().logger(sink.logger()).build();
+  let code = r#"
+        import { memoryUsage } from "flux:process"
+        let { rss } = memoryUsage()
+        console.log(typeof rss + ":" + (rss > 0))
+        "#;
+  let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("build runtime");
+  rt.block_on(engine.eval_source(code));
+  assert_eq!(sink.captured().at(LogLevel::Log), "number:true");
+}

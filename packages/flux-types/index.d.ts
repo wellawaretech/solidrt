@@ -13,6 +13,12 @@ declare module "flux:process" {
   /** The CPU architecture: "x64", "arm64", ... */
   export let arch: string
   /**
+   * Current-process memory usage. `rss` is the resident set size in bytes.
+   * (Node also reports heapTotal/heapUsed/external/arrayBuffers; only rss is
+   * provided for now.)
+   */
+  export function memoryUsage(): { rss: number }
+  /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.
    *
