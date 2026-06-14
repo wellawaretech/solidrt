@@ -10,7 +10,7 @@
   "files": [
     "bin/",
     "src/",
-    "LICENSE"
+    "AGENTS.md"
   ],
   "dependencies": {
     "@babel/core": "^7.28.5",

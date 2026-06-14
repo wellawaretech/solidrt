@@ -2,6 +2,8 @@
 
 A collection of components for [SolidRT](https://github.com/wellawaretech/solidrt) apps.
 
+> LLM agents: see [AGENTS.md](./AGENTS.md) for a dense, self-contained quickstart.
+
 ## Installation
 
 ```sh

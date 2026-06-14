@@ -2,6 +2,8 @@
 
 Developer tooling for SolidRT. Provides a development environment for `@solidrt/core` applications.
 
+> LLM agents: see [AGENTS.md](./AGENTS.md) for a dense, self-contained quickstart.
+
 ## Commands
 
 ```sh

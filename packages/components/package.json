@@ -10,8 +10,7 @@
   },
   "files": [
     "src/",
-    "README.md",
-    "LICENSE"
+    "AGENTS.md"
   ],
   "peerDependencies": {
     "@solidrt/core": "workspace:*",

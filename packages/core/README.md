@@ -4,6 +4,8 @@ A low-level toolkit for creating cross-platform applications.
 
 _SolidRT is in pre-alpha stage. Anything can and will be changed._
 
+> LLM agents: see [AGENTS.md](./AGENTS.md) for a dense, self-contained quickstart.
+
 ## Getting started
 
 Prerequisites: [bun](https://bun.sh) (only required for development; not needed to run built apps).

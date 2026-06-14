@@ -1,0 +1,67 @@
+# @solidrt/components - agent notes
+
+Higher-level components built on @solidrt/core primitives. Optional: an app can
+be built with core primitives alone. For the underlying element model, events,
+reactivity, and how to run/verify, see @solidrt/core and @solidrt/cli (their
+AGENTS.md). Full prop tables are in this package's README.
+
+## Install
+
+```sh
+bun add @solidrt/components   # peers: @solidrt/core, @solidjs/signals
+```
+
+## Props: layout vs style (the non-obvious split)
+
+Most components group props into two objects, plus top-level event handlers:
+
+- `layout={{...}}` - the core LayoutProps: flex/grid, sizing, padding/margin,
+  position. For `Text`, also the font fields (fontSize, fontWeight, ...).
+  Changing these relayouts.
+- `style={{...}}` - paint only, never affects layout: `backgroundColor`,
+  `borderColor`, `borderWidth`, `borderRadius`, `color` (Text), and the
+  transform `x`/`y`/`rotate`/`scale`.
+- Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, NOT
+  inside `layout`/`style`.
+
+## Exports
+
+- `Window` - root surface; renders a core `<window>`, so `render()` accepts it.
+  Applies `layout` and `style.backgroundColor` only (a window cannot be
+  transformed or bordered). Also: `title`, `fullscreen`, `vsync`, `fps`.
+- `View` - general box; draws a background/border when the matching `style`
+  props are set.
+- `Text` - text in a layout box; font fields go in `layout`, `color` in `style`.
+- `Image` - fetches/decodes/uploads an image: `src: string | Uint8Array`.
+- `TextInput` - single-line input; `value`/`onInput`/`onSubmit`, controlled or
+  uncontrolled, plus `placeholder`, `maxLength`, `autoFocus`, `disabled`.
+- `SafeArea` - pads children clear of system UI (notches, status bars); top and
+  bottom on by default, pass `false`/a number per edge.
+- `theme` / `setTheme` - shared appearance (colors, spacing, radii, font sizes);
+  call `setTheme({...})` to override defaults.
+
+## Minimal app (verified to render)
+
+```tsx
+import { render } from "@solidrt/core"
+import { Window, View, Text } from "@solidrt/components"
+import { createSignal } from "@solidjs/signals"
+
+function App() {
+  let [count, setCount] = createSignal(0)
+  return (
+    <Window title="App" style={{ backgroundColor: "#0b0f17" }}
+      layout={{ flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 24 }}>
+      <Text layout={{ fontSize: 48, fontWeight: 800 }} style={{ color: "#1f6feb" }}>
+        {count()}
+      </Text>
+      <View onPointerDown={() => setCount((c) => c + 1)}
+        layout={{ padding: 16 }} style={{ backgroundColor: "#1f6feb", borderRadius: 12 }}>
+        <Text style={{ color: "#ffffff" }}>increment</Text>
+      </View>
+    </Window>
+  )
+}
+
+render(() => <App />)
+```
