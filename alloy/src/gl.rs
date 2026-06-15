@@ -134,6 +134,9 @@ const GL_RENDERBUFFER: u32 = 0x8D41;
 const GL_DEPTH24_STENCIL8: u32 = 0x88F0;
 const GL_DEPTH_STENCIL_ATTACHMENT: u32 = 0x821A;
 const GL_RENDERBUFFER_BINDING: u32 = 0x8CA7;
+const GL_COLOR_BUFFER_BIT: u32 = 0x4000;
+const GL_DEPTH_BUFFER_BIT: u32 = 0x0100;
+const GL_STENCIL_BUFFER_BIT: u32 = 0x0400;
 
 fn gl_fn(name: &std::ffi::CStr) -> unsafe extern "C" fn() {
   unsafe {
@@ -146,8 +149,9 @@ fn gl_fn(name: &std::ffi::CStr) -> unsafe extern "C" fn() {
 /// ownership per the Impeller API; creating the texture through wgpu would
 /// end in a double glDeleteTextures). The calling thread must have a GL
 /// context current and `impeller_ctx` must have been created on it. The
-/// trailing glFlush makes the contents visible to the other shared context
-/// (the render thread samples what the UI thread rendered).
+/// trailing glFinish guarantees the offscreen render has completed before the
+/// texture crosses to the render thread, which samples it from a separate
+/// shared GL context (where the contents are otherwise undefined).
 pub fn render_display_list_to_texture(
   impeller_ctx: &mut ImpellerContext,
   dl: &DisplayList,
@@ -176,9 +180,20 @@ pub fn render_display_list_to_texture(
   let delete_renderbuffers: extern "C" fn(i32, *const u32) =
     unsafe { std::mem::transmute(gl_fn(c"glDeleteRenderbuffers")) };
   let get_integerv: extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(gl_fn(c"glGetIntegerv")) };
-  let flush: extern "C" fn() = unsafe { std::mem::transmute(gl_fn(c"glFlush")) };
+  let finish: extern "C" fn() = unsafe { std::mem::transmute(gl_fn(c"glFinish")) };
+  let clear_color: extern "C" fn(f32, f32, f32, f32) = unsafe { std::mem::transmute(gl_fn(c"glClearColor")) };
+  let clear: extern "C" fn(u32) = unsafe { std::mem::transmute(gl_fn(c"glClear")) };
 
   let (width, height) = (size.width as i32, size.height as i32);
+
+  // Some Android GPUs require render-target dimensions aligned to a tile
+  // boundary; an unaligned offscreen texture/renderbuffer can come back with
+  // corrupted (shifted, channel-scrambled) content. Over-allocate storage to
+  // the next multiple of 64 and render into the unaligned top-left corner
+  // (via the wrap_fbo viewport below), so the content itself stays at
+  // (width, height) but lives in aligned backing storage.
+  let align_up = |v: i32| (v + 63) & !63;
+  let (alloc_width, alloc_height) = (align_up(width), align_up(height));
 
   // Save the current bindings so wgpu's cached GL state stays valid.
   let mut prev_fbo: i32 = 0;
@@ -191,7 +206,7 @@ pub fn render_display_list_to_texture(
   let mut tex: u32 = 0;
   gen_textures(1, &mut tex);
   bind_texture(GL_TEXTURE_2D, tex);
-  tex_image_2d(GL_TEXTURE_2D, 0, GL_RGBA8 as i32, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, std::ptr::null());
+  tex_image_2d(GL_TEXTURE_2D, 0, GL_RGBA8 as i32, alloc_width, alloc_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, std::ptr::null());
   // No mips exist: the default MIN_FILTER references mipmaps, which would
   // make the texture sampling-incomplete (reads as black).
   tex_parameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR as i32);
@@ -203,7 +218,7 @@ pub fn render_display_list_to_texture(
   let mut rbo: u32 = 0;
   gen_renderbuffers(1, &mut rbo);
   bind_renderbuffer(GL_RENDERBUFFER, rbo);
-  renderbuffer_storage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+  renderbuffer_storage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, alloc_width, alloc_height);
   bind_renderbuffer(GL_RENDERBUFFER, prev_rbo as u32);
 
   let mut fbo: u32 = 0;
@@ -216,6 +231,14 @@ pub fn render_display_list_to_texture(
   let result = if status != GL_FRAMEBUFFER_COMPLETE {
     Err(format!("offscreen framebuffer incomplete: {status:#x}"))
   } else {
+    // glTexImage2D(..., null) leaves the texture's initial contents
+    // driver-defined. Desktop GL tends to hand back zeroed memory, but on
+    // Android's tile-based GPUs it can be leftover compressed tile data from
+    // unrelated content. Force a defined transparent base regardless of
+    // whether Impeller's own surface clear covers an externally-built FBO.
+    clear_color(0.0, 0.0, 0.0, 0.0);
+    clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
     // A wrapped-FBO surface is use-and-throw: draw once, then drop it.
     match unsafe { impeller_ctx.wrap_fbo(fbo as u64, PixelFormat::RGBA8888, size) } {
       Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("offscreen draw failed: {e}")),
@@ -226,10 +249,16 @@ pub fn render_display_list_to_texture(
   bind_framebuffer(GL_FRAMEBUFFER, prev_fbo as u32);
   delete_framebuffers(1, &fbo);
   delete_renderbuffers(1, &rbo);
-  flush();
+  // glFlush only submits commands; it does not guarantee the offscreen render
+  // has completed. The render thread samples this texture from a different
+  // shared GL context, where shared-object contents stay undefined until the
+  // producing context's writes actually finish. glFinish blocks until the GPU
+  // is done, so the texture is complete before it crosses to the render thread.
+  // (Stage 1 diagnostic: a fence sync would avoid stalling the UI thread.)
+  finish();
 
   match result {
-    Ok(()) => unsafe { impeller_ctx.adopt_opengl_texture(width as u32, height as u32, 1, tex as u64) }
+    Ok(()) => unsafe { impeller_ctx.adopt_opengl_texture(alloc_width as u32, alloc_height as u32, 1, tex as u64) }
       .ok_or_else(|| "failed to adopt offscreen texture".to_string()),
     Err(e) => {
       delete_textures(1, &tex);
