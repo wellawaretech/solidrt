@@ -192,6 +192,7 @@ impl Stats {
     fps: u32,
     paint_stats: crate::rendertree::composite::PaintStats,
     phases: FramePhases,
+    textures: usize,
   ) {
     self.refresh();
 
@@ -230,7 +231,7 @@ impl Stats {
     // draw phases. SET is a raw count (setProperty writes/frame), not a share.
     let frame_ms = self.frame_ms;
     let pct = |ms: f32| if frame_ms > 0.0 { ms / frame_ms * 100.0 } else { 0.0 };
-    text.push_str(&format!("JS {:2.0}% SET {:.0}\n", pct(self.js_ms), self.set_count));
+    text.push_str(&format!("JS {:.0}% SET {:.0}\n", pct(self.js_ms), self.set_count));
     // Native draw phases as frame shares: LAY layout, PNT paint, PST postLayout,
     // HOV hover.
     text.push_str(&format!(
@@ -252,6 +253,10 @@ impl Stats {
     // Snapshot boundaries this frame: reused+rasterized.
     if paint_stats.snapshots_reused + paint_stats.snapshots_rasterized > 0 {
       text.push_str(&format!("{}+{} SNP\n", paint_stats.snapshots_reused, paint_stats.snapshots_rasterized));
+    }
+    // Textures currently held in the registry (GL/Impeller texture pairs in use).
+    if textures > 0 {
+      text.push_str(&format!("{} TEX\n", textures));
     }
 
     pb.add_text(&text);

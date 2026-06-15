@@ -46,6 +46,15 @@ impl TextureRegistry {
     self.entries.borrow().get(&id).map(Rc::clone)
   }
 
+  /// Number of textures currently held in the registry.
+  pub fn len(&self) -> usize {
+    self.entries.borrow().len()
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.entries.borrow().is_empty()
+  }
+
   pub fn insert(&self, id: u64, entry: TextureEntry) {
     self.entries.borrow_mut().insert(id, Rc::new(entry));
     self.generation.set(self.generation.get().wrapping_add(1));
