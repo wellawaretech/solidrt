@@ -132,6 +132,14 @@ impl GpuTexture {
         glow::PixelUnpackData::Slice(Some(data)),
       );
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      // The render thread samples this texture from a separate shared GL
+      // context, where the upload stays invisible until the producing (UI)
+      // context's writes actually complete. The UI context never presents, so
+      // nothing else flushes it; without this the render thread shows stale or
+      // uninitialized content until the driver auto-flushes (seconds later).
+      // glFinish blocks until the GPU is done, matching the offscreen path in
+      // gl.rs. (A fence sync would avoid stalling the UI thread; see that path.)
+      gl.finish();
     }
   }
 }
