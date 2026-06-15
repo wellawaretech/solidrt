@@ -26,13 +26,17 @@ export function uploadTexture(textureId: number, offset: number = 0): void {
 // the texture id (usable anywhere a normal texture id is, e.g. <texture src>).
 // The fragment body may reference vUV (0..1, top-left origin), iResolution,
 // iTime, and any `uniform float` it declares; pass their values via `params`.
+// `textures` binds each declared `uniform sampler2D` to an existing texture id
+// (e.g. a camera or decoded image) so the shader can read it; those inputs are
+// re-sampled on every setShaderParams call, so live sources stay current.
 export function createShader(
   fragmentSrc: string,
   width: number,
   height: number,
   params?: Record<string, number>,
+  textures?: Record<string, number>,
 ): number {
-  return gpu.createShader(fragmentSrc, width, height, params)
+  return gpu.createShader(fragmentSrc, width, height, params, textures)
 }
 
 // Re-render an existing shader texture with new param values and request a

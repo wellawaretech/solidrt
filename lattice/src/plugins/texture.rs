@@ -19,6 +19,12 @@ fn collect_params(obj: &Object<'_>) -> Vec<(String, f32)> {
   obj.props::<String, f64>().filter_map(|r| r.ok()).map(|(k, v)| (k, v as f32)).collect()
 }
 
+// Flatten a JS { samplerName: textureId } object into (name, id) pairs alloy
+// binds to the shader's sampler2D uniforms. Non-numeric values are skipped.
+fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
+  obj.props::<String, u64>().filter_map(|r| r.ok()).collect()
+}
+
 fn decode_image_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> flux::rquickjs::Result<Object<'js>> {
   let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "decodeImage: detached buffer"))?;
   let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
@@ -113,11 +119,13 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
           fragment_src: String,
           width: u32,
           height: u32,
-          params: Option<Object<'_>>|
+          params: Option<Object<'_>>,
+          textures: Option<Object<'_>>|
           -> flux::rquickjs::Result<u64> {
       let params = params.as_ref().map(collect_params).unwrap_or_default();
+      let textures = textures.as_ref().map(collect_textures).unwrap_or_default();
       create_shader_atx
-        .create_shader_texture(width, height, &fragment_src, &params)
+        .create_shader_texture(width, height, &fragment_src, &params, &textures)
         .map_err(|e| throw_str(&ctx, &format!("createShader: {e}")))
     },
   )

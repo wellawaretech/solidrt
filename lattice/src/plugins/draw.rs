@@ -130,6 +130,7 @@ pub fn init(
         platform.fps(),
         paint_stats,
         phases,
+        atx.textures.len(),
       );
     }
 

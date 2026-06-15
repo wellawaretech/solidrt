@@ -130,9 +130,11 @@ impl Context {
     height: u32,
     fragment_src: &str,
     params: &[(String, f32)],
+    textures: &[(String, u64)],
   ) -> Result<u64, String> {
-    let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src)?;
-    shader.render(&self.gl, params);
+    let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src, textures.to_vec())?;
+    let resolved = self.resolve_sampler_bindings(&shader);
+    shader.render(&self.gl, params, &resolved);
 
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
@@ -147,11 +149,23 @@ impl Context {
   /// Re-render an existing shader texture with new params. The output keeps its
   /// id and Impeller texture (no re-adoption); only the GL contents change, so
   /// the caller must request a frame for the new pixels to reach the screen.
+  /// Sampler inputs are re-resolved, so updated source textures are picked up.
   pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
     let shaders = self.shaders.borrow();
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    shader.render(&self.gl, params);
+    let resolved = self.resolve_sampler_bindings(shader);
+    shader.render(&self.gl, params, &resolved);
     Ok(())
+  }
+
+  /// Map a shader's (name -> source texture id) bindings to live GL textures,
+  /// dropping any id no longer in the registry (it samples as unbound/black).
+  fn resolve_sampler_bindings(&self, shader: &crate::shader::ShaderTexture) -> Vec<(String, glow::Texture)> {
+    shader
+      .sampler_bindings()
+      .iter()
+      .filter_map(|(name, src_id)| self.textures.get(*src_id).map(|e| (name.clone(), e.gpu.gl_texture)))
+      .collect()
   }
 
   /// Rasterize a display list into a new GPU texture of the given pixel size,

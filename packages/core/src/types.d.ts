@@ -40,7 +40,13 @@ declare global {
     createTexture(data: Uint8Array, width: number, height: number): number
     createMutableTexture(data: Uint8Array, width: number, height: number): number
     uploadTexture(textureId: number, offset?: number): void
-    createShader(fragmentSrc: string, width: number, height: number, params?: Record<string, number>): number
+    createShader(
+      fragmentSrc: string,
+      width: number,
+      height: number,
+      params?: Record<string, number>,
+      textures?: Record<string, number>,
+    ): number
     setShaderParams(textureId: number, params: Record<string, number>): void
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }

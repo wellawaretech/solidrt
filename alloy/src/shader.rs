@@ -96,10 +96,20 @@ pub struct ShaderTexture {
   /// Active uniform name -> location, reflected once at link time. JS params are
   /// matched to locations by name; iResolution is filled from the target size.
   uniforms: HashMap<String, glow::UniformLocation>,
+  /// sampler2D uniform name -> source texture id. Resolved to a live GL texture
+  /// at each render by the owner (which holds the texture registry), so an input
+  /// whose contents or registry entry changed is picked up automatically.
+  sampler_bindings: Vec<(String, u64)>,
 }
 
 impl ShaderTexture {
-  pub fn new(gl: &glow::Context, width: u32, height: u32, fragment_src: &str) -> Result<Self, String> {
+  pub fn new(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+    fragment_src: &str,
+    sampler_bindings: Vec<(String, u64)>,
+  ) -> Result<Self, String> {
     let program = link_program(gl, fragment_src)?;
 
     unsafe {
@@ -152,7 +162,7 @@ impl ShaderTexture {
         }
       }
 
-      Ok(ShaderTexture { program, fbo, target, width, height, uniforms })
+      Ok(ShaderTexture { program, fbo, target, width, height, uniforms, sampler_bindings })
     }
   }
 
@@ -160,14 +170,23 @@ impl ShaderTexture {
     self.target
   }
 
-  /// Render the shader into its target texture with the given float params.
-  /// Saves and restores the GL bindings and enables it touches so Impeller's
-  /// cached state stays valid, then glFinish so the texture is complete before
-  /// the render thread samples it from a separate shared GL context.
-  pub fn render(&self, gl: &glow::Context, params: &[(String, f32)]) {
+  /// The sampler2D inputs this shader declared, as (uniform name, source texture
+  /// id). The owner resolves each id to a live GL texture before rendering.
+  pub fn sampler_bindings(&self) -> &[(String, u64)] {
+    &self.sampler_bindings
+  }
+
+  /// Render the shader into its target texture with the given float params and
+  /// resolved sampler inputs (uniform name -> source GL texture, in the order
+  /// `sampler_bindings` declared them). Saves and restores the GL bindings and
+  /// enables it touches so Impeller's cached state stays valid, then glFinish so
+  /// the texture is complete before the render thread samples it from a separate
+  /// shared GL context.
+  pub fn render(&self, gl: &glow::Context, params: &[(String, f32)], textures: &[(String, glow::Texture)]) {
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
       let prev_program_name = gl.get_parameter_i32(glow::CURRENT_PROGRAM);
+      let prev_active = gl.get_parameter_i32(glow::ACTIVE_TEXTURE);
       let mut prev_vp = [0i32; 4];
       gl.get_parameter_i32_slice(glow::VIEWPORT, &mut prev_vp);
       let blend = gl.is_enabled(glow::BLEND);
@@ -188,6 +207,19 @@ impl ShaderTexture {
         }
       }
 
+      // Bind each resolved sampler input to its own texture unit and point the
+      // sampler uniform at that unit. Save the prior binding per unit so Impeller
+      // (which assumes its own units) is not left looking at our textures.
+      let mut prev_unit_bindings: Vec<(u32, i32)> = Vec::new();
+      for (unit, (name, tex)) in textures.iter().enumerate() {
+        let Some(loc) = self.uniforms.get(name) else { continue };
+        let unit = unit as u32;
+        gl.active_texture(glow::TEXTURE0 + unit);
+        prev_unit_bindings.push((unit, gl.get_parameter_i32(glow::TEXTURE_BINDING_2D)));
+        gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
+        gl.uniform_1_i32(Some(loc), unit as i32);
+      }
+
       // The fragment writes opaque coverage over the whole target; turn off the
       // fixed-function state that could clip or blend it away.
       gl.disable(glow::BLEND);
@@ -197,6 +229,11 @@ impl ShaderTexture {
       gl.draw_arrays(glow::TRIANGLES, 0, 3);
 
       // Restore prior GL state for Impeller.
+      for (unit, prev) in prev_unit_bindings {
+        gl.active_texture(glow::TEXTURE0 + unit);
+        gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev));
+      }
+      gl.active_texture(prev_active as u32);
       gl.use_program(prev_program(prev_program_name));
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       gl.viewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
