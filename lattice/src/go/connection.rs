@@ -8,6 +8,25 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// `None` until the first successful connect.
 pub type DevServerCell = Arc<Mutex<Option<String>>>;
 
+/// Atomic flags shared between the dev-server connection (this module, which
+/// runs on a tokio worker thread) and the UI thread. Cheap to clone: every
+/// field is an `Arc`, so cloning shares the same underlying flags.
+#[derive(Clone)]
+pub struct DevFlags {
+  /// Latched from a `reload` message; read when building the next engine to
+  /// decide whether to install the file proxy.
+  pub proxy_files_enabled: Arc<AtomicBool>,
+  /// Latched from a `reload` message; read when building the next engine to
+  /// decide whether to install the fetch proxy.
+  pub proxy_http_enabled: Arc<AtomicBool>,
+  /// Whether the debug stats overlay is drawn; set from the `welcome`
+  /// message's `stats` field.
+  pub stats_enabled: Arc<AtomicBool>,
+  /// Frame-request latch (see PlatformContext::request_frame); set alongside
+  /// `stats_enabled` so a toggle is drawn even when the app is idle.
+  pub frame_requested: Arc<AtomicBool>,
+}
+
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
 
@@ -56,12 +75,10 @@ pub fn start(
   engine_tx: UnboundedSender<crate::EngineCmd>,
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
-  proxy_files_enabled: Arc<AtomicBool>,
-  proxy_http_enabled: Arc<AtomicBool>,
-  stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
+  flags: DevFlags,
 ) -> UnboundedSender<DevCmd> {
   let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
-  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles));
+  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, flags));
   cmd_tx
 }
 
@@ -73,9 +90,7 @@ async fn supervisor(
   engine_tx: UnboundedSender<crate::EngineCmd>,
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
-  proxy_files_enabled: Arc<AtomicBool>,
-  proxy_http_enabled: Arc<AtomicBool>,
-  stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
+  flags: DevFlags,
 ) {
   let mut pending: Option<DevCmd> = None;
   loop {
@@ -91,31 +106,12 @@ async fn supervisor(
         let _ = state_tx.send(ConnState::Idle);
       }
       DevCmd::Connect(addr) => {
-        pending = run_direct(
-          addr,
-          &mut cmd_rx,
-          &engine_tx,
-          &state_tx,
-          &dev_server,
-          &proxy_files_enabled,
-          &proxy_http_enabled,
-          &stats_handles,
-        )
-        .await;
+        pending = run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags).await;
       }
       DevCmd::Discover => {
         #[cfg(not(target_os = "android"))]
         {
-          pending = run_discover(
-            &mut cmd_rx,
-            &engine_tx,
-            &state_tx,
-            &dev_server,
-            &proxy_files_enabled,
-            &proxy_http_enabled,
-            &stats_handles,
-          )
-          .await;
+          pending = run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags).await;
         }
         #[cfg(target_os = "android")]
         {
@@ -135,15 +131,13 @@ async fn run_direct(
   engine_tx: &UnboundedSender<crate::EngineCmd>,
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
-  proxy_files_enabled: &Arc<AtomicBool>,
-  proxy_http_enabled: &Arc<AtomicBool>,
-  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
+  flags: &DevFlags,
 ) -> Option<DevCmd> {
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
     tokio::select! {
       cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles) => {
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags) => {
         // Failed to connect or the connection dropped; pause before retrying,
         // but let a new command interrupt the wait.
         tokio::select! {
@@ -167,9 +161,7 @@ async fn run_discover(
   engine_tx: &UnboundedSender<crate::EngineCmd>,
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
-  proxy_files_enabled: &Arc<AtomicBool>,
-  proxy_http_enabled: &Arc<AtomicBool>,
-  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
+  flags: &DevFlags,
 ) -> Option<DevCmd> {
   use mdns_sd::ServiceDaemon;
 
@@ -217,7 +209,7 @@ async fn run_discover(
       let _ = state_tx.send(ConnState::Connecting(server.clone()));
       let connected = tokio::select! {
         cmd = cmd_rx.recv() => return cmd,
-        c = try_serve(&server, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles) => c,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, flags) => c,
       };
       if connected {
         // Was connected, then dropped: retry the same address.
@@ -285,9 +277,7 @@ async fn try_serve(
   tx: &UnboundedSender<crate::EngineCmd>,
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
-  proxy_files_enabled: &Arc<AtomicBool>,
-  proxy_http_enabled: &Arc<AtomicBool>,
-  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
+  flags: &DevFlags,
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
@@ -334,16 +324,15 @@ async fn try_serve(
             // The dev server's --stats setting for this session, applied to the
             // overlay live (no launch-arg plumbing needed on either platform).
             if let Some(stats) = json.get("stats").and_then(|s| s.as_bool()) {
-              let (stats_enabled, frame_requested) = stats_handles;
-              stats_enabled.store(stats, Ordering::Relaxed);
-              frame_requested.store(true, Ordering::Relaxed);
+              flags.stats_enabled.store(stats, Ordering::Relaxed);
+              flags.frame_requested.store(true, Ordering::Relaxed);
             }
           }
           Some("reload") => {
             let proxy_files = json.get("proxyFiles").and_then(|p| p.as_bool()).unwrap_or(false);
             let proxy_http = json.get("proxyHttp").and_then(|p| p.as_bool()).unwrap_or(false);
-            proxy_files_enabled.store(proxy_files, Ordering::Relaxed);
-            proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
+            flags.proxy_files_enabled.store(proxy_files, Ordering::Relaxed);
+            flags.proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
             if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
               let _ = tx.send(crate::EngineCmd::Reload(code.to_string()));
             }

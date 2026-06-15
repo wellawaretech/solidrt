@@ -14,16 +14,15 @@ use flux::{ExecHandle, FluxEngineBuilder};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::LocalSet;
 
-use super::connection::{self, ConnState, DevCmd, DevServerCell};
+use super::connection::{self, ConnState, DevCmd, DevFlags, DevServerCell};
 use super::control::install_dev_control;
 use super::proxy::{install_proxy_state, ProxyFsModule};
 
 /// Bundles the dev-server connection state held natively across engine rebuilds.
 pub struct DevSession {
-  // Latched by the connection supervisor from each server `reload` message; read
-  // when building the next engine to decide whether to install the proxy.
-  proxy_files_enabled: Arc<AtomicBool>,
-  proxy_http_enabled: Arc<AtomicBool>,
+  // Atomic flags shared with the connection supervisor (proxy enablement,
+  // stats overlay); see DevFlags.
+  flags: DevFlags,
   // Dialed address of the connected dev server (the proxy base).
   dev_server: DevServerCell,
   // Latest connection state, re-emitted to each newly built engine (the sticky
@@ -54,22 +53,19 @@ impl DevSession {
       return None;
     }
 
-    let proxy_files_enabled = Arc::new(AtomicBool::new(false));
-    let proxy_http_enabled = Arc::new(AtomicBool::new(false));
+    let (stats_enabled, frame_requested) = stats_handles;
+    let flags = DevFlags {
+      proxy_files_enabled: Arc::new(AtomicBool::new(false)),
+      proxy_http_enabled: Arc::new(AtomicBool::new(false)),
+      stats_enabled,
+      frame_requested,
+    };
     let dev_server: DevServerCell = Arc::new(std::sync::Mutex::new(None));
     let dev_state = Rc::new(RefCell::new(ConnState::Idle));
     let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(super::config::load().recents));
 
     let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<ConnState>();
-    let dev_cmd_tx = connection::start(
-      handle,
-      engine_cmd_tx,
-      state_tx,
-      dev_server.clone(),
-      proxy_files_enabled.clone(),
-      proxy_http_enabled.clone(),
-      stats_handles,
-    );
+    let dev_cmd_tx = connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone());
 
     // Forward connection-state changes to JS as the sticky `dev` event,
     // targeting whichever engine is currently live, and keep the held copy in
@@ -90,14 +86,14 @@ impl DevSession {
       }
     });
 
-    Some(DevSession { proxy_files_enabled, proxy_http_enabled, dev_server, dev_state, dev_recents, dev_cmd_tx })
+    Some(DevSession { flags, dev_server, dev_state, dev_recents, dev_cmd_tx })
   }
 
   /// Install the dev-server control surface and, when the server has requested
   /// it, the file/http proxy onto a freshly created engine builder.
   pub fn augment_builder(&self, mut builder: FluxEngineBuilder) -> FluxEngineBuilder {
-    let proxy_files = self.proxy_files_enabled.load(Ordering::Relaxed);
-    let proxy_http = self.proxy_http_enabled.load(Ordering::Relaxed);
+    let proxy_files = self.flags.proxy_files_enabled.load(Ordering::Relaxed);
+    let proxy_http = self.flags.proxy_http_enabled.load(Ordering::Relaxed);
     if proxy_files || proxy_http {
       if let Some(url) = self.dev_server.lock().expect("dev_server lock poisoned").clone() {
         if proxy_files {

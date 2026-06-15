@@ -72,6 +72,7 @@ impl PlatformContext {
   /// Shared handles for toggling the stats overlay from another thread (the
   /// dev-server connection): set `stats_enabled` and latch `frame_requested`
   /// so the change is drawn even when the app is otherwise idle.
+  #[cfg_attr(not(feature = "go"), allow(dead_code))]
   pub fn stats_handles(&self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
     (self.stats_enabled.clone(), self.frame_requested.clone())
   }

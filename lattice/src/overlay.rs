@@ -230,7 +230,7 @@ impl Stats {
     // draw phases. SET is a raw count (setProperty writes/frame), not a share.
     let frame_ms = self.frame_ms;
     let pct = |ms: f32| if frame_ms > 0.0 { ms / frame_ms * 100.0 } else { 0.0 };
-    text.push_str(&format!("JS {:.0}% SET {:.0}\n", pct(self.js_ms), self.set_count));
+    text.push_str(&format!("JS {:2.0}% SET {:.0}\n", pct(self.js_ms), self.set_count));
     // Native draw phases as frame shares: LAY layout, PNT paint, PST postLayout,
     // HOV hover.
     text.push_str(&format!(

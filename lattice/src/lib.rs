@@ -416,7 +416,14 @@ fn ui_thread(
     // srt.dev surface. None in record mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
-    let dev_session = go::DevSession::start(&handle, cmd_tx.clone(), record_fps, &local, current_exec.clone(), platform.stats_handles());
+    let dev_session = go::DevSession::start(
+      &handle,
+      cmd_tx.clone(),
+      record_fps,
+      &local,
+      current_exec.clone(),
+      platform.stats_handles(),
+    );
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
     // toward it). Injected into each engine; persists across reloads for continuous
