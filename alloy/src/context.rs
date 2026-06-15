@@ -1,5 +1,6 @@
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -17,6 +18,9 @@ pub struct Context {
   gl: glow::Context,
   impeller_ctx: RefCell<ImpellerContext>,
   pub textures: TextureRegistry,
+  // Compiled fragment-shader targets, keyed by the texture id their output is
+  // registered under, so update_shader_params can re-render into the same id.
+  shaders: RefCell<HashMap<u64, crate::shader::ShaderTexture>>,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   tx: mpsc::Sender<DisplayList>,
@@ -40,6 +44,7 @@ impl Context {
       gl,
       impeller_ctx: RefCell::new(impeller_ctx),
       textures: TextureRegistry::new(),
+      shaders: RefCell::new(HashMap::new()),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
       tx,
@@ -111,6 +116,41 @@ impl Context {
     }
     let size = ISize::new(width as i64, height as i64);
     entry.gpu.upload(&self.gl, &pixels[offset..end], size);
+    Ok(())
+  }
+
+  /// Compile a GLSL ES fragment shader, render it once into a new RGBA8 target
+  /// texture, and register the output in the texture registry. Returns the id
+  /// the output is sampleable under (usable anywhere a normal texture id is).
+  /// The compiled program is retained so update_shader_params can re-render the
+  /// same texture without recompiling or re-adopting.
+  pub fn create_shader_texture(
+    &self,
+    width: u32,
+    height: u32,
+    fragment_src: &str,
+    params: &[(String, f32)],
+  ) -> Result<u64, String> {
+    let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src)?;
+    shader.render(&self.gl, params);
+
+    let size = ISize::new(width as i64, height as i64);
+    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
+    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt shader texture failed".to_string())?;
+
+    let id = self.textures.allocate_id();
+    self.textures.insert(id, TextureEntry { gpu, impeller });
+    self.shaders.borrow_mut().insert(id, shader);
+    Ok(id)
+  }
+
+  /// Re-render an existing shader texture with new params. The output keeps its
+  /// id and Impeller texture (no re-adoption); only the GL contents change, so
+  /// the caller must request a frame for the new pixels to reach the screen.
+  pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
+    let shaders = self.shaders.borrow();
+    let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    shader.render(&self.gl, params);
     Ok(())
   }
 

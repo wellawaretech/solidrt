@@ -11,6 +11,7 @@ mod logging;
 pub mod microphone;
 mod mode;
 mod record;
+mod shader;
 mod texture;
 
 pub use impellers;

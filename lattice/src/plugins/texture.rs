@@ -13,6 +13,12 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
   ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
+// Flatten a JS { name: number } object into the (name, f32) pairs alloy matches
+// against the shader's uniforms by name. Non-numeric values are skipped.
+fn collect_params(obj: &Object<'_>) -> Vec<(String, f32)> {
+  obj.props::<String, f64>().filter_map(|r| r.ok()).map(|(k, v)| (k, v as f32)).collect()
+}
+
 fn decode_image_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> flux::rquickjs::Result<Object<'js>> {
   let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "decodeImage: detached buffer"))?;
   let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
@@ -77,6 +83,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   .expect("create createMutableTexture");
 
   let upload_atx = atx.clone();
+  let upload_platform = platform.clone();
   let upload_texture = Function::new(
     ctx.clone(),
     move |ctx: Ctx<'_>, id: u64, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
@@ -93,11 +100,42 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
         .update_texture(id, pixels, offset.0.unwrap_or(0))
         .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
       // New texture content changes the screen without any tree mutation.
-      platform.request_frame();
+      upload_platform.request_frame();
       Ok(())
     },
   )
   .expect("create uploadTexture");
+
+  let create_shader_atx = atx.clone();
+  let create_shader = Function::new(
+    ctx.clone(),
+    move |ctx: Ctx<'_>,
+          fragment_src: String,
+          width: u32,
+          height: u32,
+          params: Option<Object<'_>>|
+          -> flux::rquickjs::Result<u64> {
+      let params = params.as_ref().map(collect_params).unwrap_or_default();
+      create_shader_atx
+        .create_shader_texture(width, height, &fragment_src, &params)
+        .map_err(|e| throw_str(&ctx, &format!("createShader: {e}")))
+    },
+  )
+  .expect("create createShader");
+
+  let set_params_atx = atx.clone();
+  let set_params_platform = platform.clone();
+  let set_shader_params = Function::new(
+    ctx.clone(),
+    move |ctx: Ctx<'_>, id: u64, params: Object<'_>| -> flux::rquickjs::Result<()> {
+      let params = collect_params(&params);
+      set_params_atx.update_shader_params(id, &params).map_err(|e| throw_str(&ctx, &format!("setShaderParams: {e}")))?;
+      // New shader output changes the screen without any tree mutation.
+      set_params_platform.request_frame();
+      Ok(())
+    },
+  )
+  .expect("create setShaderParams");
 
   let decode_image = Function::new(ctx.clone(), decode_image_impl).expect("create decodeImage");
 
@@ -105,6 +143,8 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   gpu.set("createTexture", create_texture).expect("set gpu.createTexture");
   gpu.set("createMutableTexture", create_mutable_texture).expect("set gpu.createMutableTexture");
   gpu.set("uploadTexture", upload_texture).expect("set gpu.uploadTexture");
+  gpu.set("createShader", create_shader).expect("set gpu.createShader");
+  gpu.set("setShaderParams", set_shader_params).expect("set gpu.setShaderParams");
   gpu.set("decodeImage", decode_image).expect("set gpu.decodeImage");
   ctx.globals().set("gpu", gpu).expect("set gpu global");
 }
