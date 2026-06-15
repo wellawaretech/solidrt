@@ -11,10 +11,10 @@ use crate::texture::{GpuTexture, TextureEntry, TextureRegistry};
 
 pub struct Context {
   backend: Backend,
-  wgpu_device: wgpu::Device,
-  wgpu_queue: wgpu::Queue,
-  // RefCell because wrap_fbo needs &mut while Context is shared behind Arc;
-  // like the registries, it is only ever touched from the UI thread.
+  // GLES bindings + the Impeller context. Both are tied to the UI thread's GL
+  // context and only ever touched from the UI thread. RefCell on impeller_ctx
+  // because wrap_fbo needs &mut while Context is shared behind Arc.
+  gl: glow::Context,
   impeller_ctx: RefCell<ImpellerContext>,
   pub textures: TextureRegistry,
   pub(crate) cameras: CameraRegistry,
@@ -22,26 +22,22 @@ pub struct Context {
   tx: mpsc::Sender<DisplayList>,
 }
 
-// Safety: Context is thread-safe (Send + Sync) because:
-// - wgpu::Device and Queue are thread-safe (Send + Sync)
-// - Impeller::Context uses thread-local GL state, but we ensure proper synchronization
-//   by making the GL context current on the rendering thread before any GPU operations
-// - We never access the Impeller context concurrently; only the UI thread with its GL context current
+// Safety: Context is asserted Send + Sync but is only ever accessed from the UI
+// thread, where its GL context is current. glow::Context and Impeller::Context
+// both rely on that thread-local GL state; we never touch them concurrently.
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 impl Context {
   pub fn new(
     backend: Backend,
-    wgpu_device: wgpu::Device,
-    wgpu_queue: wgpu::Queue,
+    gl: glow::Context,
     impeller_ctx: ImpellerContext,
     tx: mpsc::Sender<DisplayList>,
   ) -> Self {
     Context {
       backend,
-      wgpu_device,
-      wgpu_queue,
+      gl,
       impeller_ctx: RefCell::new(impeller_ctx),
       textures: TextureRegistry::new(),
       cameras: CameraRegistry::default(),
@@ -57,8 +53,8 @@ impl Context {
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
-      let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
-      gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+      let gpu = GpuTexture::new(&self.gl, self.backend, size);
+      gpu.upload(&self.gl, &pixels, size);
       let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     }
@@ -68,13 +64,13 @@ impl Context {
   pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
-      let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
-      gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+      let gpu = GpuTexture::new(&self.gl, self.backend, size);
+      gpu.upload(&self.gl, &pixels, size);
       let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
       self.textures.insert(id, TextureEntry { gpu, impeller });
     } else {
       let entry = self.textures.get(id).expect("texture must exist in else branch");
-      entry.gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels, size);
+      entry.gpu.upload(&self.gl, &pixels, size);
     }
     self.textures.get(id).expect("texture must exist after insert or update")
   }
@@ -93,8 +89,8 @@ impl Context {
   /// alive until released.
   pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture::new(&self.wgpu_device, self.backend, size);
-    gpu.upload(&self.wgpu_device, &self.wgpu_queue, pixels, size);
+    let gpu = GpuTexture::new(&self.gl, self.backend, size);
+    gpu.upload(&self.gl, pixels, size);
     let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
     self.textures.insert(id, TextureEntry { gpu, impeller });
   }
@@ -114,7 +110,7 @@ impl Context {
       ));
     }
     let size = ISize::new(width as i64, height as i64);
-    entry.gpu.upload(&self.wgpu_device, &self.wgpu_queue, &pixels[offset..end], size);
+    entry.gpu.upload(&self.gl, &pixels[offset..end], size);
     Ok(())
   }
 
@@ -132,7 +128,7 @@ impl Context {
         flipped.scale(1.0, -1.0);
         flipped.draw_display_list(dl, 1.0);
         let flipped = flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())?;
-        gl::render_display_list_to_texture(&mut self.impeller_ctx.borrow_mut(), &flipped, size)
+        gl::render_display_list_to_texture(&self.gl, &mut self.impeller_ctx.borrow_mut(), &flipped, size)
       }
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
@@ -143,7 +139,7 @@ impl Context {
   pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
-      Backend::Gl => gl::read_texture_pixels(texture, size),
+      Backend::Gl => gl::read_texture_pixels(&self.gl, texture, size),
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
     }
