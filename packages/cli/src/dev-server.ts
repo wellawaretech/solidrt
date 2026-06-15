@@ -157,7 +157,7 @@ export function startServer() {
         print(`[cli] Client connected ${ws.remoteAddress}`)
         // Advertise our real LAN address so clients dialed over the adb loopback
         // can show/remember the directly reachable address (see connection.rs).
-        ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl }))
+        ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: values.stats }))
         if (state.currentCode) {
           ws.send(buildReload({ code: state.currentCode }))
         }

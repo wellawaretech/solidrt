@@ -48,6 +48,7 @@ impl DevSession {
     record_fps: Option<u32>,
     local: &LocalSet,
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
+    stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
   ) -> Option<DevSession> {
     if record_fps.is_some() {
       return None;
@@ -67,6 +68,7 @@ impl DevSession {
       dev_server.clone(),
       proxy_files_enabled.clone(),
       proxy_http_enabled.clone(),
+      stats_handles,
     );
 
     // Forward connection-state changes to JS as the sticky `dev` event,

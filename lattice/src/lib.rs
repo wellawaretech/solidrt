@@ -30,7 +30,7 @@ use std::sync::Arc;
 #[no_mangle]
 pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
-  start(&rt, None, alloy::Mode::Run, (1280, 720));
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false);
   0
 }
 
@@ -120,6 +120,9 @@ fn emit_render_event(
     let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
     obj.set("frame", next_frame).expect("set frame");
     obj.set("time", time).expect("set time");
+    // Stamp the start of the JS render handler so draw() can measure onFrame +
+    // flush without any timing call crossing into JS (see frame::RENDER_START).
+    crate::frame::RENDER_START.with(|c| c.set(Some(std::time::Instant::now())));
     emit_event(&ctx, "render", obj);
   });
 }
@@ -147,6 +150,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   app: Option<AppSource>,
   record_fps: Option<u32>,
+  stats: bool,
 ) {
   // Anchor the process to a writable directory before any app code runs, so
   // relative paths (e.g. a flux:sqlite database) resolve to persistent storage.
@@ -168,6 +172,7 @@ fn ui_thread(
   // loop blocks waiting for each frame's display list, so a frame skipped by
   // the demand-driven gate would deadlock it.
   platform.set_always_render(matches!(record_fps, Some(rfps) if rfps > 0));
+  platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
 
@@ -411,7 +416,7 @@ fn ui_thread(
     // srt.dev surface. None in record mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
-    let dev_session = go::DevSession::start(&handle, cmd_tx.clone(), record_fps, &local, current_exec.clone());
+    let dev_session = go::DevSession::start(&handle, cmd_tx.clone(), record_fps, &local, current_exec.clone(), platform.stats_handles());
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
     // toward it). Injected into each engine; persists across reloads for continuous
@@ -516,7 +521,7 @@ fn ui_thread(
   });
 }
 
-pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: alloy::Mode, size: (u32, u32)) {
+pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: alloy::Mode, size: (u32, u32), stats: bool) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
 
@@ -528,6 +533,6 @@ pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: 
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, app_source, record_fps);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, app_source, record_fps, stats);
   });
 }

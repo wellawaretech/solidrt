@@ -1,8 +1,23 @@
 use alloy::{Modifiers, PointerType};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::time::Instant;
 
 pub type PointerKey = (PointerType, u64);
+
+// Profiling counters, read by the debug overlay. They live as thread-locals on
+// the single JS execution thread (where the render handler, setProperty and
+// draw all run), so the JS side never makes a timing call: native stamps the
+// values around the work and the overlay reads them. Zero added FFI crossings.
+thread_local! {
+  // Instant captured just before the "render" event is emitted to JS. Read at
+  // draw() entry, the delta is the JS render handler (onFrame + flush).
+  pub static RENDER_START: Cell<Option<Instant>> = Cell::new(None);
+
+  // setProperty (FFI prop write) calls since the last frame. Bumped in the
+  // native setProperty handler, read and reset each frame in draw().
+  pub static SETPROP_COUNT: Cell<u32> = Cell::new(0);
+}
 
 pub enum InputEvent {
   PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },

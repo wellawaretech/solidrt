@@ -109,6 +109,7 @@ pub fn init(
   let platform_ref = platform.clone();
   let cmd_tx = alloy_cmd_tx.clone();
   let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
+    crate::frame::SETPROP_COUNT.with(|c| c.set(c.get() + 1));
     let value = to_prop_value(&value);
     let mut tree = tree_ref.borrow_mut();
     let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx);

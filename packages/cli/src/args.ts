@@ -13,6 +13,7 @@ export let { values, positionals } = parseArgs({
     fps: { type: "string" },
     duration: { type: "string" },
     size: { type: "string" },
+    stats: { type: "boolean", default: false },
     android: { type: "boolean", default: false },
     device: { type: "string" },
   },
@@ -77,6 +78,7 @@ run/server options:
 
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
+      --stats            Show the debug stats overlay (FPS, memory, frame timings)
 
 client options:
       --android          Install and launch the client on a connected Android device

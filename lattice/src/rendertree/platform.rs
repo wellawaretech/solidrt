@@ -2,7 +2,7 @@ use alloy::impellers::{Point, Rect, Size, TypographyContext};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::sync::Arc;
 
 const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
 const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
@@ -14,16 +14,16 @@ pub struct PlatformContext {
   display_scale: Cell<f32>,
   safe_area: Cell<Rect>,
   fps: Cell<u32>,
-  // Frame-request latch (Flutter-style scheduleFrame). Atomic because change
-  // sources latch from both the UI thread (ffi mutations) and the alloy event
-  // thread (pointer input, resize). The per-second stats cells below are only
-  // touched by take_frame_requested on the UI thread.
-  frame_requested: AtomicBool,
-  req_window_start: Cell<Instant>,
-  req_window_count: Cell<u32>,
-  requests_per_second: Cell<u32>,
+  // Frame-request latch (Flutter-style scheduleFrame). Atomic and Arc'd because
+  // change sources latch from the UI thread (ffi mutations), the alloy event
+  // thread (pointer input, resize), and the dev-server connection thread (see
+  // go/connection.rs).
+  frame_requested: Arc<AtomicBool>,
   // Bypass the demand-driven gate and render every frame (record mode).
   always_render: Cell<bool>,
+  // Whether the debug stats overlay (HUD) is drawn. Arc'd so the dev-server
+  // connection (a different thread, see go/connection.rs) can toggle it.
+  stats_enabled: Arc<AtomicBool>,
 }
 
 // Safety: PlatformContext is only used on the UI thread.
@@ -44,11 +44,9 @@ impl PlatformContext {
       display_scale: Cell::new(1.0),
       safe_area: Cell::new(Rect::new(Point::new(0.0, 0.0), Size::new(0.0, 0.0))),
       fps: Cell::new(0),
-      frame_requested: AtomicBool::new(false),
-      req_window_start: Cell::new(Instant::now()),
-      req_window_count: Cell::new(0),
-      requests_per_second: Cell::new(0),
+      frame_requested: Arc::new(AtomicBool::new(false)),
       always_render: Cell::new(false),
+      stats_enabled: Arc::new(AtomicBool::new(false)),
     }
   }
 
@@ -60,6 +58,24 @@ impl PlatformContext {
     self.always_render.get()
   }
 
+  /// Toggle the debug stats overlay. Requests a frame so the change is drawn
+  /// even when the app is otherwise idle.
+  pub fn set_stats_enabled(&self, enabled: bool) {
+    self.stats_enabled.store(enabled, Ordering::Relaxed);
+    self.request_frame();
+  }
+
+  pub fn stats_enabled(&self) -> bool {
+    self.stats_enabled.load(Ordering::Relaxed)
+  }
+
+  /// Shared handles for toggling the stats overlay from another thread (the
+  /// dev-server connection): set `stats_enabled` and latch `frame_requested`
+  /// so the change is drawn even when the app is otherwise idle.
+  pub fn stats_handles(&self) -> (Arc<AtomicBool>, Arc<AtomicBool>) {
+    (self.stats_enabled.clone(), self.frame_requested.clone())
+  }
+
   /// Latch a frame request (Flutter's scheduleFrame). Idempotent; callable
   /// from any thread. The draw gate consumes it via take_frame_requested:
   /// no request, no frame.
@@ -67,24 +83,9 @@ impl PlatformContext {
     self.frame_requested.store(true, Ordering::Relaxed);
   }
 
-  /// Consume the latch. Called once per render tick (from draw); also rolls
-  /// the requested-frames-per-second window used by the debug overlay.
+  /// Consume the latch. Called once per render tick (from draw).
   pub fn take_frame_requested(&self) -> bool {
-    let requested = self.frame_requested.swap(false, Ordering::Relaxed);
-    if requested {
-      self.req_window_count.set(self.req_window_count.get() + 1);
-    }
-    if self.req_window_start.get().elapsed().as_secs_f32() >= 1.0 {
-      self.requests_per_second.set(self.req_window_count.get());
-      self.req_window_count.set(0);
-      self.req_window_start.set(Instant::now());
-    }
-    requested
-  }
-
-  /// Requested frames in the last completed one-second window.
-  pub fn requests_per_second(&self) -> u32 {
-    self.requests_per_second.get()
+    self.frame_requested.swap(false, Ordering::Relaxed)
   }
 
   pub fn window_size(&self) -> (f32, f32) {

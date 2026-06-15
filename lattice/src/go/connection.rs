@@ -58,9 +58,10 @@ pub fn start(
   dev_server: DevServerCell,
   proxy_files_enabled: Arc<AtomicBool>,
   proxy_http_enabled: Arc<AtomicBool>,
+  stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
 ) -> UnboundedSender<DevCmd> {
   let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
-  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled));
+  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles));
   cmd_tx
 }
 
@@ -74,6 +75,7 @@ async fn supervisor(
   dev_server: DevServerCell,
   proxy_files_enabled: Arc<AtomicBool>,
   proxy_http_enabled: Arc<AtomicBool>,
+  stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
 ) {
   let mut pending: Option<DevCmd> = None;
   loop {
@@ -89,16 +91,31 @@ async fn supervisor(
         let _ = state_tx.send(ConnState::Idle);
       }
       DevCmd::Connect(addr) => {
-        pending =
-          run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled)
-            .await;
+        pending = run_direct(
+          addr,
+          &mut cmd_rx,
+          &engine_tx,
+          &state_tx,
+          &dev_server,
+          &proxy_files_enabled,
+          &proxy_http_enabled,
+          &stats_handles,
+        )
+        .await;
       }
       DevCmd::Discover => {
         #[cfg(not(target_os = "android"))]
         {
-          pending =
-            run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &proxy_files_enabled, &proxy_http_enabled)
-              .await;
+          pending = run_discover(
+            &mut cmd_rx,
+            &engine_tx,
+            &state_tx,
+            &dev_server,
+            &proxy_files_enabled,
+            &proxy_http_enabled,
+            &stats_handles,
+          )
+          .await;
         }
         #[cfg(target_os = "android")]
         {
@@ -120,12 +137,13 @@ async fn run_direct(
   dev_server: &DevServerCell,
   proxy_files_enabled: &Arc<AtomicBool>,
   proxy_http_enabled: &Arc<AtomicBool>,
+  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
 ) -> Option<DevCmd> {
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
     tokio::select! {
       cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled) => {
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles) => {
         // Failed to connect or the connection dropped; pause before retrying,
         // but let a new command interrupt the wait.
         tokio::select! {
@@ -151,6 +169,7 @@ async fn run_discover(
   dev_server: &DevServerCell,
   proxy_files_enabled: &Arc<AtomicBool>,
   proxy_http_enabled: &Arc<AtomicBool>,
+  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
 ) -> Option<DevCmd> {
   use mdns_sd::ServiceDaemon;
 
@@ -198,7 +217,7 @@ async fn run_discover(
       let _ = state_tx.send(ConnState::Connecting(server.clone()));
       let connected = tokio::select! {
         cmd = cmd_rx.recv() => return cmd,
-        c = try_serve(&server, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled) => c,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, proxy_files_enabled, proxy_http_enabled, stats_handles) => c,
       };
       if connected {
         // Was connected, then dropped: retry the same address.
@@ -268,6 +287,7 @@ async fn try_serve(
   dev_server: &DevServerCell,
   proxy_files_enabled: &Arc<AtomicBool>,
   proxy_http_enabled: &Arc<AtomicBool>,
+  stats_handles: &(Arc<AtomicBool>, Arc<AtomicBool>),
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
@@ -310,6 +330,13 @@ async fn try_serve(
               if !server_addr.is_empty() && server_addr != addr {
                 let _ = state_tx.send(ConnState::Connected(server_addr.to_string()));
               }
+            }
+            // The dev server's --stats setting for this session, applied to the
+            // overlay live (no launch-arg plumbing needed on either platform).
+            if let Some(stats) = json.get("stats").and_then(|s| s.as_bool()) {
+              let (stats_enabled, frame_requested) = stats_handles;
+              stats_enabled.store(stats, Ordering::Relaxed);
+              frame_requested.store(true, Ordering::Relaxed);
             }
           }
           Some("reload") => {
