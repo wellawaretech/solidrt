@@ -41,8 +41,10 @@ use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, Function, JsLifetime, Object, TypedArray, Value};
 use tokio::sync::mpsc;
 
+use std::net::SocketAddr;
+
 use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, TransportAddrUsage};
-use iroh::{Endpoint as IrohEndpoint, EndpointId, RelayUrl, SecretKey};
+use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
@@ -137,11 +139,33 @@ impl P2pEndpoint {
     encode_hex(&self.secret)
   }
 
-  /// Dial a peer by `id` and open one bidirectional stream over `protocol`.
+  /// A self-contained dial token (`id|relay|ips`) carrying this endpoint's id,
+  /// home relay, and direct addresses, so a peer can `connect` without relying
+  /// on discovery. Waits (briefly) for the relay to be assigned before encoding.
+  pub fn ticket<'js>(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<String>>>> {
+    let ep = self.inner.clone();
+    let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+    Ok(Promised(async move {
+      pending.hold();
+      // Wait until the endpoint has a relay so the ticket includes it; bounded,
+      // since a LAN-only endpoint without a relay still yields direct addresses.
+      let _ = tokio::time::timeout(std::time::Duration::from_secs(3), ep.online()).await;
+      let ticket = encode_ticket(&ep.addr());
+      pending.release();
+      Ok(ticket)
+    }))
+  }
+
+  /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
+  /// either a `ticket` (preferred: connects directly, no discovery) or a bare
+  /// endpoint `id` (needs discovery to resolve the peer's address).
   pub fn connect<'js>(
     &self,
     ctx: Ctx<'js>,
-    id: String,
+    peer: String,
     protocol: String,
   ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, P2pStream>>>>> {
     let ep = self.inner.clone();
@@ -151,8 +175,8 @@ impl P2pEndpoint {
     Ok(Promised(async move {
       pending.hold();
       let r = async {
-        let id: EndpointId = id.parse().map_err(io_err)?;
-        let conn = ep.connect(id, &alpn).await.map_err(io_err)?;
+        let addr = parse_dial(&peer)?;
+        let conn = ep.connect(addr, &alpn).await.map_err(io_err)?;
         let (send, recv) = conn.open_bi().await.map_err(io_err)?;
         Ok::<_, std::io::Error>((conn, send, recv))
       }
@@ -383,6 +407,39 @@ impl P2pStream {
   pub fn remote_id(&self) -> String {
     self.conn.remote_id().to_string()
   }
+}
+
+/// Encode an `EndpointAddr` as a compact ticket string `id|relay|ip1,ip2,...`
+/// (relay and ips optional). Hand-rolled rather than serde to keep the QR small.
+fn encode_ticket(addr: &EndpointAddr) -> String {
+  let mut relay = String::new();
+  let mut ips: Vec<String> = Vec::new();
+  for ta in &addr.addrs {
+    match ta {
+      TransportAddr::Relay(url) if relay.is_empty() => relay = url.to_string(),
+      TransportAddr::Ip(sa) => ips.push(sa.to_string()),
+      _ => {}
+    }
+  }
+  format!("{}|{}|{}", addr.id, relay, ips.join(","))
+}
+
+/// Parse a dial target that is either a bare endpoint id or an `encode_ticket`
+/// string. A bare id (no `|`) yields an id-only addr (needs discovery to
+/// resolve); a ticket carries the relay + direct addresses, so no discovery.
+fn parse_dial(s: &str) -> Result<EndpointAddr, std::io::Error> {
+  let mut parts = s.split('|');
+  let id: EndpointId = parts.next().unwrap_or("").trim().parse().map_err(io_err)?;
+  let mut addrs: Vec<TransportAddr> = Vec::new();
+  if let Some(relay) = parts.next().filter(|s| !s.is_empty()) {
+    addrs.push(TransportAddr::Relay(relay.parse().map_err(io_err)?));
+  }
+  if let Some(ips) = parts.next() {
+    for ip in ips.split(',').filter(|s| !s.is_empty()) {
+      addrs.push(TransportAddr::Ip(ip.parse::<SocketAddr>().map_err(io_err)?));
+    }
+  }
+  Ok(EndpointAddr::from_parts(id, addrs))
 }
 
 /// Build and bind an iroh endpoint. Returns it together with the (possibly
