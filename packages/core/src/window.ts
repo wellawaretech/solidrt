@@ -108,7 +108,7 @@ export function attachWindow(_nodeId: number) {
       for (let fn of frames.values()) fn(t, frame, refreshRate)
     }
     flush()
-    draw()
+    ffi.renderFrame()
   }
 
   onSettled(() => {

@@ -6,7 +6,7 @@ use crate::AlloyContext;
 use alloy::impellers::{DisplayList, DisplayListBuilder};
 use flux::{
   emit_event,
-  rquickjs::{Ctx as QuickJsContext, Function},
+  rquickjs::{Ctx as QuickJsContext, Function, Object},
 };
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ pub fn init(
 ) {
   let stats = RefCell::new(overlay::Stats::new());
   let cache: RefCell<Option<DlCache>> = RefCell::new(None);
-  let draw_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
+  let render_frame_fn = Function::new(qtx.clone(), move |qtx: QuickJsContext<'_>| {
     // JS render-handler cost (onFrame + flush), measured natively: time since
     // the instant stamped before the "render" event, now that the handler has
     // reached draw(). Plus the FFI prop writes that flush produced. Recorded
@@ -148,8 +148,10 @@ pub fn init(
       atx.submit(dl).expect("Failed to submit display list");
     }
   })
-  .expect("create draw");
+  .expect("create renderFrame");
 
-  let globals = qtx.globals();
-  globals.set("draw", draw_fn).expect("set draw");
+  // Attach to the ffi object created by the tree plugin (registered before
+  // this one), keeping the whole render bridge under one global.
+  let ffi: Object<'_> = qtx.globals().get("ffi").expect("ffi global (tree plugin must init first)");
+  ffi.set("renderFrame", render_frame_fn).expect("set ffi.renderFrame");
 }
