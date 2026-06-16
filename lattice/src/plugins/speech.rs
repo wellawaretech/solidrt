@@ -23,10 +23,10 @@ struct Session {
   /// alloy microphone session feeding this recognizer.
   mic: u64,
   recognizer: Recognizer,
-  /// Close after the first final result (singleUtterance without a wake
+  /// Close after the first final result (continuous=false without a wake
   /// word; with one, the worker re-arms instead and the session stays open).
   close_on_final: bool,
-  /// Receives `{ text, final }` results.
+  /// Receives `{ transcript, isFinal }` results.
   callback: Option<Persistent<Function<'static>>>,
   on_speech_start: Option<Persistent<Function<'static>>>,
   on_speech_end: Option<Persistent<Function<'static>>>,
@@ -109,9 +109,9 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     }
   };
   let wake_threshold: Option<f64> = options.get("wakeThreshold")?;
-  let language: Option<String> = options.get("language")?;
+  let language: Option<String> = options.get("lang")?;
   let microphone: Option<u32> = options.get("microphone")?;
-  let single: Option<bool> = options.get("singleUtterance")?;
+  let continuous: Option<bool> = options.get("continuous")?;
   let interim: Option<bool> = options.get("interimResults")?;
 
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
@@ -120,7 +120,7 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     .atx
     .open_microphone(microphone, SAMPLE_RATE)
     .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
-  let single = single.unwrap_or(false);
+  let single = !continuous.unwrap_or(true);
   let close_on_final = single && wake_model.is_none();
   let recognizer = Recognizer::start(RecognizerConfig {
     model,
@@ -269,15 +269,15 @@ pub fn tick(ctx: &Ctx<'_>) {
   }
 }
 
-/// Call a session's `{ text, final }` result callback, if registered.
+/// Call a session's `{ transcript, isFinal }` result callback, if registered.
 fn dispatch_result(ctx: &Ctx<'_>, state: &SpeechPluginState, sid: u64, text: &str, is_final: bool) {
   let Some(callback) = state.0.sessions.borrow().get(&sid).and_then(|s| s.callback.clone()) else {
     return;
   };
   let call = || -> flux::rquickjs::Result<()> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("text", text)?;
-    obj.set("final", is_final)?;
+    obj.set("transcript", text)?;
+    obj.set("isFinal", is_final)?;
     callback.restore(ctx)?.call::<_, ()>((obj,))
   };
   if let Err(e) = call() {

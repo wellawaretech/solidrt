@@ -14,11 +14,15 @@ export type SpeechOptions = {
   /** A ggml Silero VAD model (file contents). */
   vadModel: Uint8Array
   /** Whisper language code; "auto" detects (multilingual models only). Default "en". */
-  language?: string
+  lang?: string
   /** Explicit microphone device id from listMicrophones(). */
   microphone?: number
-  /** Stop automatically after the first final result (with wakeWord: re-arm instead, one result per wake). */
-  singleUtterance?: boolean
+  /**
+   * Keep transcribing utterance after utterance. Default true. Set false to
+   * stop after the first final result (with wakeWord: re-arm instead, one
+   * result per wake). Inverse of the Web Speech API default (false there).
+   */
+  continuous?: boolean
   /** Also deliver snapshot transcripts (final: false) while an utterance is still being spoken. */
   interimResults?: boolean
   /**
@@ -36,10 +40,10 @@ export type SpeechOptions = {
 }
 
 export type SpeechResult = {
-  /** Transcript of the utterance (a snapshot of it when final is false). */
-  text: string
+  /** Transcript of the utterance (a snapshot of it when isFinal is false). */
+  transcript: string
   /** True for the completed utterance, false for interim snapshots. */
-  final: boolean
+  isFinal: boolean
 }
 
 export type SpeechSession = {
