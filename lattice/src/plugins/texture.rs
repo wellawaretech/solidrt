@@ -25,22 +25,6 @@ fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
   obj.props::<String, u64>().filter_map(|r| r.ok()).collect()
 }
 
-fn decode_image_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> flux::rquickjs::Result<Object<'js>> {
-  let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "decodeImage: detached buffer"))?;
-  let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-  let img = image::load_from_memory(bytes).map_err(|e| throw_str(&ctx, &format!("decodeImage: {e}")))?;
-  let rgba = img.to_rgba8();
-  let width = rgba.width();
-  let height = rgba.height();
-  let pixels = rgba.into_raw();
-  let ta = TypedArray::<u8>::new(ctx.clone(), pixels)?;
-  let result = Object::new(ctx.clone())?;
-  result.set("data", ta)?;
-  result.set("width", width)?;
-  result.set("height", height)?;
-  Ok(result)
-}
-
 pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let create_atx = atx.clone();
   let create_texture = Function::new(
@@ -145,14 +129,11 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   )
   .expect("create setShaderParams");
 
-  let decode_image = Function::new(ctx.clone(), decode_image_impl).expect("create decodeImage");
-
   let gpu = Object::new(ctx.clone()).expect("create gpu object");
   gpu.set("createTexture", create_texture).expect("set gpu.createTexture");
   gpu.set("createMutableTexture", create_mutable_texture).expect("set gpu.createMutableTexture");
   gpu.set("uploadTexture", upload_texture).expect("set gpu.uploadTexture");
   gpu.set("createShader", create_shader).expect("set gpu.createShader");
   gpu.set("setShaderParams", set_shader_params).expect("set gpu.setShaderParams");
-  gpu.set("decodeImage", decode_image).expect("set gpu.decodeImage");
   ctx.globals().set("gpu", gpu).expect("set gpu global");
 }

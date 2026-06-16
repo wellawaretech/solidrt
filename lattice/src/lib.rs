@@ -476,6 +476,7 @@ fn ui_thread(
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
         .plugin(move |ctx| plugins::texture::init(ctx, texture_atx, texture_platform))
+        .plugin(|ctx| plugins::image::init(ctx))
         .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
         .plugin(move |ctx| plugins::microphone::init(ctx, microphone_atx))
         .plugin(|ctx| plugins::events::init(&ctx))

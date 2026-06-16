@@ -1,18 +1,3 @@
-export type DecodedImage = {
-  data: Uint8Array
-  width: number
-  height: number
-}
-
-/**
- * Decodes encoded image bytes (PNG, JPEG, and the other formats the runtime's
- * image decoder supports) into raw, tightly-packed RGBA8 pixels plus the
- * decoded dimensions. Feed the result straight into `createTexture`.
- */
-export function decodeImage(bytes: Uint8Array): DecodedImage {
-  return gpu.decodeImage(bytes)
-}
-
 /**
  * Uploads raw RGBA8 pixels to an immutable GPU texture and returns its id (use
  * it as `<texture src={id} />`). `data` must be exactly `width * height * 4`

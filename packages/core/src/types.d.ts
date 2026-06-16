@@ -52,6 +52,9 @@ declare global {
       textures?: Record<string, number>,
     ): number
     setShaderParams(textureId: number, params: Record<string, number>): void
+  }
+
+  let image: {
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }
 
