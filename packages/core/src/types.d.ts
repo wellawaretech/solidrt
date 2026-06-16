@@ -161,7 +161,7 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   overflowY?: "visible" | "clip" | "hidden" | "scroll"
 }
 
-// Colors are CSS color strings, parsed to a packed u32 by parseColorToU32.
+/** Colors are CSS color strings, parsed to a packed u32 by `parseColorToU32`. */
 export type Color = string
 
 export interface PaintProps {

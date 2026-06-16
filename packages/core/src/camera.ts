@@ -48,18 +48,23 @@ export function listCameras(): CameraInfo[] {
   return camera.listCameras()
 }
 
-// Camera hotplug. Re-enumerate with listCameras() to see the new device set.
-// Events only flow once the camera subsystem is up, i.e. after the first
-// listCameras() or openCamera() call. Returns an unsubscribe function.
-// Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
-// Linux you get added=true but not added=false (removal is broken upstream);
-// on macOS/Windows there is no camera hotplug at all, so nothing fires.
+/**
+ * Camera hotplug. Re-enumerate with `listCameras()` to see the new device set.
+ * Events only flow once the camera subsystem is up, i.e. after the first
+ * `listCameras()` or `openCamera()` call. Returns an unsubscribe function.
+ *
+ * Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
+ * Linux you get `added=true` but not `added=false` (removal is broken upstream);
+ * on macOS/Windows there is no camera hotplug at all, so nothing fires.
+ */
 export function onDeviceChange(callback: (event: { added: boolean }) => void): () => void {
   return on("cameraDeviceChange", callback)
 }
 
-// One-shot scan of an RGBA8 pixel buffer for QR codes; composes with
-// decodeImage: scanBarcodes(img.data, img.width, img.height).
+/**
+ * One-shot scan of an RGBA8 pixel buffer for QR codes; composes with
+ * `decodeImage`: `scanBarcodes(img.data, img.width, img.height)`.
+ */
 export function scanBarcodes(data: Uint8Array, width: number, height: number): BarcodeResult[] {
   return camera.scanImage(data, width, height)
 }

@@ -28,8 +28,10 @@ export function listMicrophones(): MicrophoneInfo[] {
   return microphone.listMicrophones()
 }
 
-// Async to leave room for an OS permission prompt on platforms that need one
-// (the desktop backends open synchronously).
+/**
+ * Opens a microphone for capture. Async to leave room for an OS permission
+ * prompt on platforms that need one (the desktop backends open synchronously).
+ */
 export async function openMicrophone(options: MicrophoneOptions = {}): Promise<Microphone> {
   let opened = microphone.open(options)
   return {
