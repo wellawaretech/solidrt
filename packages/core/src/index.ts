@@ -1,5 +1,5 @@
 export * from "./renderer"
-export { setFocus, getFocusedNodeId, measureText, getBoundingBox } from "./core"
+export { setFocus, getFocusedNodeId, measureText, getBoundingBox, parseColorToU32 } from "./core"
 export type { BoundingBox } from "./core"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { createTexture, decodeImage } from "./gpu"
