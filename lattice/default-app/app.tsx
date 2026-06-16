@@ -1,6 +1,6 @@
 import { render } from "@solidrt/core"
-import { CameraView, listCameras, onDeviceChange } from "@solidrt/core/camera"
-import { createSignal } from "@solidjs/signals"
+import { createCamera, listCameras, onDeviceChange, type BarcodeResult } from "@solidrt/core/camera"
+import { createEffect, createSignal } from "@solidjs/signals"
 import { For, Show } from "solid-js"
 import { platform } from "flux:process"
 import { on } from "srt:events"
@@ -39,6 +39,20 @@ function Button(props: { label: string; color: string; onTap: () => void }) {
       <text color="white">{props.label}</text>
     </view>
   )
+}
+
+// Viewfinder over createCamera: mounts only while scanning (under <Show>), so
+// the camera opens when scanning starts and closes when it stops.
+function CameraView(props: {
+  width?: number
+  scan?: "qr"[]
+  onBarcode?: (result: BarcodeResult) => void
+  onError?: (error: Error) => void
+}) {
+  let cam = createCamera({ width: props.width, scan: props.scan })
+  createEffect(() => cam.barcode(), (b) => { if (b) props.onBarcode?.(b) })
+  createEffect(() => cam.error(), (e) => { if (e) props.onError?.(e) })
+  return <texture src={cam.texture()} width={props.width} />
 }
 
 function App() {

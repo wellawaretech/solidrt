@@ -8,6 +8,8 @@
 // (incl. the dev-server file proxy), or a download cache layered on top.
 // Requires a runtime built with speech support.
 
+import { createSignal, onCleanup } from "@solidjs/signals"
+
 export type SpeechOptions = {
   /** A ggml Whisper model (file contents, e.g. ggml-tiny.en.bin). */
   model: Uint8Array
@@ -68,4 +70,80 @@ export async function startRecognition(options: SpeechOptions): Promise<SpeechSe
     onWake: (callback: () => void) => speech.setWakeCallback(started.handle, callback),
     stop: () => speech.stop(started.handle),
   }
+}
+
+/** A live recognition session as reactive accessors. */
+export type SpeechStream = {
+  /** True once the models are loaded and listening has begun. */
+  ready(): boolean
+  /** Latest transcript, "" until the first result (a snapshot while isFinal is false). */
+  transcript(): string
+  /** Whether transcript() is the completed utterance rather than an interim snapshot. */
+  isFinal(): boolean
+  /** True while the user is mid-utterance (between speech start and end). */
+  speaking(): boolean
+  /** True from when an utterance ends until its transcript arrives. */
+  transcribing(): boolean
+  /**
+   * wakeWord sessions only: true from when the wake word is heard until the
+   * following command is transcribed (the next final result), then false.
+   * Always false without a wakeWord.
+   */
+  awake(): boolean
+  /** Set if loading or starting failed. */
+  error(): Error | undefined
+}
+
+/**
+ * Starts speech recognition and exposes it as reactive signals: read
+ * transcript()/isFinal() for results, speaking() and awake() for session
+ * state. Stops when the reactive owner is disposed. The lower-level
+ * startRecognition() is the imperative alternative.
+ */
+export function createSpeechRecognition(options: SpeechOptions): SpeechStream {
+  let [ready, setReady] = createSignal(false)
+  let [transcript, setTranscript] = createSignal("")
+  let [isFinal, setIsFinal] = createSignal(false)
+  let [speaking, setSpeaking] = createSignal(false)
+  let [transcribing, setTranscribing] = createSignal(false)
+  let [awake, setAwake] = createSignal(false)
+  let [error, setError] = createSignal<Error | undefined>(undefined)
+  let handle: number | undefined
+  let disposed = false
+
+  speech
+    .start(options)
+    .then((started) => {
+      if (disposed) {
+        speech.stop(started.handle)
+        return
+      }
+      handle = started.handle
+      speech.setResultCallback(started.handle, (result) => {
+        setTranscript(result.transcript)
+        setIsFinal(result.isFinal)
+        if (result.isFinal) {
+          setTranscribing(false)
+          setAwake(false)
+        }
+      })
+      speech.setSpeechStartCallback(started.handle, () => setSpeaking(true))
+      speech.setSpeechEndCallback(started.handle, () => {
+        setSpeaking(false)
+        setTranscribing(true)
+      })
+      speech.setWakeCallback(started.handle, () => setAwake(true))
+      setReady(true)
+    })
+    .catch((e) => setError(e instanceof Error ? e : new Error(String(e))))
+
+  onCleanup(() => {
+    disposed = true
+    if (handle !== undefined) {
+      speech.stop(handle)
+      handle = undefined
+    }
+  })
+
+  return { ready, transcript, isFinal, speaking, transcribing, awake, error }
 }

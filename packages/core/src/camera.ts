@@ -3,6 +3,7 @@
 // (SDL semantics): the promise resolves once the stream is configured and
 // rejects if the user denies access.
 
+import { createSignal, onCleanup } from "@solidjs/signals"
 import { on } from "srt:events"
 
 export type CameraFacing = "front" | "back" | "unknown"
@@ -78,4 +79,58 @@ export async function openCamera(options: CameraOptions = {}): Promise<Camera> {
     onBarcode: (callback: (result: BarcodeResult) => void) => camera.setBarcodeCallback(opened.handle, callback),
     close: () => camera.close(opened.handle),
   }
+}
+
+/** A live camera as reactive accessors. */
+export type CameraStream = {
+  /** Texture id once the stream is up, undefined while opening; render with <texture src={...}>. */
+  texture(): number | undefined
+  /** Actual stream size, undefined while opening. */
+  width(): number | undefined
+  height(): number | undefined
+  /** The most recently decoded barcode (requires the scan option). */
+  barcode(): BarcodeResult | undefined
+  /** Set if opening failed (e.g. permission denied). */
+  error(): Error | undefined
+}
+
+/**
+ * Opens a camera and exposes it as reactive signals: read texture() in JSX and
+ * it appears once the stream is configured. Closes automatically when the
+ * reactive owner is disposed (e.g. the component unmounts). The lower-level
+ * openCamera() is the imperative alternative.
+ */
+export function createCamera(options: CameraOptions = {}): CameraStream {
+  let [texture, setTexture] = createSignal<number | undefined>(undefined)
+  let [width, setWidth] = createSignal<number | undefined>(undefined)
+  let [height, setHeight] = createSignal<number | undefined>(undefined)
+  let [barcode, setBarcode] = createSignal<BarcodeResult | undefined>(undefined)
+  let [error, setError] = createSignal<Error | undefined>(undefined)
+  let handle: number | undefined
+  let disposed = false
+
+  camera
+    .open(options)
+    .then((opened) => {
+      if (disposed) {
+        camera.close(opened.handle)
+        return
+      }
+      handle = opened.handle
+      if (options.scan) camera.setBarcodeCallback(opened.handle, (result) => setBarcode(result))
+      setTexture(opened.texture)
+      setWidth(opened.width)
+      setHeight(opened.height)
+    })
+    .catch((e) => setError(e instanceof Error ? e : new Error(String(e))))
+
+  onCleanup(() => {
+    disposed = true
+    if (handle !== undefined) {
+      camera.close(handle)
+      handle = undefined
+    }
+  })
+
+  return { texture, width, height, barcode, error }
 }
