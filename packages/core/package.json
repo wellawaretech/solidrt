@@ -11,7 +11,7 @@
     "./gpu": "./src/gpu.ts",
     "./image": "./src/image.ts",
     "./microphone": "./src/microphone.ts",
-    "./speech": "./src/speech.ts",
+    "./speech-recognition": "./src/speech-recognition.ts",
     "./jsx-runtime": "./jsx-runtime.d.ts",
     "./jsx-runtime-dev": "./jsx-runtime.d.ts"
   },
