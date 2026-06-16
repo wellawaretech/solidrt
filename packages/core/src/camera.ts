@@ -74,5 +74,3 @@ export async function openCamera(options: CameraOptions = {}): Promise<Camera> {
     close: () => camera.close(opened.handle),
   }
 }
-
-export { CameraView, type CameraViewProps } from "./camera-view"
