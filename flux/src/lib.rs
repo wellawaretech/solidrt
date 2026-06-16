@@ -32,6 +32,8 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   loader.add_module("flux:fs", flux::fs::FsModule);
   resolver.add_module("flux:http");
   loader.add_module("flux:http", flux::serve::HttpModule);
+  resolver.add_module("flux:p2p");
+  loader.add_module("flux:p2p", flux::p2p::P2pModule);
   resolver.add_module("flux:process");
   loader.add_module("flux:process", flux::process::ProcessModule);
   resolver.add_module("flux:path");

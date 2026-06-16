@@ -33,6 +33,10 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   }
 
   let sdl_context = sdl3::init().expect("Failed to initialize SDL3");
+  // On Android, hand SDL's JNI env + activity to ndk-context so JNI-using deps
+  // (iroh's network monitoring via flux:p2p) can reach the Android context.
+  #[cfg(target_os = "android")]
+  crate::sdl_utils::init_android_context();
   let video = sdl_context.video().expect("Failed to get video subsystem");
 
   gl::configure_opengl(&video);
@@ -139,8 +143,7 @@ impl App {
       let tick_period = std::time::Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
       // Wait for a display list, but never past the next idle-tick deadline
       // (capped at 8ms to keep SDL event polling responsive).
-      let timeout =
-        tick_period.saturating_sub(last_frame_signal.elapsed()).min(std::time::Duration::from_millis(8));
+      let timeout = tick_period.saturating_sub(last_frame_signal.elapsed()).min(std::time::Duration::from_millis(8));
       match rx.recv_timeout(timeout) {
         Ok(mut dl) => {
           while let Ok(newer) = rx.try_recv() {

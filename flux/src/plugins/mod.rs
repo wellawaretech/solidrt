@@ -50,6 +50,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:http");
   loader.add_module("flux:http", flux::serve::HttpModule);
 
+  resolver.add_module("flux:p2p");
+  loader.add_module("flux:p2p", flux::p2p::P2pModule);
+
   resolver.add_module("flux:process");
   loader.add_module("flux:process", flux::process::ProcessModule);
 

@@ -3,6 +3,7 @@ pub mod events;
 pub mod file;
 pub mod fs;
 pub mod memory;
+pub mod p2p;
 pub mod path;
 pub mod process;
 pub mod serve;

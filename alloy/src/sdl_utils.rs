@@ -267,3 +267,59 @@ pub fn surface_rotation_degrees(frame: *mut SDL_Surface) -> u32 {
     }
   }
 }
+
+/// Publish SDL's JNI env + activity into the process-wide `ndk-context` so
+/// JNI-using dependencies can reach the Android `JavaVM` and `Context`. iroh's
+/// network monitoring (reached via `flux:p2p`) reads this; without it the first
+/// `ndk_context::android_context()` call panics ("android context was not
+/// initialized"). Call once, after `SDL_Init`, before any such dependency runs.
+/// The activity reference and VM live for the whole process, so they are not
+/// released.
+#[cfg(target_os = "android")]
+pub fn init_android_context() {
+  use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};
+
+  let env_ptr = unsafe { SDL_GetAndroidJNIEnv() } as *mut jni::sys::JNIEnv;
+  if env_ptr.is_null() {
+    log::error!("[alloy] SDL_GetAndroidJNIEnv returned null; ndk-context not initialized");
+    return;
+  }
+  let mut env = match unsafe { jni::JNIEnv::from_raw(env_ptr) } {
+    Ok(env) => env,
+    Err(e) => {
+      log::error!("[alloy] JNIEnv::from_raw failed: {e}");
+      return;
+    }
+  };
+  let vm = match env.get_java_vm() {
+    Ok(vm) => vm,
+    Err(e) => {
+      log::error!("[alloy] could not get JavaVM for ndk-context: {e}");
+      return;
+    }
+  };
+  let activity_ptr = unsafe { SDL_GetAndroidActivity() } as jni::sys::jobject;
+  if activity_ptr.is_null() {
+    log::error!("[alloy] SDL_GetAndroidActivity returned null; ndk-context not initialized");
+    return;
+  }
+  // SDL returns a LOCAL ref, valid only on this thread/frame. iroh's network
+  // monitoring touches the context from its own threads, so promote it to a
+  // global ref and keep it for the process lifetime (forget -> no DeleteGlobalRef).
+  let activity_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr) };
+  let global = match env.new_global_ref(&activity_obj) {
+    Ok(g) => g,
+    Err(e) => {
+      log::error!("[alloy] new_global_ref(activity) failed: {e}");
+      return;
+    }
+  };
+  let activity_global = global.as_raw();
+  std::mem::forget(global);
+  unsafe {
+    ndk_context::initialize_android_context(
+      vm.get_java_vm_pointer() as *mut std::ffi::c_void,
+      activity_global as *mut std::ffi::c_void,
+    );
+  }
+}

@@ -11,7 +11,10 @@ impl log::Log for SdlLogger {
       // (every 100ms while a recognizer listens).
       metadata.level() <= log::Level::Warn
     } else {
-      metadata.level() <= log::Level::Info
+      // Third-party crates (notably the iroh p2p stack: magicsock, quinn, relay,
+      // net-report, portmapper) are very chatty at info; keep only their warnings.
+      // Raise with SRT_LOG=debug when diagnosing a specific subsystem.
+      metadata.level() <= log::Level::Warn
     }
   }
   fn log(&self, record: &log::Record) {
