@@ -1,4 +1,4 @@
-import { createRoot, createEffect } from "@solidjs/signals"
+import { createRoot } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
 import { parseColorToU32, setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
@@ -145,6 +145,12 @@ export let {
   },
 })
 
+/**
+ * Mounts a SolidRT app. Call once at the top level: `render(() => <App />)`.
+ * The element returned by `code` MUST be a `<window>` (it becomes the native
+ * window and root of the render tree); anything else throws. Runs inside a
+ * reactive root, so the whole tree is disposed together on engine reload.
+ */
 export function render(code: () => any) {
   createRoot(() => {
     let root = code()
