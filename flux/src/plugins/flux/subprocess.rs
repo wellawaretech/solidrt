@@ -1,7 +1,7 @@
 use rquickjs::function::{MutFn, Opt};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Ctx, Function, IntoJs, Object, TypedArray, Value};
+use rquickjs::{Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::io;
 use std::process::Stdio;
 use std::rc::Rc;
@@ -55,6 +55,22 @@ struct CommandOutput {
   as_bytes: bool,
 }
 
+// The future returns this rather than capturing `ctx`: a clean JS Error is
+// produced here, in into_js, which runs on the JS thread with ctx in hand.
+enum OutputResult {
+  Ok(CommandOutput),
+  Err(String),
+}
+
+impl<'js> IntoJs<'js> for OutputResult {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    match self {
+      OutputResult::Ok(output) => output.into_js(ctx),
+      OutputResult::Err(msg) => Err(Exception::throw_message(ctx, &msg)),
+    }
+  }
+}
+
 impl<'js> IntoJs<'js> for CommandOutput {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
@@ -81,7 +97,12 @@ fn bytes_to_js<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>, as_bytes: bool) -> rquickjs:
   }
 }
 
-fn parse_spec(cmd: String, args: Option<Vec<String>>, opts: Option<Object<'_>>) -> rquickjs::Result<CommandSpec> {
+fn parse_spec<'js>(
+  ctx: &Ctx<'js>,
+  cmd: String,
+  args: Option<Vec<String>>,
+  opts: Option<Object<'js>>,
+) -> rquickjs::Result<CommandSpec> {
   let mut spec = CommandSpec {
     cmd,
     args: args.unwrap_or_default(),
@@ -102,7 +123,7 @@ fn parse_spec(cmd: String, args: Option<Vec<String>>, opts: Option<Object<'_>>) 
       }
     }
     if let Some(stdin) = opts.get::<_, Option<Value>>("stdin")? {
-      spec.stdin = Some(value_to_bytes(&stdin)?);
+      spec.stdin = Some(value_to_bytes(ctx, &stdin)?);
     }
     if let Some(ms) = opts.get::<_, Option<f64>>("timeoutMs")? {
       spec.timeout_ms = Some(ms.max(0.0) as u64);
@@ -114,30 +135,21 @@ fn parse_spec(cmd: String, args: Option<Vec<String>>, opts: Option<Object<'_>>) 
   Ok(spec)
 }
 
-fn value_to_bytes(value: &Value<'_>) -> rquickjs::Result<Vec<u8>> {
+fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>> {
   if let Some(s) = value.as_string() {
     Ok(s.to_string()?.into_bytes())
   } else if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
     Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
   } else {
-    Err(rquickjs::Error::Io(io::Error::new(
-      io::ErrorKind::InvalidInput,
-      "stdin must be a string or Uint8Array",
-    )))
+    Err(Exception::throw_message(ctx, "stdin must be a string or Uint8Array"))
   }
 }
 
 // Runs the child to completion, holding the engine alive (PendingOps) while it
 // runs. kill_on_drop ensures a timed-out child is reaped: on timeout the future
-// owning the child is dropped, which kills it.
-async fn run_output(spec: Rc<CommandSpec>, pending: PendingOps) -> rquickjs::Result<CommandOutput> {
-  pending.hold();
-  let result = run_output_inner(&spec).await;
-  pending.release();
-  result
-}
-
-async fn run_output_inner(spec: &CommandSpec) -> rquickjs::Result<CommandOutput> {
+// owning the child is dropped, which kills it. Failures come back as plain
+// message strings and are turned into clean JS Errors by the caller.
+async fn run_output_inner(spec: &CommandSpec) -> Result<CommandOutput, String> {
   let mut command = TokioCommand::new(&spec.cmd);
   command.args(&spec.args);
   command.kill_on_drop(true);
@@ -155,22 +167,22 @@ async fn run_output_inner(spec: &CommandSpec) -> rquickjs::Result<CommandOutput>
 
   if let Some(bytes) = &spec.stdin {
     if let Some(mut si) = child.stdin.take() {
-      si.write_all(bytes).await.map_err(rquickjs::Error::Io)?;
+      si.write_all(bytes)
+        .await
+        .map_err(|e| format!("failed to write stdin to {}: {e}", spec.cmd))?;
       // Dropping si closes stdin so the child sees EOF.
     }
   }
 
   let output = match spec.timeout_ms {
     Some(ms) => match tokio::time::timeout(Duration::from_millis(ms), child.wait_with_output()).await {
-      Ok(r) => r.map_err(rquickjs::Error::Io)?,
-      Err(_) => {
-        return Err(rquickjs::Error::Io(io::Error::new(
-          io::ErrorKind::TimedOut,
-          format!("command timed out after {ms}ms: {}", spec.cmd),
-        )))
-      }
+      Ok(r) => r.map_err(|e| format!("failed to run {}: {e}", spec.cmd))?,
+      Err(_) => return Err(format!("command timed out after {ms}ms: {}", spec.cmd)),
     },
-    None => child.wait_with_output().await.map_err(rquickjs::Error::Io)?,
+    None => child
+      .wait_with_output()
+      .await
+      .map_err(|e| format!("failed to run {}: {e}", spec.cmd))?,
   };
 
   Ok(CommandOutput {
@@ -182,13 +194,12 @@ async fn run_output_inner(spec: &CommandSpec) -> rquickjs::Result<CommandOutput>
   })
 }
 
-fn spawn_err(cmd: &str, e: io::Error) -> rquickjs::Error {
-  let msg = if e.kind() == io::ErrorKind::NotFound {
+fn spawn_err(cmd: &str, e: io::Error) -> String {
+  if e.kind() == io::ErrorKind::NotFound {
     format!("command not found: {cmd}")
   } else {
     format!("failed to spawn {cmd}: {e}")
-  };
-  rquickjs::Error::Io(io::Error::new(e.kind(), msg))
+  }
 }
 
 #[cfg(unix)]
@@ -222,7 +233,7 @@ fn build_command<'js>(
   args: Opt<Vec<String>>,
   opts: Opt<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
-  let spec = Rc::new(parse_spec(cmd, args.0, opts.0)?);
+  let spec = Rc::new(parse_spec(&ctx, cmd, args.0, opts.0)?);
 
   let obj = Object::new(ctx.clone())?;
   obj.set("cmd", spec.cmd.clone())?;
@@ -235,7 +246,15 @@ fn build_command<'js>(
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let spec = spec.clone();
-        Ok(Promised(run_output(spec, pending)))
+        Ok(Promised(async move {
+          pending.hold();
+          let result = run_output_inner(&spec).await;
+          pending.release();
+          match result {
+            Ok(output) => OutputResult::Ok(output),
+            Err(msg) => OutputResult::Err(msg),
+          }
+        }))
       }
     }),
   )
