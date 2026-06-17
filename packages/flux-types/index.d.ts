@@ -210,21 +210,3 @@ declare module "flux:sqlite" {
     close(): Promise<void>
   }
 }
-
-declare module "flux:memory" {
-  /**
-   * Allocate a zeroed byte buffer shared between Rust and JS without copying:
-   * the backing memory is a single allocation both sides read and write. The
-   * engine frees it when the returned view is garbage collected. Use it for
-   * data handed across the boundary repeatedly, e.g. texture pixels or command
-   * buffers.
-   */
-  export function alloc(size: number): Uint8Array
-  /** Fill `length` bytes of `data` starting at `offset` with the byte `value`. */
-  export function memset(data: Uint8Array, offset: number, length: number, value: number): void
-  /**
-   * Fill `length` 32-bit words of `data` starting at word `offset` with `value`
-   * (offset and length are in u32 units, not bytes).
-   */
-  export function memset32(data: Uint8Array, offset: number, length: number, value: number): void
-}

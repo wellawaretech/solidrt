@@ -24,8 +24,6 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
 
   let mut resolver = BuiltinResolver::default();
   let mut loader = ModuleLoader::default();
-  // resolver.add_module("flux:memory");
-  // loader.add_module("flux:memory", flux::memory::MemoryModule);
   resolver.add_module("flux:sqlite");
   loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
   resolver.add_module("flux:fs");
