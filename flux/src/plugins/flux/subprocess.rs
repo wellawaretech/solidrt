@@ -8,8 +8,11 @@ use std::rc::Rc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
+use tokio::sync::{watch, Mutex, Notify};
+use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
+use crate::plugins::body::{byte_stream_iterable, to_byte_stream};
 use crate::plugins::js_error::JsResult;
 
 // flux:subprocess - spawn child processes and collect their output.
@@ -54,6 +57,30 @@ struct CommandOutput {
   stdout: Vec<u8>,
   stderr: Vec<u8>,
   as_bytes: bool,
+}
+
+// The exit status of a spawned child (the output() shape without the buffered
+// streams). Cloneable so it can be published to multiple status() awaiters.
+#[derive(Clone, Default)]
+struct StatusData {
+  code: Option<i32>,
+  signal: Option<String>,
+}
+
+impl<'js> IntoJs<'js> for StatusData {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    match self.code {
+      Some(c) => obj.set("code", c)?,
+      None => obj.set("code", Value::new_null(ctx.clone()))?,
+    }
+    match self.signal {
+      Some(s) => obj.set("signal", s)?,
+      None => obj.set("signal", Value::new_null(ctx.clone()))?,
+    }
+    obj.set("success", self.code == Some(0))?;
+    Ok(obj.into_value())
+  }
 }
 
 impl<'js> IntoJs<'js> for CommandOutput {
@@ -242,6 +269,185 @@ fn build_command<'js>(
   )
   .expect("create output function");
   obj.set("output", output_fn)?;
+
+  let spawn_fn = Function::new(
+    ctx.clone(),
+    object_builder({
+      let spec = spec.clone();
+      move |ctx| build_child(ctx, &spec)
+    }),
+  )
+  .expect("create spawn function");
+  obj.set("spawn", spawn_fn)?;
+
+  Ok(obj)
+}
+
+// Coerces a capturing closure to the `for<'js>` HRTB that rquickjs needs to
+// return a `'js`-bound Object. A capturing closure does not infer this on its
+// own (Object is invariant over `'js`); a plain fn item like build_file does.
+fn object_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>) -> rquickjs::Result<Object<'js>>,
+{
+  f
+}
+
+// Spawn the child and build its handle: live stdout/stderr async-iterables,
+// stdin write()/endStdin(), kill(), and status(). spawn() is synchronous (the
+// process is launched here); a failure to launch throws a clean Error.
+fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<Object<'js>> {
+  let mut command = TokioCommand::new(&spec.cmd);
+  command.args(&spec.args);
+  command.kill_on_drop(true);
+  command.stdin(Stdio::piped());
+  command.stdout(Stdio::piped());
+  command.stderr(Stdio::piped());
+  if let Some(cwd) = &spec.cwd {
+    command.current_dir(cwd);
+  }
+  for (k, v) in &spec.env {
+    command.env(k, v);
+  }
+
+  let mut child = command.spawn().map_err(|e| Exception::throw_message(&ctx, &spawn_err(&spec.cmd, e)))?;
+
+  let pid = child.id();
+  let stdout = child.stdout.take().expect("child stdout piped");
+  let stderr = child.stderr.take().expect("child stderr piped");
+  let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+
+  // stdin is held behind an async Mutex so write()/endStdin() serialize: a write
+  // holds the lock across its (backpressure-respecting) write_all, so concurrent
+  // writes queue instead of racing. opts.stdin (if given) is written first; the
+  // pipe then stays open for further writes.
+  let stdin = Rc::new(Mutex::new(child.stdin.take()));
+  if let Some(bytes) = spec.stdin.clone() {
+    let stdin = stdin.clone();
+    let pending = pending.clone();
+    ctx.spawn(async move {
+      let mut guard = stdin.lock().await;
+      if let Some(si) = guard.as_mut() {
+        pending.hold();
+        let _ = si.write_all(&bytes).await;
+        pending.release();
+      }
+    });
+  }
+
+  // Supervisor: owns the child, waits for exit (or a kill request), and
+  // publishes the exit status. Holds a pending op for the child's lifetime so
+  // the engine stays alive until it exits.
+  let kill_notify = Rc::new(Notify::new());
+  let (status_tx, status_rx) = watch::channel(None::<StatusData>);
+  {
+    let kill_notify = kill_notify.clone();
+    let pending = pending.clone();
+    ctx.spawn(async move {
+      pending.hold();
+      let status = loop {
+        tokio::select! {
+          _ = kill_notify.notified() => { let _ = child.start_kill(); }
+          res = child.wait() => break res,
+        }
+      };
+      let data = match status {
+        Ok(st) => StatusData { code: st.code(), signal: exit_signal(&st) },
+        Err(_) => StatusData::default(),
+      };
+      let _ = status_tx.send(Some(data));
+      pending.release();
+    });
+  }
+
+  let obj = Object::new(ctx.clone())?;
+  obj.set("pid", pid)?;
+  obj.set("stdout", byte_stream_iterable(&ctx, to_byte_stream(ReaderStream::new(stdout)), pending.clone())?)?;
+  obj.set("stderr", byte_stream_iterable(&ctx, to_byte_stream(ReaderStream::new(stderr)), pending.clone())?)?;
+
+  let write_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let stdin = stdin.clone();
+      move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+        let bytes = value_to_bytes(&ctx, &data)?;
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+        let stdin = stdin.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let mut guard = stdin.lock().await;
+          let r = match guard.as_mut() {
+            Some(si) => si.write_all(&bytes).await.map_err(|e| format!("write stdin: {e}")),
+            None => Err("stdin is closed".to_string()),
+          };
+          pending.release();
+          JsResult(r)
+        }))
+      }
+    }),
+  )
+  .expect("create write function");
+  obj.set("write", write_fn)?;
+
+  // endStdin() -> Promise: close stdin so the child sees EOF, after any queued
+  // writes have drained (it takes the same lock).
+  let endstdin_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let stdin = stdin.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+        let stdin = stdin.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          stdin.lock().await.take();
+          pending.release();
+          JsResult::<()>(Ok(()))
+        }))
+      }
+    }),
+  )
+  .expect("create endStdin function");
+  obj.set("endStdin", endstdin_fn)?;
+
+  // kill(): request termination (portable; SIGKILL / TerminateProcess).
+  let kill_fn = Function::new(ctx.clone(), {
+    let kill_notify = kill_notify.clone();
+    move || {
+      kill_notify.notify_one();
+    }
+  })
+  .expect("create kill function");
+  obj.set("kill", kill_fn)?;
+
+  // status() -> Promise<{ code, signal, success }>, resolves when the child exits.
+  let status_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let status_rx = status_rx.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+        let mut rx = status_rx.clone();
+        Ok(Promised(async move {
+          pending.hold();
+          let data = loop {
+            {
+              if let Some(d) = rx.borrow_and_update().clone() {
+                break d;
+              }
+            }
+            if rx.changed().await.is_err() {
+              break StatusData::default();
+            }
+          };
+          pending.release();
+          data
+        }))
+      }
+    }),
+  )
+  .expect("create status function");
+  obj.set("status", status_fn)?;
 
   Ok(obj)
 }

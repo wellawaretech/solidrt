@@ -1343,6 +1343,7 @@ dependencies = [
  "rusqlite",
  "sysinfo",
  "tokio",
+ "tokio-util",
  "which",
 ]
 
