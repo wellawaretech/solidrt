@@ -199,6 +199,17 @@ impl Context {
     }
   }
 
+  /// Free a texture created via `create_texture_from_pixels`, `create_texture_at`,
+  /// or `create_shader_texture`. Removes the entry from the texture registry so
+  /// in-flight display list references keep the texture alive until they drop.
+  /// For shader textures also destroys the GL program and FBO.
+  pub fn destroy_texture(&self, id: u64) {
+    self.textures.remove(id);
+    if let Some(shader) = self.shaders.borrow_mut().remove(&id) {
+      shader.destroy(&self.gl);
+    }
+  }
+
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
     match gpu_texture.backend {
       Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx.borrow(), size),

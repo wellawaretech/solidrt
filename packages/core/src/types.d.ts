@@ -44,6 +44,7 @@ declare global {
     createTexture(data: Uint8Array, width: number, height: number): number
     createMutableTexture(data: Uint8Array, width: number, height: number): number
     uploadTexture(textureId: number, offset?: number): void
+    destroyTexture(textureId: number): void
     createShader(
       fragmentSrc: string,
       width: number,

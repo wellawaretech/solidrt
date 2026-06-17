@@ -70,6 +70,10 @@ impl TextureRegistry {
     *id += 1;
     result
   }
+
+  pub fn remove(&self, id: u64) -> Option<Rc<TextureEntry>> {
+    self.entries.borrow_mut().remove(&id)
+  }
 }
 
 /// A GL texture that is adopted into Impeller right after creation. Impeller

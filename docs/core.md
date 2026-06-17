@@ -171,6 +171,8 @@ let id = createTexture(img.data, img.width, img.height)
 // <texture src={id} imageWidth={img.width} imageHeight={img.height} />
 ```
 
+When called inside a reactive scope the texture is freed automatically once that owner is disposed. When called outside one (for example after an `await`, where the owner is no longer current), nothing is registered and you must free it yourself with `destroyTexture(id)`. The same rule applies to `createMutableTexture` and `createShader`.
+
 ---
 
 ## Utilities

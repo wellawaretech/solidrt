@@ -74,6 +74,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
 
   let upload_atx = atx.clone();
   let upload_platform = platform.clone();
+  let pinned_destroy = pinned.clone();
   let upload_texture = Function::new(
     ctx.clone(),
     move |ctx: Ctx<'_>, id: u64, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
@@ -129,10 +130,21 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   )
   .expect("create setShaderParams");
 
+  let destroy_atx = atx.clone();
+  let destroy_texture = Function::new(
+    ctx.clone(),
+    move |id: u64| {
+      pinned_destroy.borrow_mut().remove(&id);
+      destroy_atx.destroy_texture(id);
+    },
+  )
+  .expect("create destroyTexture");
+
   let gpu = Object::new(ctx.clone()).expect("create gpu object");
   gpu.set("createTexture", create_texture).expect("set gpu.createTexture");
   gpu.set("createMutableTexture", create_mutable_texture).expect("set gpu.createMutableTexture");
   gpu.set("uploadTexture", upload_texture).expect("set gpu.uploadTexture");
+  gpu.set("destroyTexture", destroy_texture).expect("set gpu.destroyTexture");
   gpu.set("createShader", create_shader).expect("set gpu.createShader");
   gpu.set("setShaderParams", set_shader_params).expect("set gpu.setShaderParams");
   ctx.globals().set("gpu", gpu).expect("set gpu global");

@@ -170,6 +170,16 @@ impl ShaderTexture {
     self.target
   }
 
+  /// Release GL resources owned by this shader (program and FBO). The target
+  /// texture is NOT deleted here: Impeller owns it via the adopted Texture handle
+  /// in the TextureRegistry, and that handle is responsible for deletion.
+  pub fn destroy(self, gl: &glow::Context) {
+    unsafe {
+      gl.delete_framebuffer(self.fbo);
+      gl.delete_program(self.program);
+    }
+  }
+
   /// The sampler2D inputs this shader declared, as (uniform name, source texture
   /// id). The owner resolves each id to a live GL texture before rendering.
   pub fn sampler_bindings(&self) -> &[(String, u64)] {

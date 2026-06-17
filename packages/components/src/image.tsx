@@ -1,5 +1,6 @@
 import { createSignal, createEffect, onCleanup } from "@solidjs/signals"
-import { decodeImage, createTexture } from "@solidrt/core/gpu"
+import { createTexture, destroyTexture } from "@solidrt/core/gpu"
+import { decodeImage } from "@solidrt/core/image"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -10,13 +11,14 @@ export interface ImageProps extends PointerProps {
 }
 
 //TODO onLoad, onError
-//TODO release texture in onCleanup
 export function Image(props: ImageProps) {
   let [res, setRes] = createSignal<{ id: number; width: number; height: number }>()
 
   // Load (and decode) whenever src changes. A url is fetched; bytes are used
   // directly. The async result is pushed into the signal so the texture shows
-  // once ready; a stale flag drops results from a superseded src.
+  // once ready; a stale flag drops results from a superseded src. The old
+  // texture is destroyed before installing the new one; on unmount the current
+  // texture is destroyed by onCleanup below.
   createEffect(
     () => props.src,
     (source) => {
@@ -33,7 +35,9 @@ export function Image(props: ImageProps) {
         if (stale) return
         let { data, width, height } = decodeImage(bytes)
         let id = createTexture(data, width, height)
+        let old = res()
         setRes({ id, width, height })
+        if (old !== undefined) destroyTexture(old.id)
       })()
 
       return () => {
@@ -52,7 +56,8 @@ export function Image(props: ImageProps) {
   let texH = () => (typeof props.layout?.height === "number" ? props.layout.height : undefined)
 
   onCleanup(() => {
-    //TODO release texture
+    let r = res()
+    if (r !== undefined) destroyTexture(r.id)
   })
 
   return (
