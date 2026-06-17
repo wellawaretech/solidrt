@@ -23,7 +23,7 @@ will get `Cannot find module 'flux:fs'` (and the same for `flux:http`,
 ```
 
 If you already have a `types` array (for example with `@types/bun`), **add to
-it** rather than replacing it — listing `types` disables TypeScript's automatic
+it** rather than replacing it - listing `types` disables TypeScript's automatic
 type inclusion, so every package you rely on must be named:
 
 ```json
