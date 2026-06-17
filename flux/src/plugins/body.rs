@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::js_error::JsResult;
 
 /// A network-sourced response body stream (e.g. a fetch response), with its error
 /// flattened to `io::Error` so consumers stay reqwest-free.
@@ -106,7 +107,7 @@ pub(crate) enum BodySource {
 }
 
 impl BodySource {
-  async fn collect(self, pending: PendingOps) -> rquickjs::Result<Vec<u8>> {
+  async fn collect(self, pending: PendingOps) -> Result<Vec<u8>, String> {
     match self {
       BodySource::Bytes(bytes) => Ok(bytes),
       BodySource::Stream(stream) => drain_stream(stream, pending).await,
@@ -116,7 +117,7 @@ impl BodySource {
 
 /// Read a byte stream to EOF, concatenating chunks. Holds a pending op across the
 /// network reads so the engine stays alive until the body is fully drained.
-async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> rquickjs::Result<Vec<u8>> {
+async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> Result<Vec<u8>, String> {
   pending.hold();
   let mut buf = Vec::new();
   let mut error = None;
@@ -131,22 +132,26 @@ async fn drain_stream(mut stream: ByteStream, pending: PendingOps) -> rquickjs::
   }
   pending.release();
   match error {
-    Some(e) => Err(rquickjs::Error::Io(e)),
+    Some(e) => Err(e.to_string()),
     None => Ok(buf),
   }
 }
 
-pub(crate) async fn collect_text(source: BodySource, pending: PendingOps) -> rquickjs::Result<String> {
+async fn collect_text_raw(source: BodySource, pending: PendingOps) -> Result<String, String> {
   let bytes = source.collect(pending).await?;
-  String::from_utf8(bytes).map_err(utf8_err)
+  String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-pub(crate) async fn collect_bytes(source: BodySource, pending: PendingOps) -> rquickjs::Result<JsBytes> {
-  Ok(JsBytes(source.collect(pending).await?))
+pub(crate) async fn collect_text(source: BodySource, pending: PendingOps) -> JsResult<String> {
+  JsResult(collect_text_raw(source, pending).await)
 }
 
-pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> rquickjs::Result<JsonValue> {
-  Ok(JsonValue(collect_text(source, pending).await?))
+pub(crate) async fn collect_bytes(source: BodySource, pending: PendingOps) -> JsResult<JsBytes> {
+  JsResult(source.collect(pending).await.map(JsBytes))
+}
+
+pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> JsResult<JsonValue> {
+  JsResult(collect_text_raw(source, pending).await.map(JsonValue))
 }
 
 /// One step of a Rust-backed byte async-iterator. Returned owned (not as a JS
@@ -159,7 +164,7 @@ enum IterStep {
 }
 
 /// Return type of the iterator's `next()`: a promise resolving to one `IterStep`.
-type IterStepFuture = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<IterStep>>>>>;
+type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<IterStep>>>>>;
 
 impl<'js> IntoJs<'js> for IterStep {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
@@ -201,19 +206,19 @@ pub(crate) fn byte_stream_iterable<'js>(
         // Take the stream out so no RefCell borrow is held across the await. A
         // concurrent (un-awaited) next() finding it gone just reports done.
         let Some(mut stream) = cell.borrow_mut().take() else {
-          return Ok(IterStep::Done);
+          return JsResult(Ok(IterStep::Done));
         };
         pending.hold();
         let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
         pending.release();
-        match item {
+        JsResult(match item {
           Some(Ok(chunk)) => {
             *cell.borrow_mut() = Some(stream);
             Ok(IterStep::Chunk(chunk.to_vec()))
           }
-          Some(Err(e)) => Err(rquickjs::Error::Io(e)),
+          Some(Err(e)) => Err(e.to_string()),
           None => Ok(IterStep::Done),
-        }
+        })
       })))
     }),
   )?;
@@ -403,13 +408,10 @@ pub(crate) fn throw_msg(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
-fn utf8_err(e: std::string::FromUtf8Error) -> rquickjs::Error {
-  rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidData, e))
-}
-
 /// Attach text(), bytes(), json() methods to obj.
 ///
 /// fetch_bytes is invoked lazily on each method call to obtain the body bytes.
+/// Its error is a plain message string, surfaced to JS as a clean `Error`.
 /// If consume_once is true, calling any of the three methods more than once
 /// throws "Body already consumed" (web fetch semantics). If false, methods can
 /// be called repeatedly (file-like semantics).
@@ -421,7 +423,7 @@ pub fn attach_body<'js, F, Fut>(
 ) -> rquickjs::Result<()>
 where
   F: Fn() -> Fut + Clone + 'static,
-  Fut: Future<Output = rquickjs::Result<Vec<u8>>> + 'static,
+  Fut: Future<Output = Result<Vec<u8>, String>> + 'static,
 {
   let consumed = Rc::new(Cell::new(false));
 
@@ -437,8 +439,10 @@ where
         consumed.set(true);
         let fetch = fetch_bytes.clone();
         Ok(Promised(async move {
-          let bytes = fetch().await?;
-          String::from_utf8(bytes).map_err(utf8_err)
+          JsResult(match fetch().await {
+            Ok(bytes) => String::from_utf8(bytes).map_err(|e| e.to_string()),
+            Err(msg) => Err(msg),
+          })
         }))
       }
     }),
@@ -457,8 +461,7 @@ where
         consumed.set(true);
         let fetch = fetch_bytes.clone();
         Ok(Promised(async move {
-          let bytes = fetch().await?;
-          Ok::<JsBytes, rquickjs::Error>(JsBytes(bytes))
+          JsResult(fetch().await.map(JsBytes))
         }))
       }
     }),
@@ -477,9 +480,10 @@ where
         consumed.set(true);
         let fetch = fetch_bytes.clone();
         Ok(Promised(async move {
-          let bytes = fetch().await?;
-          let text = String::from_utf8(bytes).map_err(utf8_err)?;
-          Ok::<JsonValue, rquickjs::Error>(JsonValue(text))
+          JsResult(match fetch().await {
+            Ok(bytes) => String::from_utf8(bytes).map(JsonValue).map_err(|e| e.to_string()),
+            Err(msg) => Err(msg),
+          })
         }))
       }
     }),

@@ -4,6 +4,7 @@ pub mod fetch;
 pub mod flux;
 pub mod headers;
 pub mod http;
+pub mod js_error;
 pub mod request;
 pub mod response;
 pub mod text;
@@ -11,7 +12,7 @@ pub mod time;
 pub mod websocket;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Object};
+use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object};
 
 use crate::engine::ShutdownHooks;
 use crate::logger::Logger;
@@ -85,6 +86,7 @@ pub(crate) async fn init_context(
       console::init_console(&ctx);
       flux::events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
+      flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
       headers::init_headers(&ctx);
       request::init_request(&ctx);
       response::init_response(&ctx);
@@ -100,4 +102,17 @@ pub(crate) async fn init_context(
     .await;
 
   (runtime, context, pending)
+}
+
+/// Feature names this build/runtime provides, surfaced as `Flux.capabilities`.
+/// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
+/// rather than on the OS. A conditionally-compiled feature would be added under
+/// its own cfg, so it only appears when actually present.
+fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
+  let names = ["sqlite", "fs", "http", "p2p", "process", "path", "subprocess"];
+  let arr = Array::new(ctx.clone()).expect("create capabilities array");
+  for (i, name) in names.iter().enumerate() {
+    arr.set(i, *name).expect("set capability");
+  }
+  arr
 }

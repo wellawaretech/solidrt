@@ -43,6 +43,8 @@ path-clean = "1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
 iroh = "1"
+# Cross-platform PATH lookup for flux:subprocess `which` (handles Windows PATHEXT).
+which = "7"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

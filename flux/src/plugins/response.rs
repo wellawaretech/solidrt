@@ -11,6 +11,7 @@ use crate::plugins::body::{
   JsonValue, MessageBody,
 };
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+use crate::plugins::js_error::JsResult;
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]
@@ -30,7 +31,7 @@ pub struct Response<'js> {
   pub(crate) url: String,
 }
 
-type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<T>>>>>;
+type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>>>>>;
 
 impl<'js> Trace<'js> for Response<'js> {
   fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {

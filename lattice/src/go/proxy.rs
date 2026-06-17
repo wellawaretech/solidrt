@@ -97,12 +97,12 @@ fn build_proxy_file<'js>(ctx: Ctx<'js>, path: String) -> flux::rquickjs::Result<
       let url = url_for_body.clone();
       let client = client_for_body.clone();
       async move {
-        let resp = client.get(&*url).send().await.map_err(http_err)?;
+        let resp = client.get(&*url).send().await.map_err(|e| e.to_string())?;
         let status = resp.status();
         if !status.is_success() {
-          return Err(http_err(format!("HTTP {} for {}", status.as_u16(), &*url)));
+          return Err(format!("HTTP {} for {}", status.as_u16(), &*url));
         }
-        resp.bytes().await.map(|b| b.to_vec()).map_err(http_err)
+        resp.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
       }
     },
     false,

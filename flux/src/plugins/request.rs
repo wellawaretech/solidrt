@@ -14,8 +14,9 @@ use crate::plugins::body::{
 };
 use crate::plugins::flux::websocket::ServeUpgrade;
 use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+use crate::plugins::js_error::JsResult;
 
-type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = rquickjs::Result<T>>>>>;
+type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>>>>>;
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Request")]

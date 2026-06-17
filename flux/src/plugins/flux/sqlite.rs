@@ -61,19 +61,21 @@
 //!   added they keep the single-argument style (an object), not an overload.
 //! - Integers always go i64 -> JS number; no `safeIntegers`/bigint mode, so
 //!   values above 2^53 lose precision silently.
-//! - Errors surface as generic `IO Error: ...`, not a typed SQLite error.
+//! - Errors surface as a generic `Error` with the SQLite message, not a typed
+//!   SQLite error subclass.
 //! - `close()` is async (returns a promise); Bun's is synchronous.
 
-use std::io;
 use std::sync::mpsc::{Receiver, Sender};
 
 use rquickjs::class::Trace;
 use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Array, Class, Ctx, IntoJs, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Array, Class, Ctx, Exception, IntoJs, JsLifetime, Object, TypedArray, Value};
 use rusqlite::{Connection, OpenFlags};
 use tokio::sync::oneshot;
+
+use crate::plugins::js_error::{err_message, JsResult};
 
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
 /// decoded result cells (SQL -> JS). Owned so it can cross the channel.
@@ -151,14 +153,14 @@ impl Database {
     ctx: Ctx<'js>,
     path: String,
     mode: Opt<String>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<Database>>>> {
-    let flags = open_flags(mode.0)?;
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
+    let flags = open_flags(mode.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = spawn_database(path, flags).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -176,15 +178,15 @@ impl Database {
     ctx: Ctx<'js>,
     sql: String,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<RunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<RunResult>>>> {
     let cmd_tx = self.cmd_tx.clone();
-    let bound = extract_params(params.0)?;
+    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = exec_roundtrip(&cmd_tx, sql, bound, false).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -194,14 +196,14 @@ impl Database {
     &self,
     ctx: Ctx<'js>,
     sql: String,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<()>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = batch_roundtrip(&cmd_tx, sql).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -212,15 +214,15 @@ impl Database {
     &self,
     ctx: Ctx<'js>,
     statements: Array<'js>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<TxResults>>>> {
-    let parsed = extract_statements(statements)?;
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<TxResults>>>> {
+    let parsed = extract_statements(statements).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let cmd_tx = self.cmd_tx.clone();
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = transaction_roundtrip(&cmd_tx, parsed).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -229,7 +231,7 @@ impl Database {
   pub fn close<'js>(
     &self,
     ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<()>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
@@ -240,7 +242,7 @@ impl Database {
         let _ = rx.await;
       }
       pending.release();
-      Ok(())
+      JsResult(Ok(()))
     }))
   }
 }
@@ -261,16 +263,16 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<Rows>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Rows>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0)?;
+    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = query_roundtrip(&cmd_tx, sql, bound, true, false).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -279,16 +281,16 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<FirstRow>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<FirstRow>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0)?;
+    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = query_roundtrip(&cmd_tx, sql, bound, true, true).await.map(|rows| FirstRow(rows.0.into_iter().next()));
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 
@@ -297,39 +299,34 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = rquickjs::Result<RunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<RunResult>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0)?;
+    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
     Ok(Promised(async move {
       pending.hold();
       let r = exec_roundtrip(&cmd_tx, sql, bound, true).await;
       pending.release();
-      r
+      JsResult(r)
     }))
   }
 }
 
 /// Map a JS `mode` string to open flags. Default (`None`/`"ro"`) is read-only.
-fn open_flags(mode: Option<String>) -> rquickjs::Result<OpenFlags> {
+fn open_flags(mode: Option<String>) -> Result<OpenFlags, String> {
   let base = OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
   let access = match mode.as_deref() {
     None | Some("ro") => OpenFlags::SQLITE_OPEN_READ_ONLY,
     Some("rw") => OpenFlags::SQLITE_OPEN_READ_WRITE,
     Some("rw+") => OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
-    Some(other) => {
-      return Err(rquickjs::Error::Io(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("unknown database mode {other:?}, expected \"ro\", \"rw\", or \"rw+\""),
-      )))
-    }
+    Some(other) => return Err(format!("unknown database mode {other:?}, expected \"ro\", \"rw\", or \"rw+\"")),
   };
   Ok(base | access)
 }
 
 /// Spawn the connection thread and wait for it to open the database.
-async fn spawn_database(path: String, flags: OpenFlags) -> rquickjs::Result<Database> {
+async fn spawn_database(path: String, flags: OpenFlags) -> Result<Database, String> {
   let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Command>();
   let (open_tx, open_rx) = oneshot::channel::<rusqlite::Result<()>>();
   std::thread::Builder::new()
@@ -397,7 +394,7 @@ async fn query_roundtrip(
   params: Vec<SqlValue>,
   cached: bool,
   first_only: bool,
-) -> rquickjs::Result<Rows> {
+) -> Result<Rows, String> {
   let (reply, rx) = oneshot::channel();
   cmd_tx.send(Command::Query { sql, params, cached, first_only, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
@@ -408,13 +405,13 @@ async fn exec_roundtrip(
   sql: String,
   params: Vec<SqlValue>,
   cached: bool,
-) -> rquickjs::Result<RunResult> {
+) -> Result<RunResult, String> {
   let (reply, rx) = oneshot::channel();
   cmd_tx.send(Command::Run { sql, params, cached, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
 }
 
-async fn batch_roundtrip(cmd_tx: &Sender<Command>, sql: String) -> rquickjs::Result<()> {
+async fn batch_roundtrip(cmd_tx: &Sender<Command>, sql: String) -> Result<(), String> {
   let (reply, rx) = oneshot::channel();
   cmd_tx.send(Command::Exec { sql, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map_err(sqlite_err)
@@ -423,7 +420,7 @@ async fn batch_roundtrip(cmd_tx: &Sender<Command>, sql: String) -> rquickjs::Res
 async fn transaction_roundtrip(
   cmd_tx: &Sender<Command>,
   statements: Vec<(String, Vec<SqlValue>)>,
-) -> rquickjs::Result<TxResults> {
+) -> Result<TxResults, String> {
   let (reply, rx) = oneshot::channel();
   cmd_tx.send(Command::Transaction { statements, reply }).map_err(|_| closed_err())?;
   rx.await.map_err(|_| closed_err())?.map(TxResults).map_err(sqlite_err)
@@ -512,37 +509,34 @@ impl rusqlite::types::ToSql for SqlValue {
 }
 
 /// Convert a JS array of bind parameters into owned SqlValues.
-fn extract_params(params: Option<Array<'_>>) -> rquickjs::Result<Vec<SqlValue>> {
+fn extract_params(params: Option<Array<'_>>) -> Result<Vec<SqlValue>, String> {
   let Some(arr) = params else {
     return Ok(Vec::new());
   };
   let mut out = Vec::with_capacity(arr.len());
   for v in arr.iter::<Value>() {
-    let v = v?;
+    let v = v.map_err(err_message)?;
     out.push(js_to_sql(v)?);
   }
   Ok(out)
 }
 
 /// Convert a JS array of `[sql, params]` entries into owned statements.
-fn extract_statements(arr: Array<'_>) -> rquickjs::Result<Vec<(String, Vec<SqlValue>)>> {
+fn extract_statements(arr: Array<'_>) -> Result<Vec<(String, Vec<SqlValue>)>, String> {
   let mut out = Vec::with_capacity(arr.len());
   for entry in arr.iter::<Value>() {
-    let entry = entry?;
+    let entry = entry.map_err(err_message)?;
     let Some(pair) = entry.into_array() else {
-      return Err(rquickjs::Error::Io(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        "each transaction statement must be an array [sql, params?]",
-      )));
+      return Err("each transaction statement must be an array [sql, params?]".to_string());
     };
-    let sql: String = pair.get(0)?;
+    let sql: String = pair.get(0).map_err(err_message)?;
     let params = pair.get::<Array>(1).ok();
     out.push((sql, extract_params(params)?));
   }
   Ok(out)
 }
 
-fn js_to_sql(v: Value<'_>) -> rquickjs::Result<SqlValue> {
+fn js_to_sql(v: Value<'_>) -> Result<SqlValue, String> {
   if v.is_null() || v.is_undefined() {
     Ok(SqlValue::Null)
   } else if let Some(b) = v.as_bool() {
@@ -552,20 +546,20 @@ fn js_to_sql(v: Value<'_>) -> rquickjs::Result<SqlValue> {
   } else if let Some(f) = v.as_float() {
     Ok(SqlValue::Real(f))
   } else if let Some(s) = v.as_string() {
-    Ok(SqlValue::Text(s.to_string()?))
+    Ok(SqlValue::Text(s.to_string().map_err(err_message)?))
   } else if let Ok(ta) = TypedArray::<u8>::from_value(v.clone()) {
     Ok(SqlValue::Blob(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()))
   } else {
-    Err(rquickjs::Error::Io(io::Error::new(io::ErrorKind::InvalidInput, "unsupported SQL parameter type")))
+    Err("unsupported SQL parameter type".to_string())
   }
 }
 
-fn sqlite_err(e: impl std::fmt::Display) -> rquickjs::Error {
-  rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
+fn sqlite_err(e: impl std::fmt::Display) -> String {
+  e.to_string()
 }
 
-fn closed_err() -> rquickjs::Error {
-  sqlite_err("database is closed")
+fn closed_err() -> String {
+  "database is closed".to_string()
 }
 
 impl<'js> IntoJs<'js> for SqlValue {

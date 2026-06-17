@@ -10,6 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
 
 use crate::pending::PendingOps;
+use crate::plugins::js_error::JsResult;
 
 // flux:subprocess - spawn child processes and collect their output.
 //
@@ -53,22 +54,6 @@ struct CommandOutput {
   stdout: Vec<u8>,
   stderr: Vec<u8>,
   as_bytes: bool,
-}
-
-// The future returns this rather than capturing `ctx`: a clean JS Error is
-// produced here, in into_js, which runs on the JS thread with ctx in hand.
-enum OutputResult {
-  Ok(CommandOutput),
-  Err(String),
-}
-
-impl<'js> IntoJs<'js> for OutputResult {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self {
-      OutputResult::Ok(output) => output.into_js(ctx),
-      OutputResult::Err(msg) => Err(Exception::throw_message(ctx, &msg)),
-    }
-  }
 }
 
 impl<'js> IntoJs<'js> for CommandOutput {
@@ -250,10 +235,7 @@ fn build_command<'js>(
           pending.hold();
           let result = run_output_inner(&spec).await;
           pending.release();
-          match result {
-            Ok(output) => OutputResult::Ok(output),
-            Err(msg) => OutputResult::Err(msg),
-          }
+          JsResult(result)
         }))
       }
     }),
@@ -264,17 +246,26 @@ fn build_command<'js>(
   Ok(obj)
 }
 
+// which(cmd) -> absolute path to the resolved executable, or null. Cross-platform
+// PATH lookup (handles Windows PATHEXT / .exe). The "is this binary available?"
+// check the GUI needs, without branching on the OS.
+fn which_impl(cmd: String) -> Option<String> {
+  which::which(cmd).ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 pub struct SubprocessModule;
 
 impl ModuleDef for SubprocessModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("command")?;
+    decl.declare("which")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     let command_fn = Function::new(ctx.clone(), build_command).expect("create command function");
     exports.export("command", command_fn)?;
+    exports.export("which", Function::new(ctx.clone(), which_impl)?)?;
     Ok(())
   }
 }
