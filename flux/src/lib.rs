@@ -36,6 +36,8 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   loader.add_module("flux:process", flux::process::ProcessModule);
   resolver.add_module("flux:path");
   loader.add_module("flux:path", flux::path::PathModule);
+  resolver.add_module("flux:subprocess");
+  loader.add_module("flux:subprocess", flux::subprocess::SubprocessModule);
   rt.set_loader(resolver, loader);
 
   let ctx = Context::full(&rt).expect("failed to create QuickJS context");
