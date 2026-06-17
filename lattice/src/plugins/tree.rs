@@ -108,17 +108,20 @@ pub fn init(
   let tree_ref = shared.0.clone();
   let platform_ref = platform.clone();
   let cmd_tx = alloy_cmd_tx.clone();
-  let set_property = Function::new(ctx.clone(), move |node_id: u64, property: String, value: Value<'_>| {
-    crate::frame::SETPROP_COUNT.with(|c| c.set(c.get() + 1));
-    let value = to_prop_value(&value);
-    let mut tree = tree_ref.borrow_mut();
-    let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx);
-    if invalidate {
-      tree.invalidate_cache(node_id);
-    }
-    platform_ref.request_frame();
-  })
-  .expect("create setProperty");
+  let set_property =
+    Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> flux::rquickjs::Result<()> {
+      crate::frame::SETPROP_COUNT.with(|c| c.set(c.get() + 1));
+      let value = to_prop_value(&value);
+      let mut tree = tree_ref.borrow_mut();
+      let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx)
+        .map_err(|msg| ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into()))?;
+      if invalidate {
+        tree.invalidate_cache(node_id);
+      }
+      platform_ref.request_frame();
+      Ok(())
+    })
+    .expect("create setProperty");
 
   let platform_ref = platform.clone();
   let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame()).expect("create requestFrame");

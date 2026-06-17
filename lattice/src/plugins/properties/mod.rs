@@ -30,7 +30,10 @@ use taffy::style::Position;
 use crate::plugins::value::PropValue;
 use crate::rendertree::{BoundaryMode, Element, ElementKind};
 
-pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> bool {
+// Returns Ok(invalidate) on success; Err(message) for an unknown property, which
+// the FFI caller surfaces as a throwable JS error rather than aborting the
+// process. A single typo'd or unsupported prop must not take down the runtime.
+pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> Result<bool, String> {
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.
@@ -41,7 +44,7 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
       v => panic!("unknown position value '{v}'"),
     };
     el.set_position(position);
-    return true;
+    return Ok(true);
   }
 
   // Element-level, kind-independent: marks a retained-paint boundary
@@ -54,7 +57,7 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
       _ => panic!("repaintBoundary must be a boolean or \"snapshot\""),
     };
     el.paint_cache.borrow_mut().take();
-    return false;
+    return Ok(false);
   }
 
   let handled = match &mut el.kind {
@@ -69,22 +72,22 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
     ElementKind::Texture(tex) => texture::apply(tex, name, value),
   };
   if let Some(invalidate) = handled {
-    return invalidate;
+    return Ok(invalidate);
   }
 
   if let Some(paint) = el.kind.paint_mut() {
     if let Some(invalidate) = paint::apply(paint, name, value) {
-      return invalidate;
+      return Ok(invalidate);
     }
   }
 
   if let Some(style) = el.style_mut() {
     if let Some(invalidate) = layout::apply(style, name, value) {
-      return invalidate;
+      return Ok(invalidate);
     }
   }
 
-  panic!("unknown property '{name}'")
+  Err(format!("unknown property '{name}'"))
 }
 
 // Shared value decoders, kept here so every per-element module reads the same.
