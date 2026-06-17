@@ -1,5 +1,6 @@
-import { createSignal, flush, onCleanup } from "@solidjs/signals"
-import { getBoundingBox, measureText, onLayout, setFocus } from "@solidrt/core"
+import { createSignal, onCleanup } from "@solidjs/signals"
+import { setFocus } from "@solidrt/core"
+import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
@@ -25,24 +26,20 @@ export interface TextInputProps {
 // Printable text arrives via onTextInput (post-IME commit). onKeyDown handles
 // Backspace, Enter, Escape. Outside-click-to-blur is the caller's job.
 export function TextInput(props: TextInputProps) {
-  let [internalValue, setInternalValue] = createSignal(props.defaultValue ?? "")
   let [focused, setFocused] = createSignal(false)
   let [caretOn, setCaretOn] = createSignal(true)
-  let [viewportWidth, setViewportWidth] = createSignal(0)
 
   let node: { id: number } | undefined
   let viewport: { id: number } | undefined
   let blinkId: any = null
 
-  let value = () => props.value ?? internalValue()
-
-  let commit = (next: string) => {
-    if (props.maxLength != null && next.length > props.maxLength) {
-      next = next.slice(0, props.maxLength)
-    }
-    if (props.value == null) setInternalValue(next)
-    props.onInput?.(next)
-  }
+  let buffer = createTextBuffer({
+    value: () => props.value,
+    defaultValue: props.defaultValue,
+    onInput: (v) => props.onInput?.(v),
+    maxLength: () => props.maxLength,
+  })
+  let value = buffer.value
 
   let handlePointerDown = () => {
     if (props.disabled) return
@@ -70,8 +67,7 @@ export function TextInput(props: TextInputProps) {
   let handleKeyDown = (e: any) => {
     if (props.disabled) return
     if (e.key === "Backspace") {
-      let v = value()
-      if (v.length > 0) commit(v.slice(0, -1))
+      buffer.deleteBackward()
       setCaretOn(true)
     } else if (e.key === "Return" || e.key === "Enter") {
       props.onSubmit?.(value())
@@ -82,7 +78,7 @@ export function TextInput(props: TextInputProps) {
 
   let handleTextInput = (e: any) => {
     if (props.disabled) return
-    commit(value() + (e.text ?? ""))
+    buffer.insertText(e.text ?? "")
     setCaretOn(true)
   }
 
@@ -101,27 +97,15 @@ export function TextInput(props: TextInputProps) {
   let displayText = () => (showPlaceholder() ? (props.placeholder ?? "") : value())
   let displayColor = () => (showPlaceholder() ? theme.color.textMuted : textColor())
 
-  // Viewport width is the inner scroll container's own laid-out width, read
-  // after layout. This works for numeric, "auto" and "%" widths alike (no need
-  // to subtract padding: the padding lives on the outer view). getBoundingBox
-  // is a snapshot, so we push it into a signal from onLayout. The flush drains
-  // the resulting scrollX update synchronously, before paint, so the scroll
-  // tracks the width in the same frame instead of trailing it by one.
-  onLayout(() => {
-    if (!viewport) return
-    let w = getBoundingBox(viewport)?.width ?? 0
-    if (w !== viewportWidth()) setViewportWidth(w)
-    flush()
-  })
-
+  // Reserve a caret column at the end while editing so it stays in view. While
+  // the placeholder shows, value() is "" so the offset is 0 with no special
+  // case. The viewport node is the inner scroll container; createCaretScroll
+  // reads its laid-out width after layout and flushes the offset before paint.
   let caretWidth = () => (focused() && !showPlaceholder() ? 1 : 0)
-  let scrollX = () => {
-    if (showPlaceholder()) return 0
-    let tw = measureText(value(), { fontSize: theme.text.body.size }).width
-    let vw = viewportWidth()
-    if (vw <= 0) return 0
-    return Math.max(0, tw + caretWidth() - vw)
-  }
+  let scrollX = createCaretScroll(
+    () => viewport,
+    () => ({ text: value(), fontSize: theme.text.body.size, caretWidth: caretWidth() }),
+  )
 
   return (
     <view
