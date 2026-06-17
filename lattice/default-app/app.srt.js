@@ -3302,12 +3302,7 @@ function ensureResizeState() {
   let [scale, setScale] = createSignal(1);
   on("resize", (e2) => {
     setSize({ width: e2.width, height: e2.height });
-    setSafe({
-      top: e2.safeArea.top,
-      left: e2.safeArea.left,
-      bottom: e2.height - e2.safeArea.bottom,
-      right: e2.width - e2.safeArea.right
-    });
+    setSafe(e2.safeArea);
     setScale(e2.displayScale);
   });
   sizeAccessor = size;
@@ -3561,8 +3556,14 @@ import { on as on2 } from "srt:events";
 function listCameras() {
   return camera.listCameras();
 }
-function onDeviceChange(callback) {
-  return on2("cameraDeviceChange", callback);
+var devicesAccessor;
+function cameraDevices() {
+  if (!devicesAccessor) {
+    let [devices, setDevices] = createSignal(listCameras());
+    on2("cameraDeviceChange", () => setDevices(listCameras()));
+    devicesAccessor = devices;
+  }
+  return devicesAccessor();
 }
 function createCamera(options = {}) {
   let [texture, setTexture] = createSignal(undefined);
@@ -4132,10 +4133,10 @@ function Button(props) {
   return _el$;
 }
 function CameraView(props) {
-  let cam = createCamera({
+  let cam = createCamera(untrack(() => ({
     width: props.width,
     scan: props.scan
-  });
+  })));
   createEffect(() => cam.barcode(), (b2) => {
     if (b2)
       props.onBarcode?.(b2);
@@ -4159,8 +4160,7 @@ function CameraView(props) {
 }
 function App() {
   let dev = devAvailable;
-  let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0);
-  onDeviceChange(() => setHasCamera(listCameras().length > 0));
+  let hasCamera = () => cameraDevices().length > 0;
   let isAndroid = platform === "android";
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);

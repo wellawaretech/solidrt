@@ -1,6 +1,6 @@
 import { render } from "@solidrt/core"
-import { createCamera, listCameras, onDeviceChange, type BarcodeResult } from "@solidrt/core/camera"
-import { createEffect, createSignal } from "@solidjs/signals"
+import { createCamera, cameraDevices, type BarcodeResult } from "@solidrt/core/camera"
+import { createEffect, createSignal, untrack } from "@solidjs/signals"
 import { For, Show } from "solid-js"
 import { platform } from "flux:process"
 import { on } from "srt:events"
@@ -49,7 +49,7 @@ function CameraView(props: {
   onBarcode?: (result: BarcodeResult) => void
   onError?: (error: Error) => void
 }) {
-  let cam = createCamera({ width: props.width, scan: props.scan })
+  let cam = createCamera(untrack(() => ({ width: props.width, scan: props.scan })))
   createEffect(() => cam.barcode(), (b) => { if (b) props.onBarcode?.(b) })
   createEffect(() => cam.error(), (e) => { if (e) props.onError?.(e) })
   return <texture src={cam.texture()} width={props.width} />
@@ -57,8 +57,7 @@ function CameraView(props: {
 
 function App() {
   let dev = devAvailable
-  let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0)
-  onDeviceChange(() => setHasCamera(listCameras().length > 0))
+  let hasCamera = () => cameraDevices().length > 0
   let isAndroid = platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")

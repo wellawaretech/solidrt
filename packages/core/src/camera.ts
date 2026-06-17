@@ -49,10 +49,32 @@ export function listCameras(): CameraInfo[] {
   return camera.listCameras()
 }
 
+let devicesAccessor: (() => CameraInfo[]) | undefined
+
 /**
- * Camera hotplug. Re-enumerate with `listCameras()` to see the new device set.
- * Events only flow once the camera subsystem is up, i.e. after the first
- * `listCameras()` or `openCamera()` call. Returns an unsubscribe function.
+ * Current camera list as a reactive accessor: re-enumerates on hotplug.
+ * Also initializes the camera subsystem (required before hotplug events fire).
+ * App-lifetime: there is one camera subsystem, so no cleanup is needed.
+ *
+ * Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
+ * Linux you get add events but not remove (removal is broken upstream);
+ * on macOS/Windows there is no camera hotplug at all.
+ */
+export function cameraDevices(): CameraInfo[] {
+  if (!devicesAccessor) {
+    let [devices, setDevices] = createSignal<CameraInfo[]>(listCameras())
+    on("cameraDeviceChange", () => setDevices(listCameras()))
+    devicesAccessor = devices
+  }
+  return devicesAccessor()
+}
+
+/**
+ * Low-level fallback: subscribe to camera hotplug events with a callback.
+ * Prefer `cameraDevices()` unless the reactive accessor does not fit your use
+ * case. Re-enumerate with `listCameras()` inside the callback to get the new
+ * device set. Events only flow once the camera subsystem is up (after the first
+ * `listCameras()` or `openCamera()` call). Returns an unsubscribe function.
  *
  * Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
  * Linux you get `added=true` but not `added=false` (removal is broken upstream);
