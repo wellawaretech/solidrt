@@ -1,27 +1,22 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use flux::rquickjs::function::Opt;
-use flux::rquickjs::{Ctx, Function, JsLifetime, Object, Persistent, TypedArray, Value};
+use flux::rquickjs::{Ctx, Function, JsLifetime, Object, TypedArray};
 
 use crate::rendertree::PlatformContext;
 use crate::AlloyContext;
 
-// Per-engine texture bookkeeping, held in context userdata so that engine
-// teardown (which clears userdata while the runtime is still alive) both frees
-// the pinned JS buffers and destroys the GPU textures. Holding it in closure
-// captures instead would defer Persistent drops to the final GC sweep, tripping
-// JS_FreeRuntime's gc_obj_list assertion, and would never reach the textures.
+// Per-engine texture bookkeeping, held in context userdata so engine teardown
+// (which clears userdata while the runtime is still alive) destroys the GPU
+// textures this engine created.
 #[derive(Clone, JsLifetime)]
 struct TextureState(#[qjs(skip_trace)] Rc<TextureInner>);
 
 struct TextureInner {
   atx: AlloyContext,
-  // Mutable textures pin their JS pixel buffer (a GC anchor per texture id) so
-  // uploadTexture can re-read it in place instead of marshaling bytes per call.
-  pinned: RefCell<HashMap<u64, Persistent<Value<'static>>>>,
   // Every texture id this engine created (immutable, mutable, and shader). The
   // alloy texture registry outlives the engine, so without this a reload leaks
   // the previous app's textures - the app rarely calls destroyTexture itself.
@@ -56,7 +51,6 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   ctx
     .store_userdata(TextureState(Rc::new(TextureInner {
       atx: atx.clone(),
-      pinned: RefCell::new(HashMap::new()),
       created: RefCell::new(HashSet::new()),
     })))
     .expect("store texture state");
@@ -79,17 +73,16 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   )
   .expect("create createTexture");
 
+  // A mutable texture is created exactly like an immutable one; "mutable" only
+  // signals intent to update it later via uploadTexture. The seed buffer may be
+  // larger than one frame (uploadTexture takes an offset), so only require that
+  // the first frame fits.
   let mutable_atx = atx.clone();
   let create_mutable_texture = Function::new(
     ctx.clone(),
-    move |data: TypedArray<'_, u8>, width: u32, height: u32| -> flux::rquickjs::Result<u64> {
-      // Derive the Ctx from the array itself: closure parameters get independent
-      // elided lifetimes, but Persistent::save needs ctx and value unified.
-      let ctx = data.as_value().ctx().clone();
+    move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> flux::rquickjs::Result<u64> {
       let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
       let frame_size = (width as usize) * (height as usize) * 4;
-      // The buffer may be larger than one frame (uploadTexture takes an offset),
-      // so only require that at least the first frame fits.
       if raw.len < frame_size {
         return Err(throw_str(
           &ctx,
@@ -99,28 +92,20 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
       let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
       let id = mutable_atx.create_texture_from_pixels(width, height, pixels);
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
-      state.0.pinned.borrow_mut().insert(id, Persistent::save(&ctx, data.into_value()));
       state.0.created.borrow_mut().insert(id);
       Ok(id)
     },
   )
   .expect("create createMutableTexture");
 
+  // The caller passes the pixel buffer on every upload (it already holds it),
+  // so nothing is pinned on the Rust side. `data` may hold multiple frames;
+  // `offset` selects the one to upload. Reading the buffer is zero-copy.
   let upload_atx = atx.clone();
   let upload_platform = platform.clone();
   let upload_texture = Function::new(
     ctx.clone(),
-    move |ctx: Ctx<'_>, id: u64, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
-      let state = ctx.userdata::<TextureState>().expect("texture state userdata");
-      let anchor = state
-        .0
-        .pinned
-        .borrow()
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| throw_str(&ctx, &format!("uploadTexture: texture {id} is not a mutable texture")))?;
-      let value = anchor.restore(&ctx)?;
-      let data = TypedArray::<u8>::from_value(value).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+    move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
       let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "uploadTexture: detached buffer"))?;
       let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
       upload_atx
@@ -174,7 +159,6 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
     ctx.clone(),
     move |ctx: Ctx<'_>, id: u64| {
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
-      state.0.pinned.borrow_mut().remove(&id);
       state.0.created.borrow_mut().remove(&id);
       destroy_atx.destroy_texture(id);
     },

@@ -2,7 +2,10 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{ArrayBuffer, Ctx, Function, TypedArray, Value};
 
 fn alloc<'js>(ctx: Ctx<'js>, size: usize) -> rquickjs::Result<Value<'js>> {
-  let ab = ArrayBuffer::new_copy(ctx.clone(), vec![0u8; size])?;
+  // ArrayBuffer::new hands the Rust Vec's memory straight to the JS engine (no
+  // copy); the engine frees it when the buffer is garbage collected. This lets
+  // Rust and JS share one allocation, e.g. a pixel or command buffer.
+  let ab = ArrayBuffer::new(ctx.clone(), vec![0u8; size])?;
   TypedArray::<u8>::from_arraybuffer(ab).map(|ta| ta.into_value())
 }
 
@@ -15,7 +18,6 @@ pub struct MemoryModule;
 impl ModuleDef for MemoryModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("alloc")?;
-    decl.declare("free")?;
     decl.declare("memset")?;
     decl.declare("memset32")?;
     Ok(())
@@ -23,12 +25,6 @@ impl ModuleDef for MemoryModule {
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     let alloc_fn = Function::new(ctx.clone(), alloc)?;
-
-    let free_fn = Function::new(ctx.clone(), |_ctx: Ctx<'_>, data: TypedArray<'_, u8>| -> rquickjs::Result<()> {
-      let mut ab = data.arraybuffer()?;
-      ab.detach();
-      Ok(())
-    })?;
 
     let memset_fn = Function::new(
       ctx.clone(),
@@ -57,7 +53,6 @@ impl ModuleDef for MemoryModule {
     )?;
 
     exports.export("alloc", alloc_fn)?;
-    exports.export("free", free_fn)?;
     exports.export("memset", memset_fn)?;
     exports.export("memset32", memset32_fn)?;
     Ok(())

@@ -16,12 +16,12 @@ export function createTexture(data: Uint8Array, width: number, height: number): 
 }
 
 /**
- * Creates a GPU texture that keeps reading from `data` (which may hold multiple
- * frames): mutate the buffer in place, then call `uploadTexture` to push the
- * pixels to the GPU. Like `createTexture`, `data` is RGBA8 and must hold at
- * least `width * height * 4` bytes, and the texture is freed automatically when
- * the reactive owner is disposed; created outside a reactive scope you must
- * call `destroyTexture` yourself.
+ * Creates a GPU texture you intend to update over time: seed it with `data`,
+ * then call `uploadTexture(id, data)` to push new pixels. `data` is RGBA8 and
+ * must hold at least `width * height * 4` bytes (it may hold several frames).
+ * Like `createTexture`, the texture is freed automatically when the reactive
+ * owner is disposed; created outside a reactive scope you must call
+ * `destroyTexture` yourself.
  */
 export function createMutableTexture(data: Uint8Array, width: number, height: number): number {
   let id = gpu.createMutableTexture(data, width, height)
@@ -30,12 +30,12 @@ export function createMutableTexture(data: Uint8Array, width: number, height: nu
 }
 
 /**
- * Pushes the current contents of a mutable texture's backing buffer to the GPU.
- * `offset` is a byte offset into that buffer, selecting which frame to upload
- * when the buffer holds several (default 0, the first frame).
+ * Pushes pixels from `data` to a mutable texture on the GPU. Pass the same
+ * buffer you mutate in place each frame. `offset` is a byte offset into `data`,
+ * selecting which frame to upload when the buffer holds several (default 0).
  */
-export function uploadTexture(textureId: number, offset: number = 0): void {
-  gpu.uploadTexture(textureId, offset)
+export function uploadTexture(textureId: number, data: Uint8Array, offset: number = 0): void {
+  gpu.uploadTexture(textureId, data, offset)
 }
 
 /**

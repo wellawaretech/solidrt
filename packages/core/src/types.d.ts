@@ -43,7 +43,7 @@ declare global {
   let gpu: {
     createTexture(data: Uint8Array, width: number, height: number): number
     createMutableTexture(data: Uint8Array, width: number, height: number): number
-    uploadTexture(textureId: number, offset?: number): void
+    uploadTexture(textureId: number, data: Uint8Array, offset?: number): void
     destroyTexture(textureId: number): void
     createShader(
       fragmentSrc: string,

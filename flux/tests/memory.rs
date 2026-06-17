@@ -65,23 +65,6 @@ async fn memset_offset() {
 }
 
 #[tokio::test]
-async fn import_free() {
-  let out = run_source(
-    r#"
-            import { alloc, free, memset } from "flux:memory";
-            let buf = alloc(4);
-            memset(buf, 0, 4, 0x11);
-            console.log(buf.byteLength);
-            free(buf);
-            console.log(buf.byteLength);
-            "#,
-  )
-  .await;
-  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
-  assert_eq!(out.log(), "4\n0");
-}
-
-#[tokio::test]
 async fn memset_out_of_bounds() {
   let out = run_source(
     r#"
