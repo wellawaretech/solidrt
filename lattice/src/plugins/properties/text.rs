@@ -1,4 +1,4 @@
-use alloy::impellers::FontWeight;
+use alloy::impellers::{FontWeight, TextAlignment};
 
 use super::{f32_of, str_of};
 use crate::plugins::value::PropValue;
@@ -12,6 +12,13 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
       other => other.to_string(),
     }),
     "fontSize" => text.set_font_size(f32_of(value, "fontSize")),
+    "textAlign" => text.set_text_alignment(match str_of(value, "textAlign") {
+      "left" => TextAlignment::Left,
+      "right" => TextAlignment::Right,
+      "center" => TextAlignment::Center,
+      "justify" => TextAlignment::Justify,
+      v => panic!("unknown textAlign value '{v}'"),
+    }),
     "lineHeight" => text.set_line_height(f32_of(value, "lineHeight")),
     "maxLines" => text.set_max_lines(value.as_f64().expect("maxLines must be a number") as u32),
     "fontWeight" => text.set_font_weight(match value.as_f64().expect("fontWeight must be a number") as u32 {

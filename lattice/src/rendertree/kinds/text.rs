@@ -200,6 +200,10 @@ impl Text {
     self.font_weight = weight;
     true
   }
+  pub fn set_text_alignment(&mut self, alignment: TextAlignment) -> bool {
+    self.text_alignment = alignment;
+    true
+  }
 
   pub fn with_layout(self) -> Element {
     Element::with_layout(ElementKind::Text(self), Style { display: Display::Block, ..Default::default() })
