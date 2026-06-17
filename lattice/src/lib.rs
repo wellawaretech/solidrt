@@ -66,11 +66,14 @@ pub enum AppSource {
 
 fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32) {
   eh.exec(move |ctx| {
+    // All four are insets: distance from the corresponding window edge, like CSS
+    // env(safe-area-inset-*). safe_area is a rect in absolute coords, so the far
+    // edges become (window extent - far edge).
     let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
     sa.set("top", safe_area.origin.y).expect("set top");
     sa.set("left", safe_area.origin.x).expect("set left");
-    sa.set("right", safe_area.origin.x + safe_area.size.width).expect("set right");
-    sa.set("bottom", safe_area.origin.y + safe_area.size.height).expect("set bottom");
+    sa.set("right", size.width as f32 - (safe_area.origin.x + safe_area.size.width)).expect("set right");
+    sa.set("bottom", size.height as f32 - (safe_area.origin.y + safe_area.size.height)).expect("set bottom");
     let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
     obj.set("width", size.width).expect("set width");
     obj.set("height", size.height).expect("set height");

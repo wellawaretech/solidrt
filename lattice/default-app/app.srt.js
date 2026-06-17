@@ -3291,10 +3291,32 @@ function onFrame(fn) {
   onCleanup(cleanup2);
   return cleanup2;
 }
-function onResize(fn) {
-  let unsubscribe = on("resize", fn);
-  onCleanup(unsubscribe);
-  return unsubscribe;
+var sizeAccessor;
+var safeAreaAccessor;
+var displayScaleAccessor;
+function ensureResizeState() {
+  if (sizeAccessor)
+    return;
+  let [size, setSize] = createSignal({ width: 0, height: 0 });
+  let [safe, setSafe] = createSignal({ top: 0, left: 0, right: 0, bottom: 0 });
+  let [scale, setScale] = createSignal(1);
+  on("resize", (e2) => {
+    setSize({ width: e2.width, height: e2.height });
+    setSafe({
+      top: e2.safeArea.top,
+      left: e2.safeArea.left,
+      bottom: e2.height - e2.safeArea.bottom,
+      right: e2.width - e2.safeArea.right
+    });
+    setScale(e2.displayScale);
+  });
+  sizeAccessor = size;
+  safeAreaAccessor = safe;
+  displayScaleAccessor = scale;
+}
+function windowSize() {
+  ensureResizeState();
+  return sizeAccessor();
 }
 function attachWindow(_nodeId) {
   let unsubscribe = null;
@@ -4046,12 +4068,7 @@ function TangramLetter(props) {
 }
 var LOGO_HEIGHT = Math.max(...letters.map((l2) => l2.height));
 function Logo() {
-  let [scale, setScale] = createSignal(1);
-  onResize(({
-    width
-  }) => {
-    setScale(width * 1.12 / 1500);
-  });
+  let scale = () => windowSize().width * 1.12 / 1500;
   var _el$4 = createElement("view"), _el$5 = createElement("view");
   insertNode(_el$4, _el$5);
   setProp(_el$4, "justifyContent", "center");

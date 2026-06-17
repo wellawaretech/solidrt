@@ -42,6 +42,8 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
 
 // ------ Resize ----------------
 
+// Insets: each value is the distance from the corresponding window edge, like
+// CSS env(safe-area-inset-*).
 interface SafeArea {
   top: number
   left: number
@@ -80,15 +82,7 @@ function ensureResizeState() {
   let [scale, setScale] = createSignal(1)
   on("resize", (e: ResizeEvent) => {
     setSize({ width: e.width, height: e.height })
-    // safeArea() exposes all four as insets (distance from their edge), like CSS
-    // env(safe-area-inset-*). The raw event still carries bottom/right as
-    // absolute edges, so convert here until the event itself is normalized.
-    setSafe({
-      top: e.safeArea.top,
-      left: e.safeArea.left,
-      bottom: e.height - e.safeArea.bottom,
-      right: e.width - e.safeArea.right,
-    })
+    setSafe(e.safeArea)
     setScale(e.displayScale)
   })
   sizeAccessor = size
