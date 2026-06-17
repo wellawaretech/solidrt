@@ -1,17 +1,28 @@
 // Headless text-input mechanism. These primitives own the objective parts of
-// an editable single-line field -- the value buffer and the scroll-to-caret
-// geometry -- and nothing with a UI opinion. Caret blink, keybindings,
-// placeholder and styling are policy and belong to the component (the "skin")
-// that composes these.
+// an editable single-line field -- the value buffer (text + caret/selection)
+// and the scroll-to-caret geometry -- and nothing with a UI opinion. Caret
+// blink, keybindings, placeholder and styling are policy and belong to the
+// component (the "skin") that composes these.
 
 import { createSignal, flush } from "@solidjs/signals"
 import { getBoundingBox, measureText } from "./core"
 import { onLayout } from "./window"
 
+/**
+ * A text selection as anchor/focus character offsets, following the same model
+ * as the platform editors (Flutter's TextSelection, the DOM Selection): the
+ * anchor is where the selection started, the focus is the moving end where the
+ * caret sits. A collapsed selection (anchor === focus) is a plain caret.
+ */
+export type Selection = { anchor: number; focus: number }
+
+export type MoveDirection = "left" | "right" | "start" | "end"
+
 export type TextBufferOptions = {
   /**
    * Controlled value accessor. When it returns a string, the buffer mirrors it
-   * and edits flow out only through onInput (the internal state is bypassed).
+   * and edits flow out only through onInput (the internal text is bypassed).
+   * The selection is always buffer-owned editing state regardless.
    */
   value?: () => string | undefined
   /** Initial value when uncontrolled. */
@@ -25,80 +36,172 @@ export type TextBufferOptions = {
 export type TextBuffer = {
   /** Current text: the controlled value if provided, else internal state. */
   value(): string
-  /** Insert text (V1: appended at the end). */
+  /** Current selection, clamped to the text length. Collapsed = a caret. */
+  selection(): Selection
+  /** The focus offset (where the caret sits). */
+  caret(): number
+  /** Replace the current selection with text, then collapse the caret after it. */
   insertText(text: string): void
-  /** Delete the last character (V1: backspace at the end). */
+  /** Delete the selection if any, else the character before the caret. */
   deleteBackward(): void
-  /** Replace the whole value. */
+  /** Delete the selection if any, else the character after the caret. */
+  deleteForward(): void
+  /** Move the caret. `extend` keeps the anchor to grow a selection (else collapses). */
+  move(direction: MoveDirection, options?: { extend?: boolean }): void
+  /** Set the selection directly (offsets are clamped to the text length). */
+  setSelection(anchor: number, focus: number): void
+  /** Replace the whole value, caret to the end. */
   setValue(next: string): void
   /** Clear to empty. */
   clear(): void
 }
 
 /**
- * An editable text buffer that bridges controlled/uncontrolled use. With a
- * `value` accessor the buffer is controlled: edits do not mutate internal state,
- * they only call `onInput` so the owner can update its source. Without one it
- * holds the text itself. Every edit is clamped to `maxLength`.
+ * An editable text buffer that bridges controlled/uncontrolled use and owns the
+ * caret/selection. With a `value` accessor the buffer is controlled: edits do
+ * not mutate internal text, they only call `onInput` so the owner can update its
+ * source. Without one it holds the text itself. The selection is always
+ * buffer-owned state and is clamped to the current text length on read, so an
+ * external truncation of a controlled value cannot leave the caret dangling.
+ * Every edit is clamped to `maxLength`.
  */
 export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
-  let [internalValue, setInternalValue] = createSignal(options.defaultValue ?? "")
+  let initial = options.defaultValue ?? ""
+  let [internalValue, setInternalValue] = createSignal(initial)
+  let [selectionState, setSelectionState] = createSignal<Selection>({
+    anchor: initial.length,
+    focus: initial.length,
+  })
 
   let value = () => options.value?.() ?? internalValue()
 
-  let commit = (next: string) => {
+  let selection = (): Selection => {
+    let len = value().length
+    let s = selectionState()
+    return { anchor: Math.min(s.anchor, len), focus: Math.min(s.focus, len) }
+  }
+
+  // Ordered selection bounds [start, end).
+  let range = () => {
+    let { anchor, focus } = selection()
+    return anchor <= focus ? [anchor, focus] : [focus, anchor]
+  }
+
+  let setCaret = (offset: number) => setSelectionState({ anchor: offset, focus: offset })
+
+  // Apply a text edit and place the caret, clamping to maxLength.
+  let apply = (next: string, caret: number) => {
     let max = options.maxLength?.()
     if (max != null && next.length > max) next = next.slice(0, max)
+    caret = Math.min(caret, next.length)
     if (options.value?.() == null) setInternalValue(next)
+    setCaret(caret)
     options.onInput?.(next)
   }
 
   return {
     value,
-    insertText: (text) => commit(value() + text),
+    selection,
+    caret: () => selection().focus,
+
+    insertText: (text) => {
+      let v = value()
+      let [start, end] = range()
+      apply(v.slice(0, start) + text + v.slice(end), start + text.length)
+    },
+
     deleteBackward: () => {
       let v = value()
-      if (v.length > 0) commit(v.slice(0, -1))
+      let [start, end] = range()
+      if (start !== end) apply(v.slice(0, start) + v.slice(end), start)
+      else if (start > 0) apply(v.slice(0, start - 1) + v.slice(start), start - 1)
     },
-    setValue: (next) => commit(next),
-    clear: () => commit(""),
+
+    deleteForward: () => {
+      let v = value()
+      let [start, end] = range()
+      if (start !== end) apply(v.slice(0, start) + v.slice(end), start)
+      else if (end < v.length) apply(v.slice(0, end) + v.slice(end + 1), end)
+    },
+
+    move: (direction, opts) => {
+      let extend = opts?.extend ?? false
+      let { anchor, focus } = selection()
+      let len = value().length
+      // A non-extending left/right on a range collapses to the near edge.
+      if (!extend && anchor !== focus && (direction === "left" || direction === "right")) {
+        setCaret(direction === "left" ? Math.min(anchor, focus) : Math.max(anchor, focus))
+        return
+      }
+      let next = focus
+      if (direction === "left") next = Math.max(0, focus - 1)
+      else if (direction === "right") next = Math.min(len, focus + 1)
+      else if (direction === "start") next = 0
+      else if (direction === "end") next = len
+      setSelectionState({ anchor: extend ? anchor : next, focus: next })
+    },
+
+    setSelection: (anchor, focus) => {
+      let len = value().length
+      setSelectionState({ anchor: Math.min(anchor, len), focus: Math.min(focus, len) })
+    },
+
+    setValue: (next) => apply(next, next.length),
+    clear: () => apply("", 0),
   }
 }
 
 export type CaretScrollInput = {
   text: string
   fontSize: number
-  /** Px reserved so the caret stays visible past the text end. Default 0. */
+  /** Caret offset into `text`. Defaults to the text end. */
+  caret?: number
+  /** Px reserved so the caret stays visible at the viewport edge. Default 0. */
   caretWidth?: number
 }
 
 /**
- * Returns the horizontal scroll offset that keeps the end of `text` (plus an
- * optional caret width) within the viewport node. The viewport's laid-out width
- * is read in onLayout and pushed into a signal; the synchronous flush drains the
- * resulting offset update before paint, so the scroll tracks a width change in
- * the same frame instead of trailing it. Pure geometry: no caret rendering and
- * no placeholder/visual policy.
+ * Returns the horizontal scroll offset that keeps the caret within the viewport
+ * node. The offset is retained between frames and only adjusted when the caret
+ * would fall outside the visible range (scrolled left when the caret runs past
+ * the right edge, right when it moves before the left edge), so stationary text
+ * does not jump. The viewport width and offset are computed in onLayout and the
+ * synchronous flush drains the update before paint, so the scroll tracks a caret
+ * or width change in the same frame. Pure geometry: no caret rendering and no
+ * placeholder/visual policy.
  */
 export function createCaretScroll(
   viewport: () => { id: number } | undefined,
   input: () => CaretScrollInput,
 ): () => number {
-  let [viewportWidth, setViewportWidth] = createSignal(0)
+  let [scrollX, setScrollX] = createSignal(0)
 
   onLayout(() => {
     let node = viewport()
     if (!node) return
-    let w = getBoundingBox(node)?.width ?? 0
-    if (w !== viewportWidth()) setViewportWidth(w)
+    let vw = getBoundingBox(node)?.width ?? 0
+    let { text, fontSize, caret, caretWidth = 0 } = input()
+    let len = text.length
+    let c = caret == null ? len : Math.max(0, Math.min(caret, len))
+
+    let totalWidth = measureText(text, { fontSize }).width
+    let caretX = c >= len ? totalWidth : measureText(text.slice(0, c), { fontSize }).width
+    let maxScroll = Math.max(0, totalWidth + caretWidth - vw)
+
+    let cur = scrollX()
+    let next = cur
+    if (vw <= 0) {
+      next = 0
+    } else if (caretX < cur) {
+      next = caretX
+    } else if (caretX + caretWidth > cur + vw) {
+      next = caretX + caretWidth - vw
+    }
+    next = Math.max(0, Math.min(next, maxScroll))
+
+    if (next !== cur) setScrollX(next)
     flush()
   })
 
-  return () => {
-    let { text, fontSize, caretWidth = 0 } = input()
-    let vw = viewportWidth()
-    if (vw <= 0) return 0
-    let tw = measureText(text, { fontSize }).width
-    return Math.max(0, tw + caretWidth - vw)
-  }
+  return scrollX
 }
