@@ -14,6 +14,7 @@ export async function runServerCommand() {
   // Initialize state from args
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
+  state.stats = values.stats
 
   if (values["proxy-http"]) {
     cache.initCache({ dir: process.cwd() })

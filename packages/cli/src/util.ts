@@ -15,6 +15,7 @@ export let state = {
   serverUrl: null as string | null,
   rl: null as ReadlineInterface | null,
   bonjour: null as Bonjour | null,
+  stats: false,
 }
 
 // Build target per binary, for the "not found" hint. Run from the repo root.

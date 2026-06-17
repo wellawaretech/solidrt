@@ -2,7 +2,7 @@ import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
-import { buildReload, broadcastStop } from "./dev-server"
+import { buildReload, broadcast } from "./dev-server"
 import { bundle } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
@@ -11,7 +11,7 @@ function cmdStop(args: string) {
     stopWatcher()
     state.currentCode = null
     state.source = undefined
-    broadcastStop()
+    broadcast({ type: "stop" })
     print("[cli] Sent stop to all clients")
     return
   }
@@ -54,6 +54,21 @@ async function cmdReload(args: string) {
     clientList[idx].send(msg)
     print(`[cli] Sent reload to client ${idx}`)
   }
+}
+
+function cmdStats(args: string) {
+  if (args === "on") {
+    state.stats = true
+  } else if (args === "off") {
+    state.stats = false
+  } else if (!args) {
+    state.stats = !state.stats
+  } else {
+    print("Usage: stats [on|off]")
+    return
+  }
+  broadcast({ type: "stats", stats: state.stats })
+  print(`[cli] Stats overlay ${state.stats ? "on" : "off"}`)
 }
 
 function cmdList() {
@@ -105,7 +120,7 @@ async function cmdLoad(file: string) {
   print(`[cli] Loaded ${file}`)
 }
 
-let COMMANDS = ["load ", "stop", "reload", "list", "quit", "exit", "help"]
+let COMMANDS = ["load ", "stop", "reload", "list", "stats", "quit", "exit", "help"]
 let LOAD_EXTENSIONS = [".tsx", ".srt.js", ".srt.bin"]
 
 function completer(line: string): [string[], string] {
@@ -150,6 +165,8 @@ export function startRepl() {
       cmdLoad(cmd.slice(5).trim())
     } else if (cmd === "list") {
       cmdList()
+    } else if (cmd === "stats" || cmd.startsWith("stats ")) {
+      cmdStats(cmd.slice(6).trim())
     } else if (cmd === "quit" || cmd === "exit") {
       shutdown()
     } else if (cmd.startsWith("!")) {
@@ -165,7 +182,7 @@ export function startRepl() {
         )
       }
     } else if (cmd === "help") {
-      print("Commands: load, stop, reload, list, !<cmd>, quit, help")
+      print("Commands: load, stop, reload, list, stats, !<cmd>, quit, help")
     } else if (cmd) {
       print(`Unknown command: ${cmd}`)
     }

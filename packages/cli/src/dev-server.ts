@@ -10,14 +10,15 @@ import * as cache from "./cache"
 export const DEV_HOST = "127.0.0.1"
 export const DEV_PORT = 15194
 
-// Dev-server WS protocol helpers: the reload message shape and the stop broadcast.
+// Dev-server WS protocol helpers: the reload message shape and a broadcast to all clients.
 export function buildReload(payload: { code?: string | null; bytecode?: string }) {
   return JSON.stringify({ type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload })
 }
 
-export function broadcastStop() {
+export function broadcast(msg: object) {
+  let text = JSON.stringify(msg)
   for (let ws of state.clients.keys()) {
-    ws.send(JSON.stringify({ type: "stop" }))
+    ws.send(text)
   }
 }
 
@@ -157,7 +158,7 @@ export function startServer() {
         print(`[cli] Client connected ${ws.remoteAddress}`)
         // Advertise our real LAN address so clients dialed over the adb loopback
         // can show/remember the directly reachable address (see connection.rs).
-        ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: values.stats }))
+        ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats }))
         if (state.currentCode) {
           ws.send(buildReload({ code: state.currentCode }))
         }

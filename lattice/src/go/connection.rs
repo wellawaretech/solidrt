@@ -337,6 +337,13 @@ async fn try_serve(
               let _ = tx.send(crate::EngineCmd::Reload(code.to_string()));
             }
           }
+          Some("stats") => {
+            // Live toggle of the debug overlay from the dev-server REPL.
+            if let Some(stats) = json.get("stats").and_then(|s| s.as_bool()) {
+              flags.stats_enabled.store(stats, Ordering::Relaxed);
+              flags.frame_requested.store(true, Ordering::Relaxed);
+            }
+          }
           Some("stop") => {
             let _ = tx.send(crate::EngineCmd::Stop);
           }

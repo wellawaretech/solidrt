@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use alloy::impellers::{
-  Color, DisplayListBuilder, Paint, ParagraphBuilder, ParagraphStyle, Point, Rect, TextAlignment,
-  TypographyContext,
+  Color, DisplayListBuilder, Paint, ParagraphBuilder, ParagraphStyle, Point, Rect,
+  Size, TextAlignment, TypographyContext,
 };
 use cpu_time::ProcessTime;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -221,7 +221,7 @@ impl Stats {
     };
     pb.push_style(&style);
 
-    let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS\n", 
+    let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS", 
     self.proc_cpu, self.proc_rss as f32 / MIB, fps);
     // Each timing is shown as a share of the measured frame period (js_ms and
     // frame_ms are smoothed the same way on the JS thread, so a share stays
@@ -231,11 +231,11 @@ impl Stats {
     // draw phases. SET is a raw count (setProperty writes/frame), not a share.
     let frame_ms = self.frame_ms;
     let pct = |ms: f32| if frame_ms > 0.0 { ms / frame_ms * 100.0 } else { 0.0 };
-    text.push_str(&format!("JS {:.0}% SET {:.0}\n", pct(self.js_ms), self.set_count));
+    text.push_str(&format!("\nJS {:.0}% SET {:.0}", pct(self.js_ms), self.set_count));
     // Native draw phases as frame shares: LAY layout, PNT paint, PST postLayout,
     // HOV hover.
     text.push_str(&format!(
-      "LAY {:.0}% PNT {:.0}%\nPST {:.0}% HOV {:.0}%\n",
+      "\nLAY {:.0}% PNT {:.0}%\nPST {:.0}% HOV {:.0}%",
       pct(self.phases.layout), pct(self.phases.paint),
       pct(self.phases.post), pct(self.phases.hover),
     ));
@@ -243,20 +243,20 @@ impl Stats {
     // (reuse) and frames skipped entirely (skip). Hidden when the gate saved
     // nothing this second - every frame a full rebuild, which FPS already shows.
     if self.reused + self.skipped > 0 {
-      text.push_str(&format!("{} reuse {} skip\n", self.reused, self.skipped));
+      text.push_str(&format!("\n{} reuse {} skip", self.reused, self.skipped));
     }
     // Repaint boundaries this frame: reused+recorded. Hidden when the app
     // declares none.
     if paint_stats.boundaries_reused + paint_stats.boundaries_recorded > 0 {
-      text.push_str(&format!("{}+{} BND\n", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
+      text.push_str(&format!("\n{}+{} BND", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
     }
     // Snapshot boundaries this frame: reused+rasterized.
     if paint_stats.snapshots_reused + paint_stats.snapshots_rasterized > 0 {
-      text.push_str(&format!("{}+{} SNP\n", paint_stats.snapshots_reused, paint_stats.snapshots_rasterized));
+      text.push_str(&format!("\n{}+{} SNP", paint_stats.snapshots_reused, paint_stats.snapshots_rasterized));
     }
     // Textures currently held in the registry (GL/Impeller texture pairs in use).
     if textures > 0 {
-      text.push_str(&format!("{} TEX\n", textures));
+      text.push_str(&format!("\n{} TEX", textures));
     }
 
     pb.add_text(&text);
@@ -266,6 +266,21 @@ impl Stats {
     };
     let x = safe_area.origin.x + safe_area.size.width - PARA_WIDTH - 10.0;
     let y = safe_area.origin.y + 10.0;
+
+    // Darkening backdrop so the white text stays legible over light content. The
+    // paragraph is right-aligned in PARA_WIDTH, so its right edge sits at
+    // x + PARA_WIDTH and the box only needs to span the longest line.
+    let pad = 10.0;
+    let text_w = paragraph.get_longest_line_width();
+    let text_h = paragraph.get_height();
+    let bg = Rect::new(
+      Point::new(x + PARA_WIDTH - text_w - pad, y - pad),
+      Size::new(text_w + pad * 2.0, text_h + pad * 2.0),
+    );
+    let mut bg_paint = Paint::default();
+    bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
+    b.draw_rect(&bg, &bg_paint);
+
     b.draw_paragraph(&paragraph, Point::new(x, y));
   }
 }

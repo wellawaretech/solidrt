@@ -284,7 +284,7 @@ pub fn init_android_context() {
     log::error!("[alloy] SDL_GetAndroidJNIEnv returned null; ndk-context not initialized");
     return;
   }
-  let mut env = match unsafe { jni::JNIEnv::from_raw(env_ptr) } {
+  let env = match unsafe { jni::JNIEnv::from_raw(env_ptr) } {
     Ok(env) => env,
     Err(e) => {
       log::error!("[alloy] JNIEnv::from_raw failed: {e}");
