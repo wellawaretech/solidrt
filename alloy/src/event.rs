@@ -81,10 +81,13 @@ pub enum AlloyEvent {
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   TextInput { text: String },
   PowerStatus { info: sdl_utils::PowerInfo },
-  // Emitted when the on-screen keyboard visibility changes. SDL does not
-  // provide an event for this, so it is detected by polling
-  // SDL_ScreenKeyboardShown each loop iteration.
-  KeyboardVisibility { shown: bool },
+  // Emitted when the on-screen keyboard visibility or size changes. SDL does
+  // not provide an event for this, so it is detected by polling
+  // SDL_ScreenKeyboardShown and the platform-reported IME inset each loop
+  // iteration. `height` is the keyboard's overlap with the window in logical
+  // pixels (0 when hidden or unsupported); the window is fullscreen so it is
+  // not resized for the keyboard, and the app uses this to lift its content.
+  KeyboardVisibility { shown: bool, height: f32 },
   // delta_x / delta_y use browser convention: positive delta_y means
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.

@@ -34,6 +34,20 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
   0
 }
 
+// Receives the soft-keyboard (IME) inset height in pixels from
+// MainActivity.nativeKeyboardInset (Android UI thread) and stores it for the
+// event loop to pick up. The export lives in the cdylib so the symbol lands in
+// libmain.so; the env/class pointers are unused.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  px: core::ffi::c_int,
+) {
+  alloy::set_keyboard_inset_px(px as i32);
+}
+
 // --- End Android entry point ------------------------------
 
 #[derive(Clone, JsLifetime)]
@@ -327,11 +341,12 @@ fn ui_thread(
               });
             }
           }
-          alloy::AlloyEvent::KeyboardVisibility { shown } => {
+          alloy::AlloyEvent::KeyboardVisibility { shown, height } => {
             if let Some(eh) = current_exec_events.borrow().as_ref() {
               eh.exec(move |ctx| {
                 let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
                 obj.set("shown", shown).expect("set shown");
+                obj.set("height", height).expect("set height");
                 emit_event(&ctx, "keyboardVisibility", obj);
               });
             }

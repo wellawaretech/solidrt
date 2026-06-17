@@ -76,6 +76,7 @@
             android:alwaysRetainTaskState="true"
             android:screenOrientation="fullSensor"
             android:launchMode="singleInstance"
+            android:windowSoftInputMode="adjustNothing"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:preferMinimalPostProcessing="true"
             android:exported="true"

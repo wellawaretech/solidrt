@@ -1,7 +1,7 @@
-import type { LayoutProps } from "@solidrt/core"
+import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
-export interface WindowProps {
+export interface WindowProps extends PointerProps {
   children?: any
   title?: string
   fullscreen?: boolean
@@ -21,6 +21,18 @@ export function Window(props: WindowProps) {
       fullscreen={props.fullscreen}
       vsync={props.vsync}
       fps={props.fps}
+      onPointerEnter={props.onPointerEnter}
+      onPointerLeave={props.onPointerLeave}
+      onPointerDown={props.onPointerDown}
+      onPointerUp={props.onPointerUp}
+      onPointerMove={props.onPointerMove}
+      onWheel={props.onWheel}
+      onFocus={props.onFocus}
+      onBlur={props.onBlur}
+      onKeyDown={props.onKeyDown}
+      onKeyUp={props.onKeyUp}
+      onTextInput={props.onTextInput}
+      pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
         <d-rect color={props.style.backgroundColor} />

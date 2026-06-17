@@ -132,6 +132,7 @@ impl App {
     // Polled each loop iteration; transitions emit KeyboardVisibility so the
     // JS side can react (auto-blur on hide, layout adjustments on show).
     let mut prev_keyboard_shown = false;
+    let mut prev_keyboard_height = 0.0_f32;
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
@@ -235,9 +236,12 @@ impl App {
 
       if let Ok(video) = sdl_context.video() {
         let shown = video.text_input().is_screen_keyboard_shown(&window);
-        if shown != prev_keyboard_shown {
+        let scale = crate::sdl_utils::window_display_scale(&window);
+        let height = crate::keyboard_inset_px() as f32 / scale;
+        if shown != prev_keyboard_shown || height != prev_keyboard_height {
           prev_keyboard_shown = shown;
-          event_tx.send(AlloyEvent::KeyboardVisibility { shown }).ok();
+          prev_keyboard_height = height;
+          event_tx.send(AlloyEvent::KeyboardVisibility { shown, height }).ok();
         }
       }
 

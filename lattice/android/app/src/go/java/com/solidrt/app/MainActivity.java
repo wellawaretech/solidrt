@@ -3,6 +3,8 @@ package com.solidrt.app;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowInsets;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -23,10 +25,24 @@ public class MainActivity extends SDLActivity {
         };
     }
 
+    // Forwards the soft keyboard (IME) inset height in pixels to native. The
+    // window is fullscreen/edge-to-edge, so the OS will not resize for the
+    // keyboard; the app lifts its own content using this value instead.
+    private static native void nativeKeyboardInset(int px);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         extractAssets();
         super.onCreate(savedInstanceState);
+
+        // Report the IME inset to native whenever insets change (keyboard
+        // show/hide). Listens on the content view so it sees the insets before
+        // the SDL surface; returns them unconsumed so SDL still gets them.
+        View content = findViewById(android.R.id.content);
+        content.setOnApplyWindowInsetsListener((v, insets) -> {
+            nativeKeyboardInset(insets.getInsets(WindowInsets.Type.ime()).bottom);
+            return insets;
+        });
     }
 
     private void extractAssets() {

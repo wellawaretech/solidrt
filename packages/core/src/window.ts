@@ -121,6 +121,23 @@ export function windowFocused(): boolean {
   return focusedAccessor()
 }
 
+let keyboardHeightAccessor: (() => number) | undefined
+
+/**
+ * Height in logical pixels that the on-screen keyboard overlaps the window
+ * (0 when hidden or on platforms without a soft keyboard), as a reactive
+ * accessor. The window is not resized for the keyboard, so pad or lift content
+ * by this much to keep it above the keyboard.
+ */
+export function keyboardHeight(): number {
+  if (!keyboardHeightAccessor) {
+    let [height, setHeight] = createSignal(0)
+    on("keyboardVisibility", ({ height: h }: { height: number }) => setHeight(h ?? 0))
+    keyboardHeightAccessor = height
+  }
+  return keyboardHeightAccessor()
+}
+
 /**
  * Fires after layout has been computed for the current frame but before paint.
  * Setting properties that affect layout from this callback will be picked up
