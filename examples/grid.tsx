@@ -1,13 +1,7 @@
-import { createSignal } from "@solidjs/signals"
-import { onResize, render } from "@solidrt/core"
+import { render, safeArea } from "@solidrt/core"
 
-let [bottom, setBottom] = createSignal(0)
-let [right, setRight] = createSignal(0)
-
-onResize(({ width, height, safeArea }) => {
-  setBottom(Math.max(height - safeArea.bottom, 10))
-  setRight(Math.max(width - safeArea.right, 10))
-})
+let bottom = () => Math.max(safeArea().bottom, 10)
+let right = () => Math.max(safeArea().right, 10)
 
 function App() {
   return (

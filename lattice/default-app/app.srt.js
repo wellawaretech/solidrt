@@ -2043,6 +2043,9 @@ function createSignal(e, t) {
 function createMemo(e, t) {
   return accessor(computed(e, t));
 }
+function createEffect(e, t, n) {
+  effect(e, t.effect || t, t.error, { user: true, ...n });
+}
 function createRenderEffect(e, t, n) {
   effect(e, t, undefined, n);
 }
@@ -3315,7 +3318,7 @@ function attachWindow(_nodeId) {
         fn(t2, frame, refreshRate);
     }
     flush();
-    draw();
+    ffi.renderFrame();
   }
   onSettled(() => {
     unsubRefreshRate = on("displayRefreshRate", ({ hz }) => {
@@ -3533,67 +3536,40 @@ function render(code) {
 }
 // packages/core/src/camera.ts
 import { on as on2 } from "srt:events";
-
-// packages/core/src/camera-view.tsx
-function CameraView(props) {
-  let [texture, setTexture] = createSignal(undefined);
-  let cam;
-  let disposed = false;
-  openCamera({
-    camera: props.camera,
-    facing: props.facing,
-    width: props.width,
-    height: props.height,
-    scan: props.scan
-  }).then((opened) => {
-    if (disposed) {
-      opened.close();
-      return;
-    }
-    cam = opened;
-    if (props.onBarcode)
-      opened.onBarcode(props.onBarcode);
-    setTexture(opened.texture);
-    props.onReady?.(opened);
-  }).catch((e2) => props.onError?.(e2 instanceof Error ? e2 : new Error(String(e2))));
-  onCleanup(() => {
-    disposed = true;
-    cam?.close();
-    cam = undefined;
-  });
-  var _el$ = createElement("texture");
-  effect3(() => ({
-    e: texture(),
-    t: props.width,
-    a: props.height
-  }), ({
-    e: e2,
-    t: t2,
-    a: a2
-  }, _p$) => {
-    e2 !== _p$?.e && setProp(_el$, "src", e2, _p$?.e);
-    t2 !== _p$?.t && setProp(_el$, "width", t2, _p$?.t);
-    a2 !== _p$?.a && setProp(_el$, "height", a2, _p$?.a);
-  });
-  return _el$;
-}
-
-// packages/core/src/camera.ts
 function listCameras() {
   return camera.listCameras();
 }
 function onDeviceChange(callback) {
   return on2("cameraDeviceChange", callback);
 }
-async function openCamera(options = {}) {
-  let opened = await camera.open(options);
-  return {
-    texture: opened.texture,
-    width: opened.width,
-    height: opened.height,
-    onBarcode: (callback) => camera.setBarcodeCallback(opened.handle, callback),
-    close: () => camera.close(opened.handle)
-  };
+function createCamera(options = {}) {
+  let [texture, setTexture] = createSignal(undefined);
+  let [width, setWidth] = createSignal(undefined);
+  let [height, setHeight] = createSignal(undefined);
+  let [barcode, setBarcode] = createSignal(undefined);
+  let [error, setError] = createSignal(undefined);
+  let handle;
+  let disposed = false;
+  camera.open(options).then((opened) => {
+    if (disposed) {
+      camera.close(opened.handle);
+      return;
+    }
+    handle = opened.handle;
+    if (options.scan)
+      camera.setBarcodeCallback(opened.handle, (result) => setBarcode(result));
+    setTexture(opened.texture);
+    setWidth(opened.width);
+    setHeight(opened.height);
+  }).catch((e2) => setError(e2 instanceof Error ? e2 : new Error(String(e2))));
+  onCleanup(() => {
+    disposed = true;
+    if (handle !== undefined) {
+      camera.close(handle);
+      handle = undefined;
+    }
+  });
+  return { texture, width, height, barcode, error };
 }
 
 // lattice/default-app/app.tsx
@@ -4138,6 +4114,32 @@ function Button(props) {
   });
   return _el$;
 }
+function CameraView(props) {
+  let cam = createCamera({
+    width: props.width,
+    scan: props.scan
+  });
+  createEffect(() => cam.barcode(), (b2) => {
+    if (b2)
+      props.onBarcode?.(b2);
+  });
+  createEffect(() => cam.error(), (e2) => {
+    if (e2)
+      props.onError?.(e2);
+  });
+  var _el$4 = createElement("texture");
+  effect3(() => ({
+    e: cam.texture(),
+    t: props.width
+  }), ({
+    e: e2,
+    t: t2
+  }, _p$) => {
+    e2 !== _p$?.e && setProp(_el$4, "src", e2, _p$?.e);
+    t2 !== _p$?.t && setProp(_el$4, "width", t2, _p$?.t);
+  });
+  return _el$4;
+}
 function App() {
   let dev = devAvailable;
   let [hasCamera, setHasCamera] = createSignal(listCameras().length > 0);
@@ -4170,23 +4172,23 @@ function App() {
     setScanning(false);
     connect(normalizeAddress(data));
   };
-  var _el$4 = createElement("window"), _el$5 = createElement("d-rect"), _el$6 = createElement("view"), _el$7 = createElement("view"), _el$8 = createElement("text"), _el$9 = createElement("view");
-  insertNode(_el$4, _el$5);
-  insertNode(_el$4, _el$6);
-  setProp(_el$4, "title", "solidrt-go");
-  setProp(_el$5, "color", "#111");
-  insertNode(_el$6, _el$7);
-  setProp(_el$6, "flexGrow", 1);
-  setProp(_el$6, "justifyContent", "center");
-  setProp(_el$6, "alignItems", "center");
-  setProp(_el$6, "flexDirection", "column-reverse");
-  setProp(_el$6, "gap", 40);
+  var _el$5 = createElement("window"), _el$6 = createElement("d-rect"), _el$7 = createElement("view"), _el$8 = createElement("view"), _el$9 = createElement("text"), _el$0 = createElement("view");
+  insertNode(_el$5, _el$6);
+  insertNode(_el$5, _el$7);
+  setProp(_el$5, "title", "solidrt-go");
+  setProp(_el$6, "color", "#111");
   insertNode(_el$7, _el$8);
-  insertNode(_el$7, _el$9);
-  setProp(_el$7, "flexDirection", "column");
+  setProp(_el$7, "flexGrow", 1);
+  setProp(_el$7, "justifyContent", "center");
   setProp(_el$7, "alignItems", "center");
-  setProp(_el$7, "gap", 16);
-  insert(_el$7, createComponent2(Show, {
+  setProp(_el$7, "flexDirection", "column-reverse");
+  setProp(_el$7, "gap", 40);
+  insertNode(_el$8, _el$9);
+  insertNode(_el$8, _el$0);
+  setProp(_el$8, "flexDirection", "column");
+  setProp(_el$8, "alignItems", "center");
+  setProp(_el$8, "gap", 16);
+  insert(_el$8, createComponent2(Show, {
     get when() {
       return scanning();
     },
@@ -4201,12 +4203,12 @@ function App() {
         }
       });
     }
-  }), _el$8);
-  setProp(_el$8, "color", "lightgrey");
-  insert(_el$8, status);
-  setProp(_el$9, "flexDirection", "row");
-  setProp(_el$9, "gap", 12);
-  insert(_el$9, (() => {
+  }), _el$9);
+  setProp(_el$9, "color", "lightgrey");
+  insert(_el$9, status);
+  setProp(_el$0, "flexDirection", "row");
+  setProp(_el$0, "gap", 12);
+  insert(_el$0, (() => {
     var _c$ = memo2(() => !!(idle() && !scanning() && canDiscover));
     return () => _c$() && createComponent2(Button, {
       label: "Discover",
@@ -4214,7 +4216,7 @@ function App() {
       onTap: () => discover()
     });
   })(), null);
-  insert(_el$9, (() => {
+  insert(_el$0, (() => {
     var _c$2 = memo2(() => !!(idle() && !scanning() && dev && hasCamera()));
     return () => _c$2() && createComponent2(Button, {
       label: "Scan QR",
@@ -4222,7 +4224,7 @@ function App() {
       onTap: startScan
     });
   })(), null);
-  insert(_el$9, (() => {
+  insert(_el$0, (() => {
     var _c$3 = memo2(() => !!(idle() && !scanning() && isAndroid));
     return () => _c$3() && createComponent2(Button, {
       label: "Connect (adb)",
@@ -4230,7 +4232,7 @@ function App() {
       onTap: () => connect(LOOPBACK)
     });
   })(), null);
-  insert(_el$9, (() => {
+  insert(_el$0, (() => {
     var _c$4 = memo2(() => !!scanning());
     return () => _c$4() && createComponent2(Button, {
       label: "Cancel",
@@ -4238,7 +4240,7 @@ function App() {
       onTap: () => setScanning(false)
     });
   })(), null);
-  insert(_el$9, (() => {
+  insert(_el$0, (() => {
     var _c$5 = memo2(() => !!busy());
     return () => _c$5() && createComponent2(Button, {
       label: "Cancel",
@@ -4246,7 +4248,7 @@ function App() {
       onTap: () => stop()
     });
   })(), null);
-  insert(_el$9, (() => {
+  insert(_el$0, (() => {
     var _c$6 = memo2(() => !!connected());
     return () => _c$6() && createComponent2(Button, {
       label: "Disconnect",
@@ -4254,19 +4256,19 @@ function App() {
       onTap: () => stop()
     });
   })(), null);
-  insert(_el$7, createComponent2(Show, {
+  insert(_el$8, createComponent2(Show, {
     get when() {
       return memo2(() => !!(idle() && !scanning()))() && recents().length > 0;
     },
     get children() {
-      var _el$0 = createElement("view"), _el$1 = createElement("text");
-      insertNode(_el$0, _el$1);
-      setProp(_el$0, "flexDirection", "column");
-      setProp(_el$0, "alignItems", "center");
-      setProp(_el$0, "gap", 8);
-      insertNode(_el$1, createTextNode(`recent`));
-      setProp(_el$1, "color", "grey");
-      insert(_el$0, createComponent2(For, {
+      var _el$1 = createElement("view"), _el$10 = createElement("text");
+      insertNode(_el$1, _el$10);
+      setProp(_el$1, "flexDirection", "column");
+      setProp(_el$1, "alignItems", "center");
+      setProp(_el$1, "gap", 8);
+      insertNode(_el$10, createTextNode(`recent`));
+      setProp(_el$10, "color", "grey");
+      insert(_el$1, createComponent2(For, {
         get each() {
           return recents();
         },
@@ -4276,10 +4278,10 @@ function App() {
           onTap: () => connect(addr)
         })
       }), null);
-      return _el$0;
+      return _el$1;
     }
   }), null);
-  insert(_el$6, createComponent2(Logo, {}), null);
-  return _el$4;
+  insert(_el$7, createComponent2(Logo, {}), null);
+  return _el$5;
 }
 render(() => createComponent2(App, {}));

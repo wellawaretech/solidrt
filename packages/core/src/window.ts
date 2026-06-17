@@ -1,4 +1,4 @@
-import { onCleanup, onSettled, flush } from "@solidjs/signals"
+import { createSignal, onCleanup, onSettled, flush } from "@solidjs/signals"
 import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
@@ -60,6 +60,71 @@ export function onResize(fn: (data: ResizeEvent) => void) {
   let unsubscribe = on("resize", fn)
   onCleanup(unsubscribe)
   return unsubscribe
+}
+
+// ------ Reactive window state ----------------
+
+// Singleton accessors over the same events as onResize / onWindowFocus. There
+// is one window, so these are bare accessors rather than a createX instance.
+// Lazily subscribed on first read (resize is sticky, so the first read sees the
+// current value); app-lifetime, so no onCleanup.
+
+let sizeAccessor: (() => { width: number; height: number }) | undefined
+let safeAreaAccessor: (() => SafeArea) | undefined
+let displayScaleAccessor: (() => number) | undefined
+
+function ensureResizeState() {
+  if (sizeAccessor) return
+  let [size, setSize] = createSignal({ width: 0, height: 0 })
+  let [safe, setSafe] = createSignal<SafeArea>({ top: 0, left: 0, right: 0, bottom: 0 })
+  let [scale, setScale] = createSignal(1)
+  on("resize", (e: ResizeEvent) => {
+    setSize({ width: e.width, height: e.height })
+    // safeArea() exposes all four as insets (distance from their edge), like CSS
+    // env(safe-area-inset-*). The raw event still carries bottom/right as
+    // absolute edges, so convert here until the event itself is normalized.
+    setSafe({
+      top: e.safeArea.top,
+      left: e.safeArea.left,
+      bottom: e.height - e.safeArea.bottom,
+      right: e.width - e.safeArea.right,
+    })
+    setScale(e.displayScale)
+  })
+  sizeAccessor = size
+  safeAreaAccessor = safe
+  displayScaleAccessor = scale
+}
+
+/** Current window size, as a reactive accessor. */
+export function windowSize(): { width: number; height: number } {
+  ensureResizeState()
+  return sizeAccessor!()
+}
+
+/** Current safe-area insets, as a reactive accessor. */
+export function safeArea(): SafeArea {
+  ensureResizeState()
+  return safeAreaAccessor!()
+}
+
+/** Current display scale (device pixel ratio), as a reactive accessor. */
+export function displayScale(): number {
+  ensureResizeState()
+  return displayScaleAccessor!()
+}
+
+let focusedAccessor: (() => boolean) | undefined
+
+/** Whether the window currently has focus, as a reactive accessor. */
+export function windowFocused(): boolean {
+  if (!focusedAccessor) {
+    let [focused, setFocused] = createSignal(true)
+    on("windowFocus", () => setFocused(true))
+    on("windowBlur", () => setFocused(false))
+    focusedAccessor = focused
+  }
+  return focusedAccessor()
 }
 
 /**

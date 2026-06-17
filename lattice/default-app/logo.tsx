@@ -1,4 +1,4 @@
-import { onFrame, onResize } from "@solidrt/core"
+import { onFrame, windowSize } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
 const EXPLODE_DIST = 3
@@ -292,11 +292,7 @@ function TangramLetter(props: { letter: Letter; colors: LogoColors; delay: numbe
 const LOGO_HEIGHT = Math.max(...letters.map((l) => l.height))
 
 export function Logo() {
-  let [scale, setScale] = createSignal(1)
-
-  onResize(({ width }) => {
-    setScale((width * 1.12) / 1500)
-  })
+  let scale = () => (windowSize().width * 1.12) / 1500
 
   return (
     <view justifyContent="center" alignItems="center" width={1500} height={LOGO_HEIGHT * scale()} scale={scale()}>

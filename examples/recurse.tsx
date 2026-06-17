@@ -1,4 +1,4 @@
-import { onFrame, onResize, onWindowBlur, onWindowFocus, render } from "@solidrt/core"
+import { onFrame, render, safeArea, windowSize } from "@solidrt/core"
 import { createSignal } from "@solidjs/signals"
 
 // Recursion test. 
@@ -10,7 +10,7 @@ const DEPTH = 25
 
 let rad = (n: number) => (n / 360) * Math.PI * 2
 let [rotate, setRotate] = createSignal(0)
-let [size, setSize] = createSignal(0)
+let size = () => Math.min(windowSize().width, windowSize().height)
 
 function Nested(props: { depth: number }) {
   if (props.depth === 0) return
@@ -34,14 +34,8 @@ function Nested(props: { depth: number }) {
   )
 }
 
-let [bottom, setBottom] = createSignal(0)
-let [right, setRight] = createSignal(0)
-
-onResize(({ width, height, safeArea }) => {
-  setSize(Math.min(width, height))
-  setBottom(Math.max(height - safeArea.bottom, 10))
-  setRight(Math.max(width - safeArea.right, 10))
-})
+let bottom = () => Math.max(safeArea().bottom, 10)
+let right = () => Math.max(safeArea().right, 10)
 
 function App() {
   let running = true
