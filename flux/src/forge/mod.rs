@@ -10,4 +10,5 @@
 pub mod http;
 pub mod p2p;
 pub mod sqlite;
+pub mod subprocess;
 pub mod websocket;
