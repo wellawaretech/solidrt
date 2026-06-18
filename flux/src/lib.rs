@@ -9,6 +9,7 @@ pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
 pub use plugins::body::{attach_body, JsBytes, JsonValue};
+pub use plugins::fetch::JsResponseData;
 pub use plugins::js_error::JsResult;
 pub use plugins::flux::events::{emit_event, has_listeners, register_listener};
 pub use plugins::flux::process::ProcessArgs;

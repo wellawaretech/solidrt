@@ -69,7 +69,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           })
           .unwrap_or_default();
 
-        Ok(with_pending(&ctx, async move { do_fetch(client, &method, &url, headers, body).await }))
+        Ok(with_pending(&ctx, async move { do_fetch(client, &method, &url, headers, body).await.map(JsResponseData) }))
       },
     ),
   )
@@ -78,8 +78,17 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   globals.set("fetch", fetch_fn).expect("set fetch global");
 }
 
-impl<'js> IntoJs<'js> for ResponseData {
+/// Marshalling newtype over the engine-free `forge::fetch::ResponseData`, so its
+/// `IntoJs` (building a JS `Response`) stays in this crate once forge is split
+/// out - a foreign `IntoJs` on a foreign type would otherwise trip the orphan
+/// rule. Public because the lattice dev-server proxy also returns it from its
+/// own `fetch`; both the `fetch` global and that proxy `.map(JsResponseData)`
+/// the bare `do_fetch` result.
+pub struct JsResponseData(pub ResponseData);
+
+impl<'js> IntoJs<'js> for JsResponseData {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    response_from_parts(ctx, self.body, self.status, self.status_text, self.url, self.headers)?.into_js(ctx)
+    let r = self.0;
+    response_from_parts(ctx, r.body, r.status, r.status_text, r.url, r.headers)?.into_js(ctx)
   }
 }

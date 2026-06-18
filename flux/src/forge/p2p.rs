@@ -155,9 +155,9 @@ impl Endpoint {
 /// One known transport address for a peer, as reported by `conn_info`.
 pub struct AddrEntry {
   /// `"relay"`, `"direct"` (an IP path), or `"custom"`.
-  pub(crate) kind: &'static str,
-  pub(crate) addr: String,
-  pub(crate) active: bool,
+  pub kind: &'static str,
+  pub addr: String,
+  pub active: bool,
 }
 
 /// A snapshot of how a peer connection is currently carried. `path` is
@@ -165,8 +165,8 @@ pub struct AddrEntry {
 /// active), `"mixed"` (both), or `"none"`; `addrs` lists every known transport
 /// address.
 pub struct ConnInfo {
-  pub(crate) path: &'static str,
-  pub(crate) addrs: Vec<AddrEntry>,
+  pub path: &'static str,
+  pub addrs: Vec<AddrEntry>,
 }
 
 /// A single bidirectional p2p stream: a byte duplex. Reads are pull-based; writes

@@ -38,19 +38,19 @@ pub struct CommandSpec {
 
 /// The buffered result of a finished child (`output()`).
 pub struct CommandOutput {
-  pub(crate) code: Option<i32>,
-  pub(crate) signal: Option<String>,
-  pub(crate) stdout: Vec<u8>,
-  pub(crate) stderr: Vec<u8>,
-  pub(crate) as_bytes: bool,
+  pub code: Option<i32>,
+  pub signal: Option<String>,
+  pub stdout: Vec<u8>,
+  pub stderr: Vec<u8>,
+  pub as_bytes: bool,
 }
 
 /// The exit status of a spawned child (the `output()` shape without the buffered
 /// streams). Cloneable so it can be published to multiple `status()` awaiters.
 #[derive(Clone, Default)]
 pub struct StatusData {
-  pub(crate) code: Option<i32>,
-  pub(crate) signal: Option<String>,
+  pub code: Option<i32>,
+  pub signal: Option<String>,
 }
 
 impl CommandSpec {

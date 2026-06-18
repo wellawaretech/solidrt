@@ -11,9 +11,9 @@
 /// `"directory"`, `"symlink"`, or `"other"`; `mtime_ms` is the modification time
 /// in milliseconds since the Unix epoch, absent if the platform/file has none.
 pub struct StatInfo {
-  pub(crate) size: u64,
-  pub(crate) file_type: &'static str,
-  pub(crate) mtime_ms: Option<i64>,
+  pub size: u64,
+  pub file_type: &'static str,
+  pub mtime_ms: Option<i64>,
 }
 
 /// Read a file's whole contents.

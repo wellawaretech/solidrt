@@ -163,9 +163,9 @@ impl P2pEndpoint {
     &self,
     ctx: Ctx<'js>,
     id: String,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ConnInfo>>>> {
+  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<JsConnInfo>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.conn_info(id).await }))
+    Ok(with_pending(&ctx, async move { inner.conn_info(id).await.map(JsConnInfo) }))
   }
 
   /// Close the endpoint, ending any `accept` iteration.
@@ -266,18 +266,26 @@ impl<'js> IntoJs<'js> for ReadStep {
   }
 }
 
-impl<'js> IntoJs<'js> for ConnInfo {
+// Marshalling newtype over the engine-free `forge::p2p::ConnInfo`, so its
+// `IntoJs` stays in this crate once forge is split out (a foreign `IntoJs` on a
+// foreign type would otherwise trip the orphan rule). The `connInfo` call site
+// `.map(JsConnInfo)`s the bare forge result.
+// `pub` (not re-exported) only to satisfy `private_interfaces`: it appears in the
+// rquickjs `#[methods]` return type of `conn_info`, which is a `pub fn`.
+pub struct JsConnInfo(ConnInfo);
+
+impl<'js> IntoJs<'js> for JsConnInfo {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     let addrs = Array::new(ctx.clone())?;
-    for (i, entry) in self.addrs.into_iter().enumerate() {
+    for (i, entry) in self.0.addrs.into_iter().enumerate() {
       let e = Object::new(ctx.clone())?;
       e.set("kind", entry.kind)?;
       e.set("addr", entry.addr)?;
       e.set("active", entry.active)?;
       addrs.set(i, e)?;
     }
-    obj.set("path", self.path)?;
+    obj.set("path", self.0.path)?;
     obj.set("addrs", addrs)?;
     Ok(obj.into_value())
   }

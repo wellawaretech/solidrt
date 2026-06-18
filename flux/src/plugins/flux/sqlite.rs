@@ -113,10 +113,10 @@ impl Database {
     ctx: Ctx<'js>,
     sql: String,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<RunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
     let conn = self.conn.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, false).await }))
+    Ok(with_pending(&ctx, async move { conn.run(sql, bound, false).await.map(JsRunResult) }))
   }
 
   /// Run a batch of statements (separated by `;`) with no parameters. Intended
@@ -137,10 +137,10 @@ impl Database {
     &self,
     ctx: Ctx<'js>,
     statements: Array<'js>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<TxResults>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsTxResults>>>> {
     let parsed = extract_statements(statements).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let conn = self.conn.clone();
-    Ok(with_pending(&ctx, async move { conn.transaction(parsed).await }))
+    Ok(with_pending(&ctx, async move { conn.transaction(parsed).await.map(JsTxResults) }))
   }
 
   /// Close the connection, releasing it. Safe to call more than once; later
@@ -173,11 +173,11 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Rows>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRows>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.query(sql, bound, true).await }))
+    Ok(with_pending(&ctx, async move { conn.query(sql, bound, true).await.map(JsRows) }))
   }
 
   /// The first matching row as a plain object, or `undefined` if there are none.
@@ -185,11 +185,11 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<FirstRow>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsFirstRow>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.get(sql, bound, true).await }))
+    Ok(with_pending(&ctx, async move { conn.get(sql, bound, true).await.map(JsFirstRow) }))
   }
 
   /// Execute as a write. Resolves to `{ changes, lastInsertRowid }`.
@@ -197,11 +197,11 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: Opt<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<RunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, true).await }))
+    Ok(with_pending(&ctx, async move { conn.run(sql, bound, true).await.map(JsRunResult) }))
   }
 }
 
@@ -253,9 +253,22 @@ fn js_to_sql(v: Value<'_>) -> Result<SqlValue, String> {
   }
 }
 
-impl<'js> IntoJs<'js> for SqlValue {
+// Marshalling newtypes over the engine-free `forge::sqlite` result types. The
+// `IntoJs` impls live on these wrappers, not on the forge types directly, so
+// that once forge is its own crate, converting its types to JS stays inside this
+// crate rather than tripping the orphan rule (a foreign `IntoJs` on a foreign
+// type). The forge methods return the bare types; call sites `.map(JsX)` them.
+struct JsSqlValue(SqlValue);
+// `pub` (not re-exported) only to satisfy `private_interfaces`: these appear in
+// the rquickjs `#[methods]` return types, which are `pub fn`s.
+pub struct JsRows(Rows);
+pub struct JsFirstRow(FirstRow);
+pub struct JsRunResult(RunResult);
+pub struct JsTxResults(TxResults);
+
+impl<'js> IntoJs<'js> for JsSqlValue {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self {
+    match self.0 {
       SqlValue::Null => Ok(Value::new_null(ctx.clone())),
       SqlValue::Int(i) => i.into_js(ctx),
       SqlValue::Real(f) => f.into_js(ctx),
@@ -269,44 +282,44 @@ impl<'js> IntoJs<'js> for SqlValue {
 fn row_to_object<'js>(ctx: &Ctx<'js>, cells: Vec<(String, SqlValue)>) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
   for (name, val) in cells {
-    obj.set(name, val)?;
+    obj.set(name, JsSqlValue(val))?;
   }
   Ok(obj)
 }
 
-impl<'js> IntoJs<'js> for Rows {
+impl<'js> IntoJs<'js> for JsRows {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let arr = Array::new(ctx.clone())?;
-    for (idx, row) in self.0.into_iter().enumerate() {
+    for (idx, row) in self.0 .0.into_iter().enumerate() {
       arr.set(idx, row_to_object(ctx, row)?)?;
     }
     Ok(arr.into_value())
   }
 }
 
-impl<'js> IntoJs<'js> for FirstRow {
+impl<'js> IntoJs<'js> for JsFirstRow {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self.0 {
+    match self.0 .0 {
       Some(cells) => Ok(row_to_object(ctx, cells)?.into_value()),
       None => Ok(Value::new_undefined(ctx.clone())),
     }
   }
 }
 
-impl<'js> IntoJs<'js> for RunResult {
+impl<'js> IntoJs<'js> for JsRunResult {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("changes", self.changes)?;
-    obj.set("lastInsertRowid", self.last_insert_rowid)?;
+    obj.set("changes", self.0.changes)?;
+    obj.set("lastInsertRowid", self.0.last_insert_rowid)?;
     Ok(obj.into_value())
   }
 }
 
-impl<'js> IntoJs<'js> for TxResults {
+impl<'js> IntoJs<'js> for JsTxResults {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let arr = Array::new(ctx.clone())?;
-    for (idx, r) in self.0.into_iter().enumerate() {
-      arr.set(idx, r)?;
+    for (idx, r) in self.0 .0.into_iter().enumerate() {
+      arr.set(idx, JsRunResult(r))?;
     }
     Ok(arr.into_value())
   }

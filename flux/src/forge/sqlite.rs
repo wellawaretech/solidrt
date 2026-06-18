@@ -33,19 +33,19 @@ pub(crate) enum SqlValue {
 }
 
 /// Result rows: each row is a list of (column name, value) pairs.
-pub struct Rows(pub(crate) Vec<Vec<(String, SqlValue)>>);
+pub struct Rows(pub Vec<Vec<(String, SqlValue)>>);
 
 /// A single row, or none. Returned by `get`.
-pub struct FirstRow(pub(crate) Option<Vec<(String, SqlValue)>>);
+pub struct FirstRow(pub Option<Vec<(String, SqlValue)>>);
 
 /// The outcome of a write: rows changed and the last inserted rowid.
 pub struct RunResult {
-  pub(crate) changes: i64,
-  pub(crate) last_insert_rowid: i64,
+  pub changes: i64,
+  pub last_insert_rowid: i64,
 }
 
 /// One RunResult per statement in a transaction batch.
-pub struct TxResults(pub(crate) Vec<RunResult>);
+pub struct TxResults(pub Vec<RunResult>);
 
 /// A command sent from a JS call to the connection thread. Each variant carries
 /// a oneshot sender the thread replies on.

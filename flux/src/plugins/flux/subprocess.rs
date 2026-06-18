@@ -37,20 +37,27 @@ use crate::plugins::marshal::with_pending;
 //   timeoutMs kill the child if it has not exited within this many ms
 //   encoding  "buffer" -> stdout/stderr as Uint8Array; default utf8 strings
 
-impl<'js> IntoJs<'js> for StatusData {
+// Marshalling newtypes over the engine-free `forge::subprocess` result types,
+// so the `IntoJs` conversions stay in this crate once forge is split out (a
+// foreign `IntoJs` on a foreign type would otherwise trip the orphan rule). Call
+// sites `.map(JsX)` the bare forge results.
+struct JsStatusData(StatusData);
+struct JsCommandOutput(CommandOutput);
+
+impl<'js> IntoJs<'js> for JsStatusData {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    set_status(&obj, ctx, self.code, self.signal)?;
+    set_status(&obj, ctx, self.0.code, self.0.signal)?;
     Ok(obj.into_value())
   }
 }
 
-impl<'js> IntoJs<'js> for CommandOutput {
+impl<'js> IntoJs<'js> for JsCommandOutput {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    set_status(&obj, ctx, self.code, self.signal)?;
-    obj.set("stdout", bytes_to_js(ctx, self.stdout, self.as_bytes)?)?;
-    obj.set("stderr", bytes_to_js(ctx, self.stderr, self.as_bytes)?)?;
+    set_status(&obj, ctx, self.0.code, self.0.signal)?;
+    obj.set("stdout", bytes_to_js(ctx, self.0.stdout, self.0.as_bytes)?)?;
+    obj.set("stderr", bytes_to_js(ctx, self.0.stderr, self.0.as_bytes)?)?;
     Ok(obj.into_value())
   }
 }
@@ -143,7 +150,7 @@ fn build_command<'js>(
       let spec = spec.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let spec = spec.clone();
-        Ok(with_pending(&ctx, async move { spec.run_output().await }))
+        Ok(with_pending(&ctx, async move { spec.run_output().await.map(JsCommandOutput) }))
       }
     }),
   )
@@ -262,7 +269,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let child = child.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let child = child.clone();
-        Ok(with_pending(&ctx, async move { Ok::<StatusData, String>(child.status().await) }))
+        Ok(with_pending(&ctx, async move { Ok::<JsStatusData, String>(JsStatusData(child.status().await)) }))
       }
     }),
   )

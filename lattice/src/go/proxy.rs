@@ -15,7 +15,7 @@ use flux::rquickjs::{
   promise::Promised,
   Array, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
 };
-use flux::{attach_body, do_fetch, JsResult};
+use flux::{attach_body, do_fetch, JsResponseData, JsResult};
 use std::io;
 use std::rc::Rc;
 
@@ -329,7 +329,7 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String, http: bool) {
           let proxy_url = (*proxy_url).clone();
           let client = state.client.clone();
           Ok(Promised(async move {
-            JsResult(do_fetch(client, &method, &proxy_url, headers, body.map(reqwest::Body::from)).await)
+            JsResult(do_fetch(client, &method, &proxy_url, headers, body.map(reqwest::Body::from)).await.map(JsResponseData))
           }))
         }
       }),

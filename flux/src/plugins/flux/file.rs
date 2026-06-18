@@ -9,12 +9,18 @@ use crate::plugins::marshal::with_pending;
 // Marshalling for the `file()` reference: forward to the engine-free
 // `forge::fs` disk operations and encode their results back to JS.
 
-impl<'js> IntoJs<'js> for fs::StatInfo {
+// Marshalling newtype over the engine-free `forge::fs::StatInfo`, so its
+// `IntoJs` stays in this crate once forge is split out (a foreign `IntoJs` on a
+// foreign type would otherwise trip the orphan rule). The `stat` call site
+// `.map(JsStatInfo)`s the bare forge result.
+struct JsStatInfo(fs::StatInfo);
+
+impl<'js> IntoJs<'js> for JsStatInfo {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("size", self.size)?;
-    obj.set("type", self.file_type)?;
-    if let Some(m) = self.mtime_ms {
+    obj.set("size", self.0.size)?;
+    obj.set("type", self.0.file_type)?;
+    if let Some(m) = self.0.mtime_ms {
       obj.set("mtime", m)?;
     }
     Ok(obj.into_value())
@@ -66,7 +72,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::stat(&path).await }))
+        Ok(with_pending(&ctx, async move { fs::stat(&path).await.map(JsStatInfo) }))
       }
     }),
   )
