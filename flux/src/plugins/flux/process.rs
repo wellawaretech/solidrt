@@ -1,11 +1,12 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, JsLifetime, Object};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use super::events::register_listener;
+use super::events::{emit_event, has_listeners, register_listener};
+use crate::forge::process::{arch, platform, rss, SignalStream};
+use crate::logger::CtxLogger;
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -19,7 +20,8 @@ use super::events::register_listener;
 // receives the signal name. The OS watcher behind a signal is a long-lived
 // spawned task, so it is torn down once the signal's last listener is gone
 // (a fired once(), or the final unsubscribe followed by a delivery) - otherwise
-// it would keep the engine from ever going idle.
+// it would keep the engine from ever going idle. The OS-specific signal source
+// lives in `forge::process::SignalStream`; this layer owns the spawn + bus.
 
 // flux:process also exposes the process argument vector:
 //
@@ -31,52 +33,18 @@ use super::events::register_listener;
 #[derive(Clone, JsLifetime, Default)]
 pub struct ProcessArgs(#[qjs(skip_trace)] pub Vec<String>);
 
-// flux:process also exposes the host OS and CPU architecture:
+// flux:process also exposes the host OS and CPU architecture (platform/arch) and
+// current-process memory usage (Node/Bun parity):
 //
-//   import { platform, arch } from "flux:process"
-
-/// The host OS ("darwin", "win32", "linux", "android", ...).
-pub fn platform() -> &'static str {
-  match std::env::consts::OS {
-    "macos" => "darwin",
-    "windows" => "win32",
-    other => other,
-  }
-}
-
-/// The CPU architecture ("x64", "arm64", ...).
-pub fn arch() -> &'static str {
-  match std::env::consts::ARCH {
-    "x86_64" => "x64",
-    "aarch64" => "arm64",
-    "x86" => "ia32",
-    other => other,
-  }
-}
-
-// flux:process also exposes current-process memory usage (Node/Bun parity):
-//
-//   import { memoryUsage } from "flux:process"
+//   import { platform, arch, memoryUsage } from "flux:process"
 //   memoryUsage() // { rss }  - resident set size in bytes
 //
 // Node returns { rss, heapTotal, heapUsed, external, arrayBuffers }; we expose
 // rss for now (the headline figure). A companion cpuUsage() is deferred until we
 // settle on a portable user/system CPU-time split (getrusage / GetProcessTimes).
 fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
-  let mut system = System::new_with_specifics(RefreshKind::nothing());
-  let mut rss = 0u64;
-  if let Ok(pid) = sysinfo::get_current_pid() {
-    system.refresh_processes_specifics(
-      ProcessesToUpdate::Some(&[pid]),
-      true,
-      ProcessRefreshKind::nothing().with_memory(),
-    );
-    if let Some(proc) = system.process(pid) {
-      rss = proc.memory();
-    }
-  }
   let obj = Object::new(ctx)?;
-  obj.set("rss", rss as f64)?;
+  obj.set("rss", rss() as f64)?;
   Ok(obj)
 }
 
@@ -128,45 +96,20 @@ fn once_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rqu
   register_listener(&ctx, signal, callback, true)
 }
 
-const KNOWN_SIGNALS: &[&str] = &["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
-
 // Installs a once-per-context OS watcher for `signal` that emits the signal name
 // through the event bus on each delivery, stopping when the signal has no more
-// listeners. Unknown signal names install no watcher (their listeners simply
-// never fire).
+// listeners. The OS source (and the unix vs non-unix split) lives in
+// `forge::process::SignalStream`; an unopenable signal (unknown name, unsupported
+// on this platform, install failure) logs and installs nothing.
 fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
-  use crate::logger::CtxLogger;
-
-  if !KNOWN_SIGNALS.contains(&signal) {
-    ctx.logger().error(&format!("[flux:process] unrecognized signal: {signal}"));
-    return;
-  }
   let installed = ctx.userdata::<InstalledSignals>().expect("installed signals userdata");
   if installed.0.borrow().contains(signal) {
     return;
   }
-  install_watcher(ctx, signal, &installed);
-}
-
-#[cfg(unix)]
-fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
-  use super::events::{emit_event, has_listeners};
-  use crate::logger::CtxLogger;
-  use tokio::signal::unix::SignalKind;
-
-  let kind = match signal {
-    "SIGINT" => SignalKind::interrupt(),
-    "SIGTERM" => SignalKind::terminate(),
-    "SIGHUP" => SignalKind::hangup(),
-    "SIGQUIT" => SignalKind::quit(),
-    "SIGUSR1" => SignalKind::user_defined1(),
-    "SIGUSR2" => SignalKind::user_defined2(),
-    _ => unreachable!(),
-  };
-  let mut stream = match tokio::signal::unix::signal(kind) {
+  let mut stream = match SignalStream::open(signal) {
     Ok(stream) => stream,
-    Err(e) => {
-      ctx.logger().error(&format!("[flux:process] failed to install {signal} handler: {e}"));
+    Err(msg) => {
+      ctx.logger().error(&format!("[flux:process] {msg}"));
       return;
     }
   };
@@ -175,7 +118,7 @@ fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
   let name = signal.to_string();
   let ctx_cb = ctx.clone();
   ctx.spawn(async move {
-    while stream.recv().await.is_some() {
+    while stream.recv().await {
       emit_event(&ctx_cb, &name, name.clone());
       // A fired once() listener is pruned by the bus; if no listeners remain,
       // stop watching so the engine can go idle.
@@ -185,36 +128,6 @@ fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
     }
     if let Some(installed) = ctx_cb.userdata::<InstalledSignals>() {
       installed.0.borrow_mut().remove(&name);
-    }
-  });
-}
-
-// On non-Unix platforms only SIGINT (Ctrl+C) is supported via tokio's ctrl_c().
-#[cfg(not(unix))]
-fn install_watcher(ctx: &Ctx<'_>, signal: &str, installed: &InstalledSignals) {
-  use super::events::{emit_event, has_listeners};
-  use crate::logger::CtxLogger;
-
-  if signal != "SIGINT" {
-    ctx.logger().error(&format!("[flux:process] unsupported signal on this platform: {signal}"));
-    return;
-  }
-  installed.0.borrow_mut().insert(signal.to_string());
-
-  let ctx_cb = ctx.clone();
-  ctx.spawn(async move {
-    loop {
-      if let Err(e) = tokio::signal::ctrl_c().await {
-        ctx_cb.logger().error(&format!("[flux:process] failed to install SIGINT handler: {e}"));
-        break;
-      }
-      emit_event(&ctx_cb, "SIGINT", "SIGINT".to_string());
-      if !has_listeners(&ctx_cb, "SIGINT") {
-        break;
-      }
-    }
-    if let Some(installed) = ctx_cb.userdata::<InstalledSignals>() {
-      installed.0.borrow_mut().remove("SIGINT");
     }
   });
 }

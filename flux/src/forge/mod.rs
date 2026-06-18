@@ -13,6 +13,7 @@ pub mod fs;
 pub mod http;
 pub mod p2p;
 pub mod path;
+pub mod process;
 pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
