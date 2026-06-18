@@ -8,4 +8,5 @@
 //! REDESIGN.md).
 
 pub mod http;
+pub mod sqlite;
 pub mod websocket;
