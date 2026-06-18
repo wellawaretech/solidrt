@@ -8,10 +8,12 @@
 //! REDESIGN.md).
 
 pub mod events;
+pub mod fetch;
 pub mod fs;
 pub mod http;
 pub mod p2p;
 pub mod path;
 pub mod sqlite;
+pub mod stream;
 pub mod subprocess;
 pub mod websocket;

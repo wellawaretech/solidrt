@@ -1,15 +1,10 @@
 use rquickjs::{Ctx, JsLifetime};
-use std::io;
 use std::rc::Rc;
 
 const USER_AGENT: &str = concat!("flux/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, JsLifetime)]
 pub(crate) struct HttpClient(#[qjs(skip_trace)] pub Rc<reqwest::Client>);
-
-pub(crate) fn reqwest_err(e: reqwest::Error) -> rquickjs::Error {
-  rquickjs::Error::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
-}
 
 pub(crate) fn init_http(ctx: &Ctx<'_>) {
   let client =

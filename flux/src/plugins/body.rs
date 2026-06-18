@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use futures_core::Stream;
 use rquickjs::{
   function::{MutFn, This},
   promise::{MaybePromise, Promised},
@@ -7,7 +6,6 @@ use rquickjs::{
 };
 use std::cell::{Cell, RefCell};
 use std::future::Future;
-use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
 use tokio::sync::mpsc;
@@ -15,10 +13,12 @@ use tokio::sync::mpsc;
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
+use crate::plugins::marshal::{attach_async_iterator, iter_result};
 
-/// A network-sourced response body stream (e.g. a fetch response), with its error
-/// flattened to `io::Error` so consumers stay reqwest-free.
-pub(crate) type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>>>>;
+// Re-exported so existing `crate::plugins::body::{ByteStream, to_byte_stream}`
+// importers (response, request, serve, subprocess) stay unchanged; the
+// engine-free primitive itself now lives in `forge::stream`.
+pub(crate) use crate::forge::stream::{to_byte_stream, ByteStream};
 
 /// In-memory body buffer shared by Response and Request. Consume-once semantics:
 /// `take` returns the bytes once, then subsequent calls return None.
@@ -168,17 +168,11 @@ type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<IterStep>>>>
 
 impl<'js> IntoJs<'js> for IterStep {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    match self {
-      IterStep::Chunk(bytes) => {
-        obj.set("value", TypedArray::<u8>::new(ctx.clone(), bytes)?)?;
-        obj.set("done", false)?;
-      }
-      IterStep::Done => {
-        obj.set("done", true)?;
-      }
-    }
-    Ok(obj.into_value())
+    let value = match self {
+      IterStep::Chunk(bytes) => Some(TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value()),
+      IterStep::Done => None,
+    };
+    Ok(iter_result(ctx, value)?.into_value())
   }
 }
 
@@ -223,9 +217,7 @@ pub(crate) fn byte_stream_iterable<'js>(
     }),
   )?;
   iter.set("next", next_fn)?;
-
-  let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
-  attach.call::<_, ()>((iter.clone(),))?;
+  attach_async_iterator(ctx, &iter)?;
 
   Ok(iter)
 }
@@ -237,30 +229,6 @@ pub(crate) fn buffered_async_iterable<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>) -> rq
   let ta = TypedArray::<u8>::new(ctx.clone(), bytes)?;
   let wrap: Function = ctx.eval("(b) => (async function* () { if (b.length) yield b; })()")?;
   wrap.call((ta,))
-}
-
-/// Adapts a foreign byte stream into the common `ByteStream`, flattening its error
-/// to `io::Error`. The single bridge from a producer crate's stream (reqwest for
-/// fetch responses, hyper for incoming request bodies) into our engine-internal
-/// body type, so the rest of the code stays producer-agnostic.
-struct MapErrStream<E> {
-  inner: Pin<Box<dyn Stream<Item = Result<Bytes, E>>>>,
-}
-
-impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> Stream for MapErrStream<E> {
-  type Item = Result<Bytes, io::Error>;
-
-  fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-    self.inner.as_mut().poll_next(cx).map(|chunk| chunk.map(|r| r.map_err(io::Error::other)))
-  }
-}
-
-pub(crate) fn to_byte_stream<S, E>(stream: S) -> ByteStream
-where
-  S: Stream<Item = Result<Bytes, E>> + 'static,
-  E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
-{
-  Box::pin(MapErrStream { inner: Box::pin(stream) })
 }
 
 /// Extract bytes from a JS value (string, Uint8Array, null/undefined).

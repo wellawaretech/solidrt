@@ -42,7 +42,7 @@ use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::body::extract_body_value;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -140,26 +140,18 @@ impl P2pEndpoint {
         pending.hold();
         let r = inner.accept_one(&alpn).await;
         pending.release();
-        let obj = Object::new(ctx2.clone())?;
         match r {
           Ok(Some((conn, send, recv))) => {
             let stream = P2pStream::create(&ctx2, conn, send, recv)?;
-            obj.set("value", stream)?;
-            obj.set("done", false)?;
+            iter_result(&ctx2, Some(stream.into_js(&ctx2)?))
           }
-          Ok(None) => {
-            obj.set("value", Value::new_undefined(ctx2.clone()))?;
-            obj.set("done", true)?;
-          }
-          Err(msg) => return Err(Exception::throw_message(&ctx2, &msg)),
+          Ok(None) => iter_result(&ctx2, None),
+          Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
         }
-        Ok(obj)
       })))
     })?;
     iter.set("next", next_fn)?;
-
-    let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
-    attach.call::<_, ()>((iter.clone(),))?;
+    attach_async_iterator(&ctx, &iter)?;
     Ok(iter)
   }
 
@@ -215,8 +207,7 @@ impl P2pStream {
     });
 
     let instance = Class::instance(ctx.clone(), P2pStream { inner })?;
-    let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
-    attach.call::<_, ()>((instance.clone(),))?;
+    attach_async_iterator(ctx, &instance)?;
     Ok(instance)
   }
 }
@@ -267,18 +258,11 @@ pub struct ReadStep(Option<Vec<u8>>);
 
 impl<'js> IntoJs<'js> for ReadStep {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    match self.0 {
-      Some(buf) => {
-        obj.set("value", TypedArray::<u8>::new(ctx.clone(), buf)?)?;
-        obj.set("done", false)?;
-      }
-      None => {
-        obj.set("value", Value::new_undefined(ctx.clone()))?;
-        obj.set("done", true)?;
-      }
-    }
-    Ok(obj.into_value())
+    let value = match self.0 {
+      Some(buf) => Some(TypedArray::<u8>::new(ctx.clone(), buf)?.into_value()),
+      None => None,
+    };
+    Ok(iter_result(ctx, value)?.into_value())
   }
 }
 
