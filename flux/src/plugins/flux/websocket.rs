@@ -7,7 +7,6 @@ use rquickjs::class::{Trace, Tracer};
 use rquickjs::function::{IntoArgs, Opt};
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::rc::Rc;
 use tokio::io::AsyncWrite;
 use tokio::sync::{mpsc, watch, Notify};
@@ -126,9 +125,6 @@ pub(crate) struct ServerWebSocket<'js> {
   /// close-grace deadline (`notify_one` stores a permit, so no race with a
   /// loop that is not currently waiting).
   closing: Rc<Notify>,
-  topics: Topics,
-  /// The topics this socket joined, so closing can unsubscribe them all.
-  subscribed: RefCell<HashSet<String>>,
   /// The user value from `upgrade(req, { data })`; undefined when not given.
   data: RefCell<Value<'js>>,
 }
@@ -151,13 +147,6 @@ impl<'js> ServerWebSocket<'js> {
       return Err(Exception::throw_message(ctx, "ping/pong payload must be 125 bytes or fewer"));
     }
     Ok(payload)
-  }
-
-  /// Drop all topic subscriptions (the socket closed).
-  fn unsubscribe_all(&self) {
-    for topic in self.subscribed.borrow_mut().drain() {
-      self.topics.unsubscribe(&topic, self.sink.id());
-    }
   }
 }
 
@@ -186,29 +175,24 @@ impl<'js> ServerWebSocket<'js> {
   /// Join a topic; `server.publish(topic)` and peers' `ws.publish(topic)` then
   /// reach this socket. No-op on a closing or closed socket.
   pub fn subscribe(&self, topic: String) {
-    if !self.sink.is_open() {
-      return;
-    }
-    self.topics.subscribe(&topic, &self.sink);
-    self.subscribed.borrow_mut().insert(topic);
+    self.sink.subscribe(&topic);
   }
 
   /// Leave a topic. Closing the socket unsubscribes everything automatically.
   pub fn unsubscribe(&self, topic: String) {
-    self.topics.unsubscribe(&topic, self.sink.id());
-    self.subscribed.borrow_mut().remove(&topic);
+    self.sink.unsubscribe(&topic);
   }
 
   #[qjs(rename = "isSubscribed")]
   pub fn is_subscribed(&self, topic: String) -> bool {
-    self.subscribed.borrow().contains(&topic)
+    self.sink.is_subscribed(&topic)
   }
 
   /// Publish to every subscriber of `topic` except this socket. Returns the
   /// number of sockets the message was queued to.
   pub fn publish(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
     let (opcode, payload) = message_payload(&data)?;
-    Ok(self.topics.publish(&topic, opcode, payload, Some(self.sink.id())))
+    Ok(self.sink.publish(&topic, opcode, payload))
   }
 
   /// Send a close frame (default 1000). The connection finishes once the peer
@@ -285,14 +269,12 @@ async fn run_socket<'js>(
   let (read_half, write_half) = ws.split(tokio::io::split);
   let mut reader = FragmentCollectorRead::new(read_half);
   let (tx, rx) = mpsc::unbounded_channel::<OutMsg>();
-  let sink = Rc::new(SocketSink::new(topics.next_id(), tx, handlers.backpressure_limit));
+  let sink = Rc::new(SocketSink::new(topics, tx, handlers.backpressure_limit));
   let close_notify = Rc::new(Notify::new());
 
   let socket_handle = ServerWebSocket {
     sink: sink.clone(),
     closing: close_notify.clone(),
-    topics,
-    subscribed: RefCell::new(HashSet::new()),
     data: RefCell::new(data.unwrap_or_else(|| Value::new_undefined(ctx.clone()))),
   };
   let ws_class = match Class::instance(ctx.clone(), socket_handle) {
@@ -385,7 +367,7 @@ async fn run_socket<'js>(
 
   sink.mark_closed();
   sink.send_end();
-  ws_class.borrow().unsubscribe_all();
+  sink.unsubscribe_all();
   let (code, reason) = close_info;
   call_callback(&ctx, &handlers.close, (ws_class, code, reason), "close", logger);
 }

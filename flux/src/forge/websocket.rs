@@ -12,7 +12,7 @@
 
 use fastwebsockets::OpCode;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -46,8 +46,14 @@ pub(crate) enum OutMsg {
 }
 
 /// The plain-Rust outgoing half of one socket: the writer queue plus its
-/// accounting. Shared (`Rc`) between the JS handle, the reader and writer tasks,
-/// and the pub/sub topic registry, which must hold sockets without JS lifetimes.
+/// accounting and pub/sub membership. Shared (`Rc`) between the JS handle, the
+/// reader and writer tasks, and the pub/sub topic registry, which must hold
+/// sockets without JS lifetimes.
+///
+/// Holding `topics` makes a `topics <-> sink` reference cycle while the socket
+/// is subscribed to anything; `unsubscribe_all` (run when the socket closes)
+/// breaks it by dropping the registry's `Rc<SocketSink>`, so the close path must
+/// always reach it.
 pub(crate) struct SocketSink {
   id: u64,
   tx: mpsc::UnboundedSender<OutMsg>,
@@ -58,15 +64,25 @@ pub(crate) struct SocketSink {
   /// writer empties the queue.
   backpressured: Cell<bool>,
   limit: usize,
+  /// The server's pub/sub registry, so the socket can (un)subscribe itself.
+  topics: Topics,
+  /// The topics this socket joined, so closing can unsubscribe them all.
+  subscribed: RefCell<HashSet<String>>,
 }
 
 impl SocketSink {
-  pub(crate) fn new(id: u64, tx: mpsc::UnboundedSender<OutMsg>, limit: usize) -> Self {
-    SocketSink { id, tx, state: Cell::new(OPEN), queued: Cell::new(0), backpressured: Cell::new(false), limit }
-  }
-
-  pub(crate) fn id(&self) -> u64 {
-    self.id
+  pub(crate) fn new(topics: Topics, tx: mpsc::UnboundedSender<OutMsg>, limit: usize) -> Self {
+    let id = topics.next_id();
+    SocketSink {
+      id,
+      tx,
+      state: Cell::new(OPEN),
+      queued: Cell::new(0),
+      backpressured: Cell::new(false),
+      limit,
+      topics,
+      subscribed: RefCell::new(HashSet::new()),
+    }
   }
 
   pub(crate) fn state(&self) -> u8 {
@@ -146,6 +162,41 @@ impl SocketSink {
       true
     } else {
       false
+    }
+  }
+
+  /// Join a topic so `publish(topic)` reaches this socket. No-op on a closing or
+  /// closed socket. Takes `&Rc<Self>` because the registry holds the socket by
+  /// `Rc` (without a JS lifetime).
+  pub(crate) fn subscribe(self: &Rc<Self>, topic: &str) {
+    if !self.is_open() {
+      return;
+    }
+    self.topics.subscribe(topic, self);
+    self.subscribed.borrow_mut().insert(topic.to_string());
+  }
+
+  /// Leave a topic. Closing the socket unsubscribes everything automatically.
+  pub(crate) fn unsubscribe(&self, topic: &str) {
+    self.topics.unsubscribe(topic, self.id);
+    self.subscribed.borrow_mut().remove(topic);
+  }
+
+  pub(crate) fn is_subscribed(&self, topic: &str) -> bool {
+    self.subscribed.borrow().contains(topic)
+  }
+
+  /// Publish a pre-encoded message to every subscriber of `topic` except this
+  /// socket. Returns the number of sockets the message was queued to.
+  pub(crate) fn publish(&self, topic: &str, opcode: OpCode, payload: Vec<u8>) -> i32 {
+    self.topics.publish(topic, opcode, payload, Some(self.id))
+  }
+
+  /// Drop all topic subscriptions (the socket closed). Breaks the
+  /// `topics <-> sink` cycle; see the struct doc.
+  pub(crate) fn unsubscribe_all(&self) {
+    for topic in self.subscribed.borrow_mut().drain() {
+      self.topics.unsubscribe(&topic, self.id);
     }
   }
 }
