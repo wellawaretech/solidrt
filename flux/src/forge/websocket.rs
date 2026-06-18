@@ -10,12 +10,16 @@
 //! `OutMsg`, `parse_close`, and `CLOSE_GRACE` are also shared with the
 //! web-standard WebSocket *client* (`plugins/websocket.rs`).
 
-use fastwebsockets::OpCode;
+use fastwebsockets::{FragmentCollectorRead, Frame, OpCode, WebSocketError, WebSocketRead, WebSocketWrite};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{mpsc, watch, Notify};
+
+use crate::forge::http::wait_for_stop;
+use crate::logger::Logger;
 
 /// Web-standard readyState values. A server socket is born OPEN (the handle is
 /// only created after the handshake), so there is no CONNECTING state here.
@@ -71,9 +75,12 @@ pub(crate) struct SocketSink {
 }
 
 impl SocketSink {
-  pub(crate) fn new(topics: Topics, tx: mpsc::UnboundedSender<OutMsg>, limit: usize) -> Self {
+  /// Build a sink and the receiver its writer task drains. Owns the outgoing
+  /// channel so callers never handle `OutMsg` directly.
+  pub(crate) fn new(topics: Topics, limit: usize) -> (Rc<Self>, mpsc::UnboundedReceiver<OutMsg>) {
     let id = topics.next_id();
-    SocketSink {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let sink = Rc::new(SocketSink {
       id,
       tx,
       state: Cell::new(OPEN),
@@ -82,7 +89,8 @@ impl SocketSink {
       limit,
       topics,
       subscribed: RefCell::new(HashSet::new()),
-    }
+    });
+    (sink, rx)
   }
 
   pub(crate) fn state(&self) -> u8 {
@@ -267,5 +275,159 @@ pub(crate) fn parse_close(payload: &[u8]) -> (u16, String) {
     (u16::from_be_bytes([payload[0], payload[1]]), String::from_utf8_lossy(&payload[2..]).into_owned())
   } else {
     (1005, String::new())
+  }
+}
+
+// ---- Server loops ----------------------------------------------------------
+
+/// The engine-bound half of a server websocket: the in-loop callbacks
+/// (`message`/`pong`/`drain`/`close`) the read/write loops fire. A scripting host
+/// forwards them to script functions; a pure-Rust host implements them with
+/// closures. The `Handle` (the host's per-socket object, e.g. the script's
+/// `ServerWebSocket`) is built by the host before the loops start, so its
+/// construction is not part of this trait - the loops only pass it back.
+pub(crate) trait WsDispatch {
+  /// The per-socket handle the callbacks receive.
+  type Handle;
+
+  fn on_text(&self, handle: &Self::Handle, text: String);
+  fn on_binary(&self, handle: &Self::Handle, bytes: Vec<u8>);
+  fn on_pong(&self, handle: &Self::Handle, bytes: Vec<u8>);
+  fn on_drain(&self, handle: &Self::Handle);
+  fn on_close(&self, handle: &Self::Handle, code: u16, reason: String);
+}
+
+/// Drive the read half until the peer closes, errors, or the server shuts down.
+/// Owns the close-grace state machine and forwards the read half's obligated
+/// sends (pong replies, close echoes) to the writer; decoded data frames go to
+/// `dispatch`. On exit it ends the writer queue, drops topic subscriptions, and
+/// fires `on_close`. Engine-free: generic over `WsDispatch`.
+pub(crate) async fn run_reader<R, D>(
+  read_half: WebSocketRead<R>,
+  sink: Rc<SocketSink>,
+  close_notify: Rc<Notify>,
+  mut shutdown_rx: watch::Receiver<bool>,
+  dispatch: &D,
+  handle: &D::Handle,
+  logger: &Logger,
+) where
+  R: AsyncRead + Unpin,
+  D: WsDispatch,
+{
+  let mut reader = FragmentCollectorRead::new(read_half);
+
+  // Forward the read half's obligated sends to the writer, counting their bytes
+  // like any other queued frame. A send error means the writer is gone, which
+  // ends the read loop.
+  let obligated_sink = sink.clone();
+  let mut send_obligated = move |frame: Frame<'_>| {
+    let res = obligated_sink
+      .send_obligated(frame.opcode, frame.payload.into())
+      .map_err(|()| WebSocketError::ConnectionClosed);
+    std::future::ready(res)
+  };
+
+  // (code, reason) reported to the close callback.
+  let mut close_info = (1006u16, String::new());
+  // Once closing (server shutdown or ws.close()), keep reading only until the
+  // peer's close echo, bounded by a grace deadline so a silent peer cannot keep
+  // the socket (and the runtime) alive forever.
+  let grace = tokio::time::sleep(CLOSE_GRACE);
+  tokio::pin!(grace);
+  let mut closing = false;
+  loop {
+    tokio::select! {
+      frame = reader.read_frame(&mut send_obligated) => {
+        let frame = match frame {
+          Ok(f) => f,
+          Err(e) => {
+            if !matches!(e, WebSocketError::ConnectionClosed | WebSocketError::UnexpectedEOF) {
+              logger.warn(&format!("[flux] websocket read error: {e}"));
+            }
+            break;
+          }
+        };
+        match frame.opcode {
+          OpCode::Text => dispatch.on_text(handle, String::from_utf8_lossy(&frame.payload).into_owned()),
+          OpCode::Binary => dispatch.on_binary(handle, frame.payload.into()),
+          OpCode::Pong => dispatch.on_pong(handle, frame.payload.into()),
+          OpCode::Close => {
+            close_info = parse_close(&frame.payload);
+            break;
+          }
+          _ => {}
+        }
+      }
+      _ = wait_for_stop(&mut shutdown_rx), if !closing => {
+        closing = true;
+        // 1001 Going Away: the server is shutting down.
+        let _ = sink.begin_close(1001, String::new());
+        grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
+      }
+      // ws.close() was called from the host: arm the grace deadline.
+      _ = close_notify.notified(), if !closing => {
+        closing = true;
+        grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
+      }
+      _ = grace.as_mut(), if closing => {
+        logger.warn("[flux] websocket close timed out; dropping connection");
+        break;
+      }
+    }
+  }
+
+  sink.mark_closed();
+  sink.send_end();
+  sink.unsubscribe_all();
+  let (code, reason) = close_info;
+  dispatch.on_close(handle, code, reason);
+}
+
+/// Drain the writer queue, writing frames to the socket and accounting the
+/// queued bytes, until the reader ends the queue (`OutMsg::End`). Fires
+/// `on_drain` when a backpressured queue empties. Engine-free: generic over
+/// `WsDispatch`.
+pub(crate) async fn run_writer<W, D>(
+  mut ws: WebSocketWrite<W>,
+  mut rx: mpsc::UnboundedReceiver<OutMsg>,
+  sink: Rc<SocketSink>,
+  dispatch: &D,
+  handle: &D::Handle,
+  logger: &Logger,
+) where
+  W: AsyncWrite + Unpin,
+  D: WsDispatch,
+{
+  // After a close frame goes out nothing more may be sent; queued frames that
+  // arrive later (including a redundant close echo) are dropped, but their bytes
+  // still leave the queue accounting.
+  let mut sent_close = false;
+  while let Some(msg) = rx.recv().await {
+    let res = match msg {
+      OutMsg::Frame(opcode, payload) => {
+        let len = payload.len();
+        let res = if sent_close {
+          Ok(())
+        } else {
+          sent_close = opcode == OpCode::Close;
+          ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
+        };
+        if sink.on_written(len, res.is_ok()) {
+          dispatch.on_drain(handle);
+        }
+        res
+      }
+      OutMsg::Close(code, reason) if !sent_close => {
+        sent_close = true;
+        sink.set_closing();
+        ws.write_frame(Frame::close(code, reason.as_bytes())).await
+      }
+      OutMsg::End => break,
+      _ => Ok(()),
+    };
+    if let Err(e) = res {
+      logger.warn(&format!("[flux] websocket write error: {e}"));
+      break;
+    }
   }
 }

@@ -1,5 +1,5 @@
 use fastwebsockets::upgrade::{is_upgrade_request, upgrade as accept_upgrade, UpgradeFut};
-use fastwebsockets::{FragmentCollectorRead, Frame, OpCode, WebSocketError, WebSocketWrite};
+use fastwebsockets::OpCode;
 use http_body_util::BodyExt;
 use hyper::header::{HeaderName, HeaderValue};
 use hyper::Request as HyperRequest;
@@ -8,12 +8,11 @@ use rquickjs::function::{IntoArgs, Opt};
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
-use tokio::io::AsyncWrite;
-use tokio::sync::{mpsc, watch, Notify};
+use tokio::sync::{watch, Notify};
 
-use crate::forge::http::{wait_for_stop, ResBody};
+use crate::forge::http::ResBody;
 use crate::forge::websocket::{
-  parse_close, OutMsg, SocketSink, Topics, CLOSE_GRACE, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
+  run_reader, run_writer, SocketSink, Topics, WsDispatch, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
 };
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
@@ -219,14 +218,41 @@ impl<'js> ServerWebSocket<'js> {
   }
 }
 
-/// The writer task's shared per-socket state and callbacks.
-struct WriterState<'js> {
-  sink: Rc<SocketSink>,
-  drain: Option<Function<'js>>,
-  ws_class: Class<'js, ServerWebSocket<'js>>,
+/// The marshalling `WsDispatch`: forwards the read/write loops' in-loop
+/// callbacks to their JS functions. One per socket, shared (`Rc`) by the reader
+/// and writer tasks. The handle it receives is the `ServerWebSocket` class.
+struct JsDispatch<'js> {
+  ctx: Ctx<'js>,
+  handlers: Rc<WsHandlers<'js>>,
+  logger: Logger,
 }
 
-/// Run an accepted socket: spawn its writer, then drive the read loop until the
+impl<'js> WsDispatch for JsDispatch<'js> {
+  type Handle = Class<'js, ServerWebSocket<'js>>;
+
+  fn on_text(&self, handle: &Self::Handle, text: String) {
+    call_callback(&self.ctx, &self.handlers.message, (handle.clone(), text), "message", &self.logger);
+  }
+
+  fn on_binary(&self, handle: &Self::Handle, bytes: Vec<u8>) {
+    call_callback(&self.ctx, &self.handlers.message, (handle.clone(), JsBytes(bytes)), "message", &self.logger);
+  }
+
+  fn on_pong(&self, handle: &Self::Handle, bytes: Vec<u8>) {
+    call_callback(&self.ctx, &self.handlers.pong, (handle.clone(), JsBytes(bytes)), "pong", &self.logger);
+  }
+
+  fn on_drain(&self, handle: &Self::Handle) {
+    call_callback(&self.ctx, &self.handlers.drain, (handle.clone(),), "drain", &self.logger);
+  }
+
+  fn on_close(&self, handle: &Self::Handle, code: u16, reason: String) {
+    call_callback(&self.ctx, &self.handlers.close, (handle.clone(), code, reason), "close", &self.logger);
+  }
+}
+
+/// Run an accepted socket: build the handle, fire `open`, spawn the writer task,
+/// then drive the read loop (both loops are engine-free, in forge) until the
 /// peer closes, errors, or the server shuts down. Holds a pending op per task so
 /// the runtime stays alive while the socket is open. Runs on the JS executor:
 /// the callbacks are JS functions.
@@ -243,7 +269,7 @@ pub(crate) fn spawn_socket<'js>(
   pending.hold();
   let ctx2 = ctx.clone();
   ctx.spawn(async move {
-    run_socket(ctx2, socket, handlers, shutdown_rx, &logger, &pending, data, topics).await;
+    run_socket(ctx2, socket, handlers, shutdown_rx, logger, &pending, data, topics).await;
     pending.release();
   });
 }
@@ -253,8 +279,8 @@ async fn run_socket<'js>(
   ctx: Ctx<'js>,
   socket: UpgradeFut,
   handlers: Rc<WsHandlers<'js>>,
-  mut shutdown_rx: watch::Receiver<bool>,
-  logger: &Logger,
+  shutdown_rx: watch::Receiver<bool>,
+  logger: Logger,
   pending: &PendingOps,
   data: Option<Value<'js>>,
   topics: Topics,
@@ -267,9 +293,7 @@ async fn run_socket<'js>(
     }
   };
   let (read_half, write_half) = ws.split(tokio::io::split);
-  let mut reader = FragmentCollectorRead::new(read_half);
-  let (tx, rx) = mpsc::unbounded_channel::<OutMsg>();
-  let sink = Rc::new(SocketSink::new(topics, tx, handlers.backpressure_limit));
+  let (sink, rx) = SocketSink::new(topics, handlers.backpressure_limit);
   let close_notify = Rc::new(Notify::new());
 
   let socket_handle = ServerWebSocket {
@@ -277,7 +301,7 @@ async fn run_socket<'js>(
     closing: close_notify.clone(),
     data: RefCell::new(data.unwrap_or_else(|| Value::new_undefined(ctx.clone()))),
   };
-  let ws_class = match Class::instance(ctx.clone(), socket_handle) {
+  let handle = match Class::instance(ctx.clone(), socket_handle) {
     Ok(c) => c,
     Err(e) => {
       logger.warn(&format!("[flux] websocket: could not create socket handle: {e}"));
@@ -285,132 +309,24 @@ async fn run_socket<'js>(
     }
   };
 
+  let dispatch = Rc::new(JsDispatch { ctx: ctx.clone(), handlers: handlers.clone(), logger: logger.clone() });
+
+  call_callback(&ctx, &handlers.open, (handle.clone(),), "open", &logger);
+
+  // The writer is its own task so the reader's close-grace deadline can end the
+  // connection (and fire `close`) even if a wedged peer stalls writes.
   pending.hold();
-  let writer_state =
-    WriterState { sink: sink.clone(), drain: handlers.drain.clone(), ws_class: ws_class.clone() };
-  let writer_ctx = ctx.clone();
+  let writer_dispatch = dispatch.clone();
+  let writer_handle = handle.clone();
+  let writer_sink = sink.clone();
   let writer_logger = logger.clone();
   let writer_pending = pending.clone();
   ctx.spawn(async move {
-    run_writer(writer_ctx, write_half, rx, writer_state, &writer_logger).await;
+    run_writer(write_half, rx, writer_sink, &*writer_dispatch, &writer_handle, &writer_logger).await;
     writer_pending.release();
   });
 
-  call_callback(&ctx, &handlers.open, (ws_class.clone(),), "open", logger);
-
-  // Forward the read half's obligated sends (pong replies, close echoes) to the
-  // writer, counting their bytes like any other queued frame. A send error
-  // means the writer is gone, which ends the read loop.
-  let obligated_sink = sink.clone();
-  let mut send_obligated = move |frame: Frame<'_>| {
-    let res = obligated_sink.send_obligated(frame.opcode, frame.payload.into()).map_err(|()| WebSocketError::ConnectionClosed);
-    std::future::ready(res)
-  };
-
-  // (code, reason) reported to the close callback.
-  let mut close_info = (1006u16, String::new());
-  // Once closing (server shutdown or ws.close()), keep reading only until the
-  // peer's close echo, bounded by a grace deadline so a silent peer cannot
-  // keep the socket (and the runtime) alive forever.
-  let grace = tokio::time::sleep(CLOSE_GRACE);
-  tokio::pin!(grace);
-  let mut closing = false;
-  loop {
-    tokio::select! {
-      frame = reader.read_frame(&mut send_obligated) => {
-        let frame = match frame {
-          Ok(f) => f,
-          Err(e) => {
-            if !matches!(e, WebSocketError::ConnectionClosed | WebSocketError::UnexpectedEOF) {
-              logger.warn(&format!("[flux] websocket read error: {e}"));
-            }
-            break;
-          }
-        };
-        match frame.opcode {
-          OpCode::Text => {
-            let text = String::from_utf8_lossy(&frame.payload).into_owned();
-            call_callback(&ctx, &handlers.message, (ws_class.clone(), text), "message", logger);
-          }
-          OpCode::Binary => {
-            let bytes = JsBytes(frame.payload.into());
-            call_callback(&ctx, &handlers.message, (ws_class.clone(), bytes), "message", logger);
-          }
-          OpCode::Pong => {
-            let bytes = JsBytes(frame.payload.into());
-            call_callback(&ctx, &handlers.pong, (ws_class.clone(), bytes), "pong", logger);
-          }
-          OpCode::Close => {
-            close_info = parse_close(&frame.payload);
-            break;
-          }
-          _ => {}
-        }
-      }
-      _ = wait_for_stop(&mut shutdown_rx), if !closing => {
-        closing = true;
-        // 1001 Going Away: the server is shutting down.
-        let _ = sink.begin_close(1001, String::new());
-        grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
-      }
-      // ws.close() was called from JS: arm the grace deadline.
-      _ = close_notify.notified(), if !closing => {
-        closing = true;
-        grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
-      }
-      _ = grace.as_mut(), if closing => {
-        logger.warn("[flux] websocket close timed out; dropping connection");
-        break;
-      }
-    }
-  }
-
-  sink.mark_closed();
-  sink.send_end();
-  sink.unsubscribe_all();
-  let (code, reason) = close_info;
-  call_callback(&ctx, &handlers.close, (ws_class, code, reason), "close", logger);
-}
-
-async fn run_writer<'js, W: AsyncWrite + Unpin>(
-  ctx: Ctx<'js>,
-  mut ws: WebSocketWrite<W>,
-  mut rx: mpsc::UnboundedReceiver<OutMsg>,
-  shared: WriterState<'js>,
-  logger: &Logger,
-) {
-  // After a close frame goes out nothing more may be sent; queued frames that
-  // arrive later (including a redundant close echo) are dropped, but their
-  // bytes still leave the queue accounting.
-  let mut sent_close = false;
-  while let Some(msg) = rx.recv().await {
-    let res = match msg {
-      OutMsg::Frame(opcode, payload) => {
-        let len = payload.len();
-        let res = if sent_close {
-          Ok(())
-        } else {
-          sent_close = opcode == OpCode::Close;
-          ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
-        };
-        if shared.sink.on_written(len, res.is_ok()) {
-          call_callback(&ctx, &shared.drain, (shared.ws_class.clone(),), "drain", logger);
-        }
-        res
-      }
-      OutMsg::Close(code, reason) if !sent_close => {
-        sent_close = true;
-        shared.sink.set_closing();
-        ws.write_frame(Frame::close(code, reason.as_bytes())).await
-      }
-      OutMsg::End => break,
-      _ => Ok(()),
-    };
-    if let Err(e) = res {
-      logger.warn(&format!("[flux] websocket write error: {e}"));
-      break;
-    }
-  }
+  run_reader(read_half, sink, close_notify, shutdown_rx, &*dispatch, &handle, &logger).await;
 }
 
 /// Invoke an optional websocket callback, logging a throw instead of
