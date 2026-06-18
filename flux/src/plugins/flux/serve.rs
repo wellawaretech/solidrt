@@ -1,26 +1,22 @@
 use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full};
-use hyper::body::{Body, Frame, Incoming};
-use hyper::server::conn::http1;
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::upgrade::OnUpgrade;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
-use hyper_util::rt::TokioIo;
-use percent_encoding::percent_decode_str;
 use rquickjs::class::Trace;
 use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::convert::Infallible;
-use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, watch};
 
+use crate::forge::http::{
+  accept_loop, bind_listener, build_response, channel_body, full_body, serve_connection, text_response, ResBody,
+  Route, RouteTable, ServerShared,
+};
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
@@ -30,64 +26,6 @@ use crate::plugins::flux::websocket::{
 use crate::plugins::headers::headers_from_init;
 use crate::plugins::request::{request_from_parts, Request};
 use crate::plugins::response::Response;
-
-/// One boxed body type for every serve response, so buffered (`Full`) and
-/// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
-/// never produce an error, hence `Infallible`.
-pub(crate) type ResBody = BoxBody<Bytes, Infallible>;
-
-fn full_body(bytes: Bytes) -> ResBody {
-  Full::new(bytes).boxed()
-}
-
-/// A streamed response body: hyper pulls frames as the producer task sends bytes.
-/// The stream ends (EOF) when the sender is dropped (producer finished or errored).
-struct ChannelBody {
-  rx: mpsc::Receiver<Bytes>,
-}
-
-impl Body for ChannelBody {
-  type Data = Bytes;
-  type Error = Infallible;
-
-  fn poll_frame(
-    mut self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-  ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-    match self.rx.poll_recv(cx) {
-      Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
-      Poll::Ready(None) => Poll::Ready(None),
-      Poll::Pending => Poll::Pending,
-    }
-  }
-}
-
-fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
-  HyperResponse::builder()
-    .status(status)
-    .header("Content-Type", "text/plain")
-    .body(full_body(Bytes::copy_from_slice(body.as_bytes())))
-    .expect("build response")
-}
-
-/// Assemble a hyper response from already-extracted parts and an (already boxed)
-/// body. Defaults the Content-Type to text/plain when the headers don't set one.
-/// Shared by buffered and streamed responses alike.
-fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
-  let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-  let mut builder = HyperResponse::builder().status(status);
-  let mut has_content_type = false;
-  for (k, v) in headers {
-    if k.eq_ignore_ascii_case("content-type") {
-      has_content_type = true;
-    }
-    builder = builder.header(k.as_str(), v.as_str());
-  }
-  if !has_content_type {
-    builder = builder.header("Content-Type", "text/plain");
-  }
-  builder.body(body).unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
-}
 
 /// Read a server-built Response's buffered bytes. Server responses are buffered
 /// (`new Response(string/bytes)`) or outgoing streams (handled separately), never
@@ -109,7 +47,7 @@ fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<ResBody> {
 /// continues on the executor while hyper flushes frames as they arrive.
 fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> HyperResponse<ResBody> {
   let iterable = resp.stream.clone().expect("stream_response called without a stream");
-  let (tx, rx) = mpsc::channel::<Bytes>(16);
+  let (tx, body) = channel_body();
 
   let pump_ctx = ctx.clone();
   let logger = ctx.logger();
@@ -117,7 +55,7 @@ fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> HyperResponse<R
     pump_async_iterable(pump_ctx, iterable, tx, logger).await;
   });
 
-  build_response(resp.status, &resp.headers.borrow().entries(), ChannelBody { rx }.boxed())
+  build_response(resp.status, &resp.headers.borrow().entries(), body)
 }
 
 fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<ResBody> {
@@ -149,13 +87,6 @@ fn snapshot_response<'js>(r: &Response<'js>) -> StaticResponse {
   StaticResponse { status: r.status, headers: r.headers.borrow().entries(), body: buffered_bytes(r) }
 }
 
-/// One `/`-delimited segment of a route pattern.
-enum Segment {
-  Literal(String),
-  Param(String),
-  Wildcard,
-}
-
 enum RouteHandler<'js> {
   Fn(Function<'js>),
   Static(StaticResponse),
@@ -163,82 +94,13 @@ enum RouteHandler<'js> {
   Methods(Vec<(String, Function<'js>)>),
 }
 
-/// A registered route: its compiled pattern, a match `tier` (0 = exact, 1 = has a
-/// `:param`, 2 = has a `*`), and the handler to run.
-struct Route<'js> {
-  segments: Vec<Segment>,
-  tier: u8,
-  handler: RouteHandler<'js>,
-}
-
-/// The compiled `routes` table. Routes are pre-sorted by `tier` so exact patterns
-/// beat `:param` patterns beat `*`; within a tier, registration order is kept.
-struct RouteTable<'js> {
-  routes: Vec<Route<'js>>,
-}
-
-impl<'js> RouteTable<'js> {
-  /// Return the first matching route's handler and its captured path params.
-  fn lookup(&self, path: &str) -> Option<(&RouteHandler<'js>, Vec<(String, String)>)> {
-    let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    for route in &self.routes {
-      if let Some(params) = match_segments(&route.segments, &path_segs) {
-        return Some((&route.handler, params));
-      }
-    }
-    None
-  }
-}
-
-/// Split a pattern like `/users/:id/*` into segments and compute its match tier.
-fn parse_pattern(pattern: &str) -> (Vec<Segment>, u8) {
-  let mut segments = Vec::new();
-  let mut tier = 0u8;
-  for part in pattern.split('/').filter(|s| !s.is_empty()) {
-    if part == "*" {
-      segments.push(Segment::Wildcard);
-      tier = 2;
-    } else if let Some(name) = part.strip_prefix(':') {
-      segments.push(Segment::Param(name.to_string()));
-      tier = tier.max(1);
-    } else {
-      segments.push(Segment::Literal(part.to_string()));
-    }
-  }
-  (segments, tier)
-}
-
-/// Match request path segments against a pattern, capturing `:param` values. A
-/// trailing `*` matches the remaining segments (including none).
-fn match_segments(segments: &[Segment], path: &[&str]) -> Option<Vec<(String, String)>> {
-  let mut params = Vec::new();
-  let mut i = 0;
-  for seg in segments {
-    match seg {
-      Segment::Wildcard => return Some(params),
-      Segment::Literal(lit) => {
-        if path.get(i) != Some(&lit.as_str()) {
-          return None;
-        }
-        i += 1;
-      }
-      Segment::Param(name) => {
-        // Decode per-segment so an encoded %2F stays inside the value rather
-        // than acting as a path separator. Lossy: invalid UTF-8 won't reject.
-        let value = percent_decode_str(path.get(i)?).decode_utf8_lossy().into_owned();
-        params.push((name.clone(), value));
-        i += 1;
-      }
-    }
-  }
-  // Without a wildcard the path must be fully consumed (no extra segments).
-  (i == path.len()).then_some(params)
-}
-
 /// Parse the `routes` option into a compiled table. A value may be a handler
 /// function `(req, server) => Response` or a static `Response`; anything else is
 /// warned about and skipped.
-fn parse_routes<'js>(opts: &Object<'js>, logger: &Logger) -> rquickjs::Result<Option<Rc<RouteTable<'js>>>> {
+fn parse_routes<'js>(
+  opts: &Object<'js>,
+  logger: &Logger,
+) -> rquickjs::Result<Option<Rc<RouteTable<RouteHandler<'js>>>>> {
   let Some(routes_obj): Option<Object<'js>> = opts.get("routes")? else {
     return Ok(None);
   };
@@ -266,12 +128,9 @@ fn parse_routes<'js>(opts: &Object<'js>, logger: &Logger) -> rquickjs::Result<Op
       logger.warn(&format!("[flux] serve route {key} ignored: value must be a function, Response, or method object"));
       continue;
     };
-    let (segments, tier) = parse_pattern(&key);
-    routes.push(Route { segments, tier, handler });
+    routes.push(Route::new(&key, handler));
   }
-  // Stable sort keeps registration order within each tier.
-  routes.sort_by_key(|r| r.tier);
-  Ok(Some(Rc::new(RouteTable { routes })))
+  Ok(Some(Rc::new(RouteTable::from_routes(routes))))
 }
 
 /// The JS handler set a running server dispatches to. Cloned per connection and
@@ -280,7 +139,7 @@ fn parse_routes<'js>(opts: &Object<'js>, logger: &Logger) -> rquickjs::Result<Op
 struct Handlers<'js> {
   fetch_fn: Option<Function<'js>>,
   error_fn: Option<Function<'js>>,
-  routes: Option<Rc<RouteTable<'js>>>,
+  routes: Option<Rc<RouteTable<RouteHandler<'js>>>>,
   websocket: Option<Rc<WsHandlers<'js>>>,
   server: Class<'js, Server>,
 }
@@ -337,7 +196,7 @@ fn take_upgrade<'js>(
     return Some(text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
   };
   let server = handlers.server.borrow();
-  let shutdown_rx = server.shared.shutdown.subscribe();
+  let shutdown_rx = server.shared.subscribe();
   spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data, server.topics.clone());
   Some(response)
 }
@@ -477,16 +336,6 @@ async fn handle_request<'js>(
   }
 }
 
-/// Shutdown signal shared between the JS `Server` handle, its accept loop, and
-/// each connection task. A `watch` channel latches (once set true it stays true)
-/// and broadcasts to every subscriber. The sender lives inside the `Arc`, which
-/// the accept loop also holds, so it stays alive independent of the JS handle's
-/// lifetime: dropping the handle (e.g. an unsaved `Flux.serve(...)`) leaves the
-/// server running, matching the previous behavior.
-struct ServerShared {
-  shutdown: watch::Sender<bool>,
-}
-
 /// Handle returned by `Flux.serve`. Loosely models Bun's `Server`: `stop()` plus
 /// `port`/`hostname`/`url` introspection. `stop()` is synchronous and graceful:
 /// it stops accepting and asks each open connection to shut down gracefully, so
@@ -571,10 +420,9 @@ impl Server {
   }
 
   /// Stop accepting new connections and gracefully shut down open ones. Safe to
-  /// call more than once. A send error means there are no live subscribers (the
-  /// loop already exited), i.e. already stopped.
+  /// call more than once.
   pub fn stop(&self) {
-    let _ = self.shared.shutdown.send(true);
+    self.shared.stop();
   }
 
   #[qjs(get)]
@@ -593,81 +441,6 @@ impl Server {
   }
 }
 
-/// Resolve once a stop has been signalled (value `true`). A dropped sender also
-/// resolves it: nothing can signal a stop anymore, so treat it as one.
-pub(crate) async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
-  let _ = rx.wait_for(|&stop| stop).await;
-}
-
-async fn serve_one_connection<'js>(
-  sock: TcpStream,
-  handlers: Handlers<'js>,
-  logger: Logger,
-  mut shutdown_rx: watch::Receiver<bool>,
-) {
-  let io = TokioIo::new(sock);
-  let service = service_fn(|req: HyperRequest<Incoming>| {
-    let handlers = handlers.clone();
-    let logger = logger.clone();
-    async move { Ok::<_, std::convert::Infallible>(handle_request(req, &handlers, &logger).await) }
-  });
-
-  // with_upgrades keeps the connection alive past a 101 response so hyper can
-  // hand the raw stream to the websocket tasks.
-  let conn = http1::Builder::new().serve_connection(io, service).with_upgrades();
-  tokio::pin!(conn);
-
-  tokio::select! {
-    res = conn.as_mut() => {
-      if let Err(e) = res {
-        logger.warn(&format!("[flux] serve connection error: {e}"));
-      }
-    }
-    // On stop, finish any in-flight request then close. An idle keep-alive
-    // connection has nothing in flight, so it closes promptly and the task ends.
-    _ = wait_for_stop(&mut shutdown_rx) => {
-      conn.as_mut().graceful_shutdown();
-      if let Err(e) = conn.as_mut().await {
-        logger.warn(&format!("[flux] serve connection error: {e}"));
-      }
-    }
-  }
-}
-
-async fn run_server<'js>(
-  ctx: Ctx<'js>,
-  listener: TcpListener,
-  handlers: Handlers<'js>,
-  logger: Logger,
-  shared: Arc<ServerShared>,
-  pending: PendingOps,
-) {
-  let mut shutdown_rx = shared.shutdown.subscribe();
-  loop {
-    tokio::select! {
-      accepted = listener.accept() => {
-        let (sock, _) = match accepted {
-          Ok(v) => v,
-          Err(e) => {
-            logger.warn(&format!("[flux] serve accept error: {e}"));
-            continue;
-          }
-        };
-        let handlers = handlers.clone();
-        let logger = logger.clone();
-        let conn_rx = shared.shutdown.subscribe();
-        ctx.spawn(async move {
-          serve_one_connection(sock, handlers, logger, conn_rx).await;
-        });
-      }
-      _ = wait_for_stop(&mut shutdown_rx) => break,
-    }
-  }
-  // Paired with the hold() taken at startup. Connection tasks shut themselves
-  // down on the same signal, so the runtime drains and the engine can exit.
-  pending.release();
-}
-
 /// `serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
 /// A free function (not a closure) so its `'js` is properly higher-ranked, which
 /// the invariant `Class<'js, Server>` return type requires.
@@ -682,17 +455,9 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
 
   let hostname: Option<String> = opts.get("hostname")?;
   let hostname = hostname.unwrap_or_else(|| "0.0.0.0".to_string());
-  let addr = format!("{hostname}:{port}");
-  let listener = std::net::TcpListener::bind(&addr)
-    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to bind {addr}: {e}")))?;
-  listener
-    .set_nonblocking(true)
-    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to configure listener on {addr}: {e}")))?;
-  let listener = TcpListener::from_std(listener)
-    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to register listener on {addr}: {e}")))?;
+  let listener = bind_listener(&hostname, port).map_err(|e| Exception::throw_message(&ctx, &e))?;
 
-  let (shutdown_tx, _) = watch::channel(false);
-  let shared = Arc::new(ServerShared { shutdown: shutdown_tx });
+  let shared = ServerShared::new();
 
   // Build the handle up front so the same `Server` is both returned to the
   // caller and passed as the second `fetch(req, server)` argument.
@@ -703,10 +468,31 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
 
   pending.hold();
-  let ctx_for_server = ctx.clone();
-  let pending_for_loop = pending.clone();
+  let loop_ctx = ctx.clone();
+  let loop_logger = logger.clone();
+  let loop_shared = shared.clone();
+  let loop_pending = pending.clone();
   ctx.spawn(async move {
-    run_server(ctx_for_server, listener, handlers, logger, shared, pending_for_loop).await;
+    let shutdown_rx = loop_shared.subscribe();
+    let accept_logger = loop_logger.clone();
+    // Each accepted socket spawns its own connection task. Spawning stays here in
+    // the marshalling layer (the engine-free core hands sockets back through this
+    // closure) so the core never touches `ctx.spawn`.
+    let on_conn = move |sock| {
+      let conn_rx = loop_shared.subscribe();
+      let svc_handlers = handlers.clone();
+      let svc_logger = loop_logger.clone();
+      let service = service_fn(move |req: HyperRequest<Incoming>| {
+        let handlers = svc_handlers.clone();
+        let logger = svc_logger.clone();
+        async move { Ok::<_, Infallible>(handle_request(req, &handlers, &logger).await) }
+      });
+      loop_ctx.spawn(serve_connection(sock, service, loop_logger.clone(), conn_rx));
+    };
+    accept_loop(listener, accept_logger, shutdown_rx, on_conn).await;
+    // Paired with the hold() above. Connection tasks shut themselves down on the
+    // same signal, so the runtime drains and the engine can exit.
+    loop_pending.release();
   });
 
   Ok(server)

@@ -1,4 +1,5 @@
 mod engine;
+pub(crate) mod forge;
 mod logger;
 pub(crate) mod pending;
 mod plugins;

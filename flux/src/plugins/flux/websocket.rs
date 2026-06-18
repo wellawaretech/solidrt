@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch, Notify};
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{extract_body_value, JsBytes};
-use crate::plugins::flux::serve::{wait_for_stop, ResBody};
+use crate::forge::http::{wait_for_stop, ResBody};
 
 /// Web-standard readyState values. A server socket is born OPEN (the class is
 /// only created after the handshake), so there is no CONNECTING state here.
