@@ -6,35 +6,19 @@ use hyper::Request as HyperRequest;
 use rquickjs::class::{Trace, Tracer};
 use rquickjs::function::{IntoArgs, Opt};
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
-use std::time::Duration;
 use tokio::io::AsyncWrite;
 use tokio::sync::{mpsc, watch, Notify};
 
+use crate::forge::http::{wait_for_stop, ResBody};
+use crate::forge::websocket::{
+  parse_close, OutMsg, SocketSink, Topics, CLOSE_GRACE, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
+};
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{extract_body_value, JsBytes};
-use crate::forge::http::{wait_for_stop, ResBody};
-
-/// Web-standard readyState values. A server socket is born OPEN (the class is
-/// only created after the handshake), so there is no CONNECTING state here.
-const OPEN: u8 = 1;
-const CLOSING: u8 = 2;
-const CLOSED: u8 = 3;
-
-/// How long a closing socket waits for the peer's close echo (or remaining
-/// frames) before giving up and dropping the connection, so a dead peer cannot
-/// stall server shutdown. Shared with the client (plugins::websocket).
-pub(crate) const CLOSE_GRACE: Duration = Duration::from_secs(3);
-
-/// Bytes of queued-but-unwritten frames above which `send` reports backpressure
-/// (-1) and a later `drain` callback is armed. Matches Bun's default.
-const DEFAULT_BACKPRESSURE_LIMIT: usize = 1024 * 1024;
-
-/// Control frames (ping/pong) carry at most 125 payload bytes (RFC 6455 5.5).
-const MAX_CONTROL_PAYLOAD: usize = 125;
 
 /// The `websocket` option callbacks of `serve`. One set per server, shared by
 /// all sockets. No `ping` callback: incoming pings are answered automatically
@@ -123,121 +107,6 @@ pub(crate) fn try_upgrade<'js>(
   Ok(ServeUpgrade::Accepted { response, socket, data })
 }
 
-/// A frame queued for the writer task: messages and closes from JS, plus the
-/// read half's obligated sends (pong replies, close echoes). Shared with the
-/// client (plugins::websocket), which runs its own writer loop.
-pub(crate) enum OutMsg {
-  Frame(OpCode, Vec<u8>),
-  Close(u16, String),
-  /// The reader finished; stop the writer.
-  End,
-}
-
-/// The plain-Rust outgoing half of one socket: the writer queue plus its
-/// accounting. Shared (`Rc`) between the JS handle, the reader and writer
-/// tasks, and the pub/sub topic registry, which must hold sockets without JS
-/// lifetimes.
-pub(crate) struct SocketSink {
-  id: u64,
-  tx: mpsc::UnboundedSender<OutMsg>,
-  state: Cell<u8>,
-  /// Total payload bytes queued for the writer but not yet written.
-  queued: Cell<usize>,
-  /// True once a send exceeded `limit`; cleared (and `drain` fired) when the
-  /// writer empties the queue.
-  backpressured: Cell<bool>,
-  limit: usize,
-}
-
-impl SocketSink {
-  /// Queue a frame for the writer, with Bun's send return values: -1 when the
-  /// queue exceeds the backpressure limit (frame still queued; `drain` will
-  /// fire once it empties), 0 when the socket is no longer open (dropped),
-  /// otherwise the number of payload bytes queued.
-  fn enqueue(&self, opcode: OpCode, payload: Vec<u8>) -> i32 {
-    if self.state.get() != OPEN {
-      return 0;
-    }
-    let len = payload.len();
-    if self.tx.send(OutMsg::Frame(opcode, payload)).is_err() {
-      return 0;
-    }
-    let queued = self.queued.get() + len;
-    self.queued.set(queued);
-    if queued > self.limit {
-      self.backpressured.set(true);
-      return -1;
-    }
-    len as i32
-  }
-}
-
-/// The per-server pub/sub registry: topic name -> subscribed sockets by id.
-/// All access happens on the JS thread. Sockets are removed by `unsubscribe`
-/// and automatically when they close; an entry is dropped with its last
-/// subscriber.
-#[derive(Clone, Default)]
-pub(crate) struct Topics {
-  inner: Rc<TopicsInner>,
-}
-
-#[derive(Default)]
-struct TopicsInner {
-  map: RefCell<HashMap<String, HashMap<u64, Rc<SocketSink>>>>,
-  next_id: Cell<u64>,
-}
-
-impl Topics {
-  fn next_id(&self) -> u64 {
-    let id = self.inner.next_id.get();
-    self.inner.next_id.set(id + 1);
-    id
-  }
-
-  fn subscribe(&self, topic: &str, sink: &Rc<SocketSink>) {
-    self.inner.map.borrow_mut().entry(topic.to_string()).or_default().insert(sink.id, sink.clone());
-  }
-
-  fn unsubscribe(&self, topic: &str, id: u64) {
-    let mut map = self.inner.map.borrow_mut();
-    if let Some(subs) = map.get_mut(topic) {
-      subs.remove(&id);
-      if subs.is_empty() {
-        map.remove(topic);
-      }
-    }
-  }
-
-  pub(crate) fn subscriber_count(&self, topic: &str) -> usize {
-    self.inner.map.borrow().get(topic).map_or(0, HashMap::len)
-  }
-
-  /// Publish a message (string -> text frame, Uint8Array -> binary) to every
-  /// subscriber of `topic`, except the `exclude`d socket (the publisher, for
-  /// `ws.publish`). Returns the number of sockets the message was queued to;
-  /// closed sockets are skipped.
-  pub(crate) fn publish_value<'js>(
-    &self,
-    topic: &str,
-    data: &Value<'js>,
-    exclude: Option<u64>,
-  ) -> rquickjs::Result<i32> {
-    let (opcode, payload) = message_payload(data)?;
-    let mut delivered = 0;
-    if let Some(subs) = self.inner.map.borrow().get(topic) {
-      for (id, sink) in subs {
-        if Some(*id) == exclude {
-          continue;
-        }
-        if sink.enqueue(opcode, payload.clone()) != 0 {
-          delivered += 1;
-        }
-      }
-    }
-    Ok(delivered)
-  }
-}
-
 /// Split a message value into its frame opcode and payload bytes: a string
 /// sends a text frame, a Uint8Array a binary frame. Shared by send and publish
 /// (and the client's send).
@@ -287,7 +156,7 @@ impl<'js> ServerWebSocket<'js> {
   /// Drop all topic subscriptions (the socket closed).
   fn unsubscribe_all(&self) {
     for topic in self.subscribed.borrow_mut().drain() {
-      self.topics.unsubscribe(&topic, self.sink.id);
+      self.topics.unsubscribe(&topic, self.sink.id());
     }
   }
 }
@@ -317,7 +186,7 @@ impl<'js> ServerWebSocket<'js> {
   /// Join a topic; `server.publish(topic)` and peers' `ws.publish(topic)` then
   /// reach this socket. No-op on a closing or closed socket.
   pub fn subscribe(&self, topic: String) {
-    if self.sink.state.get() != OPEN {
+    if !self.sink.is_open() {
       return;
     }
     self.topics.subscribe(&topic, &self.sink);
@@ -326,7 +195,7 @@ impl<'js> ServerWebSocket<'js> {
 
   /// Leave a topic. Closing the socket unsubscribes everything automatically.
   pub fn unsubscribe(&self, topic: String) {
-    self.topics.unsubscribe(&topic, self.sink.id);
+    self.topics.unsubscribe(&topic, self.sink.id());
     self.subscribed.borrow_mut().remove(&topic);
   }
 
@@ -338,23 +207,21 @@ impl<'js> ServerWebSocket<'js> {
   /// Publish to every subscriber of `topic` except this socket. Returns the
   /// number of sockets the message was queued to.
   pub fn publish(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
-    self.topics.publish_value(&topic, &data, Some(self.sink.id))
+    let (opcode, payload) = message_payload(&data)?;
+    Ok(self.topics.publish(&topic, opcode, payload, Some(self.sink.id())))
   }
 
   /// Send a close frame (default 1000). The connection finishes once the peer
   /// echoes the close (or the grace period expires).
   pub fn close(&self, code: Opt<u16>, reason: Opt<String>) {
-    if self.sink.state.get() >= CLOSING {
-      return;
+    if self.sink.begin_close(code.0.unwrap_or(1000), reason.0.unwrap_or_default()) {
+      self.closing.notify_one();
     }
-    self.sink.state.set(CLOSING);
-    let _ = self.sink.tx.send(OutMsg::Close(code.0.unwrap_or(1000), reason.0.unwrap_or_default()));
-    self.closing.notify_one();
   }
 
   #[qjs(get, rename = "readyState")]
   pub fn ready_state(&self) -> u8 {
-    self.sink.state.get()
+    self.sink.state()
   }
 
   #[qjs(get)]
@@ -418,14 +285,7 @@ async fn run_socket<'js>(
   let (read_half, write_half) = ws.split(tokio::io::split);
   let mut reader = FragmentCollectorRead::new(read_half);
   let (tx, rx) = mpsc::unbounded_channel::<OutMsg>();
-  let sink = Rc::new(SocketSink {
-    id: topics.next_id(),
-    tx: tx.clone(),
-    state: Cell::new(OPEN),
-    queued: Cell::new(0),
-    backpressured: Cell::new(false),
-    limit: handlers.backpressure_limit,
-  });
+  let sink = Rc::new(SocketSink::new(topics.next_id(), tx, handlers.backpressure_limit));
   let close_notify = Rc::new(Notify::new());
 
   let socket_handle = ServerWebSocket {
@@ -461,10 +321,7 @@ async fn run_socket<'js>(
   // means the writer is gone, which ends the read loop.
   let obligated_sink = sink.clone();
   let mut send_obligated = move |frame: Frame<'_>| {
-    let payload: Vec<u8> = frame.payload.into();
-    obligated_sink.queued.set(obligated_sink.queued.get() + payload.len());
-    let res =
-      obligated_sink.tx.send(OutMsg::Frame(frame.opcode, payload)).map_err(|_| WebSocketError::ConnectionClosed);
+    let res = obligated_sink.send_obligated(frame.opcode, frame.payload.into()).map_err(|()| WebSocketError::ConnectionClosed);
     std::future::ready(res)
   };
 
@@ -510,9 +367,8 @@ async fn run_socket<'js>(
       }
       _ = wait_for_stop(&mut shutdown_rx), if !closing => {
         closing = true;
-        sink.state.set(CLOSING);
         // 1001 Going Away: the server is shutting down.
-        let _ = tx.send(OutMsg::Close(1001, String::new()));
+        let _ = sink.begin_close(1001, String::new());
         grace.as_mut().reset(tokio::time::Instant::now() + CLOSE_GRACE);
       }
       // ws.close() was called from JS: arm the grace deadline.
@@ -527,8 +383,8 @@ async fn run_socket<'js>(
     }
   }
 
-  sink.state.set(CLOSED);
-  let _ = tx.send(OutMsg::End);
+  sink.mark_closed();
+  sink.send_end();
   ws_class.borrow().unsubscribe_all();
   let (code, reason) = close_info;
   call_callback(&ctx, &handlers.close, (ws_class, code, reason), "close", logger);
@@ -555,17 +411,14 @@ async fn run_writer<'js, W: AsyncWrite + Unpin>(
           sent_close = opcode == OpCode::Close;
           ws.write_frame(Frame::new(true, opcode, None, payload.into())).await
         };
-        let left = shared.sink.queued.get().saturating_sub(len);
-        shared.sink.queued.set(left);
-        if res.is_ok() && left == 0 && shared.sink.backpressured.get() && shared.sink.state.get() == OPEN {
-          shared.sink.backpressured.set(false);
+        if shared.sink.on_written(len, res.is_ok()) {
           call_callback(&ctx, &shared.drain, (shared.ws_class.clone(),), "drain", logger);
         }
         res
       }
       OutMsg::Close(code, reason) if !sent_close => {
         sent_close = true;
-        shared.sink.state.set(CLOSING.max(shared.sink.state.get()));
+        shared.sink.set_closing();
         ws.write_frame(Frame::close(code, reason.as_bytes())).await
       }
       OutMsg::End => break,
@@ -592,15 +445,5 @@ pub(crate) fn call_callback<'js, A: IntoArgs<'js>>(
   };
   if let Err(e) = f.call::<A, Value<'js>>(args) {
     logger.warn(&format!("[flux] websocket {what} handler error: {}", format_js_error(ctx, e)));
-  }
-}
-
-/// Extract (code, reason) from a close frame payload: a big-endian u16 followed
-/// by an optional UTF-8 reason. An empty payload means no status (1005).
-pub(crate) fn parse_close(payload: &[u8]) -> (u16, String) {
-  if payload.len() >= 2 {
-    (u16::from_be_bytes([payload[0], payload[1]]), String::from_utf8_lossy(&payload[2..]).into_owned())
-  } else {
-    (1005, String::new())
   }
 }

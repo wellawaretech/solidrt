@@ -17,11 +17,12 @@ use crate::forge::http::{
   accept_loop, bind_listener, build_response, channel_body, full_body, serve_connection, text_response, ResBody,
   Route, RouteTable, ServerShared,
 };
+use crate::forge::websocket::Topics;
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
 use crate::plugins::flux::websocket::{
-  parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, Topics, WsHandlers,
+  message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
 };
 use crate::plugins::headers::headers_from_init;
 use crate::plugins::request::{request_from_parts, Request};
@@ -410,7 +411,8 @@ impl Server {
   /// Publish a message (string or Uint8Array) to every socket subscribed to
   /// `topic`. Returns the number of sockets the message was queued to.
   pub fn publish<'js>(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
-    self.topics.publish_value(&topic, &data, None)
+    let (opcode, payload) = message_payload(&data)?;
+    Ok(self.topics.publish(&topic, opcode, payload, None))
   }
 
   /// How many sockets are currently subscribed to `topic`.
