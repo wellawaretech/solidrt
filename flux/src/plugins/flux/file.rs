@@ -1,17 +1,15 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 
+use crate::forge::fs;
 use crate::pending::PendingOps;
 use crate::plugins::body::attach_body;
 use crate::plugins::marshal::with_pending;
 
-struct StatResult {
-  size: u64,
-  file_type: &'static str,
-  mtime_ms: Option<i64>,
-}
+// Marshalling for the `file()` reference: forward to the engine-free
+// `forge::fs` disk operations and encode their results back to JS.
 
-impl<'js> IntoJs<'js> for StatResult {
+impl<'js> IntoJs<'js> for fs::StatInfo {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     obj.set("size", self.size)?;
@@ -21,24 +19,6 @@ impl<'js> IntoJs<'js> for StatResult {
     }
     Ok(obj.into_value())
   }
-}
-
-fn file_type_str(ft: std::fs::FileType) -> &'static str {
-  if ft.is_file() {
-    "file"
-  } else if ft.is_dir() {
-    "directory"
-  } else if ft.is_symlink() {
-    "symlink"
-  } else {
-    "other"
-  }
-}
-
-fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
-  let mtime = meta.modified().ok()?;
-  let dur = mtime.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()?;
-  i64::try_from(dur.as_millis()).ok()
 }
 
 fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
@@ -59,7 +39,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let pending = pending_for_body.clone();
       async move {
         pending.hold();
-        let r = tokio::fs::read(&**path).await.map_err(|e| format!("read {}: {e}", path));
+        let r = fs::read(&path).await;
         pending.release();
         r
       }
@@ -72,14 +52,8 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let exists = tokio::fs::metadata(&**path).await.map(|m| m.is_file()).unwrap_or(false);
-          pending.release();
-          Ok::<bool, rquickjs::Error>(exists)
-        }))
+        Ok(with_pending(&ctx, async move { Ok::<bool, String>(fs::file_exists(&path).await) }))
       }
     }),
   )
@@ -92,16 +66,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move {
-          match tokio::fs::metadata(&**path).await {
-            Ok(meta) => Ok(StatResult {
-              size: meta.len(),
-              file_type: file_type_str(meta.file_type()),
-              mtime_ms: mtime_ms(&meta),
-            }),
-            Err(e) => Err(format!("stat {}: {e}", path)),
-          }
-        }))
+        Ok(with_pending(&ctx, async move { fs::stat(&path).await }))
       }
     }),
   )
@@ -121,9 +86,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
           return Err(Exception::throw_message(&ctx, "write: data must be string or Uint8Array"));
         };
         let path = path.clone();
-        Ok(with_pending(&ctx, async move {
-          tokio::fs::write(&**path, &bytes).await.map_err(|e| format!("write {}: {e}", path))
-        }))
+        Ok(with_pending(&ctx, async move { fs::write(&path, &bytes).await }))
       }
     }),
   )

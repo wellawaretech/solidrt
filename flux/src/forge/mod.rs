@@ -7,8 +7,11 @@
 //! land here as they are split out. Destined to become its own crate (see
 //! REDESIGN.md).
 
+pub mod events;
+pub mod fs;
 pub mod http;
 pub mod p2p;
+pub mod path;
 pub mod sqlite;
 pub mod subprocess;
 pub mod websocket;

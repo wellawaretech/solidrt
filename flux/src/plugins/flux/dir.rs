@@ -1,8 +1,13 @@
 use rquickjs::{function::MutFn, promise::Promised, Array, Ctx, Function, IntoJs, Object, Value};
 use std::rc::Rc;
 
-use crate::pending::PendingOps;
+use crate::forge::fs;
+use crate::plugins::marshal::with_pending;
 
+// Marshalling for the `dir()` reference: forward to the engine-free
+// `forge::fs` directory operations and encode their results back to JS.
+
+// A directory listing: (name, type) pairs from forge::fs::read_dir.
 struct DirEntries(Vec<(String, &'static str)>);
 
 impl<'js> IntoJs<'js> for DirEntries {
@@ -18,29 +23,6 @@ impl<'js> IntoJs<'js> for DirEntries {
   }
 }
 
-fn entry_type(ft: std::fs::FileType) -> &'static str {
-  if ft.is_file() {
-    "file"
-  } else if ft.is_dir() {
-    "directory"
-  } else if ft.is_symlink() {
-    "symlink"
-  } else {
-    "other"
-  }
-}
-
-async fn read_entries(path: &str) -> rquickjs::Result<Vec<(String, &'static str)>> {
-  let mut entries = tokio::fs::read_dir(path).await.map_err(rquickjs::Error::Io)?;
-  let mut out = Vec::new();
-  while let Some(entry) = entries.next_entry().await.map_err(rquickjs::Error::Io)? {
-    let name = entry.file_name().to_string_lossy().into_owned();
-    let ft = entry.file_type().await.map_err(rquickjs::Error::Io)?;
-    out.push((name, entry_type(ft)));
-  }
-  Ok(out)
-}
-
 fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
   let path = Rc::new(path);
   let obj = Object::new(ctx.clone())?;
@@ -51,14 +33,8 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let r = read_entries(&path).await;
-          pending.release();
-          r.map(DirEntries)
-        }))
+        Ok(with_pending(&ctx, async move { fs::read_dir(&path).await.map(DirEntries) }))
       }
     }),
   )
@@ -70,14 +46,8 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let exists = tokio::fs::metadata(&**path).await.map(|m| m.is_dir()).unwrap_or(false);
-          pending.release();
-          Ok::<bool, rquickjs::Error>(exists)
-        }))
+        Ok(with_pending(&ctx, async move { Ok::<bool, String>(fs::dir_exists(&path).await) }))
       }
     }),
   )

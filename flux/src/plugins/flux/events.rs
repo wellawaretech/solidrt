@@ -1,36 +1,29 @@
+use crate::forge::events::ListenerRegistry;
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
 use rquickjs::function::MutFn;
 use rquickjs::{Ctx, Function, IntoJs, Persistent, Value};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-// The event-bus mechanism: a string-keyed listener registry plus dispatch.
-// flux owns the mechanism but imposes no policy - it has no notion of which
-// events exist, no JS on/once surface, and no concept of sticky events.
-// Consumers (lattice's UI events, a future flux:process) build their own
-// surface on top via register_listener + emit_event.
+// Marshalling for the event-bus mechanism: hold the engine-free
+// `forge::events::ListenerRegistry` keyed by event name, store JS callbacks as
+// Persistent handles, and turn the registry's is_first/is_last signals into
+// PendingOps hold/release so the engine loop stays alive while there are
+// listeners. flux owns the mechanism but imposes no policy - it has no notion of
+// which events exist, no JS on/once surface, and no concept of sticky events.
+// Consumers (lattice's UI events, a future flux:process) build their own surface
+// on top via register_listener + emit_event.
 
-// (id, callback, once)
-type Listener = (u32, Persistent<Function<'static>>, bool);
-
-// next_id lives alongside the map so register_listener can reach everything
-// through a single userdata lookup.
-struct ListenerMapInner {
-  map: HashMap<String, Vec<Listener>>,
-  next_id: u32,
-}
-
-// JS functions are !Send, so the listener map lives in Rc<RefCell<...>>.
-// JsLifetime + skip_trace lets QuickJS store this as context userdata
-// without the GC trying to trace through the Rc.
+// The registry stores JS functions as Persistent handles. JS functions are
+// !Send, so it lives in Rc<RefCell<...>>. JsLifetime + skip_trace lets QuickJS
+// store this as context userdata without the GC trying to trace through the Rc.
 #[derive(Clone, rquickjs::JsLifetime)]
-struct ListenerMap(#[qjs(skip_trace)] Rc<RefCell<ListenerMapInner>>);
+struct ListenerMap(#[qjs(skip_trace)] Rc<RefCell<ListenerRegistry<Persistent<Function<'static>>>>>);
 
 impl Default for ListenerMap {
   fn default() -> Self {
-    Self(Rc::new(RefCell::new(ListenerMapInner { map: HashMap::new(), next_id: 1 })))
+    Self(Rc::new(RefCell::new(ListenerRegistry::default())))
   }
 }
 
@@ -61,15 +54,9 @@ pub fn register_listener<'js>(
   {
     let store = ctx.userdata::<ListenerMap>().unwrap();
     let pending = ctx.userdata::<PendingOps>().unwrap();
-    let mut inner = store.0.borrow_mut();
-
-    id = inner.next_id;
-    inner.next_id += 1;
-
-    let is_first_for_event = !inner.map.contains_key(&event);
-    inner.map.entry(event.clone()).or_default().push((id, persistent, once));
-
-    if is_first_for_event {
+    let (new_id, is_first) = store.0.borrow_mut().insert(event.clone(), persistent, once);
+    id = new_id;
+    if is_first {
       pending.hold();
     }
   }
@@ -79,13 +66,8 @@ pub fn register_listener<'js>(
     MutFn::from(move |ctx: Ctx<'_>| {
       let store = ctx.userdata::<ListenerMap>().unwrap();
       let pending = ctx.userdata::<PendingOps>().unwrap();
-      let mut inner = store.0.borrow_mut();
-      if let Some(cbs) = inner.map.get_mut(&event) {
-        cbs.retain(|(lid, _, _)| *lid != id);
-        if cbs.is_empty() {
-          inner.map.remove(&event);
-          pending.release();
-        }
+      if store.0.borrow_mut().remove(&event, id) {
+        pending.release();
       }
     }),
   )
@@ -96,8 +78,8 @@ pub fn register_listener<'js>(
 // for an event is gone.
 pub fn has_listeners(ctx: &Ctx<'_>, event: &str) -> bool {
   let store = ctx.userdata::<ListenerMap>().unwrap();
-  let inner = store.0.borrow();
-  inner.map.get(event).is_some_and(|cbs| !cbs.is_empty())
+  let reg = store.0.borrow();
+  reg.has_listeners(event)
 }
 
 // Dispatches an event to all registered listeners.
@@ -105,21 +87,11 @@ pub fn has_listeners(ctx: &Ctx<'_>, event: &str) -> bool {
 pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
   let arg = data.into_js(ctx).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
 
-  // Snapshot before calling into JS so a listener that mutates the map
-  // (e.g. calls its own unsubscribe) does not invalidate iteration.
-  // Also remember which entries were once-listeners so we can prune them
-  // after dispatch.
+  // Snapshot before calling into JS so a listener that mutates the map (e.g.
+  // calls its own unsubscribe) does not invalidate iteration. Also remember the
+  // once-listeners so we can prune them after dispatch.
   let store = ctx.userdata::<ListenerMap>().unwrap();
-  let (snapshot, once_ids): (Vec<Persistent<Function<'static>>>, Vec<u32>) = {
-    let inner = store.0.borrow();
-    match inner.map.get(event) {
-      Some(cbs) => (
-        cbs.iter().map(|(_, p, _)| p.clone()).collect(),
-        cbs.iter().filter(|(_, _, once)| *once).map(|(id, _, _)| *id).collect(),
-      ),
-      None => (Vec::new(), Vec::new()),
-    }
-  };
+  let (snapshot, once_ids) = store.0.borrow().snapshot(event);
 
   for listener in snapshot {
     if let Ok(f) = listener.restore(ctx) {
@@ -129,17 +101,12 @@ pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
     }
   }
 
-  // Prune once-listeners we just fired. A listener could have unsubscribed
-  // itself during dispatch; retain() is a no-op for already-removed IDs.
+  // Prune once-listeners we just fired. A listener could have unsubscribed itself
+  // during dispatch; prune is a no-op for already-removed IDs.
   if !once_ids.is_empty() {
     let pending = ctx.userdata::<PendingOps>().unwrap();
-    let mut inner = store.0.borrow_mut();
-    if let Some(cbs) = inner.map.get_mut(event) {
-      cbs.retain(|(id, _, _)| !once_ids.contains(id));
-      if cbs.is_empty() {
-        inner.map.remove(event);
-        pending.release();
-      }
+    if store.0.borrow_mut().prune(event, &once_ids) {
+      pending.release();
     }
   }
 }

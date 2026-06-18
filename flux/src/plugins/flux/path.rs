@@ -1,8 +1,11 @@
-use path_clean::PathClean;
 use rquickjs::function::Rest;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, IntoJs, Value};
-use std::path::{PathBuf, MAIN_SEPARATOR_STR};
+
+use crate::forge::path;
+
+// Marshalling for `flux:path`: adapt JS args to the engine-free `forge::path`
+// functions, and turn a containment failure (`None`) into JS `null`.
 
 pub struct PathModule;
 
@@ -20,39 +23,15 @@ impl ModuleDef for PathModule {
   }
 }
 
-// Joins and normalizes `segments` lexically. Empty segments are skipped so a
-// stray "" cannot turn a relative join absolute; an empty result yields ".".
 fn join(segments: Rest<String>) -> String {
-  let joined = segments.iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(MAIN_SEPARATOR_STR);
-  if joined.is_empty() {
-    return ".".to_string();
-  }
-  PathBuf::from(joined).clean().to_string_lossy().into_owned()
+  path::join(&segments.0)
 }
 
-// Resolves `path` against the trusted `base`, returning the absolute result
-// only if it stays inside `base`; otherwise null. Fusing normalization and
-// containment means a caller cannot resolve an untrusted path and forget to
-// check it did not escape. An absolute or `..`-laden `path` that climbs above
-// `base` fails the check and yields null.
+// Returns the resolved absolute path, or an explicit JS `null` (not `undefined`)
+// to match the documented `string | null` contract when `path` escapes `base`.
 fn resolve_within<'js>(ctx: Ctx<'js>, base: String, path: String) -> rquickjs::Result<Value<'js>> {
-  let mut root = PathBuf::from(&base);
-  if root.is_relative() {
-    if let Ok(cwd) = std::env::current_dir() {
-      root = cwd.join(root);
-    }
-  }
-  let root = root.clean();
-
-  let joined = root.join(&path).clean();
-
-  // Component-wise prefix check (a path starts with itself), so a sibling like
-  // `<root>-secret` is correctly rejected without a manual trailing-separator
-  // dance. A rejection returns an explicit JS `null` (not `undefined`) to match
-  // the documented `string | null` contract.
-  if joined.starts_with(&root) {
-    joined.to_string_lossy().into_owned().into_js(&ctx)
-  } else {
-    Ok(Value::new_null(ctx))
+  match path::resolve_within(&base, &path) {
+    Some(resolved) => resolved.into_js(&ctx),
+    None => Ok(Value::new_null(ctx)),
   }
 }
