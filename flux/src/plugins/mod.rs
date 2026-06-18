@@ -5,6 +5,7 @@ pub mod flux;
 pub mod headers;
 pub mod http;
 pub mod js_error;
+pub mod marshal;
 pub mod request;
 pub mod response;
 pub mod text;

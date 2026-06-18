@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::pending::PendingOps;
 use crate::plugins::body::attach_body;
-use crate::plugins::js_error::JsResult;
+use crate::plugins::marshal::with_pending;
 
 struct StatResult {
   size: u64,
@@ -91,20 +91,16 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let r = tokio::fs::metadata(&**path).await;
-          pending.release();
-          JsResult(match r {
+        Ok(with_pending(&ctx, async move {
+          match tokio::fs::metadata(&**path).await {
             Ok(meta) => Ok(StatResult {
               size: meta.len(),
               file_type: file_type_str(meta.file_type()),
               mtime_ms: mtime_ms(&meta),
             }),
             Err(e) => Err(format!("stat {}: {e}", path)),
-          })
+          }
         }))
       }
     }),
@@ -124,13 +120,9 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
         } else {
           return Err(Exception::throw_message(&ctx, "write: data must be string or Uint8Array"));
         };
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let path = path.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let r = tokio::fs::write(&**path, &bytes).await;
-          pending.release();
-          JsResult(r.map_err(|e| format!("write {}: {e}", path)))
+        Ok(with_pending(&ctx, async move {
+          tokio::fs::write(&**path, &bytes).await.map_err(|e| format!("write {}: {e}", path))
         }))
       }
     }),

@@ -13,7 +13,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
 use crate::plugins::body::{byte_stream_iterable, to_byte_stream};
-use crate::plugins::js_error::JsResult;
+use crate::plugins::marshal::with_pending;
 
 // flux:subprocess - spawn child processes and collect their output.
 //
@@ -256,14 +256,8 @@ fn build_command<'js>(
     MutFn::from({
       let spec = spec.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let spec = spec.clone();
-        Ok(Promised(async move {
-          pending.hold();
-          let result = run_output_inner(&spec).await;
-          pending.release();
-          JsResult(result)
-        }))
+        Ok(with_pending(&ctx, async move { run_output_inner(&spec).await }))
       }
     }),
   )
@@ -371,17 +365,13 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let stdin = stdin.clone();
       move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
         let bytes = value_to_bytes(&ctx, &data)?;
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let stdin = stdin.clone();
-        Ok(Promised(async move {
-          pending.hold();
+        Ok(with_pending(&ctx, async move {
           let mut guard = stdin.lock().await;
-          let r = match guard.as_mut() {
+          match guard.as_mut() {
             Some(si) => si.write_all(&bytes).await.map_err(|e| format!("write stdin: {e}")),
             None => Err("stdin is closed".to_string()),
-          };
-          pending.release();
-          JsResult(r)
+          }
         }))
       }
     }),
@@ -396,13 +386,10 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     MutFn::from({
       let stdin = stdin.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
-        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
         let stdin = stdin.clone();
-        Ok(Promised(async move {
-          pending.hold();
+        Ok(with_pending(&ctx, async move {
           stdin.lock().await.take();
-          pending.release();
-          JsResult::<()>(Ok(()))
+          Ok::<(), String>(())
         }))
       }
     }),

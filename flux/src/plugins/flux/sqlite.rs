@@ -76,6 +76,7 @@ use rusqlite::{Connection, OpenFlags};
 use tokio::sync::oneshot;
 
 use crate::plugins::js_error::{err_message, JsResult};
+use crate::plugins::marshal::with_pending;
 
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
 /// decoded result cells (SQL -> JS). Owned so it can cross the channel.
@@ -155,13 +156,7 @@ impl Database {
     mode: Opt<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
     let flags = open_flags(mode.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = spawn_database(path, flags).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { spawn_database(path, flags).await }))
   }
 
   /// Create a reusable prepared statement. Construction is synchronous and
@@ -181,13 +176,7 @@ impl Database {
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<RunResult>>>> {
     let cmd_tx = self.cmd_tx.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = exec_roundtrip(&cmd_tx, sql, bound, false).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { exec_roundtrip(&cmd_tx, sql, bound, false).await }))
   }
 
   /// Run a batch of statements (separated by `;`) with no parameters. Intended
@@ -198,13 +187,7 @@ impl Database {
     sql: String,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let cmd_tx = self.cmd_tx.clone();
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = batch_roundtrip(&cmd_tx, sql).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { batch_roundtrip(&cmd_tx, sql).await }))
   }
 
   /// Run a batch of `[sql, params]` statements in a single transaction. All run
@@ -217,13 +200,7 @@ impl Database {
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<TxResults>>>> {
     let parsed = extract_statements(statements).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let cmd_tx = self.cmd_tx.clone();
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = transaction_roundtrip(&cmd_tx, parsed).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { transaction_roundtrip(&cmd_tx, parsed).await }))
   }
 
   /// Close the connection, releasing it. Safe to call more than once; later
@@ -233,16 +210,13 @@ impl Database {
     ctx: Ctx<'js>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<()>>>> {
     let cmd_tx = self.cmd_tx.clone();
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
+    Ok(with_pending(&ctx, async move {
       let (reply, rx) = oneshot::channel();
       // A send error means the thread already exited: treat as closed.
       if cmd_tx.send(Command::Close { reply }).is_ok() {
         let _ = rx.await;
       }
-      pending.release();
-      JsResult(Ok(()))
+      Ok::<(), String>(())
     }))
   }
 }
@@ -267,13 +241,7 @@ impl Statement {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = query_roundtrip(&cmd_tx, sql, bound, true, false).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { query_roundtrip(&cmd_tx, sql, bound, true, false).await }))
   }
 
   /// The first matching row as a plain object, or `undefined` if there are none.
@@ -285,12 +253,8 @@ impl Statement {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = query_roundtrip(&cmd_tx, sql, bound, true, true).await.map(|rows| FirstRow(rows.0.into_iter().next()));
-      pending.release();
-      JsResult(r)
+    Ok(with_pending(&ctx, async move {
+      query_roundtrip(&cmd_tx, sql, bound, true, true).await.map(|rows| FirstRow(rows.0.into_iter().next()))
     }))
   }
 
@@ -303,13 +267,7 @@ impl Statement {
     let cmd_tx = self.cmd_tx.clone();
     let sql = self.sql.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let pending = ctx.userdata::<crate::pending::PendingOps>().expect("pending ops").clone();
-    Ok(Promised(async move {
-      pending.hold();
-      let r = exec_roundtrip(&cmd_tx, sql, bound, true).await;
-      pending.release();
-      JsResult(r)
-    }))
+    Ok(with_pending(&ctx, async move { exec_roundtrip(&cmd_tx, sql, bound, true).await }))
   }
 }
 
