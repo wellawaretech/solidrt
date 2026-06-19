@@ -67,7 +67,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, IntoJs, JsLifetime, Object, TypedArray, Value};
 
-use crate::forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
+use forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
 use crate::plugins::js_error::{err_message, JsResult};
 use crate::plugins::marshal::with_pending;
 

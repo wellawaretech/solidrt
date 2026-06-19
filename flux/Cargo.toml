@@ -27,24 +27,18 @@ default = ["compile"]
 compile = []
 
 [dependencies]
+forge = { workspace = true }
 log = { workspace = true }
 rquickjs = { version = "0.12.0", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
+# The capability cores (and their reqwest/hyper/rusqlite/iroh/... deps) live in
+# forge now; flux keeps only what the marshalling layer names directly.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
-futures-core = "0.3"
-percent-encoding = "2"
-rusqlite = { version = "0.40", features = ["bundled"] }
-path-clean = "1"
-# Current-process stats for flux:process (memoryUsage rss). Same crate/features as lattice's overlay.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
 iroh = "1"
-# Cross-platform PATH lookup for flux:subprocess `which` (handles Windows PATHEXT).
-which = "7"
 # ReaderStream adapts a child's stdout/stderr (AsyncRead) into a byte stream for
 # flux:subprocess streaming spawn.
 tokio-util = { version = "0.7", features = ["io"] }

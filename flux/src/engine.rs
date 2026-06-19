@@ -101,7 +101,7 @@ impl FluxEngineBuilder {
 
   pub fn build(self) -> FluxEngine {
     let logger = match self.logger {
-      Some(f) => Logger(Arc::from(f)),
+      Some(f) => Logger::new(f),
       None => default_logger(),
     };
     let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();

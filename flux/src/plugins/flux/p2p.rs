@@ -37,7 +37,7 @@ use rquickjs::{Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Objec
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 
-use crate::forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
+use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::body::extract_body_value;

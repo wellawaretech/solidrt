@@ -35,7 +35,7 @@ use crate::logger::Logger;
 const READ_CHUNK: usize = 64 * 1024;
 
 /// A message queued from the caller for the per-stream writer task.
-pub(crate) enum WriteMsg {
+pub enum WriteMsg {
   Data(Vec<u8>),
   Finish,
 }
@@ -44,7 +44,7 @@ pub(crate) enum WriteMsg {
 /// is itself a clone of shared state plus the 32-byte secret), so the caller can
 /// move a clone into each async op rather than borrowing across an await.
 #[derive(Clone)]
-pub(crate) struct Endpoint {
+pub struct Endpoint {
   inner: IrohEndpoint,
   /// The 32-byte secret key, kept so it can be read back for persistence.
   secret: [u8; 32],
@@ -59,7 +59,7 @@ impl Endpoint {
   /// iroh's bind does blocking work that otherwise stalls a single-threaded host
   /// (observed on Android, starving the render/init commands). This also turns a
   /// bind panic into a returned error instead of a silent teardown.
-  pub(crate) async fn bind(
+  pub async fn bind(
     secret: Option<[u8; 32]>,
     relay_url: Option<String>,
     alpns: Vec<Vec<u8>>,
@@ -72,13 +72,13 @@ impl Endpoint {
   }
 
   /// This endpoint's dial address: the string peers pass to `connect`.
-  pub(crate) fn id(&self) -> String {
+  pub fn id(&self) -> String {
     self.inner.id().to_string()
   }
 
   /// The secret key as 64 hex chars, for the caller to persist and feed back to
   /// `bind` to keep a stable identity across restarts.
-  pub(crate) fn secret_key_hex(&self) -> String {
+  pub fn secret_key_hex(&self) -> String {
     encode_hex(&self.secret)
   }
 
@@ -86,7 +86,7 @@ impl Endpoint {
   /// home relay, and direct addresses, so a peer can `connect` without relying on
   /// discovery. Waits (briefly) for the relay to be assigned before encoding;
   /// bounded, since a LAN-only endpoint without a relay still yields direct addrs.
-  pub(crate) async fn ticket(&self) -> String {
+  pub async fn ticket(&self) -> String {
     let _ = tokio::time::timeout(Duration::from_secs(3), self.inner.online()).await;
     encode_ticket(&self.inner.addr())
   }
@@ -95,7 +95,7 @@ impl Endpoint {
   /// either a `ticket` (connects directly, no discovery) or a bare endpoint `id`
   /// (needs discovery to resolve the peer's address). Returns the raw iroh parts;
   /// the caller assembles a `Stream` from them.
-  pub(crate) async fn connect(
+  pub async fn connect(
     &self,
     peer: String,
     protocol: String,
@@ -109,14 +109,14 @@ impl Endpoint {
 
   /// Accept the next incoming connection matching `alpn` and open its first
   /// bidirectional stream. `Ok(None)` once the endpoint stops accepting (closed).
-  pub(crate) async fn accept_one(&self, alpn: &[u8]) -> Result<Option<(Connection, SendStream, RecvStream)>, String> {
+  pub async fn accept_one(&self, alpn: &[u8]) -> Result<Option<(Connection, SendStream, RecvStream)>, String> {
     accept_one(&self.inner, alpn).await
   }
 
   /// Snapshot of how the connection to `id` is currently carried; see `ConnInfo`.
   /// iroh starts on the relay and upgrades to direct after hole-punching, so poll
   /// this to watch the path settle.
-  pub(crate) async fn conn_info(&self, id: String) -> Result<ConnInfo, String> {
+  pub async fn conn_info(&self, id: String) -> Result<ConnInfo, String> {
     let id: EndpointId = id.parse().map_err(|e| format!("invalid endpoint id: {e}"))?;
     let info = self.inner.remote_info(id).await;
     let mut addrs = Vec::new();
@@ -147,7 +147,7 @@ impl Endpoint {
   }
 
   /// Close the endpoint, ending any `accept_one` loop.
-  pub(crate) async fn close(&self) {
+  pub async fn close(&self) {
     self.inner.close().await;
   }
 }
@@ -173,7 +173,7 @@ pub struct ConnInfo {
 /// go through the writer task draining the channel `new` hands back. Holds the
 /// `Connection` only to keep the QUIC connection (and thus the stream) alive for
 /// the stream's lifetime.
-pub(crate) struct Stream {
+pub struct Stream {
   conn: Connection,
   recv: RefCell<Option<RecvStream>>,
   tx: mpsc::UnboundedSender<WriteMsg>,
@@ -183,7 +183,7 @@ impl Stream {
   /// Build a stream and the receiver its writer task drains. The caller spawns
   /// `run_writer(send, rx, logger)` (spawning is host-specific). Owns the
   /// outgoing channel so callers never handle `WriteMsg` directly.
-  pub(crate) fn new(conn: Connection, recv: RecvStream) -> (Rc<Stream>, mpsc::UnboundedReceiver<WriteMsg>) {
+  pub fn new(conn: Connection, recv: RecvStream) -> (Rc<Stream>, mpsc::UnboundedReceiver<WriteMsg>) {
     let (tx, rx) = mpsc::unbounded_channel::<WriteMsg>();
     let stream = Rc::new(Stream { conn, recv: RefCell::new(Some(recv)), tx });
     (stream, rx)
@@ -192,7 +192,7 @@ impl Stream {
   /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
   /// or once the recv half is gone (closed). The recv half is taken out before the
   /// await and put back after, so no borrow is held across it.
-  pub(crate) async fn read_chunk(&self) -> Result<Option<Vec<u8>>, String> {
+  pub async fn read_chunk(&self) -> Result<Option<Vec<u8>>, String> {
     let Some(mut recv) = self.recv.borrow_mut().take() else {
       return Ok(None);
     };
@@ -210,24 +210,24 @@ impl Stream {
   }
 
   /// Queue bytes on the send half.
-  pub(crate) fn write(&self, bytes: Vec<u8>) {
+  pub fn write(&self, bytes: Vec<u8>) {
     let _ = self.tx.send(WriteMsg::Data(bytes));
   }
 
   /// Finish the send half (QUIC FIN) after queued writes flush. The recv half
   /// stays open for replies.
-  pub(crate) fn finish(&self) {
+  pub fn finish(&self) {
     let _ = self.tx.send(WriteMsg::Finish);
   }
 
   /// Tear the stream down: finish the send half and stop reading.
-  pub(crate) fn close(&self) {
+  pub fn close(&self) {
     let _ = self.tx.send(WriteMsg::Finish);
     self.recv.borrow_mut().take();
   }
 
   /// The remote peer's endpoint id.
-  pub(crate) fn remote_id(&self) -> String {
+  pub fn remote_id(&self) -> String {
     self.conn.remote_id().to_string()
   }
 }
@@ -315,7 +315,7 @@ async fn accept_one(
 
 /// Drain queued writes onto the send half in order, then finish it. A write
 /// error or a closed queue ends the task.
-pub(crate) async fn run_writer(mut send: SendStream, mut rx: mpsc::UnboundedReceiver<WriteMsg>, logger: &Logger) {
+pub async fn run_writer(mut send: SendStream, mut rx: mpsc::UnboundedReceiver<WriteMsg>, logger: &Logger) {
   while let Some(msg) = rx.recv().await {
     match msg {
       WriteMsg::Data(buf) => {
@@ -336,7 +336,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 /// Decode 64 hex chars into 32 bytes (a secret key). Engine-free; the caller
 /// extracts the string from JS first.
-pub(crate) fn decode_hex32(s: &str) -> Result<[u8; 32], String> {
+pub fn decode_hex32(s: &str) -> Result<[u8; 32], String> {
   if s.len() != 64 {
     return Err("secretKey must be 64 hex characters (32 bytes)".to_string());
   }

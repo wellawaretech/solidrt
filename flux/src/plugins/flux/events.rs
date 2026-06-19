@@ -1,4 +1,4 @@
-use crate::forge::events::ListenerRegistry;
+use forge::events::ListenerRegistry;
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
 use rquickjs::function::MutFn;

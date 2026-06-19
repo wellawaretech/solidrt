@@ -2,7 +2,7 @@ use rquickjs::function::Rest;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, IntoJs, Value};
 
-use crate::forge::path;
+use forge::path;
 
 // Marshalling for `flux:path`: adapt JS args to the engine-free `forge::path`
 // functions, and turn a containment failure (`None`) into JS `null`.

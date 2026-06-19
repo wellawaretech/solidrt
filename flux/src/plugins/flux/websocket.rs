@@ -10,8 +10,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use tokio::sync::{watch, Notify};
 
-use crate::forge::http::ResBody;
-use crate::forge::websocket::{
+use forge::http::ResBody;
+use forge::websocket::{
   run_reader, run_writer, SocketSink, Topics, WsDispatch, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
 };
 use crate::logger::{format_js_error, Logger};

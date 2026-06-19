@@ -33,9 +33,9 @@ use crate::logger::Logger;
 /// One boxed body type for every serve response, so buffered (`Full`) and
 /// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
 /// never produce an error, hence `Infallible`.
-pub(crate) type ResBody = BoxBody<Bytes, Infallible>;
+pub type ResBody = BoxBody<Bytes, Infallible>;
 
-pub(crate) fn full_body(bytes: Bytes) -> ResBody {
+pub fn full_body(bytes: Bytes) -> ResBody {
   Full::new(bytes).boxed()
 }
 
@@ -65,12 +65,12 @@ impl Body for ChannelBody {
 /// sends `Bytes` frames; dropping the sender ends the body (EOF). Used for
 /// responses whose bytes are produced after the handler returns (chunked transfer
 /// encoding, no Content-Length).
-pub(crate) fn channel_body() -> (mpsc::Sender<Bytes>, ResBody) {
+pub fn channel_body() -> (mpsc::Sender<Bytes>, ResBody) {
   let (tx, rx) = mpsc::channel::<Bytes>(16);
   (tx, ChannelBody { rx }.boxed())
 }
 
-pub(crate) fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
+pub fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
   HyperResponse::builder()
     .status(status)
     .header("Content-Type", "text/plain")
@@ -81,7 +81,7 @@ pub(crate) fn text_response(status: StatusCode, body: &str) -> HyperResponse<Res
 /// Assemble a hyper response from already-extracted parts and an (already boxed)
 /// body. Defaults the Content-Type to text/plain when the headers don't set one.
 /// Shared by buffered and streamed responses alike.
-pub(crate) fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
+pub fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
   let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
   let mut builder = HyperResponse::builder().status(status);
   let mut has_content_type = false;
@@ -156,15 +156,15 @@ fn match_segments(segments: &[Segment], path: &[&str]) -> Option<Vec<(String, St
 /// `:param`, 2 = has a `*`), and the handler payload to run. Generic over the
 /// handler type `H` so the engine-free router carries whatever the marshalling
 /// layer needs (a script function, a static snapshot, a per-method table).
-pub(crate) struct Route<H> {
+pub struct Route<H> {
   segments: Vec<Segment>,
   tier: u8,
-  pub(crate) handler: H,
+  pub handler: H,
 }
 
 impl<H> Route<H> {
   /// Compile `pattern` and pair it with its handler payload.
-  pub(crate) fn new(pattern: &str, handler: H) -> Self {
+  pub fn new(pattern: &str, handler: H) -> Self {
     let (segments, tier) = parse_pattern(pattern);
     Route { segments, tier, handler }
   }
@@ -172,20 +172,20 @@ impl<H> Route<H> {
 
 /// A compiled route table. Routes are pre-sorted by `tier` so exact patterns beat
 /// `:param` patterns beat `*`; within a tier, registration order is kept.
-pub(crate) struct RouteTable<H> {
+pub struct RouteTable<H> {
   routes: Vec<Route<H>>,
 }
 
 impl<H> RouteTable<H> {
   /// Build a table from routes, sorting by tier. A stable sort keeps registration
   /// order within each tier.
-  pub(crate) fn from_routes(mut routes: Vec<Route<H>>) -> Self {
+  pub fn from_routes(mut routes: Vec<Route<H>>) -> Self {
     routes.sort_by_key(|r| r.tier);
     RouteTable { routes }
   }
 
   /// Return the first matching route's handler and its captured path params.
-  pub(crate) fn lookup(&self, path: &str) -> Option<(&H, Vec<(String, String)>)> {
+  pub fn lookup(&self, path: &str) -> Option<(&H, Vec<(String, String)>)> {
     let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     for route in &self.routes {
       if let Some(params) = match_segments(&route.segments, &path_segs) {
@@ -203,36 +203,36 @@ impl<H> RouteTable<H> {
 /// broadcasts to every subscriber. Held in an `Arc` so the accept loop keeps it
 /// alive independent of any handle's lifetime: dropping the handle leaves the
 /// server running.
-pub(crate) struct ServerShared {
+pub struct ServerShared {
   shutdown: watch::Sender<bool>,
 }
 
 impl ServerShared {
-  pub(crate) fn new() -> Arc<Self> {
+  pub fn new() -> Arc<Self> {
     let (shutdown, _) = watch::channel(false);
     Arc::new(ServerShared { shutdown })
   }
 
-  pub(crate) fn subscribe(&self) -> watch::Receiver<bool> {
+  pub fn subscribe(&self) -> watch::Receiver<bool> {
     self.shutdown.subscribe()
   }
 
   /// Signal shutdown. A send error means there are no live subscribers (the loop
   /// already exited), i.e. already stopped.
-  pub(crate) fn stop(&self) {
+  pub fn stop(&self) {
     let _ = self.shutdown.send(true);
   }
 }
 
 /// Resolve once a stop has been signalled (value `true`). A dropped sender also
 /// resolves it: nothing can signal a stop anymore, so treat it as one.
-pub(crate) async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
+pub async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
   let _ = rx.wait_for(|&stop| stop).await;
 }
 
 /// Bind a non-blocking TCP listener for the HTTP server, registered with tokio.
 /// Returns a descriptive message on failure for the caller to surface.
-pub(crate) fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, String> {
+pub fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, String> {
   let addr = format!("{hostname}:{port}");
   let listener = std::net::TcpListener::bind(&addr).map_err(|e| format!("serve: failed to bind {addr}: {e}"))?;
   listener
@@ -246,7 +246,7 @@ pub(crate) fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, St
 /// keep-alive connection has nothing in flight, so it closes promptly. Generic
 /// over the request `service` so the engine-free core never names the handler's
 /// (script-bound) types.
-pub(crate) async fn serve_connection<S>(
+pub async fn serve_connection<S>(
   sock: TcpStream,
   service: S,
   logger: Logger,
@@ -281,7 +281,7 @@ pub(crate) async fn serve_connection<S>(
 /// (which the marshalling layer uses to spawn a connection task). Owns the
 /// accept/stop `select!` and accept-error logging; the spawn itself stays with
 /// the caller so the engine-free core never spawns engine-bound tasks.
-pub(crate) async fn accept_loop<F>(
+pub async fn accept_loop<F>(
   listener: TcpListener,
   logger: Logger,
   mut shutdown_rx: watch::Receiver<bool>,

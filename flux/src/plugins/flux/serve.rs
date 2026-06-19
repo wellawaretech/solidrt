@@ -13,11 +13,11 @@ use std::convert::Infallible;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::forge::http::{
+use forge::http::{
   accept_loop, bind_listener, build_response, channel_body, full_body, serve_connection, text_response, ResBody,
   Route, RouteTable, ServerShared,
 };
-use crate::forge::websocket::Topics;
+use forge::websocket::Topics;
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};

@@ -27,13 +27,13 @@ use tokio::sync::{watch, Mutex, Notify};
 /// A parsed, reusable command spec. Shared (`Rc`) into each `output()`/`spawn()`
 /// so the same reference can be run more than once, like a re-readable `file()`.
 pub struct CommandSpec {
-  pub(crate) cmd: String,
-  pub(crate) args: Vec<String>,
-  pub(crate) cwd: Option<String>,
-  pub(crate) env: Vec<(String, String)>,
-  pub(crate) stdin: Option<Vec<u8>>,
-  pub(crate) timeout_ms: Option<u64>,
-  pub(crate) as_bytes: bool,
+  pub cmd: String,
+  pub args: Vec<String>,
+  pub cwd: Option<String>,
+  pub env: Vec<(String, String)>,
+  pub stdin: Option<Vec<u8>>,
+  pub timeout_ms: Option<u64>,
+  pub as_bytes: bool,
 }
 
 /// The buffered result of a finished child (`output()`).

@@ -1,0 +1,28 @@
+[package]
+name = "forge"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "forge"
+path = "src/lib.rs"
+
+[dependencies]
+log = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+futures-core = "0.3"
+percent-encoding = "2"
+rusqlite = { version = "0.40", features = ["bundled"] }
+path-clean = "1"
+# Current-process stats for flux:process (memoryUsage rss).
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
+iroh = "1"
+# Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
+which = "7"

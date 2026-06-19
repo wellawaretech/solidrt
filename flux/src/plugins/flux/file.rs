@@ -1,7 +1,7 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 
-use crate::forge::fs;
+use forge::fs;
 use crate::pending::PendingOps;
 use crate::plugins::body::attach_body;
 use crate::plugins::marshal::with_pending;

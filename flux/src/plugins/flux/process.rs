@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use super::events::{emit_event, has_listeners, register_listener};
-use crate::forge::process::{arch, platform, rss, SignalStream};
+use forge::process::{arch, platform, rss, SignalStream};
 use crate::logger::CtxLogger;
 
 // flux:process - process-level events. The first such surface flux owns on top

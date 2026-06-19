@@ -18,7 +18,7 @@ use crate::plugins::marshal::{attach_async_iterator, iter_result};
 // Re-exported so existing `crate::plugins::body::{ByteStream, to_byte_stream}`
 // importers (response, request, serve, subprocess) stay unchanged; the
 // engine-free primitive itself now lives in `forge::stream`.
-pub(crate) use crate::forge::stream::{to_byte_stream, ByteStream};
+pub(crate) use forge::stream::{to_byte_stream, ByteStream};
 
 /// In-memory body buffer shared by Response and Request. Consume-once semantics:
 /// `take` returns the bytes once, then subsequent calls return None.

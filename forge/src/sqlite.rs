@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
 /// decoded result cells (SQL -> JS). Owned so it can cross the channel.
-pub(crate) enum SqlValue {
+pub enum SqlValue {
   Null,
   Int(i64),
   Real(f64),
@@ -80,7 +80,7 @@ enum Command {
 /// (it is just the command channel), so the JS `Database` and each `Statement`
 /// share one connection.
 #[derive(Clone)]
-pub(crate) struct SqliteConnection {
+pub struct SqliteConnection {
   cmd_tx: Sender<Command>,
 }
 
@@ -88,7 +88,7 @@ impl SqliteConnection {
   /// Open a database. `mode` selects access: `None`/`"ro"` (read-only, file must
   /// exist), `"rw"` (read-write, must exist), `"rw+"` (read-write, create if
   /// missing). Spawns the connection thread and waits for it to open.
-  pub(crate) async fn connect(path: String, mode: Option<String>) -> Result<Self, String> {
+  pub async fn connect(path: String, mode: Option<String>) -> Result<Self, String> {
     let flags = open_flags(mode)?;
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Command>();
     let (open_tx, open_rx) = oneshot::channel::<rusqlite::Result<()>>();
@@ -104,33 +104,33 @@ impl SqliteConnection {
   }
 
   /// All matching rows.
-  pub(crate) async fn query(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<Rows, String> {
+  pub async fn query(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<Rows, String> {
     self.call(|reply| Command::Query { sql, params, cached, first_only: false, reply }).await
   }
 
   /// The first matching row, or none.
-  pub(crate) async fn get(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<FirstRow, String> {
+  pub async fn get(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<FirstRow, String> {
     let rows = self.call(|reply| Command::Query { sql, params, cached, first_only: true, reply }).await?;
     Ok(FirstRow(rows.0.into_iter().next()))
   }
 
   /// Execute a write. `cached` uses the connection's prepared-statement cache.
-  pub(crate) async fn run(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<RunResult, String> {
+  pub async fn run(&self, sql: String, params: Vec<SqlValue>, cached: bool) -> Result<RunResult, String> {
     self.call(|reply| Command::Run { sql, params, cached, reply }).await
   }
 
   /// Run a multi-statement script with no parameters.
-  pub(crate) async fn exec(&self, sql: String) -> Result<(), String> {
+  pub async fn exec(&self, sql: String) -> Result<(), String> {
     self.call(|reply| Command::Exec { sql, reply }).await
   }
 
   /// Run a batch of `[sql, params]` statements in one BEGIN/COMMIT.
-  pub(crate) async fn transaction(&self, statements: Vec<(String, Vec<SqlValue>)>) -> Result<TxResults, String> {
+  pub async fn transaction(&self, statements: Vec<(String, Vec<SqlValue>)>) -> Result<TxResults, String> {
     self.call(|reply| Command::Transaction { statements, reply }).await.map(TxResults)
   }
 
   /// Close the connection, releasing it. Safe to call more than once.
-  pub(crate) async fn close(&self) {
+  pub async fn close(&self) {
     let (reply, rx) = oneshot::channel();
     // A send error means the thread already exited: treat as closed.
     if self.cmd_tx.send(Command::Close { reply }).is_ok() {

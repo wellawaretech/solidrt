@@ -1329,22 +1329,16 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "fastwebsockets",
- "futures-core",
+ "forge",
  "http-body-util",
  "hyper",
- "hyper-util",
  "iroh",
  "libc",
  "log",
- "path-clean",
- "percent-encoding",
  "reqwest 0.12.28",
  "rquickjs",
- "rusqlite",
- "sysinfo",
  "tokio",
  "tokio-util",
- "which",
 ]
 
 [[package]]
@@ -1364,6 +1358,27 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "forge"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "fastwebsockets",
+ "futures-core",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "iroh",
+ "log",
+ "path-clean",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "sysinfo",
+ "tokio",
+ "which",
+]
 
 [[package]]
 name = "form_urlencoded"

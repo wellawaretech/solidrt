@@ -74,7 +74,7 @@ pub(crate) async fn init_context(
   context
     .with(|ctx| {
       ctx.store_userdata(pending.clone()).unwrap();
-      ctx.store_userdata(logger).unwrap();
+      crate::logger::store_logger(&ctx, logger);
       ctx.store_userdata(shutdown_hooks).unwrap();
       for store in userdata {
         store(&ctx);

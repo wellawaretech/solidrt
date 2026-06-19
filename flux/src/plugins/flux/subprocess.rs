@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 use tokio_util::io::ReaderStream;
 
-use crate::forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
+use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 use crate::pending::PendingOps;
 use crate::plugins::body::{byte_stream_iterable, to_byte_stream};
 use crate::plugins::marshal::with_pending;

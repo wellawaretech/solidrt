@@ -1,6 +1,6 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 
-use crate::forge::fetch::{channel_request_body, do_fetch, ResponseData};
+use forge::fetch::{channel_request_body, do_fetch, ResponseData};
 use crate::logger::CtxLogger;
 use crate::plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::http::HttpClient;

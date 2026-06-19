@@ -1,44 +1,19 @@
 use rquickjs::{Ctx, JsLifetime};
-use std::sync::Arc;
 
-/// Log level passed to the logger callback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogLevel {
-  Debug,
-  Log,
-  Warn,
-  Error,
-}
+// The logging sink itself is engine-free and lives in forge; flux adds the
+// rquickjs glue: storing it in JS context userdata, fetching it via `ctx`, and
+// formatting JS exceptions for it.
+pub use forge::logger::{default_logger, LogFn, LogLevel, Logger};
 
-/// Shared log sink, stored as userdata in the JS context.
+/// Userdata wrapper so the engine-free `forge::logger::Logger` can be stored in
+/// the JS context. rquickjs userdata must impl `JsLifetime`, which forge's type
+/// cannot derive without depending on the engine; this flux-local wrapper can.
 #[derive(Clone, JsLifetime)]
-pub struct Logger(#[qjs(skip_trace)] pub(crate) Arc<dyn Fn(LogLevel, &str) + Send + Sync>);
+struct LoggerUd(#[qjs(skip_trace)] Logger);
 
-impl Logger {
-  pub fn debug(&self, msg: &str) {
-    (self.0)(LogLevel::Debug, msg);
-  }
-
-  pub fn log(&self, msg: &str) {
-    (self.0)(LogLevel::Log, msg);
-  }
-
-  pub fn warn(&self, msg: &str) {
-    (self.0)(LogLevel::Warn, msg);
-  }
-
-  pub fn error(&self, msg: &str) {
-    (self.0)(LogLevel::Error, msg);
-  }
-}
-
-pub fn default_logger() -> Logger {
-  Logger(Arc::new(|level, msg| match level {
-    LogLevel::Debug => log::debug!("{msg}"),
-    LogLevel::Log => log::info!("{msg}"),
-    LogLevel::Warn => log::warn!("{msg}"),
-    LogLevel::Error => log::error!("{msg}"),
-  }))
+/// Store the logger in the JS context as userdata, so `ctx.logger()` can reach it.
+pub(crate) fn store_logger(ctx: &Ctx<'_>, logger: Logger) {
+  ctx.store_userdata(LoggerUd(logger)).expect("store logger userdata");
 }
 
 pub trait CtxLogger {
@@ -47,7 +22,7 @@ pub trait CtxLogger {
 
 impl CtxLogger for Ctx<'_> {
   fn logger(&self) -> Logger {
-    self.userdata::<Logger>().unwrap().clone()
+    self.userdata::<LoggerUd>().expect("logger userdata").0.clone()
   }
 }
 
@@ -73,6 +48,3 @@ pub fn report_uncaught(ctx: &Ctx<'_>, err: rquickjs::Error, context: &str) {
   let msg = format_js_error(ctx, err);
   ctx.logger().error(&format!("[flux] uncaught exception in {context}: {msg}"));
 }
-
-/// Logging function type: receives a log level and message string.
-pub type LogFn = Box<dyn Fn(LogLevel, &str) + Send + Sync>;

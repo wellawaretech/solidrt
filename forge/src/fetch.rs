@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 
-use crate::forge::stream::{to_byte_stream, ByteStream};
+use crate::stream::{to_byte_stream, ByteStream};
 
 /// The retained parts of an HTTP response: status, resolved url, headers, and a
 /// lazily-drained body stream.
