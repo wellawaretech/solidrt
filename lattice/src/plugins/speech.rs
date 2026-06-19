@@ -13,7 +13,7 @@ use flux::rquickjs::promise::Promise;
 use flux::rquickjs::{Ctx, Exception, FromJs, Function, JsLifetime, Object, Persistent, TypedArray, Value};
 
 use crate::speech::{Recognizer, RecognizerConfig, RecognizerEvent, SAMPLE_RATE};
-use crate::AlloyContext;
+use flux::gui::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
   ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())

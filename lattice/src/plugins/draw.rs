@@ -2,7 +2,7 @@ use crate::frame::{EngineState, InputState};
 use crate::overlay;
 use crate::plugins;
 use alloy::rendertree::{self, PlatformContext};
-use crate::AlloyContext;
+use flux::gui::AlloyContext;
 use alloy::impellers::{DisplayList, DisplayListBuilder};
 use flux::{
   emit_event,

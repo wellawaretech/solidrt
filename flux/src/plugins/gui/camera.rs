@@ -11,14 +11,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use alloy::camera::{CameraFacing, CameraStatus};
-use flux::rquickjs::function::Opt;
-use flux::rquickjs::promise::Promise;
-use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
+use rquickjs::function::Opt;
+use rquickjs::promise::Promise;
+use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
-use crate::AlloyContext;
+use super::AlloyContext;
 
-fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
-  ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
+  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
 struct PendingOpen {
@@ -69,7 +69,7 @@ fn facing_str(facing: CameraFacing) -> &'static str {
   }
 }
 
-fn list_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<Array<'_>> {
+fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
   let arr = Array::new(ctx.clone())?;
   for (i, cam) in alloy::camera::list_cameras().iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -81,7 +81,7 @@ fn list_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<Array<'_>> {
   Ok(arr)
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> flux::rquickjs::Result<Promise<'js>> {
+fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
   let mut device: Option<u32> = None;
   let mut facing: Option<CameraFacing> = None;
   let mut width: Option<u32> = None;
@@ -148,7 +148,7 @@ fn scan_image_impl<'js>(
   data: TypedArray<'js, u8>,
   width: u32,
   height: u32,
-) -> flux::rquickjs::Result<Array<'js>> {
+) -> rquickjs::Result<Array<'js>> {
   let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "scanImage: detached buffer"))?;
   let expected = (width as usize) * (height as usize) * 4;
   if raw.len != expected {
@@ -194,7 +194,7 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
     match state.0.atx.camera_status(entry.session) {
       Some(CameraStatus::Pending) => state.0.pending.borrow_mut().push(entry),
       Some(CameraStatus::Ready { texture_id, width, height }) => {
-        let settle = || -> flux::rquickjs::Result<()> {
+        let settle = || -> rquickjs::Result<()> {
           let obj = Object::new(ctx.clone())?;
           obj.set("handle", entry.session)?;
           obj.set("texture", texture_id)?;
@@ -227,7 +227,7 @@ fn dispatch_barcodes(ctx: &Ctx<'_>, state: &CameraPluginState) {
       continue;
     }
     for data in state.0.atx.take_camera_barcodes(session) {
-      let call = || -> flux::rquickjs::Result<()> {
+      let call = || -> rquickjs::Result<()> {
         let obj = Object::new(ctx.clone())?;
         obj.set("data", data.as_str())?;
         obj.set("format", "qr")?;

@@ -14,7 +14,7 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
-use flux::rquickjs::JsLifetime;
+use flux::gui::AlloyContext;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use frame::{EngineState, InputEvent, InputState};
 use alloy::rendertree::{PlatformContext, RenderTree};
@@ -48,16 +48,6 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
 }
 
 // --- End Android entry point ------------------------------
-
-#[derive(Clone, JsLifetime)]
-pub(crate) struct AlloyContext(#[qjs(skip_trace)] pub(crate) Arc<alloy::Context>);
-
-impl std::ops::Deref for AlloyContext {
-  type Target = alloy::Context;
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 
@@ -124,7 +114,7 @@ fn emit_render_event(
       }
       None => raw,
     };
-    if plugins::camera::tick(&ctx) {
+    if flux::gui::camera::tick(&ctx) {
       // A camera frame landed in its texture; the screen content changed
       // even though the tree did not.
       platform.request_frame();
@@ -474,12 +464,9 @@ fn ui_thread(
 
       let tree_cmd_tx = alloy_cmd_tx.clone();
       let tree_platform = platform.clone();
-      let texture_platform = platform.clone();
       let raf_platform = platform.clone();
+      let gui_atx = atx.clone();
       let tree_atx = AlloyContext(atx.clone());
-      let texture_atx = AlloyContext(atx.clone());
-      let camera_atx = AlloyContext(atx.clone());
-      let microphone_atx = AlloyContext(atx.clone());
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder()
@@ -492,17 +479,14 @@ fn ui_thread(
         })
         .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
         .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
-        .plugin(move |ctx| plugins::texture::init(ctx, texture_atx, texture_platform))
         .plugin(|ctx| plugins::image::init(ctx))
-        .plugin(move |ctx| plugins::camera::init(ctx, camera_atx))
-        .plugin(move |ctx| plugins::microphone::init(ctx, microphone_atx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .userdata(clock.clone());
       // flux owns the gui plugin set and its registration order; lattice only
       // supplies the host instances they bind.
-      let builder = flux::gui::install(builder, flux::gui::GuiHost { platform: raf_platform });
+      let builder = flux::gui::install(builder, flux::gui::GuiHost { platform: raf_platform, alloy: gui_atx });
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // Install the dev-server control surface and (when enabled) the proxy.

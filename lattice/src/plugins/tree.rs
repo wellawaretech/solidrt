@@ -8,7 +8,7 @@ use taffy::prelude::*;
 
 use crate::plugins::value::PropValue;
 use alloy::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
-use crate::AlloyContext;
+use flux::gui::AlloyContext;
 
 // Marshals a JavaScript value into the engine-independent PropValue that
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on

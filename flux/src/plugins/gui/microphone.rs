@@ -5,13 +5,13 @@
 
 use std::rc::Rc;
 
-use flux::rquickjs::function::Opt;
-use flux::rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
+use rquickjs::function::Opt;
+use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
 
-use crate::AlloyContext;
+use super::AlloyContext;
 
-fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
-  ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
+  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
 #[derive(Clone, JsLifetime)]
@@ -33,7 +33,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
   ctx.globals().set("microphone", microphone).expect("set microphone global");
 }
 
-fn list_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<Array<'_>> {
+fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
   let arr = Array::new(ctx.clone())?;
   for (i, mic) in alloy::microphone::list_microphones().iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -44,7 +44,7 @@ fn list_impl(ctx: Ctx<'_>) -> flux::rquickjs::Result<Array<'_>> {
   Ok(arr)
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> flux::rquickjs::Result<Object<'js>> {
+fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let mut device: Option<u32> = None;
   let mut sample_rate: Option<u32> = None;
   if let Some(opts) = options.0 {
@@ -64,7 +64,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> flux::rquickjs::R
 }
 
 /// Drain the mono f32 samples captured since the last read.
-fn read_impl(ctx: Ctx<'_>, session: u64) -> flux::rquickjs::Result<TypedArray<'_, f32>> {
+fn read_impl(ctx: Ctx<'_>, session: u64) -> rquickjs::Result<TypedArray<'_, f32>> {
   let state = ctx.userdata::<MicrophonePluginState>().expect("microphone state");
   let samples = state.0.read_microphone(session).map_err(|e| throw_str(&ctx, &format!("read: {e}")))?;
   TypedArray::new(ctx.clone(), samples)

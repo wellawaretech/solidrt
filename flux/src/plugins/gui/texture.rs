@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use flux::rquickjs::function::Opt;
-use flux::rquickjs::{Ctx, Function, JsLifetime, Object, TypedArray};
+use rquickjs::function::Opt;
+use rquickjs::{Ctx, Function, JsLifetime, Object, TypedArray};
 
 use alloy::rendertree::PlatformContext;
-use crate::AlloyContext;
+use super::AlloyContext;
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
 // (which clears userdata while the runtime is still alive) destroys the GPU
@@ -31,8 +31,8 @@ impl Drop for TextureInner {
   }
 }
 
-fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
-  ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
+  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
 // Flatten a JS { name: number } object into the (name, f32) pairs alloy matches
@@ -58,7 +58,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let create_atx = atx.clone();
   let create_texture = Function::new(
     ctx.clone(),
-    move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> flux::rquickjs::Result<u64> {
+    move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<u64> {
       let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createTexture: detached buffer"))?;
       let expected = (width as usize) * (height as usize) * 4;
       if raw.len != expected {
@@ -80,7 +80,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let mutable_atx = atx.clone();
   let create_mutable_texture = Function::new(
     ctx.clone(),
-    move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> flux::rquickjs::Result<u64> {
+    move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<u64> {
       let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
       let frame_size = (width as usize) * (height as usize) * 4;
       if raw.len < frame_size {
@@ -105,7 +105,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let upload_platform = platform.clone();
   let upload_texture = Function::new(
     ctx.clone(),
-    move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> flux::rquickjs::Result<()> {
+    move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> rquickjs::Result<()> {
       let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "uploadTexture: detached buffer"))?;
       let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
       upload_atx
@@ -127,7 +127,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
           height: u32,
           params: Option<Object<'_>>,
           textures: Option<Object<'_>>|
-          -> flux::rquickjs::Result<u64> {
+          -> rquickjs::Result<u64> {
       let params = params.as_ref().map(collect_params).unwrap_or_default();
       let textures = textures.as_ref().map(collect_textures).unwrap_or_default();
       let id = create_shader_atx
@@ -144,7 +144,7 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   let set_params_platform = platform.clone();
   let set_shader_params = Function::new(
     ctx.clone(),
-    move |ctx: Ctx<'_>, id: u64, params: Object<'_>| -> flux::rquickjs::Result<()> {
+    move |ctx: Ctx<'_>, id: u64, params: Object<'_>| -> rquickjs::Result<()> {
       let params = collect_params(&params);
       set_params_atx.update_shader_params(id, &params).map_err(|e| throw_str(&ctx, &format!("setShaderParams: {e}")))?;
       // New shader output changes the screen without any tree mutation.
