@@ -27,7 +27,10 @@ speech = ["dep:whisper-rs", "dep:livekit-wakeword"]
 [dependencies]
 alloy = { workspace = true }
 log = { workspace = true }
-flux = { workspace = true, default-features = false }
+# gui is always on: lattice is the renderer, so the alloy-backed flux::gui
+# bindings are needed in every build config (incl. the --no-default-features
+# runtime and go builds). `compile` is selected per-build via --features.
+flux = { workspace = true, default-features = false, features = ["gui"] }
 half = "2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render

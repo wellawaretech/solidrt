@@ -16,7 +16,7 @@ use forge::websocket::{
 };
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::body::{extract_body_value, JsBytes};
+use crate::plugins::standards::body::{extract_body_value, JsBytes};
 
 /// The `websocket` option callbacks of `serve`. One set per server, shared by
 /// all sockets. No `ping` callback: incoming pings are answered automatically

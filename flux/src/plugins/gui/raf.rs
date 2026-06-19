@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use flux::report_uncaught;
-use flux::rquickjs::{Ctx, Function, JsLifetime, Persistent};
+use crate::logger::report_uncaught;
+use rquickjs::{Ctx, Function, JsLifetime, Persistent};
 
 use alloy::rendertree::PlatformContext;
 

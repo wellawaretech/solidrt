@@ -87,7 +87,8 @@ default-app-bundle: $(DEFAULT_APP_JS)
 
 # -- Fonts --------------------------------------------
 
-FONTS_DIR = $(CURDIR)/assets/fonts
+# Fonts moved to alloy with the render tree (embedded by alloy's platform.rs).
+FONTS_DIR = $(CURDIR)/../alloy/assets/fonts
 
 download-fonts:
 	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSans.ttf

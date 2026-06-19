@@ -20,13 +20,13 @@ use forge::http::{
 use forge::websocket::Topics;
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
-use crate::plugins::flux::websocket::{
+use crate::plugins::standards::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
+use crate::plugins::modules::websocket::{
   message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
 };
-use crate::plugins::headers::headers_from_init;
-use crate::plugins::request::{request_from_parts, Request};
-use crate::plugins::response::Response;
+use crate::plugins::standards::headers::headers_from_init;
+use crate::plugins::standards::request::{request_from_parts, Request};
+use crate::plugins::standards::response::Response;
 
 /// Read a server-built Response's buffered bytes. Server responses are buffered
 /// (`new Response(string/bytes)`) or outgoing streams (handled separately), never

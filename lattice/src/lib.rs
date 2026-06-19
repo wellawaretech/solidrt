@@ -131,7 +131,7 @@ fn emit_render_event(
     }
     #[cfg(feature = "speech")]
     plugins::speech::tick(&ctx);
-    plugins::raf::flush(&ctx, ts);
+    flux::gui::raf::flush(&ctx, ts);
     let time = ts / 1000.0;
     let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
     obj.set("frame", next_frame).expect("set frame");
@@ -499,8 +499,10 @@ fn ui_thread(
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
-        .plugin(move |ctx| plugins::raf::init(&ctx, raf_platform))
         .userdata(clock.clone());
+      // flux owns the gui plugin set and its registration order; lattice only
+      // supplies the host instances they bind.
+      let builder = flux::gui::install(builder, flux::gui::GuiHost { platform: raf_platform });
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // Install the dev-server control surface and (when enabled) the proxy.

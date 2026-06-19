@@ -40,7 +40,7 @@ use iroh::endpoint::{Connection, RecvStream, SendStream};
 use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::body::extract_body_value;
+use crate::plugins::standards::body::extract_body_value;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending};
 

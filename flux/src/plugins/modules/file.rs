@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use forge::fs;
 use crate::pending::PendingOps;
-use crate::plugins::body::attach_body;
+use crate::plugins::standards::body::attach_body;
 use crate::plugins::marshal::with_pending;
 
 // Marshalling for the `file()` reference: forward to the engine-free

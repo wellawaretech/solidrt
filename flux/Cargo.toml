@@ -25,9 +25,15 @@ path = "src/bin/fluxrt.rs"
 [features]
 default = ["compile"]
 compile = []
+# The alloy-backed GUI marshalling layer (flux::gui): render-tree / texture /
+# raf / camera / microphone bindings. Pulls alloy (SDL + Impeller + GL). Off by
+# default so the headless flux runtime and its bins stay GUI-free; lattice turns
+# it on.
+gui = ["dep:alloy"]
 
 [dependencies]
 forge = { workspace = true }
+alloy = { workspace = true, optional = true }
 log = { workspace = true }
 rquickjs = { version = "0.12.0", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }

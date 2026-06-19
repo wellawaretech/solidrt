@@ -1331,6 +1331,7 @@ dependencies = [
 name = "flux"
 version = "0.0.0"
 dependencies = [
+ "alloy",
  "bytes",
  "fastwebsockets",
  "forge",

@@ -3,16 +3,19 @@ mod logger;
 pub(crate) mod pending;
 mod plugins;
 
+#[cfg(feature = "gui")]
+pub use plugins::gui;
+
 pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
-pub use plugins::body::{attach_body, JsBytes, JsonValue};
-pub use plugins::fetch::JsResponseData;
+pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
+pub use plugins::standards::fetch::JsResponseData;
 pub use plugins::js_error::JsResult;
-pub use plugins::flux::events::{emit_event, has_listeners, register_listener};
-pub use plugins::flux::process::ProcessArgs;
-pub use plugins::time::Clock;
+pub use plugins::modules::events::{emit_event, has_listeners, register_listener};
+pub use plugins::modules::process::ProcessArgs;
+pub use plugins::standards::time::Clock;
 pub use rquickjs;
 
 #[cfg(feature = "compile")]
@@ -20,7 +23,7 @@ use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOpti
 
 #[cfg(feature = "compile")]
 pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
-  use plugins::flux;
+  use plugins::modules;
   use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 
   let rt = Runtime::new().expect("failed to create QuickJS runtime");
@@ -28,19 +31,19 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   let mut resolver = BuiltinResolver::default();
   let mut loader = ModuleLoader::default();
   resolver.add_module("flux:sqlite");
-  loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
+  loader.add_module("flux:sqlite", modules::sqlite::SqliteModule);
   resolver.add_module("flux:fs");
-  loader.add_module("flux:fs", flux::fs::FsModule);
+  loader.add_module("flux:fs", modules::fs::FsModule);
   resolver.add_module("flux:http");
-  loader.add_module("flux:http", flux::serve::HttpModule);
+  loader.add_module("flux:http", modules::serve::HttpModule);
   resolver.add_module("flux:p2p");
-  loader.add_module("flux:p2p", flux::p2p::P2pModule);
+  loader.add_module("flux:p2p", modules::p2p::P2pModule);
   resolver.add_module("flux:process");
-  loader.add_module("flux:process", flux::process::ProcessModule);
+  loader.add_module("flux:process", modules::process::ProcessModule);
   resolver.add_module("flux:path");
-  loader.add_module("flux:path", flux::path::PathModule);
+  loader.add_module("flux:path", modules::path::PathModule);
   resolver.add_module("flux:subprocess");
-  loader.add_module("flux:subprocess", flux::subprocess::SubprocessModule);
+  loader.add_module("flux:subprocess", modules::subprocess::SubprocessModule);
   rt.set_loader(resolver, loader);
 
   let ctx = Context::full(&rt).expect("failed to create QuickJS context");

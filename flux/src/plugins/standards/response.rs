@@ -6,11 +6,11 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::pending::PendingOps;
-use crate::plugins::body::{
+use crate::plugins::standards::body::{
   collect_bytes, collect_json, collect_text, extract_streaming_body, throw_msg, BodySource, ByteStream, JsBytes,
   JsonValue, MessageBody,
 };
-use crate::plugins::headers::{headers_from_init, headers_from_pairs, Headers};
+use crate::plugins::standards::headers::{headers_from_init, headers_from_pairs, Headers};
 use crate::plugins::js_error::JsResult;
 
 #[derive(JsLifetime)]

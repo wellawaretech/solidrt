@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::body::JsBytes;
+use crate::plugins::standards::body::JsBytes;
 use forge::websocket::{parse_close, OutMsg, CLOSE_GRACE};
-use crate::plugins::flux::websocket::{call_callback, message_payload};
+use crate::plugins::modules::websocket::{call_callback, message_payload};
 
 /// Web-standard readyState values. Unlike a server socket, a client starts in
 /// CONNECTING while the TCP connect and handshake are in flight.

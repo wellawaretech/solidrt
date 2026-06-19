@@ -1,16 +1,15 @@
-pub mod body;
-pub mod console;
-pub mod fetch;
-pub mod flux;
-pub mod headers;
-pub mod http;
+// Plugin layers (see flux/CLAUDE.md): `standards` = web-standard JS APIs
+// (console, fetch, Headers/Request/Response, timers, WebSocket client);
+// `modules` = the `flux:*` capability modules (sqlite, http, p2p, ...) binding
+// forge; `gui` = the alloy-backed render/capture bindings. js_error + marshal
+// are the shared marshalling toolkit used across all three.
 pub mod js_error;
 pub mod marshal;
-pub mod request;
-pub mod response;
-pub mod text;
-pub mod time;
-pub mod websocket;
+
+pub mod modules;
+pub mod standards;
+#[cfg(feature = "gui")]
+pub mod gui;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object};
@@ -41,25 +40,25 @@ pub(crate) async fn init_context(
   let mut loader = ModuleLoader::default();
 
   resolver.add_module("flux:sqlite");
-  loader.add_module("flux:sqlite", flux::sqlite::SqliteModule);
+  loader.add_module("flux:sqlite", modules::sqlite::SqliteModule);
 
   resolver.add_module("flux:fs");
-  loader.add_module("flux:fs", flux::fs::FsModule);
+  loader.add_module("flux:fs", modules::fs::FsModule);
 
   resolver.add_module("flux:http");
-  loader.add_module("flux:http", flux::serve::HttpModule);
+  loader.add_module("flux:http", modules::serve::HttpModule);
 
   resolver.add_module("flux:p2p");
-  loader.add_module("flux:p2p", flux::p2p::P2pModule);
+  loader.add_module("flux:p2p", modules::p2p::P2pModule);
 
   resolver.add_module("flux:process");
-  loader.add_module("flux:process", flux::process::ProcessModule);
+  loader.add_module("flux:process", modules::process::ProcessModule);
 
   resolver.add_module("flux:path");
-  loader.add_module("flux:path", flux::path::PathModule);
+  loader.add_module("flux:path", modules::path::PathModule);
 
   resolver.add_module("flux:subprocess");
-  loader.add_module("flux:subprocess", flux::subprocess::SubprocessModule);
+  loader.add_module("flux:subprocess", modules::subprocess::SubprocessModule);
 
   for f in module_overrides {
     f(&mut resolver, &mut loader);
@@ -81,18 +80,18 @@ pub(crate) async fn init_context(
       }
       let flux_obj = Object::new(ctx.clone()).unwrap();
 
-      http::init_http(&ctx);
-      time::init(&ctx);
-      fetch::init_fetch(&ctx);
-      console::init_console(&ctx);
-      flux::events::init(&ctx);
+      standards::http::init_http(&ctx);
+      standards::time::init(&ctx);
+      standards::fetch::init_fetch(&ctx);
+      standards::console::init_console(&ctx);
+      modules::events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
-      headers::init_headers(&ctx);
-      request::init_request(&ctx);
-      response::init_response(&ctx);
-      text::init_text(&ctx);
-      websocket::init_websocket(&ctx);
+      standards::headers::init_headers(&ctx);
+      standards::request::init_request(&ctx);
+      standards::response::init_response(&ctx);
+      standards::text::init_text(&ctx);
+      standards::websocket::init_websocket(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 

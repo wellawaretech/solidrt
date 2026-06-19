@@ -7,7 +7,7 @@ use tokio_util::io::ReaderStream;
 
 use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 use crate::pending::PendingOps;
-use crate::plugins::body::{byte_stream_iterable, to_byte_stream};
+use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
 use crate::plugins::marshal::with_pending;
 
 // flux:subprocess - spawn child processes and collect their output.
