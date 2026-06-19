@@ -1,14 +1,22 @@
 use alloy::impellers::{FontStyle, FontWeight};
-use flux::rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
+use rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use taffy::prelude::*;
 
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
-use flux::gui::AlloyContext;
+use super::AlloyContext;
+
+thread_local! {
+  // setProperty (FFI prop write) calls since the last frame. Bumped in the
+  // native setProperty handler below; read and reset each frame by the draw
+  // bridge (in lattice) for the debug overlay. Lives on the single JS thread,
+  // so no timing call crosses into JS.
+  pub static SETPROP_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 // Marshals a JavaScript value into the engine-independent PropValue that
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on
@@ -39,7 +47,7 @@ struct TextSize {
 }
 
 impl<'js> IntoJs<'js> for TextSize {
-  fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     obj.set("width", self.width)?;
     obj.set("height", self.height)?;
@@ -52,7 +60,7 @@ impl<'js> IntoJs<'js> for TextSize {
 struct JsBoundingBox(BoundingBox);
 
 impl<'js> IntoJs<'js> for JsBoundingBox {
-  fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
     obj.set("x", self.0.x)?;
     obj.set("y", self.0.y)?;
@@ -113,12 +121,12 @@ pub fn init(
   let platform_ref = platform.clone();
   let cmd_tx = alloy_cmd_tx.clone();
   let set_property =
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> flux::rquickjs::Result<()> {
-      crate::frame::SETPROP_COUNT.with(|c| c.set(c.get() + 1));
+    Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
+      SETPROP_COUNT.with(|c| c.set(c.get() + 1));
       let value = to_prop_value(&value);
       let mut tree = tree_ref.borrow_mut();
       let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx)
-        .map_err(|msg| ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into()))?;
+        .map_err(|msg| ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into()))?;
       if invalidate {
         tree.invalidate_cache(node_id);
       }

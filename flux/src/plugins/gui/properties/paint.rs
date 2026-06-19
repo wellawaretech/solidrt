@@ -1,7 +1,7 @@
 use alloy::impellers::{BlendMode, Color, DrawStyle, StrokeCap, StrokeJoin};
 
 use super::{f32_of, str_of};
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::PaintState;
 
 pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<bool> {

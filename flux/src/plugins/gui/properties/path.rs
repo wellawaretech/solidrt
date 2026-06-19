@@ -1,7 +1,7 @@
 use alloy::impellers::FillType;
 
 use super::{f32_of, str_of};
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Path;
 
 pub fn apply(path: &mut Path, name: &str, value: &PropValue) -> Option<bool> {

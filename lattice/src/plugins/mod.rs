@@ -5,6 +5,3 @@ pub mod image;
 pub mod input;
 #[cfg(feature = "speech")]
 pub mod speech;
-mod properties;
-pub mod tree;
-pub(crate) mod value;

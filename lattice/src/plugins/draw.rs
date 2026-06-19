@@ -43,7 +43,7 @@ pub fn init(
       .with(|c| c.get())
       .map(|t| t.elapsed().as_secs_f32() * 1000.0)
       .unwrap_or(0.0);
-    let set_count = crate::frame::SETPROP_COUNT.with(|c| c.replace(0));
+    let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
     stats.borrow_mut().record_js(js_ms, set_count);
 
     // Demand-driven gate: when nothing requested a frame, skip it entirely
@@ -64,7 +64,7 @@ pub fn init(
       return;
     }
 
-    let tree = qtx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
+    let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
 
     // Present-only reuse: nothing that feeds the display list changed, so
     // resubmit the cached one instead of rebuilding. Layout, postLayout and

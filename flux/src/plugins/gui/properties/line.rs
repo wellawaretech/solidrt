@@ -1,5 +1,5 @@
 use super::f32_of;
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Line;
 
 pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Option<bool> {

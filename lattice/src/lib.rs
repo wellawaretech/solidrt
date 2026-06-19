@@ -462,11 +462,8 @@ fn ui_thread(
       let engine_state = Arc::new(EngineState::new());
       *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
-      let tree_cmd_tx = alloy_cmd_tx.clone();
-      let tree_platform = platform.clone();
-      let raf_platform = platform.clone();
-      let gui_atx = atx.clone();
-      let tree_atx = AlloyContext(atx.clone());
+      let draw_platform = platform.clone();
+      let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder()
@@ -476,17 +473,21 @@ fn ui_thread(
           flux::LogLevel::Log => log::info!("{msg}"),
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
-        })
-        .plugin(move |ctx| plugins::tree::init(&ctx, render_tree, tree_cmd_tx, tree_platform, tree_atx))
-        .plugin(move |ctx| plugins::draw::init(ctx, platform, AlloyContext(atx), input_state, engine_state))
+        });
+      // flux owns the gui plugin set and its registration order (the tree plugin
+      // creates the `ffi` global the draw bridge attaches to, so install runs
+      // before draw); lattice only supplies the host instances they bind.
+      let builder = flux::gui::install(
+        builder,
+        flux::gui::GuiHost { platform: platform.clone(), alloy: atx.clone(), render_tree, alloy_cmd_tx: alloy_cmd_tx.clone() },
+      );
+      let builder = builder
+        .plugin(move |ctx| plugins::draw::init(ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state))
         .plugin(|ctx| plugins::image::init(ctx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .userdata(clock.clone());
-      // flux owns the gui plugin set and its registration order; lattice only
-      // supplies the host instances they bind.
-      let builder = flux::gui::install(builder, flux::gui::GuiHost { platform: raf_platform, alloy: gui_atx });
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // Install the dev-server control surface and (when enabled) the proxy.

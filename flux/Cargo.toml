@@ -29,11 +29,15 @@ compile = []
 # raf / camera / microphone bindings. Pulls alloy (SDL + Impeller + GL). Off by
 # default so the headless flux runtime and its bins stay GUI-free; lattice turns
 # it on.
-gui = ["dep:alloy"]
+gui = ["dep:alloy", "dep:taffy"]
 
 [dependencies]
 forge = { workspace = true }
 alloy = { workspace = true, optional = true }
+# Render-tree layout types named by the gui tree/properties bindings. Must match
+# the version alloy + lattice pin (0.10.1) so the taffy `Style` type unifies
+# across the crate boundary.
+taffy = { version = "0.10.1", optional = true }
 log = { workspace = true }
 rquickjs = { version = "0.12.0", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }

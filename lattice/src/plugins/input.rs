@@ -1,5 +1,4 @@
 use crate::frame::{EngineState, InputEvent, InputState, PointerKey};
-use crate::plugins;
 use alloy::rendertree::{
   hit::{path_diff, DefaultHitTester, HitTester},
   XY,
@@ -41,7 +40,7 @@ fn build_pointer_obj<'js>(
 /// working when no frame is being produced. Handlers that mutate state request
 /// the next frame through their ffi calls.
 pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, engine_state: &EngineState) {
-  let tree = ctx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
+  let tree = ctx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
   match event {
     InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
       let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
@@ -96,7 +95,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, engine_state: &EngineState) {
 /// frame: layout changes can move elements under a stationary cursor, which
 /// arrival-time dispatch cannot see.
 pub fn refresh_hover(ctx: &Ctx<'_>, input_state: &InputState, engine_state: &EngineState) {
-  let tree = ctx.userdata::<plugins::tree::SharedRenderTree>().expect("render tree userdata");
+  let tree = ctx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
   let modifiers = input_state.modifiers();
   for ((pointer_type, pointer_id), (px, py)) in input_state.pointers() {
     let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(px, py));

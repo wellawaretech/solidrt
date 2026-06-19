@@ -1,5 +1,5 @@
 use super::{decode_radius, f32_of};
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Rectangle;
 
 pub fn apply(rect: &mut Rectangle, name: &str, value: &PropValue) -> Option<bool> {

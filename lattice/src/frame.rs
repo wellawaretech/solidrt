@@ -13,10 +13,6 @@ thread_local! {
   // Instant captured just before the "render" event is emitted to JS. Read at
   // draw() entry, the delta is the JS render handler (onFrame + flush).
   pub static RENDER_START: Cell<Option<Instant>> = Cell::new(None);
-
-  // setProperty (FFI prop write) calls since the last frame. Bumped in the
-  // native setProperty handler, read and reset each frame in draw().
-  pub static SETPROP_COUNT: Cell<u32> = Cell::new(0);
 }
 
 pub enum InputEvent {

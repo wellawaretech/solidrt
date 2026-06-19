@@ -1,5 +1,5 @@
 use super::f32_of;
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Texture;
 
 pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<bool> {

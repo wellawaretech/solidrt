@@ -9,7 +9,7 @@ use taffy::style::Overflow;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 use super::{f32_of, str_of};
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 
 pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
   match name {

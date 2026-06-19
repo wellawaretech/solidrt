@@ -27,7 +27,7 @@ use std::sync::mpsc::Sender;
 use alloy::AlloyCommand;
 use taffy::style::Position;
 
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::{BoundaryMode, Element, ElementKind};
 
 // Returns Ok(invalidate) on success; Err(message) for an unknown property, which

@@ -1,5 +1,5 @@
 use super::f32_of;
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Oval;
 
 pub fn apply(oval: &mut Oval, name: &str, value: &PropValue) -> Option<bool> {

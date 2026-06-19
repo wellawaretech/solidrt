@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use alloy::AlloyCommand;
 
 use super::str_of;
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Window;
 
 pub fn apply(win: &mut Window, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> Option<bool> {

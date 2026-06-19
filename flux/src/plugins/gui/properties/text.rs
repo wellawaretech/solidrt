@@ -1,7 +1,7 @@
 use alloy::impellers::{FontWeight, TextAlignment};
 
 use super::{f32_of, str_of};
-use crate::plugins::value::PropValue;
+use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::{Span, Text};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
