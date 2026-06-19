@@ -5,7 +5,7 @@ use std::sync::Arc;
 use flux::report_uncaught;
 use flux::rquickjs::{Ctx, Function, JsLifetime, Persistent};
 
-use crate::rendertree::PlatformContext;
+use alloy::rendertree::PlatformContext;
 
 // Per-engine requestAnimationFrame queue, stored in the JS context userdata so
 // it is recreated on engine reload. Callbacks are one-shot; flush() swaps the

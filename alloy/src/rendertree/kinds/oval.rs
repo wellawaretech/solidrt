@@ -3,7 +3,7 @@ use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
-use alloy::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
+use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]

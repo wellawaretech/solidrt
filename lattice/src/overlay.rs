@@ -190,7 +190,7 @@ impl Stats {
     typography: &TypographyContext,
     safe_area: Rect,
     fps: u32,
-    paint_stats: crate::rendertree::composite::PaintStats,
+    paint_stats: alloy::rendertree::composite::PaintStats,
     phases: FramePhases,
     textures: usize,
   ) {

@@ -28,7 +28,7 @@ use alloy::AlloyCommand;
 use taffy::style::Position;
 
 use crate::plugins::value::PropValue;
-use crate::rendertree::{BoundaryMode, Element, ElementKind};
+use alloy::rendertree::{BoundaryMode, Element, ElementKind};
 
 // Returns Ok(invalidate) on success; Err(message) for an unknown property, which
 // the FFI caller surfaces as a throwable JS error rather than aborting the

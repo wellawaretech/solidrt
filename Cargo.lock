@@ -104,9 +104,13 @@ dependencies = [
  "impellers",
  "jni 0.21.1",
  "log",
+ "lyon_algorithms",
+ "lyon_path",
  "ndk-context",
  "rxing",
  "sdl3",
+ "svgtypes",
+ "taffy",
 ]
 
 [[package]]
@@ -2547,14 +2551,11 @@ dependencies = [
  "image",
  "livekit-wakeword",
  "log",
- "lyon_algorithms",
- "lyon_path",
  "mdns-sd",
  "reqwest 0.12.28",
  "rquickjs",
  "serde",
  "serde_json",
- "svgtypes",
  "sysinfo",
  "taffy",
  "tokio",

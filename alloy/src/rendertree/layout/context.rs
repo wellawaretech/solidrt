@@ -30,7 +30,7 @@ impl LayoutData {
 pub struct LayoutContext<'a> {
   pub render_tree: &'a mut RenderTree,
   pub platform: &'a PlatformContext,
-  pub alloy: &'a alloy::Context,
+  pub alloy: &'a crate::Context,
 }
 
 impl<'a> TraversePartialTree for LayoutContext<'a> {

@@ -11,7 +11,7 @@ pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
 
-use alloy::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
+use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
 use std::cell::RefCell;
 use taffy::prelude::*;
 
@@ -55,7 +55,7 @@ pub struct BoundingBox {
 /// (platform, alloy) comes first; paint-time geometry follows.
 pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
-  pub alloy: &'a alloy::Context,
+  pub alloy: &'a crate::Context,
   pub size: WH,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,
@@ -65,7 +65,7 @@ pub struct BuildContext<'a> {
 }
 
 impl<'a> BuildContext<'a> {
-  pub fn new(platform: &'a PlatformContext, alloy: &'a alloy::Context) -> Self {
+  pub fn new(platform: &'a PlatformContext, alloy: &'a crate::Context) -> Self {
     Self {
       platform,
       alloy,
@@ -82,7 +82,7 @@ impl<'a> BuildContext<'a> {
 /// first; the taffy-supplied size constraints for this call follow.
 pub struct MeasureContext<'a> {
   pub platform: &'a PlatformContext,
-  pub alloy: &'a alloy::Context,
+  pub alloy: &'a crate::Context,
   pub known: Size<Option<f32>>,
   pub available: Size<AvailableSpace>,
 }

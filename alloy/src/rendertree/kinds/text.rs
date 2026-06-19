@@ -1,6 +1,6 @@
 use super::PaintState;
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
-use alloy::impellers::{
+use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
   TypographyContext,
 };

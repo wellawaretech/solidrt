@@ -1,4 +1,4 @@
-use alloy::impellers::{
+use crate::impellers::{
   ClipOperation, DisplayListBuilder, Point as IPoint, Rect, RoundingRadii, Size as ISize, TextureSampling,
 };
 use taffy::prelude::*;
@@ -15,7 +15,7 @@ const CLIP_INF: f32 = 1.0e7;
 
 // Runs taffy layout. Safe to call repeatedly: taffy's per-node cache makes
 // a second call cheap when nothing has been invalidated since the previous run.
-pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &alloy::Context) {
+pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) {
   let Some(root_id) = tree.root else { return };
   let (width, height) = platform.window_size();
 
@@ -44,7 +44,7 @@ pub fn paint_phase(
   builder: &mut DisplayListBuilder,
   tree: &mut RenderTree,
   platform: &PlatformContext,
-  alloy: &alloy::Context,
+  alloy: &crate::Context,
 ) -> PaintStats {
   let Some(root_id) = tree.root else { return PaintStats::default() };
   let (width, height) = platform.window_size();

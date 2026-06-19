@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
-use alloy::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point};
+use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point};
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;

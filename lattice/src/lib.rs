@@ -4,7 +4,6 @@ mod go;
 mod overlay;
 mod paced_clock;
 mod plugins;
-mod rendertree;
 #[cfg(feature = "speech")]
 pub mod speech;
 
@@ -18,7 +17,7 @@ use alloy::impellers::{ISize, Rect};
 use flux::rquickjs::JsLifetime;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use frame::{EngineState, InputEvent, InputState};
-use rendertree::{PlatformContext, RenderTree};
+use alloy::rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};

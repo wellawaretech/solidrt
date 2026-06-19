@@ -6,7 +6,7 @@ use std::sync::Arc;
 use flux::rquickjs::function::Opt;
 use flux::rquickjs::{Ctx, Function, JsLifetime, Object, TypedArray};
 
-use crate::rendertree::PlatformContext;
+use alloy::rendertree::PlatformContext;
 use crate::AlloyContext;
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown

@@ -1,6 +1,6 @@
 use super::f32_of;
 use crate::plugins::value::PropValue;
-use crate::rendertree::Oval;
+use alloy::rendertree::Oval;
 
 pub fn apply(oval: &mut Oval, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {

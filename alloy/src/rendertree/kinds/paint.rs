@@ -1,4 +1,4 @@
-use alloy::impellers::{BlendMode, Color, DrawStyle, Paint, StrokeCap, StrokeJoin};
+use crate::impellers::{BlendMode, Color, DrawStyle, Paint, StrokeCap, StrokeJoin};
 
 #[derive(Clone, Debug)]
 pub struct PaintState {

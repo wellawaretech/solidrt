@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
-use alloy::impellers::{DisplayListBuilder, Point};
+use crate::impellers::{DisplayListBuilder, Point};
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]

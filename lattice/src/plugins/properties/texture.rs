@@ -1,6 +1,6 @@
 use super::f32_of;
 use crate::plugins::value::PropValue;
-use crate::rendertree::Texture;
+use alloy::rendertree::Texture;
 
 pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {

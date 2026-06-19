@@ -1,6 +1,6 @@
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
-use alloy::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
+use crate::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
 use taffy::{AlignSelf, Display, Size as TaffySize, Style};
 
 #[derive(Clone, Debug, Default)]

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use taffy::prelude::*;
 
 use crate::plugins::value::PropValue;
-use crate::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
+use alloy::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
 use crate::AlloyContext;
 
 // Marshals a JavaScript value into the engine-independent PropValue that
@@ -47,13 +47,17 @@ impl<'js> IntoJs<'js> for TextSize {
   }
 }
 
-impl<'js> IntoJs<'js> for BoundingBox {
+// BoundingBox lives in alloy (engine-free), so the rquickjs IntoJs conversion
+// cannot be a trait impl on it (orphan rule). Wrap it locally for marshalling.
+struct JsBoundingBox(BoundingBox);
+
+impl<'js> IntoJs<'js> for JsBoundingBox {
   fn into_js(self, ctx: &Ctx<'js>) -> flux::rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("x", self.x)?;
-    obj.set("y", self.y)?;
-    obj.set("width", self.width)?;
-    obj.set("height", self.height)?;
+    obj.set("x", self.0.x)?;
+    obj.set("y", self.0.y)?;
+    obj.set("width", self.0.width)?;
+    obj.set("height", self.0.height)?;
     Ok(obj.into_value())
   }
 }
@@ -127,9 +131,10 @@ pub fn init(
   let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame()).expect("create requestFrame");
 
   let tree_ref = shared.0.clone();
-  let get_bounding_box =
-    Function::new(ctx.clone(), move |id: u64| -> Option<BoundingBox> { tree_ref.borrow().bounding_box(id) })
-      .expect("create getBoundingBox");
+  let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
+    tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
+  })
+  .expect("create getBoundingBox");
 
   let cmd_tx = alloy_cmd_tx.clone();
   let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
