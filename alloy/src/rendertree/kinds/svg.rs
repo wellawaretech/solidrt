@@ -1,6 +1,8 @@
-use super::PaintState;
+use super::{Gradient, GradientStop, PaintState};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
-use crate::impellers::{Color, DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, StrokeCap, StrokeJoin};
+use crate::impellers::{
+  Color, DisplayListBuilder, DrawStyle, FillType, Matrix, Path as ImpPath, PathBuilder, Point, StrokeCap, StrokeJoin, TileMode,
+};
 use std::cell::RefCell;
 use usvg::tiny_skia_path::{PathSegment, Transform};
 
@@ -25,9 +27,9 @@ struct Built {
 // convenience layer above the single-shape `Path` primitive; it does not
 // replace it (Path stays the low-level, hit-testable, reactively-driven shape).
 //
-// Stage 1 limitations (documented, deferred): gradients degrade to a
-// representative solid color; clipPath, masks, filters, patterns, exact group
-// opacity, and SVG <text> are not applied; hit-testing is bounding-box only.
+// Limitations (documented, deferred): clipPath, masks, filters, patterns, exact
+// group opacity, and SVG <text> are not applied; radial gradient focal point
+// (fx/fy/fr) is ignored; hit-testing is bounding-box only.
 pub struct Svg {
   pub src: String,
   // Drives `currentColor` (injected as a usvg stylesheet). Explicit fills/strokes
@@ -169,18 +171,17 @@ fn convert_path(path: &usvg::Path, out: &mut Vec<DrawCmd>) {
       usvg::FillRule::NonZero => FillType::NonZero,
     };
     let imp = build_imp_path(path.data(), &transform, rule);
-    let paint = PaintState {
-      color: paint_to_color(fill.paint(), fill.opacity()),
-      draw_style: DrawStyle::Fill,
-      ..PaintState::default()
-    };
+    let (color, gradient) = resolve_paint(fill.paint(), fill.opacity(), &transform);
+    let paint = PaintState { color, gradient, draw_style: DrawStyle::Fill, ..PaintState::default() };
     out.push(DrawCmd { path: imp, paint });
   }
 
   if let Some(stroke) = path.stroke() {
     let imp = build_imp_path(path.data(), &transform, FillType::NonZero);
+    let (color, gradient) = resolve_paint(stroke.paint(), stroke.opacity(), &transform);
     let paint = PaintState {
-      color: paint_to_color(stroke.paint(), stroke.opacity()),
+      color,
+      gradient,
       draw_style: DrawStyle::Stroke,
       stroke_width: stroke.width().get(),
       stroke_cap: match stroke.linecap() {
@@ -228,19 +229,74 @@ fn build_imp_path(data: &usvg::tiny_skia_path::Path, t: &Transform, rule: FillTy
   b.take_path_new(rule)
 }
 
-// Stage 1 degrades gradients to a representative (averaged) stop color. Patterns
-// have no solid analogue, so they fall back to mid-gray. Real gradient color
-// sources are stage 2.
-fn paint_to_color(paint: &usvg::Paint, opacity: usvg::Opacity) -> Color {
-  let (r, g, b) = match paint {
-    usvg::Paint::Color(c) => (c.red, c.green, c.blue),
-    usvg::Paint::LinearGradient(grad) => average_stops(grad.stops()),
-    usvg::Paint::RadialGradient(grad) => average_stops(grad.stops()),
-    usvg::Paint::Pattern(_) => (128, 128, 128),
-  };
-  Color::new_srgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, opacity.get())
+// Resolves a usvg paint into a solid fallback color plus an optional gradient
+// color source. The fallback (an averaged stop color for gradients, mid-gray for
+// patterns) is what hit-testing and any uncovered region see; the gradient, when
+// present, is what actually paints. `abs` is the path's absolute transform, which
+// maps the gradient's coordinates into the same space as the baked geometry.
+fn resolve_paint(paint: &usvg::Paint, opacity: usvg::Opacity, abs: &Transform) -> (Color, Option<Gradient>) {
+  let alpha = opacity.get();
+  match paint {
+    usvg::Paint::Color(c) => (solid(c.red, c.green, c.blue, alpha), None),
+    usvg::Paint::LinearGradient(grad) => {
+      let (r, g, b) = average_stops(grad.stops());
+      let gradient = Gradient::Linear {
+        start: Point::new(grad.x1(), grad.y1()),
+        end: Point::new(grad.x2(), grad.y2()),
+        stops: convert_stops(grad.stops(), alpha),
+        tile: spread_to_tile(grad.spread_method()),
+        transform: transform_to_matrix(&abs.pre_concat(grad.transform())),
+      };
+      (solid(r, g, b, alpha), Some(gradient))
+    }
+    usvg::Paint::RadialGradient(grad) => {
+      let (r, g, b) = average_stops(grad.stops());
+      let gradient = Gradient::Radial {
+        center: Point::new(grad.cx(), grad.cy()),
+        radius: grad.r().get(),
+        stops: convert_stops(grad.stops(), alpha),
+        tile: spread_to_tile(grad.spread_method()),
+        transform: transform_to_matrix(&abs.pre_concat(grad.transform())),
+      };
+      (solid(r, g, b, alpha), Some(gradient))
+    }
+    usvg::Paint::Pattern(_) => (Color::new_srgba(0.5, 0.5, 0.5, alpha), None),
+  }
 }
 
+fn solid(r: u8, g: u8, b: u8, a: f32) -> Color {
+  Color::new_srgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a)
+}
+
+fn convert_stops(stops: &[usvg::Stop], fill_alpha: f32) -> Vec<GradientStop> {
+  stops
+    .iter()
+    .map(|s| {
+      let c = s.color();
+      GradientStop {
+        offset: s.offset().get(),
+        color: solid(c.red, c.green, c.blue, s.opacity().get() * fill_alpha),
+      }
+    })
+    .collect()
+}
+
+fn spread_to_tile(spread: usvg::SpreadMethod) -> TileMode {
+  match spread {
+    usvg::SpreadMethod::Pad => TileMode::Clamp,
+    usvg::SpreadMethod::Reflect => TileMode::Mirror,
+    usvg::SpreadMethod::Repeat => TileMode::Repeat,
+  }
+}
+
+// tiny_skia affine (x' = sx*x + kx*y + tx, y' = ky*x + sy*y + ty) into the
+// euclid-backed Impeller Matrix, whose new_2d takes column vectors (a,b)(c,d)(e,f).
+fn transform_to_matrix(t: &Transform) -> Matrix {
+  Matrix::new_2d(t.sx, t.ky, t.kx, t.sy, t.tx, t.ty)
+}
+
+// Mid-gray fallback color from the average of a gradient's stops, used for
+// hit-testing and any region the color source does not cover.
 fn average_stops(stops: &[usvg::Stop]) -> (u8, u8, u8) {
   if stops.is_empty() {
     return (128, 128, 128);
@@ -314,7 +370,7 @@ mod tests {
   }
 
   #[test]
-  fn degrades_gradient_to_solid() {
+  fn builds_linear_gradient() {
     let mut svg = Svg::default();
     svg.set_src(
       r##"<svg viewBox="0 0 100 100">
@@ -330,8 +386,16 @@ mod tests {
     let built = svg.built.borrow();
     let built = built.as_ref().expect("svg should parse");
 
-    // The gradient (black -> white) averages to mid-gray as a solid fallback.
     assert_eq!(built.cmds.len(), 1);
-    assert!(has_color(built, 0.5, 0.5, 0.5), "gradient did not degrade to mid-gray");
+    // A real linear gradient with both stops, plus the averaged mid-gray fallback.
+    match &built.cmds[0].paint.gradient {
+      Some(Gradient::Linear { stops, .. }) => {
+        assert_eq!(stops.len(), 2);
+        assert!((stops[0].color.red - 0.0).abs() < 0.02, "first stop should be black");
+        assert!((stops[1].color.red - 1.0).abs() < 0.02, "second stop should be white");
+      }
+      other => panic!("expected a linear gradient, got {other:?}"),
+    }
+    assert!(has_color(built, 0.5, 0.5, 0.5), "fallback should be averaged mid-gray");
   }
 }

@@ -13,7 +13,7 @@ mod window;
 // pub use audio::AudioNode;
 pub use line::Line;
 pub use oval::Oval;
-pub use paint::PaintState;
+pub use paint::{Gradient, GradientStop, PaintState};
 pub use path::Path;
 pub use rectangle::Rectangle;
 pub use svg::Svg;
