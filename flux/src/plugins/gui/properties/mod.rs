@@ -17,6 +17,7 @@ mod oval;
 mod paint;
 mod path;
 mod rectangle;
+mod svg;
 mod text;
 mod texture;
 mod view;
@@ -28,6 +29,7 @@ use alloy::AlloyCommand;
 use taffy::style::Position;
 
 use crate::plugins::gui::value::PropValue;
+use alloy::impellers::Color;
 use alloy::rendertree::{BoundaryMode, Element, ElementKind};
 
 // Returns Ok(invalidate) on success; Err(message) for an unknown property, which
@@ -67,6 +69,7 @@ pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sende
     ElementKind::Oval(oval) => oval::apply(oval, name, value),
     ElementKind::Line(line) => line::apply(line, name, value),
     ElementKind::Path(path) => path::apply(path, name, value),
+    ElementKind::Svg(svg) => svg::apply(svg, name, value),
     ElementKind::Text(text) => text::apply(text, name, value),
     ElementKind::Span(span) => text::apply_span(span, name, value),
     ElementKind::Texture(tex) => texture::apply(tex, name, value),
@@ -97,6 +100,17 @@ pub(super) fn f32_of(value: &PropValue, what: &str) -> f32 {
 
 pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> &'a str {
   value.as_str().unwrap_or_else(|| panic!("{what} must be a string"))
+}
+
+// JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
+pub(super) fn decode_color(value: &PropValue) -> Color {
+  let rgba = value.as_f64().expect("color must be a number") as u32;
+  Color::new_srgba(
+    ((rgba >> 24) & 0xFF) as f32 / 255.0,
+    ((rgba >> 16) & 0xFF) as f32 / 255.0,
+    ((rgba >> 8) & 0xFF) as f32 / 255.0,
+    (rgba & 0xFF) as f32 / 255.0,
+  )
 }
 
 // A single number applies to all four corners; an array is

@@ -1,6 +1,6 @@
-use alloy::impellers::{BlendMode, Color, DrawStyle, StrokeCap, StrokeJoin};
+use alloy::impellers::{BlendMode, DrawStyle, StrokeCap, StrokeJoin};
 
-use super::{f32_of, str_of};
+use super::{decode_color, f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::PaintState;
 
@@ -30,17 +30,6 @@ pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<bo
     "blendMode" => paint.set_blend_mode(decode_blend_mode(str_of(value, "blendMode"))),
     _ => return None,
   })
-}
-
-// JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
-fn decode_color(value: &PropValue) -> Color {
-  let rgba = value.as_f64().expect("color must be a number") as u32;
-  Color::new_srgba(
-    ((rgba >> 24) & 0xFF) as f32 / 255.0,
-    ((rgba >> 16) & 0xFF) as f32 / 255.0,
-    ((rgba >> 8) & 0xFF) as f32 / 255.0,
-    (rgba & 0xFF) as f32 / 255.0,
-  )
 }
 
 fn decode_blend_mode(s: &str) -> BlendMode {

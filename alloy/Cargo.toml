@@ -43,3 +43,8 @@ taffy = "0.10.1"
 svgtypes = "0.16"
 lyon_path = "1"
 lyon_algorithms = "1"
+# Full SVG document parsing/normalization for the <svg> element (resolves CSS,
+# transforms, use/defs, gradients, clips into a flat path tree). default-features
+# off drops the text/font stack (fontdb, rustybuzz, unicode-*); we only consume
+# the normalized geometry, never rasterize, so resvg/tiny-skia are not pulled.
+usvg = { version = "0.47", default-features = false }

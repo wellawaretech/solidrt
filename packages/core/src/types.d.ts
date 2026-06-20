@@ -307,6 +307,14 @@ export interface PathProps extends Position, PaintProps, PointerProps {
   fillRule?: "nonZero" | "evenOdd"
 }
 
+export interface SvgProps extends Position, PointerProps {
+  // A whole SVG document as a string (an imported asset, a fetched string, or a
+  // template literal). Parsed and rendered as one unit; takes no JSX children.
+  src?: string
+  // Drives currentColor in the document. Explicit fills/strokes still win.
+  color?: Color
+}
+
 export interface TextProps extends PaintProps, PointerProps {
   children?: Children
   fontFamily?: "sans" | "mono" | (string & {})

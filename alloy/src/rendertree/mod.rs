@@ -6,7 +6,7 @@ pub mod platform;
 mod tree;
 
 pub use hit::HitConfig;
-pub use kinds::{Line, Oval, PaintState, Path, Rectangle, Span, Text, Texture, View, Window};
+pub use kinds::{Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View, Window};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;
@@ -111,6 +111,7 @@ pub enum ElementKind {
   Oval(Oval),
   Line(Line),
   Path(Path),
+  Svg(Svg),
   Text(Text),
   Span(Span),
   Texture(Texture),
@@ -140,6 +141,7 @@ impl ElementKind {
         | ElementKind::Oval(_)
         | ElementKind::Line(_)
         | ElementKind::Path(_)
+        | ElementKind::Svg(_)
         | ElementKind::Texture(_)
     )
   }
@@ -166,6 +168,7 @@ impl Buildable for ElementKind {
       ElementKind::Oval(n) => n.build(ctx, builder),
       ElementKind::Line(n) => n.build(ctx, builder),
       ElementKind::Path(n) => n.build(ctx, builder),
+      ElementKind::Svg(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
       ElementKind::Texture(n) => n.build(ctx, builder),
       ElementKind::Span(_) => {} // ElementKind::Audio(_) => {}
@@ -179,6 +182,7 @@ impl Measurable for ElementKind {
       ElementKind::Text(n) => n.measure(ctx),
       ElementKind::Texture(n) => n.measure(ctx),
       ElementKind::Path(n) => n.measure(ctx),
+      ElementKind::Svg(n) => n.measure(ctx),
       ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Line(n) => n.measure(ctx),
       ElementKind::Rectangle(n) => n.measure(ctx),
@@ -262,6 +266,8 @@ impl Element {
       "d-line" => Line::default().no_layout(),
       "path" => Path::default().with_layout(),
       "d-path" => Path::default().no_layout(),
+      "svg" => Svg::default().with_layout(),
+      "d-svg" => Svg::default().no_layout(),
       "text" => Text::default().with_layout(),
       "d-text" => Text::default().no_layout(),
       "d-span" => Span::default().no_layout(),

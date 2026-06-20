@@ -3,6 +3,7 @@ import type {
   RectProps,
   OvalProps,
   PathProps,
+  SvgProps,
   ViewProps,
   TextProps,
   TextureProps,
@@ -32,12 +33,14 @@ export namespace JSX {
     rect: RectProps & LayoutProps
     oval: OvalProps & LayoutProps
     path: PathProps & LayoutProps
+    svg: SvgProps & LayoutProps
     texture: TextureProps & LayoutProps
     audio: AudioProps
     "d-view": ViewProps
     "d-rect": RectProps
     "d-oval": OvalProps
     "d-path": PathProps
+    "d-svg": SvgProps
     "d-texture": TextureProps
     "d-text": TextProps
   }
