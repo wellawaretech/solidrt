@@ -20,6 +20,7 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
     "minHeight" => style.min_size.height = parse_dimension(value),
     "maxWidth" => style.max_size.width = parse_dimension(value),
     "maxHeight" => style.max_size.height = parse_dimension(value),
+    "aspectRatio" => style.aspect_ratio = Some(parse_aspect_ratio(value)),
 
     // Padding
     "padding" => {
@@ -250,6 +251,27 @@ fn parse_dimension_str(s: &str) -> Dimension {
   } else {
     let n: f32 = s.parse().expect("dimension value must be a number or 'auto'");
     Dimension::length(n)
+  }
+}
+
+// taffy interprets aspect_ratio as width / height (matching CSS). Accept a bare
+// number or the CSS `"16 / 9"` ratio form.
+fn parse_aspect_ratio(value: &PropValue) -> f32 {
+  if let Some(n) = value.as_f64() {
+    n as f32
+  } else if let Some(s) = value.as_str() {
+    let parts: Vec<&str> = s.split('/').map(|p| p.trim()).collect();
+    match parts.as_slice() {
+      [w, h] => {
+        let w: f32 = w.parse().expect("aspectRatio width must be a number");
+        let h: f32 = h.parse().expect("aspectRatio height must be a number");
+        w / h
+      }
+      [r] => r.parse().expect("aspectRatio must be a number"),
+      _ => panic!("invalid aspectRatio value: '{s}'"),
+    }
+  } else {
+    panic!("aspectRatio must be a number or string")
   }
 }
 

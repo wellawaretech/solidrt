@@ -144,6 +144,7 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   minHeight?: Dimension
   maxWidth?: Dimension
   maxHeight?: Dimension
+  aspectRatio?: number | (string & {})
 
   padding?: Dimension
   paddingTop?: Dimension
