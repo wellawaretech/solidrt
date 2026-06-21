@@ -307,7 +307,7 @@ export interface LineProps extends PaintProps, PointerProps {
 
 export interface PathProps extends Position, PaintProps, PointerProps {
   d?: string
-  fillRule?: "nonZero" | "evenOdd"
+  fillRule?: "nonzero" | "evenodd"
 }
 
 export interface SvgProps extends Position, PointerProps {

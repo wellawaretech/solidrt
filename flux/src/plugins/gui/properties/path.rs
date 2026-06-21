@@ -10,8 +10,8 @@ pub fn apply(path: &mut Path, name: &str, value: &PropValue) -> Option<bool> {
     "x" => path.set_x(f32_of(value, "x")),
     "y" => path.set_y(f32_of(value, "y")),
     "fillRule" => path.set_fill_rule(match str_of(value, "fillRule") {
-      "nonZero" => FillType::NonZero,
-      "evenOdd" => FillType::Odd,
+      "nonzero" => FillType::NonZero,
+      "evenodd" => FillType::Odd,
       v => panic!("unknown fillRule '{v}'"),
     }),
     _ => return None,
