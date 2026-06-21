@@ -33,10 +33,10 @@ impl Buildable for Rectangle {
         bottom_right: Point::new(br, br),
         bottom_left: Point::new(bl, bl),
       };
-      let paint = self.paint.to_paint();
+      let paint = self.paint.to_paint_in(&rect);
       builder.draw_rounded_rect(&rect, &radii, &paint);
     } else {
-      let paint = self.paint.to_paint();
+      let paint = self.paint.to_paint_in(&rect);
       builder.draw_rect(&rect, &paint);
     }
   }

@@ -1,4 +1,4 @@
-use super::{Gradient, GradientStop, PaintState};
+use super::{Gradient, GradientStop, GradientUnits, PaintState};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use crate::impellers::{
   Color, DisplayListBuilder, DrawStyle, FillType, Matrix, Path as ImpPath, PathBuilder, Point, StrokeCap, StrokeJoin, TileMode,
@@ -246,6 +246,7 @@ fn resolve_paint(paint: &usvg::Paint, opacity: usvg::Opacity, abs: &Transform) -
         stops: convert_stops(grad.stops(), alpha),
         tile: spread_to_tile(grad.spread_method()),
         transform: transform_to_matrix(&abs.pre_concat(grad.transform())),
+        units: GradientUnits::Absolute,
       };
       (solid(r, g, b, alpha), Some(gradient))
     }
@@ -257,6 +258,8 @@ fn resolve_paint(paint: &usvg::Paint, opacity: usvg::Opacity, abs: &Transform) -
         stops: convert_stops(grad.stops(), alpha),
         tile: spread_to_tile(grad.spread_method()),
         transform: transform_to_matrix(&abs.pre_concat(grad.transform())),
+        units: GradientUnits::Absolute,
+        circle: false,
       };
       (solid(r, g, b, alpha), Some(gradient))
     }

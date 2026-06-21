@@ -23,7 +23,7 @@ impl Buildable for Oval {
     let h = self.h.unwrap_or(ctx.size.h);
 
     let rect = Rect::new(Point::new(x, y), Size::new(w, h));
-    let paint = self.paint.to_paint();
+    let paint = self.paint.to_paint_in(&rect);
     builder.draw_oval(&rect, &paint);
   }
 }

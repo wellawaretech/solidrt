@@ -1,6 +1,7 @@
 /// <reference types="@solidrt/flux-types" />
 
 import type { JSX as SolidJSX } from "@solidjs/signals"
+import type { Gradient } from "./color"
 
 // UI event bus (lattice), provided by the runtime as a builtin module.
 // on/once return an unsubscribe function.
@@ -163,11 +164,12 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   overflowY?: "visible" | "clip" | "hidden" | "scroll"
 }
 
-/** Colors are CSS color strings, parsed to a packed u32 by `parseColorToU32`. */
+/** Colors are CSS color strings, parsed to a packed u32 by `parseColor`. */
 export type Color = string
 
 export interface PaintProps {
-  color?: Color
+  // A solid color, or a gradient from createLinearGradient/createRadialGradient.
+  color?: Color | Gradient
   blendMode?: "clear" | "source" | "destination" | "source-over" | "destination-over" | "source-in" | "destination-in" | "source-out" | "destination-out" | "source-atop" | "destination-atop" | "xor" | "plus" | "modulate" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "multiply" | "hue" | "saturation" | "color" | "luminosity"
   drawStyle?: "fill" | "stroke" | "stroke-and-fill"
   strokeCap?: "butt" | "round" | "square"

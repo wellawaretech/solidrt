@@ -1,7 +1,8 @@
 import { createRoot } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { attachWindow } from "./window"
-import { parseColorToU32, setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
+import { setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
+import { parseColor, isGradient, encodeGradient } from "./color"
 
 export { getEventHandler } from "./core"
 
@@ -77,8 +78,13 @@ export let {
       return
     }
 
+    if (name === "color" && isGradient(value)) {
+      ffi.setProperty(node.id, name, encodeGradient(value))
+      return
+    }
+
     if (name === "color" && typeof value === "string") {
-      ffi.setProperty(node.id, name, parseColorToU32(value))
+      ffi.setProperty(node.id, name, parseColor(value))
       return
     }
 

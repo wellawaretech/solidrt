@@ -1,18 +1,4 @@
-import { colord, extend } from "colord"
-import namesPlugin from "colord/plugins/names"
 import type { MeasureTextOptions } from "./types"
-extend([namesPlugin])
-
-/**
- * Parses a CSS color string (named, hex, `rgb()`, `hsl()`, ...) into a packed
- * `0xRRGGBBAA` u32: red in the high byte, alpha in the low byte. Alpha is scaled
- * from colord's 0..1 to 0..255. This is the wire format the runtime expects for
- * the `color` property.
- */
-export function parseColorToU32(color: string): number {
-  let { r, g, b, a } = colord(color).toRgb()
-  return (((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | ((a * 255) & 0xFF)) >>> 0
-}
 
 let handlers = new Map<number, Map<string, Function>>()
 

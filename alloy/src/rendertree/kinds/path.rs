@@ -1,7 +1,7 @@
 use super::PaintState;
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
-use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point};
+use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
@@ -16,7 +16,7 @@ pub struct Path {
   pub paint: PaintState,
   pub fill_rule: FillType,
   path: RefCell<Option<ImpPath>>,
-  bounds: RefCell<Option<(f32, f32, f32, f32)>>,
+  bounds: RefCell<Option<Rect>>,
   lyon_path: RefCell<Option<lyon_path::Path>>,
 }
 
@@ -268,7 +268,7 @@ impl Path {
     *self.lyon_path.borrow_mut() = Some(lyon_builder.build());
 
     if bb.0 <= bb.2 {
-      *self.bounds.borrow_mut() = Some((bb.0, bb.1, bb.2 - bb.0, bb.3 - bb.1));
+      *self.bounds.borrow_mut() = Some(Rect::new(Point::new(bb.0, bb.1), Size::new(bb.2 - bb.0, bb.3 - bb.1)));
     }
   }
 
@@ -315,7 +315,11 @@ impl Buildable for Path {
     self.ensure_built();
     let path = self.path.borrow();
     let Some(path) = path.as_ref() else { return };
-    let paint = self.paint.to_paint();
+    // A box-relative gradient resolves against the path's bounding box.
+    let paint = match *self.bounds.borrow() {
+      Some(rect) => self.paint.to_paint_in(&rect),
+      None => self.paint.to_paint(),
+    };
     builder.draw_path(path, &paint);
   }
 }
@@ -327,10 +331,13 @@ impl Measurable for Path {
     }
     self.ensure_built();
     let bounds = self.bounds.borrow();
-    let Some((_, _, w, h)) = *bounds else {
+    let Some(rect) = *bounds else {
       return TaffySize::ZERO;
     };
-    TaffySize { width: ctx.known.width.unwrap_or(w), height: ctx.known.height.unwrap_or(h) }
+    TaffySize {
+      width: ctx.known.width.unwrap_or(rect.size.width),
+      height: ctx.known.height.unwrap_or(rect.size.height),
+    }
   }
 }
 
@@ -338,9 +345,10 @@ impl Hittable for Path {
   fn is_in_bounds(&self, pt: XY, _ctx: &HitContext) -> bool {
     self.ensure_built();
     let bounds = self.bounds.borrow();
-    let Some((x, y, w, h)) = *bounds else {
+    let Some(rect) = *bounds else {
       return false;
     };
+    let (x, y, w, h) = (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
 
     let half_stroke = self.paint.stroke_width / 2.0;
     if pt.x < x - half_stroke || pt.x > x + w + half_stroke || pt.y < y - half_stroke || pt.y > y + h + half_stroke {

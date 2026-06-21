@@ -6,7 +6,9 @@ pub mod platform;
 mod tree;
 
 pub use hit::HitConfig;
-pub use kinds::{Gradient, GradientStop, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View, Window};
+pub use kinds::{
+  Gradient, GradientStop, GradientUnits, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View, Window,
+};
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::RenderTree;

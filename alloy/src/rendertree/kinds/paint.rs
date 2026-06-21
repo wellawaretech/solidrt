@@ -1,4 +1,4 @@
-use crate::impellers::{BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, StrokeCap, StrokeJoin, TileMode};
+use crate::impellers::{BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, Rect, StrokeCap, StrokeJoin, TileMode};
 
 #[derive(Clone, Debug)]
 pub struct GradientStop {
@@ -6,33 +6,125 @@ pub struct GradientStop {
   pub color: Color,
 }
 
+// Whether a gradient's coordinates are already in the drawing space (SVG resolves
+// everything to absolute coordinates) or are box-relative 0..1 fractions resolved
+// against the painted element's bounds at paint time (the factory API).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GradientUnits {
+  Absolute,
+  BoundingBox,
+}
+
 // A gradient color source described as plain data. The native ColorSource is
-// built on demand in `to_paint` (like Paint itself), so PaintState stays cheap
-// to clone and compare. `transform` maps the gradient's parametric coordinates
-// into the same space the geometry is drawn in.
+// built on demand in `to_paint*` (like Paint itself), so PaintState stays cheap
+// to clone and compare. For Absolute units, `transform` maps the parametric
+// coordinates into the drawing space; for BoundingBox units it is unused (the
+// box transform is derived from the element bounds at paint time).
 #[derive(Clone, Debug)]
 pub enum Gradient {
-  Linear { start: Point, end: Point, stops: Vec<GradientStop>, tile: TileMode, transform: Matrix },
-  Radial { center: Point, radius: f32, stops: Vec<GradientStop>, tile: TileMode, transform: Matrix },
+  Linear { start: Point, end: Point, stops: Vec<GradientStop>, tile: TileMode, transform: Matrix, units: GradientUnits },
+  Radial {
+    center: Point,
+    radius: f32,
+    stops: Vec<GradientStop>,
+    tile: TileMode,
+    transform: Matrix,
+    units: GradientUnits,
+    // For BoundingBox radials: true keeps a true circle (radius a fraction of the
+    // shorter side); false lets the non-uniform box transform stretch it into an
+    // ellipse. Ignored for Absolute units.
+    circle: bool,
+  },
 }
 
 impl Gradient {
-  fn to_color_source(&self) -> ColorSource {
+  // Box-relative linear gradient (factory API): endpoints in 0..1 of the element
+  // box, clamped at the ends like CSS.
+  pub fn linear_box(start: Point, end: Point, stops: Vec<GradientStop>) -> Self {
+    Gradient::Linear {
+      start,
+      end,
+      stops,
+      tile: TileMode::Clamp,
+      transform: Matrix::identity(),
+      units: GradientUnits::BoundingBox,
+    }
+  }
+
+  // Box-relative radial gradient (factory API): center in 0..1, radius in 0..1.
+  pub fn radial_box(center: Point, radius: f32, circle: bool, stops: Vec<GradientStop>) -> Self {
+    Gradient::Radial {
+      center,
+      radius,
+      stops,
+      tile: TileMode::Clamp,
+      transform: Matrix::identity(),
+      units: GradientUnits::BoundingBox,
+      circle,
+    }
+  }
+
+  // Builds the native color source, resolving box-relative coordinates against
+  // `bounds` (x, y, w, h) when given. Returns None for a box-relative gradient
+  // with no bounds, so the caller falls back to the solid color.
+  fn to_color_source(&self, bounds: Option<(f32, f32, f32, f32)>) -> Option<ColorSource> {
     match self {
-      Gradient::Linear { start, end, stops, tile, transform } => {
+      Gradient::Linear { start, end, stops, tile, transform, units } => {
         let (colors, offsets) = split_stops(stops);
-        ColorSource::new_linear_gradient(*start, *end, &colors, &offsets, *tile, Some(transform))
+        let xform = match units {
+          GradientUnits::Absolute => *transform,
+          GradientUnits::BoundingBox => box_matrix(bounds?),
+        };
+        Some(ColorSource::new_linear_gradient(*start, *end, &colors, &offsets, *tile, Some(&xform)))
       }
-      Gradient::Radial { center, radius, stops, tile, transform } => {
+      Gradient::Radial { center, radius, stops, tile, transform, units, circle } => {
         let (colors, offsets) = split_stops(stops);
-        ColorSource::new_radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(transform))
+        match units {
+          GradientUnits::Absolute => {
+            Some(ColorSource::new_radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(transform)))
+          }
+          GradientUnits::BoundingBox if *circle => {
+            // True circle: resolve center and radius to pixels; no stretch.
+            let (x, y, w, h) = bounds?;
+            let c = Point::new(x + center.x * w, y + center.y * h);
+            let r = radius * w.min(h);
+            Some(ColorSource::new_radial_gradient(c, r, &colors, &offsets, *tile, None))
+          }
+          GradientUnits::BoundingBox => {
+            // Ellipse: keep 0..1 coords and let the box transform stretch the circle.
+            let xform = box_matrix(bounds?);
+            Some(ColorSource::new_radial_gradient(*center, *radius, &colors, &offsets, *tile, Some(&xform)))
+          }
+        }
       }
     }
   }
 }
 
+// Maps the unit square (0..1) onto the box (x, y, w, h).
+fn box_matrix((x, y, w, h): (f32, f32, f32, f32)) -> Matrix {
+  Matrix::new_2d(w, 0.0, 0.0, h, x, y)
+}
+
 fn split_stops(stops: &[GradientStop]) -> (Vec<Color>, Vec<f32>) {
   (stops.iter().map(|s| s.color).collect(), stops.iter().map(|s| s.offset).collect())
+}
+
+// Average of the stop colors, used as the solid fallback for hit-testing and for
+// when a box-relative gradient is painted without bounds.
+fn average_stops(stops: &[GradientStop]) -> Color {
+  if stops.is_empty() {
+    return Color::new_srgba(0.5, 0.5, 0.5, 1.0);
+  }
+  let (mut r, mut g, mut b, mut a) = (0.0, 0.0, 0.0, 0.0);
+  for s in stops {
+    r += s.color.red;
+    g += s.color.green;
+    b += s.color.blue;
+    a += s.color.alpha;
+  }
+  let n = stops.len() as f32;
+  Color::new_srgba(r / n, g / n, b / n, a / n)
 }
 
 #[derive(Clone, Debug)]
@@ -91,23 +183,38 @@ fn gradient_eq(a: &Option<Gradient>, b: &Option<Gradient>) -> bool {
   match (a, b) {
     (None, None) => true,
     (
-      Some(Gradient::Linear { start: s1, end: e1, stops: st1, tile: t1, transform: m1 }),
-      Some(Gradient::Linear { start: s2, end: e2, stops: st2, tile: t2, transform: m2 }),
-    ) => s1 == s2 && e1 == e2 && t1 == t2 && m1 == m2 && stops_eq(st1, st2),
+      Some(Gradient::Linear { start: s1, end: e1, stops: st1, tile: t1, transform: m1, units: u1 }),
+      Some(Gradient::Linear { start: s2, end: e2, stops: st2, tile: t2, transform: m2, units: u2 }),
+    ) => s1 == s2 && e1 == e2 && t1 == t2 && m1 == m2 && u1 == u2 && stops_eq(st1, st2),
     (
-      Some(Gradient::Radial { center: c1, radius: r1, stops: st1, tile: t1, transform: m1 }),
-      Some(Gradient::Radial { center: c2, radius: r2, stops: st2, tile: t2, transform: m2 }),
-    ) => c1 == c2 && r1 == r2 && t1 == t2 && m1 == m2 && stops_eq(st1, st2),
+      Some(Gradient::Radial { center: c1, radius: r1, stops: st1, tile: t1, transform: m1, units: u1, circle: ci1 }),
+      Some(Gradient::Radial { center: c2, radius: r2, stops: st2, tile: t2, transform: m2, units: u2, circle: ci2 }),
+    ) => c1 == c2 && r1 == r2 && t1 == t2 && m1 == m2 && u1 == u2 && ci1 == ci2 && stops_eq(st1, st2),
     _ => false,
   }
 }
 
 impl PaintState {
+  // For paints with no box-relative gradient (solids and SVG's absolute
+  // gradients). A box-relative gradient reaching here has no bounds to resolve
+  // against, so it is skipped and the solid fallback color shows.
   pub fn to_paint(&self) -> Paint {
+    self.build_paint(None)
+  }
+
+  // For elements that fill a known box; resolves a box-relative gradient against
+  // `bounds` in the element's own paint space.
+  pub fn to_paint_in(&self, bounds: &Rect) -> Paint {
+    self.build_paint(Some((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)))
+  }
+
+  fn build_paint(&self, bounds: Option<(f32, f32, f32, f32)>) -> Paint {
     let mut paint = Paint::default();
     paint.set_color(self.color);
     if let Some(gradient) = &self.gradient {
-      paint.set_color_source(&gradient.to_color_source());
+      if let Some(source) = gradient.to_color_source(bounds) {
+        paint.set_color_source(&source);
+      }
     }
     paint.set_draw_style(self.draw_style);
     paint.set_blend_mode(self.blend_mode);
@@ -120,8 +227,21 @@ impl PaintState {
 
   // Paint never affects layout, so all setters report false. Values arrive
   // already decoded (color unpacked, enums resolved) from the binding layer.
+
+  // A solid color clears any gradient (the two are mutually exclusive fills).
   pub fn set_color(&mut self, color: Color) -> bool {
     self.color = color;
+    self.gradient = None;
+    false
+  }
+
+  // Sets a gradient fill and derives a solid fallback from its stops (used for
+  // hit-testing and when painted without resolvable bounds).
+  pub fn set_gradient(&mut self, gradient: Gradient) -> bool {
+    self.color = match &gradient {
+      Gradient::Linear { stops, .. } | Gradient::Radial { stops, .. } => average_stops(stops),
+    };
+    self.gradient = Some(gradient);
     false
   }
   pub fn set_draw_style(&mut self, v: DrawStyle) -> bool {
@@ -147,5 +267,63 @@ impl PaintState {
   pub fn set_stroke_miter(&mut self, v: f32) -> bool {
     self.stroke_miter = v;
     false
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::impellers::Size;
+
+  fn stop(offset: f32, r: f32, g: f32, b: f32) -> GradientStop {
+    GradientStop { offset, color: Color::new_srgba(r, g, b, 1.0) }
+  }
+
+  #[test]
+  fn set_gradient_derives_average_fallback() {
+    let mut p = PaintState::default();
+    p.set_gradient(Gradient::linear_box(
+      Point::new(0.0, 0.0),
+      Point::new(1.0, 1.0),
+      vec![stop(0.0, 0.0, 0.0, 0.0), stop(1.0, 1.0, 1.0, 1.0)],
+    ));
+    // Black + white averages to mid-gray.
+    assert!((p.color.red - 0.5).abs() < 0.01);
+    assert!(matches!(p.gradient, Some(Gradient::Linear { units: GradientUnits::BoundingBox, .. })));
+  }
+
+  #[test]
+  fn set_color_clears_gradient() {
+    let mut p = PaintState::default();
+    p.set_gradient(Gradient::radial_box(Point::new(0.5, 0.5), 0.5, true, vec![stop(0.0, 1.0, 0.0, 0.0)]));
+    assert!(p.gradient.is_some());
+    p.set_color(Color::new_srgba(0.0, 0.0, 1.0, 1.0));
+    assert!(p.gradient.is_none());
+  }
+
+  #[test]
+  fn box_relative_resolution_does_not_panic() {
+    let mut p = PaintState::default();
+    p.set_gradient(Gradient::linear_box(
+      Point::new(0.0, 0.0),
+      Point::new(1.0, 1.0),
+      vec![stop(0.0, 1.0, 0.0, 0.0), stop(1.0, 0.0, 0.0, 1.0)],
+    ));
+    // Resolving against a box builds a color source; with no bounds the
+    // box-relative gradient is skipped and the fallback color is used.
+    let _ = p.to_paint_in(&Rect::new(Point::new(0.0, 0.0), Size::new(200.0, 100.0)));
+    let _ = p.to_paint();
+  }
+
+  #[test]
+  fn circle_radial_resolves_with_bounds() {
+    let mut p = PaintState::default();
+    p.set_gradient(Gradient::radial_box(
+      Point::new(0.5, 0.5),
+      0.5,
+      true,
+      vec![stop(0.0, 1.0, 1.0, 1.0), stop(1.0, 0.0, 0.0, 0.0)],
+    ));
+    let _ = p.to_paint_in(&Rect::new(Point::new(10.0, 20.0), Size::new(80.0, 40.0)));
   }
 }
