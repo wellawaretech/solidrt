@@ -1,6 +1,13 @@
 # @solidrt/flux-types
 
-TypeScript type definitions for the `Flux` runtime global in [SolidRT](https://github.com/wellawaretech/solidrt) apps.
+TypeScript type definitions for the [SolidRT](https://github.com/wellawaretech/solidrt)
+`flux` runtime: the `Flux` global, the `flux:*` capability modules, the
+web-standard globals flux provides, and the GUI globals.
+
+The runtime is QuickJS, not a browser or Node, so it ships neither `lib.dom` nor
+the Bun/Node libraries. This package is the single source of truth for everything
+the flux runtime exposes, including web standards like `fetch`, `Response`,
+`WebSocket`, `console`, and timers.
 
 ## Installation
 
@@ -8,31 +15,45 @@ TypeScript type definitions for the `Flux` runtime global in [SolidRT](https://g
 bun add -d @solidrt/flux-types
 ```
 
-Then **you must add it to the `types` array** in your `tsconfig.json`. This is
-required: the `flux:*` modules are ambient declarations, so they are only
-visible to TypeScript when the package is listed in `types`. Without this you
-will get `Cannot find module 'flux:fs'` (and the same for `flux:http`,
-`flux:process`, etc.).
+Then configure `tsconfig.json` so TypeScript uses these types and does **not**
+pull in browser or Bun/Node globals that the runtime does not have:
 
 ```json
 {
   "compilerOptions": {
+    "lib": ["ESNext"],
     "types": ["@solidrt/flux-types"]
   }
 }
 ```
 
-If you already have a `types` array (for example with `@types/bun`), **add to
-it** rather than replacing it - listing `types` disables TypeScript's automatic
-type inclusion, so every package you rely on must be named:
+- `lib: ["ESNext"]` keeps the genuine ECMAScript types (Promise, Array, Map,
+  TypedArrays, `Symbol.asyncIterator`) while dropping the DOM. Including `"dom"`
+  would advertise `document`, `window`, `localStorage`, and other APIs that do
+  not exist in flux.
+- `types: ["@solidrt/flux-types"]` makes the `flux:*` modules (ambient module
+  declarations) and the runtime globals visible.
 
-```json
-{
-  "compilerOptions": {
-    "types": ["bun", "@solidrt/flux-types"]
-  }
-}
-```
+Do **not** also add `@types/bun` or `@types/node`: they declare `Bun.*`,
+`bun:*`/`node:*` modules, `process`, `Buffer`, and other APIs the runtime does
+not provide, and they collide with the web-standard globals declared here.
+
+If you already maintain a `types` array, add to it rather than replacing it:
+listing `types` disables TypeScript's automatic inclusion, so every package you
+rely on must be named.
+
+## What's covered
+
+- `Flux` global (`version`, `capabilities`).
+- `flux:*` modules: `flux:http`, `flux:fs`, `flux:sqlite`, `flux:subprocess`,
+  `flux:p2p`, `flux:process`, `flux:path`.
+- Web-standard globals: `console`, `fetch` + `Headers`/`Request`/`Response`,
+  `setTimeout`/`setInterval`/`queueMicrotask`, `performance`, `WebSocket`,
+  `TextEncoder`/`TextDecoder`. These are deliberate subsets matching exactly what
+  the runtime implements.
+- GUI globals (present only on a gui-enabled runtime): `camera`, `microphone`,
+  `gpu`, `requestAnimationFrame`/`cancelAnimationFrame`, and the internal `ffi`
+  render-tree bridge.
 
 ## License
 
