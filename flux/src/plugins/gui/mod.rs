@@ -5,6 +5,7 @@
 // (e.g. speech, dev tooling) keep their core + binding in lattice.
 
 pub mod camera;
+pub mod events;
 pub mod microphone;
 mod properties;
 pub mod raf;

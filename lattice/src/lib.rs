@@ -14,10 +14,10 @@ enum EngineCmd {
 }
 
 use alloy::impellers::{ISize, Rect};
+use alloy::rendertree::{PlatformContext, RenderTree};
 use flux::gui::AlloyContext;
 use flux::{emit_event, ExecHandle, FluxEngine};
 use frame::{EngineState, InputEvent, InputState};
-use alloy::rendertree::{PlatformContext, RenderTree};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -218,24 +218,21 @@ fn ui_thread(
     };
     local.spawn_local(async move {
       while let Some(event) = ev_rx.recv().await {
+        // Lattice-only input bookkeeping (the modifier state pointer dispatch
+        // reads); the key events themselves are marshalled by flux below.
+        if let alloy::AlloyEvent::KeyDown { modifiers, .. } | alloy::AlloyEvent::KeyUp { modifiers, .. } = &event {
+          input_state_events.set_modifiers(*modifiers);
+        }
+        // flux owns the marshalling of the engine-agnostic window / keyboard /
+        // device events into the JS bus; the runner keeps only the policy events
+        // (pacing, sticky, hit-testing) in the match below.
+        if let Some(eh) = current_exec_events.borrow().as_ref() {
+          if flux::gui::events::forward(eh, &event) {
+            continue;
+          }
+        }
         match event {
           alloy::AlloyEvent::Quit => std::process::exit(0),
-          alloy::AlloyEvent::WindowFocus => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                emit_event(&ctx, "windowFocus", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::WindowBlur => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                emit_event(&ctx, "windowBlur", obj);
-              });
-            }
-          }
           alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
             platform_events.set_window_size(size.width as f32, size.height as f32);
             platform_events.set_display_scale(display_scale);
@@ -287,89 +284,6 @@ fn ui_thread(
               InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers },
             );
           }
-          alloy::AlloyEvent::KeyDown { keycode, scancode, modifiers } => {
-            input_state_events.set_modifiers(modifiers);
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              let key = keycode.map(|k| k.name()).unwrap_or_default();
-              let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("key", key).expect("set key");
-                obj.set("code", code).expect("set code");
-                obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
-                obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
-                obj.set("altKey", modifiers.alt).expect("set altKey");
-                obj.set("metaKey", modifiers.meta).expect("set metaKey");
-                emit_event(&ctx, "keydown", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::KeyUp { keycode, scancode, modifiers } => {
-            input_state_events.set_modifiers(modifiers);
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              let key = keycode.map(|k| k.name()).unwrap_or_default();
-              let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("key", key).expect("set key");
-                obj.set("code", code).expect("set code");
-                obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
-                obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
-                obj.set("altKey", modifiers.alt).expect("set altKey");
-                obj.set("metaKey", modifiers.meta).expect("set metaKey");
-                emit_event(&ctx, "keyup", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::TextInput { text } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("text", text).expect("set text");
-                emit_event(&ctx, "textInput", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::KeyboardVisibility { shown, height } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("shown", shown).expect("set shown");
-                obj.set("height", height).expect("set height");
-                emit_event(&ctx, "keyboardVisibility", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::CameraDeviceChange { added } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("added", added).expect("set added");
-                emit_event(&ctx, "cameraDeviceChange", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::PowerStatus { info } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              use alloy::sdl_utils::PowerState;
-              let state = match info.state {
-                PowerState::OnBattery => "onBattery",
-                PowerState::Charging => "charging",
-                PowerState::Charged => "charged",
-                PowerState::NoBattery => "noBattery",
-                PowerState::Unknown => "unknown",
-              };
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("state", state).expect("set state");
-                match info.percent {
-                  Some(p) => obj.set("percent", p).expect("set percent"),
-                  None => obj.set("percent", rquickjs::Null).expect("set percent null"),
-                }
-                emit_event(&ctx, "powerStatus", obj);
-              });
-            }
-          }
           alloy::AlloyEvent::FrameRendered { frame, fps, time: _ } => {
             platform_events.set_fps(fps);
             if let Some(eh) = current_exec_events.borrow().as_ref() {
@@ -413,6 +327,17 @@ fn ui_thread(
               });
             }
           }
+          // Marshalled by flux::gui::events::forward when an engine is live; they
+          // only reach here pre-engine (startup) or mid-reload, where they are
+          // safely ignored.
+          alloy::AlloyEvent::WindowFocus
+          | alloy::AlloyEvent::WindowBlur
+          | alloy::AlloyEvent::KeyDown { .. }
+          | alloy::AlloyEvent::KeyUp { .. }
+          | alloy::AlloyEvent::TextInput { .. }
+          | alloy::AlloyEvent::KeyboardVisibility { .. }
+          | alloy::AlloyEvent::CameraDeviceChange { .. }
+          | alloy::AlloyEvent::PowerStatus { .. } => {}
         }
       }
     });
@@ -466,24 +391,29 @@ fn ui_thread(
       let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
-      let builder = FluxEngine::builder()
-        .stack_size(JS_STACK_SIZE)
-        .logger(|level, msg| match level {
-          flux::LogLevel::Debug => log::debug!("{msg}"),
-          flux::LogLevel::Log => log::info!("{msg}"),
-          flux::LogLevel::Warn => log::warn!("{msg}"),
-          flux::LogLevel::Error => log::error!("{msg}"),
-        });
+      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE).logger(|level, msg| match level {
+        flux::LogLevel::Debug => log::debug!("{msg}"),
+        flux::LogLevel::Log => log::info!("{msg}"),
+        flux::LogLevel::Warn => log::warn!("{msg}"),
+        flux::LogLevel::Error => log::error!("{msg}"),
+      });
       // flux owns the gui plugin set and its registration order; it stores the
       // shared render tree in userdata, which the runner's draw bridge
       // (`srt:render`) reads to draw it. lattice only supplies the host
       // instances they bind.
       let builder = flux::gui::install(
         builder,
-        flux::gui::GuiHost { platform: platform.clone(), alloy: atx.clone(), render_tree, alloy_cmd_tx: alloy_cmd_tx.clone() },
+        flux::gui::GuiHost {
+          platform: platform.clone(),
+          alloy: atx.clone(),
+          render_tree,
+          alloy_cmd_tx: alloy_cmd_tx.clone(),
+        },
       );
       let builder = builder
-        .plugin(move |ctx| plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state))
+        .plugin(move |ctx| {
+          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state)
+        })
         .plugin(|ctx| plugins::image::init(ctx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:render", plugins::draw::SrtRenderModule)
@@ -535,7 +465,13 @@ fn ui_thread(
   });
 }
 
-pub fn start(rt: &tokio::runtime::Runtime, app_source: Option<AppSource>, mode: alloy::Mode, size: (u32, u32), stats: bool) {
+pub fn start(
+  rt: &tokio::runtime::Runtime,
+  app_source: Option<AppSource>,
+  mode: alloy::Mode,
+  size: (u32, u32),
+  stats: bool,
+) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
 
