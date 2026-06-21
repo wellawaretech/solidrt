@@ -15,11 +15,12 @@
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />
 
-// GUI capabilities (present only on a gui-enabled runtime). camera/microphone/
-// gpu are flux:* modules like the rest; requestAnimationFrame stays a global
-// (web-standard name). The render-tree bridge (ffi) is still a runner-owned
-// global for now and lives in the consuming app's own declarations until it
-// becomes flux:rendertree.
+// GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/
+// microphone/gpu are flux:* modules like the rest; requestAnimationFrame stays a
+// global (web-standard name). flux:rendertree is the render-tree bridge the
+// renderer drives; displaying the built tree (renderFrame) is the runner's
+// concern (srt:render in lattice), not part of flux.
+/// <reference path="./gui/rendertree.d.ts" />
 /// <reference path="./gui/camera.d.ts" />
 /// <reference path="./gui/microphone.d.ts" />
 /// <reference path="./gui/gpu.d.ts" />

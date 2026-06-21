@@ -1,4 +1,5 @@
 use alloy::impellers::{FontStyle, FontWeight};
+use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -88,7 +89,22 @@ impl<'js> IntoJs<'js> for JsBoundingBox {
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
-pub fn init(
+// State the `flux:rendertree` module binds, stashed in userdata by `store_state`
+// before any import so the module's `evaluate` can build its exports.
+#[derive(Clone, JsLifetime)]
+struct RenderTreeState(#[qjs(skip_trace)] Rc<RenderTreeInner>);
+
+struct RenderTreeInner {
+  tree: Rc<RefCell<RenderTree>>,
+  platform: Arc<PlatformContext>,
+  alloy_cmd_tx: Sender<alloy::AlloyCommand>,
+  atx: AlloyContext,
+}
+
+/// Create the shared render tree and stash the state the `flux:rendertree`
+/// module binds, before any import. Also stores `SharedRenderTree`, which the
+/// runner's draw bridge (`srt:render`) reads directly.
+pub fn store_state(
   ctx: &Ctx<'_>,
   tree: RenderTree,
   alloy_cmd_tx: Sender<alloy::AlloyCommand>,
@@ -97,137 +113,162 @@ pub fn init(
 ) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).expect("store render tree");
+  ctx
+    .store_userdata(RenderTreeState(Rc::new(RenderTreeInner { tree: shared.0, platform, alloy_cmd_tx, atx })))
+    .expect("store rendertree state");
+}
 
-  let tree_ref = shared.0.clone();
-  let platform_ref = platform.clone();
-  let create_root = Function::new(ctx.clone(), move |id: u64| {
-    let mut tree = tree_ref.borrow_mut();
-    tree.create_node(id, Window::default().with_layout());
-    tree.root = Some(id);
-    platform_ref.request_frame();
-  })
-  .expect("create createRoot");
+/// The `flux:rendertree` module: the render-tree bridge the renderer drives to
+/// build and mutate the native tree (create/insert/delete nodes, write
+/// properties, query layout, measure text). Marshalling only - all domain logic
+/// lives in alloy's rendertree. Displaying the built tree is the runner's
+/// concern (`srt:render`), not part of this module.
+pub struct RenderTreeModule;
 
-  let tree_ref = shared.0.clone();
-  let platform_ref = platform.clone();
-  let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
-    tree_ref.borrow_mut().create_node(id, Element::from_kind(&kind));
-    platform_ref.request_frame();
-  })
-  .expect("create createNode");
+impl ModuleDef for RenderTreeModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+    decl.declare("createRoot")?;
+    decl.declare("createNode")?;
+    decl.declare("deleteNode")?;
+    decl.declare("insertNode")?;
+    decl.declare("setProperty")?;
+    decl.declare("requestFrame")?;
+    decl.declare("setTextInputActive")?;
+    decl.declare("measureText")?;
+    decl.declare("getBoundingBox")?;
+    Ok(())
+  }
 
-  let tree_ref = shared.0.clone();
-  let platform_ref = platform.clone();
-  let delete_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
-    tree_ref.borrow_mut().delete_node(parent_id, node_id);
-    platform_ref.request_frame();
-  })
-  .expect("create deleteNode");
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    let state = ctx.userdata::<RenderTreeState>().expect("rendertree state userdata");
+    let tree = state.0.tree.clone();
+    let platform = state.0.platform.clone();
+    let alloy_cmd_tx = state.0.alloy_cmd_tx.clone();
+    let atx = state.0.atx.clone();
 
-  let tree_ref = shared.0.clone();
-  let platform_ref = platform.clone();
-  let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
-    tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
-    platform_ref.request_frame();
-  })
-  .expect("create insertNode");
-
-  let tree_ref = shared.0.clone();
-  let platform_ref = platform.clone();
-  let cmd_tx = alloy_cmd_tx.clone();
-  let set_property = Function::new(
-    ctx.clone(),
-    move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
-      SETPROP_COUNT.with(|c| c.set(c.get() + 1));
-      let value = to_prop_value(&value);
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let create_root = Function::new(ctx.clone(), move |id: u64| {
       let mut tree = tree_ref.borrow_mut();
-      let invalidate = super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx)
-        .map_err(|msg| ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into()))?;
-      if invalidate {
-        tree.invalidate_cache(node_id);
-      }
+      tree.create_node(id, Window::default().with_layout());
+      tree.root = Some(id);
       platform_ref.request_frame();
-      Ok(())
-    },
-  )
-  .expect("create setProperty");
+    })?;
 
-  let platform_ref = platform.clone();
-  let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame()).expect("create requestFrame");
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
+      tree_ref.borrow_mut().create_node(id, Element::from_kind(&kind));
+      platform_ref.request_frame();
+    })?;
 
-  let tree_ref = shared.0.clone();
-  let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
-    tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
-  })
-  .expect("create getBoundingBox");
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let delete_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
+      tree_ref.borrow_mut().delete_node(parent_id, node_id);
+      platform_ref.request_frame();
+    })?;
 
-  let cmd_tx = alloy_cmd_tx.clone();
-  let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
-    cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
-  })
-  .expect("create setTextInputActive");
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
+      tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
+      platform_ref.request_frame();
+    })?;
 
-  let measure_platform = platform.clone();
-  let measure_atx = atx.clone();
-  let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
-    let mut node = Text::default();
-    node.computed_text = text;
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let cmd_tx = alloy_cmd_tx.clone();
+    let set_property = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
+        SETPROP_COUNT.with(|c| c.set(c.get() + 1));
+        let value = to_prop_value(&value);
+        let mut tree = tree_ref.borrow_mut();
+        let invalidate =
+          super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx).map_err(|msg| {
+            ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into())
+          })?;
+        if invalidate {
+          tree.invalidate_cache(node_id);
+        }
+        platform_ref.request_frame();
+        Ok(())
+      },
+    )?;
 
-    if let Some(opts) = options.0 {
-      if let Ok(v) = opts.get::<_, String>("fontFamily") {
-        node.font_family = match v.as_str() {
-          "mono" => "Noto Sans Mono".to_string(),
-          "sans" => "Noto Sans".to_string(),
-          other => other.to_string(),
-        };
+    let platform_ref = platform.clone();
+    let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame())?;
+
+    let tree_ref = tree.clone();
+    let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
+      tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
+    })?;
+
+    let cmd_tx = alloy_cmd_tx.clone();
+    let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
+      cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
+    })?;
+
+    let measure_platform = platform.clone();
+    let measure_atx = atx.clone();
+    let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
+      let mut node = Text::default();
+      node.computed_text = text;
+
+      if let Some(opts) = options.0 {
+        if let Ok(v) = opts.get::<_, String>("fontFamily") {
+          node.font_family = match v.as_str() {
+            "mono" => "Noto Sans Mono".to_string(),
+            "sans" => "Noto Sans".to_string(),
+            other => other.to_string(),
+          };
+        }
+        if let Ok(v) = opts.get::<_, f64>("fontSize") {
+          node.font_size = v as f32;
+        }
+        if let Ok(v) = opts.get::<_, String>("fontStyle") {
+          node.font_style = match v.as_str() {
+            "italic" => FontStyle::Italic,
+            _ => FontStyle::Normal,
+          };
+        }
+        if let Ok(v) = opts.get::<_, f64>("fontWeight") {
+          node.font_weight = match v as u32 {
+            100 => FontWeight::Thin,
+            200 => FontWeight::ExtraLight,
+            300 => FontWeight::Light,
+            500 => FontWeight::Medium,
+            600 => FontWeight::SemiBold,
+            700 => FontWeight::Bold,
+            800 => FontWeight::ExtraBold,
+            900 => FontWeight::Black,
+            _ => FontWeight::Regular,
+          };
+        }
+        if let Ok(v) = opts.get::<_, f64>("maxLines") {
+          node.max_lines = v as u32;
+        }
       }
-      if let Ok(v) = opts.get::<_, f64>("fontSize") {
-        node.font_size = v as f32;
-      }
-      if let Ok(v) = opts.get::<_, String>("fontStyle") {
-        node.font_style = match v.as_str() {
-          "italic" => FontStyle::Italic,
-          _ => FontStyle::Normal,
-        };
-      }
-      if let Ok(v) = opts.get::<_, f64>("fontWeight") {
-        node.font_weight = match v as u32 {
-          100 => FontWeight::Thin,
-          200 => FontWeight::ExtraLight,
-          300 => FontWeight::Light,
-          500 => FontWeight::Medium,
-          600 => FontWeight::SemiBold,
-          700 => FontWeight::Bold,
-          800 => FontWeight::ExtraBold,
-          900 => FontWeight::Black,
-          _ => FontWeight::Regular,
-        };
-      }
-      if let Ok(v) = opts.get::<_, f64>("maxLines") {
-        node.max_lines = v as u32;
-      }
-    }
 
-    let size = node.measure(&MeasureContext {
-      platform: &measure_platform,
-      alloy: &*measure_atx,
-      known: Size { width: None, height: None },
-      available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-    });
-    TextSize { width: size.width, height: size.height }
-  })
-  .expect("create measureText");
+      let size = node.measure(&MeasureContext {
+        platform: &measure_platform,
+        alloy: &*measure_atx,
+        known: Size { width: None, height: None },
+        available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+      });
+      TextSize { width: size.width, height: size.height }
+    })?;
 
-  let ffi = Object::new(ctx.clone()).expect("create ffi object");
-  ffi.set("createRoot", create_root).expect("set ffi.createRoot");
-  ffi.set("createNode", create_node).expect("set ffi.createNode");
-  ffi.set("deleteNode", delete_node).expect("set ffi.deleteNode");
-  ffi.set("insertNode", insert_node).expect("set ffi.insertNode");
-  ffi.set("setProperty", set_property).expect("set ffi.setProperty");
-  ffi.set("requestFrame", request_frame).expect("set ffi.requestFrame");
-  ffi.set("setTextInputActive", set_text_input_active).expect("set ffi.setTextInputActive");
-  ffi.set("measureText", measure_text).expect("set ffi.measureText");
-  ffi.set("getBoundingBox", get_bounding_box).expect("set ffi.getBoundingBox");
-
-  ctx.globals().set("ffi", ffi).expect("set ffi global");
+    exports.export("createRoot", create_root)?;
+    exports.export("createNode", create_node)?;
+    exports.export("deleteNode", delete_node)?;
+    exports.export("insertNode", insert_node)?;
+    exports.export("setProperty", set_property)?;
+    exports.export("requestFrame", request_frame)?;
+    exports.export("setTextInputActive", set_text_input_active)?;
+    exports.export("measureText", measure_text)?;
+    exports.export("getBoundingBox", get_bounding_box)?;
+    Ok(())
+  }
 }

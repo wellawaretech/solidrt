@@ -474,17 +474,19 @@ fn ui_thread(
           flux::LogLevel::Warn => log::warn!("{msg}"),
           flux::LogLevel::Error => log::error!("{msg}"),
         });
-      // flux owns the gui plugin set and its registration order (the tree plugin
-      // creates the `ffi` global the draw bridge attaches to, so install runs
-      // before draw); lattice only supplies the host instances they bind.
+      // flux owns the gui plugin set and its registration order; it stores the
+      // shared render tree in userdata, which the runner's draw bridge
+      // (`srt:render`) reads to draw it. lattice only supplies the host
+      // instances they bind.
       let builder = flux::gui::install(
         builder,
         flux::gui::GuiHost { platform: platform.clone(), alloy: atx.clone(), render_tree, alloy_cmd_tx: alloy_cmd_tx.clone() },
       );
       let builder = builder
-        .plugin(move |ctx| plugins::draw::init(ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state))
+        .plugin(move |ctx| plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state))
         .plugin(|ctx| plugins::image::init(ctx))
         .plugin(|ctx| plugins::events::init(&ctx))
+        .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .userdata(clock.clone());

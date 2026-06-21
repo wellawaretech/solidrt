@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.14/node_modules/@solidjs/signals/dist/prod.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-beta.14/node_modules/@solidjs/signals/dist/prod.js
 class NotReadyError extends Error {
   source;
   constructor(e) {
@@ -2657,7 +2657,7 @@ function flattenArray(e, t = [], n) {
   return r;
 }
 
-// node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 var NoHydrateContext = {
@@ -2722,7 +2722,7 @@ function Show(props) {
   });
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -3023,10 +3023,216 @@ function createRenderer(options) {
   };
 }
 
-// packages/core/src/window.ts
+// ../../packages/core/src/window.ts
 import { on, once } from "srt:events";
 
-// node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
+// ../../packages/core/src/core.ts
+var handlers = new Map;
+function setEventHandler(nodeId, name, fn) {
+  if (fn == null) {
+    handlers.get(nodeId)?.delete(name);
+    return;
+  }
+  let nodeHandlers = handlers.get(nodeId);
+  if (!nodeHandlers) {
+    nodeHandlers = new Map;
+    handlers.set(nodeId, nodeHandlers);
+  }
+  nodeHandlers.set(name, fn);
+}
+function getEventHandler(nodeId, name) {
+  return handlers.get(nodeId)?.get(name);
+}
+function cleanupNodeHandlers(nodeId) {
+  handlers.delete(nodeId);
+}
+var focusedNodeId = null;
+var textInputActive = false;
+function setFocus(nodeId) {
+  if (nodeId === focusedNodeId)
+    return;
+  let oldId = focusedNodeId;
+  focusedNodeId = nodeId;
+  if (oldId != null) {
+    getEventHandler(oldId, "onBlur")?.();
+  }
+  if (nodeId != null) {
+    getEventHandler(nodeId, "onFocus")?.();
+  }
+  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
+  if (wantActive !== textInputActive) {
+    textInputActive = wantActive;
+    ffi.setTextInputActive(wantActive);
+  }
+}
+function getFocusedNodeId() {
+  return focusedNodeId;
+}
+
+// ../../packages/core/src/window.ts
+var nextFrameId = 1;
+var animationFrames = new Map;
+var refreshRate = 60;
+function onFrame(fn) {
+  let frameId = null;
+  let extendedFn = (tick, frame, rate) => {
+    fn(tick, frame, rate);
+    frameId = nextFrameId++;
+    animationFrames.set(frameId, extendedFn);
+    ffi.requestFrame();
+  };
+  frameId = nextFrameId++;
+  animationFrames.set(frameId, extendedFn);
+  ffi.requestFrame();
+  let cleanup2 = () => animationFrames.delete(frameId);
+  onCleanup(cleanup2);
+  return cleanup2;
+}
+var sizeAccessor;
+var safeAreaAccessor;
+var displayScaleAccessor;
+function ensureResizeState() {
+  if (sizeAccessor)
+    return;
+  let [size, setSize] = createSignal({ width: 0, height: 0 });
+  let [safe, setSafe] = createSignal({ top: 0, left: 0, right: 0, bottom: 0 });
+  let [scale, setScale] = createSignal(1);
+  on("resize", (e) => {
+    setSize({ width: e.width, height: e.height });
+    setSafe(e.safeArea);
+    setScale(e.displayScale);
+  });
+  sizeAccessor = size;
+  safeAreaAccessor = safe;
+  displayScaleAccessor = scale;
+}
+function windowSize() {
+  ensureResizeState();
+  return sizeAccessor();
+}
+function attachWindow(_nodeId) {
+  let unsubscribe = null;
+  let unsubDown = null;
+  let unsubUp = null;
+  let unsubMove = null;
+  let unsubEnter = null;
+  let unsubLeave = null;
+  let unsubWheel = null;
+  let unsubKeyDown = null;
+  let unsubKeyUp = null;
+  let unsubTextInput = null;
+  let unsubKeyboardVisibility = null;
+  let unsubRefreshRate = null;
+  let unsubFirstResize = null;
+  function runFrame(t, frame) {
+    if (animationFrames.size > 0) {
+      let frames = animationFrames;
+      animationFrames = new Map;
+      for (let fn of frames.values())
+        fn(t, frame, refreshRate);
+    }
+    flush();
+    ffi.renderFrame();
+  }
+  onSettled(() => {
+    unsubRefreshRate = on("displayRefreshRate", ({ hz }) => {
+      if (hz > 0)
+        refreshRate = hz;
+    });
+    unsubscribe = on("render", ({ time, frame }) => {
+      runFrame(time * 1000, frame);
+    });
+    unsubDown = on("pointerDown", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerDown")?.(e);
+      }
+      let focused = getFocusedNodeId();
+      if (focused != null && !targets.includes(focused)) {
+        setFocus(null);
+      }
+    });
+    unsubUp = on("pointerUp", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerUp")?.(e);
+      }
+    });
+    unsubMove = on("pointerMove", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerMove")?.(e);
+      }
+    });
+    unsubEnter = on("pointerEnter", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerEnter")?.(e);
+      }
+    });
+    unsubLeave = on("pointerLeave", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onPointerLeave")?.(e);
+      }
+    });
+    unsubWheel = on("wheel", ({ targets, ...e }) => {
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, "onWheel")?.(e);
+      }
+    });
+    unsubKeyDown = on("keydown", (e) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onKeyDown")?.(e);
+      }
+    });
+    unsubKeyUp = on("keyup", (e) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onKeyUp")?.(e);
+      }
+    });
+    unsubTextInput = on("textInput", (e) => {
+      let id = getFocusedNodeId();
+      if (id != null) {
+        getEventHandler(id, "onTextInput")?.(e);
+      }
+    });
+    unsubKeyboardVisibility = on("keyboardVisibility", ({ shown }) => {
+      if (!shown)
+        setFocus(null);
+    });
+    unsubFirstResize = once("resize", () => {
+      queueMicrotask(() => runFrame(0, 0));
+    });
+  });
+  onCleanup(() => {
+    if (unsubscribe)
+      unsubscribe();
+    if (unsubDown)
+      unsubDown();
+    if (unsubUp)
+      unsubUp();
+    if (unsubMove)
+      unsubMove();
+    if (unsubEnter)
+      unsubEnter();
+    if (unsubLeave)
+      unsubLeave();
+    if (unsubWheel)
+      unsubWheel();
+    if (unsubKeyDown)
+      unsubKeyDown();
+    if (unsubKeyUp)
+      unsubKeyUp();
+    if (unsubTextInput)
+      unsubTextInput();
+    if (unsubKeyboardVisibility)
+      unsubKeyboardVisibility();
+    if (unsubRefreshRate)
+      unsubRefreshRate();
+    if (unsubFirstResize)
+      unsubFirstResize();
+  });
+}
+
+// ../../node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
 var r = { grad: 0.9, turn: 360, rad: 360 / (2 * Math.PI) };
 var t = function(r2) {
   return typeof r2 == "string" ? r2.length > 0 : typeof r2 == "number";
@@ -3194,7 +3400,7 @@ var k = function(r2) {
   });
 };
 
-// node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/names.mjs
+// ../../node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/names.mjs
 function names_default(e2, f2) {
   var a2 = { white: "#ffffff", bisque: "#ffe4c4", blue: "#0000ff", cadetblue: "#5f9ea0", chartreuse: "#7fff00", chocolate: "#d2691e", coral: "#ff7f50", antiquewhite: "#faebd7", aqua: "#00ffff", azure: "#f0ffff", whitesmoke: "#f5f5f5", papayawhip: "#ffefd5", plum: "#dda0dd", blanchedalmond: "#ffebcd", black: "#000000", gold: "#ffd700", goldenrod: "#daa520", gainsboro: "#dcdcdc", cornsilk: "#fff8dc", cornflowerblue: "#6495ed", burlywood: "#deb887", aquamarine: "#7fffd4", beige: "#f5f5dc", crimson: "#dc143c", cyan: "#00ffff", darkblue: "#00008b", darkcyan: "#008b8b", darkgoldenrod: "#b8860b", darkkhaki: "#bdb76b", darkgray: "#a9a9a9", darkgreen: "#006400", darkgrey: "#a9a9a9", peachpuff: "#ffdab9", darkmagenta: "#8b008b", darkred: "#8b0000", darkorchid: "#9932cc", darkorange: "#ff8c00", darkslateblue: "#483d8b", gray: "#808080", darkslategray: "#2f4f4f", darkslategrey: "#2f4f4f", deeppink: "#ff1493", deepskyblue: "#00bfff", wheat: "#f5deb3", firebrick: "#b22222", floralwhite: "#fffaf0", ghostwhite: "#f8f8ff", darkviolet: "#9400d3", magenta: "#ff00ff", green: "#008000", dodgerblue: "#1e90ff", grey: "#808080", honeydew: "#f0fff0", hotpink: "#ff69b4", blueviolet: "#8a2be2", forestgreen: "#228b22", lawngreen: "#7cfc00", indianred: "#cd5c5c", indigo: "#4b0082", fuchsia: "#ff00ff", brown: "#a52a2a", maroon: "#800000", mediumblue: "#0000cd", lightcoral: "#f08080", darkturquoise: "#00ced1", lightcyan: "#e0ffff", ivory: "#fffff0", lightyellow: "#ffffe0", lightsalmon: "#ffa07a", lightseagreen: "#20b2aa", linen: "#faf0e6", mediumaquamarine: "#66cdaa", lemonchiffon: "#fffacd", lime: "#00ff00", khaki: "#f0e68c", mediumseagreen: "#3cb371", limegreen: "#32cd32", mediumspringgreen: "#00fa9a", lightskyblue: "#87cefa", lightblue: "#add8e6", midnightblue: "#191970", lightpink: "#ffb6c1", mistyrose: "#ffe4e1", moccasin: "#ffe4b5", mintcream: "#f5fffa", lightslategray: "#778899", lightslategrey: "#778899", navajowhite: "#ffdead", navy: "#000080", mediumvioletred: "#c71585", powderblue: "#b0e0e6", palegoldenrod: "#eee8aa", oldlace: "#fdf5e6", paleturquoise: "#afeeee", mediumturquoise: "#48d1cc", mediumorchid: "#ba55d3", rebeccapurple: "#663399", lightsteelblue: "#b0c4de", mediumslateblue: "#7b68ee", thistle: "#d8bfd8", tan: "#d2b48c", orchid: "#da70d6", mediumpurple: "#9370db", purple: "#800080", pink: "#ffc0cb", skyblue: "#87ceeb", springgreen: "#00ff7f", palegreen: "#98fb98", red: "#ff0000", yellow: "#ffff00", slateblue: "#6a5acd", lavenderblush: "#fff0f5", peru: "#cd853f", palevioletred: "#db7093", violet: "#ee82ee", teal: "#008080", slategray: "#708090", slategrey: "#708090", aliceblue: "#f0f8ff", darkseagreen: "#8fbc8f", darkolivegreen: "#556b2f", greenyellow: "#adff2f", seagreen: "#2e8b57", seashell: "#fff5ee", tomato: "#ff6347", silver: "#c0c0c0", sienna: "#a0522d", lavender: "#e6e6fa", lightgreen: "#90ee90", orange: "#ffa500", orangered: "#ff4500", steelblue: "#4682b4", royalblue: "#4169e1", turquoise: "#40e0d0", yellowgreen: "#9acd32", salmon: "#fa8072", saddlebrown: "#8b4513", sandybrown: "#f4a460", rosybrown: "#bc8f8f", darksalmon: "#e9967a", lightgoldenrodyellow: "#fafad2", snow: "#fffafa", lightgrey: "#d3d3d3", lightgray: "#d3d3d3", dimgray: "#696969", dimgrey: "#696969", olivedrab: "#6b8e23", olive: "#808000" }, r2 = {};
   for (var d2 in a2)
@@ -3224,218 +3430,17 @@ function names_default(e2, f2) {
   }, "name"]);
 }
 
-// packages/core/src/core.ts
+// ../../packages/core/src/color.ts
 k([names_default]);
-function parseColorToU32(color) {
+function parseColor(color) {
   let { r: r2, g: g2, b: b2, a: a2 } = w(color).toRgb();
   return ((r2 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a2 * 255 & 255) >>> 0;
 }
-var handlers = new Map;
-function setEventHandler(nodeId, name, fn) {
-  if (fn == null) {
-    handlers.get(nodeId)?.delete(name);
-    return;
-  }
-  let nodeHandlers = handlers.get(nodeId);
-  if (!nodeHandlers) {
-    nodeHandlers = new Map;
-    handlers.set(nodeId, nodeHandlers);
-  }
-  nodeHandlers.set(name, fn);
-}
-function getEventHandler(nodeId, name) {
-  return handlers.get(nodeId)?.get(name);
-}
-function cleanupNodeHandlers(nodeId) {
-  handlers.delete(nodeId);
-}
-var focusedNodeId = null;
-var textInputActive = false;
-function setFocus(nodeId) {
-  if (nodeId === focusedNodeId)
-    return;
-  let oldId = focusedNodeId;
-  focusedNodeId = nodeId;
-  if (oldId != null) {
-    getEventHandler(oldId, "onBlur")?.();
-  }
-  if (nodeId != null) {
-    getEventHandler(nodeId, "onFocus")?.();
-  }
-  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
-  if (wantActive !== textInputActive) {
-    textInputActive = wantActive;
-    ffi.setTextInputActive(wantActive);
-  }
-}
-function getFocusedNodeId() {
-  return focusedNodeId;
+function isGradient(value) {
+  return typeof value === "object" && value !== null && "__gradient" in value;
 }
 
-// packages/core/src/window.ts
-var nextFrameId = 1;
-var animationFrames = new Map;
-var refreshRate = 60;
-function onFrame(fn) {
-  let frameId = null;
-  let extendedFn = (tick, frame, rate) => {
-    fn(tick, frame, rate);
-    frameId = nextFrameId++;
-    animationFrames.set(frameId, extendedFn);
-    ffi.requestFrame();
-  };
-  frameId = nextFrameId++;
-  animationFrames.set(frameId, extendedFn);
-  ffi.requestFrame();
-  let cleanup2 = () => animationFrames.delete(frameId);
-  onCleanup(cleanup2);
-  return cleanup2;
-}
-var sizeAccessor;
-var safeAreaAccessor;
-var displayScaleAccessor;
-function ensureResizeState() {
-  if (sizeAccessor)
-    return;
-  let [size, setSize] = createSignal({ width: 0, height: 0 });
-  let [safe, setSafe] = createSignal({ top: 0, left: 0, right: 0, bottom: 0 });
-  let [scale, setScale] = createSignal(1);
-  on("resize", (e2) => {
-    setSize({ width: e2.width, height: e2.height });
-    setSafe(e2.safeArea);
-    setScale(e2.displayScale);
-  });
-  sizeAccessor = size;
-  safeAreaAccessor = safe;
-  displayScaleAccessor = scale;
-}
-function windowSize() {
-  ensureResizeState();
-  return sizeAccessor();
-}
-function attachWindow(_nodeId) {
-  let unsubscribe = null;
-  let unsubDown = null;
-  let unsubUp = null;
-  let unsubMove = null;
-  let unsubEnter = null;
-  let unsubLeave = null;
-  let unsubWheel = null;
-  let unsubKeyDown = null;
-  let unsubKeyUp = null;
-  let unsubTextInput = null;
-  let unsubKeyboardVisibility = null;
-  let unsubRefreshRate = null;
-  let unsubFirstResize = null;
-  function runFrame(t2, frame) {
-    if (animationFrames.size > 0) {
-      let frames = animationFrames;
-      animationFrames = new Map;
-      for (let fn of frames.values())
-        fn(t2, frame, refreshRate);
-    }
-    flush();
-    ffi.renderFrame();
-  }
-  onSettled(() => {
-    unsubRefreshRate = on("displayRefreshRate", ({ hz }) => {
-      if (hz > 0)
-        refreshRate = hz;
-    });
-    unsubscribe = on("render", ({ time, frame }) => {
-      runFrame(time * 1000, frame);
-    });
-    unsubDown = on("pointerDown", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerDown")?.(e2);
-      }
-      let focused = getFocusedNodeId();
-      if (focused != null && !targets.includes(focused)) {
-        setFocus(null);
-      }
-    });
-    unsubUp = on("pointerUp", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerUp")?.(e2);
-      }
-    });
-    unsubMove = on("pointerMove", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerMove")?.(e2);
-      }
-    });
-    unsubEnter = on("pointerEnter", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerEnter")?.(e2);
-      }
-    });
-    unsubLeave = on("pointerLeave", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerLeave")?.(e2);
-      }
-    });
-    unsubWheel = on("wheel", ({ targets, ...e2 }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onWheel")?.(e2);
-      }
-    });
-    unsubKeyDown = on("keydown", (e2) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyDown")?.(e2);
-      }
-    });
-    unsubKeyUp = on("keyup", (e2) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyUp")?.(e2);
-      }
-    });
-    unsubTextInput = on("textInput", (e2) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onTextInput")?.(e2);
-      }
-    });
-    unsubKeyboardVisibility = on("keyboardVisibility", ({ shown }) => {
-      if (!shown)
-        setFocus(null);
-    });
-    unsubFirstResize = once("resize", () => {
-      queueMicrotask(() => runFrame(0, 0));
-    });
-  });
-  onCleanup(() => {
-    if (unsubscribe)
-      unsubscribe();
-    if (unsubDown)
-      unsubDown();
-    if (unsubUp)
-      unsubUp();
-    if (unsubMove)
-      unsubMove();
-    if (unsubEnter)
-      unsubEnter();
-    if (unsubLeave)
-      unsubLeave();
-    if (unsubWheel)
-      unsubWheel();
-    if (unsubKeyDown)
-      unsubKeyDown();
-    if (unsubKeyUp)
-      unsubKeyUp();
-    if (unsubTextInput)
-      unsubTextInput();
-    if (unsubKeyboardVisibility)
-      unsubKeyboardVisibility();
-    if (unsubRefreshRate)
-      unsubRefreshRate();
-    if (unsubFirstResize)
-      unsubFirstResize();
-  });
-}
-
-// packages/core/src/renderer.ts
+// ../../packages/core/src/renderer.ts
 var nodes = new Map;
 var id = 1;
 function createProxyNode(elementType) {
@@ -3483,8 +3488,12 @@ var {
       setEventHandler(node.id, name, value);
       return;
     }
+    if (name === "color" && isGradient(value)) {
+      ffi.setProperty(node.id, name, value);
+      return;
+    }
     if (name === "color" && typeof value === "string") {
-      ffi.setProperty(node.id, name, parseColorToU32(value));
+      ffi.setProperty(node.id, name, parseColor(value));
       return;
     }
     ffi.setProperty(node.id, name, value);
@@ -3551,11 +3560,11 @@ function render(code) {
     insert(null, root);
   });
 }
-// packages/core/src/camera.ts
+// ../../packages/core/src/gpu.ts
+import * as gpu from "flux:gpu";
+// ../../packages/core/src/camera.ts
+import { listCameras, open } from "flux:camera";
 import { on as on2 } from "srt:events";
-function listCameras() {
-  return camera.listCameras();
-}
 var devicesAccessor;
 function cameraDevices() {
   if (!devicesAccessor) {
@@ -3571,36 +3580,36 @@ function createCamera(options = {}) {
   let [height, setHeight] = createSignal(undefined);
   let [barcode, setBarcode] = createSignal(undefined);
   let [error, setError] = createSignal(undefined);
-  let handle;
+  let session;
   let disposed = false;
-  camera.open(options).then((opened) => {
+  open(options).then((cam) => {
     if (disposed) {
-      camera.close(opened.handle);
+      cam.close();
       return;
     }
-    handle = opened.handle;
+    session = cam;
     if (options.scan)
-      camera.setBarcodeCallback(opened.handle, (result) => setBarcode(result));
-    setTexture(opened.texture);
-    setWidth(opened.width);
-    setHeight(opened.height);
+      cam.onBarcode((result) => setBarcode(result));
+    setTexture(cam.texture);
+    setWidth(cam.width);
+    setHeight(cam.height);
   }).catch((e2) => setError(e2 instanceof Error ? e2 : new Error(String(e2))));
   onCleanup(() => {
     disposed = true;
-    if (handle !== undefined) {
-      camera.close(handle);
-      handle = undefined;
+    if (session) {
+      session.close();
+      session = undefined;
     }
   });
   return { texture, width, height, barcode, error };
 }
 
-// lattice/default-app/app.tsx
+// app.tsx
 import { platform } from "flux:process";
 import { on as on3 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev";
 
-// lattice/default-app/logo.tsx
+// logo.tsx
 var EXPLODE_DIST = 3;
 var STAGGER_DELAY = 100;
 var ANIM_DURATION = 600;
@@ -4096,7 +4105,7 @@ function Logo() {
   return _el$4;
 }
 
-// lattice/default-app/app.tsx
+// app.tsx
 var LOOPBACK = "127.0.0.1:15194";
 var STATUS_TEXT = {
   idle: "not connected",

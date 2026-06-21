@@ -21,27 +21,16 @@ declare module "srt:dev" {
   export function stop(): void
 }
 
-declare global {
-  // camera / microphone / gpu and requestAnimationFrame now come from
-  // @solidrt/flux-types (flux:* modules + the rAF global). ffi stays here for now
-  // because its renderFrame() is bolted on by the lattice runner, not flux; it
-  // moves to flux-types when the render tree becomes flux:rendertree.
-  let ffi: {
-    createRoot(id: number): void
-    createNode(id: number, kind: string): void
-    insertNode(parentId: number, nodeId: number, anchorId?: number): void
-    deleteNode(parentId: number, nodeId: number): void
-    setProperty(nodeId: number, name: string, value: unknown): void
-    setTextInputActive(active: boolean): void
-    requestFrame(): void
-    // Synchronously renders the current frame to the screen: runs layout, the
-    // postLayout hook, paint and hover refresh, then builds and submits the
-    // display list. requestFrame() schedules a future frame instead.
-    renderFrame(): void
-    measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
-    getBoundingBox(id: number): { x: number, y: number, width: number, height: number } | null
-  }
+// Frame draw (lattice runner). renderFrame() synchronously renders the current
+// frame: layout, the postLayout hook, paint and hover refresh, then builds and
+// submits the display list. To schedule a future frame instead, use
+// requestFrame() from "flux:rendertree". The tree-building surface itself is
+// "flux:rendertree" (from @solidrt/flux-types).
+declare module "srt:render" {
+  export function renderFrame(): void
+}
 
+declare global {
   let image: {
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }
@@ -57,14 +46,6 @@ declare global {
     setWakeCallback(handle: number, callback: () => void): void
     stop(handle: number): void
   }
-}
-
-export interface MeasureTextOptions {
-  fontFamily?: "sans" | "mono" | (string & {})
-  fontSize?: number
-  fontStyle?: "normal" | "italic"
-  fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
-  maxLines?: number
 }
 
 type Children = SolidJSX.Element

@@ -52,8 +52,8 @@ pub struct GuiHost {
 
 /// Register the GUI plugin set onto the engine builder. The single seam the
 /// runner calls: it must not need to know individual plugin init functions or
-/// their registration order. The tree plugin registers first: it creates the
-/// `ffi` global the draw bridge (in the runner) attaches `renderFrame` to.
+/// their registration order. The tree plugin stores the shared render tree in
+/// userdata, which the runner's draw bridge (`srt:render`) reads to draw it.
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
   let tree_platform = platform.clone();
@@ -63,17 +63,18 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let texture_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy);
-  // Capture/render capabilities are `flux:*` modules (registered below); only the
-  // render tree (ffi) and the web-standard rAF stay globals for now. The plugins
+  // The render tree and the capture/render devices are all `flux:*` modules
+  // (registered below); only the web-standard rAF stays a global. The plugins
   // store each module's host state in userdata before any import; the module
   // surfaces read it in their `evaluate`.
   builder
-    .plugin(move |ctx| tree::init(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
+    .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
     .plugin(move |ctx| raf::init(&ctx, raf_platform))
     .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
     .plugin(register_capabilities)
+    .module_override("flux:rendertree", tree::RenderTreeModule)
     .module_override("flux:camera", camera::CameraModule)
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:gpu", texture::GpuModule)

@@ -1,4 +1,4 @@
-import type { MeasureTextOptions } from "./types"
+import * as tree from "flux:rendertree"
 
 let handlers = new Map<number, Map<string, Function>>()
 
@@ -48,7 +48,7 @@ export function setFocus(nodeId: number | null): void {
   let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null
   if (wantActive !== textInputActive) {
     textInputActive = wantActive
-    ffi.setTextInputActive(wantActive)
+    tree.setTextInputActive(wantActive)
   }
 }
 
@@ -71,7 +71,7 @@ export interface BoundingBox {
  * translations; x/y are wrong when a rotate/scale sits anywhere above the node.
  */
 export function getBoundingBox(node: { id: number }): BoundingBox | null {
-  return ffi.getBoundingBox(node.id)
+  return tree.getBoundingBox(node.id)
 }
 
 /**
@@ -79,6 +79,6 @@ export function getBoundingBox(node: { id: number }): BoundingBox | null {
  * options (family, size, weight, style, maxLines), without adding it to the
  * tree. Useful for sizing or laying out around text before it is drawn.
  */
-export function measureText(text: string, options?: MeasureTextOptions): { width: number, height: number } {
-  return ffi.measureText(text, options)
+export function measureText(text: string, options?: tree.MeasureTextOptions): { width: number, height: number } {
+  return tree.measureText(text, options)
 }

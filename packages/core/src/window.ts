@@ -1,4 +1,6 @@
 import { createSignal, onCleanup, onSettled, flush } from "@solidjs/signals"
+import { requestFrame } from "flux:rendertree"
+import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
@@ -28,12 +30,12 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
     // A pending onFrame callback is a standing request for the next frame.
-    ffi.requestFrame()
+    requestFrame()
   }
 
   frameId = nextFrameId++
   animationFrames.set(frameId, extendedFn)
-  ffi.requestFrame()
+  requestFrame()
 
   let cleanup = () => animationFrames.delete(frameId)
   onCleanup(cleanup)
@@ -186,7 +188,7 @@ export function attachWindow(_nodeId: number) {
       for (let fn of frames.values()) fn(t, frame, refreshRate)
     }
     flush()
-    ffi.renderFrame()
+    renderFrame()
   }
 
   onSettled(() => {

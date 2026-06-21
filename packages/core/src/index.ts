@@ -26,6 +26,6 @@ export type {
   TextProps,
   TextureProps,
   AudioProps,
-  MeasureTextOptions,
   Color,
 } from "./types"
+export type { MeasureTextOptions } from "flux:rendertree"

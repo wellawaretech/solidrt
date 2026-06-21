@@ -1,5 +1,6 @@
 import { createRoot } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
+import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
 import { setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
 import { parseColor, isGradient } from "./color"
@@ -48,8 +49,8 @@ export let {
 
     // console.debug("[srt] createElement", proxy.id, elementType)
 
-    if (elementType === "window") ffi.createRoot(proxy.id)
-    else ffi.createNode(proxy.id, elementType)
+    if (elementType === "window") tree.createRoot(proxy.id)
+    else tree.createNode(proxy.id, elementType)
 
     return proxy
   },
@@ -57,14 +58,14 @@ export let {
   createTextNode: (value: string): ProxyNode => {
     let proxy = createProxyNode("d-span")
     // console.debug("[srt] createTextNode", proxy.id, value)
-    ffi.createNode(proxy.id, "d-span")
-    ffi.setProperty(proxy.id, "text", "" + value)
+    tree.createNode(proxy.id, "d-span")
+    tree.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
 
   replaceText: (node: ProxyNode, value: string): void => {
     // console.debug("[srt] replaceText", node.id, value)
-    ffi.setProperty(node.id, "text", "" + value)
+    tree.setProperty(node.id, "text", "" + value)
   },
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "d-span",
@@ -79,16 +80,16 @@ export let {
     }
 
     if (name === "color" && isGradient(value)) {
-      ffi.setProperty(node.id, name, value)
+      tree.setProperty(node.id, name, value)
       return
     }
 
     if (name === "color" && typeof value === "string") {
-      ffi.setProperty(node.id, name, parseColor(value))
+      tree.setProperty(node.id, name, parseColor(value))
       return
     }
 
-    ffi.setProperty(node.id, name, value)
+    tree.setProperty(node.id, name, value)
   },
 
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
@@ -110,8 +111,8 @@ export let {
 
       // console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
 
-      if (anchor) ffi.insertNode(parent.id, node.id, anchor.id)
-      else ffi.insertNode(parent.id, node.id)
+      if (anchor) tree.insertNode(parent.id, node.id, anchor.id)
+      else tree.insertNode(parent.id, node.id)
     }
   },
 
@@ -127,7 +128,7 @@ export let {
     }
     node.parent = undefined
 
-    ffi.deleteNode(parent.id, node.id)
+    tree.deleteNode(parent.id, node.id)
 
     // Recursively clean up node and all descendants. Clear focus before
     // dropping handlers so onBlur still fires for a focused descendant.
