@@ -7,9 +7,9 @@ use alloy::rendertree::{Gradient, GradientStop, PaintState};
 pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {
     // `color` carries either a solid (a packed-u32 number) or a gradient created
-    // by createLinearGradient/createRadialGradient (encoded as a list).
+    // by createLinearGradient/createRadialGradient (a branded object).
     "color" => match value {
-      PropValue::List(_) => paint.set_gradient(decode_gradient(value)),
+      PropValue::Map(_) => paint.set_gradient(decode_gradient(value)),
       _ => paint.set_color(decode_color(value)),
     },
     "strokeWidth" => paint.set_stroke_width(f32_of(value, "strokeWidth")),
@@ -37,34 +37,40 @@ pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<bo
   })
 }
 
-// Gradient encoding produced by the core factories (coordinates are 0..1 of the
-// element box; colors are packed u32):
-//   linear: ["linear", x0, y0, x1, y1, [off0, col0, off1, col1, ...]]
-//   radial: ["radial", cx, cy, r, circleFlag, [off0, col0, ...]]
+// The branded gradient object produced by the core factories, decoded by key
+// (coordinates are 0..1 of the element box; stop colors are packed u32):
+//   linear: { __gradient: "linear", x0, y0, x1, y1, stops: [{offset, color}, ...] }
+//   radial: { __gradient: "radial", cx, cy, r, circle, stops: [...] }
 fn decode_gradient(value: &PropValue) -> Gradient {
-  let list = value.as_list().expect("gradient must be a list");
-  match list.first().and_then(PropValue::as_str) {
+  match value.get("__gradient").and_then(PropValue::as_str) {
     Some("linear") => {
-      let start = Point::new(f32_of(&list[1], "x0"), f32_of(&list[2], "y0"));
-      let end = Point::new(f32_of(&list[3], "x1"), f32_of(&list[4], "y1"));
-      Gradient::linear_box(start, end, decode_stops(&list[5]))
+      let start = Point::new(field_f32(value, "x0"), field_f32(value, "y0"));
+      let end = Point::new(field_f32(value, "x1"), field_f32(value, "y1"));
+      Gradient::linear_box(start, end, decode_stops(value))
     }
     Some("radial") => {
-      let center = Point::new(f32_of(&list[1], "cx"), f32_of(&list[2], "cy"));
-      let radius = f32_of(&list[3], "r");
-      let circle = f32_of(&list[4], "circle") != 0.0;
-      Gradient::radial_box(center, radius, circle, decode_stops(&list[5]))
+      let center = Point::new(field_f32(value, "cx"), field_f32(value, "cy"));
+      let radius = field_f32(value, "r");
+      let circle = value.get("circle").and_then(PropValue::as_bool).unwrap_or(false);
+      Gradient::radial_box(center, radius, circle, decode_stops(value))
     }
     other => panic!("unknown gradient kind {other:?}"),
   }
 }
 
-fn decode_stops(value: &PropValue) -> Vec<GradientStop> {
-  let flat = value.as_list().expect("gradient stops must be a list");
-  flat
-    .chunks(2)
-    .map(|pair| GradientStop { offset: f32_of(&pair[0], "stop offset"), color: decode_color(&pair[1]) })
+fn decode_stops(gradient: &PropValue) -> Vec<GradientStop> {
+  let stops = gradient.get("stops").and_then(PropValue::as_list).expect("gradient must have a stops list");
+  stops
+    .iter()
+    .map(|stop| GradientStop {
+      offset: field_f32(stop, "offset"),
+      color: decode_color(stop.get("color").expect("gradient stop must have a color")),
+    })
     .collect()
+}
+
+fn field_f32(map: &PropValue, key: &str) -> f32 {
+  f32_of(map.get(key).unwrap_or_else(|| panic!("gradient missing '{key}'")), key)
 }
 
 fn decode_blend_mode(s: &str) -> BlendMode {

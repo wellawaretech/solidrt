@@ -36,6 +36,21 @@ fn to_prop_value(value: &Value<'_>) -> PropValue {
       items.push(to_prop_value(&arr.get::<Value>(i).expect("array element must be a value")));
     }
     PropValue::List(items)
+  } else if value.as_function().is_some() {
+    // Functions (event handlers) are bound in the JS renderer, not marshalled as
+    // data; ignore any that reach here.
+    PropValue::Null
+  } else if let Some(obj) = value.as_object() {
+    // Arrays and functions are already handled above, so this is a plain object:
+    // marshal its own enumerable keys into a Map, recursing on each value.
+    let entries = obj
+      .props::<String, Value>()
+      .map(|entry| {
+        let (k, v) = entry.expect("object property must be a key/value pair");
+        (k, to_prop_value(&v))
+      })
+      .collect();
+    PropValue::Map(entries)
   } else {
     PropValue::Null
   }
