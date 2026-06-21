@@ -1,6 +1,6 @@
-use forge::events::ListenerRegistry;
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
+use forge::events::ListenerRegistry;
 use rquickjs::function::MutFn;
 use rquickjs::{Ctx, Function, IntoJs, Persistent, Value};
 use std::cell::RefCell;

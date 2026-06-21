@@ -7,14 +7,14 @@ mod plugins;
 pub use plugins::gui;
 
 pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
-pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
-pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
-pub use plugins::standards::fetch::JsResponseData;
+pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::js_error::JsResult;
 pub use plugins::modules::events::{emit_event, has_listeners, register_listener};
 pub use plugins::modules::process::ProcessArgs;
+pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
+pub use plugins::standards::fetch::JsResponseData;
 pub use plugins::standards::time::Clock;
 pub use rquickjs;
 

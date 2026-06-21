@@ -15,12 +15,15 @@
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />
 
-// GUI globals (present only on a gui-enabled runtime).
+// GUI capabilities (present only on a gui-enabled runtime). camera/microphone/
+// gpu are flux:* modules like the rest; requestAnimationFrame stays a global
+// (web-standard name). The render-tree bridge (ffi) is still a runner-owned
+// global for now and lives in the consuming app's own declarations until it
+// becomes flux:rendertree.
 /// <reference path="./gui/camera.d.ts" />
 /// <reference path="./gui/microphone.d.ts" />
 /// <reference path="./gui/gpu.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
-/// <reference path="./gui/ffi.d.ts" />
 
 declare let Flux: {
   /** The flux runtime version. */

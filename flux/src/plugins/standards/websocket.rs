@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::modules::websocket::{call_callback, message_payload};
 use crate::plugins::standards::body::JsBytes;
 use forge::websocket::{parse_close, OutMsg, CLOSE_GRACE};
-use crate::plugins::modules::websocket::{call_callback, message_payload};
 
 /// Web-standard readyState values. Unlike a server socket, a client starts in
 /// CONNECTING while the TCP connect and handshake are in flight.
@@ -292,7 +292,14 @@ fn fire_error_close<'js>(ctx: &Ctx<'js>, shared: &WsShared<'js>, message: &str, 
   fire_close(ctx, shared, 1006, String::new(), false, logger);
 }
 
-fn fire_close<'js>(ctx: &Ctx<'js>, shared: &WsShared<'js>, code: u16, reason: String, was_clean: bool, logger: &Logger) {
+fn fire_close<'js>(
+  ctx: &Ctx<'js>,
+  shared: &WsShared<'js>,
+  code: u16,
+  reason: String,
+  was_clean: bool,
+  logger: &Logger,
+) {
   let close = shared.handlers.borrow().close.clone();
   fire_event(
     ctx,
@@ -375,8 +382,9 @@ async fn run_client<'js>(
   // writer. A send error means the writer is gone, which ends the read loop.
   let obligated_tx = tx.clone();
   let mut send_obligated = move |frame: Frame<'_>| {
-    let res =
-      obligated_tx.send(OutMsg::Frame(frame.opcode, frame.payload.into())).map_err(|_| WebSocketError::ConnectionClosed);
+    let res = obligated_tx
+      .send(OutMsg::Frame(frame.opcode, frame.payload.into()))
+      .map_err(|_| WebSocketError::ConnectionClosed);
     std::future::ready(res)
   };
 

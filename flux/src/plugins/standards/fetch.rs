@@ -1,11 +1,11 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
 
-use forge::fetch::{channel_request_body, do_fetch, ResponseData};
 use crate::logger::CtxLogger;
+use crate::plugins::marshal::with_pending;
 use crate::plugins::standards::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::standards::http::HttpClient;
-use crate::plugins::marshal::with_pending;
 use crate::plugins::standards::response::response_from_parts;
+use forge::fetch::{channel_request_body, do_fetch, ResponseData};
 
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let globals = ctx.globals();

@@ -15,7 +15,7 @@ pub mod value;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use rquickjs::JsLifetime;
+use rquickjs::{Array, Ctx, JsLifetime, Object};
 
 use alloy::rendertree::{PlatformContext, RenderTree};
 use alloy::AlloyCommand;
@@ -57,15 +57,40 @@ pub struct GuiHost {
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
   let tree_platform = platform.clone();
-  let texture_platform = platform.clone();
+  let raf_platform = platform.clone();
+  let texture_platform = platform;
   let tree_atx = AlloyContext(alloy.clone());
   let texture_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy);
+  // Capture/render capabilities are `flux:*` modules (registered below); only the
+  // render tree (ffi) and the web-standard rAF stay globals for now. The plugins
+  // store each module's host state in userdata before any import; the module
+  // surfaces read it in their `evaluate`.
   builder
     .plugin(move |ctx| tree::init(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
-    .plugin(move |ctx| raf::init(&ctx, platform))
-    .plugin(move |ctx| texture::init(ctx, texture_atx, texture_platform))
-    .plugin(move |ctx| camera::init(ctx, camera_atx))
-    .plugin(move |ctx| microphone::init(ctx, microphone_atx))
+    .plugin(move |ctx| raf::init(&ctx, raf_platform))
+    .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))
+    .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
+    .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
+    .plugin(register_capabilities)
+    .module_override("flux:camera", camera::CameraModule)
+    .module_override("flux:microphone", microphone::MicrophoneModule)
+    .module_override("flux:gpu", texture::GpuModule)
+}
+
+/// Append the gui capability names to `Flux.capabilities` so availability checks
+/// are uniform with the other modules (`Flux.capabilities.includes("camera")`).
+/// Runs as a plugin (after `Flux` is created) and only on a gui build, since
+/// `install` is the gui-feature seam.
+fn register_capabilities(ctx: Ctx<'_>) {
+  let Ok(flux) = ctx.globals().get::<_, Object>("Flux") else {
+    return;
+  };
+  let Ok(caps) = flux.get::<_, Array>("capabilities") else {
+    return;
+  };
+  for name in ["camera", "microphone", "gpu"] {
+    let _ = caps.set(caps.len(), name);
+  }
 }

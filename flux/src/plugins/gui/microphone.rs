@@ -6,6 +6,7 @@
 use std::rc::Rc;
 
 use rquickjs::function::Opt;
+use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
 
 use super::AlloyContext;
@@ -17,20 +18,29 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
 #[derive(Clone, JsLifetime)]
 struct MicrophonePluginState(#[qjs(skip_trace)] Rc<AlloyContext>);
 
-pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
+/// Store the microphone plugin state in userdata, before any module import, so
+/// `MicrophoneModule::evaluate` can read it. The `flux:microphone` surface is
+/// registered separately via `module_override`.
+pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx.store_userdata(MicrophonePluginState(Rc::new(atx))).expect("store microphone state");
+}
 
-  let list = Function::new(ctx.clone(), list_impl).expect("create microphone.listMicrophones");
-  let open = Function::new(ctx.clone(), open_impl).expect("create microphone.open");
-  let read = Function::new(ctx.clone(), read_impl).expect("create microphone.read");
-  let close = Function::new(ctx.clone(), close_impl).expect("create microphone.close");
+/// The `flux:microphone` module. `open` returns a bound session object
+/// (`{ sampleRate, read, close }`) so the raw handle stays in Rust.
+pub struct MicrophoneModule;
 
-  let microphone = Object::new(ctx.clone()).expect("create microphone object");
-  microphone.set("listMicrophones", list).expect("set microphone.listMicrophones");
-  microphone.set("open", open).expect("set microphone.open");
-  microphone.set("read", read).expect("set microphone.read");
-  microphone.set("close", close).expect("set microphone.close");
-  ctx.globals().set("microphone", microphone).expect("set microphone global");
+impl ModuleDef for MicrophoneModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+    decl.declare("listMicrophones")?;
+    decl.declare("open")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    exports.export("listMicrophones", Function::new(ctx.clone(), list_impl)?)?;
+    exports.export("open", Function::new(ctx.clone(), open_impl)?)?;
+    Ok(())
+  }
 }
 
 fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
@@ -58,9 +68,25 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<
     state.0.open_microphone(device, sample_rate).map_err(|e| throw_str(&ctx, &format!("openMicrophone: {e}")))?;
 
   let obj = Object::new(ctx.clone())?;
-  obj.set("handle", session)?;
   obj.set("sampleRate", sample_rate)?;
+  // read()/close() are bound to this session so the raw handle stays in Rust;
+  // they reuse the same helpers the global API did. read returns an invariant
+  // TypedArray<'js>, so its closure needs the HRTB coercion (see flux/CLAUDE.md);
+  // close returns () and does not.
+  let read_fn = Function::new(ctx.clone(), read_builder(move |ctx| read_impl(ctx, session)))?;
+  obj.set("read", read_fn)?;
+  let close_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_impl(ctx, session))?;
+  obj.set("close", close_fn)?;
   Ok(obj)
+}
+
+// Coerces a capturing closure to the `for<'js>` HRTB rquickjs needs to return an
+// invariant `TypedArray<'js>`; a capturing closure will not infer it on its own.
+fn read_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>) -> rquickjs::Result<TypedArray<'js, f32>>,
+{
+  f
 }
 
 /// Drain the mono f32 samples captured since the last read.

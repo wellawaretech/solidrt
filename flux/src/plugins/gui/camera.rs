@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use alloy::camera::{CameraFacing, CameraStatus};
 use rquickjs::function::Opt;
+use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
@@ -37,7 +38,11 @@ struct Inner {
 #[derive(Clone, JsLifetime)]
 struct CameraPluginState(#[qjs(skip_trace)] Rc<Inner>);
 
-pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
+/// Store the camera plugin state in userdata. Runs at engine init (before any
+/// module import) so `CameraModule::evaluate` and the per-frame `tick` can read
+/// it. The `flux:camera` module surface is registered separately via
+/// `module_override`.
+pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx
     .store_userdata(CameraPluginState(Rc::new(Inner {
       atx,
@@ -45,20 +50,28 @@ pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
       barcode_handlers: RefCell::new(HashMap::new()),
     })))
     .expect("store camera state");
+}
 
-  let list = Function::new(ctx.clone(), list_impl).expect("create camera.listCameras");
-  let open = Function::new(ctx.clone(), open_impl).expect("create camera.open");
-  let close = Function::new(ctx.clone(), close_impl).expect("create camera.close");
-  let set_barcode = Function::new(ctx.clone(), set_barcode_impl).expect("create camera.setBarcodeCallback");
-  let scan_image = Function::new(ctx.clone(), scan_image_impl).expect("create camera.scanImage");
+/// The `flux:camera` module. `open` resolves to a bound session object
+/// (`{ texture, width, height, onBarcode, close }`) so the handle never leaves
+/// Rust; `close`/`setBarcodeCallback` are methods on it rather than module
+/// exports taking a raw handle.
+pub struct CameraModule;
 
-  let camera = Object::new(ctx.clone()).expect("create camera object");
-  camera.set("listCameras", list).expect("set camera.listCameras");
-  camera.set("open", open).expect("set camera.open");
-  camera.set("close", close).expect("set camera.close");
-  camera.set("setBarcodeCallback", set_barcode).expect("set camera.setBarcodeCallback");
-  camera.set("scanImage", scan_image).expect("set camera.scanImage");
-  ctx.globals().set("camera", camera).expect("set camera global");
+impl ModuleDef for CameraModule {
+  fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
+    decl.declare("listCameras")?;
+    decl.declare("open")?;
+    decl.declare("scanImage")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    exports.export("listCameras", Function::new(ctx.clone(), list_impl)?)?;
+    exports.export("open", Function::new(ctx.clone(), open_impl)?)?;
+    exports.export("scanImage", Function::new(ctx.clone(), scan_image_impl)?)?;
+    Ok(())
+  }
 }
 
 fn facing_str(facing: CameraFacing) -> &'static str {
@@ -112,11 +125,8 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<
   };
 
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
-  let session = state
-    .0
-    .atx
-    .open_camera(device, facing, size, scan_qr)
-    .map_err(|e| throw_str(&ctx, &format!("openCamera: {e}")))?;
+  let session =
+    state.0.atx.open_camera(device, facing, size, scan_qr).map_err(|e| throw_str(&ctx, &format!("openCamera: {e}")))?;
 
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   state.0.pending.borrow_mut().push(PendingOpen {
@@ -194,12 +204,22 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
     match state.0.atx.camera_status(entry.session) {
       Some(CameraStatus::Pending) => state.0.pending.borrow_mut().push(entry),
       Some(CameraStatus::Ready { texture_id, width, height }) => {
+        let session = entry.session;
         let settle = || -> rquickjs::Result<()> {
           let obj = Object::new(ctx.clone())?;
-          obj.set("handle", entry.session)?;
           obj.set("texture", texture_id)?;
           obj.set("width", width)?;
           obj.set("height", height)?;
+          // close()/onBarcode() are bound to this session so the raw handle
+          // never crosses into JS; they reuse the same helpers the global API did.
+          let close_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| close_impl(ctx, session))?;
+          obj.set("close", close_fn)?;
+          let on_barcode_fn = Function::new(ctx.clone(), move |callback: Function<'_>| {
+            // Derive the Ctx from the callback so their lifetimes unify.
+            let ctx = callback.ctx().clone();
+            set_barcode_impl(ctx, session, callback);
+          })?;
+          obj.set("onBarcode", on_barcode_fn)?;
           entry.resolve.restore(ctx)?.call::<_, ()>((obj,))
         };
         if let Err(e) = settle() {

@@ -1,10 +1,10 @@
 use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 
-use forge::fs;
 use crate::pending::PendingOps;
-use crate::plugins::standards::body::attach_body;
 use crate::plugins::marshal::with_pending;
+use crate::plugins::standards::body::attach_body;
+use forge::fs;
 
 // Marshalling for the `file()` reference: forward to the engine-free
 // `forge::fs` disk operations and encode their results back to JS.

@@ -5,10 +5,10 @@ use rquickjs::{Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
 use std::rc::Rc;
 use tokio_util::io::ReaderStream;
 
-use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 use crate::pending::PendingOps;
-use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
 use crate::plugins::marshal::with_pending;
+use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
+use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 
 // flux:subprocess - spawn child processes and collect their output.
 //
@@ -63,7 +63,12 @@ impl<'js> IntoJs<'js> for JsCommandOutput {
 }
 
 // Set the { code, signal, success } fields shared by output() and status().
-fn set_status<'js>(obj: &Object<'js>, ctx: &Ctx<'js>, code: Option<i32>, signal: Option<String>) -> rquickjs::Result<()> {
+fn set_status<'js>(
+  obj: &Object<'js>,
+  ctx: &Ctx<'js>,
+  code: Option<i32>,
+  signal: Option<String>,
+) -> rquickjs::Result<()> {
   match code {
     Some(c) => obj.set("code", c)?,
     None => obj.set("code", Value::new_null(ctx.clone()))?,

@@ -22,9 +22,10 @@ declare module "srt:dev" {
 }
 
 declare global {
-  function requestAnimationFrame(callback: (time: number) => void): number
-  function cancelAnimationFrame(id: number): void
-
+  // camera / microphone / gpu and requestAnimationFrame now come from
+  // @solidrt/flux-types (flux:* modules + the rAF global). ffi stays here for now
+  // because its renderFrame() is bolted on by the lattice runner, not flux; it
+  // moves to flux-types when the render tree becomes flux:rendertree.
   let ffi: {
     createRoot(id: number): void
     createNode(id: number, kind: string): void
@@ -41,39 +42,8 @@ declare global {
     getBoundingBox(id: number): { x: number, y: number, width: number, height: number } | null
   }
 
-  let gpu: {
-    createTexture(data: Uint8Array, width: number, height: number): number
-    createMutableTexture(data: Uint8Array, width: number, height: number): number
-    uploadTexture(textureId: number, data: Uint8Array, offset?: number): void
-    destroyTexture(textureId: number): void
-    createShader(
-      fragmentSrc: string,
-      width: number,
-      height: number,
-      params?: Record<string, number>,
-      textures?: Record<string, number>,
-    ): number
-    setShaderParams(textureId: number, params: Record<string, number>): void
-  }
-
   let image: {
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
-  }
-
-  let camera: {
-    listCameras(): { id: number, name: string, facing: "front" | "back" | "unknown" }[]
-    open(options: { camera?: number, facing?: "front" | "back", width?: number, height?: number, scan?: string[] }):
-      Promise<{ handle: number, texture: number, width: number, height: number }>
-    setBarcodeCallback(handle: number, callback: (result: { data: string, format: "qr" }) => void): void
-    scanImage(data: Uint8Array, width: number, height: number): { data: string, format: "qr" }[]
-    close(handle: number): void
-  }
-
-  let microphone: {
-    listMicrophones(): { id: number, name: string }[]
-    open(options: { microphone?: number, sampleRate?: number }): { handle: number, sampleRate: number }
-    read(handle: number): Float32Array
-    close(handle: number): void
   }
 
   let speech: {

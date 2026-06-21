@@ -1,8 +1,8 @@
 use rquickjs::{function::MutFn, promise::Promised, Array, Ctx, Function, IntoJs, Object, Value};
 use std::rc::Rc;
 
-use forge::fs;
 use crate::plugins::marshal::with_pending;
+use forge::fs;
 
 // Marshalling for the `dir()` reference: forward to the engine-free
 // `forge::fs` directory operations and encode their results back to JS.

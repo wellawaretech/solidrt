@@ -428,9 +428,7 @@ where
         }
         consumed.set(true);
         let fetch = fetch_bytes.clone();
-        Ok(Promised(async move {
-          JsResult(fetch().await.map(JsBytes))
-        }))
+        Ok(Promised(async move { JsResult(fetch().await.map(JsBytes)) }))
       }
     }),
   )

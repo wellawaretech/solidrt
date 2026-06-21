@@ -35,7 +35,12 @@ use alloy::rendertree::{BoundaryMode, Element, ElementKind};
 // Returns Ok(invalidate) on success; Err(message) for an unknown property, which
 // the FFI caller surfaces as a throwable JS error rather than aborting the
 // process. A single typo'd or unsupported prop must not take down the runtime.
-pub fn apply_jsx(el: &mut Element, name: &str, value: &PropValue, cmd_tx: &Sender<AlloyCommand>) -> Result<bool, String> {
+pub fn apply_jsx(
+  el: &mut Element,
+  name: &str,
+  value: &PropValue,
+  cmd_tx: &Sender<AlloyCommand>,
+) -> Result<bool, String> {
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.

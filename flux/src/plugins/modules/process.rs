@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use super::events::{emit_event, has_listeners, register_listener};
-use forge::process::{arch, platform, rss, SignalStream};
 use crate::logger::CtxLogger;
+use forge::process::{arch, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI

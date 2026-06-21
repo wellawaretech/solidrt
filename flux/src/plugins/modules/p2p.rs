@@ -37,12 +37,12 @@ use rquickjs::{Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Objec
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 
-use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
-use crate::plugins::standards::body::extract_body_value;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending};
+use crate::plugins::standards::body::extract_body_value;
+use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -73,9 +73,10 @@ impl P2pEndpoint {
     opts: Opt<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
     let (secret, relay_url, alpns) = parse_create_opts(&ctx, opts.0)?;
-    Ok(with_pending(&ctx, async move {
-      Endpoint::bind(secret, relay_url, alpns).await.map(|inner| P2pEndpoint { inner })
-    }))
+    Ok(with_pending(
+      &ctx,
+      async move { Endpoint::bind(secret, relay_url, alpns).await.map(|inner| P2pEndpoint { inner }) },
+    ))
   }
 
   /// This endpoint's dial address: the string peers pass to `connect`.
@@ -93,10 +94,7 @@ impl P2pEndpoint {
 
   /// A self-contained dial token carrying this endpoint's id, home relay, and
   /// direct addresses, so a peer can `connect` without relying on discovery.
-  pub fn ticket<'js>(
-    &self,
-    ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
+  pub fn ticket<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
     let inner = self.inner.clone();
     Ok(with_pending(&ctx, async move { Ok::<String, String>(inner.ticket().await) }))
   }
@@ -217,10 +215,7 @@ impl P2pStream {
   /// Async-iterator step: resolve `{ value: Uint8Array, done: false }` for the
   /// next chunk, or `{ done: true }` at end-of-stream. Pull-based, so the
   /// transport only advances as JS iterates.
-  pub fn next<'js>(
-    &self,
-    ctx: Ctx<'js>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ReadStep>>>> {
+  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ReadStep>>>> {
     let inner = self.inner.clone();
     Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(ReadStep) }))
   }
@@ -320,11 +315,7 @@ fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs
     None => None,
   };
   let relay_url = opts.get::<_, Option<String>>("relayUrl")?;
-  let alpns = opts
-    .get::<_, Option<Vec<String>>>("protocols")?
-    .unwrap_or_default()
-    .into_iter()
-    .map(String::into_bytes)
-    .collect();
+  let alpns =
+    opts.get::<_, Option<Vec<String>>>("protocols")?.unwrap_or_default().into_iter().map(String::into_bytes).collect();
   Ok((secret, relay_url, alpns))
 }

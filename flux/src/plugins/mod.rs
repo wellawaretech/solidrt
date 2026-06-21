@@ -6,10 +6,10 @@
 pub mod js_error;
 pub mod marshal;
 
-pub mod modules;
-pub mod standards;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod modules;
+pub mod standards;
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
 use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object};

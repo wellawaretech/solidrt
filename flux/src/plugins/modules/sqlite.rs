@@ -67,9 +67,9 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, IntoJs, JsLifetime, Object, TypedArray, Value};
 
-use forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
 use crate::plugins::js_error::{err_message, JsResult};
 use crate::plugins::marshal::with_pending;
+use forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
 
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "Database")]
@@ -94,9 +94,7 @@ impl Database {
     path: String,
     mode: Opt<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
-    Ok(with_pending(&ctx, async move {
-      SqliteConnection::connect(path, mode.0).await.map(|conn| Database { conn })
-    }))
+    Ok(with_pending(&ctx, async move { SqliteConnection::connect(path, mode.0).await.map(|conn| Database { conn }) }))
   }
 
   /// Create a reusable prepared statement. Construction is synchronous and

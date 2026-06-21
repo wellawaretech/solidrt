@@ -1,4 +1,10 @@
+// GPU textures and shaders, reactive (SolidJS) layer: the create* helpers free
+// their texture automatically when the reactive owner is disposed. The imperative
+// primitive lives in the `flux:gpu` module; import { uploadTexture,
+// setShaderParams, destroyTexture, ... } from "flux:gpu" for non-reactive use.
+
 import { getOwner, onCleanup } from "@solidjs/signals"
+import * as gpu from "flux:gpu"
 
 /**
  * Uploads raw RGBA8 pixels to an immutable GPU texture and returns its id (use
@@ -7,7 +13,8 @@ import { getOwner, onCleanup } from "@solidjs/signals"
  * `createMutableTexture` instead. When called inside a reactive scope the
  * texture is freed automatically once that owner is disposed; when called
  * outside one (e.g. after an `await`, where the owner is no longer current)
- * nothing is registered and you must call `destroyTexture` yourself.
+ * nothing is registered and you must call `destroyTexture` (from flux:gpu)
+ * yourself.
  */
 export function createTexture(data: Uint8Array, width: number, height: number): number {
   let id = gpu.createTexture(data, width, height)
@@ -17,36 +24,16 @@ export function createTexture(data: Uint8Array, width: number, height: number): 
 
 /**
  * Creates a GPU texture you intend to update over time: seed it with `data`,
- * then call `uploadTexture(id, data)` to push new pixels. `data` is RGBA8 and
- * must hold at least `width * height * 4` bytes (it may hold several frames).
- * Like `createTexture`, the texture is freed automatically when the reactive
- * owner is disposed; created outside a reactive scope you must call
- * `destroyTexture` yourself.
+ * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels. `data`
+ * is RGBA8 and must hold at least `width * height * 4` bytes (it may hold several
+ * frames). Like `createTexture`, the texture is freed automatically when the
+ * reactive owner is disposed; created outside a reactive scope you must call
+ * `destroyTexture` (from flux:gpu) yourself.
  */
 export function createMutableTexture(data: Uint8Array, width: number, height: number): number {
   let id = gpu.createMutableTexture(data, width, height)
   if (getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
-}
-
-/**
- * Pushes pixels from `data` to a mutable texture on the GPU. Pass the same
- * buffer you mutate in place each frame. `offset` is a byte offset into `data`,
- * selecting which frame to upload when the buffer holds several (default 0).
- */
-export function uploadTexture(textureId: number, data: Uint8Array, offset: number = 0): void {
-  gpu.uploadTexture(textureId, data, offset)
-}
-
-/**
- * Frees a GPU texture and its associated resources. When
- * createTexture/createMutableTexture/createShader run inside a reactive scope
- * this is called automatically once that owner is disposed; call it explicitly
- * when a texture is created outside the reactive graph (e.g. after an `await`)
- * or when managing its lifetime manually.
- */
-export function destroyTexture(textureId: number): void {
-  gpu.destroyTexture(textureId)
 }
 
 /**
@@ -70,12 +57,4 @@ export function createShader(
   let id = gpu.createShader(fragmentSrc, width, height, params, textures)
   if (getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
-}
-
-/**
- * Re-renders an existing shader texture with new param values and requests a
- * frame. Use this to animate (e.g. update `iTime` each frame).
- */
-export function setShaderParams(textureId: number, params: Record<string, number>): void {
-  gpu.setShaderParams(textureId, params)
 }

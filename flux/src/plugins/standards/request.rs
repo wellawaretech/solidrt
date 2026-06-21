@@ -8,13 +8,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::pending::PendingOps;
+use crate::plugins::js_error::JsResult;
+use crate::plugins::modules::websocket::ServeUpgrade;
 use crate::plugins::standards::body::{
   collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream, JsBytes, JsonValue,
   MessageBody,
 };
-use crate::plugins::modules::websocket::ServeUpgrade;
 use crate::plugins::standards::headers::{headers_from_init, headers_from_pairs, Headers};
-use crate::plugins::js_error::JsResult;
 
 type BodyFuture<T> = Promised<Pin<Box<dyn Future<Output = JsResult<T>>>>>;
 

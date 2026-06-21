@@ -1,48 +1,39 @@
-// Microphone capture globals (gui-enabled runtime only). Bare globals, not a
-// `flux:*` module; helper types stay module-scoped via the trailing `export {}`.
+// Microphone capture (gui-enabled runtime only). The imperative primitive;
+// @solidrt/core's createMicrophone wraps it with SolidJS reactivity. `open`
+// returns a bound session object, so the raw handle never leaves the runtime.
 
-/** A microphone device from {@link microphone.listMicrophones}. */
-type MicrophoneDevice = {
-  /** Device id to pass as `open({ microphone })`. */
-  id: number
-  /** Human-readable device name. */
-  name: string
-}
-
-/** Options for {@link microphone.open}. */
-type MicrophoneOpenOptions = {
-  /** Device id from {@link MicrophoneDevice}. Omit to use the default. */
-  microphone?: number
-  /** Capture sample rate in Hz. Defaults to 16000. */
-  sampleRate?: number
-}
-
-/** An opened microphone session. */
-type MicrophoneSession = {
-  /** Session handle for `read` / `close`. */
-  handle: number
-  /** The actual capture sample rate in Hz. */
-  sampleRate: number
-}
-
-declare global {
-  /**
-   * Microphone capture. The lower-level primitive that `@solidrt/core`'s
-   * `createMicrophone` wraps. Available only on a gui-enabled runtime.
-   */
-  const microphone: {
-    /** List the available microphone devices. */
-    listMicrophones(): MicrophoneDevice[]
-    /**
-     * Open a microphone. Synchronous: current platforms expose no audio
-     * permission prompt.
-     */
-    open(options?: MicrophoneOpenOptions): MicrophoneSession
-    /** Drain the mono float samples captured since the last read. */
-    read(handle: number): Float32Array
-    /** Close a session by its `handle`. */
-    close(handle: number): void
+declare module "flux:microphone" {
+  /** A microphone device from {@link listMicrophones}. */
+  type MicrophoneDevice = {
+    /** Device id to pass as `open({ microphone })`. */
+    id: number
+    /** Human-readable device name. */
+    name: string
   }
-}
 
-export {}
+  /** Options for {@link open}. */
+  type MicrophoneOpenOptions = {
+    /** Device id from {@link MicrophoneDevice}. Omit to use the default. */
+    microphone?: number
+    /** Capture sample rate in Hz. Defaults to 16000. */
+    sampleRate?: number
+  }
+
+  /** An opened microphone session with controls bound to it. */
+  type MicrophoneSession = {
+    /** The actual capture sample rate in Hz. */
+    sampleRate: number
+    /** Drain the mono float samples captured since the last read. */
+    read(): Float32Array
+    /** Release the device. */
+    close(): void
+  }
+
+  /** List the available microphone devices. */
+  export function listMicrophones(): MicrophoneDevice[]
+  /**
+   * Open a microphone. Synchronous: current platforms expose no audio permission
+   * prompt.
+   */
+  export function open(options?: MicrophoneOpenOptions): MicrophoneSession
+}

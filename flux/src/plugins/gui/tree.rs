@@ -6,9 +6,9 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use taffy::prelude::*;
 
+use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
-use super::AlloyContext;
 
 thread_local! {
   // setProperty (FFI prop write) calls since the last frame. Bumped in the
@@ -135,8 +135,9 @@ pub fn init(
   let tree_ref = shared.0.clone();
   let platform_ref = platform.clone();
   let cmd_tx = alloy_cmd_tx.clone();
-  let set_property =
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
+  let set_property = Function::new(
+    ctx.clone(),
+    move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
       SETPROP_COUNT.with(|c| c.set(c.get() + 1));
       let value = to_prop_value(&value);
       let mut tree = tree_ref.borrow_mut();
@@ -147,8 +148,9 @@ pub fn init(
       }
       platform_ref.request_frame();
       Ok(())
-    })
-    .expect("create setProperty");
+    },
+  )
+  .expect("create setProperty");
 
   let platform_ref = platform.clone();
   let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame()).expect("create requestFrame");
