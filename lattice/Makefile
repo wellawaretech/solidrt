@@ -11,7 +11,17 @@ CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
 # want the voice stack -- e.g. the release flow for now. GO_FEATURES /
 # RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
 # (go = client, which already pulls flux/compile; runtime = default minus go).
+#
+# 32-bit Android ABIs default it off: whisper.cpp inference is impractical on
+# 32-bit ARM/x86 (no reliable NEON fp16 path, tight address space for model +
+# inference buffers). Still overridable with SPEECH=1 if someone wants to try.
+ANDROID_ABI_32BIT_armeabi-v7a = 1
+ANDROID_ABI_32BIT_x86         = 1
+ifeq ($(ANDROID_ABI_32BIT_$(ANDROID_ABI)),1)
+SPEECH ?= 0
+else
 SPEECH ?= 1
+endif
 ifeq ($(SPEECH),0)
 GO_FEATURES      = --no-default-features --features go
 RUNTIME_FEATURES = --no-default-features --features flux/compile
@@ -66,6 +76,7 @@ help:
 	@echo ""
 	@echo "Android dist (fat: all ABIs):"
 	@echo "  dist-android         Build fat APK into packages/android-arm64-v8a/"
+	@echo "  dist-android-armeabi-v7a  Build 32-bit APK into packages/android-armeabi-v7a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=0 to build without speech recognition (default: on)."

@@ -12,6 +12,14 @@ android {
         targetSdkVersion 36
         versionCode 1
         versionName "1.0"
+        // Restrict the packaged native libs to one ABI when -PsrtAbi is passed
+        // (e.g. the 32-bit single-ABI dist target). Absent, every ABI staged
+        // under dist/android is bundled, which is the fat-APK default.
+        if (project.hasProperty('srtAbi')) {
+            ndk {
+                abiFilters.addAll(project.property('srtAbi').split(',').toList())
+            }
+        }
     }
     flavorDimensions "variant"
     productFlavors {

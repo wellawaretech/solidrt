@@ -44,27 +44,35 @@ export function resolveBinary(name: string) {
   return null
 }
 
-// The Android client APK is per-ABI (it bundles native .so for one architecture)
-// and host-independent, so it lives under dist/android/<abi>/ rather than the
-// host triple map. Only arm64-v8a is supported for now.
-let ANDROID_ABI = "arm64-v8a"
-let ANDROID_PKG = "@solidrt/android-arm64-v8a"
+// The Android client APK is host-independent (it bundles native .so for the
+// device, not the host), so it lives under dist/android/<abi>/ rather than the
+// host triple map. arm64-v8a (a fat APK: arm64-v8a + the x86_64 emulator) and
+// armeabi-v7a (32-bit) ship published npm packages; other ABIs (e.g. x86) only
+// resolve via the SRT_HOME contributor path.
+let DEFAULT_ANDROID_ABI = "arm64-v8a"
+export let ANDROID_PKG_MAP: Record<string, string> = {
+  "arm64-v8a": "@solidrt/android-arm64-v8a",
+  "armeabi-v7a": "@solidrt/android-armeabi-v7a",
+}
 
-export function resolveApk() {
+export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
   // 1. SRT_HOME: contributor checkout, where `make dist-android` stages the APK
   //    under dist/android/<abi>/.
   let srtRoot = process.env.SRT_HOME
   if (srtRoot) {
-    let apk = resolve(srtRoot, "dist/android", ANDROID_ABI, "solidrt-go.apk")
+    let apk = resolve(srtRoot, "dist/android", abi, "solidrt-go.apk")
     if (existsSync(apk)) return apk
   }
 
   // 2. Platform npm package
-  try {
-    let pkgDir = dirname(require.resolve(`${ANDROID_PKG}/package.json`))
-    let apk = resolve(pkgDir, "solidrt-go.apk")
-    if (existsSync(apk)) return apk
-  } catch {}
+  let pkg = ANDROID_PKG_MAP[abi]
+  if (pkg) {
+    try {
+      let pkgDir = dirname(require.resolve(`${pkg}/package.json`))
+      let apk = resolve(pkgDir, "solidrt-go.apk")
+      if (existsSync(apk)) return apk
+    } catch {}
+  }
 
   return null
 }

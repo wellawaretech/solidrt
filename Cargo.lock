@@ -2173,9 +2173,14 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843ff3d6d7843171a0f95722364ce38535fdcc6b7c17c1452ef3941fd80fcf69"
 dependencies = [
+ "anyhow",
+ "bindgen",
  "bitflags",
  "bytemuck",
  "euclid",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

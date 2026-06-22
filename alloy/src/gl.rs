@@ -284,12 +284,20 @@ impl RenderSurface for GlSurface {
   }
 }
 
-// Native stack for the UI/JS thread. Large and identical on every platform so
-// deep JS recursion behaves the same everywhere (the SDL main thread's stack is
-// irrelevant: the engine runs here, not there). This is virtual address space,
-// committed only as it is used; it is the hard ceiling under which QuickJS's own
-// (smaller, tunable) soft limit sits.
+// Native stack for the UI/JS thread. Large so deep JS recursion behaves the
+// same everywhere (the SDL main thread's stack is irrelevant: the engine runs
+// here, not there). This is virtual address space, committed only as it is
+// used; it is the hard ceiling under which QuickJS's own (smaller, tunable)
+// soft limit sits.
+//
+// 32-bit targets get a much smaller reservation: a 32-bit process does not
+// have enough address space left to reserve a contiguous 1GB stack once its
+// libraries are loaded, and pthread_create simply fails (observed on a 32-bit
+// Android device). 64MB is still far beyond plausible JS recursion depth.
+#[cfg(target_pointer_width = "64")]
 const UI_THREAD_STACK_SIZE: usize = 1024 * 1024 * 1024;
+#[cfg(target_pointer_width = "32")]
+const UI_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 pub fn run_context(
   ui_context: &sdl3::video::GLContext,

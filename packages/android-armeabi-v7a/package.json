@@ -1,0 +1,10 @@
+{
+  "name": "@solidrt/android-armeabi-v7a",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "SolidRT platform package for Android armeabi-v7a (32-bit)",
+  "files": [
+    "solidrt-go.apk",
+    "LICENSE"
+  ]
+}

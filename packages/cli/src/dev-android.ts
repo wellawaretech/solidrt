@@ -1,5 +1,5 @@
 import { print, requireAdb } from "./util"
-import { resolveApk } from "./artifacts"
+import { resolveApk, ANDROID_PKG_MAP } from "./artifacts"
 import { values } from "./args"
 import { DEV_PORT } from "./dev-server"
 
@@ -70,6 +70,17 @@ function resolveTarget(adb: string): string {
   return only
 }
 
+// Primary ABI of the connected device (e.g. "arm64-v8a", "armeabi-v7a"), used
+// to pick the matching APK -- a fat (multi-ABI) APK reports its 64-bit ABI
+// here and still installs fine, so this only matters for single-ABI builds.
+function deviceAbi(adb: string, target: string): string {
+  let res = Bun.spawnSync([adb, "-s", target, "shell", "getprop", "ro.product.cpu.abi"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  return res.stdout.toString().trim()
+}
+
 // Install + launch the Android client on a connected device over adb, forwarding
 // its loopback to the host dev server so the client connects at 127.0.0.1 (see
 // setupAdbReverse). Fire-and-forget: the client's lifecycle is tracked via WS
@@ -77,14 +88,18 @@ function resolveTarget(adb: string): string {
 export async function spawnAndroidClient() {
   let adb = requireAdb()
 
-  let apk = resolveApk()
+  let target = resolveTarget(adb)
+  let abi = deviceAbi(adb, target)
+
+  let apk = resolveApk(abi)
   if (!apk) {
-    console.error("Could not find the SolidRT-Go APK.")
-    console.error("Add it with: bun add -d @solidrt/android-arm64-v8a")
+    console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
+    let pkg = ANDROID_PKG_MAP[abi]
+    if (pkg) console.error(`Add it with: bun add -d ${pkg}`)
+    let target = abi === "armeabi-v7a" ? "make dist-android-armeabi-v7a" : "make dist-android"
+    console.error(`Or build one locally (from lattice/): ${target}`)
     process.exit(1)
   }
-
-  let target = resolveTarget(adb)
 
   print(`[cli] Installing SolidRT-Go on ${target}`)
   let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })

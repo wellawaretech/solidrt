@@ -14,7 +14,14 @@ ANDROID_ABI ?= arm64-v8a
 # libs for each, so it runs on both real arm64 devices and the x86_64 emulator.
 ANDROID_ABIS = arm64-v8a x86_64
 
-PKG_ANDROID := $(CURDIR)/../packages/android-arm64-v8a
+# Comma-separated form of ANDROID_ABIS for gradle's -PsrtAbi (abiFilters).
+empty :=
+space := $(empty) $(empty)
+comma := ,
+ANDROID_ABIS_CSV := $(subst $(space),$(comma),$(strip $(ANDROID_ABIS)))
+
+PKG_ANDROID    := $(CURDIR)/../packages/android-arm64-v8a
+PKG_ANDROID_32 := $(CURDIR)/../packages/android-armeabi-v7a
 
 RUST_TARGET_arm64-v8a   = aarch64-linux-android
 RUST_TARGET_armeabi-v7a = armv7-linux-androideabi
@@ -29,12 +36,24 @@ CLANG_TRIPLE_x86_64      = x86_64-linux-android
 CLANG_TRIPLE_x86         = i686-linux-android
 ANDROID_CLANG_TRIPLE     = $(CLANG_TRIPLE_$(ANDROID_ABI))
 
+# armv7 needs impellers' bindgen_live (see alloy/Cargo.toml) to point at the
+# real 32-bit target. Use the bindgen-recognized BINDGEN_EXTRA_CLANG_ARGS_<target>
+# suffix (matching Cargo's TARGET env var, hyphens to underscores) rather than
+# the plain var: bindgen also runs for host-targeted build units in the same
+# build (e.g. rquickjs-macro, a proc-macro crate that always builds for the
+# host), and an unscoped value corrupts those instead of just armv7.
+# --sysroot is required too: without it, clang's implicit host glibc fallback
+# search path still gets appended after the NDK paths, and bionic's headers
+# pull in incompatible glibc macros (__GLIBC_USE) through it.
+BINDGEN_VAR_armeabi-v7a   = BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi
+BINDGEN_ARGS_armeabi-v7a  = --target=armv7a-linux-androideabi26 --sysroot=$(NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+
 ANDROID_DIST  = $(SRT_HOME)/dist/android/$(ANDROID_ABI)
 APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: client-android run-android dist-android
+.PHONY: client-android run-android dist-android dist-android-armeabi-v7a
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -43,6 +62,7 @@ define ndk-build
 	ANDROID_NDK_HOME=$(NDK_HOME) ANDROID_NDK_ROOT=$(NDK_HOME) \
 	  CMAKE_TOOLCHAIN_FILE_$(subst -,_,$(ANDROID_TARGET))=$(CURDIR)/android/cmake/android-abi.toolchain.cmake \
 	  CMAKE_ANDROID_ARCH_ABI=$(ANDROID_ABI) \
+	  $(if $(BINDGEN_VAR_$(ANDROID_ABI)),$(BINDGEN_VAR_$(ANDROID_ABI))="$(BINDGEN_ARGS_$(ANDROID_ABI))") \
 	  $(2) \
 	  $(SOLIDRT_VERSION) cargo ndk -t $(ANDROID_ABI) build --lib $(3)
 endef
@@ -87,9 +107,23 @@ dist-android: $(GRADLE_WRAPPER_JAR)
 	for abi in $(ANDROID_ABIS); do \
 	  $(MAKE) client-android ANDROID_ABI=$$abi PROFILE=$(PROFILE) || exit 1; \
 	done
-	# One assemble bundles every staged ABI (gradle jniLibs.srcDir = dist/android).
-	cd android && ./gradlew assembleGoDebug
+	# Pin the assemble to ANDROID_ABIS via -PsrtAbi so a leftover ABI staged under
+	# dist/android (e.g. armeabi-v7a from dist-android-armeabi-v7a) can't leak into
+	# the fat APK; gradle's jniLibs.srcDir would otherwise bundle every staged ABI.
+	cd android && ./gradlew assembleGoDebug -PsrtAbi="$(ANDROID_ABIS_CSV)"
 	mkdir -p $(ANDROID_DIST)
 	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
 	cp $(ANDROID_DIST)/solidrt-go.apk $(PKG_ANDROID)/solidrt-go.apk
 	@echo "Staged fat solidrt-go.apk ($(ANDROID_ABIS)) into $(ANDROID_DIST)/ and $(PKG_ANDROID)/"
+
+# 32-bit (armeabi-v7a) single-ABI APK staged into packages/android-armeabi-v7a/.
+# Unlike the fat dist-android, -PsrtAbi=armeabi-v7a restricts the bundled native
+# libs to the one ABI even though dist/android may hold other staged ABIs, so the
+# 32-bit package stays 32-bit. SPEECH defaults off for 32-bit (see Makefile).
+dist-android-armeabi-v7a: $(GRADLE_WRAPPER_JAR)
+	$(MAKE) client-android ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
+	cd android && ./gradlew assembleGoDebug -PsrtAbi=armeabi-v7a
+	mkdir -p $(SRT_HOME)/dist/android/armeabi-v7a
+	cp $(APK_GO_DEBUG) $(SRT_HOME)/dist/android/armeabi-v7a/solidrt-go.apk
+	cp $(SRT_HOME)/dist/android/armeabi-v7a/solidrt-go.apk $(PKG_ANDROID_32)/solidrt-go.apk
+	@echo "Staged armeabi-v7a solidrt-go.apk into $(SRT_HOME)/dist/android/armeabi-v7a/ and $(PKG_ANDROID_32)/"

@@ -9,6 +9,12 @@ name = "basic"
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys"] }
 sdl3 = { version = "0.18.4", features = ["build-from-source"] }
+
+# impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
+# armv7 the pointer-sized struct fields don't line up, so re-run bindgen
+# against the real target (Makefile.android sets BINDGEN_EXTRA_CLANG_ARGS).
+[target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
+impellers = { version = "0.4.2", features = ["bindgen_live"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "0.1"
