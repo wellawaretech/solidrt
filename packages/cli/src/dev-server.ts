@@ -8,7 +8,7 @@ import { values } from "./args"
 import * as cache from "./cache"
 
 export const DEV_HOST = "127.0.0.1"
-export const DEV_PORT = 15194
+export const DEV_PORT = 0x8844
 
 // Dev-server WS protocol helpers: the reload message shape and a broadcast to all clients.
 export function buildReload(payload: { code?: string | null; bytecode?: string }) {

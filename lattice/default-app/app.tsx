@@ -2,14 +2,11 @@ import { render } from "@solidrt/core"
 import { createCamera, cameraDevices, type BarcodeResult } from "@solidrt/core/camera"
 import { createEffect, createSignal, untrack } from "@solidjs/signals"
 import { For, Show } from "solid-js"
-import { platform } from "flux:process"
 import { on } from "srt:events"
-import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev"
+import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents, launchAddress } from "srt:dev"
 import { Logo } from "./logo"
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
-
-const LOOPBACK = "127.0.0.1:15194"
 
 const STATUS_TEXT: Record<DevState, string> = {
   idle: "not connected",
@@ -58,7 +55,6 @@ function CameraView(props: {
 function App() {
   let dev = devAvailable
   let hasCamera = () => cameraDevices().length > 0
-  let isAndroid = platform === "android"
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
@@ -77,6 +73,13 @@ function App() {
         console.log("got recents", e.recents)
       }
     })
+  }
+
+  // Launched with a dev-server address (srt client --android delivers it as an
+  // intent extra -> argv): connect immediately so no on-device interaction is
+  // needed (e.g. on a TV with no manual entry).
+  if (dev && launchAddress) {
+    connect(launchAddress)
   }
 
   let idle = () => state() === "idle"
@@ -132,8 +135,8 @@ function App() {
             {idle() && !scanning() && dev && hasCamera() && (
               <Button label="Scan QR" color="#3366b3" onTap={startScan} />
             )}
-            {idle() && !scanning() && isAndroid && (
-              <Button label="Connect (adb)" color="#3366b3" onTap={() => connect(LOOPBACK)} />
+            {idle() && !scanning() && launchAddress && (
+              <Button label="Connect" color="#3366b3" onTap={() => connect(launchAddress)} />
             )}
             {scanning() && <Button label="Cancel" color="#555" onTap={() => setScanning(false)} />}
             {busy() && <Button label="Cancel" color="#555" onTap={() => stop()} />}

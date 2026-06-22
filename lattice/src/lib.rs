@@ -27,10 +27,38 @@ use std::sync::Arc;
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
-  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false);
+pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
+  let dev_server = parse_dev_server_arg(argc, argv);
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server);
   0
+}
+
+// Pull `--dev-server <addr>` out of the C argv SDL hands SDL_main (populated from
+// MainActivity.getArguments). The address is the dev server the go client should
+// auto-dial; None when launched without it (e.g. tapping the app icon).
+#[cfg(target_os = "android")]
+fn parse_dev_server_arg(argc: i32, argv: *mut *mut i8) -> Option<String> {
+  if argv.is_null() || argc <= 0 {
+    return None;
+  }
+  let args: Vec<String> = (0..argc as isize)
+    .filter_map(|i| {
+      let ptr = unsafe { *argv.offset(i) };
+      if ptr.is_null() {
+        return None;
+      }
+      // c_char is u8 on Android ARM, i8 elsewhere; cast so this builds on both.
+      unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) }.to_str().ok().map(str::to_owned)
+    })
+    .collect();
+  let mut it = args.iter();
+  while let Some(arg) = it.next() {
+    if arg == "--dev-server" {
+      return it.next().cloned();
+    }
+  }
+  None
 }
 
 // Receives the soft-keyboard (IME) inset height in pixels from
@@ -65,6 +93,16 @@ const JS_STACK_SIZE: usize = 64 * 1024 * 1024;
 pub enum AppSource {
   Text(String),
   Bytecode(Vec<u8>),
+}
+
+/// What to run, threaded from `start` into the UI thread (kept distinct from the
+/// runtime plumbing it travels with: the tokio handle, alloy context, channels).
+struct RunOptions {
+  app: Option<AppSource>,
+  record_fps: Option<u32>,
+  stats: bool,
+  // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
+  dev_server: Option<String>,
 }
 
 fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32) {
@@ -154,10 +192,12 @@ fn ui_thread(
   atx: Arc<alloy::Context>,
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
-  app: Option<AppSource>,
-  record_fps: Option<u32>,
-  stats: bool,
+  opts: RunOptions,
 ) {
+  let RunOptions { app, record_fps, stats, dev_server } = opts;
+  // Only the go dev client consumes the launch dev-server address.
+  #[cfg(not(feature = "go"))]
+  let _ = dev_server;
   // Anchor the process to a writable directory before any app code runs, so
   // relative paths (e.g. a flux:sqlite database) resolve to persistent storage.
   // The launch cwd is unreliable: on Android it is "/" (read-only); on desktop
@@ -355,6 +395,7 @@ fn ui_thread(
       &local,
       current_exec.clone(),
       platform.stats_handles(),
+      dev_server,
     );
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
@@ -471,6 +512,7 @@ pub fn start(
   mode: alloy::Mode,
   size: (u32, u32),
   stats: bool,
+  dev_server: Option<String>,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -482,7 +524,8 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
+  let opts = RunOptions { app: app_source, record_fps, stats, dev_server };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, app_source, record_fps, stats);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });
 }

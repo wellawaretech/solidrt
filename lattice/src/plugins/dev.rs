@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use flux::rquickjs::function::MutFn;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Array, Ctx, Function, JsLifetime};
+use flux::rquickjs::{Array, Ctx, Function, JsLifetime, Null};
 
 // The `srt:dev` module: the dev-server control surface (connect / discover /
 // stop) used by the default app's connection UI. The actual command plumbing
@@ -24,6 +24,9 @@ pub struct DevControlInner {
   pub stop: Box<dyn Fn()>,
   pub can_discover: bool,
   pub recents: Vec<String>,
+  // Dev-server address delivered at launch (srt client --android); the default
+  // app auto-connects to it. None when launched without one.
+  pub launch_address: Option<String>,
 }
 
 impl DevControl {
@@ -48,6 +51,7 @@ impl ModuleDef for SrtDevModule {
     decl.declare("stop")?;
     decl.declare("canDiscover")?;
     decl.declare("recents")?;
+    decl.declare("launchAddress")?;
     Ok(())
   }
 
@@ -72,6 +76,10 @@ impl ModuleDef for SrtDevModule {
           recents.set(i, addr.clone())?;
         }
         exports.export("recents", recents)?;
+        match &control.0.launch_address {
+          Some(addr) => exports.export("launchAddress", addr.clone())?,
+          None => exports.export("launchAddress", Null)?,
+        };
       }
       None => {
         exports.export("available", false)?;
@@ -80,6 +88,7 @@ impl ModuleDef for SrtDevModule {
         exports.export("stop", Function::new(ctx.clone(), MutFn::from(|| {}))?)?;
         exports.export("canDiscover", false)?;
         exports.export("recents", Array::new(ctx.clone())?)?;
+        exports.export("launchAddress", Null)?;
       }
     }
     Ok(())

@@ -34,6 +34,9 @@ pub struct DevSession {
   // Control channel into the connection supervisor, exposed to JS via the
   // srt.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
+  // Dev-server address delivered at launch (srt client --android), exposed to JS
+  // as srt:dev launchAddress so the default app can auto-connect.
+  launch_address: Option<String>,
 }
 
 impl DevSession {
@@ -48,6 +51,7 @@ impl DevSession {
     local: &LocalSet,
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
     stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
+    launch_address: Option<String>,
   ) -> Option<DevSession> {
     if record_fps.is_some() {
       return None;
@@ -86,7 +90,7 @@ impl DevSession {
       }
     });
 
-    Some(DevSession { flags, dev_server, dev_state, dev_recents, dev_cmd_tx })
+    Some(DevSession { flags, dev_server, dev_state, dev_recents, dev_cmd_tx, launch_address })
   }
 
   /// Install the dev-server control surface and, when the server has requested
@@ -104,7 +108,8 @@ impl DevSession {
     }
     let dev_cmd_tx = self.dev_cmd_tx.clone();
     let recents = self.dev_recents.borrow().clone();
-    builder.plugin(move |ctx| install_dev_control(ctx, dev_cmd_tx, recents))
+    let launch_address = self.launch_address.clone();
+    builder.plugin(move |ctx| install_dev_control(ctx, dev_cmd_tx, recents, launch_address))
   }
 
   /// Replay the latest connection state into a freshly built engine so a reload

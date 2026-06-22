@@ -11,7 +11,12 @@ use crate::plugins::dev::{self, DevControl, DevControlInner};
 /// Install the dev control as context userdata, backing the `srt:dev` module
 /// with connect/discover/stop that forward onto `cmd_tx`. `recents` is a
 /// snapshot of recently connected addresses (most-recent-first).
-pub fn install_dev_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, recents: Vec<String>) {
+pub fn install_dev_control(
+  ctx: Ctx<'_>,
+  cmd_tx: UnboundedSender<DevCmd>,
+  recents: Vec<String>,
+  launch_address: Option<String>,
+) {
   let connect_tx = cmd_tx.clone();
   let discover_tx = cmd_tx.clone();
   let stop_tx = cmd_tx;
@@ -30,6 +35,7 @@ pub fn install_dev_control(ctx: Ctx<'_>, cmd_tx: UnboundedSender<DevCmd>, recent
     // the buttons that apply.
     can_discover: cfg!(not(target_os = "android")),
     recents,
+    launch_address,
   });
 
   dev::install(&ctx, control);

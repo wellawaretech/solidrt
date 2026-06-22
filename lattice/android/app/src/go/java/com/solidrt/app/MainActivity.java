@@ -1,5 +1,6 @@
 package com.solidrt.app;
 
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.util.Log;
@@ -23,6 +24,20 @@ public class MainActivity extends SDLActivity {
             "impeller",
             "main"
         };
+    }
+
+    // The dev CLI (`srt client --android`) passes the dev-server address to dial
+    // as an intent extra. Forward it to native as argv (SDL hands getArguments()
+    // to SDL_main), where the go client reads --dev-server and auto-connects.
+    // Avoids adb reverse, which does not work over wireless adb.
+    @Override
+    protected String[] getArguments() {
+        Intent intent = getIntent();
+        String addr = intent != null ? intent.getStringExtra("srt_dev_server") : null;
+        if (addr != null && !addr.isEmpty()) {
+            return new String[] { "--dev-server", addr };
+        }
+        return new String[0];
     }
 
     // Forwards the soft keyboard (IME) inset height in pixels to native. The

@@ -3611,9 +3611,8 @@ function createCamera(options = {}) {
 }
 
 // lattice/default-app/app.tsx
-import { platform } from "flux:process";
 import { on as on3 } from "srt:events";
-import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev";
+import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents, launchAddress } from "srt:dev";
 
 // lattice/default-app/logo.tsx
 var EXPLODE_DIST = 3;
@@ -4112,7 +4111,6 @@ function Logo() {
 }
 
 // lattice/default-app/app.tsx
-var LOOPBACK = "127.0.0.1:15194";
 var STATUS_TEXT = {
   idle: "not connected",
   searching: "searching...",
@@ -4176,7 +4174,6 @@ function CameraView(props) {
 function App() {
   let dev = devAvailable;
   let hasCamera = () => cameraDevices().length > 0;
-  let isAndroid = platform === "android";
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
   let [recents, setRecents] = createSignal(initialRecents);
@@ -4191,6 +4188,9 @@ function App() {
         console.log("got recents", e2.recents);
       }
     });
+  }
+  if (dev && launchAddress) {
+    connect(launchAddress);
   }
   let idle = () => state() === "idle";
   let busy = () => state() === "searching" || state() === "connecting";
@@ -4257,11 +4257,11 @@ function App() {
     });
   })(), null);
   insert(_el$0, (() => {
-    var _c$3 = memo2(() => !!(idle() && !scanning() && isAndroid));
+    var _c$3 = memo2(() => !!(idle() && !scanning() && launchAddress));
     return () => _c$3() && createComponent2(Button, {
-      label: "Connect (adb)",
+      label: "Connect",
       color: "#3366b3",
-      onTap: () => connect(LOOPBACK)
+      onTap: () => connect(launchAddress)
     });
   })(), null);
   insert(_el$0, (() => {

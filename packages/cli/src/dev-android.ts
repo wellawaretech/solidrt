@@ -1,3 +1,4 @@
+import { networkInterfaces } from "node:os"
 import { print, requireAdb } from "./util"
 import { resolveApk, ANDROID_PKG_MAP } from "./artifacts"
 import { values } from "./args"
@@ -6,21 +7,48 @@ import { DEV_PORT } from "./dev-server"
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
 
-// Forward the device's loopback DEV_PORT to the host dev server, so the client
-// reaches it at 127.0.0.1:DEV_PORT (see lattice/src/go/connection.rs). This is
-// the adb-reverse path: it works for the emulator (behind NAT, cannot reach the
-// host via LAN mDNS discovery) and for USB-tethered devices alike, and is
-// harmless on any adb connection. (Android only uses this path; the client's
-// mDNS discovery is desktop-only -- see lattice/src/go/connection.rs.)
-function setupAdbReverse(adb: string, target: string) {
-  print(`[cli] Forwarding 127.0.0.1:${DEV_PORT} on ${target} to host dev server`)
-  let res = Bun.spawnSync([adb, "-s", target, "reverse", `tcp:${DEV_PORT}`, `tcp:${DEV_PORT}`], {
+let ipToInt = (ip: string) => ip.split(".").reduce((acc, o) => (acc << 8) + (parseInt(o, 10) & 255), 0) >>> 0
+
+// This host's IPv4 on the same subnet as `deviceIp`: the interface whose
+// (address & netmask) matches the device's. Pure computation over what the OS
+// reports (cross-platform, no routing socket, no hardcoded ranges).
+function hostIpFor(deviceIp: string): string | null {
+  let d = ipToInt(deviceIp)
+  for (let addrs of Object.values(networkInterfaces())) {
+    for (let a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal && (ipToInt(a.address) & ipToInt(a.netmask)) === (d & ipToInt(a.netmask))) {
+        return a.address
+      }
+    }
+  }
+  return null
+}
+
+// The device's own IPv4 on its primary network: from the serial for wireless adb
+// (ip:port), else queried over adb. `ip route get` reports the source IP of the
+// route to a public address, i.e. the device's main interface IP.
+function deviceIp(adb: string, target: string): string | null {
+  let m = target.match(/^(\d+\.\d+\.\d+\.\d+):\d+$/)
+  if (m) return m[1] ?? null
+  let res = Bun.spawnSync([adb, "-s", target, "shell", "ip", "route", "get", "1.1.1.1"], {
     stdout: "pipe",
     stderr: "pipe",
   })
-  if (res.exitCode !== 0) {
-    print(`[cli] adb reverse failed (client will fall back to discovery):\n${res.stderr.toString()}`)
-  }
+  return res.stdout.toString().match(/src (\d+\.\d+\.\d+\.\d+)/)?.[1] ?? null
+}
+
+// The host:port the client on `target` should dial to reach this machine's dev
+// server, by adb transport: the emulator reaches the host through its NAT alias
+// 10.0.2.2; every other transport shares a LAN with the host, so match the
+// device's IP to the host interface on its subnet. Replaces the old adb-reverse
+// loopback tunnel, which never worked over wireless adb. Returns null when the
+// address cannot be resolved (the client then falls back to QR/recents).
+function devServerAddress(adb: string, target: string): string | null {
+  if (target.startsWith("emulator-")) return `10.0.2.2:${DEV_PORT}`
+  let dip = deviceIp(adb, target)
+  if (!dip) return null
+  let host = hostIpFor(dip)
+  return host ? `${host}:${DEV_PORT}` : null
 }
 
 // Serials of connected, authorized devices (excludes offline/unauthorized).
@@ -81,10 +109,10 @@ function deviceAbi(adb: string, target: string): string {
   return res.stdout.toString().trim()
 }
 
-// Install + launch the Android client on a connected device over adb, forwarding
-// its loopback to the host dev server so the client connects at 127.0.0.1 (see
-// setupAdbReverse). Fire-and-forget: the client's lifecycle is tracked via WS
-// connect/disconnect in dev-server.ts, not as a child process here.
+// Install + launch the Android client on a connected device over adb, passing it
+// the dev-server address to dial as a launch-intent extra (see devServerAddress).
+// Fire-and-forget: the client's lifecycle is tracked via WS connect/disconnect in
+// dev-server.ts, not as a child process here.
 export async function spawnAndroidClient() {
   let adb = requireAdb()
 
@@ -108,12 +136,19 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  setupAdbReverse(adb, target)
+  // Hand the client the dev-server address to dial, as a launch-intent extra that
+  // MainActivity forwards to native argv (--dev-server); the client auto-connects
+  // to it. Replaces adb reverse, which never worked over wireless adb.
+  let devServer = devServerAddress(adb, target)
+  let launchArgs = [adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY]
+  if (devServer) {
+    print(`[cli] Client will dial dev server at ${devServer}`)
+    launchArgs.push("--es", "srt_dev_server", devServer)
+  } else {
+    print("[cli] Could not resolve a host address for the device; client will need a manual/QR connect")
+  }
 
-  let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY], {
-    stdout: "pipe",
-    stderr: "pipe",
-  })
+  let start = Bun.spawn(launchArgs, { stdout: "pipe", stderr: "pipe" })
   if ((await start.exited) !== 0) {
     console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)

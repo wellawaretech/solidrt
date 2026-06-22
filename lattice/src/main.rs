@@ -37,12 +37,15 @@ fn main() {
   let mut duration: u32 = 1;
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
+  let mut dev_server: Option<String> = None;
   let mut source_path: Option<String> = None;
   while let Some(arg) = args.next() {
     if arg == "--record" {
       record = true;
     } else if arg == "--stats" {
       stats = true;
+    } else if arg == "--dev-server" {
+      dev_server = Some(args.next().expect("--dev-server requires a value"));
     } else if arg == "--fps" {
       fps = args.next().expect("--fps requires a value").parse().expect("--fps value must be a positive integer");
     } else if arg == "--duration" {
@@ -77,5 +80,5 @@ fn main() {
     alloy::Mode::Run
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, app, mode, size, stats);
+  lattice::start(&rt, app, mode, size, stats, dev_server);
 }
