@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- Banner background -->
+    <path android:fillColor="#FFFFFF" android:pathData="M0,0 L320,0 L320,180 L0,180 Z"/>
+    <!-- Logo reused from ic_launcher_foreground, centered (108x108 in a 320x180 frame) -->
+    <group android:translateX="106" android:translateY="36">
+        <path android:fillColor="#1A3380" android:pathData="M7.33,7.33 L7.33,54 L54,54 L54,7.33 Z"/>
+        <path android:fillColor="#3366B3" android:pathData="M7.33,54 L7.33,100.67 L54,100.67 L54,54 Z"/>
+        <path android:fillColor="#3366B3" android:pathData="M54,7.33 L54,54 L100.67,54 L100.67,7.33 Z"/>
+        <path android:fillColor="#6699E6" android:pathData="M54,54 L100.67,54 L54,100.67 Z"/>
+        <path android:fillColor="#1A3380" android:pathData="M100.67,54 L100.67,100.67 L54,100.67 Z"/>
+    </group>
+</vector>

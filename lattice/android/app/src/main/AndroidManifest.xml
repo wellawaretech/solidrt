@@ -28,6 +28,11 @@
         android:name="android.hardware.type.pc"
         android:required="false" />
 
+    <!-- Android TV (Leanback) support, optional so phones/tablets still install -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+
     <!-- Audio recording support -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature
@@ -61,6 +66,7 @@
     -->
     <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/tv_banner"
         android:allowBackup="true"
         android:theme="@style/AppTheme"
         android:enableOnBackInvokedCallback="false"
@@ -84,6 +90,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- Let Android know that we can handle some USB devices and should receive this event -->
             <intent-filter>
