@@ -1,4 +1,4 @@
-// ../../node_modules/.bun/@solidjs+signals@2.0.0-beta.14/node_modules/@solidjs/signals/dist/prod.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.14/node_modules/@solidjs/signals/dist/prod.js
 class NotReadyError extends Error {
   source;
   constructor(e) {
@@ -2657,7 +2657,7 @@ function flattenArray(e, t = [], n) {
   return r;
 }
 
-// ../../node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/solid.js
+// node_modules/.bun/solid-js@2.0.0-beta.14/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 var NoHydrateContext = {
@@ -2722,7 +2722,7 @@ function Show(props) {
   });
 }
 
-// ../../node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
+// node_modules/.bun/@solidjs+universal@2.0.0-beta.14+4805d24c3c460789/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -3023,10 +3023,16 @@ function createRenderer(options) {
   };
 }
 
-// ../../packages/core/src/window.ts
+// packages/core/src/renderer.ts
+import * as tree2 from "flux:rendertree";
+
+// packages/core/src/window.ts
+import { requestFrame } from "flux:rendertree";
+import { renderFrame } from "srt:render";
 import { on, once } from "srt:events";
 
-// ../../packages/core/src/core.ts
+// packages/core/src/core.ts
+import * as tree from "flux:rendertree";
 var handlers = new Map;
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
@@ -3062,14 +3068,14 @@ function setFocus(nodeId) {
   let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
   if (wantActive !== textInputActive) {
     textInputActive = wantActive;
-    ffi.setTextInputActive(wantActive);
+    tree.setTextInputActive(wantActive);
   }
 }
 function getFocusedNodeId() {
   return focusedNodeId;
 }
 
-// ../../packages/core/src/window.ts
+// packages/core/src/window.ts
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -3079,11 +3085,11 @@ function onFrame(fn) {
     fn(tick, frame, rate);
     frameId = nextFrameId++;
     animationFrames.set(frameId, extendedFn);
-    ffi.requestFrame();
+    requestFrame();
   };
   frameId = nextFrameId++;
   animationFrames.set(frameId, extendedFn);
-  ffi.requestFrame();
+  requestFrame();
   let cleanup2 = () => animationFrames.delete(frameId);
   onCleanup(cleanup2);
   return cleanup2;
@@ -3132,7 +3138,7 @@ function attachWindow(_nodeId) {
         fn(t, frame, refreshRate);
     }
     flush();
-    ffi.renderFrame();
+    renderFrame();
   }
   onSettled(() => {
     unsubRefreshRate = on("displayRefreshRate", ({ hz }) => {
@@ -3232,7 +3238,7 @@ function attachWindow(_nodeId) {
   });
 }
 
-// ../../node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
+// node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
 var r = { grad: 0.9, turn: 360, rad: 360 / (2 * Math.PI) };
 var t = function(r2) {
   return typeof r2 == "string" ? r2.length > 0 : typeof r2 == "number";
@@ -3400,7 +3406,7 @@ var k = function(r2) {
   });
 };
 
-// ../../node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/names.mjs
+// node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/names.mjs
 function names_default(e2, f2) {
   var a2 = { white: "#ffffff", bisque: "#ffe4c4", blue: "#0000ff", cadetblue: "#5f9ea0", chartreuse: "#7fff00", chocolate: "#d2691e", coral: "#ff7f50", antiquewhite: "#faebd7", aqua: "#00ffff", azure: "#f0ffff", whitesmoke: "#f5f5f5", papayawhip: "#ffefd5", plum: "#dda0dd", blanchedalmond: "#ffebcd", black: "#000000", gold: "#ffd700", goldenrod: "#daa520", gainsboro: "#dcdcdc", cornsilk: "#fff8dc", cornflowerblue: "#6495ed", burlywood: "#deb887", aquamarine: "#7fffd4", beige: "#f5f5dc", crimson: "#dc143c", cyan: "#00ffff", darkblue: "#00008b", darkcyan: "#008b8b", darkgoldenrod: "#b8860b", darkkhaki: "#bdb76b", darkgray: "#a9a9a9", darkgreen: "#006400", darkgrey: "#a9a9a9", peachpuff: "#ffdab9", darkmagenta: "#8b008b", darkred: "#8b0000", darkorchid: "#9932cc", darkorange: "#ff8c00", darkslateblue: "#483d8b", gray: "#808080", darkslategray: "#2f4f4f", darkslategrey: "#2f4f4f", deeppink: "#ff1493", deepskyblue: "#00bfff", wheat: "#f5deb3", firebrick: "#b22222", floralwhite: "#fffaf0", ghostwhite: "#f8f8ff", darkviolet: "#9400d3", magenta: "#ff00ff", green: "#008000", dodgerblue: "#1e90ff", grey: "#808080", honeydew: "#f0fff0", hotpink: "#ff69b4", blueviolet: "#8a2be2", forestgreen: "#228b22", lawngreen: "#7cfc00", indianred: "#cd5c5c", indigo: "#4b0082", fuchsia: "#ff00ff", brown: "#a52a2a", maroon: "#800000", mediumblue: "#0000cd", lightcoral: "#f08080", darkturquoise: "#00ced1", lightcyan: "#e0ffff", ivory: "#fffff0", lightyellow: "#ffffe0", lightsalmon: "#ffa07a", lightseagreen: "#20b2aa", linen: "#faf0e6", mediumaquamarine: "#66cdaa", lemonchiffon: "#fffacd", lime: "#00ff00", khaki: "#f0e68c", mediumseagreen: "#3cb371", limegreen: "#32cd32", mediumspringgreen: "#00fa9a", lightskyblue: "#87cefa", lightblue: "#add8e6", midnightblue: "#191970", lightpink: "#ffb6c1", mistyrose: "#ffe4e1", moccasin: "#ffe4b5", mintcream: "#f5fffa", lightslategray: "#778899", lightslategrey: "#778899", navajowhite: "#ffdead", navy: "#000080", mediumvioletred: "#c71585", powderblue: "#b0e0e6", palegoldenrod: "#eee8aa", oldlace: "#fdf5e6", paleturquoise: "#afeeee", mediumturquoise: "#48d1cc", mediumorchid: "#ba55d3", rebeccapurple: "#663399", lightsteelblue: "#b0c4de", mediumslateblue: "#7b68ee", thistle: "#d8bfd8", tan: "#d2b48c", orchid: "#da70d6", mediumpurple: "#9370db", purple: "#800080", pink: "#ffc0cb", skyblue: "#87ceeb", springgreen: "#00ff7f", palegreen: "#98fb98", red: "#ff0000", yellow: "#ffff00", slateblue: "#6a5acd", lavenderblush: "#fff0f5", peru: "#cd853f", palevioletred: "#db7093", violet: "#ee82ee", teal: "#008080", slategray: "#708090", slategrey: "#708090", aliceblue: "#f0f8ff", darkseagreen: "#8fbc8f", darkolivegreen: "#556b2f", greenyellow: "#adff2f", seagreen: "#2e8b57", seashell: "#fff5ee", tomato: "#ff6347", silver: "#c0c0c0", sienna: "#a0522d", lavender: "#e6e6fa", lightgreen: "#90ee90", orange: "#ffa500", orangered: "#ff4500", steelblue: "#4682b4", royalblue: "#4169e1", turquoise: "#40e0d0", yellowgreen: "#9acd32", salmon: "#fa8072", saddlebrown: "#8b4513", sandybrown: "#f4a460", rosybrown: "#bc8f8f", darksalmon: "#e9967a", lightgoldenrodyellow: "#fafad2", snow: "#fffafa", lightgrey: "#d3d3d3", lightgray: "#d3d3d3", dimgray: "#696969", dimgrey: "#696969", olivedrab: "#6b8e23", olive: "#808000" }, r2 = {};
   for (var d2 in a2)
@@ -3430,7 +3436,7 @@ function names_default(e2, f2) {
   }, "name"]);
 }
 
-// ../../packages/core/src/color.ts
+// packages/core/src/color.ts
 k([names_default]);
 function parseColor(color) {
   let { r: r2, g: g2, b: b2, a: a2 } = w(color).toRgb();
@@ -3440,7 +3446,7 @@ function isGradient(value) {
   return typeof value === "object" && value !== null && "__gradient" in value;
 }
 
-// ../../packages/core/src/renderer.ts
+// packages/core/src/renderer.ts
 var nodes = new Map;
 var id = 1;
 function createProxyNode(elementType) {
@@ -3455,7 +3461,7 @@ var {
   createComponent: createComponent2,
   createElement,
   createTextNode,
-  insertNode,
+  insertNode: insertNode2,
   insert,
   spread,
   setProp,
@@ -3466,19 +3472,19 @@ var {
   createElement: (elementType) => {
     let proxy = createProxyNode(elementType);
     if (elementType === "window")
-      ffi.createRoot(proxy.id);
+      tree2.createRoot(proxy.id);
     else
-      ffi.createNode(proxy.id, elementType);
+      tree2.createNode(proxy.id, elementType);
     return proxy;
   },
   createTextNode: (value) => {
     let proxy = createProxyNode("d-span");
-    ffi.createNode(proxy.id, "d-span");
-    ffi.setProperty(proxy.id, "text", "" + value);
+    tree2.createNode(proxy.id, "d-span");
+    tree2.setProperty(proxy.id, "text", "" + value);
     return proxy;
   },
   replaceText: (node, value) => {
-    ffi.setProperty(node.id, "text", "" + value);
+    tree2.setProperty(node.id, "text", "" + value);
   },
   isTextNode: (node) => node?.elementType === "d-span",
   setProperty: (node, name, value) => {
@@ -3489,14 +3495,14 @@ var {
       return;
     }
     if (name === "color" && isGradient(value)) {
-      ffi.setProperty(node.id, name, value);
+      tree2.setProperty(node.id, name, value);
       return;
     }
     if (name === "color" && typeof value === "string") {
-      ffi.setProperty(node.id, name, parseColor(value));
+      tree2.setProperty(node.id, name, parseColor(value));
       return;
     }
-    ffi.setProperty(node.id, name, value);
+    tree2.setProperty(node.id, name, value);
   },
   insertNode: (parent, node, anchor) => {
     if (!node)
@@ -3514,9 +3520,9 @@ var {
         }
       }
       if (anchor)
-        ffi.insertNode(parent.id, node.id, anchor.id);
+        tree2.insertNode(parent.id, node.id, anchor.id);
       else
-        ffi.insertNode(parent.id, node.id);
+        tree2.insertNode(parent.id, node.id);
     }
   },
   removeNode: (parent, node) => {
@@ -3527,7 +3533,7 @@ var {
       parent.children.splice(index, 1);
     }
     node.parent = undefined;
-    ffi.deleteNode(parent.id, node.id);
+    tree2.deleteNode(parent.id, node.id);
     let cleanup2 = (n2) => {
       for (let child of n2.children)
         cleanup2(child);
@@ -3560,9 +3566,9 @@ function render(code) {
     insert(null, root);
   });
 }
-// ../../packages/core/src/gpu.ts
+// packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-// ../../packages/core/src/camera.ts
+// packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
 import { on as on2 } from "srt:events";
 var devicesAccessor;
@@ -3604,12 +3610,12 @@ function createCamera(options = {}) {
   return { texture, width, height, barcode, error };
 }
 
-// app.tsx
+// lattice/default-app/app.tsx
 import { platform } from "flux:process";
 import { on as on3 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents } from "srt:dev";
 
-// logo.tsx
+// lattice/default-app/logo.tsx
 var EXPLODE_DIST = 3;
 var STAGGER_DELAY = 100;
 var ANIM_DURATION = 600;
@@ -4030,7 +4036,7 @@ function TangramLetter(props) {
   var _el$ = createElement("view");
   insert(_el$, () => props.letter.pieces.map((p2, i2) => (() => {
     var _el$2 = createElement("view"), _el$3 = createElement("d-path");
-    insertNode(_el$2, _el$3);
+    insertNode2(_el$2, _el$3);
     effect3(() => ({
       e: pieceVectors[i2][0] * dist(),
       t: pieceVectors[i2][1] * dist(),
@@ -4080,7 +4086,7 @@ var LOGO_HEIGHT = Math.max(...letters.map((l2) => l2.height));
 function Logo() {
   let scale = () => windowSize().width * 1.12 / 1500;
   var _el$4 = createElement("view"), _el$5 = createElement("view");
-  insertNode(_el$4, _el$5);
+  insertNode2(_el$4, _el$5);
   setProp(_el$4, "justifyContent", "center");
   setProp(_el$4, "alignItems", "center");
   setProp(_el$4, "width", 1500);
@@ -4105,7 +4111,7 @@ function Logo() {
   return _el$4;
 }
 
-// app.tsx
+// lattice/default-app/app.tsx
 var LOOPBACK = "127.0.0.1:15194";
 var STATUS_TEXT = {
   idle: "not connected",
@@ -4118,8 +4124,8 @@ function normalizeAddress(raw) {
 }
 function Button(props) {
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("text");
-  insertNode(_el$, _el$2);
-  insertNode(_el$, _el$3);
+  insertNode2(_el$, _el$2);
+  insertNode2(_el$, _el$3);
   setProp(_el$, "paddingLeft", 18);
   setProp(_el$, "paddingRight", 18);
   setProp(_el$, "paddingTop", 10);
@@ -4199,18 +4205,18 @@ function App() {
     connect(normalizeAddress(data));
   };
   var _el$5 = createElement("window"), _el$6 = createElement("d-rect"), _el$7 = createElement("view"), _el$8 = createElement("view"), _el$9 = createElement("text"), _el$0 = createElement("view");
-  insertNode(_el$5, _el$6);
-  insertNode(_el$5, _el$7);
+  insertNode2(_el$5, _el$6);
+  insertNode2(_el$5, _el$7);
   setProp(_el$5, "title", "solidrt-go");
   setProp(_el$6, "color", "#111");
-  insertNode(_el$7, _el$8);
+  insertNode2(_el$7, _el$8);
   setProp(_el$7, "flexGrow", 1);
   setProp(_el$7, "justifyContent", "center");
   setProp(_el$7, "alignItems", "center");
   setProp(_el$7, "flexDirection", "column-reverse");
   setProp(_el$7, "gap", 40);
-  insertNode(_el$8, _el$9);
-  insertNode(_el$8, _el$0);
+  insertNode2(_el$8, _el$9);
+  insertNode2(_el$8, _el$0);
   setProp(_el$8, "flexDirection", "column");
   setProp(_el$8, "alignItems", "center");
   setProp(_el$8, "gap", 16);
@@ -4288,11 +4294,11 @@ function App() {
     },
     get children() {
       var _el$1 = createElement("view"), _el$10 = createElement("text");
-      insertNode(_el$1, _el$10);
+      insertNode2(_el$1, _el$10);
       setProp(_el$1, "flexDirection", "column");
       setProp(_el$1, "alignItems", "center");
       setProp(_el$1, "gap", 8);
-      insertNode(_el$10, createTextNode(`recent`));
+      insertNode2(_el$10, createTextNode(`recent`));
       setProp(_el$10, "color", "grey");
       insert(_el$1, createComponent2(For, {
         get each() {

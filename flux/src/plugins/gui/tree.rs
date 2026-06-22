@@ -133,6 +133,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("insertNode")?;
     decl.declare("setProperty")?;
     decl.declare("requestFrame")?;
+    decl.declare("render")?;
     decl.declare("setTextInputActive")?;
     decl.declare("measureText")?;
     decl.declare("getBoundingBox")?;
@@ -200,6 +201,15 @@ impl ModuleDef for RenderTreeModule {
     let platform_ref = platform.clone();
     let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame())?;
 
+    // The direct draw path: lay out, paint and submit the whole tree now. Lets a
+    // flux + alloy app put its tree on screen without the runner's frame loop.
+    let tree_ref = tree.clone();
+    let render_platform = platform.clone();
+    let render_atx = atx.clone();
+    let render = Function::new(ctx.clone(), move || {
+      alloy::rendertree::composite::render(&mut tree_ref.borrow_mut(), &render_platform, &render_atx);
+    })?;
+
     let tree_ref = tree.clone();
     let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
       tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
@@ -266,6 +276,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("insertNode", insert_node)?;
     exports.export("setProperty", set_property)?;
     exports.export("requestFrame", request_frame)?;
+    exports.export("render", render)?;
     exports.export("setTextInputActive", set_text_input_active)?;
     exports.export("measureText", measure_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;

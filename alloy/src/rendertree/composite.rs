@@ -62,6 +62,25 @@ pub fn paint_phase(
   }
 }
 
+/// Lay out and paint the whole tree into a fresh display list and submit it to
+/// the render thread: the minimal "draw the tree once" path. Unlike the runner's
+/// frame loop it carries no demand gating, retained-list reuse, post-layout hook
+/// or stats overlay (all of which are policy); it is what a flux + alloy app
+/// calls each frame to put the current tree on screen. Returns the frame's paint
+/// stats.
+pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> PaintStats {
+  let mut builder = DisplayListBuilder::new(None);
+  let scale = platform.display_scale();
+  builder.scale(scale, scale);
+  let stats = paint_phase(&mut builder, tree, platform, alloy);
+  if let Some(dl) = builder.build() {
+    if alloy.submit(dl).is_err() {
+      log::warn!("rendertree::render: render thread unavailable, dropping frame");
+    }
+  }
+  stats
+}
+
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
 // recording or as rasterized pixels, in node-local coordinates; the parent has
 // already translated the builder) and replayed from the cache until something

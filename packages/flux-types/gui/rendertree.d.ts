@@ -29,6 +29,12 @@ declare module "flux:rendertree" {
   /** Request that a frame be rendered soon (coalesced by the demand-driven loop). */
   export function requestFrame(): void
   /**
+   * Lay out, paint and submit the whole tree to the screen now (one frame). The
+   * direct draw path for a flux + alloy app; requestFrame only schedules a
+   * future frame and leaves the actual draw to the runner.
+   */
+  export function render(): void
+  /**
    * Measure the rendered size of `text` under the given font options, without
    * adding it to the tree.
    */
