@@ -63,6 +63,24 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   directly-positioned, often-animating elements (e.g. hundreds of balls), `d-`
   skips the per-element layout that plain elements would incur.
 
+- Layout-affecting vs not (this matters for per-frame work). Props fall in three
+  buckets, split by where they take effect:
+  - `LayoutProps` - width/height, min/max sizes, margin, padding, `position` and
+    its `top`/`right`/`bottom`/`left` offsets, flex*/gap/display, grid*,
+    aspectRatio, overflow. Changing ANY of these triggers a Taffy reflow of the
+    node and its subtree.
+  - `TransformProps` - x, y, scale/scaleX/scaleY, rotate/rotateX/rotateY,
+    perspective, cx/cy, scrollX/scrollY. Applied at paint/composite; NO reflow.
+  - `PaintProps` - color, drawStyle, strokeWidth, blendMode, radius. Also no
+    reflow.
+  So to MOVE or animate an element - dragging, transitions, per-frame motion -
+  translate it with the transform `x`/`y` (or scale/rotate), never by animating
+  `left`/`top`/`margin`/`width`. Common trap: `left`/`top` read like "position"
+  but they are LAYOUT offsets (for `position:absolute`), so driving them every
+  frame reflows the tree. Anchor the element once with layout (e.g.
+  `position:absolute` at `left:0,top:0`, or just let normal flow place it) and
+  then translate it with `x`/`y`.
+
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
   onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an
