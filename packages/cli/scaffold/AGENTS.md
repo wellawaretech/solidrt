@@ -15,10 +15,16 @@ Authoritative references ship inside the installed packages - read them:
 
 ## The things assistants get wrong (this is not React/DOM)
 
-1. SolidJS 2.0, not React (and not Solid 1.x). Primitives come from
-   @solidjs/signals; no hooks, no virtual DOM, the component body runs once.
-   createEffect has the 2.0 two-function shape - a TRACKED compute that reads
-   signals and returns a value, then an UNTRACKED effect that receives it:
+1. SolidJS 2.0, not React (and not Solid 1.x). Import the whole authoring
+   surface from @solidrt/core - it re-exports the substrate so you do not have to
+   know which package a symbol lives in: render plus the window/paint/event APIs,
+   the reactive primitives (createSignal, createMemo, createEffect, createStore,
+   reconcile, mapArray, untrack, onCleanup), and the control-flow components (For,
+   Show, Switch/Match, Repeat, Loading, Errored). No hooks, no virtual DOM, the
+   component body runs once. Render lists with <For each={...}>{item => ...}</For>,
+   never array.map. createEffect has the 2.0 two-function shape - a TRACKED
+   compute that reads signals and returns a value, then an UNTRACKED effect that
+   receives it:
      createEffect(() => count(), (c) => console.log(c))
    The Solid 1.x single-callback form, createEffect(() => console.log(count())),
    does NOT track in 2.0.
@@ -32,7 +38,9 @@ Authoritative references ship inside the installed packages - read them:
 6. No onClick/onPress. A button is a <view>/<rect> with onPointerDown.
 7. d- prefix = detached from layout: a plain element is laid out by Taffy, a
    d-element you position with x/y (omit to fill the parent = how backgrounds
-   work).
+   work). A detached node cannot have attached (regular, Taffy-laid-out)
+   children - everything under a d-element must itself be detached. Nesting a
+   plain <view>/<text> inside a d-element is an error.
 8. Per-frame work: onFrame((tick, frame) => {}), or the standard
    requestAnimationFrame(t => {}) for animations. Also onResize, onLayout.
 9. Device/GPU via subpath imports: @solidrt/core/camera, /microphone, /gpu.

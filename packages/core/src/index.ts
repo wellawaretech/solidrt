@@ -29,3 +29,54 @@ export type {
   Color,
 } from "./types"
 export type { MeasureTextOptions } from "flux:rendertree"
+
+// --- Authoring-surface re-exports -------------------------------------------
+// A SolidRT app is built from three substrate packages: @solidjs/signals
+// (reactivity), solid-js (control-flow components), and @solidjs/universal (the
+// renderer factory, surfaced via ./renderer). Forwarding the app-facing pieces
+// here means an app imports its whole vocabulary from "@solidrt/core" instead of
+// having to know which substrate package each symbol lives in. These are already
+// peerDependencies, so this adds no new dependency. Curated on purpose - do not
+// `export *` from solid-js, which would leak DOM/hydration-only helpers that are
+// meaningless on the flux runtime.
+
+// Reactivity (from @solidjs/signals).
+export {
+  createSignal,
+  createMemo,
+  createEffect,
+  createRenderEffect,
+  createRoot,
+  createStore,
+  reconcile,
+  mapArray,
+  repeat,
+  untrack,
+  onCleanup,
+  onSettled,
+} from "@solidjs/signals"
+export type { Accessor, Setter, Signal, Store, StoreSetter } from "@solidjs/signals"
+
+// Control flow, components, and context (from solid-js).
+export {
+  For,
+  Show,
+  Switch,
+  Match,
+  Repeat,
+  Loading,
+  Errored,
+  Reveal,
+  lazy,
+  createUniqueId,
+  createContext,
+  useContext,
+  children,
+} from "solid-js"
+export type {
+  Component,
+  ParentComponent,
+  FlowComponent,
+  VoidComponent,
+  ComponentProps,
+} from "solid-js"
