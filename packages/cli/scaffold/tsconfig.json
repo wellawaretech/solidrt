@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  "include": ["src"]
+}

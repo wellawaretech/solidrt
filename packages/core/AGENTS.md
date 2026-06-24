@@ -68,10 +68,14 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an
   `onTextInput` handler (setFocus activates the on-screen keyboard).
 
-- Reactivity is plain SolidJS (`createSignal`, `createEffect`, ... from
-  @solidjs/signals). Per-frame work: `onFrame((tick, frame) => {})` (returns a
-  cleanup; auto-cleaned inside a reactive scope). Also onResize, onLayout,
-  onWindowFocus, onWindowBlur.
+- Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
+  is as you expect, but `createEffect` takes the 2.0 two-function shape: a
+  TRACKED compute that reads signals and returns a value, then an UNTRACKED
+  effect that receives it - `createEffect(() => count(), (c) => ...)`. The 1.x
+  single-callback form `createEffect(() => { ...count()... })` does NOT track
+  here. Per-frame work: `onFrame((tick, frame) => {})` (returns a cleanup;
+  auto-cleaned inside a reactive scope) or standard `requestAnimationFrame`.
+  Also onResize, onLayout, onWindowFocus, onWindowBlur.
 
 - Device/GPU access via subpath imports: @solidrt/core/camera, /microphone,
   /speech, /gpu. Image flow: `decodeImage(bytes)` -> `createTexture(data,w,h)`

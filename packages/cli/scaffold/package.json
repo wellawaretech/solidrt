@@ -1,0 +1,17 @@
+{
+  "name": "solidrt-app",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "srt run src/index.tsx",
+    "bundle": "srt bundle src/index.tsx"
+  },
+  "dependencies": {
+    "@solidrt/core": "latest"
+  },
+  "devDependencies": {
+    "@solidrt/cli": "latest",
+    "@solidrt/flux-types": "latest",
+    "typescript": "^6"
+  }
+}
