@@ -35,6 +35,9 @@ function usage(line: string): never {
 // Per-command argument requirements. Called once before dispatch.
 export function validateArgs() {
   switch (command) {
+    case "init":
+      if (!source) usage("srt init <dir>  (the target folder is required)")
+      break
     case "bundle":
       if (values.flux) {
         if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")
@@ -65,6 +68,7 @@ export function printUsage() {
   console.error(`Usage: srt <command> [options] [file]
 
 Commands:
+  init <dir>             Scaffold a new SolidRT project into a new (empty) folder
   run [file]             Start dev server + local solidrt-go client
   server [file]          Start dev server only
   client                 Start solidrt-go client only

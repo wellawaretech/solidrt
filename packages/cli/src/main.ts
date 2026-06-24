@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { values, command, validateArgs, printUsage } from "./args"
+import { runInitCommand } from "./commands/init"
 import { runBundleCommand } from "./commands/bundle"
 import { runPackCommand } from "./commands/pack"
 import { runRecordCommand } from "./commands/record"
@@ -35,7 +36,9 @@ if (isProdBuild && process.env.NODE_ENV !== "production") {
 
 // -- Dispatch --
 
-if (command === "bundle") {
+if (command === "init") {
+  await runInitCommand()
+} else if (command === "bundle") {
   await runBundleCommand()
 } else if (command === "pack") {
   await runPackCommand()

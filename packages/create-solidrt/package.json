@@ -1,0 +1,15 @@
+{
+  "name": "create-solidrt",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "Antoine van Wel",
+  "type": "module",
+  "bin": {
+    "create-solidrt": "./bin/create-solidrt"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ]
+}

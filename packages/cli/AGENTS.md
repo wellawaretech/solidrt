@@ -9,6 +9,10 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 
 ## Commands
 
+- `bunx srt init <dir>` - scaffold a new SolidRT project into a new (empty)
+  folder: package.json, tsconfig.json, AGENTS.md, a starter src/index.tsx, then
+  installs deps. Greenfield shortcut (no install needed first):
+  `bun create solidrt <dir>`.
 - `bunx srt run src/index.tsx` - dev server + a local client window, watches and
   hot-reloads. NEEDS A DISPLAY (opens a GUI window). Not usable headless.
 - `bunx srt bundle src/index.tsx` - transpile to `<file>.srt.js`. With

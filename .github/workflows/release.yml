@@ -251,6 +251,7 @@ jobs:
             packages/android-arm64-v8a
             packages/android-armeabi-v7a
             packages/cli
+            packages/create-solidrt
           )
           for dir in packages/*/; do
             dir="${dir%/}"
@@ -368,5 +369,11 @@ jobs:
       - name: Publish @solidrt/cli
         run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
         working-directory: packages/cli
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish create-solidrt
+        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
+        working-directory: packages/create-solidrt
         env:
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
