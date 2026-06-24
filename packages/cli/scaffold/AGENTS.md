@@ -46,6 +46,13 @@ Authoritative references ship inside the installed packages - read them:
 9. Device/GPU via subpath imports: @solidrt/core/camera, /microphone, /gpu.
 10. tsconfig needs jsx:"preserve" + jsxImportSource:"@solidrt/core". Solid peer
     deps are pinned betas - do not bump them casually.
+11. Use ASCII characters whenever possible in code and text - for example, no
+    em-dashes (use a hyphen), no smart/curly quotes, no unicode symbols.
+12. Respect the safe area. safeArea() from @solidrt/core is a reactive accessor
+    returning { top, left, right, bottom } insets (like CSS
+    env(safe-area-inset-*)); keep content out from under the status bar / home
+    indicator by padding the top and bottom edges by safeArea().top /
+    safeArea().bottom (full-bleed backgrounds may extend underneath).
 
 ## Run / verify
 
