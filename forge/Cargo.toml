@@ -26,3 +26,11 @@ fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] 
 iroh = "1"
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
 which = "7"
+# UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
+# that tokio's UdpSocket::bind doesn't expose: bind via socket2, then adopt with
+# UdpSocket::from_std. Already in the tree (tokio depends on it).
+socket2 = "0.6"
+# Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
+# flux:net interfaces() — the no-subprocess replacement for parsing `ip addr`.
+# Already in the tree (iroh depends on it).
+netdev = "0.44"

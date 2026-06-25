@@ -12,6 +12,7 @@ pub mod fetch;
 pub mod fs;
 pub mod http;
 pub mod logger;
+pub mod net;
 pub mod p2p;
 pub mod path;
 pub mod process;
