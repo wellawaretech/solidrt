@@ -30,7 +30,7 @@ use taffy::style::Position;
 
 use crate::plugins::gui::value::PropValue;
 use alloy::impellers::Color;
-use alloy::rendertree::{BoundaryMode, Element, ElementKind};
+use alloy::rendertree::{BoundaryMode, Element, ElementKind, PointerEvents};
 
 // Returns Ok(invalidate) on success; Err(message) for an unknown property, which
 // the FFI caller surfaces as a throwable JS error rather than aborting the
@@ -64,6 +64,23 @@ pub fn apply_jsx(
       _ => panic!("repaintBoundary must be a boolean or \"snapshot\""),
     };
     el.paint_cache.borrow_mut().take();
+    return Ok(false);
+  }
+
+  // Element-level, kind-independent: controls hit testing (see hit.rs). Paint/hit
+  // only, no layout invalidation. Components forward this even when unset, so a
+  // null resets to the default (Auto).
+  if name == "pointerEvents" {
+    let pointer_events = match value {
+      PropValue::Null => PointerEvents::Auto,
+      _ => match str_of(value, "pointerEvents") {
+        "auto" => PointerEvents::Auto,
+        "none" => PointerEvents::None,
+        "all" => PointerEvents::All,
+        v => panic!("unknown pointerEvents value '{v}'"),
+      },
+    };
+    el.set_pointer_events(pointer_events);
     return Ok(false);
   }
 

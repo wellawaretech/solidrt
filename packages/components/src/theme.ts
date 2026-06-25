@@ -10,6 +10,8 @@ export type Theme = {
     textMuted: string
     surface: string
     border: string
+    primary: string
+    onPrimary: string
   }
   spacing: { sm: number; md: number }
   radius: { sm: number }
@@ -25,6 +27,8 @@ export let theme: Theme = {
     textMuted: "rgba(0,0,0,0.4)",
     surface: "#ccc",
     border: "rgba(0,0,0,0.2)",
+    primary: "#1f6feb",
+    onPrimary: "#ffffff",
   },
   spacing: { sm: 4, md: 8 },
   radius: { sm: 4 },

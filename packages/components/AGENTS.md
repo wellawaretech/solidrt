@@ -35,6 +35,14 @@ Most components group props into two objects, plus top-level event handlers:
 - `Image` - fetches/decodes/uploads an image: `src: string | Uint8Array`.
 - `TextInput` - single-line input; `value`/`onInput`/`onSubmit`, controlled or
   uncontrolled, plus `placeholder`, `maxLength`, `autoFocus`, `disabled`.
+- `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
+  Wheel + drag, no momentum yet. Backed by `createScroll` from
+  `@solidrt/core/scroll` (headless offset+clamp geometry).
+- `Pressable` - pressable box; `onPress` on a primary press released inside,
+  `disabled` opts out. `children`/`style` can be functions of `{ pressed,
+  hovered }`. No pointer capture: a drag out cancels via onPointerLeave.
+- `Button` - themed Pressable: accent box + label (string/number child), scales
+  on press (via reactive style); colors from `theme.color.primary`/`onPrimary`.
 - `SafeArea` - pads children clear of system UI (notches, status bars); top and
   bottom on by default, pass `false`/a number per edge.
 - `theme` / `setTheme` - shared appearance (colors, spacing, radii, font sizes);

@@ -153,14 +153,22 @@ export interface TransformProps {
   scrollY?: number
 }
 
+// Window-relative pointer coordinates are reported as clientX/clientY (matching
+// the DOM MouseEvent). pointerType distinguishes mouse from touch; button is the
+// pressed button on down/up (0 = primary); the modifier flags mirror the DOM.
 export interface PointerEvent {
-  x: number
-  y: number
+  clientX: number
+  clientY: number
+  pointerId: number
+  pointerType: "mouse" | "touch" | "pen" | (string & {})
+  button?: number
+  shiftKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  metaKey: boolean
 }
 
-export interface WheelEvent {
-  x: number
-  y: number
+export interface WheelEvent extends PointerEvent {
   deltaX: number
   deltaY: number
 }

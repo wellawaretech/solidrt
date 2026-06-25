@@ -11,6 +11,7 @@
     "./gpu": "./src/gpu.ts",
     "./image": "./src/image.ts",
     "./microphone": "./src/microphone.ts",
+    "./scroll": "./src/scroll.ts",
     "./speech-recognition": "./src/speech-recognition.ts",
     "./text-input": "./src/text-input.ts",
     "./jsx-runtime": "./jsx-runtime.d.ts",

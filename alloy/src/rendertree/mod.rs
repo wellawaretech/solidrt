@@ -5,7 +5,7 @@ pub mod layout;
 pub mod platform;
 mod tree;
 
-pub use hit::HitConfig;
+pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
   Gradient, GradientStop, GradientUnits, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View, Window,
 };
@@ -303,6 +303,12 @@ impl Element {
     let layout = self.layout.as_mut().expect("position requires a layout element");
     layout.style.position = position;
     layout.positioning_context = matches!(position, Position::Relative);
+  }
+
+  /// Sets how this element participates in hit testing. Paint/hit only; never
+  /// affects layout.
+  pub fn set_pointer_events(&mut self, pointer_events: PointerEvents) {
+    self.interaction.get_or_insert_with(HitConfig::default).pointer_events = pointer_events;
   }
 
   pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {

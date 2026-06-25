@@ -217,6 +217,82 @@ Top and bottom insets are applied by default. Pass `false` to opt out of an edge
 | `right`    | `boolean \| number` | `false` | Apply right inset. A number sets the minimum padding.  |
 | `children` | `any`               | -       | Content to render inside the safe area.                |
 
+### ScrollView
+
+A scrollable region. Scrolls vertically by default; pass `horizontal` to scroll the other axis instead. Both the wheel and dragging scroll the content. There is no momentum/fling yet, and (with no pointer capture) a drag that leaves the box ends the gesture.
+
+```jsx
+import { ScrollView, Text } from "@solidrt/components"
+import { For } from "@solidrt/core"
+
+<ScrollView layout={{ height: 300 }} style={{ backgroundColor: "#111", borderRadius: 8 }}>
+  <For each={items()}>{(item) => <Text style={{ color: "#fff" }}>{item}</Text>}</For>
+</ScrollView>
+```
+
+**Props**
+
+Accepts all pointer event props, plus:
+
+| Prop         | Type                             | Description                                  |
+| ------------ | -------------------------------- | -------------------------------------------- |
+| `horizontal` | `boolean`                        | Scroll the horizontal axis instead of vertical. |
+| `layout`     | `LayoutProps`                    | Layout of the outer box (e.g. `height`).     |
+| `style`      | `StyleProps`                     | Background, border, and transform.           |
+| `ref`        | `(node: { id: number }) => void` | Reference to the outer box.                   |
+| `children`   | `any`                            | Scrollable content.                          |
+
+The underlying geometry primitive `createScroll` is available from `@solidrt/core/scroll` for building custom scrollers.
+
+### Pressable
+
+A pressable box. `onPress` fires on a primary-button press released over the box; a drag out of the box (or a non-primary button) does not fire it. `children` and `style` may each be a function of the `{ pressed, hovered }` state, so the box can restyle on press/hover without extra signals.
+
+```jsx
+import { Pressable, Text } from "@solidrt/components"
+
+<Pressable
+  onPress={() => setCount((c) => c + 1)}
+  layout={{ padding: 12 }}
+  style={(s) => ({ backgroundColor: s.pressed ? "#333" : "#222", borderRadius: 8 })}
+>
+  <Text style={{ color: "#fff" }}>Tap me</Text>
+</Pressable>
+```
+
+**Props**
+
+Accepts all pointer event props, plus:
+
+| Prop       | Type                                                | Description                                  |
+| ---------- | --------------------------------------------------- | -------------------------------------------- |
+| `onPress`  | `() => void`                                        | Fires on a completed press.                  |
+| `disabled` | `boolean`                                           | Takes no pointer events when true.           |
+| `layout`   | `LayoutProps`                                        | Layout properties.                           |
+| `style`    | `StyleProps \| (state) => StyleProps`               | Paint properties, or a function of state.    |
+| `children` | `any \| (state) => any`                             | Content, or a function of state.             |
+| `ref`      | `(node: { id: number }) => void`                    | Node reference.                              |
+
+### Button
+
+Themed convenience over `Pressable`: a padded, centered, accent-colored box with a label that scales slightly on press. A string or number child is rendered as the themed label; any other child renders as-is. Colors come from the theme (`color.primary`, `color.onPrimary`); override per-button via `style`.
+
+```jsx
+import { Button } from "@solidrt/components"
+
+<Button onPress={save} layout={{ minWidth: 120 }}>Save</Button>
+```
+
+**Props**
+
+| Prop       | Type          | Description                                    |
+| ---------- | ------------- | ---------------------------------------------- |
+| `onPress`  | `() => void`  | Fires on a completed press.                    |
+| `disabled` | `boolean`     | Mutes colors and ignores presses.              |
+| `layout`   | `LayoutProps` | Overrides padding/sizing.                      |
+| `style`    | `StyleProps`  | Overrides background, radius, etc.             |
+| `children` | `any`         | Label text, or custom content.                 |
+
 ## License
 
 MIT. Copyright (c) 2026 Antoine van Wel.
