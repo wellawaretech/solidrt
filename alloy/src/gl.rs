@@ -1,3 +1,4 @@
+use crate::backend::{Frame, GpuFence};
 use crate::{Backend, Context, DisplayContext, GpuTexture, RenderSurface};
 use glow::HasContext;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
@@ -190,13 +191,9 @@ pub fn render_display_list_to_texture(
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
     gl.delete_framebuffer(fbo);
     gl.delete_renderbuffer(rbo);
-    // glFlush only submits commands; it does not guarantee the offscreen render
-    // has completed. The render thread samples this texture from a different
-    // shared GL context, where shared-object contents stay undefined until the
-    // producing context's writes actually finish. glFinish blocks until the GPU
-    // is done, so the texture is complete before it crosses to the render thread.
-    // (A fence sync would avoid stalling the UI thread; see KNOWN_ISSUES.md.)
-    gl.finish();
+    // No glFinish here: this offscreen draw is part of the UI thread's frame, so
+    // Context::submit's per-frame fence orders it ahead of the render thread
+    // sampling the adopted texture (it waits on that fence before compositing).
 
     match result {
       Ok(()) => impeller_ctx
@@ -254,6 +251,11 @@ pub fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: ISize) -
 pub struct GlSurface {
   ctx: ImpellerContext,
   surface: impellers::Surface,
+  // GLES bindings for the render thread's main context (current on this thread).
+  // Used to wait on the UI thread's per-frame fence before Impeller samples its
+  // textures; the wait and Impeller's draws share this context, so the GPU
+  // orders the wait ahead of compositing.
+  gl: glow::Context,
 }
 
 impl GlSurface {
@@ -263,7 +265,9 @@ impl GlSurface {
     let surface = unsafe { ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }
       .ok_or_else(|| Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>)?;
 
-    Ok(GlSurface { ctx, surface })
+    let gl = create_gl_context();
+
+    Ok(GlSurface { ctx, surface, gl })
   }
 }
 
@@ -281,6 +285,19 @@ impl RenderSurface for GlSurface {
 
   fn resize(&mut self, size: ISize) {
     self.surface = unsafe { self.ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.expect("Failed to resize GL surface");
+  }
+
+  fn consume_fence(&self, fence: Option<GpuFence>, wait: bool) {
+    if let Some(GpuFence(sync)) = fence {
+      unsafe {
+        // GPU-side wait: subsequent draws on this context wait for the UI
+        // thread's work to complete, without stalling the render thread's CPU.
+        if wait {
+          self.gl.wait_sync(sync, 0, glow::TIMEOUT_IGNORED);
+        }
+        self.gl.delete_sync(sync);
+      }
+    }
   }
 }
 
@@ -302,7 +319,7 @@ const UI_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 pub fn run_context(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
-  tx: mpsc::Sender<DisplayList>,
+  tx: mpsc::Sender<Frame>,
 ) {
   let gl_context_ptr = Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
 

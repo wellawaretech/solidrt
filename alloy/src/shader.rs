@@ -260,9 +260,9 @@ impl ShaderTexture {
         gl.enable(glow::CULL_FACE);
       }
 
-      // glFlush only submits; the render thread's shared context sees defined
-      // contents only after the producing context's writes actually finish.
-      gl.finish();
+      // No glFinish: this render is part of the UI thread's frame, and
+      // Context::submit's per-frame fence orders it ahead of the render thread
+      // sampling the target texture, so the JS thread is never stalled here.
     }
   }
 }

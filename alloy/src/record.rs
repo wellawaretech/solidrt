@@ -1,7 +1,6 @@
-use impellers::DisplayList;
 use std::sync::mpsc;
 
-use crate::backend::RenderSurface;
+use crate::backend::{Frame, RenderSurface};
 use crate::event::AlloyEvent;
 
 pub struct RecordConfig {
@@ -16,7 +15,7 @@ pub struct RecordConfig {
 pub(crate) fn run_record_loop(
   window: sdl3::video::Window,
   mut render_surface: Box<dyn RenderSurface>,
-  rx: mpsc::Receiver<DisplayList>,
+  rx: mpsc::Receiver<Frame>,
   event_tx: mpsc::Sender<AlloyEvent>,
   record: RecordConfig,
 ) {
@@ -44,12 +43,14 @@ pub(crate) fn run_record_loop(
   let mut rgba = vec![0u8; width * height * 4];
 
   for frame in 0..record.frames {
-    let dl = match rx.recv() {
-      Ok(dl) => dl,
+    let mut sub = match rx.recv() {
+      Ok(sub) => sub,
       Err(_) => break,
     };
 
-    render_surface.draw_display_list(&dl).expect("Failed to draw display list");
+    // Order the readback after the UI thread's frame work on the GPU.
+    render_surface.consume_fence(sub.fence.take(), true);
+    render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
 
     unsafe {
       gl_bind_framebuffer(GL_READ_FRAMEBUFFER, 0);

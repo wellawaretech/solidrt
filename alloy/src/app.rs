@@ -1,8 +1,8 @@
-use impellers::{DisplayList, ISize};
+use impellers::ISize;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use crate::backend::{create_render_surface, DisplayContext, RenderSurface};
+use crate::backend::{create_render_surface, DisplayContext, Frame, RenderSurface};
 use crate::context::Context;
 use crate::event::{current_resize_event, translate_event, AlloyCommand, AlloyEvent};
 use crate::gl;
@@ -101,7 +101,7 @@ impl App {
   ) {
     let App { sdl_context, mut window, platform, mut render_surface, mode } = self;
 
-    let (tx, rx) = mpsc::channel::<DisplayList>();
+    let (tx, rx) = mpsc::channel::<Frame>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
@@ -146,12 +146,19 @@ impl App {
       // (capped at 8ms to keep SDL event polling responsive).
       let timeout = tick_period.saturating_sub(last_frame_signal.elapsed()).min(std::time::Duration::from_millis(8));
       match rx.recv_timeout(timeout) {
-        Ok(mut dl) => {
+        Ok(mut sub) => {
           while let Ok(newer) = rx.try_recv() {
-            dl = newer;
+            // The superseded frame's GPU work is subsumed by the newer frame's
+            // fence (fences are monotonic on the UI context), so just release
+            // its sync object without waiting.
+            render_surface.consume_fence(sub.fence.take(), false);
+            sub = newer;
           }
           fps_frame_count += 1;
-          render_surface.draw_display_list(&dl).expect("Failed to draw display list");
+          // Wait on the GPU for the UI thread's frame work to finish before
+          // Impeller samples its textures (replaces the UI thread's glFinish).
+          render_surface.consume_fence(sub.fence.take(), true);
+          render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
           render_surface.present(&window);
           let time = start_time.elapsed().as_secs_f64();
           event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();

@@ -1,10 +1,11 @@
+use glow::HasContext;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, Frame, GpuFence};
 use crate::camera::CameraRegistry;
 use crate::gl;
 use crate::microphone::MicrophoneRegistry;
@@ -23,7 +24,7 @@ pub struct Context {
   shaders: RefCell<HashMap<u64, crate::shader::ShaderTexture>>,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
-  tx: mpsc::Sender<DisplayList>,
+  tx: mpsc::Sender<Frame>,
 }
 
 // Safety: Context is asserted Send + Sync but is only ever accessed from the UI
@@ -37,7 +38,7 @@ impl Context {
     backend: Backend,
     gl: glow::Context,
     impeller_ctx: ImpellerContext,
-    tx: mpsc::Sender<DisplayList>,
+    tx: mpsc::Sender<Frame>,
   ) -> Self {
     Context {
       backend,
@@ -52,7 +53,14 @@ impl Context {
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    self.tx.send(dl).map_err(|_| ())
+    // Fence every bit of GPU work this UI-thread frame queued (shader renders,
+    // texture uploads, offscreen draws) so the render thread can order its
+    // sampling after that work on the GPU timeline, instead of the UI thread
+    // blocking on glFinish. A sync object is only waitable from the render
+    // context once the producing context has flushed it.
+    let fence = unsafe { self.gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0) }.ok().map(GpuFence);
+    unsafe { self.gl.flush() };
+    self.tx.send(Frame { dl, fence }).map_err(|_| ())
   }
 
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
