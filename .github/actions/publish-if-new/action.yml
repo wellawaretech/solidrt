@@ -1,0 +1,42 @@
+name: Publish if new
+description: >
+  Publish a package with `bun publish`, unless that name@version is already on
+  the npm registry. This makes the release job idempotent: if a run fails partway
+  through (e.g. one package errors), re-running it skips the already-published
+  packages instead of 403-ing on "cannot publish over existing version".
+
+inputs:
+  working-directory:
+    description: Directory of the package to publish.
+    required: true
+  version:
+    description: The version being released (used for the registry existence check).
+    required: true
+  tag-flag:
+    description: Optional dist-tag flag for prereleases, e.g. "--tag beta". Empty for latest.
+    required: false
+    default: ""
+  dry-run:
+    description: When "true", pass --dry-run to bun publish (nothing is published).
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -eu
+        name=$(node -p "require('./package.json').name")
+        # Scope slash must be percent-encoded for the registry path.
+        encoded=$(printf '%s' "$name" | sed 's#/#%2f#')
+        status=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${encoded}/${{ inputs.version }}")
+        if [ "$status" = "200" ]; then
+          echo "::notice::${name}@${{ inputs.version }} already published; skipping"
+          exit 0
+        fi
+        dry=""
+        if [ "${{ inputs.dry-run }}" = "true" ]; then dry="--dry-run"; fi
+        echo ">> publishing ${name}@${{ inputs.version }}"
+        bun publish --access public ${{ inputs.tag-flag }} $dry

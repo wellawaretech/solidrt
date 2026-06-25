@@ -205,6 +205,8 @@ jobs:
     timeout-minutes: 30
     needs: [build-linux, build-darwin, build-windows, build-android]
     environment: release
+    env:
+      NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -319,61 +321,81 @@ jobs:
           chmod +x packages/darwin-arm64/fluxrt
 
       - name: Publish @solidrt/core
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/core
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/core
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/darwin-arm64
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/darwin-arm64
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/darwin-arm64
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/linux-x64-gnu
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/linux-x64-gnu
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/linux-x64-gnu
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/win32-x64-msvc
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/win32-x64-msvc
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/win32-x64-msvc
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/android-arm64-v8a
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/android-arm64-v8a
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/android-arm64-v8a
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/android-armeabi-v7a
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/android-armeabi-v7a
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/android-armeabi-v7a
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/flux-types
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/flux-types
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/flux-types
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/components
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/components
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/components
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish @solidrt/cli
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/cli
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/cli
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
 
       - name: Publish create-solidrt
-        run: bun publish --access public ${{ steps.flags.outputs.tag_flag }} ${{ inputs.dry_run && '--dry-run' || '' }}
-        working-directory: packages/create-solidrt
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        uses: ./.github/actions/publish-if-new
+        with:
+          working-directory: packages/create-solidrt
+          version: ${{ steps.flags.outputs.version }}
+          tag-flag: ${{ steps.flags.outputs.tag_flag }}
+          dry-run: ${{ inputs.dry_run }}
