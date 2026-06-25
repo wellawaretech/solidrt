@@ -54,6 +54,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:net");
   loader.add_module("flux:net", modules::net::NetModule);
 
+  resolver.add_module("flux:mdns");
+  loader.add_module("flux:mdns", modules::mdns::MdnsModule);
+
   resolver.add_module("flux:process");
   loader.add_module("flux:process", modules::process::ProcessModule);
 

@@ -40,6 +40,8 @@ pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
   loader.add_module("flux:p2p", modules::p2p::P2pModule);
   resolver.add_module("flux:net");
   loader.add_module("flux:net", modules::net::NetModule);
+  resolver.add_module("flux:mdns");
+  loader.add_module("flux:mdns", modules::mdns::MdnsModule);
   resolver.add_module("flux:process");
   loader.add_module("flux:process", modules::process::ProcessModule);
   resolver.add_module("flux:path");

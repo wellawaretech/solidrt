@@ -6,6 +6,7 @@
 /// <reference path="./modules/subprocess.d.ts" />
 /// <reference path="./modules/p2p.d.ts" />
 /// <reference path="./modules/net.d.ts" />
+/// <reference path="./modules/mdns.d.ts" />
 
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
 // ships no lib.dom / @types/bun: these declarations are the sole source for

@@ -1385,6 +1385,7 @@ dependencies = [
  "bytes",
  "fastwebsockets",
  "futures-core",
+ "hickory-proto",
  "http-body-util",
  "hyper",
  "hyper-util",

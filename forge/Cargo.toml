@@ -30,6 +30,9 @@ which = "7"
 # that tokio's UdpSocket::bind doesn't expose: bind via socket2, then adopt with
 # UdpSocket::from_std. Already in the tree (tokio depends on it).
 socket2 = "0.6"
+# DNS message codec for flux:mdns (mDNS / DNS-SD). Already in the tree (iroh deps),
+# so this adds zero new crates; default features (std only) cover build + parse.
+hickory-proto = "0.26"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
 # flux:net interfaces() — the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).

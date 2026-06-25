@@ -2,6 +2,7 @@ pub mod dir;
 pub mod events;
 pub mod file;
 pub mod fs;
+pub mod mdns;
 pub mod net;
 pub mod p2p;
 pub mod path;
