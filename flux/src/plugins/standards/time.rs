@@ -1,6 +1,6 @@
 use rquickjs::{
-  function::{MutFn, This},
-  Ctx, Function, JsLifetime, Object,
+  function::{MutFn, Opt, This},
+  Ctx, Function, JsLifetime, Object, Value,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -44,18 +44,15 @@ impl Timers {
     self.pending.release();
   }
 
-  fn cancel<'js>(&self, ctx: &Ctx<'js>, id: u32) -> rquickjs::Result<()> {
-    let tx = self.active.borrow_mut().remove(&id);
-    match tx {
-      Some(tx) => {
-        let _ = tx.send(());
-        self.pending.release();
-        Ok(())
-      }
-      None => {
-        Err(ctx.throw(rquickjs::String::from_str(ctx.clone(), &format!("invalid timer id: {id}")).unwrap().into()))
-      }
+  fn cancel(&self, id: u32) {
+    if let Some(tx) = self.active.borrow_mut().remove(&id) {
+      let _ = tx.send(());
+      self.pending.release();
     }
+    // Unknown or already-fired id: a no-op, matching Node and the browser, where
+    // clearing a timer that never existed (or has already run) does nothing. The
+    // pending op is released on whichever of fire/cancel happens first, so there
+    // is nothing to release here.
   }
 
   fn set_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
@@ -126,6 +123,22 @@ fn schedule_microtask<'js>(cb: Function<'js>) -> rquickjs::Result<()> {
   Ok(())
 }
 
+// Extract a timer id from clearTimeout/clearInterval's argument. Node and the
+// browser ignore anything that isn't a live id - a missing argument, undefined,
+// null, a non-number, or a number that was never handed out - so any value we
+// can't read as a positive integer yields None and the caller does nothing.
+// Typing the argument as a raw Value (rather than u32) is what keeps an undefined
+// argument from blowing up in numeric conversion before we ever get to decide.
+fn timer_id(arg: Opt<Value<'_>>) -> Option<u32> {
+  let v = arg.0?;
+  let n = v.as_int().map(|i| i as f64).or_else(|| v.as_float())?;
+  if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
+    Some(n as u32)
+  } else {
+    None
+  }
+}
+
 fn init_timers(ctx: &Ctx<'_>) {
   let timers = Timers::new(ctx);
   let globals = ctx.globals();
@@ -146,7 +159,11 @@ fn init_timers(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from({
       let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id)
+      move |id: Opt<Value<'_>>| {
+        if let Some(id) = timer_id(id) {
+          timers.cancel(id);
+        }
+      }
     }),
   )
   .unwrap();
@@ -163,8 +180,15 @@ fn init_timers(ctx: &Ctx<'_>) {
   )
   .unwrap();
 
-  let clear_interval =
-    Function::new(ctx.clone(), MutFn::from(move |ctx: Ctx<'_>, id: u32| timers.cancel(&ctx, id))).unwrap();
+  let clear_interval = Function::new(
+    ctx.clone(),
+    MutFn::from(move |id: Opt<Value<'_>>| {
+      if let Some(id) = timer_id(id) {
+        timers.cancel(id);
+      }
+    }),
+  )
+  .unwrap();
 
   let queue_microtask = Function::new(ctx.clone(), MutFn::from(|cb: Function<'_>| schedule_microtask(cb))).unwrap();
 

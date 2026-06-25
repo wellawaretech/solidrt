@@ -6,35 +6,68 @@ use common::{run_source, LogSink};
 use flux::{Clock, FluxEngine};
 
 #[tokio::test]
-async fn clear_timeout_on_unknown_id_throws() {
-  let out = run_source("clearTimeout(999)").await;
-  assert!(out.has_error(), "expected error for unknown id");
+async fn clear_timeout_on_unknown_id_is_noop() {
+  // Node and the browser silently ignore an unknown id; flux matches that rather
+  // than throwing (an "invalid timer id" throw used to break debounce patterns).
+  let out = run_source("clearTimeout(999); console.log('ok')").await;
+  assert!(!out.has_error(), "unknown id should be a no-op, not an error");
+  assert_eq!(out.log(), "ok");
+}
+
+#[tokio::test]
+async fn clear_timeout_on_undefined_is_noop() {
+  // The classic `let t; ...; clearTimeout(t)` debounce reset: clearing before a
+  // timer is ever set passes undefined. Must no-op, not fail numeric conversion.
+  let out = run_source("clearTimeout(undefined); clearTimeout(); console.log('ok')").await;
+  assert!(!out.has_error(), "undefined / missing id should be a no-op");
+  assert_eq!(out.log(), "ok");
+}
+
+#[tokio::test]
+async fn clear_timeout_twice_is_noop() {
+  let out = run_source(
+    r#"
+            let id = setTimeout(() => {}, 100000);
+            clearTimeout(id);
+            clearTimeout(id);
+            console.log('ok');
+            "#,
+  )
+  .await;
+  assert!(!out.has_error(), "double clear should be a no-op");
+  assert_eq!(out.log(), "ok");
+}
+
+#[tokio::test]
+async fn clear_timeout_after_fired_is_noop() {
+  // Re-clearing a stale handle after the timer has fired is exactly the debounce
+  // case from the LAN-map app; it must not throw.
+  let out = run_source(
+    r#"
+            let id = setTimeout(() => {
+                clearTimeout(id);
+                console.log('ok');
+            }, 10);
+            "#,
+  )
+  .await;
+  assert!(!out.has_error(), "clearing a fired timer should be a no-op");
+  assert_eq!(out.log(), "ok");
 }
 
 #[tokio::test]
 async fn clear_timeout_on_not_yet_fired_cancels() {
   let out = run_source(
     r#"
-            let id = setTimeout(() => {}, 100000);
+            let fired = false;
+            let id = setTimeout(() => { fired = true; }, 20);
             clearTimeout(id);
-            console.log('cancelled');
+            setTimeout(() => console.log(fired ? 'fired' : 'cancelled'), 60);
             "#,
   )
   .await;
   assert!(!out.has_error(), "unexpected error");
   assert_eq!(out.log(), "cancelled");
-}
-
-#[tokio::test]
-async fn clear_timeout_on_unknown_id_caught() {
-  let out = run_source(
-    r#"
-            try { clearTimeout(999); console.log('no error') } catch (e) { console.log('caught: ' + e.message) }
-            "#,
-  )
-  .await;
-  let output = out.log();
-  assert!(output.starts_with("caught:"), "expected caught error, got: {output}");
 }
 
 #[tokio::test]
