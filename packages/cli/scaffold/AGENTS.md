@@ -48,11 +48,19 @@ Authoritative references ship inside the installed packages - read them:
     deps are pinned betas - do not bump them casually.
 11. Use ASCII characters whenever possible in code and text - for example, no
     em-dashes (use a hyphen), no smart/curly quotes, no unicode symbols.
-12. Respect the safe area. safeArea() from @solidrt/core is a reactive accessor
+12. Mind the safe area. safeArea() from @solidrt/core is a reactive accessor
     returning { top, left, right, bottom } insets (like CSS
-    env(safe-area-inset-*)); keep content out from under the status bar / home
-    indicator by padding the top and bottom edges by safeArea().top /
-    safeArea().bottom (full-bleed backgrounds may extend underneath).
+    env(safe-area-inset-*)). It is fine to place content outside the safe-area
+    zone (e.g. full-bleed backgrounds), just be aware it may not be visible and
+    cannot be interacted with (touch gestures). Keep interactive or essential
+    content inside the safe area by padding the edges.
+13. Prefer let over const. Use const only for real constants - a single fixed
+    string or number value - and name those in ALL_CAPS.
+14. SolidJS/SolidRT is a reactive framework: strongly prefer reactive primitives
+    (signals, memos, effects, the control-flow components) over imperative code.
+    Derive state with createMemo, react with createEffect, render conditionally
+    with <Show>/<Switch> and lists with <For> - do not hand-roll imperative
+    updates, manual subscriptions, or DOM-style mutation.
 
 ## Run / verify
 
