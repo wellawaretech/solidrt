@@ -12,6 +12,7 @@ export type Theme = {
     border: string
     primary: string
     onPrimary: string
+    scrim: string
   }
   spacing: { sm: number; md: number }
   radius: { sm: number }
@@ -29,6 +30,7 @@ export let theme: Theme = {
     border: "rgba(0,0,0,0.2)",
     primary: "#1f6feb",
     onPrimary: "#ffffff",
+    scrim: "rgba(0,0,0,0.6)",
   },
   spacing: { sm: 4, md: 8 },
   radius: { sm: 4 },
