@@ -37,13 +37,12 @@ pub fn get_power_info() -> PowerInfo {
 pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {
   let mut rect = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
   unsafe { SDL_GetWindowSafeArea(window.raw(), &mut rect) };
-  let scale = window_display_scale(window);
-  SDL_Rect {
-    x: (rect.x as f32 / scale) as i32,
-    y: (rect.y as f32 / scale) as i32,
-    w: (rect.w as f32 / scale) as i32,
-    h: (rect.h as f32 / scale) as i32,
-  }
+  // SDL_GetWindowSafeArea reports in the window's logical coordinate space (the
+  // same units as SDL_GetWindowSize), so it is already in the logical pixels the
+  // layout uses. Do not divide by display_scale: on a fractional-scaled display
+  // that shrinks the safe area and inflates the derived insets (a no-op only at
+  // scale 1.0, which is why it long went unnoticed).
+  rect
 }
 
 pub fn window_display_scale(window: &sdl3::video::Window) -> f32 {

@@ -153,49 +153,47 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32));
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
-    SdlEvent::MouseMotion { which, x, y, .. } => {
-      let scale = sdl_utils::window_display_scale(window);
-      Some(AlloyEvent::PointerMove {
-        pointer_id: which as u64,
-        pointer_type: PointerType::Mouse,
-        x: x / scale,
-        y: y / scale,
-        modifiers: sdl_utils::mod_state().into(),
-      })
-    }
+    // SDL3 reports mouse coordinates in the window's logical coordinate space
+    // (the same units as SDL_GetWindowSize), which is what the layout/hit tree
+    // uses, so they are passed through unscaled. Dividing by display_scale would
+    // over-shrink the pointer on a fractional-scaled display (a no-op at 1.0).
+    SdlEvent::MouseMotion { which, x, y, .. } => Some(AlloyEvent::PointerMove {
+      pointer_id: which as u64,
+      pointer_type: PointerType::Mouse,
+      x,
+      y,
+      modifiers: sdl_utils::mod_state().into(),
+    }),
     SdlEvent::MouseButtonDown { which, mouse_btn, x, y, .. } => {
       let button = map_mouse_button(mouse_btn)?;
-      let scale = sdl_utils::window_display_scale(window);
       Some(AlloyEvent::PointerDown {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
         button,
-        x: x / scale,
-        y: y / scale,
+        x,
+        y,
         modifiers: sdl_utils::mod_state().into(),
       })
     }
     SdlEvent::MouseButtonUp { which, mouse_btn, x, y, .. } => {
       let button = map_mouse_button(mouse_btn)?;
-      let scale = sdl_utils::window_display_scale(window);
       Some(AlloyEvent::PointerUp {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
         button,
-        x: x / scale,
-        y: y / scale,
+        x,
+        y,
         modifiers: sdl_utils::mod_state().into(),
       })
     }
     SdlEvent::MouseWheel { which, x, y, direction, mouse_x, mouse_y, .. } => {
-      let scale = sdl_utils::window_display_scale(window);
       let flipped = matches!(direction, sdl3::mouse::MouseWheelDirection::Flipped);
       let sign = if flipped { 1.0 } else { -1.0 };
       Some(AlloyEvent::Wheel {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
-        x: mouse_x / scale,
-        y: mouse_y / scale,
+        x: mouse_x,
+        y: mouse_y,
         delta_x: sign * x * 100.0,
         delta_y: sign * y * 100.0,
         modifiers: sdl_utils::mod_state().into(),
