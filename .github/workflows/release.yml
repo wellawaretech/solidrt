@@ -23,6 +23,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Single source of truth for whether release builds ship the speech stack
+  # (Whisper + wake word). Set to '1' to re-enable. 32-bit Android (armeabi-v7a)
+  # is forced speech-free in lattice/Makefile regardless of this value.
+  SPEECH: '0'
+
 jobs:
   build-linux:
     # Build on the oldest supported runner so the binary's glibc baseline stays
@@ -42,33 +48,12 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - name: Install system dependencies
-        run: |
-          for i in 1 2 3; do
-            sudo apt-get update && sudo apt-get install -y \
-              libclang-dev clang \
-              build-essential git make pkg-config cmake ninja-build gnome-desktop-testing \
-              libwayland-dev libdecor-0-dev libpipewire-0.3-dev liburing-dev \
-              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
-              libxkbcommon-dev libdrm-dev libgbm-dev \
-              libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
-              libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev \
-              libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
-              && exit 0
-            echo "apt-get failed (attempt $i), retrying in 15s"; sleep 15
-          done
-          exit 1
+      - uses: ./.github/actions/linux-system-deps
 
-      - name: Install JS dependencies
-        run: |
-          for i in 1 2 3; do
-            bun install --frozen-lockfile && exit 0
-            echo "bun install failed (attempt $i), retrying in 10s"; sleep 10
-          done
-          exit 1
+      - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}" SPEECH=1
+        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -95,16 +80,10 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - name: Install JS dependencies
-        run: |
-          for i in 1 2 3; do
-            bun install --frozen-lockfile && exit 0
-            echo "bun install failed (attempt $i), retrying in 10s"; sleep 10
-          done
-          exit 1
+      - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}" SPEECH=1
+        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -144,38 +123,19 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - name: Install cargo-ndk
-        run: |
-          for i in 1 2 3; do
-            cargo install cargo-ndk --locked && exit 0
-            echo "cargo install cargo-ndk failed (attempt $i), retrying in 15s"; sleep 15
-          done
-          exit 1
+      - uses: ./.github/actions/cargo-install
+        with:
+          args: cargo-ndk --locked
 
-      - name: Install system dependencies
-        run: |
-          for i in 1 2 3; do
-            sudo apt-get update && sudo apt-get install -y \
-              libclang-dev clang \
-              build-essential git make pkg-config cmake ninja-build \
-              && exit 0
-            echo "apt-get failed (attempt $i), retrying in 15s"; sleep 15
-          done
-          exit 1
+      - uses: ./.github/actions/android-system-deps
 
-      - name: Install JS dependencies
-        run: |
-          for i in 1 2 3; do
-            bun install --frozen-lockfile && exit 0
-            echo "bun install failed (attempt $i), retrying in 10s"; sleep 10
-          done
-          exit 1
+      - uses: ./.github/actions/js-install
 
       - name: Build fat APK (arm64-v8a + x86_64)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}" SPEECH=1
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
 
-      # 32-bit (armeabi-v7a) ships speech-free: SPEECH defaults off for 32-bit
-      # ABIs (see lattice/Makefile), so this intentionally omits SPEECH=1.
+      # 32-bit (armeabi-v7a) ships speech-free unconditionally: SPEECH is forced
+      # off for 32-bit ABIs in lattice/Makefile, so this omits the flag.
       - name: Build 32-bit APK (armeabi-v7a)
         run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
 
@@ -211,16 +171,10 @@ jobs:
       - name: Add MSYS2 tools to PATH
         run: echo "C:/msys64/usr/bin" >> $GITHUB_PATH
 
-      - name: Install JS dependencies
-        run: |
-          for i in 1 2 3; do
-            bun install --frozen-lockfile && exit 0
-            echo "bun install failed (attempt $i), retrying in 10s"; sleep 10
-          done
-          exit 1
+      - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-windows VERSION="${GITHUB_REF_NAME#v}" SPEECH=1
+        run: make dist-windows VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -242,6 +196,12 @@ jobs:
     environment: release
     env:
       NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Single source of truth for which packages get version-bumped and published.
+      PUBLISH_DIRS: >-
+        packages/core packages/components packages/flux-types
+        packages/darwin-arm64 packages/linux-x64-gnu packages/win32-x64-msvc
+        packages/android-arm64-v8a packages/android-armeabi-v7a
+        packages/cli packages/create-solidrt
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -278,36 +238,26 @@ jobs:
       - name: Bump package versions
         run: |
           VERSION="${{ steps.flags.outputs.version }}"
-          PUBLISH_DIRS=(
-            packages/core
-            packages/components
-            packages/flux-types
-            packages/darwin-arm64
-            packages/linux-x64-gnu
-            packages/win32-x64-msvc
-            packages/android-arm64-v8a
-            packages/android-armeabi-v7a
-            packages/cli
-            packages/create-solidrt
-          )
           for dir in packages/*/; do
             dir="${dir%/}"
-            if [[ ! " ${PUBLISH_DIRS[*]} " =~ " ${dir} " ]]; then
+            if [[ ! " ${PUBLISH_DIRS} " =~ " ${dir} " ]]; then
               echo "::warning::Package directory '${dir}' is not in the publish list"
             fi
           done
-          for dir in "${PUBLISH_DIRS[@]}"; do
+          for dir in ${PUBLISH_DIRS}; do
             (cd "$dir" && npm pkg set version="$VERSION")
           done
 
       - name: Bump Rust crate versions
         if: ${{ !inputs.dry_run }}
+        uses: ./.github/actions/cargo-install
+        with:
+          args: cargo-edit --locked --no-default-features --features set-version
+
+      - name: Set Rust crate versions
+        if: ${{ !inputs.dry_run }}
         run: |
           VERSION="${{ steps.flags.outputs.version }}"
-          for i in 1 2 3; do
-            cargo install cargo-edit --locked --no-default-features --features set-version && break
-            echo "cargo install cargo-edit failed (attempt $i), retrying in 15s"; sleep 15
-          done
           for crate in flux alloy lattice; do
             (cd "$crate" && cargo set-version "$VERSION")
           done
@@ -316,127 +266,31 @@ jobs:
       # (not `bun update`) so only the bumped workspace packages change and
       # unrelated dependencies are not silently upgraded mid-release.
       - name: Refresh lockfile with bumped versions
-        run: bun install
+        uses: ./.github/actions/js-install
+        with:
+          frozen: 'false'
 
-      - name: Download Linux binaries
+      # Pull every build artifact into its package dir in one shot: each artifact
+      # is named after its package (linux-x64-gnu, darwin-arm64, ...) so it lands
+      # in packages/<name>/.
+      - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: linux-x64-gnu
-          path: packages/linux-x64-gnu
-
-      - name: Download Darwin binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: darwin-arm64
-          path: packages/darwin-arm64
-
-      - name: Download Windows binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: win32-x64-msvc
-          path: packages/win32-x64-msvc
-
-      - name: Download Android arm64-v8a APK
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: android-arm64-v8a
-          path: packages/android-arm64-v8a
-
-      - name: Download Android armeabi-v7a APK
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: android-armeabi-v7a
-          path: packages/android-armeabi-v7a
+          path: packages
 
       - name: Restore executable bit on binaries
         run: |
-          chmod +x packages/linux-x64-gnu/solidrt-go
-          chmod +x packages/linux-x64-gnu/solidrt
-          chmod +x packages/linux-x64-gnu/flux
-          chmod +x packages/linux-x64-gnu/fluxc
-          chmod +x packages/linux-x64-gnu/fluxrt
-          chmod +x packages/darwin-arm64/solidrt-go
-          chmod +x packages/darwin-arm64/solidrt
-          chmod +x packages/darwin-arm64/flux
-          chmod +x packages/darwin-arm64/fluxc
-          chmod +x packages/darwin-arm64/fluxrt
+          for d in linux-x64-gnu darwin-arm64; do
+            chmod +x packages/$d/solidrt-go packages/$d/solidrt \
+              packages/$d/flux packages/$d/fluxc packages/$d/fluxrt
+          done
 
-      - name: Publish @solidrt/core
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/core
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/darwin-arm64
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/darwin-arm64
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/linux-x64-gnu
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/linux-x64-gnu
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/win32-x64-msvc
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/win32-x64-msvc
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/android-arm64-v8a
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/android-arm64-v8a
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/android-armeabi-v7a
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/android-armeabi-v7a
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/flux-types
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/flux-types
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/components
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/components
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish @solidrt/cli
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/cli
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
-
-      - name: Publish create-solidrt
-        uses: ./.github/actions/publish-if-new
-        with:
-          working-directory: packages/create-solidrt
-          version: ${{ steps.flags.outputs.version }}
-          tag-flag: ${{ steps.flags.outputs.tag_flag }}
-          dry-run: ${{ inputs.dry_run }}
+      - name: Publish packages
+        env:
+          VERSION: ${{ steps.flags.outputs.version }}
+          TAG_FLAG: ${{ steps.flags.outputs.tag_flag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          for dir in ${PUBLISH_DIRS}; do
+            ./.github/scripts/publish-if-new.sh "$dir"
+          done

@@ -1,0 +1,18 @@
+name: cargo install (retrying)
+description: Run `cargo install` with retries so a transient crates.io failure does not fail the job.
+
+inputs:
+  args:
+    description: Arguments passed to `cargo install`, e.g. "cargo-ndk --locked".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for i in 1 2 3; do
+          cargo install ${{ inputs.args }} && exit 0
+          echo "cargo install failed (attempt $i), retrying in 15s"; sleep 15
+        done
+        exit 1

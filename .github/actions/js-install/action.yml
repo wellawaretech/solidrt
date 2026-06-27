@@ -1,0 +1,21 @@
+name: Install JS dependencies
+description: Run `bun install` with retries so a transient network failure does not fail the job.
+
+inputs:
+  frozen:
+    description: When "true", pass --frozen-lockfile (release builds pin the lockfile).
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        flags=""
+        if [ "${{ inputs.frozen }}" = "true" ]; then flags="--frozen-lockfile"; fi
+        for i in 1 2 3; do
+          bun install $flags && exit 0
+          echo "bun install failed (attempt $i), retrying in 10s"; sleep 10
+        done
+        exit 1

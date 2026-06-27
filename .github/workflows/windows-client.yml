@@ -22,8 +22,9 @@ jobs:
       - name: Install build tools
         run: choco install make unzip --yes --no-progress
 
-      - name: Install JS dependencies
-        run: bun install
+      - uses: ./.github/actions/js-install
+        with:
+          frozen: 'false'
 
       - name: Build client
         shell: bash
