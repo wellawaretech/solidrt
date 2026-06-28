@@ -11,8 +11,12 @@ pub mod gui;
 pub mod modules;
 pub mod standards;
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
+
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object};
+use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object, Value};
 
 use crate::engine::ShutdownHooks;
 use crate::logger::Logger;
@@ -22,6 +26,20 @@ pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
 pub(crate) type UserdataFn = Box<dyn for<'js> FnOnce(&Ctx<'js>) + Send>;
 pub(crate) type ModuleOverrideFn = Box<dyn FnOnce(&mut BuiltinResolver, &mut ModuleLoader) + Send>;
 
+/// Pending unhandled promise rejections, keyed by promise identity, awaiting the
+/// next microtask checkpoint. The value is the already-formatted message. See
+/// `set_host_promise_rejection_tracker` below and `engine::flush_rejections`.
+pub(crate) type RejectionLog = Arc<Mutex<HashMap<u64, String>>>;
+
+/// A stable identity for a JS value across tracker calls. `Value`'s `Hash` keys
+/// on tag plus pointer bits, so the same promise object hashes the same on its
+/// reject and its later handle; distinct objects effectively never collide.
+fn value_identity(value: &Value<'_>) -> u64 {
+  let mut hasher = std::collections::hash_map::DefaultHasher::new();
+  value.hash(&mut hasher);
+  hasher.finish()
+}
+
 pub(crate) async fn init_context(
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
@@ -29,11 +47,44 @@ pub(crate) async fn init_context(
   logger: Logger,
   stack_size: Option<usize>,
   shutdown_hooks: ShutdownHooks,
-) -> (AsyncRuntime, AsyncContext, PendingOps) {
+) -> (AsyncRuntime, AsyncContext, PendingOps, RejectionLog) {
   let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
 
   if let Some(limit) = stack_size {
     runtime.set_max_stack_size(limit).await;
+  }
+
+  // Global safety net for promises that reject with no handler attached. Without
+  // this QuickJS swallows them silently (unlike a browser, which logs, or Node,
+  // which crashes); only the entry-module promise is otherwise reported.
+  //
+  // The tracker cannot report on the spot: QuickJS fires is_handled=false the
+  // instant a promise rejects unhandled, then is_handled=true if a handler is
+  // attached afterwards (e.g. `Promise.reject(e).catch(f)` fires both). Logging
+  // immediately would cry wolf on every later-handled rejection. So we record
+  // pending rejections here and let the run loop report whatever is still
+  // unhandled once the job queue drains (engine::flush_rejections) -- the
+  // microtask-checkpoint semantics the HTML spec uses.
+  let rejections: RejectionLog = Arc::new(Mutex::new(HashMap::new()));
+  {
+    let rejections = rejections.clone();
+    runtime
+      .set_host_promise_rejection_tracker(Some(Box::new(
+        move |_ctx: Ctx<'_>, promise: Value<'_>, reason: Value<'_>, is_handled: bool| {
+          let key = value_identity(&promise);
+          let mut pending = rejections.lock().expect("rejection log poisoned");
+          if is_handled {
+            pending.remove(&key);
+          } else {
+            let message = match reason.as_exception() {
+              Some(exc) => format!("Uncaught (in promise) {exc}"),
+              None => format!("Uncaught (in promise) {reason:?}"),
+            };
+            pending.insert(key, message);
+          }
+        },
+      )))
+      .await;
   }
 
   let mut resolver = BuiltinResolver::default();
@@ -107,7 +158,7 @@ pub(crate) async fn init_context(
     })
     .await;
 
-  (runtime, context, pending)
+  (runtime, context, pending, rejections)
 }
 
 /// Feature names this build/runtime provides, surfaced as `Flux.capabilities`.

@@ -187,7 +187,7 @@ impl FluxEngine {
     let logger = self.logger.clone();
     let mut exec_rx = self.exec_rx;
 
-    let (runtime, context, pending) = plugins::init_context(
+    let (runtime, context, pending, rejections) = plugins::init_context(
       self.setups,
       self.userdata,
       self.module_overrides,
@@ -206,6 +206,9 @@ impl FluxEngine {
           }
           _ = pending.notified() => {}
           _ = runtime.idle() => {
+              // Job queue drained: this is the microtask checkpoint at which any
+              // still-unhandled rejection is genuinely unhandled. Report them.
+              flush_rejections(&rejections, &logger);
               if pending.is_idle() {
                   break;
               }
@@ -216,6 +219,17 @@ impl FluxEngine {
     }
 
     shutdown_hooks.run(&logger);
+  }
+}
+
+/// Report and clear the unhandled promise rejections recorded since the last
+/// checkpoint. The tracker (see `plugins::init_context`) cannot report on the
+/// spot because a rejection may be handled a microtask later; once the job queue
+/// drains, whatever remains here is genuinely unhandled.
+fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger) {
+  let mut pending = rejections.lock().expect("rejection log poisoned");
+  for (_key, message) in pending.drain() {
+    logger.error(&message);
   }
 }
 
