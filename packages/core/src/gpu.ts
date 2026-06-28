@@ -6,12 +6,13 @@
 import { getOwner, onCleanup } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
 
-// The imperative destroy, surfaced here for the manual-cleanup path documented
-// on the create* helpers (textures made outside a reactive scope, e.g. after an
-// await, are not auto-freed). Re-exported so callers that depend on
-// @solidrt/core -- like @solidrt/components -- can free textures without
-// importing flux directly.
-export { destroyTexture } from "flux:gpu"
+// Imperative companions to the reactive create* helpers, re-exported so callers
+// that depend on @solidrt/core -- like @solidrt/components -- need not import flux
+// directly: destroyTexture for the manual-cleanup path (textures made outside a
+// reactive scope, e.g. after an await, are not auto-freed), setShaderParams to
+// drive a shader's uniforms over time, and uploadTexture to push new pixels into
+// a mutable texture.
+export { destroyTexture, setShaderParams, uploadTexture } from "flux:gpu"
 
 /**
  * Uploads raw RGBA8 pixels to an immutable GPU texture and returns its id (use

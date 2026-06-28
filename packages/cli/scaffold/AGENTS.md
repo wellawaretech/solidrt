@@ -7,7 +7,7 @@ before writing or editing code here.
 Authoritative references ship inside the installed packages - read them:
 - node_modules/solid-js/CHEATSHEET.md     - SolidJS 2.0 reactivity/control-flow model
 - node_modules/@solidrt/core/AGENTS.md   - element/prop/reactivity model
-- node_modules/@solidrt/core/examples/   - single-concept usage patterns to copy
+- node_modules/@solidrt/core/examples/   - single-concept usage patterns to copy (see its README.md index)
 - node_modules/@solidrt/cli/AGENTS.md    - running, bundling, headless verify
 - node_modules/@solidrt/core/src/types.d.ts and jsx-runtime.d.ts - source of truth
 
