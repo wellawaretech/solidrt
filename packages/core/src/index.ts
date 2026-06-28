@@ -52,6 +52,7 @@ export {
   mapArray,
   repeat,
   untrack,
+  flush,
   onCleanup,
   onSettled,
 } from "@solidjs/signals"

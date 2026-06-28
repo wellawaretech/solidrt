@@ -5,29 +5,25 @@ runtime. No DOM, no HTML, no CSS cascade. If you are an AI assistant, read this
 before writing or editing code here.
 
 Authoritative references ship inside the installed packages - read them:
+- node_modules/solid-js/CHEATSHEET.md     - SolidJS 2.0 reactivity/control-flow model
 - node_modules/@solidrt/core/AGENTS.md   - element/prop/reactivity model
+- node_modules/@solidrt/core/examples/   - single-concept usage patterns to copy
 - node_modules/@solidrt/cli/AGENTS.md    - running, bundling, headless verify
 - node_modules/@solidrt/core/src/types.d.ts and jsx-runtime.d.ts - source of truth
 
 <!-- Claude Code auto-imports these; other tools read the paths above. -->
+@./node_modules/solid-js/CHEATSHEET.md
 @./node_modules/@solidrt/core/AGENTS.md
 @./node_modules/@solidrt/cli/AGENTS.md
 
 ## The things assistants get wrong (this is not React/DOM)
 
-1. SolidJS 2.0, not React (and not Solid 1.x). Import the whole authoring
-   surface from @solidrt/core - it re-exports the substrate so you do not have to
-   know which package a symbol lives in: render plus the window/paint/event APIs,
-   the reactive primitives (createSignal, createMemo, createEffect, createStore,
-   reconcile, mapArray, untrack, onCleanup), and the control-flow components (For,
-   Show, Switch/Match, Repeat, Loading, Errored). No hooks, no virtual DOM, the
-   component body runs once. Render lists with <For each={...}>{item => ...}</For>,
-   never array.map. createEffect has the 2.0 two-function shape - a TRACKED
-   compute that reads signals and returns a value, then an UNTRACKED effect that
-   receives it:
-     createEffect(() => count(), (c) => console.log(c))
-   The Solid 1.x single-callback form, createEffect(() => console.log(count())),
-   does NOT track in 2.0.
+1. This is SolidJS 2.0 (see CHEATSHEET.md for the reactivity/control-flow
+   model), rendering through a custom Rust runtime instead of the DOM. Import
+   the whole authoring surface from @solidrt/core - it re-exports the
+   substrate so you do not have to know which package a symbol lives in:
+   render plus the window/paint/event APIs alongside the standard reactive
+   primitives and control-flow components.
 2. Host elements are lowercase intrinsics: window, view, text, rect, oval, path,
    texture, audio (+ d- variants). No div/span/img/button.
 3. render(() => <App/>) once, top level. The root MUST be <window> or it throws.
@@ -56,11 +52,6 @@ Authoritative references ship inside the installed packages - read them:
     content inside the safe area by padding the edges.
 13. Prefer let over const. Use const only for real constants - a single fixed
     string or number value - and name those in ALL_CAPS.
-14. SolidJS/SolidRT is a reactive framework: strongly prefer reactive primitives
-    (signals, memos, effects, the control-flow components) over imperative code.
-    Derive state with createMemo, react with createEffect, render conditionally
-    with <Show>/<Switch> and lists with <For> - do not hand-roll imperative
-    updates, manual subscriptions, or DOM-style mutation.
 
 ## Run / verify
 

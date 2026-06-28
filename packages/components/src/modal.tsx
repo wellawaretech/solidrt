@@ -53,6 +53,6 @@ export function Modal(props: ModalProps) {
         <d-rect color={props.backdropColor ?? theme.color.scrim} />
       </view>
       {props.children}
-    </view> as any,
+    </view>
   )
 }
