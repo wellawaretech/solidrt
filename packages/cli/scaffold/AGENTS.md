@@ -37,20 +37,26 @@ Authoritative references ship inside the installed packages - read them:
    work). A detached node cannot have attached (regular, Taffy-laid-out)
    children - everything under a d-element must itself be detached. Nesting a
    plain <view>/<text> inside a d-element is an error.
-8. Per-frame work: onFrame((tick, frame) => {}), or the standard
-   requestAnimationFrame(t => {}) for animations. Also onResize, onLayout.
-9. Device/GPU via subpath imports: @solidrt/core/camera, /microphone, /gpu.
-10. tsconfig needs jsx:"preserve" + jsxImportSource:"@solidrt/core". Solid peer
+8. Per-frame animation: onFrame((tick, frame) => {}) is the native hook
+   (runtime-paced, auto-cleans). requestAnimationFrame(t => {}) exists as a
+   web-standard one-shot but is not the preferred animation driver.
+9. Reactive window state: prefer the accessors windowSize(), safeArea(),
+   displayScale(), windowFocused(), keyboardHeight() from @solidrt/core over the
+   onResize / onLayout callbacks for reading layout and window state.
+10. Device/GPU via subpath imports: @solidrt/core/camera, /microphone, /gpu.
+    Images: createImage(src) from @solidrt/core (reactive load -> texture id);
+    raw decodeImage + createTexture (from /gpu) are the primitives underneath.
+11. tsconfig needs jsx:"preserve" + jsxImportSource:"@solidrt/core". Solid peer
     deps are pinned betas - do not bump them casually.
-11. Use ASCII characters whenever possible in code and text - for example, no
+12. Use ASCII characters whenever possible in code and text - for example, no
     em-dashes (use a hyphen), no smart/curly quotes, no unicode symbols.
-12. Mind the safe area. safeArea() from @solidrt/core is a reactive accessor
+13. Mind the safe area. safeArea() from @solidrt/core is a reactive accessor
     returning { top, left, right, bottom } insets (like CSS
     env(safe-area-inset-*)). It is fine to place content outside the safe-area
     zone (e.g. full-bleed backgrounds), just be aware it may not be visible and
     cannot be interacted with (touch gestures). Keep interactive or essential
     content inside the safe area by padding the edges.
-13. Prefer let over const. Use const only for real constants - a single fixed
+14. Prefer let over const. Use const only for real constants - a single fixed
     string or number value - and name those in ALL_CAPS.
 
 ## Run / verify
