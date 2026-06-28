@@ -3,7 +3,7 @@
 // top that fetches/decodes/uploads for you and swaps the texture when the source
 // changes - the same relationship createTexture/createShader have to flux:gpu.
 
-import { createEffect, createSignal, onCleanup } from "@solidjs/signals"
+import { createMemo, onCleanup, NotReadyError } from "@solidjs/signals"
 import { createTexture, destroyTexture } from "./gpu"
 
 export type DecodedImage = {
@@ -24,56 +24,42 @@ export function decodeImage(bytes: Uint8Array): DecodedImage {
 
 export type ImageSource = string | Uint8Array
 
-export type LoadedImage = {
-  id: number
-  width: number
-  height: number
-}
-
 /**
- * Loads an image and returns a reactive accessor for it (undefined until ready):
- * the GPU texture `id` plus the decoded `width`/`height`, so you can size the
- * `<texture>` to its natural dimensions. A string source is fetched; a
- * Uint8Array is decoded directly. Pass an accessor instead of a value to make
- * the source reactive - the image reloads and the old texture is freed whenever
- * it changes. The current texture is also freed when the reactive owner is
- * disposed. Display the result with
- * `<texture src={img().id} width={img().width} height={img().height} />`.
+ * Loads an image as an async computation and returns a reactive accessor for its
+ * GPU texture id. This is a SolidJS 2.0 async value: reading it suspends until
+ * the image is ready, so read it inside a `<Loading>` boundary (a load failure
+ * surfaces to `<Errored>`). A string source is fetched; a Uint8Array is decoded
+ * directly. Pass an accessor instead of a value to make the source reactive -
+ * the image reloads and the old texture is freed whenever it changes; the
+ * current texture is freed when the owner is disposed. Display it with
+ * `<texture src={id()} />`; the texture carries its own pixel size, so no
+ * width/height is needed unless you want to scale it.
  */
-export function createImage(src: ImageSource | (() => ImageSource)): () => LoadedImage | undefined {
+export function createImage(src: ImageSource | (() => ImageSource)): () => number {
   let getSrc = typeof src === "function" ? src : () => src
-  let [loaded, setLoaded] = createSignal<LoadedImage>()
+  let generation = 0
 
-  createEffect(getSrc, (source) => {
-    let stale = false
-    ;(async () => {
-      try {
-        let bytes: Uint8Array
-        if (typeof source === "string") {
-          let res = await fetch(source)
-          bytes = await res.bytes()
-        } else {
-          bytes = source
-        }
-        if (stale) return
-        let { data, width, height } = decodeImage(bytes)
-        let id = createTexture(data, width, height)
-        let old = loaded()
-        setLoaded({ id, width, height })
-        if (old !== undefined) destroyTexture(old.id)
-      } catch (err) {
-        if (!stale) console.error("createImage: failed to load", source, err)
-      }
-    })()
-    return () => {
-      stale = true
-    }
+  return createMemo<number>(async () => {
+    let source = getSrc()
+    let mine = ++generation
+
+    // Register cleanup synchronously, before the await: an onCleanup added after
+    // an await is orphaned because the reactive owner is not restored across it.
+    // The holder is filled in once the texture exists.
+    let holder = { id: -1 }
+    onCleanup(() => {
+      if (holder.id >= 0) destroyTexture(holder.id)
+    })
+
+    let bytes = typeof source === "string" ? await (await fetch(source)).bytes() : source
+
+    // If the source changed while we were loading, this run is superseded. Skip
+    // the GPU upload and stay pending: a texture created here would leak, since
+    // superseded async runs are not otherwise cleaned up. The newer run wins.
+    if (mine !== generation) throw new NotReadyError()
+
+    let { data, width, height } = decodeImage(bytes)
+    holder.id = createTexture(data, width, height)
+    return holder.id
   })
-
-  onCleanup(() => {
-    let cur = loaded()
-    if (cur !== undefined) destroyTexture(cur.id)
-  })
-
-  return loaded
 }

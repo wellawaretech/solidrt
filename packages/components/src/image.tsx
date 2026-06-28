@@ -1,4 +1,4 @@
-import { createImage } from "@solidrt/core"
+import { createImage, Loading } from "@solidrt/core"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -11,10 +11,10 @@ export interface ImageProps extends PointerProps {
 //TODO onLoad, onError
 export function Image(props: ImageProps) {
   // createImage fetches/decodes/uploads, swaps the texture when src changes, and
-  // frees it on cleanup. Pass an accessor so a reactive src reloads.
-  let res = createImage(() => props.src)
-
-  let src = () => res()?.id
+  // frees it on cleanup, returning the texture id. Pass an accessor so a reactive
+  // src reloads. Reading src() suspends until ready (a SolidJS 2.0 async value),
+  // so the <texture> below sits in a <Loading> boundary.
+  let src = createImage(() => props.src)
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0
 
   // A texture sizes from its own width/height (not the box around it), so the
@@ -48,7 +48,9 @@ export function Image(props: ImageProps) {
       {props.style?.backgroundColor != null ? (
         <d-rect color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
       ) : null}
-      <texture src={src()} width={texW()} height={texH()} />
+      <Loading fallback={null}>
+        <texture src={src()} width={texW()} height={texH()} />
+      </Loading>
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"

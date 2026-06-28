@@ -1,21 +1,25 @@
-// createImage loads an image and returns a reactive accessor for it (undefined
-// until ready): the GPU texture id plus the decoded width/height. It handles
-// fetch, decode, GPU upload, and cleanup for you. A string source is fetched; a
-// Uint8Array is decoded directly. Show it with <texture> once it exists, sized
-// to the image's natural dimensions.
+// createImage loads an image as a SolidJS 2.0 async value and returns an accessor
+// for its GPU texture id. It handles fetch, decode, GPU upload, and cleanup for
+// you. A string source is fetched; a Uint8Array is decoded directly. The texture
+// carries its own pixel size, so <texture> needs no width/height to show it at
+// natural size - pass them only to scale it.
 //
-// Pass an accessor (createImage(() => src())) instead of a value to make the
-// source reactive - the image reloads and the old texture is freed on change.
+// Reading img() suspends until ready, so read it inside a <Loading> boundary
+// (this is the 2.0 async mechanic, not a manual undefined-signal + <Show>); a
+// load failure surfaces to <Errored>. Pass an accessor (createImage(() => src()))
+// to make the source reactive - the image reloads and the old texture is freed.
 // For manual control, decodeImage + createTexture (from @solidrt/core/gpu) are
 // the primitives underneath.
-import { render, createImage, Show } from "@solidrt/core"
+import { render, createImage, Loading } from "@solidrt/core"
 
 function App() {
   let img = createImage("https://picsum.photos/seed/solidrt/400/300")
 
   return (
     <window alignItems="center" justifyContent="center">
-      <Show when={img()}>{m => <texture src={m().id} width={m().width} height={m().height} />}</Show>
+      <Loading fallback={<text color="#888">loading...</text>}>
+        <texture src={img()} />
+      </Loading>
     </window>
   )
 }
