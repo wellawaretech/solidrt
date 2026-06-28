@@ -1,29 +1,21 @@
-// Displaying an image is a three-step primitive pipeline: get the encoded bytes
-// (here via fetch; flux:fs or a bundled asset work too), decodeImage them to raw
-// RGBA8 pixels, then createTexture to upload to the GPU and show the returned id
-// with <texture>. (@solidrt/components wraps this as <Image>; this is what it
-// does underneath.)
+// createImage loads an image and returns a reactive accessor for it (undefined
+// until ready): the GPU texture id plus the decoded width/height. It handles
+// fetch, decode, GPU upload, and cleanup for you. A string source is fetched; a
+// Uint8Array is decoded directly. Show it with <texture> once it exists, sized
+// to the image's natural dimensions.
 //
-// Loading is async, so hold the texture id in a signal and render once it exists.
-// Note: createTexture auto-frees only when called inside a reactive scope; here it
-// runs after an await (no owner), so this texture lives for the app lifetime. For
-// images you swap out, destroyTexture (from @solidrt/core/gpu) the old id.
-import { render, decodeImage, createSignal, Show } from "@solidrt/core"
-import { createTexture } from "@solidrt/core/gpu"
+// Pass an accessor (createImage(() => src())) instead of a value to make the
+// source reactive - the image reloads and the old texture is freed on change.
+// For manual control, decodeImage + createTexture (from @solidrt/core/gpu) are
+// the primitives underneath.
+import { render, createImage, Show } from "@solidrt/core"
 
 function App() {
-  let [id, setId] = createSignal<number>()
-
-  async function load() {
-    let res = await fetch("https://picsum.photos/seed/solidrt/400/300")
-    let { data, width, height } = decodeImage(new Uint8Array(await res.arrayBuffer()))
-    setId(createTexture(data, width, height))
-  }
-  load()
+  let img = createImage("https://picsum.photos/seed/solidrt/400/300")
 
   return (
     <window alignItems="center" justifyContent="center">
-      <Show when={id()}>{texId => <texture src={texId()} width={400} height={300} />}</Show>
+      <Show when={img()}>{m => <texture src={m().id} width={m().width} height={m().height} />}</Show>
     </window>
   )
 }

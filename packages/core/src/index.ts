@@ -6,8 +6,8 @@ export type { Gradient, GradientStop } from "./color"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 export { createTexture } from "./gpu"
-export { decodeImage } from "./image"
-export type { DecodedImage } from "./image"
+export { createImage, decodeImage } from "./image"
+export type { DecodedImage, ImageSource } from "./image"
 export type {
   LayoutProps,
   TransformProps,

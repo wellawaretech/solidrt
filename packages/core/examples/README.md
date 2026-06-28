@@ -23,5 +23,5 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `portal.tsx` - `createPortal` relocating content to the window root to escape clipping.
 
 ## Images and GPU
-- `image.tsx` - load, `decodeImage`, `createTexture`, and display an image with `<texture>`.
+- `image.tsx` - `createImage` to load (fetch + decode + upload) and display an image with `<texture>`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated via `setShaderParams`.
