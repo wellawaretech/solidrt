@@ -7,11 +7,11 @@
     "bundle": "srt bundle src/index.tsx"
   },
   "dependencies": {
-    "@solidrt/core": "latest"
+    "@solidrt/core": "0.0.0"
   },
   "devDependencies": {
-    "@solidrt/cli": "latest",
-    "@solidrt/flux-types": "latest",
+    "@solidrt/cli": "0.0.0",
+    "@solidrt/flux-types": "0.0.0",
     "typescript": "^6"
   }
 }

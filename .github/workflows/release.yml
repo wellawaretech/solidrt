@@ -296,6 +296,13 @@ jobs:
       # touching bun.lock, so external dependencies stay pinned (no re-resolution,
       # no supply-chain drift). Runs after `bun install` above, so `workspace:*`
       # still resolves locally during install.
+      #
+      # The cli scaffold/package.json is the template copied into a freshly
+      # created app; it ships inside the @solidrt/cli tarball and carries the
+      # 0.0.0 placeholder in source. Pin it here too so a scaffolded project
+      # installs the exact @solidrt/* version the CLI was published with (and so
+      # prereleases, which do not get the `latest` dist-tag, scaffold a matching
+      # version).
       - name: Pin intra-monorepo dependency versions
         env:
           VERSION: ${{ steps.flags.outputs.version }}
@@ -303,9 +310,9 @@ jobs:
           node -e '
             const fs = require("fs");
             const VERSION = process.env.VERSION;
-            const dirs = process.env.PUBLISH_DIRS.trim().split(/\s+/);
-            for (const dir of dirs) {
-              const file = dir + "/package.json";
+            const files = process.env.PUBLISH_DIRS.trim().split(/\s+/).map(d => d + "/package.json");
+            files.push("packages/cli/scaffold/package.json");
+            for (const file of files) {
               const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
               for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
                 const deps = pkg[field];
