@@ -15,6 +15,7 @@
   ],
   "dependencies": {
     "@babel/core": "^8.0.1",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
     "@babel/preset-typescript": "^8.0.1",
     "babel-preset-solid": "2.0.0-beta.15",
     "bonjour-service": "^1.4.0",

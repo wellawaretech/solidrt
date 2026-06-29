@@ -1,4 +1,5 @@
 import { transformAsync } from "@babel/core"
+import jsx from "@babel/plugin-syntax-jsx"
 import ts from "@babel/preset-typescript"
 import solid from "babel-preset-solid"
 import { type BunPlugin } from "bun"
@@ -17,6 +18,7 @@ function solidPlugin(): BunPlugin {
         let transforms = await transformAsync(code, {
           filename: args.path,
           presets: [[solid, { moduleName: "@solidrt/core", generate: "universal" }], [ts]],
+          plugins: [jsx],
         })
         return { contents: transforms?.code ?? "", loader: "js" }
       })
