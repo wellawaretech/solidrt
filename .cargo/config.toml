@@ -1,8 +1,3 @@
-[build]
-# Build at low CPU + idle I/O priority (see nice-rustc.sh) so it yields to the
-# desktop. Applies to any cargo/make invocation in the workspace, any cwd.
-rustc-wrapper = "./.cargo/nice-rustc.sh"
-
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
 
