@@ -81,3 +81,98 @@ export type {
   VoidComponent,
   ComponentProps,
 } from "solid-js"
+
+// --- Removed in Solid 2.0 (deprecation stubs) -------------------------------
+// These symbols no longer exist in Solid 2.0. They are re-exported as `never`
+// so that imports keep resolving and the IDE surfaces a strikethrough plus the
+// migration hint instead of an opaque "not exported" error. See CHEATSHEET.md
+// "Removed (with replacements)".
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `<For keyed={false}>` - `item` becomes
+ * an accessor and `i` a plain number. See CHEATSHEET.md "Removed".
+ */
+export const Index: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Default microtask batching applies; call
+ * `flush()` to apply pending writes synchronously.
+ */
+export const batch: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `createMemo`, a split `createEffect`, or
+ * the function-form `createSignal`.
+ */
+export const createComputed: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use async computations with `<Loading>`,
+ * e.g. `createMemo(() => fetchX(id()))`.
+ */
+export const createResource: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use built-in transitions: `isPending`,
+ * `<Loading>`, or the optimistic APIs.
+ */
+export const startTransition: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use built-in transitions: `isPending`,
+ * `<Loading>`, or the optimistic APIs.
+ */
+export const useTransition: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use split effects - the compute phase makes
+ * dependencies explicit.
+ */
+export const on: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `<Errored>` or the effect `error` option.
+ */
+export const onError: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `<Errored>` or the effect `error` option.
+ */
+export const catchError: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Store setters are draft-first by default.
+ */
+export const produce: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `createStore` with draft setters.
+ */
+export const createMutable: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `createStore` with draft setters.
+ */
+export const modifyMutable: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use async iterables in computations, or a
+ * `createEffect` to push values out.
+ */
+export const from: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use async iterables in computations, or a
+ * `createEffect` to push values out.
+ */
+export const observable: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Use `mapArray`, which handles non-keyed too.
+ */
+export const indexArray: never = undefined as never
+
+/**
+ * @deprecated Removed in Solid 2.0. Error boundaries heal automatically.
+ */
+export const resetErrorBoundaries: never = undefined as never
