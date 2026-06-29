@@ -8,13 +8,14 @@ import type {
   TextProps,
   TextureProps,
   AudioProps,
-  LayoutProps
+  LayoutProps,
+  Element as CoreElement,
+  ElementChildrenAttribute as CoreElementChildrenAttribute
 } from "./src/types"
-import type { JSX as SolidJSX } from "@solidjs/signals"
 
 export namespace JSX {
-  type Element = SolidJSX.Element
-  type ElementChildrenAttribute = SolidJSX.ElementChildrenAttribute
+  type Element = CoreElement
+  type ElementChildrenAttribute = CoreElementChildrenAttribute
 
   // Return type is unconstrained: a ref callback's return value is ignored, so
   // an arrow like `ref={n => (this.node = n)}` (which returns the assignment)

@@ -56,7 +56,7 @@ export function createImage(src: ImageSource | (() => ImageSource)): () => numbe
     // If the source changed while we were loading, this run is superseded. Skip
     // the GPU upload and stay pending: a texture created here would leak, since
     // superseded async runs are not otherwise cleaned up. The newer run wins.
-    if (mine !== generation) throw new NotReadyError()
+    if (mine !== generation) throw new NotReadyError(source)
 
     let { data, width, height } = decodeImage(bytes)
     holder.id = createTexture(data, width, height)

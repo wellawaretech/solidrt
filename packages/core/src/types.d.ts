@@ -1,34 +1,12 @@
 /// <reference types="@solidrt/flux-types" />
+/// <reference path="./runtime-modules.d.ts" />
 
-import type { JSX as SolidJSX } from "@solidjs/signals"
 import type { Gradient } from "./color"
+import type { Element } from "solid-js"
 
-// UI event bus (lattice), provided by the runtime as a builtin module.
-// on/once return an unsubscribe function.
-declare module "srt:events" {
-  export function on(event: string, callback: (data: any) => void): () => void
-  export function once(event: string, callback: (data: any) => void): () => void
-}
-
-// Dev-server control surface (lattice). Present only in dev/go builds; in other
-// builds `available` is false and the functions are no-ops.
-declare module "srt:dev" {
-  export const available: boolean
-  export const canDiscover: boolean
-  export const recents: string[]
-  export function connect(address: string): void
-  export function discover(): void
-  export function stop(): void
-}
-
-// Frame draw (lattice runner). renderFrame() synchronously renders the current
-// frame: layout, the postLayout hook, paint and hover refresh, then builds and
-// submits the display list. To schedule a future frame instead, use
-// requestFrame() from "flux:rendertree". The tree-building surface itself is
-// "flux:rendertree" (from @solidrt/flux-types).
-declare module "srt:render" {
-  export function renderFrame(): void
-}
+// The "srt:*" lattice runner modules are declared in ./runtime-modules.d.ts
+// (referenced above) - ambient `declare module` only reaches consumers from a
+// non-module declaration file, and this file is a module.
 
 declare global {
   let image: {
@@ -48,7 +26,16 @@ declare global {
   }
 }
 
-type Children = SolidJSX.Element
+// JSX value model. The element type is solid-js's (its control-flow components
+// like <For> return it, so JSX.Element must match). @solidjs/signals ships no
+// JSX namespace and solid-js defines no ElementChildrenAttribute, so we supply
+// that here - its single key tells TS which prop receives JSX children.
+export type { Element }
+export interface ElementChildrenAttribute {
+  children: {}
+}
+
+type Children = Element
 
 interface FlexboxProps {
   gap?: number

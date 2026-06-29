@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
     "jsx": "preserve",
     "jsxImportSource": "@solidrt/core",
     "moduleResolution": "bundler",
