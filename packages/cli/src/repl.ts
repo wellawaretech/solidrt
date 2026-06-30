@@ -2,7 +2,7 @@ import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
-import { buildReload, broadcast } from "./dev-server"
+import { buildReload, broadcast, showBuildFailure } from "./dev-server"
 import { bundle, codeFromOutputs } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
@@ -32,6 +32,7 @@ async function cmdReload(args: string) {
     let result = await bundle(state.source)
     if (!result) {
       printErr("[cli] Build failed, reload aborted")
+      showBuildFailure()
       return
     }
     state.currentCode = await codeFromOutputs(result.outputs)

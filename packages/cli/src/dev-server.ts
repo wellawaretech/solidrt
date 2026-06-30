@@ -22,6 +22,23 @@ export function broadcast(msg: object) {
   }
 }
 
+// Reload code that fails to start the engine on purpose. The runtime treats a
+// startup error like any app that never called render() and falls back to its
+// baked-in BSOD screen, so a build that doesn't compile shows the BSOD instead
+// of leaving the previous app frozen on screen.
+const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
+
+// Called when a bundle fails to compile. Latches the BSOD trigger as the
+// current code (so a client connecting after the failure gets it too) and
+// pushes it to every connected client.
+export function showBuildFailure() {
+  state.currentCode = BSOD_TRIGGER
+  let msg = buildReload({ code: BSOD_TRIGGER })
+  for (let ws of state.clients.keys()) {
+    ws.send(msg)
+  }
+}
+
 function headersToObject(h: Headers): Record<string, string> {
   let out: Record<string, string> = {}
   h.forEach((v, k) => {
@@ -51,6 +68,7 @@ async function handleProxy(req: Request): Promise<Response> {
       print("[cli] proxy %s %s [cache hit]", req.method, target)
       let respHeaders = new Headers(hit.headers)
       respHeaders.set("x-srt-cache", "hit")
+      // await new Promise(resolve => setTimeout(resolve, 1000))
       return new Response(hit.body, { status: hit.status, headers: respHeaders })
     }
   }

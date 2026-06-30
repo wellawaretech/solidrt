@@ -1,7 +1,7 @@
 import { watch } from "node:fs"
 import { resolve, dirname } from "path"
 import { state, print, printErr } from "./util"
-import { buildReload } from "./dev-server"
+import { buildReload, showBuildFailure } from "./dev-server"
 import { bundle, codeFromOutputs } from "./bundler"
 
 let currentWatcher: ReturnType<typeof watch> | null = null
@@ -28,6 +28,7 @@ export function startWatcher() {
     let result = await bundle(state.source)
     if (!result) {
       printErr("[cli] Build failed, waiting for changes...")
+      showBuildFailure()
       return
     }
     state.currentCode = await codeFromOutputs(result.outputs)
