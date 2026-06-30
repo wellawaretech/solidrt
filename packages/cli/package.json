@@ -14,9 +14,9 @@
     "AGENTS.md"
   ],
   "dependencies": {
-    "@babel/core": "^8.0.1",
-    "@babel/plugin-syntax-jsx": "^8.0.1",
-    "@babel/preset-typescript": "^8.0.1",
+    "@babel/core": "^7.0.0",
+    "@babel/plugin-syntax-jsx": "^7.0.0",
+    "@babel/preset-typescript": "^7.0.0",
     "babel-preset-solid": "2.0.0-beta.15",
     "bonjour-service": "^1.4.0",
     "qrcode-generator": "^2.0.4"
