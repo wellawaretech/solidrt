@@ -26,5 +26,8 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `image.tsx` - `createImage` (async value: fetch + decode + upload) read inside a `<Loading>` boundary and shown with `<texture>`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated via `setShaderParams`.
 
+## Vector graphics
+- `svg.tsx` - `<svg src={...}>` draws a whole SVG *document string* (not HTML/JSX children); multi-color fills vs a `currentColor` icon recolored by the `color` prop. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `src`.
+
 ## Bundling assets
 - `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (combine with `image.tsx` to display an inlined image). `with { type: "text" }` works the same way for a string.
