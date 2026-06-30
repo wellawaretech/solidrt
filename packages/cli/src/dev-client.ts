@@ -17,11 +17,11 @@ function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteSt
 
 export function spawnClient() {
   let runner = requireBinary("solidrt-go")
-  let args: string[] = []
+  // The local client and dev server share this machine, so connect straight to
+  // the loopback server: no mDNS discovery or recents lookup is needed for `run`.
+  let args: string[] = ["--dev-server", `${DEV_HOST}:${DEV_PORT}`]
   if (values.size) args.push("--size", values.size)
   state.child = Bun.spawn([runner, ...args], {
-  //TODO implement dev server connection
-  // state.child = Bun.spawn([runner, "--dev-server", `${DEV_HOST}:${DEV_PORT}`], {
     stdio: ["ignore", "pipe", "pipe"],
   })
 
