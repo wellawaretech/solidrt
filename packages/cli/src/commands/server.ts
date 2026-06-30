@@ -1,7 +1,7 @@
 import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
-import { bundle } from "../bundler"
+import { bundle, codeFromOutputs } from "../bundler"
 import { startServer } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
@@ -28,9 +28,7 @@ export async function runServerCommand() {
   if (source && isSource) {
     let initialResult = await bundle()
     if (initialResult) {
-      for (let output of initialResult.outputs) {
-        state.currentCode = await output.text()
-      }
+      state.currentCode = await codeFromOutputs(initialResult.outputs)
     }
   } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(resolve(source)).text()

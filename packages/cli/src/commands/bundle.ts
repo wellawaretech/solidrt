@@ -1,5 +1,5 @@
 import { values, source, isPrebuilt } from "../args"
-import { bundle, bundleTo, bundleFlux, compileToBytecode } from "../bundler"
+import { bundle, bundleTo, bundleFlux, compileToBytecode, codeFromOutputs } from "../bundler"
 import { resolve } from "path"
 
 // Write to stdout and resolve only once the whole payload is flushed.
@@ -55,9 +55,7 @@ export async function runBundleCommand() {
       console.error("Build failed")
       process.exit(1)
     }
-    for (let output of result.outputs) {
-      await writeStdout(await output.text())
-    }
+    await writeStdout(await codeFromOutputs(result.outputs))
     process.exit()
   }
 
@@ -67,10 +65,7 @@ export async function runBundleCommand() {
       console.error("Build failed")
       process.exit(1)
     }
-    let jsCode = ""
-    for (let output of result.outputs) {
-      jsCode += await output.text()
-    }
+    let jsCode = await codeFromOutputs(result.outputs)
     await writeBytecode(jsCode, baseName + ".srt.bin")
     process.exit()
   }

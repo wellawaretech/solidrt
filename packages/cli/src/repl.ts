@@ -3,7 +3,7 @@ import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, broadcast } from "./dev-server"
-import { bundle } from "./bundler"
+import { bundle, codeFromOutputs } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
 function cmdStop(args: string) {
@@ -34,9 +34,7 @@ async function cmdReload(args: string) {
       printErr("[cli] Build failed, reload aborted")
       return
     }
-    for (let output of result.outputs) {
-      state.currentCode = await output.text()
-    }
+    state.currentCode = await codeFromOutputs(result.outputs)
   }
   let msg = buildReload({ code: state.currentCode })
   if (!args) {
@@ -95,9 +93,7 @@ async function cmdLoad(file: string) {
       printErr("[cli] Build failed")
       return
     }
-    for (let output of result.outputs) {
-      state.currentCode = await output.text()
-    }
+    state.currentCode = await codeFromOutputs(result.outputs)
   } else if (file.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(path).text()
   } else if (file.endsWith(".srt.bin")) {

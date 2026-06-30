@@ -8,6 +8,22 @@ declare module "*.svg" {
   export default content
 }
 
+// Binary asset imports: `import data from "./pic.png" with { type: "binary" }`.
+// The bundler inlines the file's bytes as a Uint8Array (see packages/cli
+// bundler `binaryImport`); feed it straight into createImage/decodeImage.
+declare module "*.png" {
+  const bytes: Uint8Array
+  export default bytes
+}
+declare module "*.jpg" {
+  const bytes: Uint8Array
+  export default bytes
+}
+declare module "*.jpeg" {
+  const bytes: Uint8Array
+  export default bytes
+}
+
 // UI event bus (lattice), provided by the runtime as a builtin module.
 // on/once return an unsubscribe function.
 declare module "srt:events" {

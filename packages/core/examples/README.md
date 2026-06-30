@@ -25,3 +25,6 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Images and GPU
 - `image.tsx` - `createImage` (async value: fetch + decode + upload) read inside a `<Loading>` boundary and shown with `<texture>`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated via `setShaderParams`.
+
+## Bundling assets
+- `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (combine with `image.tsx` to display an inlined image). `with { type: "text" }` works the same way for a string.
