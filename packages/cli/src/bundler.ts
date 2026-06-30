@@ -45,6 +45,7 @@ export async function bundle(entry = source) {
       minify: values.minify,
       external: ["flux:*", "srt:*"],
       define,
+      loader: { ".svg": "text" },
       plugins: [solidPlugin()],
     })
   } catch (e) {

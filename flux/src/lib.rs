@@ -21,34 +21,53 @@ pub use rquickjs;
 #[cfg(feature = "compile")]
 use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};
 
+// Bundles arrive here with every real source inlined; the only remaining
+// imports are the runtime-provided `flux:*` and `srt:*` capability modules that
+// esbuild left external. Compilation only records each as an external reference
+// (named imports are resolved at runtime link, not here), so the compiler links
+// none of them and needs no per-module enumeration: any `flux:`/`srt:` specifier
+// resolves to an empty placeholder module. The runner (lattice/fluxrt) is the
+// authority on which actually exist; a bogus name fails at startup, not here.
+#[cfg(feature = "compile")]
+struct ExternResolver;
+
+#[cfg(feature = "compile")]
+impl rquickjs::loader::Resolver for ExternResolver {
+  fn resolve<'js>(
+    &mut self,
+    _ctx: &rquickjs::Ctx<'js>,
+    base: &str,
+    name: &str,
+    _attrs: Option<rquickjs::loader::ImportAttributes<'js>>,
+  ) -> rquickjs::Result<String> {
+    if name.starts_with("flux:") || name.starts_with("srt:") {
+      Ok(name.to_string())
+    } else {
+      Err(rquickjs::Error::new_resolving(base.to_string(), name.to_string()))
+    }
+  }
+}
+
+#[cfg(feature = "compile")]
+struct ExternLoader;
+
+#[cfg(feature = "compile")]
+impl rquickjs::loader::Loader for ExternLoader {
+  fn load<'js>(
+    &mut self,
+    ctx: &rquickjs::Ctx<'js>,
+    name: &str,
+    _attrs: Option<rquickjs::loader::ImportAttributes<'js>>,
+  ) -> rquickjs::Result<Module<'js, rquickjs::module::Declared>> {
+    Module::declare(ctx.clone(), name, "")
+  }
+}
+
 #[cfg(feature = "compile")]
 pub fn compile_source(source: &str, module_name: &str) -> Vec<u8> {
-  use plugins::modules;
-  use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-
   let rt = Runtime::new().expect("failed to create QuickJS runtime");
 
-  let mut resolver = BuiltinResolver::default();
-  let mut loader = ModuleLoader::default();
-  resolver.add_module("flux:sqlite");
-  loader.add_module("flux:sqlite", modules::sqlite::SqliteModule);
-  resolver.add_module("flux:fs");
-  loader.add_module("flux:fs", modules::fs::FsModule);
-  resolver.add_module("flux:http");
-  loader.add_module("flux:http", modules::serve::HttpModule);
-  resolver.add_module("flux:p2p");
-  loader.add_module("flux:p2p", modules::p2p::P2pModule);
-  resolver.add_module("flux:net");
-  loader.add_module("flux:net", modules::net::NetModule);
-  resolver.add_module("flux:mdns");
-  loader.add_module("flux:mdns", modules::mdns::MdnsModule);
-  resolver.add_module("flux:process");
-  loader.add_module("flux:process", modules::process::ProcessModule);
-  resolver.add_module("flux:path");
-  loader.add_module("flux:path", modules::path::PathModule);
-  resolver.add_module("flux:subprocess");
-  loader.add_module("flux:subprocess", modules::subprocess::SubprocessModule);
-  rt.set_loader(resolver, loader);
+  rt.set_loader(ExternResolver, ExternLoader);
 
   let ctx = Context::full(&rt).expect("failed to create QuickJS context");
 

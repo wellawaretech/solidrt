@@ -78,6 +78,7 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
 // --- End Android entry point ------------------------------
 
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
+const BSOD_SOURCE: &str = include_str!("../default-app/bsod.srt.js");
 
 pub(crate) const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
   Some(v) => v,
@@ -221,6 +222,7 @@ fn ui_thread(
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
+  let mut showing_bsod = false;
 
   // Bridge the synchronous Alloy event channel onto an async one: a blocking
   // recv on a dedicated thread forwards each event, so the event loop can await
@@ -501,6 +503,20 @@ fn ui_thread(
         .await;
       if let Some(app) = next_app {
         current_app = app;
+        showing_bsod = false;
+      } else if !showing_bsod {
+        // Engine exited on its own (a module/startup error means render() never
+        // ran, so nothing kept it alive). Show the BSOD instead of a frozen
+        // frame; it stays live until a fixed app reloads.
+        current_app = AppSource::Text(BSOD_SOURCE.to_string());
+        showing_bsod = true;
+      } else {
+        // The BSOD itself exited; wait for a command rather than respinning.
+        match local.run_until(cmd_rx.recv()).await {
+          Some(EngineCmd::Reload(src)) => { current_app = AppSource::Text(src); showing_bsod = false; }
+          Some(EngineCmd::Stop) => { current_app = AppSource::Text(DEFAULT_SOURCE.to_string()); showing_bsod = false; }
+          None => break,
+        }
       }
     }
   });

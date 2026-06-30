@@ -3,6 +3,11 @@
 // import/export) rather than in types.d.ts: an ambient `declare module` only
 // becomes globally visible to consumers from a non-module declaration file.
 
+declare module "*.svg" {
+  const content: string
+  export default content
+}
+
 // UI event bus (lattice), provided by the runtime as a builtin module.
 // on/once return an unsubscribe function.
 declare module "srt:events" {

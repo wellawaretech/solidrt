@@ -33,6 +33,10 @@ endif
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
 DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
 
+# The BSOD screen shown when an app fails to start.
+BSOD_SRC = $(CURDIR)/default-app/bsod.tsx
+BSOD_JS  = $(CURDIR)/default-app/bsod.srt.js
+
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
@@ -62,6 +66,10 @@ all: client runtime
 $(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
 	@echo "Bundling default app (app.tsx -> app.srt.js)..."
 	cd $(CURDIR)/.. && bunx srt bundle $(DEFAULT_APP_SRC)
+
+$(BSOD_JS): $(BSOD_SRC)
+	@echo "Bundling BSOD screen (bsod.tsx -> bsod.srt.js)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -94,7 +102,7 @@ help:
 # The file target rebuilds app.srt.js when any .tsx source changes.
 # Run `make default-app-bundle` to force a rebuild.
 
-default-app-bundle: $(DEFAULT_APP_JS)
+default-app-bundle: $(DEFAULT_APP_JS) $(BSOD_JS)
 
 # -- Fonts --------------------------------------------
 
