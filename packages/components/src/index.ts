@@ -13,5 +13,6 @@ export { RadioGroup, Radio, type RadioGroupProps, type RadioProps } from "./radi
 export { Slider, type SliderProps } from "./slider"
 export { Portal, type PortalProps } from "./portal"
 export { Modal, type ModalProps } from "./modal"
+export { QrCode, type QrCodeProps } from "./qrcode"
 export { theme, setTheme, darkTheme, lightTheme, type Theme } from "./theme"
 export type { StyleProps, TextLayoutProps } from "./types"

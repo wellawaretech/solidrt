@@ -12,6 +12,9 @@
     "src/",
     "AGENTS.md"
   ],
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
+  },
   "peerDependencies": {
     "@solidrt/core": "workspace:*",
     "@solidjs/signals": "2.0.0-beta.15"
