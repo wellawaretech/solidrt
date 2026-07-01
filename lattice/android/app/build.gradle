@@ -21,6 +21,21 @@ android {
             }
         }
     }
+    // Explicit debug signing key, checked into the repo. Without this, AGP
+    // auto-generates ~/.android/debug.keystore per machine (and per CI run),
+    // so every published APK is signed with a different key and reinstalling
+    // over a prior build fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE. A
+    // fixed key (standard debug alias/password, not sensitive) keeps upgrades
+    // working across machines and releases. The debug build type uses this by
+    // default; release references it explicitly below.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     flavorDimensions "variant"
     productFlavors {
         go {

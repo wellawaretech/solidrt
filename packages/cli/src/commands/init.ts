@@ -33,12 +33,12 @@ export async function runInitCommand() {
     process.exit(1)
   }
 
-  console.log(`>> scaffolding SolidRT project in ${resolve(dir)}`)
+  console.log(`>> Scaffolding SolidRT project in ${resolve(dir)}`)
   for (let { from, to } of TEMPLATE_FILES) {
     let dest = join(dir, to)
     await mkdir(dirname(dest), { recursive: true })
     await writeFile(dest, await readFile(join(SCAFFOLD_DIR, from)))
-    console.log(`   write ${to}`)
+    console.log(`   Write ${to}`)
   }
 
   // The scaffold package.json carries a placeholder name; set it from the
@@ -50,18 +50,18 @@ export async function runInitCommand() {
 
   // Deps are declared in scaffold/package.json (Solid peers resolve via
   // @solidrt/core's peerDependencies), so a plain install is enough.
-  console.log("\n>> installing dependencies")
+  console.log("\n>> Installing dependencies")
   let install = Bun.spawnSync(["bun", "install"], {
     cwd: dir,
     stdout: "inherit",
     stderr: "inherit",
   })
   if (install.exitCode !== 0) {
-    console.error("\n!! dependency install failed; retry with `bun install` in the project")
+    console.error("\n!! Dependency install failed; retry with `bun install` in the project")
     process.exit(1)
   }
 
   let prefix = dir === "." ? "" : `cd ${dir} && `
-  console.log(`\n>> done. next:\n   ${prefix}bunx srt run src/index.tsx\n`)
+  console.log(`\n>> Done. Next:\n   ${prefix}bun run dev\n`)
   process.exit()
 }

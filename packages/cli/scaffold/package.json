@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "srt run src/index.tsx",
-    "bundle": "srt bundle src/index.tsx"
+    "server": "srt server",
+    "client": "srt client",
+    "android": "srt client --android"
   },
   "dependencies": {
     "@solidrt/core": "0.0.0"
