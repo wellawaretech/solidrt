@@ -412,6 +412,90 @@ import { Slider } from "@solidrt/components"
 | `layout`       | `LayoutProps`              | -       | Layout of the track (e.g. `width`).          |
 | `style`        | `StyleProps`               | -       | Transform only (`x`/`y`/`rotate`/`scale`).   |
 
+### Card
+
+A themed surface container: a padded column box with a `surface` fill, a subtle `border` stroke, and rounded corners. All colors come from the theme, so it recolors live on a theme switch. Pass a `title` for a heading, or lay out the content yourself. Override any paint via `style`, spacing/sizing via `layout`.
+
+```jsx
+import { Card } from "@solidrt/components"
+
+<Card title="Profile" layout={{ width: 360 }}>
+  <Text>Card body content.</Text>
+</Card>
+```
+
+**Props**
+
+| Prop       | Type          | Default   | Description                                          |
+| ---------- | ------------- | --------- | ---------------------------------------------------- |
+| `title`    | `string`      | -         | Optional heading rendered above the content.         |
+| `children` | `any`         | -         | Card content.                                        |
+| `layout`   | `LayoutProps` | -         | Box layout (e.g. `width`, `gap`, `padding`).         |
+| `style`    | `StyleProps`  | -         | Paint overrides: `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, transform. |
+
+### Divider
+
+A thin rule in the theme `border` color. It stretches across its container on the cross axis: full width inside a column, full height inside a row (pass `orientation="vertical"`). Add spacing with `layout` margins, and override the color via `style.backgroundColor`.
+
+```jsx
+import { Divider } from "@solidrt/components"
+
+<Divider />
+<Divider orientation="vertical" />
+```
+
+**Props**
+
+| Prop          | Type                          | Default        | Description                            |
+| ------------- | ----------------------------- | -------------- | -------------------------------------- |
+| `orientation` | `"horizontal" \| "vertical"`  | `"horizontal"` | Rule direction.                        |
+| `thickness`   | `number`                      | `1`            | Line thickness in pixels.              |
+| `layout`      | `LayoutProps`                 | -              | Layout (e.g. margins for spacing).     |
+| `style`       | `StyleProps`                  | -              | `backgroundColor` overrides the color. |
+
+### Badge
+
+A small rounded pill for counts, labels, and status. Accent `primary` fill with `onPrimary` text by default; a string/number child is rendered as the themed label, anything else as-is. Override the fill via `style.backgroundColor` and the label color via `style.color`.
+
+```jsx
+import { Badge } from "@solidrt/components"
+
+<Badge>New</Badge>
+<Badge style={{ backgroundColor: theme.color.danger }}>Error</Badge>
+```
+
+**Props**
+
+| Prop       | Type          | Default | Description                                        |
+| ---------- | ------------- | ------- | -------------------------------------------------- |
+| `children` | `any`         | -       | String/number renders as the label; else as-is.    |
+| `layout`   | `LayoutProps` | -       | Box layout (e.g. padding overrides).               |
+| `style`    | `StyleProps`  | -       | `backgroundColor` (fill), `color` (label), transform. |
+
+### QrCode
+
+Renders a QR code for `data` out of primitives: same-color modules in a row collapse into one box, drawn on a light quiet-zone panel. The grid recomputes only when `data` or `level` changes. It paints black on white by default (not the theme) so it stays scannable through a theme switch; override `color`/`background` only if the contrast still holds.
+
+```jsx
+import { QrCode } from "@solidrt/components"
+
+<QrCode data="https://solidjs.com" />
+<QrCode data={ticket()} moduleSize={8} level="L" />
+```
+
+**Props**
+
+| Prop         | Type                       | Default        | Description                                                    |
+| ------------ | -------------------------- | -------------- | -------------------------------------------------------------- |
+| `data`       | `string`                   | -              | The string to encode (URL, pairing ticket, text, ...).         |
+| `moduleSize` | `number`                   | `6`            | Pixels per module (the smallest square).                       |
+| `margin`     | `number`                   | `16`           | Quiet-zone padding in pixels around the grid; keep non-zero.   |
+| `color`      | `string`                   | `"#000000"`    | Dark-module color.                                             |
+| `background` | `string`                   | `"#ffffff"`    | Panel/light-module color.                                      |
+| `level`      | `"L" \| "M" \| "Q" \| "H"` | `"M"`          | Error-correction level; higher tolerates more damage but caps data length sooner. |
+| `radius`     | `number`                   | `8`            | Corner radius of the background panel.                         |
+| `layout`     | `LayoutProps`              | -              | Layout of the outer box.                                       |
+
 ## License
 
 MIT. Copyright (c) 2026 Antoine van Wel.

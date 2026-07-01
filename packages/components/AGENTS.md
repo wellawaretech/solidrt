@@ -54,6 +54,17 @@ Most components group props into two objects, plus top-level event handlers:
 - `Slider` - horizontal; `value`/`onChange` (or `defaultValue`), `min`/`max`/
   `step`. Pointer x mapped to value via `getBoundingBox`; uses core
   `setPointerCapture` so a drag keeps tracking off the track (within the window).
+- `Card` - themed surface container: padded column box, `surface` fill, `border`
+  stroke, rounded. Optional `title` heading; override paint via `style`.
+- `Divider` - thin rule in `border` color; `orientation` (default horizontal),
+  `thickness`. Stretches across the cross axis (full width in a column).
+- `Badge` - small rounded pill for counts/labels/status; `primary`/`onPrimary`
+  by default, override via `style.backgroundColor`/`style.color`.
+- `QrCode` - QR for `data: string`, built from primitives (same-color row runs
+  merged into one box on a light panel); grid memoized on `data`/`level`.
+  `moduleSize`/`margin`/`radius`/`level` (L/M/Q/H). Paints black-on-white by
+  default (NOT the theme) to stay scannable; override `color`/`background` only
+  if contrast holds. Deps on `qrcode-generator`.
 - `SafeArea` - pads children clear of system UI (notches, status bars); top and
   bottom on by default, pass `false`/a number per edge.
 - `theme` / `setTheme` / `darkTheme` / `lightTheme` - shared REACTIVE appearance

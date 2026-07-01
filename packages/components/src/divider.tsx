@@ -1,0 +1,33 @@
+import type { LayoutProps } from "@solidrt/core"
+import { theme } from "./theme"
+import type { StyleProps } from "./types"
+
+export interface DividerProps {
+  // Line direction. Horizontal (default) is a full-width rule; vertical is a
+  // full-height rule for use inside a row.
+  orientation?: "horizontal" | "vertical"
+  // Line thickness in pixels.
+  thickness?: number
+  layout?: LayoutProps
+  style?: StyleProps
+}
+
+// A thin rule in the theme border color. Stretches across its container on the
+// cross axis (full width in a column, full height in a row); add margin via
+// layout for spacing. Override the color via style.backgroundColor.
+export function Divider(props: DividerProps) {
+  let vertical = () => props.orientation === "vertical"
+  let thickness = () => props.thickness ?? 1
+  let color = () => props.style?.backgroundColor ?? theme.color.border
+
+  return (
+    <view
+      width={vertical() ? thickness() : "auto"}
+      height={vertical() ? "auto" : thickness()}
+      alignSelf="stretch"
+      {...props.layout}
+    >
+      <d-rect color={color()} />
+    </view>
+  )
+}
