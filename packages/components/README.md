@@ -12,7 +12,21 @@ bun add @solidrt/components
 
 ## Theming
 
-Appearance (colors, spacing, border, font size) is controlled via the shared theme. Call `setTheme` from `@solidrt/components` to override defaults.
+Appearance (colors, spacing, border, font size) is controlled via a shared, reactive theme. Reads are tracked, so switching the theme at runtime recolors the live UI without remounting.
+
+Two presets ship out of the box, `darkTheme` and `lightTheme`. The default is dark. Switch by passing a full preset, or apply a targeted override with a partial:
+
+```jsx
+import { setTheme, darkTheme, lightTheme } from "@solidrt/components"
+
+setTheme(lightTheme)                          // switch to light
+setTheme(darkTheme)                           // switch to dark
+setTheme({ color: { primary: "#ff2d55" } })   // override one token
+```
+
+`setTheme` merges one level deep per category, so a partial only touches the keys you pass.
+
+The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`, `onPrimary`, `danger`, and `scrim` (modal dim). Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (font sizes), shared across presets.
 
 ## Layout and style
 
@@ -292,6 +306,111 @@ import { Button } from "@solidrt/components"
 | `layout`   | `LayoutProps` | Overrides padding/sizing.                      |
 | `style`    | `StyleProps`  | Overrides background, radius, etc.             |
 | `children` | `any`         | Label text, or custom content.                 |
+
+### Switch
+
+An on/off toggle. The track fills with `primary` when on and `surfaceAlt` when off; the thumb slides across. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events.
+
+```jsx
+import { Switch } from "@solidrt/components"
+import { createSignal } from "@solidjs/signals"
+
+function NotifyToggle() {
+  let [on, setOn] = createSignal(true)
+  return <Switch value={on()} onChange={setOn} />
+}
+```
+
+**Props**
+
+| Prop           | Type                         | Default | Description                                     |
+| -------------- | ---------------------------- | ------- | ----------------------------------------------- |
+| `value`        | `boolean`                    | -       | Controlled state. Omit for uncontrolled.        |
+| `defaultValue` | `boolean`                    | `false` | Initial value for uncontrolled use.             |
+| `onChange`     | `(value: boolean) => void`   | -       | Fires with the new value on toggle.             |
+| `disabled`     | `boolean`                    | `false` | Takes no pointer events when true.              |
+| `layout`       | `LayoutProps`                | -       | Overrides sizing/positioning of the track.      |
+| `style`        | `StyleProps`                 | -       | Overrides track colors and radius.              |
+
+### Checkbox
+
+A checkbox. When checked it fills with `primary` and draws a checkmark; otherwise it is an empty bordered box. Controlled via `checked`/`onChange`, or uncontrolled via `defaultChecked`.
+
+```jsx
+import { Checkbox } from "@solidrt/components"
+
+<Checkbox checked={agree()} onChange={setAgree} />
+```
+
+**Props**
+
+| Prop             | Type                        | Default | Description                                |
+| ---------------- | --------------------------- | ------- | ------------------------------------------ |
+| `checked`        | `boolean`                   | -       | Controlled state. Omit for uncontrolled.   |
+| `defaultChecked` | `boolean`                   | `false` | Initial value for uncontrolled use.        |
+| `onChange`       | `(checked: boolean) => void`| -       | Fires with the new state on toggle.        |
+| `disabled`       | `boolean`                   | `false` | Takes no pointer events when true.         |
+| `layout`         | `LayoutProps`               | -       | Overrides sizing.                          |
+| `style`          | `StyleProps`                | -       | Overrides box colors, border, and radius.  |
+
+### RadioGroup / Radio
+
+A single-selection group. `RadioGroup` owns the selected value and shares it with its `Radio` children; each `Radio` is a ring with an inner dot when selected. A string/number child of `Radio` renders as a themed label beside the ring. Controlled via `value`/`onChange` on the group, or uncontrolled via `defaultValue`.
+
+```jsx
+import { RadioGroup, Radio } from "@solidrt/components"
+
+<RadioGroup value={plan()} onChange={setPlan}>
+  <Radio value="free">Free</Radio>
+  <Radio value="pro">Pro</Radio>
+  <Radio value="team">Team</Radio>
+</RadioGroup>
+```
+
+**RadioGroup props**
+
+| Prop           | Type                        | Default | Description                              |
+| -------------- | --------------------------- | ------- | ---------------------------------------- |
+| `value`        | `unknown`                   | -       | Controlled selected value.               |
+| `defaultValue` | `unknown`                   | -       | Initial selection for uncontrolled use.  |
+| `onChange`     | `(value: unknown) => void`  | -       | Fires with the newly selected value.     |
+| `disabled`     | `boolean`                   | `false` | Disables every `Radio` in the group.     |
+| `layout`       | `LayoutProps`               | -       | Layout of the group container.           |
+| `children`     | `any`                       | -       | `Radio` elements.                        |
+
+**Radio props**
+
+| Prop       | Type          | Description                                          |
+| ---------- | ------------- | --------------------------------------------------- |
+| `value`    | `unknown`     | This option's value; selecting it sets the group.   |
+| `disabled` | `boolean`     | Disables this option (also disabled by the group).  |
+| `layout`   | `LayoutProps` | Layout of the option row.                           |
+| `style`    | `StyleProps`  | Paint properties of the option row.                 |
+| `children` | `any`         | A string/number label, or custom content.           |
+
+### Slider
+
+A horizontal slider. The groove fills up to the thumb; pressing or dragging the track sets the value from the pointer position. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. The drag uses pointer capture, so it keeps tracking when the pointer drifts off the track (anywhere within the window).
+
+```jsx
+import { Slider } from "@solidrt/components"
+
+<Slider value={volume()} onChange={setVolume} min={0} max={100} step={1} layout={{ width: 180 }} />
+```
+
+**Props**
+
+| Prop           | Type                       | Default | Description                                  |
+| -------------- | -------------------------- | ------- | -------------------------------------------- |
+| `value`        | `number`                   | -       | Controlled value. Omit for uncontrolled.     |
+| `defaultValue` | `number`                   | `min`   | Initial value for uncontrolled use.          |
+| `min`          | `number`                   | `0`     | Lower bound.                                 |
+| `max`          | `number`                   | `100`   | Upper bound.                                 |
+| `step`         | `number`                   | -       | Snap increment. Omit for continuous.         |
+| `onChange`     | `(value: number) => void`  | -       | Fires with the new value while dragging.     |
+| `disabled`     | `boolean`                  | `false` | Takes no pointer events when true.           |
+| `layout`       | `LayoutProps`              | -       | Layout of the track (e.g. `width`).          |
+| `style`        | `StyleProps`               | -       | Transform only (`x`/`y`/`rotate`/`scale`).   |
 
 ## License
 

@@ -4,6 +4,28 @@ import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 
+// ------ Pointer capture -----------------
+
+// Active pointer captures, pointerId -> nodeId. While a pointer is captured, its
+// move/up events dispatch straight to the captured node (bypassing hit testing),
+// so a drag keeps working when the pointer drifts off the element. Modeled on the
+// web setPointerCapture; capture auto-releases on pointerUp.
+let pointerCaptures = new Map<number, number>()
+
+/**
+ * Routes all further move/up events for `pointerId` to `nodeId` until release,
+ * regardless of what is under the pointer. Call from a pointerdown handler to own
+ * a drag (e.g. a slider). Auto-releases on the matching pointerup.
+ */
+export function setPointerCapture(nodeId: number, pointerId: number) {
+  pointerCaptures.set(pointerId, nodeId)
+}
+
+/** Ends a capture early. Not needed for the common case (pointerup releases it). */
+export function releasePointerCapture(pointerId: number) {
+  pointerCaptures.delete(pointerId)
+}
+
 // ------ Animation frames ----------------
 
 let nextFrameId = 1
@@ -201,12 +223,24 @@ export function attachWindow(_nodeId: number) {
       runFrame(time * 1000, frame)
     })
 
+    // Dispatch an event to every node on the hit path, leaf->root (bubbling), so
+    // a child handler can call e.stopPropagation() to keep the event from
+    // reaching its ancestors. `targets` arrives root->leaf, hence the reverse.
+    let bubble = (targets: number[], handler: string, e: any) => {
+      let stopped = false
+      e.stopPropagation = () => {
+        stopped = true
+      }
+      for (let i = targets.length - 1; i >= 0; i--) {
+        getEventHandler(targets[i]!, handler)?.(e)
+        if (stopped) break
+      }
+    }
+
     unsubDown = on(
       "pointerDown",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        for (let nodeId of targets) {
-          getEventHandler(nodeId, "onPointerDown")?.(e)
-        }
+        bubble(targets, "onPointerDown", e)
         // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
         // moves focus to a new node is not immediately blurred again.
         let focused = getFocusedNodeId()
@@ -217,42 +251,61 @@ export function attachWindow(_nodeId: number) {
     )
 
     unsubUp = on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerUp")?.(e)
+      let captured = pointerCaptures.get(e.pointerId)
+      if (captured != null) {
+        // Deliver to the captured node, then release (web auto-release on up).
+        e.stopPropagation = () => {}
+        getEventHandler(captured, "onPointerUp")?.(e)
+        pointerCaptures.delete(e.pointerId)
+        return
       }
+      bubble(targets, "onPointerUp", e)
     })
 
     unsubMove = on(
       "pointerMove",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        for (let nodeId of targets) {
-          getEventHandler(nodeId, "onPointerMove")?.(e)
+        let captured = pointerCaptures.get(e.pointerId)
+        if (captured != null) {
+          // Captured drags get moves anywhere over the window, bypassing hit test.
+          e.stopPropagation = () => {}
+          getEventHandler(captured, "onPointerMove")?.(e)
+          return
         }
+        bubble(targets, "onPointerMove", e)
       },
     )
+
+    // Enter/leave keep their hover-diff order (already leaf->root for leave,
+    // root->leaf for enter), but still honor stopPropagation for a consistent
+    // event shape.
+    let dispatchOrdered = (targets: number[], handler: string, e: any) => {
+      let stopped = false
+      e.stopPropagation = () => {
+        stopped = true
+      }
+      for (let nodeId of targets) {
+        getEventHandler(nodeId, handler)?.(e)
+        if (stopped) break
+      }
+    }
 
     unsubEnter = on(
       "pointerEnter",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        for (let nodeId of targets) {
-          getEventHandler(nodeId, "onPointerEnter")?.(e)
-        }
+        dispatchOrdered(targets, "onPointerEnter", e)
       },
     )
 
     unsubLeave = on(
       "pointerLeave",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        for (let nodeId of targets) {
-          getEventHandler(nodeId, "onPointerLeave")?.(e)
-        }
+        dispatchOrdered(targets, "onPointerLeave", e)
       },
     )
 
     unsubWheel = on("wheel", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onWheel")?.(e)
-      }
+      bubble(targets, "onWheel", e)
     })
 
     unsubKeyDown = on("keydown", (e: any) => {

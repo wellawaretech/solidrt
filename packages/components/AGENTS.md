@@ -43,10 +43,25 @@ Most components group props into two objects, plus top-level event handlers:
   hovered }`. No pointer capture: a drag out cancels via onPointerLeave.
 - `Button` - themed Pressable: accent box + label (string/number child), scales
   on press (via reactive style); colors from `theme.color.primary`/`onPrimary`.
+- `Switch` - on/off toggle; `value`/`onChange`, controlled or uncontrolled
+  (`defaultValue`). Track fills `primary`/`surfaceAlt`, thumb slides.
+- `Checkbox` - `checked`/`onChange` (or `defaultChecked`); checkmark drawn via a
+  core `<d-path>` when checked.
+- `RadioGroup` + `Radio` - single-selection pair; the group owns
+  `value`/`onChange` (or `defaultValue`) and shares it to `Radio` children via a
+  module-local context (not a cross-component dependency). `Radio value=...`;
+  string/number child renders as a themed label.
+- `Slider` - horizontal; `value`/`onChange` (or `defaultValue`), `min`/`max`/
+  `step`. Pointer x mapped to value via `getBoundingBox`; uses core
+  `setPointerCapture` so a drag keeps tracking off the track (within the window).
 - `SafeArea` - pads children clear of system UI (notches, status bars); top and
   bottom on by default, pass `false`/a number per edge.
-- `theme` / `setTheme` - shared appearance (colors, spacing, radii, font sizes);
-  call `setTheme({...})` to override defaults.
+- `theme` / `setTheme` / `darkTheme` / `lightTheme` - shared REACTIVE appearance
+  (backed by a Solid store, so reads are tracked and switching recolors the live
+  UI). `setTheme(lightTheme)`/`setTheme(darkTheme)` switch presets;
+  `setTheme({...})` merges a one-level-deep override. Default is dark. Color
+  tokens: `background`, `surface`, `surfaceAlt`, `text`, `textMuted`, `border`,
+  `primary`, `onPrimary`, `danger`, `scrim`.
 
 ## Minimal app (verified to render)
 

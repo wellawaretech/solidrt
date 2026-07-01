@@ -153,6 +153,10 @@ export interface PointerEvent {
   ctrlKey: boolean
   altKey: boolean
   metaKey: boolean
+  // Stops the event from reaching ancestor handlers. Events dispatch leaf->root
+  // (bubbling), so calling this in a child prevents the enclosing node from
+  // seeing it (e.g. a slider claiming a drag so an ancestor scroller ignores it).
+  stopPropagation: () => void
 }
 
 export interface WheelEvent extends PointerEvent {
