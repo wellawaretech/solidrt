@@ -37,11 +37,26 @@ pub fn get_power_info() -> PowerInfo {
 pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {
   let mut rect = SDL_Rect { x: 0, y: 0, w: 0, h: 0 };
   unsafe { SDL_GetWindowSafeArea(window.raw(), &mut rect) };
-  // SDL_GetWindowSafeArea reports in the window's logical coordinate space (the
-  // same units as SDL_GetWindowSize), so it is already in the logical pixels the
-  // layout uses. Do not divide by display_scale: on a fractional-scaled display
-  // that shrinks the safe area and inflates the derived insets (a no-op only at
-  // scale 1.0, which is why it long went unnoticed).
+  // SDL reports the safe area in SDL_GetWindowSize units (it builds the rect from
+  // window->w/h minus the platform insets). Those units differ per platform:
+  // desktop reports logical points there, but Android bakes the display density
+  // into window->w/h (window->w == the physical surface width), so the safe-area
+  // rect comes back in physical pixels. The layout works in logical points, which
+  // we report elsewhere as size_in_pixels / display_scale, so normalize the rect
+  // into that same space by the ratio (size_in_pixels / scale) / window_size.
+  // That ratio is 1.0 on desktop (including fractional-scaled displays, where
+  // window_size is already logical) and 1/scale on Android.
+  let (lw, lh) = window.size();
+  let (pw, ph) = window.size_in_pixels();
+  let scale = window_display_scale(window);
+  if lw > 0 && lh > 0 && scale > 0.0 {
+    let fx = (pw as f32 / scale) / lw as f32;
+    let fy = (ph as f32 / scale) / lh as f32;
+    rect.x = (rect.x as f32 * fx).round() as i32;
+    rect.w = (rect.w as f32 * fx).round() as i32;
+    rect.y = (rect.y as f32 * fy).round() as i32;
+    rect.h = (rect.h as f32 * fy).round() as i32;
+  }
   rect
 }
 
