@@ -1,4 +1,4 @@
-import type { Color, LayoutProps } from "@solidrt/core"
+import type { Color, Gradient, LayoutProps } from "@solidrt/core"
 
 // The split between layout and style follows one rule: layout properties feed
 // into Taffy and changing them triggers a relayout; style properties are
@@ -8,9 +8,9 @@ import type { Color, LayoutProps } from "@solidrt/core"
 // drawn as a stroke overlay (not part of the box model), and the transform is
 // applied at paint time, so both live here.
 export interface StyleProps {
-  color?: Color
-  backgroundColor?: Color
-  borderColor?: Color
+  color?: Color | Gradient
+  backgroundColor?: Color | Gradient
+  borderColor?: Color | Gradient
   borderWidth?: number
   borderRadius?: number | [number, number, number, number]
   x?: number

@@ -1,4 +1,5 @@
 import { render, For, onFrame, createSignal, createLinearGradient } from "@solidrt/core"
+import { View, Window } from "@solidrt/components"
 
 const FADE = 360 
 
@@ -31,7 +32,7 @@ function Icon() {
   let start = -1
   onFrame((t) => (start < 0 && (start = t), setClock((t - start) % CYCLE)))
   return (
-    <view width={100} height={100} scale={3}>
+    <View layout={{ width: 100, height: 100 }} style={{ scale: 3 }}>
       <For each={SEGMENTS}>
         {(seg) => {
           let a = () => {
@@ -42,21 +43,23 @@ function Icon() {
           return <d-path d={seg.d} color={fill(seg, a())} />
         }}
       </For>
-    </view>
+    </View>
   )
 }
 
 function App() {
+  let backgroundColor = createLinearGradient(0, 0, 1, 1, [
+    { offset: 0, color: "#080b16" },
+    { offset: 1, color: "#1d2a52" },
+  ])
+
   return (
-    <window alignItems="center" justifyContent="center">
-      <d-rect
-        color={createLinearGradient(0, 0, 1, 1, [
-          { offset: 0, color: "#080b16" },
-          { offset: 1, color: "#1d2a52" },
-        ])}
-      />
+    <Window
+      layout={{ alignItems: "center", justifyContent: "center" }}
+      style={{ backgroundColor }}
+    >
       <Icon />
-    </window>
+    </Window>
   )
 }
 
