@@ -1,5 +1,5 @@
 import { createSignal } from "@solidjs/signals"
-import { getBoundingBox, setPointerCapture } from "@solidrt/core"
+import { getBoundingBox, onLayout, setPointerCapture } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import type { StyleProps } from "./types"
@@ -38,6 +38,17 @@ export function Slider(props: SliderProps) {
   let dragging = false
 
   let pct = () => clamp(((value() - min()) / (max() - min())) * 100, 0, 100)
+
+  // Measured groove width in pixels. The fill and thumb are driven off this
+  // rather than a percentage `width`/`left`, so dragging repaints (d-rect `w`,
+  // thumb `x` transform) instead of reflowing taffy every move. Refreshed each
+  // layout so it tracks resizes.
+  let groove: { id: number } | undefined
+  let [grooveWidth, setGrooveWidth] = createSignal(0)
+  onLayout(() => {
+    if (groove) setGrooveWidth(getBoundingBox(groove)?.width ?? 0)
+  })
+  let fillPx = () => (pct() / 100) * grooveWidth()
 
   let commit = (v: number) => {
     if (props.value === undefined) setInternal(v)
@@ -89,12 +100,10 @@ export function Slider(props: SliderProps) {
       onPointerMove={handleMove}
       onPointerUp={handleUp}
     >
-      <view position="relative" flex={1} height={GROOVE}>
+      <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
         <d-rect color={theme.color.surfaceAlt} radius={GROOVE / 2} />
-        <view width={`${pct()}%`} height={GROOVE}>
-          <d-rect color={theme.color.primary} radius={GROOVE / 2} />
-        </view>
-        <view position="absolute" left={`${pct()}%`} top={(GROOVE - THUMB) / 2} x={-THUMB / 2}>
+        <d-rect color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
+        <view position="absolute" left={0} top={(GROOVE - THUMB) / 2} x={fillPx() - THUMB / 2}>
           <d-oval w={THUMB} h={THUMB} color={theme.color.primary} />
         </view>
       </view>

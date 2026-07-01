@@ -472,6 +472,46 @@ import { Badge } from "@solidrt/components"
 | `layout`   | `LayoutProps` | -       | Box layout (e.g. padding overrides).               |
 | `style`    | `StyleProps`  | -       | `backgroundColor` (fill), `color` (label), transform. |
 
+### Spinner
+
+An indeterminate spinner: a 270-degree arc that rotates continuously. It is driven by core `onFrame`, so it participates in demand-driven rendering and stops when unmounted. Color comes from the theme `primary`; override via `style.color`.
+
+```jsx
+import { Spinner } from "@solidrt/components"
+
+<Spinner />
+<Spinner size={32} thickness={4} speed={1.5} />
+```
+
+**Props**
+
+| Prop        | Type          | Default | Description                        |
+| ----------- | ------------- | ------- | ---------------------------------- |
+| `size`      | `number`      | `24`    | Overall diameter in pixels.        |
+| `thickness` | `number`      | `3`     | Arc stroke width in pixels.        |
+| `speed`     | `number`      | `1`     | Revolutions per second.            |
+| `layout`    | `LayoutProps` | -       | Layout of the box.                 |
+| `style`     | `StyleProps`  | -       | `color` sets the arc; plus transform. |
+
+### ProgressBar
+
+A horizontal progress bar. Determinate when given a `value` in `[0, 1]` (the fill grows from the left); indeterminate when `value` is undefined (a short segment slides back and forth, driven by core `onFrame`). Track and fill colors come from the theme; override the track via `style.backgroundColor` and the fill via `style.color`.
+
+```jsx
+import { ProgressBar } from "@solidrt/components"
+
+<ProgressBar value={0.4} />   // determinate
+<ProgressBar />               // indeterminate
+```
+
+**Props**
+
+| Prop     | Type          | Default | Description                                         |
+| -------- | ------------- | ------- | --------------------------------------------------- |
+| `value`  | `number`      | -       | Progress in `[0, 1]`. Omit for an indeterminate bar. |
+| `layout` | `LayoutProps` | -       | Layout (e.g. `width`, `height`).                    |
+| `style`  | `StyleProps`  | -       | `backgroundColor` (track), `color` (fill).          |
+
 ### QrCode
 
 Renders a QR code for `data` out of primitives: same-color modules in a row collapse into one box, drawn on a light quiet-zone panel. The grid recomputes only when `data` or `level` changes. It paints black on white by default (not the theme) so it stays scannable through a theme switch; override `color`/`background` only if the contrast still holds.

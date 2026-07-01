@@ -1,0 +1,68 @@
+import { createSignal } from "@solidjs/signals"
+import { onFrame, onLayout, getBoundingBox } from "@solidrt/core"
+import type { LayoutProps } from "@solidrt/core"
+import { theme } from "./theme"
+import type { StyleProps } from "./types"
+
+export interface ProgressBarProps {
+  // Progress from 0 to 1. Omit (or leave undefined) for an indeterminate bar: a
+  // segment that slides back and forth.
+  value?: number
+  layout?: LayoutProps
+  style?: StyleProps
+}
+
+const HEIGHT = 6
+// Indeterminate: fraction of the track the sliding segment occupies, and its
+// travel speed in track-widths per second.
+const SEGMENT = 0.3
+const SPEED = 0.8
+
+let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x)
+
+// A horizontal progress bar. Determinate when given a value in [0, 1]: the fill
+// grows from the left. Indeterminate when value is undefined: a short segment
+// slides back and forth (driven by core onFrame). Colors come from the theme;
+// override the track via style.backgroundColor and the fill via style.color.
+export function ProgressBar(props: ProgressBarProps) {
+  let h = () => (props.layout?.height as number) ?? HEIGHT
+  let radius = () => h() / 2
+  let track = () => props.style?.backgroundColor ?? theme.color.surfaceAlt
+  let fill = () => props.style?.color ?? theme.color.primary
+  let indeterminate = () => props.value === undefined
+
+  // Measured track width in pixels. Both the determinate fill and the
+  // indeterminate segment are drawn as a detached d-rect sized in pixels (paint
+  // only) rather than animating a percentage `width`, which would reflow taffy
+  // whenever the value changes. Refreshed each layout so it tracks resizes.
+  let trackNode: { id: number } | undefined
+  let [trackWidth, setTrackWidth] = createSignal(0)
+  onLayout(() => {
+    if (!trackNode) return
+    setTrackWidth(getBoundingBox(trackNode)?.width ?? 0)
+  })
+
+  // tick is in milliseconds (like performance.now()).
+  let [phase, setPhase] = createSignal(0)
+  onFrame((tick) => {
+    if (!indeterminate()) return
+    // Triangle wave in [0, 1]: the segment travels left edge -> right edge and
+    // back.
+    let t = ((tick / 1000) * SPEED) % 2
+    setPhase(t > 1 ? 2 - t : t)
+  })
+
+  // Fill width in pixels: a fixed segment while indeterminate, the value fraction
+  // otherwise. Drawn via the detached d-rect `w` below (paint only), so a
+  // changing value never reflows. The indeterminate slide comes from the `x`
+  // offset.
+  let fillWidth = () => (indeterminate() ? SEGMENT : clamp(props.value ?? 0, 0, 1)) * trackWidth()
+  let offset = () => phase() * trackWidth() * (1 - SEGMENT)
+
+  return (
+    <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} {...props.layout}>
+      <d-rect color={track()} radius={radius()} />
+      <d-rect color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} />
+    </view>
+  )
+}

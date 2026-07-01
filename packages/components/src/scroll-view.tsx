@@ -45,7 +45,11 @@ export function ScrollView(props: ScrollViewProps) {
     last = null
   }
   let onWheel = (e: WheelEvent) => {
-    scroll.scrollBy(e.deltaX, e.deltaY)
+    // A plain mouse wheel only emits deltaY. On a horizontal scroller, route that
+    // vertical delta to the x axis so the wheel still scrolls it (trackpads that
+    // emit deltaX take precedence).
+    if (props.horizontal) scroll.scrollBy(e.deltaX || e.deltaY, 0)
+    else scroll.scrollBy(e.deltaX, e.deltaY)
   }
 
   let direction = () => (props.horizontal ? "row" : "column")

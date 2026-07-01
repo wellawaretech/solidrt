@@ -134,6 +134,8 @@ export function TextInput(props: TextInputProps) {
   // between them. Flow places the anchor at the caret x (the before-text width),
   // and the caret is a detached d-rect inside it: detached nodes take no layout
   // slot, so the anchor stays zero-width and the after-text is not shifted. The
+  // anchor stays mounted while the caret blinks; only a detached d-view toggles
+  // inside it, so turning the caret on and off never relays the row. The
   // anchor sits at the row's vertical center (alignItems center, zero height),
   // so the caret is offset up by half its height to straddle it. While the
   // placeholder shows, value() is "" so the slices and the scroll offset are 0
@@ -203,16 +205,18 @@ export function TextInput(props: TextInputProps) {
         ) : (
           <view flexDirection="row" alignItems="center" flexShrink={0}>
             <text {...textStyle(textColor())}>{beforeCaret()}</text>
-            {showCaret() ? (
-              <view>
-                <d-rect
-                  color={textColor()}
-                  y={-theme.text.body.size / 2}
-                  w={CARET_WIDTH}
-                  h={theme.text.body.size}
-                />
-              </view>
-            ) : null}
+            <view>
+              {showCaret() ? (
+                <d-view>
+                  <d-rect
+                    color={textColor()}
+                    y={-theme.text.body.size / 2}
+                    w={CARET_WIDTH}
+                    h={theme.text.body.size}
+                  />
+                </d-view>
+              ) : null}
+            </view>
             <text {...textStyle(textColor())}>{afterCaret()}</text>
           </view>
         )}

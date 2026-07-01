@@ -60,6 +60,11 @@ Most components group props into two objects, plus top-level event handlers:
   `thickness`. Stretches across the cross axis (full width in a column).
 - `Badge` - small rounded pill for counts/labels/status; `primary`/`onPrimary`
   by default, override via `style.backgroundColor`/`style.color`.
+- `Spinner` - indeterminate rotating arc, driven by core `onFrame`; `size`,
+  `thickness`, `speed` (rev/s). Color from `primary`, override via `style.color`.
+- `ProgressBar` - horizontal; determinate with `value` in [0,1] (fill grows from
+  the left), indeterminate when `value` is undefined (segment slides, `onFrame`).
+  Track `surfaceAlt` / fill `primary`; override via `style.backgroundColor`/`color`.
 - `QrCode` - QR for `data: string`, built from primitives (same-color row runs
   merged into one box on a light panel); grid memoized on `data`/`level`.
   `moduleSize`/`margin`/`radius`/`level` (L/M/Q/H). Paints black-on-white by
