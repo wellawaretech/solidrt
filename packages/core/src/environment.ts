@@ -127,7 +127,12 @@ export let env = {
     ensureDevicesState()
     return devicesAccessor!()
   },
-  /** The OS-level dark/light preference. */
+  /**
+   * The OS-level dark/light preference. Starts "unknown" and resolves once
+   * the runtime's `systemTheme` event fires - read it in a tracked scope
+   * (JSX, memo, effect); a top-level/untracked read will freeze at
+   * "unknown" and never see the resolved value.
+   */
   get systemTheme(): SystemTheme {
     ensureSystemThemeState()
     return systemThemeAccessor!()

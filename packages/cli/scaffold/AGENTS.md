@@ -8,6 +8,7 @@ Authoritative references ship inside the installed packages - read them:
 - node_modules/solid-js/CHEATSHEET.md          - SolidJS 2.0 reactivity/control-flow model
 - node_modules/@solidrt/components/AGENTS.md   - the component vocabulary; build UI from these
 - node_modules/@solidrt/components/README.md   - full prop tables for every component
+- node_modules/@solidrt/components/examples/   - single-concept usage patterns to copy (see its README.md index)
 - node_modules/@solidrt/core/AGENTS.md         - the underlying element/prop/reactivity model
 - node_modules/@solidrt/core/examples/         - single-concept usage patterns to copy (see its README.md index)
 - node_modules/@solidrt/cli/AGENTS.md          - running, bundling, headless verify
@@ -68,6 +69,13 @@ Authoritative references ship inside the installed packages - read them:
     em-dashes (use a hyphen), no smart/curly quotes, no unicode symbols.
 11. Prefer let over const. Use const only for real constants - a single fixed
     string or number value - and name those in ALL_CAPS.
+12. Reading a signal/prop/store at the top level of a component body (not
+    inside JSX, a `createMemo`, or an effect's compute phase) reads it
+    untracked - it silently freezes at the initial value instead of updating
+    on change. `createEffect` takes two arguments now: `(compute, apply)`.
+    `compute` is the tracked read phase; `apply(value, prev)` runs untracked
+    and is where side effects/DOM-equivalent writes belong. The old
+    single-arg `createEffect(fn)` form is gone - using it is an error.
 
 ## Run / verify
 
