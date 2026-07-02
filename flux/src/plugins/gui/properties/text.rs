@@ -6,6 +6,10 @@ use alloy::rendertree::{Span, Text};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
   Some(match name {
+    "x" => text.set_x(f32_of(value, "x")),
+    "y" => text.set_y(f32_of(value, "y")),
+    "w" => text.set_w(f32_of(value, "w")),
+    "h" => text.set_h(f32_of(value, "h")),
     "fontFamily" => text.set_font_family(match str_of(value, "fontFamily") {
       "mono" => "Noto Sans Mono".to_string(),
       "sans" => "Noto Sans".to_string(),

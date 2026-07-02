@@ -156,6 +156,7 @@ impl ElementKind {
       ElementKind::Rectangle(n) => n.local_bounds(fallback),
       ElementKind::Oval(n) => n.local_bounds(fallback),
       ElementKind::View(n) => n.local_bounds(fallback),
+      ElementKind::Text(n) => n.local_bounds(fallback),
       _ => BoundingBox { x: 0.0, y: 0.0, width: fallback.width, height: fallback.height },
     }
   }

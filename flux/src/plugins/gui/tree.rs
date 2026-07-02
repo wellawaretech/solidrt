@@ -201,6 +201,7 @@ impl ModuleDef for RenderTreeModule {
         if invalidate {
           tree.invalidate_cache(node_id);
         }
+        tree.sync_span_parent(node_id);
         platform_ref.request_frame();
         Ok(())
       },

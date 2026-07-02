@@ -268,8 +268,13 @@ export interface SvgProps extends Position, PointerProps {
   color?: Color
 }
 
-export interface TextProps extends PaintProps, PointerProps {
+export interface TextProps extends Position, PaintProps, PointerProps {
   children?: Children
+  // Shaping (wrap) width. Detached text wraps at the inherited ancestor size
+  // by default; set w for an unwrapped natural line or an explicit wrap width.
+  w?: number
+  // Reported-bounds height only; paragraph height always falls out of the text.
+  h?: number
   fontFamily?: "sans" | "mono" | (string & {})
   fontSize?: number
   lineHeight?: number

@@ -105,7 +105,13 @@ impl RenderTree {
       }
     }
 
-    self.invalidate_cache(parent_id);
+    self.sync_text(parent_id);
+
+    // A detached child is not in layout_children, so inserting it cannot
+    // change layout; only paint needs to catch up.
+    if child_has_layout {
+      self.invalidate_cache(parent_id);
+    }
     self.invalidate_paint(parent_id);
     self.bump_revision();
   }
@@ -115,6 +121,7 @@ impl RenderTree {
   /// rather than destroys; the renderer frees the node later via destroy_node if
   /// nothing re-attaches it. See renderer.ts for the deferred-destroy sweep.
   pub fn detach_node(&mut self, parent_id: u64, node_id: u64) {
+    let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
     if let Some(layout) = &mut parent.layout {
@@ -123,7 +130,10 @@ impl RenderTree {
     if let Some(node) = self.nodes.get_mut(&node_id) {
       node.parent = None;
     }
-    self.invalidate_cache(parent_id);
+    self.sync_text(parent_id);
+    if child_has_layout {
+      self.invalidate_cache(parent_id);
+    }
     self.invalidate_paint(parent_id);
     self.bump_revision();
   }
@@ -133,12 +143,16 @@ impl RenderTree {
   /// referencing it, so a direct destroy leaves no dangling child entry.
   pub fn destroy_node(&mut self, node_id: u64) {
     if let Some(parent_id) = self.try_node(node_id).and_then(|n| n.parent) {
+      let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
       if let Some(parent) = self.nodes.get_mut(&parent_id) {
         parent.children.retain(|&id| id != node_id);
         if let Some(layout) = &mut parent.layout {
           layout.layout_children.retain(|&id| id != NodeId::from(node_id));
         }
-        self.invalidate_cache(parent_id);
+        self.sync_text(parent_id);
+        if child_has_layout {
+          self.invalidate_cache(parent_id);
+        }
         self.invalidate_paint(parent_id);
       }
     }
@@ -294,12 +308,51 @@ impl RenderTree {
     self.nodes.remove(&node_id);
   }
 
+  /// Rebuild a Text's computed_text from its Span children; no-op for other
+  /// kinds. The layout pass aggregates spans for attached text on every pass,
+  /// but detached text never enters layout, so structural and span-text
+  /// changes sync eagerly here instead.
+  fn sync_text(&mut self, text_id: u64) {
+    let Some(element) = self.try_node(text_id) else { return };
+    if !matches!(element.kind, ElementKind::Text(_)) {
+      return;
+    }
+    let mut text = String::new();
+    for &child_id in &element.children {
+      if let ElementKind::Span(span) = &self.node(child_id).kind {
+        text.push_str(&span.text);
+      }
+    }
+    if let ElementKind::Text(t) = &mut self.node_mut(text_id).kind {
+      t.computed_text = text;
+    }
+  }
+
+  /// If `node_id` is a Span, resync the parent Text. Called after a property
+  /// write; no-op for every other kind, so callers need not check.
+  pub fn sync_span_parent(&mut self, node_id: u64) {
+    let Some(node) = self.try_node(node_id) else { return };
+    if !matches!(node.kind, ElementKind::Span(_)) {
+      return;
+    }
+    if let Some(parent_id) = node.parent {
+      self.sync_text(parent_id);
+    }
+  }
+
   pub fn invalidate_cache(&mut self, node_id: u64) {
     let mut current = Some(node_id);
     while let Some(id) = current {
       let element = self.node_mut(id);
       let Some(layout) = &mut element.layout else {
-        current = element.parent;
+        // Of the layout-less kinds, only a span passes the invalidation
+        // through: its text feeds the parent paragraph's measurement. Anything
+        // else is a detached node, and a detached subtree can never alter
+        // layout, so the attached ancestors' caches stay valid.
+        current = match element.kind {
+          ElementKind::Span(_) => element.parent,
+          _ => None,
+        };
         continue;
       };
       if layout.cache.is_empty() {

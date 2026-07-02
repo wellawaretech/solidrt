@@ -70,6 +70,13 @@ Most components group props into two objects, plus top-level event handlers:
   `moduleSize`/`margin`/`radius`/`level` (L/M/Q/H). Paints black-on-white by
   default (NOT the theme) to stay scannable; override `color`/`background` only
   if contrast holds. Deps on `qrcode-generator`.
+- `Icon` - thin themed wrapper over the core `<svg>` document primitive. `src`
+  is an SVG string (an imported `.svg` asset, a `lucide-static` string export, or
+  an inline literal); `size` sets a square box (default 24); `color` drives
+  `currentColor` (default `theme.color.text`). Carries no icon set of its own and
+  no icon-name registry: pass the SVG string in, so any currentColor set (Lucide,
+  Feather, Heroicons) works and only used icons are bundled. Multi-color
+  documents keep their own fills. Reach for `<svg>` directly for a non-square box.
 - `SafeArea` - pads children clear of system UI (notches, status bars); top and
   bottom on by default, pass `false`/a number per edge.
 - `theme` / `setTheme` / `darkTheme` / `lightTheme` - shared REACTIVE appearance

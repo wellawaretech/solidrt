@@ -27,45 +27,51 @@ const MODULE_SIZE = 6
 const MARGIN = 16
 const RADIUS = 8
 
-// Render a QR for `data` as primitives: merge horizontal runs of same-color
-// modules per row into a single sized box, on a light quiet-zone panel. The
-// module grid recomputes only when the data or error-correction level changes.
+// Render a QR for `data` as primitives: merge horizontal runs of dark modules
+// per row into a single d-rect, placed at explicit coordinates on a light
+// quiet-zone panel. Everything inside the panel is detached, so a data change
+// repaints without touching layout; the panel view itself has a fixed size
+// (module count * module size + margins) that only changes when the data
+// crosses a QR version boundary.
 export function QrCode(props: QrCodeProps) {
-  let rows = createMemo(() => {
+  let grid = createMemo(() => {
     let qr = qrcode(0, props.level ?? "M")
     qr.addData(props.data)
     qr.make()
     let n = qr.getModuleCount()
 
-    let out: { dark: boolean; len: number }[][] = []
+    let runs: { x: number; y: number; len: number }[] = []
     for (let y = 0; y < n; y++) {
-      let runs: { dark: boolean; len: number }[] = []
       let x = 0
       while (x < n) {
-        let dark = qr.isDark(y, x)
+        if (!qr.isDark(y, x)) {
+          x++
+          continue
+        }
         let len = 1
-        while (x + len < n && qr.isDark(y, x + len) === dark) len++
-        runs.push({ dark, len })
+        while (x + len < n && qr.isDark(y, x + len)) len++
+        runs.push({ x, y, len })
         x += len
       }
-      out.push(runs)
     }
-    return out
+    return { n, runs }
   })
 
   let size = () => props.moduleSize ?? MODULE_SIZE
+  let margin = () => props.margin ?? MARGIN
+  let side = () => grid().n * size() + 2 * margin()
 
   return (
-    <view flexDirection="column" padding={props.margin ?? MARGIN} {...props.layout}>
+    <view width={side()} height={side()} {...props.layout}>
       <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? RADIUS} />
-      {rows().map((runs) => (
-        <view flexDirection="row">
-          {runs.map((run) => (
-            <view width={run.len * size()} height={size()}>
-              {run.dark ? <d-rect color={props.color ?? "#000000"} /> : null}
-            </view>
-          ))}
-        </view>
+      {grid().runs.map((run) => (
+        <d-rect
+          x={margin() + run.x * size()}
+          y={margin() + run.y * size()}
+          w={run.len * size()}
+          h={size()}
+          color={props.color ?? "#000000"}
+        />
       ))}
     </view>
   )

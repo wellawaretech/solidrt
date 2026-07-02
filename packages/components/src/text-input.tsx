@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup } from "@solidjs/signals"
-import { setFocus } from "@solidrt/core"
+import { measureText, setFocus } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
@@ -9,6 +9,11 @@ import { policy, densityScale } from "./policy"
 // Caret thickness. Shared so the drawn caret and the scroll offset's reserved
 // edge column cannot drift apart.
 const CARET_WIDTH = 1
+
+// Shaping width handed to the detached value/placeholder text: effectively
+// unbounded, so a single line never wraps. The viewport clips it and scrollX
+// slides it.
+const TEXT_SHAPE_WIDTH = 1e9
 
 export interface TextInputProps {
   value?: string
@@ -134,20 +139,16 @@ export function TextInput(props: TextInputProps) {
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0
   let showCaret = () => focused() && caretOn() && !showPlaceholder()
 
-  // The text is split at the caret into two nodes with a zero-size anchor view
-  // between them. Flow places the anchor at the caret x (the before-text width),
-  // and the caret is a detached d-rect inside it: detached nodes take no layout
-  // slot, so the anchor stays zero-width and the after-text is not shifted. The
-  // anchor stays mounted while the caret blinks; only a detached d-view toggles
-  // inside it, so turning the caret on and off never relays the row. The
-  // anchor sits at the row's vertical center (alignItems center, zero height),
-  // so the caret is offset up by half its height to straddle it. While the
-  // placeholder shows, value() is "" so the slices and the scroll offset are 0
-  // with no special case. The viewport node is the inner scroll container;
-  // createCaretScroll reads its laid-out width after layout, keeps the caret in
-  // view, and flushes the offset before paint.
-  let beforeCaret = () => value().slice(0, buffer.caret())
-  let afterCaret = () => value().slice(buffer.caret())
+  // Everything inside the viewport is detached: the value is one d-text shaped
+  // at an unbounded width and the caret a d-rect at the measured before-caret
+  // width, so typing, caret movement, blink and scroll never touch layout. The
+  // viewport carries an explicit height (detached content takes no layout
+  // slot) equal to the one-line paragraph height, which keeps the text where
+  // the old centered attached row sat. createCaretScroll keeps the caret in
+  // view and flushes the offset before paint; scrollX is a paint-time
+  // translate that also applies to detached children.
+  let rowHeight = () => Math.round(theme.text.body.size * theme.text.body.lineHeight)
+  let caretX = () => measureText(value().slice(0, buffer.caret()), { fontSize: theme.text.body.size }).width
   let scrollX = createCaretScroll(
     () => viewport,
     () => ({
@@ -162,11 +163,11 @@ export function TextInput(props: TextInputProps) {
   )
 
   let textStyle = (color: string) => ({
+    w: TEXT_SHAPE_WIDTH,
     fontSize: theme.text.body.size,
     lineHeight: theme.text.body.lineHeight,
     color,
     maxLines: 1,
-    flexShrink: 0,
   })
 
   return (
@@ -199,30 +200,25 @@ export function TextInput(props: TextInputProps) {
       <view
         ref={(n: { id: number }) => (viewport = n)}
         flex={1}
-        flexDirection="row"
-        alignItems="center"
+        height={rowHeight()}
         overflow="hidden"
         scrollX={scrollX()}
       >
         {showPlaceholder() ? (
-          <text {...textStyle(theme.color.textMuted)}>{props.placeholder ?? ""}</text>
+          <d-text {...textStyle(theme.color.textMuted)}>{props.placeholder ?? ""}</d-text>
         ) : (
-          <view flexDirection="row" alignItems="center" flexShrink={0}>
-            <text {...textStyle(textColor())}>{beforeCaret()}</text>
-            <view>
-              {showCaret() ? (
-                <d-view>
-                  <d-rect
-                    color={textColor()}
-                    y={-theme.text.body.size / 2}
-                    w={CARET_WIDTH}
-                    h={theme.text.body.size}
-                  />
-                </d-view>
-              ) : null}
-            </view>
-            <text {...textStyle(textColor())}>{afterCaret()}</text>
-          </view>
+          <>
+            <d-text {...textStyle(textColor())}>{value()}</d-text>
+            {showCaret() ? (
+              <d-rect
+                color={textColor()}
+                x={caretX()}
+                y={(rowHeight() - theme.text.body.size) / 2}
+                w={CARET_WIDTH}
+                h={theme.text.body.size}
+              />
+            ) : null}
+          </>
         )}
       </view>
     </view>

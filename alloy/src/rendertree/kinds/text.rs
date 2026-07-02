@@ -1,8 +1,10 @@
 use super::PaintState;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
   TypographyContext,
+};
+use crate::rendertree::{
+  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
 use std::cell::RefCell;
 use taffy::prelude::*;
@@ -22,6 +24,16 @@ pub struct Text {
   pub text_alignment: TextAlignment,
   pub max_lines: u32,
   pub line_height: f32,
+  // Paint-time box overrides, mirroring Rectangle's x/y/w/h. x/y offset the
+  // drawn paragraph. w overrides the shaping (wrap) width, which otherwise
+  // falls back to the inherited layout size - detached text has no box of its
+  // own, so give it a w for an unwrapped natural line. h cannot affect shaping
+  // (paragraph height falls out of the text); it only feeds the reported
+  // bounds. None of these affect layout.
+  pub x: Option<f32>,
+  pub y: Option<f32>,
+  pub w: Option<f32>,
+  pub h: Option<f32>,
   pub paint: PaintState,
   // Shaped paragraphs for the current inputs, keyed by layout width. Shaping
   // dominates measure/build cost and properties are written directly from
@@ -41,6 +53,10 @@ impl Default for Text {
       text_alignment: TextAlignment::Left,
       max_lines: 0,
       line_height: 0.0,
+      x: None,
+      y: None,
+      w: None,
+      h: None,
       paint: PaintState::default(),
       cache: RefCell::new(ParaCache::default()),
     }
@@ -105,10 +121,10 @@ impl std::fmt::Debug for ParaCache {
 
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let Some(paragraph) = self.shaped(&ctx.platform.typography, ctx.size.w) else {
+    let Some(paragraph) = self.shaped(&ctx.platform.typography, self.w.unwrap_or(ctx.size.w)) else {
       return;
     };
-    builder.draw_paragraph(&paragraph, Point::new(0.0, 0.0));
+    builder.draw_paragraph(&paragraph, Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)));
   }
 }
 
@@ -138,6 +154,17 @@ impl Measurable for Text {
     let height = ctx.known.height.unwrap_or_else(|| paragraph.get_height());
 
     Size { width, height }
+  }
+}
+
+impl Bounded for Text {
+  fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
+    BoundingBox {
+      x: self.x.unwrap_or(0.0),
+      y: self.y.unwrap_or(0.0),
+      width: self.w.unwrap_or(fallback.width),
+      height: self.h.unwrap_or(fallback.height),
+    }
   }
 }
 
@@ -178,8 +205,27 @@ impl Text {
     Some(paragraph)
   }
 
-  // All text properties feed measurement, so every change affects layout. The
-  // resolved font family name and FontWeight come in already decoded.
+  // Box overrides paint within (or independent of) the layout box, so none of
+  // them affect layout.
+  pub fn set_x(&mut self, v: f32) -> bool {
+    self.x = Some(v);
+    false
+  }
+  pub fn set_y(&mut self, v: f32) -> bool {
+    self.y = Some(v);
+    false
+  }
+  pub fn set_w(&mut self, v: f32) -> bool {
+    self.w = Some(v);
+    false
+  }
+  pub fn set_h(&mut self, v: f32) -> bool {
+    self.h = Some(v);
+    false
+  }
+
+  // All other text properties feed measurement, so every change affects layout.
+  // The resolved font family name and FontWeight come in already decoded.
   pub fn set_font_family(&mut self, family: String) -> bool {
     self.font_family = family;
     true

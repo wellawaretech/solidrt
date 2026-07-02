@@ -24,6 +24,7 @@ export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from "./cont
 export { NavShell, type NavShellProps, type NavItem } from "./nav-shell"
 export { SplitView, type SplitViewProps } from "./split-view"
 export { QrCode, type QrCodeProps } from "./qrcode"
+export { Icon, type IconProps } from "./icon"
 export { theme, setTheme, darkTheme, lightTheme, type Theme } from "./theme"
 export {
   policy,

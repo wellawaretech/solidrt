@@ -536,6 +536,29 @@ import { QrCode } from "@solidrt/components"
 | `radius`     | `number`                   | `8`            | Corner radius of the background panel.                         |
 | `layout`     | `LayoutProps`              | -              | Layout of the outer box.                                       |
 
+### Icon
+
+A thin themed wrapper over the core `<svg>` primitive. `src` is a whole SVG document as a string; the component draws it in a square box and, for monochrome icons that stroke/fill with `currentColor`, recolors it from the theme. It carries no icon set and no name registry, so any `currentColor` SVG works (Lucide, Feather, Heroicons) and only the icons you import are bundled. Multi-color documents keep their own fills. For a non-square box, use `<svg>` directly.
+
+Icons are just SVG strings. Import them as assets (`import House from "lucide-static/icons/house.svg"`, resolved to a string), pull them from a string export, or inline a literal:
+
+```jsx
+import { Icon } from "@solidrt/components"
+import House from "lucide-static/icons/house.svg"
+
+<Icon src={House} />
+<Icon src={House} size={32} color={theme.color.primary} />
+```
+
+**Props**
+
+| Prop     | Type          | Default            | Description                                                    |
+| -------- | ------------- | ------------------ | -------------------------------------------------------------- |
+| `src`    | `string`      | -                  | The SVG document to draw.                                      |
+| `size`   | `number`      | `24`               | Square box side in pixels.                                     |
+| `color`  | `string`      | `theme.color.text` | Drives `currentColor`; explicit fills/strokes still win.       |
+| `layout` | `LayoutProps` | -                  | Layout of the box.                                             |
+
 ## License
 
 MIT. Copyright (c) 2026 Antoine van Wel.
