@@ -20,8 +20,14 @@ declare module "flux:rendertree" {
   export function createNode(id: number, kind: string): void
   /** Insert `nodeId` under `parentId`, before `anchorId` if given (else appended). */
   export function insertNode(parentId: number, nodeId: number, anchorId?: number): void
-  /** Detach and destroy `nodeId` from under `parentId`. */
-  export function deleteNode(parentId: number, nodeId: number): void
+  /**
+   * Unlink `nodeId` from `parentId` but keep its subtree alive, so it can be
+   * re-inserted elsewhere (a move). Mirrors DOM removeChild. Pair with
+   * {@link destroyNode} once the node is confirmed dead.
+   */
+  export function detachNode(parentId: number, nodeId: number): void
+  /** Free `nodeId` and its whole subtree. Call after {@link detachNode}. */
+  export function destroyNode(nodeId: number): void
   /** Write a single property on a node; `value` is marshalled per property. */
   export function setProperty(nodeId: number, name: string, value: unknown): void
   /** Enable or disable text-input capture / the on-screen keyboard. */

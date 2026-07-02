@@ -45,6 +45,16 @@ impl RenderTree {
   }
 
   pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) {
+    // Unlink from a previous parent first, so the node never lives in two
+    // children lists. Solid's control flow detaches before re-inserting, but a
+    // bare move into a different parent (no explicit remove) must stay
+    // DOM-faithful. A same-parent reorder falls through to the retain below.
+    if let Some(old_parent) = self.try_node(node_id).and_then(|n| n.parent) {
+      if old_parent != parent_id && self.try_node(old_parent).is_some() {
+        self.detach_node(old_parent, node_id);
+      }
+    }
+
     let child_has_layout = {
       let child = self.node_mut(node_id);
       child.parent = Some(parent_id);
@@ -100,16 +110,47 @@ impl RenderTree {
     self.bump_revision();
   }
 
-  pub fn delete_node(&mut self, parent_id: u64, node_id: u64) {
+  /// Unlinks `node_id` from its parent but keeps the subtree alive, so it can be
+  /// re-inserted elsewhere (a move). This mirrors DOM removeChild, which detaches
+  /// rather than destroys; the renderer frees the node later via destroy_node if
+  /// nothing re-attaches it. See renderer.ts for the deferred-destroy sweep.
+  pub fn detach_node(&mut self, parent_id: u64, node_id: u64) {
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
     if let Some(layout) = &mut parent.layout {
       layout.layout_children.retain(|&id| id != NodeId::from(node_id));
     }
-    self.delete_recursive(node_id);
+    if let Some(node) = self.nodes.get_mut(&node_id) {
+      node.parent = None;
+    }
     self.invalidate_cache(parent_id);
     self.invalidate_paint(parent_id);
     self.bump_revision();
+  }
+
+  /// Frees `node_id` and its whole subtree. Call after detach_node once the node
+  /// is confirmed dead (not moved). Defensively unlinks from any parent still
+  /// referencing it, so a direct destroy leaves no dangling child entry.
+  pub fn destroy_node(&mut self, node_id: u64) {
+    if let Some(parent_id) = self.try_node(node_id).and_then(|n| n.parent) {
+      if let Some(parent) = self.nodes.get_mut(&parent_id) {
+        parent.children.retain(|&id| id != node_id);
+        if let Some(layout) = &mut parent.layout {
+          layout.layout_children.retain(|&id| id != NodeId::from(node_id));
+        }
+        self.invalidate_cache(parent_id);
+        self.invalidate_paint(parent_id);
+      }
+    }
+    self.delete_recursive(node_id);
+    self.bump_revision();
+  }
+
+  /// Detach then destroy in one step. Retained for callers (and tests) that want
+  /// the old remove-and-free semantics without the deferred sweep.
+  pub fn delete_node(&mut self, parent_id: u64, node_id: u64) {
+    self.detach_node(parent_id, node_id);
+    self.destroy_node(node_id);
   }
 
   pub fn element_mut(&mut self, id: u64) -> &mut Element {

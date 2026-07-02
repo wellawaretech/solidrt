@@ -129,7 +129,8 @@ impl ModuleDef for RenderTreeModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("createRoot")?;
     decl.declare("createNode")?;
-    decl.declare("deleteNode")?;
+    decl.declare("detachNode")?;
+    decl.declare("destroyNode")?;
     decl.declare("insertNode")?;
     decl.declare("setProperty")?;
     decl.declare("requestFrame")?;
@@ -165,8 +166,15 @@ impl ModuleDef for RenderTreeModule {
 
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();
-    let delete_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
-      tree_ref.borrow_mut().delete_node(parent_id, node_id);
+    let detach_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
+      tree_ref.borrow_mut().detach_node(parent_id, node_id);
+      platform_ref.request_frame();
+    })?;
+
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let destroy_node = Function::new(ctx.clone(), move |node_id: u64| {
+      tree_ref.borrow_mut().destroy_node(node_id);
       platform_ref.request_frame();
     })?;
 
@@ -272,7 +280,8 @@ impl ModuleDef for RenderTreeModule {
 
     exports.export("createRoot", create_root)?;
     exports.export("createNode", create_node)?;
-    exports.export("deleteNode", delete_node)?;
+    exports.export("detachNode", detach_node)?;
+    exports.export("destroyNode", destroy_node)?;
     exports.export("insertNode", insert_node)?;
     exports.export("setProperty", set_property)?;
     exports.export("requestFrame", request_frame)?;

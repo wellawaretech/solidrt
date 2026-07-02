@@ -97,6 +97,60 @@ fn detached_child_not_in_layout_children() {
 }
 
 #[test]
+fn detach_node_keeps_subtree_alive() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+
+  tree.detach_node(1, 2);
+
+  // Unlinked from parent, but the subtree survives for re-insertion.
+  assert_eq!(tree.node(1).children, Vec::<u64>::new());
+  assert!(tree.node(1).layout_data().layout_children.is_empty());
+  assert!(tree.node(2).parent.is_none());
+  assert!(tree.try_node(2).is_some());
+  assert!(tree.try_node(3).is_some());
+  assert_eq!(tree.node(2).children, vec![3]);
+}
+
+#[test]
+fn reinsert_detached_node_moves_it() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 3, None);
+
+  // Move node 3 from under 1 to under 2 without an explicit detach first.
+  tree.insert_node(2, 3, None);
+
+  assert_eq!(tree.node(1).children, vec![2]);
+  assert_eq!(tree.node(2).children, vec![3]);
+  assert_eq!(tree.node(3).parent, Some(2));
+  assert!(tree.node(1).layout_data().layout_children.iter().all(|&id| id != taffy::NodeId::from(3u64)));
+}
+
+#[test]
+fn destroy_node_frees_detached_subtree() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+
+  assert!(tree.try_node(2).is_none());
+  assert!(tree.try_node(3).is_none());
+}
+
+#[test]
 fn delete_node_removes_subtree() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());

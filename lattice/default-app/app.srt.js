@@ -3144,6 +3144,7 @@ function getFocusedNodeId() {
 }
 
 // packages/core/src/window.ts
+var pointerCaptures = new Map;
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -3216,39 +3217,62 @@ function attachWindow(_nodeId) {
     unsubscribe = on("render", ({ time, frame }) => {
       runFrame(time * 1000, frame);
     });
-    unsubDown = on("pointerDown", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerDown")?.(e);
+    let bubble = (targets, handler, e) => {
+      let stopped = false;
+      e.stopPropagation = () => {
+        stopped = true;
+      };
+      for (let i = targets.length - 1;i >= 0; i--) {
+        getEventHandler(targets[i], handler)?.(e);
+        if (stopped)
+          break;
       }
+    };
+    unsubDown = on("pointerDown", ({ targets, ...e }) => {
+      bubble(targets, "onPointerDown", e);
       let focused = getFocusedNodeId();
       if (focused != null && !targets.includes(focused)) {
         setFocus(null);
       }
     });
     unsubUp = on("pointerUp", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerUp")?.(e);
+      let captured = pointerCaptures.get(e.pointerId);
+      if (captured != null) {
+        e.stopPropagation = () => {};
+        getEventHandler(captured, "onPointerUp")?.(e);
+        pointerCaptures.delete(e.pointerId);
+        return;
       }
+      bubble(targets, "onPointerUp", e);
     });
     unsubMove = on("pointerMove", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerMove")?.(e);
+      let captured = pointerCaptures.get(e.pointerId);
+      if (captured != null) {
+        e.stopPropagation = () => {};
+        getEventHandler(captured, "onPointerMove")?.(e);
+        return;
       }
+      bubble(targets, "onPointerMove", e);
     });
-    unsubEnter = on("pointerEnter", ({ targets, ...e }) => {
+    let dispatchOrdered = (targets, handler, e) => {
+      let stopped = false;
+      e.stopPropagation = () => {
+        stopped = true;
+      };
       for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerEnter")?.(e);
+        getEventHandler(nodeId, handler)?.(e);
+        if (stopped)
+          break;
       }
+    };
+    unsubEnter = on("pointerEnter", ({ targets, ...e }) => {
+      dispatchOrdered(targets, "onPointerEnter", e);
     });
     unsubLeave = on("pointerLeave", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onPointerLeave")?.(e);
-      }
+      dispatchOrdered(targets, "onPointerLeave", e);
     });
     unsubWheel = on("wheel", ({ targets, ...e }) => {
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, "onWheel")?.(e);
-      }
+      bubble(targets, "onWheel", e);
     });
     unsubKeyDown = on("keydown", (e) => {
       let id = getFocusedNodeId();
@@ -3523,6 +3547,30 @@ function createProxyNode(elementType) {
   id += 1;
   return node;
 }
+var pendingDestroy = new Map;
+var destroyScheduled = false;
+function destroyNode2(node) {
+  tree2.destroyNode(node.id);
+  let cleanup2 = (n2) => {
+    for (let child of n2.children)
+      if (child.parent === n2)
+        cleanup2(child);
+    if (n2.id === getFocusedNodeId())
+      setFocus(null);
+    nodes.delete(n2.id);
+    cleanupNodeHandlers(n2.id);
+  };
+  cleanup2(node);
+}
+function flushDestroy() {
+  destroyScheduled = false;
+  let batch = pendingDestroy;
+  pendingDestroy = new Map;
+  for (let node of batch.values()) {
+    if (node.parent === undefined)
+      destroyNode2(node);
+  }
+}
 function removeNode(parent, node) {
   if (!node || !parent)
     return;
@@ -3531,16 +3579,12 @@ function removeNode(parent, node) {
     parent.children.splice(index, 1);
   }
   node.parent = undefined;
-  tree2.deleteNode(parent.id, node.id);
-  let cleanup2 = (n2) => {
-    for (let child of n2.children)
-      cleanup2(child);
-    if (n2.id === getFocusedNodeId())
-      setFocus(null);
-    nodes.delete(n2.id);
-    cleanupNodeHandlers(n2.id);
-  };
-  cleanup2(node);
+  tree2.detachNode(parent.id, node.id);
+  pendingDestroy.set(node.id, node);
+  if (!destroyScheduled) {
+    destroyScheduled = true;
+    Promise.resolve().then(flushDestroy);
+  }
 }
 var {
   effect: effect3,
@@ -3594,6 +3638,7 @@ var {
   insertNode: (parent, node, anchor) => {
     if (!node)
       return;
+    pendingDestroy.delete(node.id);
     if (parent) {
       node.parent = parent;
       if (!anchor) {
@@ -3637,17 +3682,19 @@ function render(code) {
     insert(null, root);
   });
 }
+// packages/core/src/environment.ts
+import { on as on2 } from "srt:events";
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, setShaderParams, uploadTexture } from "flux:gpu";
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on2 } from "srt:events";
+import { on as on3 } from "srt:events";
 var devicesAccessor;
 function cameraDevices() {
   if (!devicesAccessor) {
     let [devices, setDevices] = createSignal(listCameras());
-    on2("cameraDeviceChange", () => setDevices(listCameras()));
+    on3("cameraDeviceChange", () => setDevices(listCameras()));
     devicesAccessor = devices;
   }
   return devicesAccessor();
@@ -3683,7 +3730,7 @@ function createCamera(options = {}) {
 }
 
 // lattice/default-app/app.tsx
-import { on as on3 } from "srt:events";
+import { on as on4 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents, launchAddress } from "srt:dev";
 
 // lattice/default-app/logo.tsx
@@ -4252,7 +4299,7 @@ function App() {
   let [scanning, setScanning] = createSignal(false);
   let [scanError, setScanError] = createSignal(null);
   if (dev) {
-    on3("dev", (e2) => {
+    on4("dev", (e2) => {
       setState(e2.state);
       setAddress(e2.address);
       if (e2.recents) {

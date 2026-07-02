@@ -30,9 +30,42 @@ function createProxyNode(elementType: ElementType): ProxyNode {
   return node
 }
 
-// Detaches `node` from `parent` and destroys it (and all descendants) on both
-// the JS and native sides. Hoisted out of the renderer config so createPortal
-// can reuse it (createRenderer does not return its removeNode hook).
+// Nodes detached this tick and awaiting the destroy sweep, keyed by id so a
+// re-insert can cancel one. See removeNode / flushDestroy.
+let pendingDestroy = new Map<number, ProxyNode>()
+let destroyScheduled = false
+
+// Frees a detached node and its subtree on both sides. Descendants that were
+// moved out (their parent no longer points here) are left alone. Clear focus
+// before dropping handlers so onBlur still fires for a focused descendant.
+function destroyNode(node: ProxyNode): void {
+  tree.destroyNode(node.id)
+  let cleanup = (n: ProxyNode) => {
+    for (let child of n.children) if (child.parent === n) cleanup(child)
+    if (n.id === getFocusedNodeId()) setFocus(null)
+    nodes.delete(n.id)
+    cleanupNodeHandlers(n.id)
+  }
+  cleanup(node)
+}
+
+// End-of-tick sweep: destroy every still-detached pending node. A node that was
+// re-inserted this tick had its entry removed by insertNode (it moved, not
+// died); one still parentless here is genuinely gone.
+function flushDestroy(): void {
+  destroyScheduled = false
+  let batch = pendingDestroy
+  pendingDestroy = new Map()
+  for (let node of batch.values()) {
+    if (node.parent === undefined) destroyNode(node)
+  }
+}
+
+// Detaches `node` from `parent`, keeping the subtree alive so it can be
+// re-inserted elsewhere (a move) - matching DOM removeChild. Destruction is
+// deferred to an end-of-tick sweep; if nothing re-attaches the node by then it
+// is freed. Hoisted out of the renderer config so createPortal can reuse it
+// (createRenderer does not return its removeNode hook).
 function removeNode(parent: ProxyNode, node: ProxyNode): void {
   if (!node || !parent) return
 
@@ -45,17 +78,13 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
   }
   node.parent = undefined
 
-  tree.deleteNode(parent.id, node.id)
+  tree.detachNode(parent.id, node.id)
 
-  // Recursively clean up node and all descendants. Clear focus before
-  // dropping handlers so onBlur still fires for a focused descendant.
-  let cleanup = (n: ProxyNode) => {
-    for (let child of n.children) cleanup(child)
-    if (n.id === getFocusedNodeId()) setFocus(null)
-    nodes.delete(n.id)
-    cleanupNodeHandlers(n.id)
+  pendingDestroy.set(node.id, node)
+  if (!destroyScheduled) {
+    destroyScheduled = true
+    Promise.resolve().then(flushDestroy)
   }
-  cleanup(node)
 }
 
 export let {
@@ -122,6 +151,10 @@ export let {
 
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
     if (!node) return
+
+    // A re-inserted node is being moved, not destroyed: cancel its pending
+    // destroy so the end-of-tick sweep leaves it (and its subtree) alone.
+    pendingDestroy.delete(node.id)
 
     if (parent) {
       node.parent = parent
