@@ -16,11 +16,19 @@ export interface ButtonProps {
 }
 
 // Themed convenience over Pressable: a padded, centered, accent-colored box with
-// a label. Press feedback is a slight scale, driven through Pressable's reactive
-// style so no nodes are recreated on press. Override the box via style and the
-// padding/sizing via layout.
+// a label. Press feedback is a slight scale, hover feedback a tint (non-touch
+// interaction policies only), both driven through Pressable's reactive style so
+// no nodes are recreated. Override the box via style and the padding/sizing via
+// layout. A caller-set backgroundColor disables the hover tint: we cannot know
+// its hover variant.
 export function Button(props: ButtonProps) {
-  let bg = () => props.style?.backgroundColor ?? (props.disabled ? theme.color.surface : theme.color.primary)
+  let bg = (s: PressState) =>
+    props.style?.backgroundColor ??
+    (props.disabled
+      ? theme.color.surface
+      : s.hovered && policy.interaction !== "touch"
+        ? theme.color.primaryHover
+        : theme.color.primary)
   let radius = () => props.style?.borderRadius ?? theme.radius.sm
   let label = () => (props.disabled ? theme.color.textMuted : theme.color.onPrimary)
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
@@ -41,7 +49,7 @@ export function Button(props: ButtonProps) {
       }}
       style={(s: PressState) => ({
         ...props.style,
-        backgroundColor: bg(),
+        backgroundColor: bg(s),
         borderRadius: radius(),
         // Always a number: a scale that flips from a number back to undefined
         // hits the transform decoder, which rejects null. Multiply so a

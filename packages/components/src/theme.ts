@@ -14,10 +14,14 @@ export type Theme = {
     surface: string
     // Subtle raised/track fill (switch off-state, slider track, ...).
     surfaceAlt: string
+    // Hover tint for surface-colored controls (non-touch interaction policies).
+    surfaceHover: string
     text: string
     textMuted: string
     border: string
     primary: string
+    // Hover tint for primary-colored controls.
+    primaryHover: string
     onPrimary: string
     // Validation / destructive.
     danger: string
@@ -41,10 +45,12 @@ export let darkTheme: Theme = {
     background: "#0b0f17",
     surface: "#161b22",
     surfaceAlt: "#21262d",
+    surfaceHover: "#262c34",
     text: "#e6edf3",
     textMuted: "rgba(230,237,243,0.5)",
     border: "rgba(255,255,255,0.14)",
     primary: "#1f6feb",
+    primaryHover: "#388bfd",
     onPrimary: "#ffffff",
     danger: "#f85149",
     scrim: "rgba(0,0,0,0.6)",
@@ -60,10 +66,12 @@ export let lightTheme: Theme = {
     background: "#ffffff",
     surface: "#f6f8fa",
     surfaceAlt: "#eaeef2",
+    surfaceHover: "#e0e5eb",
     text: "#1f2328",
     textMuted: "rgba(31,35,40,0.5)",
     border: "rgba(0,0,0,0.15)",
     primary: "#1f6feb",
+    primaryHover: "#1a5fd0",
     onPrimary: "#ffffff",
     danger: "#cf222e",
     scrim: "rgba(0,0,0,0.4)",
