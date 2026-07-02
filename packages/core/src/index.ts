@@ -9,7 +9,7 @@ export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } fro
 export { env } from "./environment"
 export type { InputDevices, SystemTheme, Orientation } from "./environment"
 export { capabilities } from "./capabilities"
-export type { Capabilities } from "./capabilities"
+export type { Capabilities, WindowSizeClass } from "./capabilities"
 export { createTexture } from "./gpu"
 export { createImage, decodeImage } from "./image"
 export type { DecodedImage, ImageSource } from "./image"

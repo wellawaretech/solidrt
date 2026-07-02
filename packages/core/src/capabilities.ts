@@ -9,6 +9,8 @@ import { env } from "./environment"
 // drops hover); the traffic-inferred seen-flags are the fallback for runtimes
 // without device enumeration.
 
+export type WindowSizeClass = "compact" | "medium" | "expanded"
+
 export type Capabilities = {
   /** A pointer can rest over content without pressing (mouse/trackpad). */
   hover: boolean
@@ -18,7 +20,13 @@ export type Capabilities = {
   touch: boolean
   /** Hardware-key navigation (tab/arrow traversal, shortcuts). */
   keyboardNav: boolean
+  /** How much horizontal room the window offers (Material breakpoints). */
+  windowSizeClass: WindowSizeClass
 }
+
+// Material 3 width breakpoints, in logical pixels.
+const MEDIUM_MIN_WIDTH = 600
+const EXPANDED_MIN_WIDTH = 840
 
 export let capabilities: Capabilities = {
   get hover() {
@@ -32,5 +40,9 @@ export let capabilities: Capabilities = {
   },
   get keyboardNav() {
     return env.inputDevices?.keyboard ?? env.keyboardSeen
+  },
+  get windowSizeClass(): WindowSizeClass {
+    let w = env.windowSize.width
+    return w >= EXPANDED_MIN_WIDTH ? "expanded" : w >= MEDIUM_MIN_WIDTH ? "medium" : "compact"
   },
 }

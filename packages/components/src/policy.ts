@@ -9,6 +9,8 @@ import type { Capabilities } from "@solidrt/core"
 export type InteractionPolicy = "touch" | "desktop" | "hybrid"
 export type DensityPolicy = "comfortable" | "compact" | "dense"
 export type MotionPolicy = "normal" | "reduced" | "none"
+export type NavigationPolicy = "bottomTabs" | "rail" | "sidebar"
+export type LayoutPolicy = "singlePane" | "twoPane"
 
 export type Policies = {
   interaction: InteractionPolicy
@@ -18,6 +20,11 @@ export type Policies = {
   // keyboard presence; the runtime cannot yet tell keyboard focus from pointer
   // focus (no Tab traversal), so this is per-session, not per-focus-source.
   focusRing: boolean
+  // Application policies: recommendations derived from the window size class.
+  // The application owns the final decision; accept them by consuming
+  // policy.navigation / policy.layout, or override via setPolicy.
+  navigation: NavigationPolicy
+  layout: LayoutPolicy
 }
 
 export type PolicyResolver = (caps: Capabilities) => Policies
@@ -41,6 +48,9 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
     focusRing: caps.keyboardNav,
+    navigation:
+      caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
+    layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane",
   }
 }
 
@@ -65,6 +75,12 @@ export let policy = {
   },
   get focusRing(): boolean {
     return overrides().focusRing ?? resolved().focusRing
+  },
+  get navigation(): NavigationPolicy {
+    return overrides().navigation ?? resolved().navigation
+  },
+  get layout(): LayoutPolicy {
+    return overrides().layout ?? resolved().layout
   },
 }
 

@@ -21,6 +21,7 @@ export { Modal, type ModalProps } from "./modal"
 export { Tooltip, type TooltipProps } from "./tooltip"
 export { Select, type SelectProps, type SelectOption } from "./select"
 export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from "./context-menu"
+export { NavShell, type NavShellProps, type NavItem } from "./nav-shell"
 export { QrCode, type QrCodeProps } from "./qrcode"
 export { theme, setTheme, darkTheme, lightTheme, type Theme } from "./theme"
 export {
@@ -34,5 +35,7 @@ export {
   type InteractionPolicy,
   type DensityPolicy,
   type MotionPolicy,
+  type NavigationPolicy,
+  type LayoutPolicy,
 } from "./policy"
 export type { StyleProps, TextLayoutProps } from "./types"
