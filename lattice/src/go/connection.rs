@@ -281,12 +281,8 @@ async fn try_serve(
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
-  let uri = http::Uri::builder()
-    .scheme("ws")
-    .authority(addr)
-    .path_and_query("/")
-    .build()
-    .expect("invalid dev server URI");
+  let uri =
+    http::Uri::builder().scheme("ws").authority(addr).path_and_query("/").build().expect("invalid dev server URI");
 
   let (mut client, _) = match tokio_websockets::ClientBuilder::from_uri(uri).connect().await {
     Ok(conn) => conn,
@@ -304,8 +300,7 @@ async fn try_serve(
   // previous address so reconnecting to a different server repoints the proxy.
   *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
-  let info =
-    format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, flux::platform(), crate::VERSION);
+  let info = format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, flux::platform(), crate::VERSION);
   let _ = client.send(tokio_websockets::Message::text(info)).await;
 
   while let Some(Ok(msg)) = client.next().await {

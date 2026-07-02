@@ -4,6 +4,10 @@ import { env } from "./environment"
 // Derived from Environment State on every read - computed, never stored - so
 // they are reactive wherever env is. Capabilities describe what is possible,
 // not how the UI should behave; behavior lives in the policy layer on top.
+//
+// Device presence wins when the runtime reports it (so unplugging the mouse
+// drops hover); the traffic-inferred seen-flags are the fallback for runtimes
+// without device enumeration.
 
 export type Capabilities = {
   /** A pointer can rest over content without pressing (mouse/trackpad). */
@@ -18,15 +22,15 @@ export type Capabilities = {
 
 export let capabilities: Capabilities = {
   get hover() {
-    return env.mouseSeen
+    return env.inputDevices?.mouse ?? env.mouseSeen
   },
   get precisePointer() {
-    return env.mouseSeen
+    return env.inputDevices?.mouse ?? env.mouseSeen
   },
   get touch() {
-    return env.touchSeen
+    return env.inputDevices?.touch ?? env.touchSeen
   },
   get keyboardNav() {
-    return env.keyboardSeen
+    return env.inputDevices?.keyboard ?? env.keyboardSeen
   },
 }

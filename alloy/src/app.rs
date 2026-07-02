@@ -4,7 +4,10 @@ use std::time::Instant;
 
 use crate::backend::{create_render_surface, DisplayContext, Frame, RenderSurface};
 use crate::context::Context;
-use crate::event::{current_resize_event, translate_event, AlloyCommand, AlloyEvent};
+use crate::event::{
+  current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
+  translate_event, AlloyCommand, AlloyEvent,
+};
 use crate::gl;
 use crate::mode::Mode;
 use crate::record::run_record_loop;
@@ -210,6 +213,9 @@ impl App {
             apply_main_thread_effects(&e, &mut render_surface, &mode);
             event_tx.send(e).ok();
             event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
+            event_tx.send(current_system_theme_event()).ok();
+            event_tx.send(current_input_devices_event()).ok();
+            event_tx.send(current_orientation_event(&window)).ok();
           }
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {

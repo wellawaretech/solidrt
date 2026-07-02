@@ -7,6 +7,7 @@ export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./wind
 export { setPointerCapture, releasePointerCapture } from "./window"
 export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 export { env } from "./environment"
+export type { InputDevices, SystemTheme, Orientation } from "./environment"
 export { capabilities } from "./capabilities"
 export type { Capabilities } from "./capabilities"
 export { createTexture } from "./gpu"

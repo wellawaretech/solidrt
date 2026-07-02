@@ -1,7 +1,8 @@
-use sdl3::sys::keyboard::SDL_GetModState;
+use sdl3::sys::keyboard::{SDL_GetModState, SDL_HasKeyboard};
+use sdl3::sys::mouse::SDL_HasMouse;
 use sdl3::sys::power::{SDL_GetPowerInfo, SDL_PowerState};
 use sdl3::sys::rect::SDL_Rect;
-use sdl3::sys::video::{SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea};
+use sdl3::sys::video::{SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SystemTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerState {
@@ -32,6 +33,34 @@ pub fn get_power_info() -> PowerInfo {
     },
     percent: if percent < 0 { None } else { Some(percent as u8) },
   }
+}
+
+// OS-level dark/light preference. Mirrored into a local enum: the sdl3 crate
+// wraps SDL_GetSystemTheme, but its SystemTheme derives nothing (not even
+// Clone), so it cannot ride in AlloyEvent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemTheme {
+  Dark,
+  Light,
+  Unknown,
+}
+
+pub fn system_theme() -> SystemTheme {
+  match unsafe { SDL_GetSystemTheme() } {
+    SDL_SystemTheme::DARK => SystemTheme::Dark,
+    SDL_SystemTheme::LIGHT => SystemTheme::Light,
+    _ => SystemTheme::Unknown,
+  }
+}
+
+// Input device presence (connected, not necessarily in use); the sdl3 crate
+// does not wrap SDL_HasKeyboard / SDL_HasMouse.
+pub fn has_keyboard() -> bool {
+  unsafe { SDL_HasKeyboard() }
+}
+
+pub fn has_mouse() -> bool {
+  unsafe { SDL_HasMouse() }
 }
 
 pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {

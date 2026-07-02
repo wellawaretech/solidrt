@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use alloy::impellers::{
-  Color, DisplayListBuilder, Paint, ParagraphBuilder, ParagraphStyle, Point, Rect,
-  Size, TextAlignment, TypographyContext,
+  Color, DisplayListBuilder, Paint, ParagraphBuilder, ParagraphStyle, Point, Rect, Size, TextAlignment,
+  TypographyContext,
 };
 use cpu_time::ProcessTime;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -221,8 +221,7 @@ impl Stats {
     };
     pb.push_style(&style);
 
-    let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS", 
-    self.proc_cpu, self.proc_rss as f32 / MIB, fps);
+    let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS", self.proc_cpu, self.proc_rss as f32 / MIB, fps);
     // Each timing is shown as a share of the measured frame period (js_ms and
     // frame_ms are smoothed the same way on the JS thread, so a share stays
     // within 100%). Shares sum to ~100% when CPU-bound; less means idle or
@@ -236,8 +235,10 @@ impl Stats {
     // HOV hover.
     text.push_str(&format!(
       "\nLAY {:.0}% PNT {:.0}%\nPST {:.0}% HOV {:.0}%",
-      pct(self.phases.layout), pct(self.phases.paint),
-      pct(self.phases.post), pct(self.phases.hover),
+      pct(self.phases.layout),
+      pct(self.phases.paint),
+      pct(self.phases.post),
+      pct(self.phases.hover),
     ));
     // Demand-gate savings/sec: frames served from the cached display list
     // (reuse) and frames skipped entirely (skip). Hidden when the gate saved
@@ -273,10 +274,8 @@ impl Stats {
     let pad = 10.0;
     let text_w = paragraph.get_longest_line_width();
     let text_h = paragraph.get_height();
-    let bg = Rect::new(
-      Point::new(x + PARA_WIDTH - text_w - pad, y - pad),
-      Size::new(text_w + pad * 2.0, text_h + pad * 2.0),
-    );
+    let bg =
+      Rect::new(Point::new(x + PARA_WIDTH - text_w - pad, y - pad), Size::new(text_w + pad * 2.0, text_h + pad * 2.0));
     let mut bg_paint = Paint::default();
     bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
     b.draw_rect(&bg, &bg_paint);

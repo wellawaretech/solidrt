@@ -63,10 +63,8 @@ impl ModuleDef for SrtDevModule {
         let stop = control.clone();
 
         exports.export("available", true)?;
-        exports.export(
-          "connect",
-          Function::new(ctx.clone(), MutFn::from(move |addr: String| (connect.0.connect)(addr)))?,
-        )?;
+        exports
+          .export("connect", Function::new(ctx.clone(), MutFn::from(move |addr: String| (connect.0.connect)(addr)))?)?;
         exports.export("discover", Function::new(ctx.clone(), MutFn::from(move || (discover.0.discover)()))?)?;
         exports.export("stop", Function::new(ctx.clone(), MutFn::from(move || (stop.0.stop)()))?)?;
         exports.export("canDiscover", control.0.can_discover)?;

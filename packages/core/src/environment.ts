@@ -3,11 +3,57 @@ import { on } from "srt:events"
 import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 
 // Environment State: reactive facts about the current execution environment.
-// Facts the runtime cannot yet report as device presence (no native device
-// enumeration events yet) are inferred from input traffic instead: a pointer
-// type or key press has been seen this session. Seen-flags only ever go from
-// false to true, so a capability derived from them can appear mid-session
-// (e.g. the first mouse move) but never flickers away.
+//
+// Device presence comes from the runtime's sticky "inputDevices" event (init +
+// hotplug). Runtimes that do not emit it leave `inputDevices` undefined, and
+// the seen-flags below act as the fallback: a pointer type or key press has
+// been seen this session. Seen-flags only ever go from false to true, so a
+// capability derived from them can appear mid-session (e.g. the first mouse
+// move) but never flickers away.
+
+/** Connected input device classes, as reported by the runtime. */
+export interface InputDevices {
+  keyboard: boolean
+  mouse: boolean
+  touch: boolean
+}
+
+export type SystemTheme = "dark" | "light" | "unknown"
+
+export type Orientation = "portrait" | "portraitFlipped" | "landscape" | "landscapeFlipped" | "unknown"
+
+let devicesAccessor: (() => InputDevices | undefined) | undefined
+
+function ensureDevicesState() {
+  if (devicesAccessor) return
+  let [devices, setDevices] = createSignal<InputDevices | undefined>(undefined)
+  // Sticky: the current state replays on subscribe, so the first read already
+  // sees it on runtimes that report devices.
+  on("inputDevices", (d: InputDevices) => {
+    setDevices({ keyboard: !!d.keyboard, mouse: !!d.mouse, touch: !!d.touch })
+  })
+  devicesAccessor = devices
+}
+
+let systemThemeAccessor: (() => SystemTheme) | undefined
+
+function ensureSystemThemeState() {
+  if (systemThemeAccessor) return
+  let [theme, setTheme] = createSignal<SystemTheme>("unknown")
+  on("systemTheme", (e: { theme?: SystemTheme }) => setTheme(e.theme ?? "unknown"))
+  systemThemeAccessor = theme
+}
+
+let orientationAccessor: (() => Orientation) | undefined
+
+function ensureOrientationState() {
+  if (orientationAccessor) return
+  let [orientation, setOrientation] = createSignal<Orientation>("unknown")
+  on("displayOrientation", (e: { orientation?: Orientation }) => {
+    setOrientation(e.orientation ?? "unknown")
+  })
+  orientationAccessor = orientation
+}
 
 let mouseSeenAccessor: (() => boolean) | undefined
 let touchSeenAccessor: (() => boolean) | undefined
@@ -41,8 +87,8 @@ function ensureKeyboardState() {
   if (keyboardSeenAccessor) return
   let [keyboard, setKeyboard] = createSignal(false)
   // Soft keyboards also deliver some keydowns (Backspace, Return), so this can
-  // read true on a touch-only device once the user types in a field. Good
-  // enough until real device presence arrives from the runtime.
+  // read true on a touch-only device once the user types in a field. Only a
+  // fallback: capabilities prefer runtime-reported device presence.
   let unsub = on("keydown", () => {
     setKeyboard(true)
     unsub()
@@ -71,6 +117,25 @@ export let env = {
   },
   get keyboardHeight() {
     return keyboardHeight()
+  },
+  /**
+   * Connected input device classes, or undefined until the runtime reports
+   * them (it does so at startup, so undefined normally means the runtime has
+   * no device enumeration).
+   */
+  get inputDevices(): InputDevices | undefined {
+    ensureDevicesState()
+    return devicesAccessor!()
+  },
+  /** The OS-level dark/light preference. */
+  get systemTheme(): SystemTheme {
+    ensureSystemThemeState()
+    return systemThemeAccessor!()
+  },
+  /** Orientation of the display the window is on. */
+  get orientation(): Orientation {
+    ensureOrientationState()
+    return orientationAccessor!()
   },
   /** A mouse (or trackpad) pointer has produced events this session. */
   get mouseSeen(): boolean {

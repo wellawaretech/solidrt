@@ -92,6 +92,17 @@ pub enum AlloyEvent {
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.
   Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
+  // OS-level dark/light preference. Emitted at init and whenever the OS theme
+  // changes; Unknown on platforms that do not report one.
+  SystemTheme { theme: sdl_utils::SystemTheme },
+  // Connected input device classes. Presence, not traffic: a connected mouse
+  // that never moves still reports true. Emitted at init and on keyboard/mouse
+  // hotplug; SDL has no touch hotplug events, so touch is re-queried on those
+  // same occasions.
+  InputDevices { keyboard: bool, mouse: bool, touch: bool },
+  // Orientation of the display the window is on. Emitted at init and on
+  // rotation.
+  DisplayOrientation { orientation: sdl3::video::Orientation },
   // Camera hotplug. Carries no device id (subscribers re-enumerate via
   // camera::list_cameras()). SDL only delivers these once the camera
   // subsystem is initialized, i.e. after the first list/open call.
@@ -106,6 +117,26 @@ pub enum AlloyEvent {
   //   - macOS/Windows: no camera hotplug at all (upstream FIXMEs, not wired),
   //     so neither add nor remove arrives.
   CameraDeviceChange { added: bool },
+}
+
+pub(crate) fn current_system_theme_event() -> AlloyEvent {
+  AlloyEvent::SystemTheme { theme: sdl_utils::system_theme() }
+}
+
+pub(crate) fn current_input_devices_event() -> AlloyEvent {
+  AlloyEvent::InputDevices {
+    keyboard: sdl_utils::has_keyboard(),
+    mouse: sdl_utils::has_mouse(),
+    touch: !sdl3::touch::num_touch_devices().is_empty(),
+  }
+}
+
+pub(crate) fn current_orientation_event(window: &sdl3::video::Window) -> AlloyEvent {
+  let orientation = window
+    .get_display()
+    .map(|d| sdl3::video::Orientation::from_ll(d.get_orientation()))
+    .unwrap_or(sdl3::video::Orientation::Unknown);
+  AlloyEvent::DisplayOrientation { orientation }
 }
 
 pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
@@ -237,6 +268,25 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
       })
     }
     SdlEvent::TextInput { text, .. } => Some(AlloyEvent::TextInput { text }),
+    // Any display's orientation event triggers a re-query of the window's own
+    // display (authoritative, and sidesteps matching display ids); a rotation
+    // elsewhere re-emits an unchanged value, which subscribers dedupe.
+    SdlEvent::Display { display_event: sdl3::event::DisplayEvent::Orientation(_), .. } => {
+      Some(current_orientation_event(window))
+    }
+    // Like the camera events below, these have no sdl3 crate Event variants and
+    // arrive as Unknown, recovered by raw type id.
+    SdlEvent::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_SYSTEM_THEME_CHANGED.0 => {
+      Some(current_system_theme_event())
+    }
+    SdlEvent::Unknown { type_, .. }
+      if type_ == sdl3::sys::events::SDL_EVENT_KEYBOARD_ADDED.0
+        || type_ == sdl3::sys::events::SDL_EVENT_KEYBOARD_REMOVED.0
+        || type_ == sdl3::sys::events::SDL_EVENT_MOUSE_ADDED.0
+        || type_ == sdl3::sys::events::SDL_EVENT_MOUSE_REMOVED.0 =>
+    {
+      Some(current_input_devices_event())
+    }
     // The sdl3 crate has no Event variants for camera device events, so they
     // arrive as Unknown and are recovered by raw type id. Approved/denied
     // (0x1402/0x1403) stay ignored: open_camera polls permission state itself.

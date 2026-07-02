@@ -18,7 +18,9 @@ export type Policies = {
 
 export type PolicyResolver = (caps: Capabilities) => Policies
 
-// Capabilities are currently inferred from seen input traffic, so interaction
+// On runtimes with device enumeration, capabilities reflect connected devices
+// from startup, so interaction settles immediately (and adapts on hotplug).
+// Elsewhere capabilities are inferred from seen input traffic: interaction
 // starts "hybrid" and settles as evidence arrives (the first mouse move flips
 // a mouse-only session to "desktop").
 export function defaultPolicyResolver(caps: Capabilities): Policies {

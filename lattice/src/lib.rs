@@ -369,6 +369,50 @@ fn ui_thread(
               });
             }
           }
+          // Sticky environment facts (like resize / displayRefreshRate): a late
+          // subscriber still sees the current value.
+          alloy::AlloyEvent::SystemTheme { theme } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              let name = match theme {
+                alloy::sdl_utils::SystemTheme::Dark => "dark",
+                alloy::sdl_utils::SystemTheme::Light => "light",
+                alloy::sdl_utils::SystemTheme::Unknown => "unknown",
+              };
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("theme", name).expect("set theme");
+                plugins::events::emit_sticky(&ctx, "systemTheme", obj);
+              });
+            }
+          }
+          alloy::AlloyEvent::InputDevices { keyboard, mouse, touch } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("keyboard", keyboard).expect("set keyboard");
+                obj.set("mouse", mouse).expect("set mouse");
+                obj.set("touch", touch).expect("set touch");
+                plugins::events::emit_sticky(&ctx, "inputDevices", obj);
+              });
+            }
+          }
+          alloy::AlloyEvent::DisplayOrientation { orientation } => {
+            if let Some(eh) = current_exec_events.borrow().as_ref() {
+              use alloy::sdl3::video::Orientation;
+              let name = match orientation {
+                Orientation::Portrait => "portrait",
+                Orientation::PortraitFlipped => "portraitFlipped",
+                Orientation::Landscape => "landscape",
+                Orientation::LandscapeFlipped => "landscapeFlipped",
+                Orientation::Unknown => "unknown",
+              };
+              eh.exec(move |ctx| {
+                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
+                obj.set("orientation", name).expect("set orientation");
+                plugins::events::emit_sticky(&ctx, "displayOrientation", obj);
+              });
+            }
+          }
           // Marshalled by flux::gui::events::forward when an engine is live; they
           // only reach here pre-engine (startup) or mid-reload, where they are
           // safely ignored.
@@ -513,8 +557,14 @@ fn ui_thread(
       } else {
         // The BSOD itself exited; wait for a command rather than respinning.
         match local.run_until(cmd_rx.recv()).await {
-          Some(EngineCmd::Reload(src)) => { current_app = AppSource::Text(src); showing_bsod = false; }
-          Some(EngineCmd::Stop) => { current_app = AppSource::Text(DEFAULT_SOURCE.to_string()); showing_bsod = false; }
+          Some(EngineCmd::Reload(src)) => {
+            current_app = AppSource::Text(src);
+            showing_bsod = false;
+          }
+          Some(EngineCmd::Stop) => {
+            current_app = AppSource::Text(DEFAULT_SOURCE.to_string());
+            showing_bsod = false;
+          }
           None => break,
         }
       }
