@@ -4,7 +4,7 @@ import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
-import { densityScale } from "./policy"
+import { policy, densityScale } from "./policy"
 
 // Caret thickness. Shared so the drawn caret and the scroll offset's reserved
 // edge column cannot drift apart.
@@ -121,10 +121,13 @@ export function TextInput(props: TextInputProps) {
     if (blinkId != null) clearInterval(blinkId)
   })
 
-  // Style overrides fall back to theme defaults.
+  // Style overrides fall back to theme defaults. The border doubles as the
+  // focus ring: primary while focused, when the focus-ring policy asks for a
+  // visible indicator.
   let textColor = () => props.style?.color ?? theme.color.text
   let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface
-  let borderColor = () => props.style?.borderColor ?? theme.color.border
+  let borderColor = () =>
+    props.style?.borderColor ?? (focused() && policy.focusRing ? theme.color.primary : theme.color.border)
   let borderWidth = () => props.style?.borderWidth ?? theme.borderWidth.sm
   let borderRadius = () => props.style?.borderRadius ?? theme.radius.sm
 

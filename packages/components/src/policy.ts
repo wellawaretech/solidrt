@@ -14,6 +14,10 @@ export type Policies = {
   interaction: InteractionPolicy
   density: DensityPolicy
   motion: MotionPolicy
+  // Whether focused controls draw a visible focus indicator. Derived from
+  // keyboard presence; the runtime cannot yet tell keyboard focus from pointer
+  // focus (no Tab traversal), so this is per-session, not per-focus-source.
+  focusRing: boolean
 }
 
 export type PolicyResolver = (caps: Capabilities) => Policies
@@ -36,6 +40,7 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
+    focusRing: caps.keyboardNav,
   }
 }
 
@@ -57,6 +62,9 @@ export let policy = {
   },
   get motion(): MotionPolicy {
     return overrides().motion ?? resolved().motion
+  },
+  get focusRing(): boolean {
+    return overrides().focusRing ?? resolved().focusRing
   },
 }
 

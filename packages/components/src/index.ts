@@ -20,6 +20,7 @@ export { Portal, type PortalProps } from "./portal"
 export { Modal, type ModalProps } from "./modal"
 export { Tooltip, type TooltipProps } from "./tooltip"
 export { Select, type SelectProps, type SelectOption } from "./select"
+export { ContextMenu, type ContextMenuProps, type ContextMenuItem } from "./context-menu"
 export { QrCode, type QrCodeProps } from "./qrcode"
 export { theme, setTheme, darkTheme, lightTheme, type Theme } from "./theme"
 export {
