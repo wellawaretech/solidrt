@@ -2,6 +2,7 @@ import { createSignal } from "@solidjs/signals"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"
+import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
 
 export interface SwitchProps {
@@ -15,10 +16,11 @@ export interface SwitchProps {
   style?: StyleProps
 }
 
+// Designed (comfortable-density) metrics; w/h below scale them by the density
+// policy.
 const W = 44
 const H = 24
 const PAD = 2
-const THUMB = H - PAD * 2
 
 // A toggle. Track fills with primary when on, surfaceAlt when off; the thumb
 // slides across. Controlled via value/onChange, or uncontrolled via
@@ -33,19 +35,23 @@ export function Switch(props: SwitchProps) {
     props.onChange?.(next)
   }
 
+  let w = () => Math.round(W * densityScale())
+  let h = () => Math.round(H * densityScale())
+  let thumb = () => h() - PAD * 2
+
   return (
     <Pressable
       onPress={toggle}
       disabled={props.disabled}
-      layout={{ width: W, height: H, ...props.layout }}
+      layout={{ width: w(), height: h(), ...props.layout }}
       style={{
         backgroundColor: on() ? theme.color.primary : theme.color.surfaceAlt,
-        borderRadius: H / 2,
+        borderRadius: h() / 2,
         ...props.style,
       }}
     >
-      <view position="absolute" top={PAD} left={PAD} x={on() ? W - THUMB - PAD * 2 : 0}>
-        <d-oval w={THUMB} h={THUMB} color={theme.color.onPrimary} />
+      <view position="absolute" top={PAD} left={PAD} x={on() ? w() - thumb() - PAD * 2 : 0}>
+        <d-oval w={thumb()} h={thumb()} color={theme.color.onPrimary} />
       </view>
     </Pressable>
   )

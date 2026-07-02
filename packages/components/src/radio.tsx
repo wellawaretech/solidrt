@@ -2,6 +2,7 @@ import { createSignal, createContext, useContext, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"
+import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
 
 // Shared selection state for a group. Created and consumed within this module, so
@@ -72,6 +73,10 @@ export function Radio(props: RadioProps) {
   let ringColor = () => (selected() ? theme.color.primary : theme.color.border)
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
 
+  let ring = () => Math.round(RING * densityScale())
+  // Inner dot inset as a fraction of the ring, so it scales with the density.
+  let inset = () => ring() * 0.3
+
   return (
     <Pressable
       onPress={() => ctx.select(props.value)}
@@ -79,10 +84,10 @@ export function Radio(props: RadioProps) {
       layout={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.md, ...props.layout }}
       style={props.style}
     >
-      <view width={RING} height={RING}>
-        <d-oval x={1} y={1} w={RING - 2} h={RING - 2} drawStyle="stroke" color={ringColor()} strokeWidth={2} />
+      <view width={ring()} height={ring()}>
+        <d-oval x={1} y={1} w={ring() - 2} h={ring() - 2} drawStyle="stroke" color={ringColor()} strokeWidth={2} />
         <Show when={selected()}>
-          <d-oval x={6} y={6} w={RING - 12} h={RING - 12} color={theme.color.primary} />
+          <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} color={theme.color.primary} />
         </Show>
       </view>
       <Show when={isText()} fallback={props.children}>

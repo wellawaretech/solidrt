@@ -1,7 +1,8 @@
 import { createSignal } from "@solidjs/signals"
-import { onFrame, onLayout, getBoundingBox } from "@solidrt/core"
+import { onFrame, onLayout, getBoundingBox, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import type { StyleProps } from "./types"
 
 export interface ProgressBarProps {
@@ -42,25 +43,37 @@ export function ProgressBar(props: ProgressBarProps) {
     setTrackWidth(getBoundingBox(trackNode)?.width ?? 0)
   })
 
-  // tick is in milliseconds (like performance.now()).
+  // tick is in milliseconds (like performance.now()). The frame loop is mounted
+  // through the <Show> below only while indeterminate and the motion policy
+  // allows it: onFrame holds a standing frame request while registered, so a
+  // check inside the callback would keep the renderer free-running (which is
+  // also why a determinate bar must not register it at all). "reduced" halves
+  // the travel speed; under "none" the segment parks centered (phase 0.5).
   let [phase, setPhase] = createSignal(0)
-  onFrame((tick) => {
-    if (!indeterminate()) return
-    // Triangle wave in [0, 1]: the segment travels left edge -> right edge and
-    // back.
-    let t = ((tick / 1000) * SPEED) % 2
-    setPhase(t > 1 ? 2 - t : t)
-  })
+  let animating = () => indeterminate() && policy.motion !== "none"
+  let Animate = () => {
+    onFrame((tick) => {
+      // Triangle wave in [0, 1]: the segment travels left edge -> right edge
+      // and back.
+      let t = ((tick / 1000) * (policy.motion === "reduced" ? SPEED / 2 : SPEED)) % 2
+      setPhase(t > 1 ? 2 - t : t)
+    })
+    return null
+  }
 
   // Fill width in pixels: a fixed segment while indeterminate, the value fraction
   // otherwise. Drawn via the detached d-rect `w` below (paint only), so a
   // changing value never reflows. The indeterminate slide comes from the `x`
   // offset.
   let fillWidth = () => (indeterminate() ? SEGMENT : clamp(props.value ?? 0, 0, 1)) * trackWidth()
-  let offset = () => phase() * trackWidth() * (1 - SEGMENT)
+  let effectivePhase = () => (policy.motion === "none" ? 0.5 : phase())
+  let offset = () => effectivePhase() * trackWidth() * (1 - SEGMENT)
 
   return (
     <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} {...props.layout}>
+      <Show when={animating()}>
+        <Animate />
+      </Show>
       <d-rect color={track()} radius={radius()} />
       <d-rect color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} />
     </view>

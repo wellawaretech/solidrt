@@ -2,6 +2,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"
+import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
 
 export interface CheckboxProps {
@@ -29,11 +30,18 @@ export function Checkbox(props: CheckboxProps) {
     props.onChange?.(next)
   }
 
+  let size = () => Math.round(SIZE * densityScale())
+  // The checkmark in box-relative fractions, so it scales with the density.
+  let check = () => {
+    let s = size()
+    return `M ${0.25 * s} ${0.5 * s} L ${0.45 * s} ${0.7 * s} L ${0.75 * s} ${0.3 * s}`
+  }
+
   return (
     <Pressable
       onPress={toggle}
       disabled={props.disabled}
-      layout={{ width: SIZE, height: SIZE, ...props.layout }}
+      layout={{ width: size(), height: size(), ...props.layout }}
       style={{
         backgroundColor: checked() ? theme.color.primary : theme.color.surface,
         borderColor: theme.color.border,
@@ -44,7 +52,7 @@ export function Checkbox(props: CheckboxProps) {
     >
       <Show when={checked()}>
         <d-path
-          d="M5 10 L9 14 L15 6"
+          d={check()}
           drawStyle="stroke"
           color={theme.color.onPrimary}
           strokeWidth={2}

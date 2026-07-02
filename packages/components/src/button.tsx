@@ -1,6 +1,7 @@
 import { Show } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
+import { policy, densityScale } from "./policy"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -32,10 +33,10 @@ export function Button(props: ButtonProps) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: theme.spacing.sm,
-        paddingBottom: theme.spacing.sm,
-        paddingLeft: theme.spacing.md,
-        paddingRight: theme.spacing.md,
+        paddingTop: Math.round(theme.spacing.sm * densityScale()),
+        paddingBottom: Math.round(theme.spacing.sm * densityScale()),
+        paddingLeft: Math.round(theme.spacing.md * densityScale()),
+        paddingRight: Math.round(theme.spacing.md * densityScale()),
         ...props.layout,
       }}
       style={(s: PressState) => ({
@@ -45,7 +46,7 @@ export function Button(props: ButtonProps) {
         // Always a number: a scale that flips from a number back to undefined
         // hits the transform decoder, which rejects null. Multiply so a
         // caller-set scale is preserved under the press feedback.
-        scale: (props.style?.scale ?? 1) * (s.pressed ? 0.97 : 1),
+        scale: (props.style?.scale ?? 1) * (s.pressed && policy.motion !== "none" ? 0.97 : 1),
       })}
     >
       <Show when={isText()} fallback={props.children}>

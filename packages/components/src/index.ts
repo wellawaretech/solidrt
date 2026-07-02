@@ -20,4 +20,16 @@ export { Portal, type PortalProps } from "./portal"
 export { Modal, type ModalProps } from "./modal"
 export { QrCode, type QrCodeProps } from "./qrcode"
 export { theme, setTheme, darkTheme, lightTheme, type Theme } from "./theme"
+export {
+  policy,
+  setPolicy,
+  setPolicyResolver,
+  defaultPolicyResolver,
+  densityScale,
+  type Policies,
+  type PolicyResolver,
+  type InteractionPolicy,
+  type DensityPolicy,
+  type MotionPolicy,
+} from "./policy"
 export type { StyleProps, TextLayoutProps } from "./types"

@@ -2,6 +2,7 @@ import { createSignal } from "@solidjs/signals"
 import { getBoundingBox, onLayout, setPointerCapture } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
+import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
 
 export interface SliderProps {
@@ -36,6 +37,9 @@ export function Slider(props: SliderProps) {
 
   let track: { id: number } | undefined
   let dragging = false
+
+  let height = () => Math.round(HEIGHT * densityScale())
+  let thumb = () => Math.round(THUMB * densityScale())
 
   let pct = () => clamp(((value() - min()) / (max() - min())) * 100, 0, 100)
 
@@ -88,7 +92,7 @@ export function Slider(props: SliderProps) {
       ref={(n: { id: number }) => (track = n)}
       flexDirection="row"
       alignItems="center"
-      height={HEIGHT}
+      height={height()}
       width={200}
       {...props.layout}
       x={props.style?.x}
@@ -103,8 +107,8 @@ export function Slider(props: SliderProps) {
       <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
         <d-rect color={theme.color.surfaceAlt} radius={GROOVE / 2} />
         <d-rect color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
-        <view position="absolute" left={0} top={(GROOVE - THUMB) / 2} x={fillPx() - THUMB / 2}>
-          <d-oval w={THUMB} h={THUMB} color={theme.color.primary} />
+        <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} x={fillPx() - thumb() / 2}>
+          <d-oval w={thumb()} h={thumb()} color={theme.color.primary} />
         </view>
       </view>
     </view>

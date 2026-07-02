@@ -1,7 +1,8 @@
 import { createSignal } from "@solidjs/signals"
-import { onFrame } from "@solidrt/core"
+import { onFrame, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import type { StyleProps } from "./types"
 
 export interface SpinnerProps {
@@ -27,9 +28,18 @@ export function Spinner(props: SpinnerProps) {
   let color = () => props.style?.color ?? theme.color.primary
   let speed = () => props.speed ?? 1
 
-  // tick is in milliseconds (like performance.now()).
+  // tick is in milliseconds (like performance.now()). The frame loop is mounted
+  // through the <Show> below so the motion policy can unmount it: onFrame holds
+  // a standing frame request while registered, so a check inside the callback
+  // would still keep the renderer free-running. Under "none" the arc freezes;
+  // "reduced" halves the spin.
   let [angle, setAngle] = createSignal(0)
-  onFrame((tick) => setAngle((tick / 1000) * speed() * Math.PI * 2))
+  let Animate = () => {
+    onFrame((tick) =>
+      setAngle((tick / 1000) * speed() * (policy.motion === "reduced" ? 0.5 : 1) * Math.PI * 2),
+    )
+    return null
+  }
 
   // A 270-degree arc starting at the top, sweeping clockwise. Coordinates are in
   // the parent box space, so the wrapping view is sized to match.
@@ -49,6 +59,9 @@ export function Spinner(props: SpinnerProps) {
       x={props.style?.x}
       y={props.style?.y}
     >
+      <Show when={policy.motion !== "none"}>
+        <Animate />
+      </Show>
       <d-path
         d={path()}
         drawStyle="stroke"
