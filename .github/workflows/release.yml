@@ -314,7 +314,7 @@ jobs:
             files.push("packages/cli/scaffold/package.json");
             for (const file of files) {
               const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-              for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+              for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "devDependencies"]) {
                 const deps = pkg[field];
                 if (!deps) continue;
                 for (const name of Object.keys(deps)) {
@@ -328,7 +328,9 @@ jobs:
       # Guard: `bun publish` bakes the resolved specifiers into each tarball. Pack
       # every package and fail the release if any intra-monorepo @solidrt/*
       # specifier did not end up at the release version -- catches the
-      # 0.0.14/0.0.16 failure mode before anything reaches the registry.
+      # 0.0.14/0.0.16 failure mode before anything reaches the registry. Also
+      # inspects the nested scaffold/package.json shipped inside @solidrt/cli:
+      # its @solidrt/* devDependencies broke 0.0.19 by staying at 0.0.0.
       - name: Verify intra-monorepo specifiers resolved
         env:
           VERSION: ${{ steps.flags.outputs.version }}
@@ -340,15 +342,23 @@ jobs:
           done
           fail=0
           for tgz in /tmp/guard-packs/*.tgz; do
-            bad=$(tar -xzO -f "$tgz" package/package.json | node -e '
-              const p = JSON.parse(require("fs").readFileSync(0, "utf8")), V = process.env.VERSION, b = [];
-              for (const f of ["dependencies", "optionalDependencies", "peerDependencies"]) {
-                const d = p[f] || {};
-                for (const [k, v] of Object.entries(d)) if (k.startsWith("@solidrt/") && v !== V) b.push(f + " " + k + "=" + v);
+            dest="/tmp/guard-packs/extract/$(basename "$tgz" .tgz)"
+            rm -rf "$dest" && mkdir -p "$dest"
+            tar -xzf "$tgz" -C "$dest"
+            bad=$(node -e '
+              const fs = require("fs"), V = process.env.VERSION, root = process.argv[1], b = [];
+              for (const rel of ["package/package.json", "package/scaffold/package.json"]) {
+                const file = root + "/" + rel;
+                if (!fs.existsSync(file)) continue;
+                const p = JSON.parse(fs.readFileSync(file, "utf8"));
+                for (const f of ["dependencies", "optionalDependencies", "peerDependencies", "devDependencies"]) {
+                  const d = p[f] || {};
+                  for (const [k, v] of Object.entries(d)) if (k.startsWith("@solidrt/") && v !== V) b.push(rel + " " + f + " " + k + "=" + v);
+                }
               }
-              if (b.length) console.log(p.name + ": " + b.join(", "));
-            ')
-            if [ -n "$bad" ]; then echo "::error::unresolved @solidrt specifier -> $bad"; fail=1; fi
+              if (b.length) console.log(b.join(", "));
+            ' "$dest")
+            if [ -n "$bad" ]; then echo "::error::unresolved @solidrt specifier in $(basename "$tgz") -> $bad"; fail=1; fi
           done
           [ "$fail" -eq 0 ]
 
