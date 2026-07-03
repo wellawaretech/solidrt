@@ -35,6 +35,7 @@ export function Card(props: CardProps) {
       y={props.style?.y}
       scale={props.style?.scale}
       rotate={props.style?.rotate}
+      opacity={props.style?.opacity}
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={props.title != null}>

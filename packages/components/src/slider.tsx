@@ -100,6 +100,7 @@ export function Slider(props: SliderProps) {
       y={props.style?.y}
       scale={props.style?.scale}
       rotate={props.style?.rotate}
+      opacity={props.style?.opacity}
       pointerEvents={props.disabled ? "none" : "auto"}
       onPointerDown={handleDown}
       onPointerMove={handleMove}

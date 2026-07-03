@@ -58,6 +58,7 @@ export function Spinner(props: SpinnerProps) {
       rotate={angle()}
       x={props.style?.x}
       y={props.style?.y}
+      opacity={props.style?.opacity}
     >
       <Show when={policy.motion !== "none"}>
         <Animate />

@@ -17,6 +17,7 @@ export interface StyleProps {
   y?: number
   rotate?: number
   scale?: number
+  opacity?: number
 }
 
 // Text shaping affects measurement, so font props belong with layout rather

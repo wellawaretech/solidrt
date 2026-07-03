@@ -65,6 +65,7 @@ export function ScrollView(props: ScrollViewProps) {
       y={props.style?.y}
       scale={props.style?.scale}
       rotate={props.style?.rotate}
+      opacity={props.style?.opacity}
       onPointerEnter={props.onPointerEnter}
       onPointerLeave={props.onPointerLeave}
       onPointerDown={props.onPointerDown}

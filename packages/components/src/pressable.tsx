@@ -60,6 +60,7 @@ export function Pressable(props: PressableProps) {
       y={style()?.y}
       scale={style()?.scale}
       rotate={style()?.rotate}
+      opacity={style()?.opacity}
       onPointerEnter={handleEnter}
       onPointerLeave={handleLeave}
       onPointerDown={handleDown}

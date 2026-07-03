@@ -188,6 +188,7 @@ export function TextInput(props: TextInputProps) {
       y={props.style?.y}
       scale={props.style?.scale}
       rotate={props.style?.rotate}
+      opacity={props.style?.opacity}
       onPointerDown={handlePointerDown}
       onFocus={handleFocus}
       onBlur={handleBlur}
