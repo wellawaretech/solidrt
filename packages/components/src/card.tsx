@@ -2,6 +2,7 @@ import { Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { typeStyle } from "./typography"
+import { space } from "./spacing"
 import type { StyleProps } from "./types"
 
 export interface CardProps {
@@ -26,8 +27,8 @@ export function Card(props: CardProps) {
     <view
       ref={props.ref}
       flexDirection="column"
-      gap={theme.spacing.lg}
-      padding={theme.spacing.xl}
+      gap={space("lg")}
+      padding={space("xl")}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}

@@ -1,6 +1,7 @@
 import { colord, extend } from "colord"
 import namesPlugin from "colord/plugins/names"
-extend([namesPlugin])
+import mixPlugin from "colord/plugins/mix"
+extend([namesPlugin, mixPlugin])
 
 /**
  * Parses a CSS color string (named, hex, `rgb()`, `hsl()`, ...) into a packed
@@ -11,6 +12,16 @@ extend([namesPlugin])
 export function parseColor(color: string): number {
   let { r, g, b, a } = colord(color).toRgb()
   return (((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | ((a * 255) & 0xFF)) >>> 0
+}
+
+/**
+ * Mixes two CSS colors in the CIE LAB color space; `t` is the fraction of `b`
+ * (0 = pure `a`, 1 = pure `b`). Returns an opaque hex string. Use it to derive
+ * semantic tones (muted text, subtle borders) instead of alpha overlays, so
+ * the resulting color does not depend on what is drawn beneath it.
+ */
+export function mixColors(a: string, b: string, t: number): string {
+  return colord(a).mix(b, t).toHex()
 }
 
 // A color stop: `offset` is 0..1 along the gradient, `color` any CSS color string.

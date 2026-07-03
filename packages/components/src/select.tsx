@@ -2,7 +2,8 @@ import { createSignal, createPortal, onLayout, getBoundingBox, Show, For, env } 
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
@@ -60,8 +61,8 @@ export function Select(props: SelectProps) {
         alignItems: "center",
         paddingTop: p.padY,
         paddingBottom: p.padY,
-        paddingLeft: Math.round(theme.spacing.md * densityScale()),
-        paddingRight: Math.round(theme.spacing.md * densityScale()),
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
       }}
       style={(s: PressState) => ({
         backgroundColor:
@@ -107,7 +108,7 @@ export function Select(props: SelectProps) {
         >
           <d-rect color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.options}>
-            {(o: SelectOption) => <OptionRow option={o} padY={Math.round(theme.spacing.sm * densityScale())} />}
+            {(o: SelectOption) => <OptionRow option={o} padY={space("sm")} />}
           </For>
           <d-rect
             drawStyle="stroke"
@@ -155,10 +156,10 @@ export function Select(props: SelectProps) {
         alignItems: "center",
         justifyContent: "space-between",
         gap: theme.spacing.md,
-        paddingTop: Math.round(theme.spacing.sm * densityScale()),
-        paddingBottom: Math.round(theme.spacing.sm * densityScale()),
-        paddingLeft: Math.round(theme.spacing.md * densityScale()),
-        paddingRight: Math.round(theme.spacing.md * densityScale()),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm"),
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
         ...props.layout,
       }}
       style={(s: PressState) => ({

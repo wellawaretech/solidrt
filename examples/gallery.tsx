@@ -26,6 +26,7 @@ import {
   Icon,
   ScrollView,
   theme,
+  space,
   setTheme,
   darkTheme,
   lightTheme,
@@ -72,7 +73,7 @@ function Row(props: { label: string; children?: any }) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 16,
+        gap: space("lg"),
       }}
     >
       <Text muted>{props.label}</Text>
@@ -166,8 +167,8 @@ function App() {
               flexWrap: "wrap",
               alignContent: "flex-start",
               justifyContent: "flex-start",
-              gap: 20,
-              padding: 20,
+              gap: space("xl"),
+              padding: space("xl"),
             }}
           >
             <Card title={dark() ? "Dark theme" : "Light theme"} layout={{ width: 360 }}>
@@ -177,17 +178,7 @@ function App() {
               <Button onPress={toggleTheme}>Toggle theme</Button>
             </Card>
 
-            <Card title="Buttons" layout={{ width: 360 }}>
-              <View layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                <Button>Primary</Button>
-                <Button variant="secondary">Secondary</Button>
-                <Button variant="ghost">Ghost</Button>
-                <Button variant="danger">Danger</Button>
-                <Button disabled>Disabled</Button>
-              </View>
-            </Card>
-
-            <Card title="Environment and policies" layout={{ width: 360 }}>
+            <Card title="Environment" layout={{ width: 360 }}>
               <Row label="Window">
                 <Value>
                   {`${env.windowSize.width} x ${env.windowSize.height} @ ${env.displayScale}x`}
@@ -225,14 +216,17 @@ function App() {
                   )}
                 </Value>
               </Row>
+              <Row label="Size class">
+                <Value>{capabilities.windowSizeClass}</Value>
+              </Row>
+            </Card>
+
+            <Card title="Policies" layout={{ width: 360 }}>
               <Row label="Interaction policy">
                 <Value>{policy.interaction}</Value>
               </Row>
               <Row label="Focus ring">
                 <Value>{policy.focusRing ? "visible" : "hidden"}</Value>
-              </Row>
-              <Row label="Size class">
-                <Value>{capabilities.windowSizeClass}</Value>
               </Row>
               <Row label="App policies">
                 <Value>{`${policy.navigation}, ${policy.layout}`}</Value>
@@ -244,7 +238,7 @@ function App() {
               <RadioGroup
                 value={densityChoice()}
                 onChange={chooseDensity}
-                layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+                layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md") }}
               >
                 <Radio value="auto">Auto</Radio>
                 <Radio value="comfortable">Comfortable</Radio>
@@ -258,7 +252,7 @@ function App() {
               <RadioGroup
                 value={motionChoice()}
                 onChange={chooseMotion}
-                layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+                layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md") }}
               >
                 <Radio value="auto">Auto</Radio>
                 <Radio value="normal">Normal</Radio>
@@ -272,13 +266,23 @@ function App() {
               <RadioGroup
                 value={textScaleChoice()}
                 onChange={chooseTextScale}
-                layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+                layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md") }}
               >
                 <Radio value="auto">Auto</Radio>
-                <Radio value={0.8}>0.8</Radio>
+                <Radio value={0.9}>0.9</Radio>
                 <Radio value={1.0}>1.0</Radio>
                 <Radio value={1.2}>1.2</Radio>
               </RadioGroup>
+            </Card>
+
+            <Card title="Buttons" layout={{ width: 360 }}>
+              <View layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md"), alignItems: "center" }}>
+                <Button>Primary</Button>
+                <Button variant="secondary">Secondary</Button>
+                <Button variant="ghost">Ghost</Button>
+                <Button variant="danger">Danger</Button>
+                <Button disabled>Disabled</Button>
+              </View>
             </Card>
 
             <Card title="Text input" layout={{ width: 360 }}>
@@ -322,7 +326,7 @@ function App() {
                 ]}
               >
                 <View
-                  layout={{ padding: 16, alignItems: "center" }}
+                  layout={{ padding: space("lg"), alignItems: "center" }}
                   style={{
                     backgroundColor: theme.color.surfaceAlt,
                     borderRadius: theme.radius.sm,
@@ -381,7 +385,7 @@ function App() {
 
             <Card title="Badges and divider" layout={{ width: 360 }}>
               <Row label="Status">
-                <View layout={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <View layout={{ flexDirection: "row", gap: space("md"), alignItems: "center" }}>
                   <Badge>New</Badge>
                   <Badge variant="neutral">3</Badge>
                   <Badge variant="danger">Error</Badge>
@@ -398,7 +402,7 @@ function App() {
                 Rest the mouse on a button. Shows under desktop and hybrid
                 interaction policies, never under touch.
               </Text>
-              <View layout={{ flexDirection: "row", gap: 12 }}>
+              <View layout={{ flexDirection: "row", gap: space("md") }}>
                 <Tooltip content="Saves your changes">
                   <Button>Hover me</Button>
                 </Tooltip>
@@ -413,7 +417,7 @@ function App() {
                 Lucide SVGs drawn through the core svg primitive. currentColor
                 follows the theme; the last two are recolored explicitly.
               </Text>
-              <View layout={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
+              <View layout={{ flexDirection: "row", gap: space("lg"), alignItems: "center" }}>
                 <Icon src={HOUSE} />
                 <Icon src={SETTINGS} />
                 <Icon src={BELL} />

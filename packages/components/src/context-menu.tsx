@@ -2,7 +2,8 @@ import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, 
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 import { typeStyle } from "./typography"
 
 export interface ContextMenuItem {
@@ -82,8 +83,8 @@ export function ContextMenu(props: ContextMenuProps) {
         alignItems: "center",
         paddingTop: p.padY,
         paddingBottom: p.padY,
-        paddingLeft: Math.round(theme.spacing.md * densityScale()),
-        paddingRight: Math.round(theme.spacing.md * densityScale()),
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
       }}
       style={(s: PressState) => ({
         backgroundColor:
@@ -128,7 +129,7 @@ export function ContextMenu(props: ContextMenuProps) {
         >
           <d-rect color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.items}>
-            {(item: ContextMenuItem) => <ItemRow item={item} padY={Math.round(theme.spacing.sm * densityScale())} />}
+            {(item: ContextMenuItem) => <ItemRow item={item} padY={space("sm")} />}
           </For>
           <d-rect
             drawStyle="stroke"

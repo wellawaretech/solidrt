@@ -1,7 +1,8 @@
 import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, env } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 import { typeStyle } from "./typography"
 
 export interface TooltipProps {
@@ -74,10 +75,10 @@ export function Tooltip(props: TooltipProps) {
         left={0}
         x={pos()?.x ?? -10000}
         y={pos()?.y ?? 0}
-        paddingTop={Math.round(theme.spacing.sm * densityScale())}
-        paddingBottom={Math.round(theme.spacing.sm * densityScale())}
-        paddingLeft={Math.round(theme.spacing.md * densityScale())}
-        paddingRight={Math.round(theme.spacing.md * densityScale())}
+        paddingTop={space("sm")}
+        paddingBottom={space("sm")}
+        paddingLeft={space("md")}
+        paddingRight={space("md")}
         pointerEvents="none"
       >
         <d-rect color={theme.color.surfaceAlt} radius={theme.radius.sm} />

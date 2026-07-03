@@ -1,4 +1,4 @@
-import { createStore } from "@solidrt/core"
+import { createStore, mixColors } from "@solidrt/core"
 
 export type TextStyle = {
   size: number
@@ -70,7 +70,10 @@ export let darkTheme: Theme = {
     surfaceAlt: "#21262d",
     surfaceHover: "#262c34",
     text: "#e6edf3",
-    textMuted: "rgba(230,237,243,0.5)",
+    // Muted is an opaque tone between text and background, mixed in LAB (like
+    // Material 3's tonal colors, not an alpha overlay): alpha text renders
+    // thin on low-DPI and its contrast depends on what sits behind it.
+    textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
     border: "rgba(255,255,255,0.14)",
     primary: "#1f6feb",
     primaryHover: "#388bfd",
@@ -92,7 +95,7 @@ export let lightTheme: Theme = {
     surfaceAlt: "#eaeef2",
     surfaceHover: "#e0e5eb",
     text: "#1f2328",
-    textMuted: "rgba(31,35,40,0.5)",
+    textMuted: mixColors("#1f2328", "#ffffff", 0.4),
     border: "rgba(0,0,0,0.15)",
     primary: "#1f6feb",
     primaryHover: "#1a5fd0",

@@ -3,6 +3,7 @@ import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps } from "./types"
 import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
+import { typeWeight } from "./typography"
 
 // Semantic text colors, resolved through the theme. Curated: only tokens that
 // make sense as a text fill; style.color takes raw values for anything else.
@@ -12,8 +13,9 @@ export interface TextProps extends PointerProps {
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually. fontSize
-  // (role-derived or explicit) is multiplied by policy.textScale; use the core
-  // <text> primitive for text that must not scale.
+  // (role-derived or explicit) is multiplied by policy.textScale and
+  // fontWeight carries policy.textWeightDelta; use the core <text> primitive
+  // for text that must not scale.
   variant?: TextVariant
   // Semantic color from the theme; defaults to "text". style.color still wins.
   color?: TextColor
@@ -78,7 +80,7 @@ export function Text(props: TextProps) {
         fontSize={(props.layout?.fontSize ?? role().size) * policy.textScale}
         lineHeight={props.layout?.lineHeight ?? role().lineHeight}
         fontStyle={props.layout?.fontStyle}
-        fontWeight={props.layout?.fontWeight ?? role().weight}
+        fontWeight={typeWeight(props.layout?.fontWeight ?? role().weight)}
         textAlign={props.layout?.textAlign}
         maxLines={props.layout?.maxLines}
       >

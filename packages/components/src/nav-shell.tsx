@@ -2,7 +2,8 @@ import { createSignal, Switch, Match, For } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 import { typeStyle } from "./typography"
 
 export interface NavItem {
@@ -113,8 +114,8 @@ export function NavShell(props: NavShellProps) {
                 flexDirection: "row",
                 alignItems: "center",
                 gap: theme.spacing.md,
-                paddingTop: Math.round(theme.spacing.sm * densityScale()) + 2,
-                paddingBottom: Math.round(theme.spacing.sm * densityScale()) + 2,
+                paddingTop: space("sm") + 2,
+                paddingBottom: space("sm") + 2,
                 paddingLeft: theme.spacing.md,
                 paddingRight: theme.spacing.md,
                 marginLeft: theme.spacing.sm,

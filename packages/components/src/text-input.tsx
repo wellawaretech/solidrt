@@ -4,7 +4,8 @@ import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 
 // Caret thickness. Shared so the drawn caret and the scroll offset's reserved
 // edge column cannot drift apart.
@@ -178,10 +179,10 @@ export function TextInput(props: TextInputProps) {
       ref={(n: { id: number }) => (node = n)}
       flexDirection="row"
       alignItems="center"
-      paddingLeft={Math.round(theme.spacing.md * densityScale())}
-      paddingRight={Math.round(theme.spacing.md * densityScale())}
-      paddingTop={Math.round(theme.spacing.sm * densityScale())}
-      paddingBottom={Math.round(theme.spacing.sm * densityScale())}
+      paddingLeft={space("md")}
+      paddingRight={space("md")}
+      paddingTop={space("sm")}
+      paddingBottom={space("sm")}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}

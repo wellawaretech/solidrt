@@ -1,7 +1,8 @@
 import { Show } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
-import { policy, densityScale } from "./policy"
+import { policy } from "./policy"
+import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
@@ -64,10 +65,10 @@ export function Button(props: ButtonProps) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: Math.round(theme.spacing.sm * densityScale()),
-        paddingBottom: Math.round(theme.spacing.sm * densityScale()),
-        paddingLeft: Math.round(theme.spacing.md * densityScale()),
-        paddingRight: Math.round(theme.spacing.md * densityScale()),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm"),
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
         ...props.layout,
       }}
       style={(s: PressState) => ({

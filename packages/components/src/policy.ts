@@ -23,6 +23,10 @@ export type Policies = {
   // Multiplier on type-scale font sizes (Dynamic Type). Follows the OS
   // preference (env.textScale); override via setPolicy to pin it.
   textScale: number
+  // Added to themed font weights, in steps of 100 (other steps decode as 400).
+  // Compensates Impeller's unhinted grayscale AA on low-DPI displays, where
+  // 1px stems smear across pixels and text reads thin; 0 on high-DPI.
+  textWeightDelta: number
   // Application policies: recommendations derived from the window size class.
   // The application owns the final decision; accept them by consuming
   // policy.navigation / policy.layout, or override via setPolicy.
@@ -52,6 +56,7 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     motion: "normal",
     focusRing: caps.keyboardNav,
     textScale: env.textScale,
+    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     navigation:
       caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
     layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane",
@@ -82,6 +87,9 @@ export let policy = {
   },
   get textScale(): number {
     return overrides().textScale ?? resolved().textScale
+  },
+  get textWeightDelta(): number {
+    return overrides().textWeightDelta ?? resolved().textWeightDelta
   },
   get navigation(): NavigationPolicy {
     return overrides().navigation ?? resolved().navigation
