@@ -1,6 +1,7 @@
 import { Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
@@ -56,12 +57,7 @@ export function Badge(props: BadgeProps) {
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={isText()} fallback={props.children}>
-        <text
-          color={fg()}
-          fontSize={theme.text.label.size}
-          lineHeight={theme.text.label.lineHeight}
-          fontWeight={theme.text.label.weight}
-        >
+        <text color={fg()} {...typeStyle("label")}>
           {props.children}
         </text>
       </Show>

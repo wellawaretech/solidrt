@@ -2,6 +2,7 @@ import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, 
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy, densityScale } from "./policy"
+import { typeStyle } from "./typography"
 
 export interface TooltipProps {
   // The tooltip body. A string/number renders as themed text; anything else
@@ -81,7 +82,7 @@ export function Tooltip(props: TooltipProps) {
       >
         <d-rect color={theme.color.surfaceAlt} radius={theme.radius.sm} />
         <Show when={isText()} fallback={props.content}>
-          <text color={theme.color.text} fontSize={theme.text.body.size} lineHeight={theme.text.body.lineHeight}>
+          <text color={theme.color.text} {...typeStyle("body")}>
             {props.content}
           </text>
         </Show>

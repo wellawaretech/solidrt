@@ -1,6 +1,7 @@
 import { Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
 export interface CardProps {
@@ -35,12 +36,7 @@ export function Card(props: CardProps) {
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={props.title != null}>
-        <text
-          color={theme.color.text}
-          fontSize={theme.text.title.size}
-          lineHeight={theme.text.title.lineHeight}
-          fontWeight={theme.text.title.weight}
-        >
+        <text color={theme.color.text} {...typeStyle("title")}>
           {props.title}
         </text>
       </Show>

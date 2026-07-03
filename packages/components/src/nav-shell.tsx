@@ -3,6 +3,7 @@ import type { LayoutProps } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy, densityScale } from "./policy"
+import { typeStyle } from "./typography"
 
 export interface NavItem {
   value: unknown
@@ -66,12 +67,7 @@ export function NavShell(props: NavShellProps) {
       style={(s: PressState) => ({ backgroundColor: itemBg(p.item, s), borderRadius: theme.radius.sm })}
     >
       {p.item.icon}
-      <text
-        color={labelColor(p.item)}
-        fontSize={theme.text.caption.size}
-        lineHeight={theme.text.caption.lineHeight}
-        fontWeight={theme.text.caption.weight}
-      >
+      <text color={labelColor(p.item)} {...typeStyle("caption")}>
         {p.item.label}
       </text>
     </Pressable>
@@ -129,8 +125,7 @@ export function NavShell(props: NavShellProps) {
               {item.icon}
               <text
                 color={item.value === value() ? theme.color.primary : theme.color.text}
-                fontSize={theme.text.body.size}
-                lineHeight={theme.text.body.lineHeight}
+                {...typeStyle("body")}
               >
                 {item.label}
               </text>

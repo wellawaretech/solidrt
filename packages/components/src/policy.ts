@@ -1,4 +1,4 @@
-import { capabilities, createSignal } from "@solidrt/core"
+import { capabilities, env, createSignal } from "@solidrt/core"
 import type { Capabilities } from "@solidrt/core"
 
 // Policies: how components should behave. Derived from capabilities by a
@@ -20,6 +20,9 @@ export type Policies = {
   // keyboard presence; the runtime cannot yet tell keyboard focus from pointer
   // focus (no Tab traversal), so this is per-session, not per-focus-source.
   focusRing: boolean
+  // Multiplier on type-scale font sizes (Dynamic Type). Follows the OS
+  // preference (env.textScale); override via setPolicy to pin it.
+  textScale: number
   // Application policies: recommendations derived from the window size class.
   // The application owns the final decision; accept them by consuming
   // policy.navigation / policy.layout, or override via setPolicy.
@@ -48,6 +51,7 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
     focusRing: caps.keyboardNav,
+    textScale: env.textScale,
     navigation:
       caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
     layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane",
@@ -75,6 +79,9 @@ export let policy = {
   },
   get focusRing(): boolean {
     return overrides().focusRing ?? resolved().focusRing
+  },
+  get textScale(): number {
+    return overrides().textScale ?? resolved().textScale
   },
   get navigation(): NavigationPolicy {
     return overrides().navigation ?? resolved().navigation

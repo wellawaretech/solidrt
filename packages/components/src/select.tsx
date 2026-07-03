@@ -3,6 +3,7 @@ import type { LayoutProps } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy, densityScale } from "./policy"
+import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
 export interface SelectOption {
@@ -47,12 +48,7 @@ export function Select(props: SelectProps) {
     props.onChange?.(v)
   }
 
-  let bodyText = (color: string) => ({
-    fontSize: theme.text.body.size,
-    lineHeight: theme.text.body.lineHeight,
-    color,
-    maxLines: 1,
-  })
+  let bodyText = (color: string) => ({ ...typeStyle("body"), color, maxLines: 1 })
 
   // One option row, shared by both presentations; only the vertical padding
   // differs (the sheet gets taller touch targets).

@@ -3,6 +3,7 @@ import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy, densityScale } from "./policy"
+import { typeStyle } from "./typography"
 
 export interface ContextMenuItem {
   label: string
@@ -70,12 +71,7 @@ export function ContextMenu(props: ContextMenuProps) {
     item.onSelect?.()
   }
 
-  let bodyText = (color: string) => ({
-    fontSize: theme.text.body.size,
-    lineHeight: theme.text.body.lineHeight,
-    color,
-    maxLines: 1,
-  })
+  let bodyText = (color: string) => ({ ...typeStyle("body"), color, maxLines: 1 })
 
   let ItemRow = (p: { item: ContextMenuItem; padY: number }) => (
     <Pressable

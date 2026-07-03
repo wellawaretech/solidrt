@@ -48,4 +48,5 @@ export {
   type NavigationPolicy,
   type LayoutPolicy,
 } from "./policy"
+export { typeStyle } from "./typography"
 export type { StyleProps, TextLayoutProps } from "./types"

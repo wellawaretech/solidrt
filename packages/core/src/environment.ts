@@ -55,6 +55,19 @@ function ensureOrientationState() {
   orientationAccessor = orientation
 }
 
+let textScaleAccessor: (() => number) | undefined
+
+function ensureTextScaleState() {
+  if (textScaleAccessor) return
+  let [scale, setScale] = createSignal(1)
+  // Sticky, like systemTheme. Guard nonsense values: a runtime bug reporting
+  // 0 or a negative would otherwise collapse all text.
+  on("textScale", (e: { scale?: number }) => {
+    setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1)
+  })
+  textScaleAccessor = scale
+}
+
 let mouseSeenAccessor: (() => boolean) | undefined
 let touchSeenAccessor: (() => boolean) | undefined
 
@@ -136,6 +149,15 @@ export let env = {
   get systemTheme(): SystemTheme {
     ensureSystemThemeState()
     return systemThemeAccessor!()
+  },
+  /**
+   * The OS text scaling preference (Dynamic Type / font scale), as a
+   * multiplier. 1 until a runtime reports it via the sticky `textScale`
+   * event; no runtime does yet.
+   */
+  get textScale(): number {
+    ensureTextScaleState()
+    return textScaleAccessor!()
   },
   /** Orientation of the display the window is on. */
   get orientation(): Orientation {

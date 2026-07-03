@@ -147,13 +147,16 @@ export function TextInput(props: TextInputProps) {
   // the old centered attached row sat. createCaretScroll keeps the caret in
   // view and flushes the offset before paint; scrollX is a paint-time
   // translate that also applies to detached children.
-  let rowHeight = () => Math.round(theme.text.body.size * theme.text.body.lineHeight)
-  let caretX = () => measureText(value().slice(0, buffer.caret()), { fontSize: theme.text.body.size }).width
+  // All one-line metrics derive from the scaled body size, so the field, the
+  // caret, and the scroll math grow together under policy.textScale.
+  let fontSize = () => theme.text.body.size * policy.textScale
+  let rowHeight = () => Math.round(fontSize() * theme.text.body.lineHeight)
+  let caretX = () => measureText(value().slice(0, buffer.caret()), { fontSize: fontSize() }).width
   let scrollX = createCaretScroll(
     () => viewport,
     () => ({
       text: value(),
-      fontSize: theme.text.body.size,
+      fontSize: fontSize(),
       caret: buffer.caret(),
       // Constant, not tied to caret visibility: the caret's footprint does not
       // change as it blinks, so reserving the column only when shown would swing
@@ -164,7 +167,7 @@ export function TextInput(props: TextInputProps) {
 
   let textStyle = (color: string) => ({
     w: TEXT_SHAPE_WIDTH,
-    fontSize: theme.text.body.size,
+    fontSize: fontSize(),
     lineHeight: theme.text.body.lineHeight,
     color,
     maxLines: 1,
@@ -213,9 +216,9 @@ export function TextInput(props: TextInputProps) {
               <d-rect
                 color={textColor()}
                 x={caretX()}
-                y={(rowHeight() - theme.text.body.size) / 2}
+                y={(rowHeight() - fontSize()) / 2}
                 w={CARET_WIDTH}
-                h={theme.text.body.size}
+                h={fontSize()}
               />
             ) : null}
           </>

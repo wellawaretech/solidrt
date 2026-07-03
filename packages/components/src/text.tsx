@@ -2,6 +2,7 @@ import { createMemo } from "@solidjs/signals"
 import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps } from "./types"
 import { theme, type TextVariant } from "./theme"
+import { policy } from "./policy"
 
 // Semantic text colors, resolved through the theme. Curated: only tokens that
 // make sense as a text fill; style.color takes raw values for anything else.
@@ -10,7 +11,9 @@ export type TextColor = "text" | "textMuted" | "primary" | "onPrimary" | "danger
 export interface TextProps extends PointerProps {
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
-  // layout font props override the role's fields individually.
+  // layout font props override the role's fields individually. fontSize
+  // (role-derived or explicit) is multiplied by policy.textScale; use the core
+  // <text> primitive for text that must not scale.
   variant?: TextVariant
   // Semantic color from the theme; defaults to "text". style.color still wins.
   color?: TextColor
@@ -72,7 +75,7 @@ export function Text(props: TextProps) {
       <text
         color={color()}
         fontFamily={props.layout?.fontFamily ?? theme.text.fontFamily}
-        fontSize={props.layout?.fontSize ?? role().size}
+        fontSize={(props.layout?.fontSize ?? role().size) * policy.textScale}
         lineHeight={props.layout?.lineHeight ?? role().lineHeight}
         fontStyle={props.layout?.fontStyle}
         fontWeight={props.layout?.fontWeight ?? role().weight}

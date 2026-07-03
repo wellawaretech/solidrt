@@ -3,6 +3,7 @@ import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"
 import { densityScale } from "./policy"
+import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
 // Shared selection state for a group. Created and consumed within this module, so
@@ -91,7 +92,7 @@ export function Radio(props: RadioProps) {
         </Show>
       </view>
       <Show when={isText()} fallback={props.children}>
-        <text color={theme.color.text} fontSize={theme.text.body.size} lineHeight={theme.text.body.lineHeight}>
+        <text color={theme.color.text} {...typeStyle("body")}>
           {props.children}
         </text>
       </Show>

@@ -1,4 +1,4 @@
-import { render, createSignal, safeArea, createEffect, env, capabilities } from "@solidrt/core"
+import { render, createSignal, safeArea, createEffect, untrack, env, capabilities } from "@solidrt/core"
 import {
   policy,
   setPolicy,
@@ -103,7 +103,10 @@ function App() {
   // The QR code follows the name field debounced, not per keystroke: each data
   // change regenerates the whole module grid, which is too heavy to run at
   // typing frequency.
-  let [qrData, setQrData] = createSignal(name())
+  // untrack: seed with the current name once; the debounced effect below owns
+  // keeping it in sync, and a bare name() read here would warn (strict mode
+  // flags top-level reactive reads in component bodies as one-shot).
+  let [qrData, setQrData] = createSignal(untrack(name))
   createEffect(
     () => name(),
     (v) => {
@@ -141,6 +144,11 @@ function App() {
   let chooseMotion = (v: unknown) => {
     setMotionChoice(v)
     setPolicy({ motion: v === "auto" ? undefined : (v as MotionPolicy) })
+  }
+  let [textScaleChoice, setTextScaleChoice] = createSignal<unknown>("auto")
+  let chooseTextScale = (v: unknown) => {
+    setTextScaleChoice(v)
+    setPolicy({ textScale: v === "auto" ? undefined : (v as number) })
   }
 
   return (
@@ -256,6 +264,20 @@ function App() {
                 <Radio value="normal">Normal</Radio>
                 <Radio value="reduced">Reduced</Radio>
                 <Radio value="none">None</Radio>
+              </RadioGroup>
+              <Divider />
+              <Row label="Text scale">
+                <Value>{`${policy.textScale}x`}</Value>
+              </Row>
+              <RadioGroup
+                value={textScaleChoice()}
+                onChange={chooseTextScale}
+                layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+              >
+                <Radio value="auto">Auto</Radio>
+                <Radio value={0.8}>0.8</Radio>
+                <Radio value={1.0}>1.0</Radio>
+                <Radio value={1.2}>1.2</Radio>
               </RadioGroup>
             </Card>
 

@@ -2,6 +2,7 @@ import { Show } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy, densityScale } from "./policy"
+import { typeStyle } from "./typography"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -82,11 +83,7 @@ export function Button(props: ButtonProps) {
       })}
     >
       <Show when={isText()} fallback={props.children}>
-        <text
-          color={label()}
-          fontSize={theme.text.body.size}
-          lineHeight={theme.text.body.lineHeight}
-        >
+        <text color={label()} {...typeStyle("body")}>
           {props.children}
         </text>
       </Show>
