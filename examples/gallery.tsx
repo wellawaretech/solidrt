@@ -35,6 +35,8 @@ import {
   SafeArea,
 } from "@solidrt/components"
 
+import icon from "./icon.png" with { type: "binary"}
+
 // A growing gallery of @solidrt/components. The whole thing recolors live when
 // the theme switches: every component reads theme.* reactively, so pressing
 // "Toggle theme" reflows the palette with no remount. The "Environment and
@@ -468,8 +470,7 @@ function App() {
               </Text>
               <View layout={{ alignItems: "center" }}>
                 <Image
-                  src="https://picsum.photos/seed/solidrt/320/180"
-                  layout={{ width: 320, height: 180 }}
+                  src={icon}
                   style={{ borderRadius: theme.radius.md }}
                 />
               </View>
