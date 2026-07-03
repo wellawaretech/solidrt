@@ -22,6 +22,7 @@ pub struct Text {
   pub font_style: FontStyle,
   pub font_weight: FontWeight,
   pub text_alignment: TextAlignment,
+  // 0 = unlimited.
   pub max_lines: u32,
   pub line_height: f32,
   // Paint-time box overrides, mirroring Rectangle's x/y/w/h. x/y offset the
@@ -190,7 +191,12 @@ impl Text {
     style.set_font_style(self.font_style);
     style.set_font_weight(self.font_weight);
     style.set_text_alignment(self.text_alignment);
-    style.set_max_lines(self.max_lines);
+    // 0 means no cap: keep txt's unlimited default. Passing 0 through reads as
+    // "the first line is the last" in Skia's line breaker, so every paragraph
+    // would shape single-line.
+    if self.max_lines > 0 {
+      style.set_max_lines(self.max_lines);
+    }
     style.set_height(self.line_height);
 
     let mut para_builder = ParagraphBuilder::new(typography)?;
