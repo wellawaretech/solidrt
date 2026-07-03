@@ -37,11 +37,13 @@ export type Theme = {
     onPrimary: string
     // Validation / destructive.
     danger: string
+    // Hover tint for danger-colored controls.
+    dangerHover: string
     // Overlay dim behind modals.
     scrim: string
   }
-  spacing: { sm: number; md: number }
-  radius: { sm: number }
+  spacing: { sm: number; md: number; lg: number; xl: number }
+  radius: { sm: number; md: number; lg: number }
   borderWidth: { sm: number }
 }
 
@@ -56,8 +58,8 @@ const TEXT: Theme["text"] = {
   title: { size: 18, lineHeight: 1.4, weight: 700 },
   heading: { size: 22, lineHeight: 1.3, weight: 700 },
 }
-const SPACING = { sm: 4, md: 8 }
-const RADIUS = { sm: 4 }
+const SPACING = { sm: 4, md: 8, lg: 16, xl: 20 }
+const RADIUS = { sm: 4, md: 8, lg: 12 }
 const BORDER_WIDTH = { sm: 1 }
 
 export let darkTheme: Theme = {
@@ -74,6 +76,7 @@ export let darkTheme: Theme = {
     primaryHover: "#388bfd",
     onPrimary: "#ffffff",
     danger: "#f85149",
+    dangerHover: "#ff7b72",
     scrim: "rgba(0,0,0,0.6)",
   },
   spacing: SPACING,
@@ -95,6 +98,7 @@ export let lightTheme: Theme = {
     primaryHover: "#1a5fd0",
     onPrimary: "#ffffff",
     danger: "#cf222e",
+    dangerHover: "#a40e26",
     scrim: "rgba(0,0,0,0.4)",
   },
   spacing: SPACING,

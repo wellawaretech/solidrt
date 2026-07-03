@@ -12,8 +12,6 @@ export interface CardProps {
   style?: StyleProps
 }
 
-const RADIUS = 12
-
 // A themed surface container: a padded column box with a subtle border and
 // rounded corners, reading its colors from the theme so it recolors live.
 // Override any paint via style, spacing/sizing via layout.
@@ -21,14 +19,14 @@ export function Card(props: CardProps) {
   let bg = () => props.style?.backgroundColor ?? theme.color.surface
   let border = () => props.style?.borderColor ?? theme.color.border
   let width = () => props.style?.borderWidth ?? theme.borderWidth.sm
-  let radius = () => props.style?.borderRadius ?? RADIUS
+  let radius = () => props.style?.borderRadius ?? theme.radius.lg
 
   return (
     <view
       ref={props.ref}
       flexDirection="column"
-      gap={16}
-      padding={20}
+      gap={theme.spacing.lg}
+      padding={theme.spacing.xl}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}

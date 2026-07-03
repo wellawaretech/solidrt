@@ -3,10 +3,14 @@ import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import type { StyleProps } from "./types"
 
+export type BadgeVariant = "primary" | "neutral" | "danger"
+
 export interface BadgeProps {
   // A string/number renders as the themed pill label; anything else is rendered
   // as-is (an icon, a dot, ...).
   children?: any
+  // Visual role: primary (accent), neutral (subtle surface), danger.
+  variant?: BadgeVariant
   layout?: LayoutProps
   style?: StyleProps
 }
@@ -19,8 +23,19 @@ const RADIUS = 999
 // onPrimary text by default; override the fill via style.backgroundColor and the
 // label color via style.color.
 export function Badge(props: BadgeProps) {
-  let bg = () => props.style?.backgroundColor ?? theme.color.primary
-  let fg = () => props.style?.color ?? theme.color.onPrimary
+  let colors = () => {
+    let c = theme.color
+    switch (props.variant ?? "primary") {
+      case "neutral":
+        return { bg: c.surfaceAlt, fg: c.text }
+      case "danger":
+        return { bg: c.danger, fg: c.onPrimary }
+      default:
+        return { bg: c.primary, fg: c.onPrimary }
+    }
+  }
+  let bg = () => props.style?.backgroundColor ?? colors().bg
+  let fg = () => props.style?.color ?? colors().fg
   let radius = () => props.style?.borderRadius ?? RADIUS
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
 

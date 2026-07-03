@@ -3,12 +3,18 @@ import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps } from "./types"
 import { theme, type TextVariant } from "./theme"
 
+// Semantic text colors, resolved through the theme. Curated: only tokens that
+// make sense as a text fill; style.color takes raw values for anything else.
+export type TextColor = "text" | "textMuted" | "primary" | "onPrimary" | "danger"
+
 export interface TextProps extends PointerProps {
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually.
   variant?: TextVariant
-  // Renders in the theme's muted text color. style.color still wins.
+  // Semantic color from the theme; defaults to "text". style.color still wins.
+  color?: TextColor
+  // Sugar for color="textMuted".
   muted?: boolean
   ref?: (node: { id: number }) => void
   layout?: TextLayoutProps
@@ -29,7 +35,8 @@ const FONT_KEYS = [
 
 export function Text(props: TextProps) {
   let role = () => theme.text[props.variant ?? "body"]
-  let color = () => props.style?.color ?? (props.muted ? theme.color.textMuted : theme.color.text)
+  let color = () =>
+    props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")]
 
   let box = createMemo(() => {
     let l = props.layout

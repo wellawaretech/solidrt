@@ -5,10 +5,15 @@ import { policy, densityScale } from "./policy"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
+
 export interface ButtonProps {
   // A string/number is rendered as the themed label; anything else is rendered
   // as-is, so a button can hold custom content (an icon, a row, ...).
   children?: any
+  // Visual role: primary (accent fill), secondary (surface fill with border),
+  // ghost (no fill until hover), danger (destructive accent fill).
+  variant?: ButtonVariant
   onPress?: () => void
   disabled?: boolean
   layout?: LayoutProps
@@ -22,15 +27,32 @@ export interface ButtonProps {
 // layout. A caller-set backgroundColor disables the hover tint: we cannot know
 // its hover variant.
 export function Button(props: ButtonProps) {
+  // Fill, hover fill, and label color per variant, read reactively from the
+  // theme. Only secondary draws a border.
+  let colors = () => {
+    let c = theme.color
+    switch (props.variant ?? "primary") {
+      case "secondary":
+        return { fill: c.surface, hover: c.surfaceHover, label: c.text, border: c.border }
+      case "ghost":
+        return { fill: "transparent", hover: c.surfaceHover, label: c.text, border: undefined }
+      case "danger":
+        return { fill: c.danger, hover: c.dangerHover, label: c.onPrimary, border: undefined }
+      default:
+        return { fill: c.primary, hover: c.primaryHover, label: c.onPrimary, border: undefined }
+    }
+  }
   let bg = (s: PressState) =>
     props.style?.backgroundColor ??
     (props.disabled
-      ? theme.color.surface
+      ? props.variant === "ghost"
+        ? "transparent"
+        : theme.color.surface
       : s.hovered && policy.interaction !== "touch"
-        ? theme.color.primaryHover
-        : theme.color.primary)
+        ? colors().hover
+        : colors().fill)
   let radius = () => props.style?.borderRadius ?? theme.radius.sm
-  let label = () => (props.disabled ? theme.color.textMuted : theme.color.onPrimary)
+  let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
 
   return (
@@ -48,6 +70,8 @@ export function Button(props: ButtonProps) {
         ...props.layout,
       }}
       style={(s: PressState) => ({
+        borderColor: colors().border,
+        borderWidth: colors().border != null ? theme.borderWidth.sm : undefined,
         ...props.style,
         backgroundColor: bg(s),
         borderRadius: radius(),

@@ -169,6 +169,16 @@ function App() {
               <Button onPress={toggleTheme}>Toggle theme</Button>
             </Card>
 
+            <Card title="Buttons" layout={{ width: 360 }}>
+              <View layout={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                <Button>Primary</Button>
+                <Button variant="secondary">Secondary</Button>
+                <Button variant="ghost">Ghost</Button>
+                <Button variant="danger">Danger</Button>
+                <Button disabled>Disabled</Button>
+              </View>
+            </Card>
+
             <Card title="Environment and policies" layout={{ width: 360 }}>
               <Row label="Window">
                 <Value>
@@ -351,10 +361,8 @@ function App() {
               <Row label="Status">
                 <View layout={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                   <Badge>New</Badge>
-                  <Badge style={{ backgroundColor: theme.color.surfaceAlt, color: theme.color.text }}>
-                    3
-                  </Badge>
-                  <Badge style={{ backgroundColor: theme.color.danger }}>Error</Badge>
+                  <Badge variant="neutral">3</Badge>
+                  <Badge variant="danger">Error</Badge>
                 </View>
               </Row>
               <Divider />
