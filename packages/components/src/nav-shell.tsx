@@ -66,7 +66,12 @@ export function NavShell(props: NavShellProps) {
       style={(s: PressState) => ({ backgroundColor: itemBg(p.item, s), borderRadius: theme.radius.sm })}
     >
       {p.item.icon}
-      <text color={labelColor(p.item)} fontSize={11} lineHeight={1.3}>
+      <text
+        color={labelColor(p.item)}
+        fontSize={theme.text.caption.size}
+        lineHeight={theme.text.caption.lineHeight}
+        fontWeight={theme.text.caption.weight}
+      >
         {p.item.label}
       </text>
     </Pressable>

@@ -3,10 +3,22 @@ import { createStore } from "@solidrt/core"
 export type TextStyle = {
   size: number
   lineHeight: number
+  weight: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
 }
 
+// The type scale's role names. <Text variant> and theme.text are keyed by these.
+export type TextVariant = "caption" | "label" | "body" | "title" | "heading"
+
 export type Theme = {
-  text: { body: TextStyle }
+  text: {
+    // Passed through to the core font stack: "sans" | "mono" | a family name.
+    fontFamily: string
+    caption: TextStyle
+    label: TextStyle
+    body: TextStyle
+    title: TextStyle
+    heading: TextStyle
+  }
   color: {
     // Window fill.
     background: string
@@ -33,8 +45,17 @@ export type Theme = {
   borderWidth: { sm: number }
 }
 
-// Scheme-independent tokens, shared by both presets.
-const TEXT = { body: { size: 14, lineHeight: 1.5 } }
+// Scheme-independent tokens, shared by both presets. The type scale: body is
+// the base text style; caption and label sit under it (secondary and
+// emphasized small text), title and heading above it (card and page headings).
+const TEXT: Theme["text"] = {
+  fontFamily: "sans",
+  caption: { size: 11, lineHeight: 1.3, weight: 400 },
+  label: { size: 12, lineHeight: 1.3, weight: 600 },
+  body: { size: 14, lineHeight: 1.5, weight: 400 },
+  title: { size: 18, lineHeight: 1.4, weight: 700 },
+  heading: { size: 22, lineHeight: 1.3, weight: 700 },
+}
 const SPACING = { sm: 4, md: 8 }
 const RADIUS = { sm: 4 }
 const BORDER_WIDTH = { sm: 1 }

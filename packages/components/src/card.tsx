@@ -37,7 +37,12 @@ export function Card(props: CardProps) {
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={props.title != null}>
-        <text color={theme.color.text} fontSize={18} fontWeight={700}>
+        <text
+          color={theme.color.text}
+          fontSize={theme.text.title.size}
+          lineHeight={theme.text.title.lineHeight}
+          fontWeight={theme.text.title.weight}
+        >
           {props.title}
         </text>
       </Show>

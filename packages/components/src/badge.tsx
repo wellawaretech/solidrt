@@ -41,7 +41,12 @@ export function Badge(props: BadgeProps) {
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={isText()} fallback={props.children}>
-        <text color={fg()} fontSize={12} fontWeight={600}>
+        <text
+          color={fg()}
+          fontSize={theme.text.label.size}
+          lineHeight={theme.text.label.lineHeight}
+          fontWeight={theme.text.label.weight}
+        >
           {props.children}
         </text>
       </Show>

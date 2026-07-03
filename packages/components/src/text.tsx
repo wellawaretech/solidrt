@@ -1,9 +1,15 @@
 import { createMemo } from "@solidjs/signals"
 import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps } from "./types"
+import { theme, type TextVariant } from "./theme"
 
 export interface TextProps extends PointerProps {
   children?: any
+  // Typography role from the theme's type scale; defaults to "body". Explicit
+  // layout font props override the role's fields individually.
+  variant?: TextVariant
+  // Renders in the theme's muted text color. style.color still wins.
+  muted?: boolean
   ref?: (node: { id: number }) => void
   layout?: TextLayoutProps
   style?: StyleProps
@@ -22,6 +28,9 @@ const FONT_KEYS = [
 ]
 
 export function Text(props: TextProps) {
+  let role = () => theme.text[props.variant ?? "body"]
+  let color = () => props.style?.color ?? (props.muted ? theme.color.textMuted : theme.color.text)
+
   let box = createMemo(() => {
     let l = props.layout
     if (!l) return {}
@@ -54,12 +63,12 @@ export function Text(props: TextProps) {
       pointerEvents={props.pointerEvents}
     >
       <text
-        color={props.style?.color}
-        fontFamily={props.layout?.fontFamily}
-        fontSize={props.layout?.fontSize}
-        lineHeight={props.layout?.lineHeight}
+        color={color()}
+        fontFamily={props.layout?.fontFamily ?? theme.text.fontFamily}
+        fontSize={props.layout?.fontSize ?? role().size}
+        lineHeight={props.layout?.lineHeight ?? role().lineHeight}
         fontStyle={props.layout?.fontStyle}
-        fontWeight={props.layout?.fontWeight}
+        fontWeight={props.layout?.fontWeight ?? role().weight}
         textAlign={props.layout?.textAlign}
         maxLines={props.layout?.maxLines}
       >
