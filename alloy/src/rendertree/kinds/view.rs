@@ -1,6 +1,6 @@
+use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::{Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, WH, XY};
-use crate::impellers::{DisplayListBuilder, Matrix};
 use std::cell::Cell;
 use taffy::{FlexDirection, Size, Style};
 
@@ -136,6 +136,12 @@ impl View {
   // Clears the memoized transform; called by the setters on a prop change.
   fn invalidate(&self) {
     self.cache.set(None);
+  }
+
+  // Current paint matrix for `size`. Composite uses this to hoist a boundary
+  // View's transform out of its cached content (see composite::hoisted_matrix).
+  pub(crate) fn paint_matrix(&self, size: WH) -> Matrix {
+    self.transform(size).matrix
   }
 }
 

@@ -1,12 +1,12 @@
 use crate::impellers::{
-  ClipOperation, DisplayListBuilder, Point as IPoint, Rect, RoundingRadii, Size as ISize, TextureSampling,
+  ClipOperation, DisplayListBuilder, Matrix, Point as IPoint, Rect, RoundingRadii, Size as ISize, TextureSampling,
 };
 use taffy::prelude::*;
 use taffy::style::Overflow;
 use taffy::Point;
 
 use crate::rendertree::{
-  BoundaryMode, BuildContext, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree, WH,
+  BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree, WH,
 };
 
 // Large finite extent used to leave one axis effectively unclipped when only the
@@ -81,10 +81,41 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   stats
 }
 
+// A boundary View's own transform is hoisted out of its cached content: the
+// recording/texture holds the content in untransformed local space, and the
+// current matrix is applied around the cached draw at composite time. This
+// keeps the cache reusable under transform-only changes, and stops Snapshot
+// mode baking a rotation/scale into the layout-box crop. Non-View kinds paint
+// transform-free content in build(), so there is nothing to hoist.
+fn hoisted_matrix(element: &Element, size: WH) -> Option<Matrix> {
+  match &element.kind {
+    ElementKind::View(v) => Some(v.paint_matrix(size)),
+    _ => None,
+  }
+}
+
+// Applies a boundary's hoisted matrix around `draw`; a plain pass-through when
+// the boundary has no transform of its own.
+fn draw_with_transform(
+  builder: &mut DisplayListBuilder,
+  matrix: Option<&Matrix>,
+  draw: impl FnOnce(&mut DisplayListBuilder),
+) {
+  if let Some(m) = matrix {
+    builder.save();
+    builder.transform(m);
+    draw(builder);
+    builder.restore();
+  } else {
+    draw(builder);
+  }
+}
+
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
 // recording or as rasterized pixels, in node-local coordinates; the parent has
-// already translated the builder) and replayed from the cache until something
-// inside it changes (see RenderTree::invalidate_paint).
+// already translated the builder, and the boundary's own transform is applied
+// here at composite time) and replayed from the cache until something inside
+// it changes (see RenderTree::invalidate_paint).
 fn build_recursive<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -93,22 +124,27 @@ fn build_recursive<'a>(
 ) {
   let element = scene.node(node_id);
   match element.repaint_boundary {
-    BoundaryMode::None => record_node(scene, node_id, ctx, builder),
+    BoundaryMode::None => record_node(scene, node_id, ctx, builder, false),
     BoundaryMode::Recording => {
+      let own = hoisted_matrix(element, ctx.size);
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(dl)) => Some(dl.clone()),
         _ => None,
       };
       if let Some(dl) = cached {
         ctx.boundaries_reused += 1;
-        builder.draw_display_list(&dl, 1.0);
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.draw_display_list(&dl, 1.0);
+        });
         return;
       }
       let mut sub = DisplayListBuilder::new(None);
-      record_node(scene, node_id, ctx, &mut sub);
+      record_node(scene, node_id, ctx, &mut sub, own.is_some());
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
-        builder.draw_display_list(&dl, 1.0);
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.draw_display_list(&dl, 1.0);
+        });
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(dl));
       }
     }
@@ -119,7 +155,9 @@ fn build_recursive<'a>(
 // Snapshot gate: the subtree is rasterized into a texture at the current
 // display scale and composited as a single quad until something inside it
 // changes, its layout size changes, or the display scale changes. Content
-// painting outside the layout box is cropped (unlike a recording boundary).
+// painting outside the layout box is cropped (unlike a recording boundary);
+// the crop happens in untransformed local space, since the boundary's own
+// transform is hoisted out of the raster and applied to the quad instead.
 fn snapshot_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -135,9 +173,11 @@ fn snapshot_node<'a>(
   // Without a real layout box there is nothing to rasterize into; paint
   // inline so overflowing content still shows up.
   if tex_w == 0 || tex_h == 0 {
-    record_node(scene, node_id, ctx, builder);
+    record_node(scene, node_id, ctx, builder, false);
     return;
   }
+
+  let own = hoisted_matrix(element, ctx.size);
 
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
@@ -150,7 +190,9 @@ fn snapshot_node<'a>(
     if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s }) = &*cache {
       if *w == width && *h == height && *s == scale {
         ctx.snapshots_reused += 1;
-        builder.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, None);
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, None);
+        });
         return;
       }
     }
@@ -158,28 +200,41 @@ fn snapshot_node<'a>(
 
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
-  record_node(scene, node_id, ctx, &mut sub);
+  record_node(scene, node_id, ctx, &mut sub, own.is_some());
   let Some(dl) = sub.build() else { return };
 
   match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h) {
     Ok(texture) => {
       ctx.snapshots_rasterized += 1;
-      builder.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, None);
+      draw_with_transform(builder, own.as_ref(), |b| {
+        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, None);
+      });
       *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot { texture, width, height, scale });
     }
     Err(e) => {
       // Paint inline this frame; the recording carries its own device-scale
       // transform, so counter the enclosing CTM's scale before replaying.
       log::warn!("snapshot rasterization failed for node {node_id}: {e}; painting inline");
-      builder.save();
-      builder.scale(1.0 / scale, 1.0 / scale);
-      builder.draw_display_list(&dl, 1.0);
-      builder.restore();
+      draw_with_transform(builder, own.as_ref(), |b| {
+        b.save();
+        b.scale(1.0 / scale, 1.0 / scale);
+        b.draw_display_list(&dl, 1.0);
+        b.restore();
+      });
     }
   }
 }
 
-fn record_node<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
+// `transform_hoisted` is set by a boundary caller that applies this node's own
+// matrix itself at composite time (only ever true for Views, whose build() is
+// exactly that matrix); the content is then recorded transform-free.
+fn record_node<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  builder: &mut DisplayListBuilder,
+  transform_hoisted: bool,
+) {
   let element = scene.node(node_id);
 
   let (overflow_x, overflow_y) = element
@@ -196,7 +251,9 @@ fn record_node<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'
     builder.save();
   }
 
-  element.build(ctx, builder);
+  if !transform_hoisted {
+    element.build(ctx, builder);
+  }
 
   if needs_clip {
     if let Some(layout) = &element.layout {
