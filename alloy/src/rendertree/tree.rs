@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use taffy::{NodeId, Size};
 
-use crate::rendertree::{BoundingBox, Damage, Element, ElementKind};
+use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind};
 
 #[cfg(test)]
 mod tests;
@@ -185,6 +185,21 @@ impl RenderTree {
       Damage::Transform => {
         if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
           self.invalidate_paint(parent);
+        }
+      }
+      Damage::Scroll => {
+        // Like Transform on a Recording boundary (its cache holds children
+        // only; composite re-applies clip and scroll), like Paint elsewhere
+        // (a Snapshot texture lacks scrolled-out pixels; a non-boundary has
+        // no cache of its own to keep).
+        let keeps_cache =
+          self.try_node(node_id).map(|e| e.repaint_boundary == BoundaryMode::Recording).unwrap_or(false);
+        if keeps_cache {
+          if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
+            self.invalidate_paint(parent);
+          }
+        } else {
+          self.invalidate_paint(node_id);
         }
       }
       Damage::Paint => self.invalidate_paint(node_id),

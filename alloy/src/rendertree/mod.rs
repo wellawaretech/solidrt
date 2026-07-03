@@ -209,6 +209,11 @@ pub enum Damage {
   None,
   /// The node's own transform changed; its content caches survive.
   Transform,
+  /// The node's scroll offset changed. A Recording cache survives (clip and
+  /// scroll are applied around it at composite time; see composite::Hoist),
+  /// but a Snapshot texture does not contain scrolled-out pixels and must
+  /// re-rasterize.
+  Scroll,
   /// Painted content changed; paint caches clear from the node up.
   Paint,
   /// Layout inputs changed; taffy caches and paint caches clear.

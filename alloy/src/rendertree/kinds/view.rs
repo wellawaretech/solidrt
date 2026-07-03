@@ -186,8 +186,10 @@ impl Hittable for View {
 impl View {
   // Matrix props (pos, center, rotate, scale, 3D) invalidate the memoized
   // matrix and report Damage::Transform: the View's own cached content stays
-  // valid because composite applies the current matrix around it. Scroll and
-  // clip_radius are baked into the recorded content, so they report Paint.
+  // valid because composite applies the current matrix around it. Scroll
+  // reports Damage::Scroll: a Recording cache survives (offset applied at
+  // composite time), a Snapshot texture cannot (scrolled-out pixels are not
+  // in it). clip_radius is baked into recorded content, so it reports Paint.
   pub fn set_rotate(&mut self, v: f32) -> Damage {
     self.rotate = Some(v);
     self.invalidate();
@@ -245,11 +247,11 @@ impl View {
   }
   pub fn set_scroll_x(&mut self, v: f32) -> Damage {
     self.scroll.get_or_insert_with(XY::default).x = v;
-    Damage::Paint
+    Damage::Scroll
   }
   pub fn set_scroll_y(&mut self, v: f32) -> Damage {
     self.scroll.get_or_insert_with(XY::default).y = v;
-    Damage::Paint
+    Damage::Scroll
   }
   pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> Damage {
     self.clip_radius = Some(radius);

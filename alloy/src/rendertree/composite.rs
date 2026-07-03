@@ -1,5 +1,6 @@
 use crate::impellers::{
-  ClipOperation, DisplayListBuilder, Matrix, Point as IPoint, Rect, RoundingRadii, Size as ISize, TextureSampling,
+  ClipOperation, DisplayList, DisplayListBuilder, Matrix, Point as IPoint, Rect, RoundingRadii, Size as ISize,
+  TextureSampling,
 };
 use taffy::prelude::*;
 use taffy::style::Overflow;
@@ -81,6 +82,25 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   stats
 }
 
+// What a boundary caller applies itself at composite time, and record_node
+// therefore leaves out of the cached content. The record order is matrix,
+// clip, scroll, children; a hoist always covers a prefix of that order (a
+// hoisted scroll requires a hoisted clip, otherwise the composite-time scroll
+// translate would move a recorded clip that must stay put in viewport space).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hoist {
+  /// Record everything (non-boundary nodes, non-View boundaries).
+  None,
+  /// The caller applies the View's matrix; clip and scroll stay recorded.
+  /// Snapshot boundaries use this: their raster must bake clip and scroll,
+  /// since the texture holds only the pixels visible at rasterize time.
+  Transform,
+  /// The caller applies matrix, clip and scroll; the cache holds children
+  /// only. Recording boundaries use this, making the cache reusable under
+  /// scroll writes as well as transform writes (see Damage::Scroll).
+  Full,
+}
+
 // A boundary View's own transform is hoisted out of its cached content: the
 // recording/texture holds the content in untransformed local space, and the
 // current matrix is applied around the cached draw at composite time. This
@@ -91,6 +111,85 @@ fn hoisted_matrix(element: &Element, size: WH) -> Option<Matrix> {
   match &element.kind {
     ElementKind::View(v) => Some(v.paint_matrix(size)),
     _ => None,
+  }
+}
+
+// Per-axis overflow clipping from the element's layout style; no layout means
+// no clip.
+fn overflow_clips(element: &Element) -> (bool, bool) {
+  element
+    .layout
+    .as_ref()
+    .map(|l| (l.style.overflow.x != Overflow::Visible, l.style.overflow.y != Overflow::Visible))
+    .unwrap_or((false, false))
+}
+
+// Emits the element's overflow clip (rounded when a View clips both axes) in
+// node-local, pre-scroll space. Shared by record_node and the Recording
+// boundary composite path so the two cannot diverge. No-op without a clip.
+fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
+  let (clip_x, clip_y) = overflow_clips(element);
+  if !clip_x && !clip_y {
+    return;
+  }
+  let layout = element.layout.as_ref().expect("overflow clip requires layout");
+  let w = layout.computed.size.width;
+  let h = layout.computed.size.height;
+  // Rounded clip only applies when the whole box is clipped (both axes);
+  // a single-axis clip has no meaningful corners to round.
+  let clip_radius = match &element.kind {
+    ElementKind::View(v) if clip_x && clip_y => v.clip_radius,
+    _ => None,
+  };
+  if let Some([tl, tr, br, bl]) = clip_radius {
+    let rect = Rect::new(IPoint::new(0.0, 0.0), ISize::new(w, h));
+    let radii = RoundingRadii {
+      top_left: IPoint::new(tl, tl),
+      top_right: IPoint::new(tr, tr),
+      bottom_right: IPoint::new(br, br),
+      bottom_left: IPoint::new(bl, bl),
+    };
+    builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
+  } else {
+    let x_min = if clip_x { 0.0 } else { -CLIP_INF };
+    let y_min = if clip_y { 0.0 } else { -CLIP_INF };
+    let x_max = if clip_x { w } else { CLIP_INF };
+    let y_max = if clip_y { h } else { CLIP_INF };
+    let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
+    builder.clip_rect(&rect, ClipOperation::Intersect);
+  }
+}
+
+// Scroll offset: applied after the clip so the clip box stays put in viewport
+// space while children slide under it. Positive scroll shifts content
+// leftward/upward. No-op for non-Views and unscrolled Views.
+fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
+  if let ElementKind::View(view) = &element.kind {
+    if let Some(s) = view.scroll {
+      builder.translate(-s.x, -s.y);
+    }
+  }
+}
+
+// Composites a Recording boundary's cached content. A View boundary's cache
+// holds children only (Hoist::Full): its current matrix, clip and scroll are
+// applied around the draw here, so transform and scroll writes replay the
+// same cache. A non-View boundary's cache holds everything and draws bare.
+fn draw_cached_recording(
+  builder: &mut DisplayListBuilder,
+  element: &Element,
+  matrix: Option<&Matrix>,
+  dl: &DisplayList,
+) {
+  if let Some(m) = matrix {
+    builder.save();
+    builder.transform(m);
+    apply_clip(builder, element);
+    apply_scroll(builder, element);
+    builder.draw_display_list(dl, 1.0);
+    builder.restore();
+  } else {
+    builder.draw_display_list(dl, 1.0);
   }
 }
 
@@ -124,27 +223,24 @@ fn build_recursive<'a>(
 ) {
   let element = scene.node(node_id);
   match element.repaint_boundary {
-    BoundaryMode::None => record_node(scene, node_id, ctx, builder, false),
+    BoundaryMode::None => record_node(scene, node_id, ctx, builder, Hoist::None),
     BoundaryMode::Recording => {
       let own = hoisted_matrix(element, ctx.size);
+      let hoist = if own.is_some() { Hoist::Full } else { Hoist::None };
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(dl)) => Some(dl.clone()),
         _ => None,
       };
       if let Some(dl) = cached {
         ctx.boundaries_reused += 1;
-        draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_display_list(&dl, 1.0);
-        });
+        draw_cached_recording(builder, element, own.as_ref(), &dl);
         return;
       }
       let mut sub = DisplayListBuilder::new(None);
-      record_node(scene, node_id, ctx, &mut sub, own.is_some());
+      record_node(scene, node_id, ctx, &mut sub, hoist);
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
-        draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_display_list(&dl, 1.0);
-        });
+        draw_cached_recording(builder, element, own.as_ref(), &dl);
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(dl));
       }
     }
@@ -173,11 +269,12 @@ fn snapshot_node<'a>(
   // Without a real layout box there is nothing to rasterize into; paint
   // inline so overflowing content still shows up.
   if tex_w == 0 || tex_h == 0 {
-    record_node(scene, node_id, ctx, builder, false);
+    record_node(scene, node_id, ctx, builder, Hoist::None);
     return;
   }
 
   let own = hoisted_matrix(element, ctx.size);
+  let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
@@ -200,7 +297,7 @@ fn snapshot_node<'a>(
 
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
-  record_node(scene, node_id, ctx, &mut sub, own.is_some());
+  record_node(scene, node_id, ctx, &mut sub, hoist);
   let Some(dl) = sub.build() else { return };
 
   match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h) {
@@ -225,73 +322,38 @@ fn snapshot_node<'a>(
   }
 }
 
-// `transform_hoisted` is set by a boundary caller that applies this node's own
-// matrix itself at composite time (only ever true for Views, whose build() is
-// exactly that matrix); the content is then recorded transform-free.
+// `hoist` names what the boundary caller applies itself at composite time
+// (see Hoist); the content is recorded without those ops. A hoisted matrix is
+// only ever a View's, whose build() is exactly that matrix concat.
 fn record_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
-  transform_hoisted: bool,
+  hoist: Hoist,
 ) {
   let element = scene.node(node_id);
 
-  let (overflow_x, overflow_y) = element
-    .layout
-    .as_ref()
-    .map(|l| (l.style.overflow.x, l.style.overflow.y))
-    .unwrap_or((Overflow::Visible, Overflow::Visible));
-  let clip_x = overflow_x != Overflow::Visible;
-  let clip_y = overflow_y != Overflow::Visible;
-  let needs_clip = clip_x || clip_y;
+  let (clip_x, clip_y) = overflow_clips(element);
+  let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;
 
-  let needs_save = matches!(&element.kind, ElementKind::View(_)) || needs_clip;
+  // A save is only needed for ops this recording itself carries: a recorded
+  // clip, or a View's matrix/scroll (child translates below are undone
+  // explicitly). Under Hoist::Full there is nothing to restore.
+  let needs_save = record_clip || (matches!(&element.kind, ElementKind::View(_)) && hoist != Hoist::Full);
   if needs_save {
     builder.save();
   }
 
-  if !transform_hoisted {
+  if hoist == Hoist::None {
     element.build(ctx, builder);
   }
 
-  if needs_clip {
-    if let Some(layout) = &element.layout {
-      let w = layout.computed.size.width;
-      let h = layout.computed.size.height;
-      // Rounded clip only applies when the whole box is clipped (both axes);
-      // a single-axis clip has no meaningful corners to round.
-      let clip_radius = match &element.kind {
-        ElementKind::View(v) if clip_x && clip_y => v.clip_radius,
-        _ => None,
-      };
-      if let Some([tl, tr, br, bl]) = clip_radius {
-        let rect = Rect::new(IPoint::new(0.0, 0.0), ISize::new(w, h));
-        let radii = RoundingRadii {
-          top_left: IPoint::new(tl, tl),
-          top_right: IPoint::new(tr, tr),
-          bottom_right: IPoint::new(br, br),
-          bottom_left: IPoint::new(bl, bl),
-        };
-        builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
-      } else {
-        let x_min = if clip_x { 0.0 } else { -CLIP_INF };
-        let y_min = if clip_y { 0.0 } else { -CLIP_INF };
-        let x_max = if clip_x { w } else { CLIP_INF };
-        let y_max = if clip_y { h } else { CLIP_INF };
-        let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
-        builder.clip_rect(&rect, ClipOperation::Intersect);
-      }
-    }
+  if record_clip {
+    apply_clip(builder, element);
   }
-
-  // Scroll offset: applied after the clip so the clip box stays put in
-  // viewport space while children slide under it. Positive scroll shifts
-  // content leftward/upward.
-  if let ElementKind::View(view) = &element.kind {
-    if let Some(s) = view.scroll {
-      builder.translate(-s.x, -s.y);
-    }
+  if hoist != Hoist::Full {
+    apply_scroll(builder, element);
   }
 
   // Text children are Spans - not visual, skip recursion
