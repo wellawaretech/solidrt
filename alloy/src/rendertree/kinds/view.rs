@@ -39,6 +39,10 @@ pub struct View {
   // Positive values shift content leftward/upward (web convention: positive
   // scrollX means scrolled "into" the content from the left).
   pub scroll: Option<XY>,
+  // Group opacity in 0..1 (None = opaque): children are composited together,
+  // then faded as a whole. Not part of the matrix; applied at composite time
+  // on boundaries, via a save_layer at record time otherwise.
+  pub opacity: Option<f32>,
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
@@ -243,6 +247,15 @@ impl View {
   pub fn set_cy(&mut self, v: f32) -> Damage {
     self.center.get_or_insert_with(XY::default).y = v;
     self.invalidate();
+    Damage::Transform
+  }
+  // Not a matrix prop (the memoized transform stays valid), but the same
+  // damage class: both boundary modes apply the current opacity around their
+  // cached content at composite time, and for a non-boundary View the baked
+  // save_layer lives in the enclosing boundary's recording, which Transform's
+  // parent-up invalidation clears.
+  pub fn set_opacity(&mut self, v: f32) -> Damage {
+    self.opacity = Some(v.clamp(0.0, 1.0));
     Damage::Transform
   }
   pub fn set_scroll_x(&mut self, v: f32) -> Damage {

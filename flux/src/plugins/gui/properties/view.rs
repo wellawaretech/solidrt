@@ -16,6 +16,7 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
     "y" => view.set_y(f32_of(value, "y")),
     "cx" => view.set_cx(f32_of(value, "cx")),
     "cy" => view.set_cy(f32_of(value, "cy")),
+    "opacity" => view.set_opacity(f32_of(value, "opacity")),
     "scrollX" => view.set_scroll_x(f32_of(value, "scrollX")),
     "scrollY" => view.set_scroll_y(f32_of(value, "scrollY")),
     "clipRadius" => view.set_clip_radius(decode_radius(value)),

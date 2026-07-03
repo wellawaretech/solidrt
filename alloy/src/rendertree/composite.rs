@@ -1,6 +1,6 @@
 use crate::impellers::{
-  ClipOperation, DisplayList, DisplayListBuilder, Matrix, Point as IPoint, Rect, RoundingRadii, Size as ISize,
-  TextureSampling,
+  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point as IPoint, Rect, RoundingRadii,
+  Size as ISize, TextureSampling,
 };
 use taffy::prelude::*;
 use taffy::style::Overflow;
@@ -171,6 +171,17 @@ fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
   }
 }
 
+// A View's group opacity; non-Views are always opaque. Like the matrix, it is
+// hoisted out of boundary caches and applied at composite time (the opacity
+// arg of draw_display_list, or a paint on the snapshot quad), so an opacity
+// write replays the same cache.
+fn view_opacity(element: &Element) -> f32 {
+  match &element.kind {
+    ElementKind::View(v) => v.opacity.unwrap_or(1.0),
+    _ => 1.0,
+  }
+}
+
 // Composites a Recording boundary's cached content. A View boundary's cache
 // holds children only (Hoist::Full): its current matrix, clip and scroll are
 // applied around the draw here, so transform and scroll writes replay the
@@ -181,15 +192,16 @@ fn draw_cached_recording(
   matrix: Option<&Matrix>,
   dl: &DisplayList,
 ) {
+  let opacity = view_opacity(element);
   if let Some(m) = matrix {
     builder.save();
     builder.transform(m);
     apply_clip(builder, element);
     apply_scroll(builder, element);
-    builder.draw_display_list(dl, 1.0);
+    builder.draw_display_list(dl, opacity);
     builder.restore();
   } else {
-    builder.draw_display_list(dl, 1.0);
+    builder.draw_display_list(dl, opacity);
   }
 }
 
@@ -276,6 +288,16 @@ fn snapshot_node<'a>(
   let own = hoisted_matrix(element, ctx.size);
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
+  // Group opacity rides on the composited quad (white keeps the texture's
+  // colors, the alpha fades it), so the texture itself stays opacity-free and
+  // survives opacity writes.
+  let opacity = view_opacity(element);
+  let opacity_paint = (opacity < 1.0).then(|| {
+    let mut paint = Paint::default();
+    paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, opacity));
+    paint
+  });
+
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
   // quad keeps the composite pixel-exact under the root scale transform.
@@ -288,7 +310,7 @@ fn snapshot_node<'a>(
       if *w == width && *h == height && *s == scale {
         ctx.snapshots_reused += 1;
         draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, None);
+          b.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
         });
         return;
       }
@@ -304,7 +326,7 @@ fn snapshot_node<'a>(
     Ok(texture) => {
       ctx.snapshots_rasterized += 1;
       draw_with_transform(builder, own.as_ref(), |b| {
-        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, None);
+        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
       });
       *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot { texture, width, height, scale });
     }
@@ -315,7 +337,7 @@ fn snapshot_node<'a>(
       draw_with_transform(builder, own.as_ref(), |b| {
         b.save();
         b.scale(1.0 / scale, 1.0 / scale);
-        b.draw_display_list(&dl, 1.0);
+        b.draw_display_list(&dl, opacity);
         b.restore();
       });
     }
@@ -347,6 +369,19 @@ fn record_node<'a>(
 
   if hoist == Hoist::None {
     element.build(ctx, builder);
+  }
+
+  // A non-boundary View's group opacity is baked here as a save_layer (the
+  // alpha composites the children as one group at the restore); boundary
+  // callers hoist it to composite time instead. The bounds are a formality:
+  // Impeller intersects them with the current clip coverage.
+  let opacity = view_opacity(element);
+  let opacity_layer = hoist == Hoist::None && opacity < 1.0;
+  if opacity_layer {
+    let mut paint = Paint::default();
+    paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, opacity));
+    let bounds = Rect::new(IPoint::new(-CLIP_INF, -CLIP_INF), ISize::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
+    builder.save_layer(&bounds, Some(&paint), None);
   }
 
   if record_clip {
@@ -393,6 +428,9 @@ fn record_node<'a>(
     builder.translate(-pos.x, -pos.y);
   }
 
+  if opacity_layer {
+    builder.restore();
+  }
   if needs_save {
     builder.restore();
   }

@@ -136,6 +136,9 @@ export interface TransformProps {
   y?: number
   cx?: number
   cy?: number
+  // Group opacity in 0..1: children are composited together, then faded as a
+  // whole (CSS `opacity`). Does not affect hit testing.
+  opacity?: number
   scrollX?: number
   scrollY?: number
 }
