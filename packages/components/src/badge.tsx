@@ -1,7 +1,7 @@
 import { Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
-import { typeStyle } from "./typography"
+import { typeStyle, lightOnDark } from "./typography"
 import type { StyleProps } from "./types"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
@@ -39,6 +39,7 @@ export function Badge(props: BadgeProps) {
   let fg = () => props.style?.color ?? colors().fg
   let radius = () => props.style?.borderRadius ?? RADIUS
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
+  let labelOnDark = () => lightOnDark(fg(), bg())
 
   return (
     <view
@@ -57,7 +58,7 @@ export function Badge(props: BadgeProps) {
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={isText()} fallback={props.children}>
-        <text color={fg()} {...typeStyle("label")}>
+        <text color={fg()} {...typeStyle("label", labelOnDark())}>
           {props.children}
         </text>
       </Show>

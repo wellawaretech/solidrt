@@ -1,7 +1,7 @@
 export * from "./renderer"
 export { setFocus, getFocusedNodeId, measureText, getBoundingBox } from "./core"
 export type { BoundingBox } from "./core"
-export { parseColor, mixColors, createLinearGradient, createRadialGradient } from "./color"
+export { parseColor, mixColors, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur } from "./window"
 export { setPointerCapture, releasePointerCapture } from "./window"

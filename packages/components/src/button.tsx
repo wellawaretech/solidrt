@@ -3,7 +3,7 @@ import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
-import { typeStyle } from "./typography"
+import { typeStyle, lightOnDark } from "./typography"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -56,6 +56,15 @@ export function Button(props: ButtonProps) {
   let radius = () => props.style?.borderRadius ?? theme.radius.sm
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   let isText = () => typeof props.children === "string" || typeof props.children === "number"
+  // The label's polarity against the idle fill: onPrimary on a saturated fill
+  // is light-on-dark even in a light theme, so it needs the low-DPI weight
+  // compensation there too.
+  let labelOnDark = () =>
+    lightOnDark(
+      label(),
+      props.style?.backgroundColor ??
+        (props.disabled ? (props.variant === "ghost" ? "transparent" : theme.color.surface) : colors().fill),
+    )
 
   return (
     <Pressable
@@ -84,7 +93,7 @@ export function Button(props: ButtonProps) {
       })}
     >
       <Show when={isText()} fallback={props.children}>
-        <text color={label()} {...typeStyle("body")}>
+        <text color={label()} {...typeStyle("body", labelOnDark())}>
           {props.children}
         </text>
       </Show>

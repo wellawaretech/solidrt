@@ -24,6 +24,15 @@ export function mixColors(a: string, b: string, t: number): string {
   return colord(a).mix(b, t).toHex()
 }
 
+/**
+ * Perceived brightness of a CSS color, 0 (black) to 1 (white), YIQ-weighted.
+ * Compare a text color against its backdrop to decide rendering polarity,
+ * e.g. whether a label sits light-on-dark (see typeWeight in components).
+ */
+export function brightness(color: string): number {
+  return colord(color).brightness()
+}
+
 // A color stop: `offset` is 0..1 along the gradient, `color` any CSS color string.
 export type GradientStop = { offset: number; color: string }
 

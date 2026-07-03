@@ -23,9 +23,11 @@ export type Policies = {
   // Multiplier on type-scale font sizes (Dynamic Type). Follows the OS
   // preference (env.textScale); override via setPolicy to pin it.
   textScale: number
-  // Added to themed font weights, in steps of 100 (other steps decode as 400).
-  // Compensates Impeller's unhinted grayscale AA on low-DPI displays, where
-  // 1px stems smear across pixels and text reads thin; 0 on high-DPI.
+  // Base weight compensation for light-on-dark text on this display, in
+  // steps of 100 (other steps decode as 400): low-DPI rendering thins
+  // inverted-polarity glyphs. Applied by typeWeight to light-on-dark runs
+  // only (per-run polarity, or the theme's palette polarity as the default),
+  // with one extra step for small font sizes; see typography.ts.
   textWeightDelta: number
   // Application policies: recommendations derived from the window size class.
   // The application owns the final decision; accept them by consuming

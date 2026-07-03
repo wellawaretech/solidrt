@@ -14,8 +14,8 @@ export interface TextProps extends PointerProps {
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually. fontSize
   // (role-derived or explicit) is multiplied by policy.textScale and
-  // fontWeight carries policy.textWeightDelta; use the core <text> primitive
-  // for text that must not scale.
+  // fontWeight carries the typeWeight low-DPI compensation; use the core
+  // <text> primitive for text that must not scale.
   variant?: TextVariant
   // Semantic color from the theme; defaults to "text". style.color still wins.
   color?: TextColor
@@ -40,6 +40,7 @@ const FONT_KEYS = [
 
 export function Text(props: TextProps) {
   let role = () => theme.text[props.variant ?? "body"]
+  let size = () => (props.layout?.fontSize ?? role().size) * policy.textScale
   let color = () =>
     props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")]
 
@@ -77,10 +78,10 @@ export function Text(props: TextProps) {
       <text
         color={color()}
         fontFamily={props.layout?.fontFamily ?? theme.text.fontFamily}
-        fontSize={(props.layout?.fontSize ?? role().size) * policy.textScale}
+        fontSize={size()}
         lineHeight={props.layout?.lineHeight ?? role().lineHeight}
         fontStyle={props.layout?.fontStyle}
-        fontWeight={typeWeight(props.layout?.fontWeight ?? role().weight)}
+        fontWeight={typeWeight(props.layout?.fontWeight ?? role().weight, size())}
         textAlign={props.layout?.textAlign}
         maxLines={props.layout?.maxLines}
       >
