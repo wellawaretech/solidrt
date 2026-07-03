@@ -1,9 +1,10 @@
 use super::PaintState;
+use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
-use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]
@@ -49,21 +50,21 @@ impl Bounded for Oval {
 }
 
 impl Oval {
-  pub fn set_x(&mut self, v: f32) -> bool {
+  pub fn set_x(&mut self, v: f32) -> Damage {
     self.x = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> bool {
+  pub fn set_y(&mut self, v: f32) -> Damage {
     self.y = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> bool {
+  pub fn set_w(&mut self, v: f32) -> Damage {
     self.w = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> bool {
+  pub fn set_h(&mut self, v: f32) -> Damage {
     self.h = Some(v);
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {

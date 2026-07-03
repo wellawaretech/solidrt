@@ -7,9 +7,9 @@
 // decoded into native values that are handed to rendertree setters. rendertree
 // knows none of it. One file per element mirrors rendertree's own structure.
 //
-// apply_jsx returns whether the change requires a layout invalidation; that
-// decision is owned by rendertree (each setter reports it) and just threaded
-// back out here.
+// apply_jsx returns the Damage the write caused (layout / paint / transform /
+// none); that decision is owned by rendertree (each setter reports it) and just
+// threaded back out here for the caller to hand to RenderTree::apply_damage.
 
 mod layout;
 mod line;
@@ -30,9 +30,9 @@ use taffy::style::Position;
 
 use crate::plugins::gui::value::PropValue;
 use alloy::impellers::Color;
-use alloy::rendertree::{BoundaryMode, Element, ElementKind, PointerEvents};
+use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};
 
-// Returns Ok(invalidate) on success; Err(message) for an unknown property, which
+// Returns Ok(damage) on success; Err(message) for an unknown property, which
 // the FFI caller surfaces as a throwable JS error rather than aborting the
 // process. A single typo'd or unsupported prop must not take down the runtime.
 pub fn apply_jsx(
@@ -40,7 +40,7 @@ pub fn apply_jsx(
   name: &str,
   value: &PropValue,
   cmd_tx: &Sender<AlloyCommand>,
-) -> Result<bool, String> {
+) -> Result<Damage, String> {
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.
@@ -51,11 +51,12 @@ pub fn apply_jsx(
       v => panic!("unknown position value '{v}'"),
     };
     el.set_position(position);
-    return Ok(true);
+    return Ok(Damage::Layout);
   }
 
   // Element-level, kind-independent: marks a retained-paint boundary
-  // (see Element::repaint_boundary). Does not affect layout.
+  // (see Element::repaint_boundary). Does not affect layout; Damage::Paint
+  // clears the node's own now-stale cache along with the ancestors'.
   if name == "repaintBoundary" {
     el.repaint_boundary = match value {
       PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
@@ -63,8 +64,7 @@ pub fn apply_jsx(
       PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
       _ => panic!("repaintBoundary must be a boolean or \"snapshot\""),
     };
-    el.paint_cache.borrow_mut().take();
-    return Ok(false);
+    return Ok(Damage::Paint);
   }
 
   // Element-level, kind-independent: controls hit testing (see hit.rs). Paint/hit
@@ -81,7 +81,7 @@ pub fn apply_jsx(
       },
     };
     el.set_pointer_events(pointer_events);
-    return Ok(false);
+    return Ok(Damage::None);
   }
 
   let handled = match &mut el.kind {
@@ -96,19 +96,19 @@ pub fn apply_jsx(
     ElementKind::Span(span) => text::apply_span(span, name, value),
     ElementKind::Texture(tex) => texture::apply(tex, name, value),
   };
-  if let Some(invalidate) = handled {
-    return Ok(invalidate);
+  if let Some(damage) = handled {
+    return Ok(damage);
   }
 
   if let Some(paint) = el.kind.paint_mut() {
-    if let Some(invalidate) = paint::apply(paint, name, value) {
-      return Ok(invalidate);
+    if let Some(damage) = paint::apply(paint, name, value) {
+      return Ok(damage);
     }
   }
 
   if let Some(style) = el.style_mut() {
-    if let Some(invalidate) = layout::apply(style, name, value) {
-      return Ok(invalidate);
+    if let Some(damage) = layout::apply(style, name, value) {
+      return Ok(damage);
     }
   }
 

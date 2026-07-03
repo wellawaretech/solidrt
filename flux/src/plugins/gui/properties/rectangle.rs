@@ -1,8 +1,9 @@
 use super::{decode_radius, f32_of};
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 use alloy::rendertree::Rectangle;
 
-pub fn apply(rect: &mut Rectangle, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(rect: &mut Rectangle, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "x" => rect.set_x(f32_of(value, "x")),
     "y" => rect.set_y(f32_of(value, "y")),

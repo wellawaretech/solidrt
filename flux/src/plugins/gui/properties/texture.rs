@@ -1,8 +1,9 @@
 use super::f32_of;
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 use alloy::rendertree::Texture;
 
-pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "src" => {
       // null/undefined clears, number sets the id.

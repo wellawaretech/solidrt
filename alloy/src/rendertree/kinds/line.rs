@@ -1,7 +1,8 @@
 use super::PaintState;
-use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use crate::impellers::{DisplayListBuilder, Point};
+use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]
@@ -41,29 +42,29 @@ impl Measurable for Line {
 }
 
 impl Line {
-  pub fn set_x1(&mut self, v: f32) -> bool {
+  pub fn set_x1(&mut self, v: f32) -> Damage {
     self.x1 = v;
-    false
+    Damage::Paint
   }
-  pub fn set_y1(&mut self, v: f32) -> bool {
+  pub fn set_y1(&mut self, v: f32) -> Damage {
     self.y1 = v;
-    false
+    Damage::Paint
   }
-  pub fn set_x2(&mut self, v: f32) -> bool {
+  pub fn set_x2(&mut self, v: f32) -> Damage {
     self.x2 = v;
-    false
+    Damage::Paint
   }
-  pub fn set_y2(&mut self, v: f32) -> bool {
+  pub fn set_y2(&mut self, v: f32) -> Damage {
     self.y2 = v;
-    false
+    Damage::Paint
   }
-  pub fn set_on_length(&mut self, v: f32) -> bool {
+  pub fn set_on_length(&mut self, v: f32) -> Damage {
     self.on_length = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_off_length(&mut self, v: f32) -> bool {
+  pub fn set_off_length(&mut self, v: f32) -> Damage {
     self.off_length = Some(v);
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {

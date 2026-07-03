@@ -2,9 +2,10 @@ use alloy::impellers::{FontWeight, TextAlignment};
 
 use super::{f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 use alloy::rendertree::{Span, Text};
 
-pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "x" => text.set_x(f32_of(value, "x")),
     "y" => text.set_y(f32_of(value, "y")),
@@ -40,7 +41,7 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<bool> {
   })
 }
 
-pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "text" => span.set_text(str_of(value, "text").to_string()),
     _ => return None,

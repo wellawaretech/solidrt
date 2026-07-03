@@ -1,5 +1,6 @@
 use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, WH, XY};
 use std::cell::Cell;
 use taffy::{FlexDirection, Size, Style};
@@ -183,75 +184,76 @@ impl Hittable for View {
 }
 
 impl View {
-  // Setters return whether the change affects layout. View transforms (pos,
-  // scale, rotate, scroll) are paint-time only, so they never do. Transform
-  // props invalidate the memoized matrix; scroll/clip_radius do not affect it.
-  pub fn set_rotate(&mut self, v: f32) -> bool {
+  // Matrix props (pos, center, rotate, scale, 3D) invalidate the memoized
+  // matrix and report Damage::Transform: the View's own cached content stays
+  // valid because composite applies the current matrix around it. Scroll and
+  // clip_radius are baked into the recorded content, so they report Paint.
+  pub fn set_rotate(&mut self, v: f32) -> Damage {
     self.rotate = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_scale(&mut self, v: f32) -> bool {
+  pub fn set_scale(&mut self, v: f32) -> Damage {
     self.scale = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_scale_x(&mut self, v: f32) -> bool {
+  pub fn set_scale_x(&mut self, v: f32) -> Damage {
     self.scale_x = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_scale_y(&mut self, v: f32) -> bool {
+  pub fn set_scale_y(&mut self, v: f32) -> Damage {
     self.scale_y = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_rotate_x(&mut self, v: f32) -> bool {
+  pub fn set_rotate_x(&mut self, v: f32) -> Damage {
     self.rotate_x = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_rotate_y(&mut self, v: f32) -> bool {
+  pub fn set_rotate_y(&mut self, v: f32) -> Damage {
     self.rotate_y = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_perspective(&mut self, v: f32) -> bool {
+  pub fn set_perspective(&mut self, v: f32) -> Damage {
     self.perspective = Some(v);
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_x(&mut self, v: f32) -> bool {
+  pub fn set_x(&mut self, v: f32) -> Damage {
     self.pos.get_or_insert_with(XY::default).x = v;
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_y(&mut self, v: f32) -> bool {
+  pub fn set_y(&mut self, v: f32) -> Damage {
     self.pos.get_or_insert_with(XY::default).y = v;
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_cx(&mut self, v: f32) -> bool {
+  pub fn set_cx(&mut self, v: f32) -> Damage {
     self.center.get_or_insert_with(XY::default).x = v;
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_cy(&mut self, v: f32) -> bool {
+  pub fn set_cy(&mut self, v: f32) -> Damage {
     self.center.get_or_insert_with(XY::default).y = v;
     self.invalidate();
-    false
+    Damage::Transform
   }
-  pub fn set_scroll_x(&mut self, v: f32) -> bool {
+  pub fn set_scroll_x(&mut self, v: f32) -> Damage {
     self.scroll.get_or_insert_with(XY::default).x = v;
-    false
+    Damage::Paint
   }
-  pub fn set_scroll_y(&mut self, v: f32) -> bool {
+  pub fn set_scroll_y(&mut self, v: f32) -> Damage {
     self.scroll.get_or_insert_with(XY::default).y = v;
-    false
+    Damage::Paint
   }
-  pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> bool {
+  pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> Damage {
     self.clip_radius = Some(radius);
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {

@@ -1,8 +1,10 @@
 use super::{Gradient, GradientStop, GradientUnits, PaintState};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use crate::impellers::{
-  Color, DisplayListBuilder, DrawStyle, FillType, Matrix, Path as ImpPath, PathBuilder, Point, StrokeCap, StrokeJoin, TileMode,
+  Color, DisplayListBuilder, DrawStyle, FillType, Matrix, Path as ImpPath, PathBuilder, Point, StrokeCap, StrokeJoin,
+  TileMode,
 };
+use crate::rendertree::Damage;
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use std::cell::RefCell;
 use usvg::tiny_skia_path::{PathSegment, Transform};
 
@@ -59,10 +61,8 @@ impl Svg {
     // no local file, no embedded data-URI rasters) and there is no base directory
     // for relative references to resolve against.
     opt.resources_dir = None;
-    opt.image_href_resolver = usvg::ImageHrefResolver {
-      resolve_data: Box::new(|_, _, _| None),
-      resolve_string: Box::new(|_, _| None),
-    };
+    opt.image_href_resolver =
+      usvg::ImageHrefResolver { resolve_data: Box::new(|_, _, _| None), resolve_string: Box::new(|_, _| None) };
     if let Some(c) = self.color {
       opt.style_sheet = Some(format!("* {{ color: {} }}", color_to_hex(c)));
     }
@@ -87,17 +87,17 @@ impl Svg {
   }
 
   // `src` changes both geometry and intrinsic size, so it invalidates layout.
-  pub fn set_src(&mut self, src: String) -> bool {
+  pub fn set_src(&mut self, src: String) -> Damage {
     self.src = src;
     self.invalidate();
-    true
+    Damage::Layout
   }
 
   // currentColor only affects paint, never size/layout.
-  pub fn set_color(&mut self, color: Color) -> bool {
+  pub fn set_color(&mut self, color: Color) -> Damage {
     self.color = Some(color);
     self.invalidate();
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {
@@ -276,10 +276,7 @@ fn convert_stops(stops: &[usvg::Stop], fill_alpha: f32) -> Vec<GradientStop> {
     .iter()
     .map(|s| {
       let c = s.color();
-      GradientStop {
-        offset: s.offset().get(),
-        color: solid(c.red, c.green, c.blue, s.opacity().get() * fill_alpha),
-      }
+      GradientStop { offset: s.offset().get(), color: solid(c.red, c.green, c.blue, s.opacity().get() * fill_alpha) }
     })
     .collect()
 }

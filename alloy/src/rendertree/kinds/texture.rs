@@ -1,6 +1,7 @@
-use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use crate::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
+use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use taffy::{AlignSelf, Display, Size as TaffySize, Style};
 
 #[derive(Clone, Debug, Default)]
@@ -76,25 +77,25 @@ impl Measurable for Texture {
 impl Texture {
   // Source id and crop rect feed measurement, so all affect layout. None clears
   // the texture; the null-vs-number decoding happens in the binding layer.
-  pub fn set_src(&mut self, id: Option<u64>) -> bool {
+  pub fn set_src(&mut self, id: Option<u64>) -> Damage {
     self.texture_id = id;
-    true
+    Damage::Layout
   }
-  pub fn set_src_x(&mut self, v: f32) -> bool {
+  pub fn set_src_x(&mut self, v: f32) -> Damage {
     self.src_x = Some(v);
-    true
+    Damage::Layout
   }
-  pub fn set_src_y(&mut self, v: f32) -> bool {
+  pub fn set_src_y(&mut self, v: f32) -> Damage {
     self.src_y = Some(v);
-    true
+    Damage::Layout
   }
-  pub fn set_src_w(&mut self, v: f32) -> bool {
+  pub fn set_src_w(&mut self, v: f32) -> Damage {
     self.src_w = Some(v);
-    true
+    Damage::Layout
   }
-  pub fn set_src_h(&mut self, v: f32) -> bool {
+  pub fn set_src_h(&mut self, v: f32) -> Damage {
     self.src_h = Some(v);
-    true
+    Damage::Layout
   }
 
   pub fn with_layout(self) -> Element {

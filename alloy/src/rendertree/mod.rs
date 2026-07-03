@@ -7,7 +7,8 @@ mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
-  Gradient, GradientStop, GradientUnits, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View, Window,
+  Gradient, GradientStop, GradientUnits, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View,
+  Window,
 };
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
@@ -192,6 +193,26 @@ impl Measurable for ElementKind {
       _ => Size::ZERO,
     }
   }
+}
+
+/// What a property write invalidates, reported by each setter and consumed by
+/// RenderTree::apply_damage. Ordered by scope; every variant implies the ones
+/// below it stay valid.
+///
+/// `Transform` marks a write to a View's composite-time matrix: the node's own
+/// cached content stays valid (composite applies the current matrix around it;
+/// see composite::hoisted_matrix), but ancestor boundaries hold the node at its
+/// old placement and must repaint.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Damage {
+  /// No visual change (window chrome, hit-testing config).
+  None,
+  /// The node's own transform changed; its content caches survive.
+  Transform,
+  /// Painted content changed; paint caches clear from the node up.
+  Paint,
+  /// Layout inputs changed; taffy caches and paint caches clear.
+  Layout,
 }
 
 /// What a repaint boundary retains across frames: nothing, the recorded

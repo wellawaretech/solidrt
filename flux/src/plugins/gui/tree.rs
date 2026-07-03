@@ -194,13 +194,11 @@ impl ModuleDef for RenderTreeModule {
         SETPROP_COUNT.with(|c| c.set(c.get() + 1));
         let value = to_prop_value(&value);
         let mut tree = tree_ref.borrow_mut();
-        let invalidate =
-          super::properties::apply_jsx(tree.element_mut(node_id), &property, &value, &cmd_tx).map_err(|msg| {
+        let damage =
+          super::properties::apply_jsx(tree.element_write(node_id), &property, &value, &cmd_tx).map_err(|msg| {
             ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into())
           })?;
-        if invalidate {
-          tree.invalidate_cache(node_id);
-        }
+        tree.apply_damage(node_id, damage);
         tree.sync_span_parent(node_id);
         platform_ref.request_frame();
         Ok(())

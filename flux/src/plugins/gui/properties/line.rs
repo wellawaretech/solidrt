@@ -1,8 +1,9 @@
 use super::f32_of;
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 use alloy::rendertree::Line;
 
-pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "x1" => line.set_x1(f32_of(value, "x1")),
     "y1" => line.set_y1(f32_of(value, "y1")),

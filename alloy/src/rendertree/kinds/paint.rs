@@ -1,4 +1,7 @@
-use crate::impellers::{BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, Rect, StrokeCap, StrokeJoin, TileMode};
+use crate::impellers::{
+  BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, Rect, StrokeCap, StrokeJoin, TileMode,
+};
+use crate::rendertree::Damage;
 
 #[derive(Clone, Debug)]
 pub struct GradientStop {
@@ -22,7 +25,14 @@ pub enum GradientUnits {
 // box transform is derived from the element bounds at paint time).
 #[derive(Clone, Debug)]
 pub enum Gradient {
-  Linear { start: Point, end: Point, stops: Vec<GradientStop>, tile: TileMode, transform: Matrix, units: GradientUnits },
+  Linear {
+    start: Point,
+    end: Point,
+    stops: Vec<GradientStop>,
+    tile: TileMode,
+    transform: Matrix,
+    units: GradientUnits,
+  },
   Radial {
     center: Point,
     radius: f32,
@@ -229,44 +239,44 @@ impl PaintState {
   // already decoded (color unpacked, enums resolved) from the binding layer.
 
   // A solid color clears any gradient (the two are mutually exclusive fills).
-  pub fn set_color(&mut self, color: Color) -> bool {
+  pub fn set_color(&mut self, color: Color) -> Damage {
     self.color = color;
     self.gradient = None;
-    false
+    Damage::Paint
   }
 
   // Sets a gradient fill and derives a solid fallback from its stops (used for
   // hit-testing and when painted without resolvable bounds).
-  pub fn set_gradient(&mut self, gradient: Gradient) -> bool {
+  pub fn set_gradient(&mut self, gradient: Gradient) -> Damage {
     self.color = match &gradient {
       Gradient::Linear { stops, .. } | Gradient::Radial { stops, .. } => average_stops(stops),
     };
     self.gradient = Some(gradient);
-    false
+    Damage::Paint
   }
-  pub fn set_draw_style(&mut self, v: DrawStyle) -> bool {
+  pub fn set_draw_style(&mut self, v: DrawStyle) -> Damage {
     self.draw_style = v;
-    false
+    Damage::Paint
   }
-  pub fn set_blend_mode(&mut self, v: BlendMode) -> bool {
+  pub fn set_blend_mode(&mut self, v: BlendMode) -> Damage {
     self.blend_mode = v;
-    false
+    Damage::Paint
   }
-  pub fn set_stroke_width(&mut self, v: f32) -> bool {
+  pub fn set_stroke_width(&mut self, v: f32) -> Damage {
     self.stroke_width = v;
-    false
+    Damage::Paint
   }
-  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> bool {
+  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> Damage {
     self.stroke_cap = v;
-    false
+    Damage::Paint
   }
-  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> bool {
+  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> Damage {
     self.stroke_join = v;
-    false
+    Damage::Paint
   }
-  pub fn set_stroke_miter(&mut self, v: f32) -> bool {
+  pub fn set_stroke_miter(&mut self, v: f32) -> Damage {
     self.stroke_miter = v;
-    false
+    Damage::Paint
   }
 }
 

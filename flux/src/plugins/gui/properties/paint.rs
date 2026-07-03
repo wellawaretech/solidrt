@@ -2,9 +2,10 @@ use alloy::impellers::{BlendMode, DrawStyle, Point, StrokeCap, StrokeJoin};
 
 use super::{decode_color, f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 use alloy::rendertree::{Gradient, GradientStop, PaintState};
 
-pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     // `color` carries either a solid (a packed-u32 number) or a gradient created
     // by createLinearGradient/createRadialGradient (a branded object).

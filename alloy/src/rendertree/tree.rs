@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use taffy::{NodeId, Size};
 
-use crate::rendertree::{BoundingBox, Element, ElementKind};
+use crate::rendertree::{BoundingBox, Damage, Element, ElementKind};
 
 #[cfg(test)]
 mod tests;
@@ -10,7 +10,7 @@ mod tests;
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,
-  // Content revision: bumped on structural changes and on element_mut (the
+  // Content revision: bumped on structural changes and on element_write (the
   // property-mutation surface). Internal layout writes (node_mut) do not
   // count. Lets a painter detect "tree unchanged since last build" and reuse
   // its display list.
@@ -167,10 +167,32 @@ impl RenderTree {
     self.destroy_node(node_id);
   }
 
-  pub fn element_mut(&mut self, id: u64) -> &mut Element {
+  /// Mutable element access for a property write. Bumps the revision but
+  /// invalidates nothing: the caller must follow up with `apply_damage`,
+  /// passing what the setter reported.
+  pub fn element_write(&mut self, id: u64) -> &mut Element {
     self.bump_revision();
-    self.invalidate_paint(id);
     self.node_mut(id)
+  }
+
+  /// Completes a property write by invalidating what the setter reported (see
+  /// `Damage`). Transform-only writes keep the node's own paint cache - its
+  /// matrix is applied at composite time - and clear from the parent up, since
+  /// ancestor recordings hold the node at its old placement.
+  pub fn apply_damage(&mut self, node_id: u64, damage: Damage) {
+    match damage {
+      Damage::None => {}
+      Damage::Transform => {
+        if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
+          self.invalidate_paint(parent);
+        }
+      }
+      Damage::Paint => self.invalidate_paint(node_id),
+      Damage::Layout => {
+        self.invalidate_cache(node_id);
+        self.invalidate_paint(node_id);
+      }
+    }
   }
 
   /// Clear cached boundary recordings from `node_id` up to the root. A content

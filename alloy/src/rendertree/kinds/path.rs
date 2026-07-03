@@ -1,7 +1,8 @@
 use super::PaintState;
-use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
+use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
@@ -280,25 +281,25 @@ impl Path {
 
   // The path's geometry is cached, so any change here invalidates that cache.
   // d/x/y also affect the measured size (layout); fill rule does not.
-  pub fn set_d(&mut self, d: String) -> bool {
+  pub fn set_d(&mut self, d: String) -> Damage {
     self.d = d;
     self.invalidate();
-    true
+    Damage::Layout
   }
-  pub fn set_x(&mut self, v: f32) -> bool {
+  pub fn set_x(&mut self, v: f32) -> Damage {
     self.x = Some(v);
     self.invalidate();
-    true
+    Damage::Layout
   }
-  pub fn set_y(&mut self, v: f32) -> bool {
+  pub fn set_y(&mut self, v: f32) -> Damage {
     self.y = Some(v);
     self.invalidate();
-    true
+    Damage::Layout
   }
-  pub fn set_fill_rule(&mut self, rule: FillType) -> bool {
+  pub fn set_fill_rule(&mut self, rule: FillType) -> Damage {
     self.fill_rule = rule;
     self.invalidate();
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {

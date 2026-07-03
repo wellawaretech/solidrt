@@ -3,6 +3,7 @@ use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
   TypographyContext,
 };
+use crate::rendertree::Damage;
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
@@ -213,48 +214,48 @@ impl Text {
 
   // Box overrides paint within (or independent of) the layout box, so none of
   // them affect layout.
-  pub fn set_x(&mut self, v: f32) -> bool {
+  pub fn set_x(&mut self, v: f32) -> Damage {
     self.x = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> bool {
+  pub fn set_y(&mut self, v: f32) -> Damage {
     self.y = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> bool {
+  pub fn set_w(&mut self, v: f32) -> Damage {
     self.w = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> bool {
+  pub fn set_h(&mut self, v: f32) -> Damage {
     self.h = Some(v);
-    false
+    Damage::Paint
   }
 
   // All other text properties feed measurement, so every change affects layout.
   // The resolved font family name and FontWeight come in already decoded.
-  pub fn set_font_family(&mut self, family: String) -> bool {
+  pub fn set_font_family(&mut self, family: String) -> Damage {
     self.font_family = family;
-    true
+    Damage::Layout
   }
-  pub fn set_font_size(&mut self, v: f32) -> bool {
+  pub fn set_font_size(&mut self, v: f32) -> Damage {
     self.font_size = v;
-    true
+    Damage::Layout
   }
-  pub fn set_line_height(&mut self, v: f32) -> bool {
+  pub fn set_line_height(&mut self, v: f32) -> Damage {
     self.line_height = v;
-    true
+    Damage::Layout
   }
-  pub fn set_max_lines(&mut self, v: u32) -> bool {
+  pub fn set_max_lines(&mut self, v: u32) -> Damage {
     self.max_lines = v;
-    true
+    Damage::Layout
   }
-  pub fn set_font_weight(&mut self, weight: FontWeight) -> bool {
+  pub fn set_font_weight(&mut self, weight: FontWeight) -> Damage {
     self.font_weight = weight;
-    true
+    Damage::Layout
   }
-  pub fn set_text_alignment(&mut self, alignment: TextAlignment) -> bool {
+  pub fn set_text_alignment(&mut self, alignment: TextAlignment) -> Damage {
     self.text_alignment = alignment;
-    true
+    Damage::Layout
   }
 
   pub fn with_layout(self) -> Element {
@@ -273,9 +274,9 @@ pub struct Span {
 
 impl Span {
   // Span text feeds the parent paragraph's measurement, so it affects layout.
-  pub fn set_text(&mut self, text: String) -> bool {
+  pub fn set_text(&mut self, text: String) -> Damage {
     self.text = text;
-    true
+    Damage::Layout
   }
 
   pub fn no_layout(self) -> Element {

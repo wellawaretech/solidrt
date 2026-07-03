@@ -1,9 +1,10 @@
 use super::PaintState;
+use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
+use crate::rendertree::Damage;
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
-use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use taffy::Size as TaffySize;
 
 #[derive(Clone, Debug, Default)]
@@ -65,26 +66,26 @@ impl Bounded for Rectangle {
 impl Rectangle {
   // Rectangle geometry is painted within its layout box, so none of these
   // affect layout.
-  pub fn set_x(&mut self, v: f32) -> bool {
+  pub fn set_x(&mut self, v: f32) -> Damage {
     self.x = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> bool {
+  pub fn set_y(&mut self, v: f32) -> Damage {
     self.y = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> bool {
+  pub fn set_w(&mut self, v: f32) -> Damage {
     self.w = Some(v);
-    false
+    Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> bool {
+  pub fn set_h(&mut self, v: f32) -> Damage {
     self.h = Some(v);
-    false
+    Damage::Paint
   }
   // [top-left, top-right, bottom-right, bottom-left].
-  pub fn set_radius(&mut self, radius: [f32; 4]) -> bool {
+  pub fn set_radius(&mut self, radius: [f32; 4]) -> Damage {
     self.radius = Some(radius);
-    false
+    Damage::Paint
   }
 
   pub fn with_layout(self) -> Element {

@@ -10,8 +10,9 @@ use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 use super::{f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
+use alloy::rendertree::Damage;
 
-pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
+pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<Damage> {
   match name {
     // Size
     "width" => style.size.width = parse_dimension(value),
@@ -229,7 +230,7 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<bool> {
 
     _ => return None,
   }
-  Some(true)
+  Some(Damage::Layout)
 }
 
 fn parse_overflow(prop: &str, value: &PropValue) -> Overflow {
