@@ -7,6 +7,7 @@ import {
   Window,
   View,
   Text,
+  Image,
   Button,
   TextInput,
   Switch,
@@ -446,8 +447,8 @@ function App() {
                 <Icon src={HOUSE} />
                 <Icon src={SETTINGS} />
                 <Icon src={BELL} />
-                <Icon src={HEART} size={32} color={theme.color.danger} />
-                <Icon src={STAR} size={32} color={theme.color.primary} />
+                <Icon src={HEART} color={theme.color.danger} />
+                <Icon src={STAR} color={theme.color.primary} />
               </View>
             </Card>
 
@@ -457,6 +458,20 @@ function App() {
               </Text>
               <View layout={{ alignItems: "center" }}>
                 <QrCode data={qrData() || "https://solidjs.com"} />
+              </View>
+            </Card>
+
+            <Card title="Image" layout={{ width: 360 }}>
+              <Text muted>
+                Fetches, decodes, and uploads an image, then shows it as a GPU
+                texture. Rounded via a clipping border radius.
+              </Text>
+              <View layout={{ alignItems: "center" }}>
+                <Image
+                  src="https://picsum.photos/seed/solidrt/320/180"
+                  layout={{ width: 320, height: 180 }}
+                  style={{ borderRadius: theme.radius.md }}
+                />
               </View>
             </Card>
           </View>

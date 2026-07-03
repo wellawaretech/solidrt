@@ -62,7 +62,7 @@ export function QrCode(props: QrCodeProps) {
   let side = () => grid().n * size() + 2 * margin()
 
   return (
-    <view width={side()} height={side()} {...props.layout}>
+    <view repaintBoundary width={side()} height={side()} {...props.layout}>
       <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? RADIUS} />
       {grid().runs.map((run) => (
         <d-rect

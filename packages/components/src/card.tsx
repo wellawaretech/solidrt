@@ -26,6 +26,7 @@ export function Card(props: CardProps) {
   return (
     <view
       ref={props.ref}
+      repaintBoundary
       flexDirection="column"
       gap={space("lg")}
       padding={space("xl")}

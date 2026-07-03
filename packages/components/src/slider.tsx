@@ -90,6 +90,7 @@ export function Slider(props: SliderProps) {
   return (
     <view
       ref={(n: { id: number }) => (track = n)}
+      repaintBoundary
       flexDirection="row"
       alignItems="center"
       height={height()}

@@ -54,6 +54,7 @@ export function Pressable(props: PressableProps) {
   return (
     <view
       ref={props.ref}
+      repaintBoundary
       {...props.layout}
       x={style()?.x}
       y={style()?.y}

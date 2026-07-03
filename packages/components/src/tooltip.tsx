@@ -70,6 +70,7 @@ export function Tooltip(props: TooltipProps) {
     return createPortal(
       <view
         ref={(n: { id: number }) => (bubble = n)}
+        repaintBoundary
         position="absolute"
         top={0}
         left={0}

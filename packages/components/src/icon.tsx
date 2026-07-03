@@ -24,12 +24,14 @@ export function Icon(props: IconProps) {
   let size = () => props.size ?? SIZE
 
   return (
-    <svg
-      width={size()}
-      height={size()}
-      src={props.src}
-      color={props.color ?? theme.color.text}
-      {...props.layout}
-    />
+    <view repaintBoundary>
+      <svg
+        width={size()}
+        height={size()}
+        src={props.src}
+        color={props.color ?? theme.color.text}
+        {...props.layout}
+      />
+    </view>
   )
 }
