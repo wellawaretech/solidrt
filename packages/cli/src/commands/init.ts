@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { source, values } from "../args"
 import { select, text } from "../prompt"
@@ -91,12 +91,12 @@ export async function runInitCommand() {
     console.log(`   Write ${to}`)
   }
 
-  // The chosen template's files become the project's src/.
+  // The chosen template's files become the project's src/. Entries may be
+  // nested directories (e.g. an asset folder), so copy recursively.
   let templateDir = join(TEMPLATES_DIR, template)
+  await mkdir(join(dir, "src"), { recursive: true })
   for (let file of await readdir(templateDir)) {
-    let dest = join(dir, "src", file)
-    await mkdir(dirname(dest), { recursive: true })
-    await copyFile(join(templateDir, file), dest)
+    await cp(join(templateDir, file), join(dir, "src", file), { recursive: true })
     console.log(`   Write src/${file}`)
   }
 
