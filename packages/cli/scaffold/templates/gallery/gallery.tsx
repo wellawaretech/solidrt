@@ -1,4 +1,11 @@
-import { render, createSignal, safeArea, createEffect, untrack, env, capabilities } from "@solidrt/core"
+import {
+  render,
+  createSignal,
+  createEffect,
+  untrack,
+  env,
+  capabilities,
+} from "@solidrt/core"
 import {
   policy,
   setPolicy,
@@ -35,7 +42,7 @@ import {
   SafeArea,
 } from "@solidrt/components"
 
-import icon from "./icon.png" with { type: "binary"}
+import icon from "./icon.png" with { type: "binary" }
 
 // A growing gallery of @solidrt/components. The whole thing recolors live when
 // the theme switches: every component reads theme.* reactively, so pressing
@@ -181,9 +188,7 @@ function App() {
             }}
           >
             <Card title={dark() ? "Dark theme" : "Light theme"} layout={{ width: 360 }}>
-              <Text muted>
-                Toggle to recolor every control below.
-              </Text>
+              <Text muted>Toggle to recolor every control below.</Text>
               <Button onPress={toggleTheme}>Toggle theme</Button>
             </Card>
 
@@ -304,7 +309,14 @@ function App() {
             </Card>
 
             <Card title="Buttons" layout={{ width: 360 }}>
-              <View layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("md"), alignItems: "center" }}>
+              <View
+                layout={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: space("md"),
+                  alignItems: "center",
+                }}
+              >
                 <Button>Primary</Button>
                 <Button variant="secondary">Secondary</Button>
                 <Button variant="ghost">Ghost</Button>
@@ -341,9 +353,8 @@ function App() {
 
             <Card title="Context menu" layout={{ width: 360 }}>
               <Text muted>
-                Right-click (mouse) or long-press (touch) the box below. Touch
-                policy presents a bottom sheet, desktop and hybrid a menu at
-                the pointer.
+                Right-click (mouse) or long-press (touch) the box below. Touch policy presents a
+                bottom sheet, desktop and hybrid a menu at the pointer.
               </Text>
               <ContextMenu
                 items={[
@@ -367,8 +378,8 @@ function App() {
 
             <Card title="Select" layout={{ width: 360 }}>
               <Text muted>
-                Forks on the interaction policy: desktop and hybrid anchor a
-                dropdown, touch opens a bottom sheet.
+                Forks on the interaction policy: desktop and hybrid anchor a dropdown, touch opens a
+                bottom sheet.
               </Text>
               <Select
                 value={fruit()}
@@ -401,13 +412,9 @@ function App() {
               <Row label="Loading">
                 <Spinner />
               </Row>
-              <Text muted>
-                Determinate, tracking the volume slider:
-              </Text>
+              <Text muted>Determinate, tracking the volume slider:</Text>
               <ProgressBar value={volume() / 100} />
-              <Text muted>
-                Indeterminate:
-              </Text>
+              <Text muted>Indeterminate:</Text>
               <ProgressBar />
             </Card>
 
@@ -420,15 +427,13 @@ function App() {
                 </View>
               </Row>
               <Divider />
-              <Text muted>
-                A divider separates content within a card.
-              </Text>
+              <Text muted>A divider separates content within a card.</Text>
             </Card>
 
             <Card title="Tooltip" layout={{ width: 360 }}>
               <Text muted>
-                Rest the mouse on a button. Shows under desktop and hybrid
-                interaction policies, never under touch.
+                Rest the mouse on a button. Shows under desktop and hybrid interaction policies,
+                never under touch.
               </Text>
               <View layout={{ flexDirection: "row", gap: space("md") }}>
                 <Tooltip content="Saves your changes">
@@ -442,8 +447,8 @@ function App() {
 
             <Card title="Icons" layout={{ width: 360 }}>
               <Text muted>
-                Lucide SVGs drawn through the core svg primitive. currentColor
-                follows the theme; the last two are recolored explicitly.
+                Lucide SVGs drawn through the core svg primitive. currentColor follows the theme;
+                the last two are recolored explicitly.
               </Text>
               <View layout={{ flexDirection: "row", gap: space("lg"), alignItems: "center" }}>
                 <Icon src={HOUSE} />
@@ -455,9 +460,7 @@ function App() {
             </Card>
 
             <Card title="QR code" layout={{ width: 360 }}>
-              <Text muted>
-                Encodes your name, or a link if the field is empty.
-              </Text>
+              <Text muted>Encodes your name, or a link if the field is empty.</Text>
               <View layout={{ alignItems: "center" }}>
                 <QrCode data={qrData() || "https://solidjs.com"} />
               </View>
@@ -465,14 +468,11 @@ function App() {
 
             <Card title="Image" layout={{ width: 360 }}>
               <Text muted>
-                Fetches, decodes, and uploads an image, then shows it as a GPU
-                texture. Rounded via a clipping border radius.
+                Fetches, decodes, and uploads an image, then shows it as a GPU texture. Rounded via
+                a clipping border radius.
               </Text>
               <View layout={{ alignItems: "center" }}>
-                <Image
-                  src={icon}
-                  style={{ borderRadius: theme.radius.md }}
-                />
+                <Image src={icon} style={{ borderRadius: theme.radius.md }} />
               </View>
             </Card>
           </View>

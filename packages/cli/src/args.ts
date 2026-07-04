@@ -16,6 +16,7 @@ export let { values, positionals } = parseArgs({
     stats: { type: "boolean", default: false },
     android: { type: "boolean", default: false },
     device: { type: "string" },
+    template: { type: "string", short: "t" },
   },
   allowPositionals: true,
 })
@@ -75,6 +76,9 @@ Commands:
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
   record <file.tsx|jsx>  Capture frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
+
+init options:
+  -t, --template <name>  Start from a named template (skips the interactive picker)
 
 run/server options:
       --proxy-files      Route file/dir access through the dev server
