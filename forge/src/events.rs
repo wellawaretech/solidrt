@@ -1,13 +1,14 @@
 //! Engine-free event-bus core.
 //!
 //! The scripting-engine-independent half of flux's event mechanism: a
-//! string-keyed listener registry generic over the callback type `F`. It holds
-//! no policy (it does not know which events exist) and names no scripting-engine
-//! types; the marshalling layer (`plugins/flux/events.rs`) instantiates it with
-//! the engine's callback handle (`Persistent<Function>` for QuickJS), keeps the
+//! string-keyed listener registry generic over the callback type `F`, and a
+//! sticky-value cache generic over the payload type `D`. Both hold no policy
+//! (they do not know which events exist) and name no scripting-engine types;
+//! the marshalling layer instantiates them with the engine's handles
+//! (`Persistent<Function>` / `Persistent<Value>` for QuickJS), keeps the
 //! engine alive via `PendingOps` using the `is_first`/`is_last` signals the
-//! methods return, and restores/calls the callbacks. A second engine reuses this
-//! registry with its own `F`. Destined for the `forge` crate (see REDESIGN.md).
+//! registry methods return, and restores/calls the callbacks. A second engine
+//! reuses them with its own `F` / `D`.
 
 use std::collections::HashMap;
 
@@ -85,5 +86,31 @@ impl<F: Clone> ListenerRegistry<F> {
       }
     }
     false
+  }
+}
+/// The latest value emitted per sticky event, keyed by event name. `D` is the
+/// host's value handle. The cache is the whole mechanism: whether an event is
+/// sticky is decided at its emit site, and replaying the cached value to a new
+/// subscriber is the subscription surface's policy - both live above this
+/// layer.
+pub struct StickyCache<D> {
+  map: HashMap<String, D>,
+}
+
+impl<D> Default for StickyCache<D> {
+  fn default() -> Self {
+    Self { map: HashMap::new() }
+  }
+}
+
+impl<D> StickyCache<D> {
+  /// Record `value` as the latest for `event`, replacing any previous value.
+  pub fn insert(&mut self, event: String, value: D) {
+    self.map.insert(event, value);
+  }
+
+  /// The latest value recorded for `event`, if any.
+  pub fn get(&self, event: &str) -> Option<&D> {
+    self.map.get(event)
   }
 }

@@ -1,10 +1,9 @@
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
-use forge::events::ListenerRegistry;
+use forge::events::{ListenerRegistry, StickyCache};
 use rquickjs::function::MutFn;
 use rquickjs::{Ctx, Function, IntoJs, Persistent, Value};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 // Marshalling for the event-bus mechanism: hold the engine-free
@@ -32,17 +31,19 @@ impl Default for ListenerMap {
 }
 
 // Sticky events cache their most recent value for replay to late subscribers
-// (engine reload, top-level await before render(), late subscribe). The cache
-// is keyed by event name; whether an event is sticky is decided by whoever
-// emits it (emit_sticky vs emit_event).
+// (engine reload, top-level await before render(), late subscribe). The
+// engine-free cache lives in forge, generic over the payload; flux
+// instantiates it with the engine's value handle, exactly like the listener
+// registry above. Whether an event is sticky is decided by whoever emits it
+// (emit_sticky vs emit_event).
 #[derive(Clone, rquickjs::JsLifetime, Default)]
-struct StickyCache(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Value<'static>>>>>);
+struct StickyMap(#[qjs(skip_trace)] Rc<RefCell<StickyCache<Persistent<Value<'static>>>>>);
 
 // Stores the listener registry and sticky cache as context userdata. No JS
 // surface is exposed; that is the consumer's job.
 pub(crate) fn init(ctx: &Ctx<'_>) {
   ctx.store_userdata(ListenerMap::default()).expect("store listener map");
-  ctx.store_userdata(StickyCache::default()).expect("store sticky cache");
+  ctx.store_userdata(StickyMap::default()).expect("store sticky cache");
 }
 
 // Registers a listener for `event`, returning an unsubscribe function that
@@ -130,7 +131,7 @@ pub fn emit_event<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
 pub fn emit_sticky<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
   let arg = data.into_js(ctx).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
   {
-    let store = ctx.userdata::<StickyCache>().expect("sticky cache userdata");
+    let store = ctx.userdata::<StickyMap>().expect("sticky cache userdata");
     store.0.borrow_mut().insert(event.to_string(), Persistent::save(ctx, arg.clone()));
   }
   emit_event(ctx, event, arg);
@@ -140,7 +141,7 @@ pub fn emit_sticky<'js, D: IntoJs<'js>>(ctx: &Ctx<'js>, event: &str, data: D) {
 // has been emitted. A subscription surface replays this to a new subscriber so
 // it observes the current state without waiting for the next natural emit.
 pub fn sticky_cached<'js>(ctx: &Ctx<'js>, event: &str) -> Option<Value<'js>> {
-  let store = ctx.userdata::<StickyCache>().expect("sticky cache userdata");
+  let store = ctx.userdata::<StickyMap>().expect("sticky cache userdata");
   let persistent = store.0.borrow().get(event).cloned()?;
   persistent.restore(ctx).ok()
 }
