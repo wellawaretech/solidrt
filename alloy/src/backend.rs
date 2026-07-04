@@ -57,9 +57,14 @@ impl DisplayContext {
     }
   }
 
-  pub fn run_context(&self, closure: impl FnOnce(Arc<Context>) + Send + 'static, tx: mpsc::Sender<Frame>) {
+  pub fn run_context(
+    &self,
+    closure: impl FnOnce(Arc<Context>) + Send + 'static,
+    tx: mpsc::Sender<Frame>,
+    wake: Option<Box<dyn Fn() + Send + Sync>>,
+  ) {
     match self {
-      DisplayContext::Gl { ui_context, .. } => gl::run_context(ui_context, closure, tx),
+      DisplayContext::Gl { ui_context, .. } => gl::run_context(ui_context, closure, tx, wake),
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }

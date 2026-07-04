@@ -1,6 +1,6 @@
 use impellers::ISize;
 use std::sync::{mpsc, Arc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::backend::{create_render_surface, DisplayContext, Frame, RenderSurface};
 use crate::context::Context;
@@ -97,6 +97,12 @@ fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
   window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0)
 }
 
+// Payload-less user event the UI thread pushes onto the SDL queue after
+// submitting a frame, so the main loop's event wait returns immediately
+// instead of at its timeout. It carries nothing: the frame itself travels
+// over the mpsc channel, which the woken loop drains.
+struct FrameReady;
+
 impl App {
   pub fn run(
     self,
@@ -107,7 +113,20 @@ impl App {
     let (tx, rx) = mpsc::channel::<Frame>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
-    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx);
+    // Frame wakeup for the interactive loop below: it sleeps on the SDL event
+    // queue, so a submitted frame must push an event to be noticed before the
+    // wait's timeout. Record mode blocks on the frame channel directly.
+    let wake: Option<Box<dyn Fn() + Send + Sync>> = if mode.is_record() {
+      None
+    } else {
+      let events = sdl_context.event().expect("Failed to get SDL event subsystem");
+      events.register_custom_event::<FrameReady>().expect("Failed to register frame event");
+      let sender = events.event_sender();
+      Some(Box::new(move || {
+        sender.push_custom_event(FrameReady).ok();
+      }))
+    };
+    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake);
 
     let initial = current_resize_event(&window);
     apply_main_thread_effects(&initial, &mut render_surface, &mode);
@@ -144,32 +163,55 @@ impl App {
     let mut last_frame_signal = Instant::now();
 
     loop {
-      let tick_period = std::time::Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
-      // Wait for a display list, but never past the next idle-tick deadline
-      // (capped at 8ms to keep SDL event polling responsive).
-      let timeout = tick_period.saturating_sub(last_frame_signal.elapsed()).min(std::time::Duration::from_millis(8));
-      match rx.recv_timeout(timeout) {
-        Ok(mut sub) => {
-          while let Ok(newer) = rx.try_recv() {
-            // The superseded frame's GPU work is subsumed by the newer frame's
-            // fence (fences are monotonic on the UI context), so just release
-            // its sync object without waiting.
-            render_surface.consume_fence(sub.fence.take(), false);
-            sub = newer;
+      let tick_period = Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
+      // Sleep on the SDL event queue until the next idle-tick deadline: input
+      // wakes it directly and each submitted frame pushes a FrameReady user
+      // event (see Context::submit), so nothing needs polling. The woken-for
+      // event is handled below alongside the rest of the queue; a FrameReady
+      // falls through translate_event as a no-op, its work is the rx drain.
+      let remaining = tick_period.saturating_sub(last_frame_signal.elapsed());
+      let first_event = if remaining.is_zero() {
+        None
+      } else {
+        // SDL waits in whole milliseconds; round up so a sub-millisecond
+        // remainder does not degrade into a spin on zero-length waits.
+        let ms = remaining.as_millis() as u32 + (remaining.as_micros() % 1000 != 0) as u32;
+        event_pump.wait_event_timeout_ms(ms)
+      };
+
+      // Drain queued frames and present only the newest. Superseded frames'
+      // GPU work is subsumed by the newer frame's fence (fences are monotonic
+      // on the UI context), so their sync objects are released without waiting.
+      let mut newest: Option<Frame> = None;
+      let mut disconnected = false;
+      loop {
+        match rx.try_recv() {
+          Ok(f) => {
+            if let Some(mut superseded) = newest.replace(f) {
+              render_surface.consume_fence(superseded.fence.take(), false);
+            }
           }
-          fps_frame_count += 1;
-          // Wait on the GPU for the UI thread's frame work to finish before
-          // Impeller samples its textures (replaces the UI thread's glFinish).
-          render_surface.consume_fence(sub.fence.take(), true);
-          render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
-          render_surface.present(&window);
-          let time = start_time.elapsed().as_secs_f64();
-          event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
-          frame += 1;
-          last_frame_signal = Instant::now();
+          Err(mpsc::TryRecvError::Empty) => break,
+          Err(mpsc::TryRecvError::Disconnected) => {
+            disconnected = true;
+            break;
+          }
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+      }
+      if let Some(mut sub) = newest {
+        fps_frame_count += 1;
+        // Wait on the GPU for the UI thread's frame work to finish before
+        // Impeller samples its textures (replaces the UI thread's glFinish).
+        render_surface.consume_fence(sub.fence.take(), true);
+        render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
+        render_surface.present(&window);
+        let time = start_time.elapsed().as_secs_f64();
+        event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+        frame += 1;
+        last_frame_signal = Instant::now();
+      }
+      if disconnected {
+        break;
       }
 
       // Rolled every iteration (not only on present) so fps decays to zero
@@ -190,7 +232,7 @@ impl App {
         event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
         last_frame_signal = Instant::now();
       }
-      for sdl_event in event_pump.poll_iter() {
+      for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
           use sdl3::event::DisplayEvent;
           if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {

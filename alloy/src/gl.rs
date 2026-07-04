@@ -320,6 +320,7 @@ pub fn run_context(
   ui_context: &sdl3::video::GLContext,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<Frame>,
+  wake: Option<Box<dyn Fn() + Send + Sync>>,
 ) {
   let gl_context_ptr = Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
 
@@ -339,7 +340,7 @@ pub fn run_context(
       let impeller_ctx = create_impeller_context();
       log::info!("[alloy] Impeller context created");
 
-      let gpu_ctx = Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, tx));
+      let gpu_ctx = Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, tx, wake));
       closure(gpu_ctx);
     });
   spawn_result.expect("failed to spawn UI thread");

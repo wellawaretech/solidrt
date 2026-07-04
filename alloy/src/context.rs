@@ -25,6 +25,10 @@ pub struct Context {
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   tx: mpsc::Sender<Frame>,
+  // Wakes the main thread's event wait after a frame is queued, so a submitted
+  // frame presents immediately instead of at the next wait timeout. None in
+  // record mode, whose capture loop blocks on the channel directly.
+  wake: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 // Safety: Context is asserted Send + Sync but is only ever accessed from the UI
@@ -39,6 +43,7 @@ impl Context {
     gl: glow::Context,
     impeller_ctx: ImpellerContext,
     tx: mpsc::Sender<Frame>,
+    wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
     Context {
       backend,
@@ -49,6 +54,7 @@ impl Context {
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
       tx,
+      wake,
     }
   }
 
@@ -60,7 +66,12 @@ impl Context {
     // context once the producing context has flushed it.
     let fence = unsafe { self.gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0) }.ok().map(GpuFence);
     unsafe { self.gl.flush() };
-    self.tx.send(Frame { dl, fence }).map_err(|_| ())
+    self.tx.send(Frame { dl, fence }).map_err(|_| ())?;
+    // Wake only after the frame is in the channel, so the woken loop finds it.
+    if let Some(wake) = &self.wake {
+      wake();
+    }
+    Ok(())
   }
 
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {

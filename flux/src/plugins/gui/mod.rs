@@ -6,6 +6,7 @@
 
 pub mod camera;
 pub mod events;
+pub mod input;
 pub mod microphone;
 mod properties;
 pub mod raf;
@@ -39,8 +40,8 @@ impl std::ops::Deref for AlloyContext {
 /// The host instances the GUI bindings need, owned by the runner (lattice) and
 /// lent to flux at engine-build time. flux owns which plugins exist and the
 /// order they register in; the runner only supplies the instances. Grows a
-/// field per plugin cluster as they move in (render tree, input/engine state,
-/// ...).
+/// field per plugin cluster as they move in - but only for clusters that need
+/// host instances (pointer input, for example, is self-contained and has none).
 pub struct GuiHost {
   pub platform: Arc<PlatformContext>,
   pub alloy: Arc<alloy::Context>,
@@ -70,6 +71,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // surfaces read it in their `evaluate`.
   builder
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
+    .plugin(|ctx| input::store_state(&ctx))
     .plugin(move |ctx| raf::init(&ctx, raf_platform))
     .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))

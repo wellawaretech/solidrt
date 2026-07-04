@@ -1,13 +1,49 @@
-use crate::frame::{EngineState, InputEvent, InputState, PointerKey};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use alloy::rendertree::{
   hit::{path_diff, DefaultHitTester, HitTester},
   XY,
 };
 use alloy::{Modifiers, PointerType};
-use flux::{
-  emit_event,
-  rquickjs::{Array, Ctx, Object},
-};
+use rquickjs::{Array, Ctx, JsLifetime, Object};
+
+use crate::emit_event;
+
+pub type PointerKey = (PointerType, u64);
+
+pub enum InputEvent {
+  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
+  PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
+  Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
+}
+
+// Hovered node paths per pointer, aimed at this engine's render tree. Lives as
+// ctx userdata so its lifetime is the engine's: a reload builds a fresh engine
+// (and tree), and the old paths (whose node ids would dangle) die with it.
+#[derive(Clone, JsLifetime)]
+struct EngineState(#[qjs(skip_trace)] Rc<RefCell<HashMap<PointerKey, Vec<u64>>>>);
+
+impl EngineState {
+  fn hovered_path(&self, key: PointerKey) -> Vec<u64> {
+    self.0.borrow().get(&key).cloned().unwrap_or_default()
+  }
+
+  fn set_hovered_path(&self, key: PointerKey, path: Vec<u64>) {
+    self.0.borrow_mut().insert(key, path);
+  }
+
+  fn remove_hovered_path(&self, key: PointerKey) {
+    self.0.borrow_mut().remove(&key);
+  }
+}
+
+/// Store fresh hover-tracking state in userdata, before any dispatch.
+pub fn store_state(ctx: &Ctx<'_>) {
+  ctx.store_userdata(EngineState(Rc::new(RefCell::new(HashMap::new())))).expect("store input state");
+}
 
 fn build_pointer_obj<'js>(
   ctx: &Ctx<'js>,
@@ -39,15 +75,16 @@ fn build_pointer_obj<'js>(
 /// pointer event. Runs when the event arrives, not per frame, so input keeps
 /// working when no frame is being produced. Handlers that mutate state request
 /// the next frame through their ffi calls.
-pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, engine_state: &EngineState) {
-  let tree = ctx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
+pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
+  let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
+  let state = ctx.userdata::<EngineState>().expect("input state userdata");
   match event {
     InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
       let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
       let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
       let obj = build_pointer_obj(ctx, pointer_id, pointer_type, x, y, modifiers, &ids);
       emit_event(ctx, "pointerMove", obj);
-      update_hover(ctx, engine_state, (pointer_type, pointer_id), x, y, modifiers, ids);
+      update_hover(ctx, &state, (pointer_type, pointer_id), x, y, modifiers, ids);
     }
     InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
       let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(x, y));
@@ -71,13 +108,13 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, engine_state: &EngineState) {
       // hover entry to prevent it from leaking across future touches.
       if pointer_type == PointerType::Touch {
         let key = (pointer_type, pointer_id);
-        let old_ids = engine_state.hovered_path(key);
+        let old_ids = state.hovered_path(key);
         if !old_ids.is_empty() {
           let leave: Vec<u64> = old_ids.iter().rev().copied().collect();
           let obj = build_pointer_obj(ctx, pointer_id, pointer_type, x, y, modifiers, &leave);
           emit_event(ctx, "pointerLeave", obj);
         }
-        engine_state.remove_hovered_path(key);
+        state.remove_hovered_path(key);
       }
     }
     InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
@@ -93,14 +130,16 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent, engine_state: &EngineState) {
 
 /// Re-run the hover diff for every live pointer. Called after each produced
 /// frame: layout changes can move elements under a stationary cursor, which
-/// arrival-time dispatch cannot see.
-pub fn refresh_hover(ctx: &Ctx<'_>, input_state: &InputState, engine_state: &EngineState) {
-  let tree = ctx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
-  let modifiers = input_state.modifiers();
-  for ((pointer_type, pointer_id), (px, py)) in input_state.pointers() {
+/// arrival-time dispatch cannot see. `pointers` is the runner's device-position
+/// snapshot; that bookkeeping outlives any single engine, so it stays on the
+/// runner's side of the boundary.
+pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, modifiers: Modifiers) {
+  let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
+  let state = ctx.userdata::<EngineState>().expect("input state userdata");
+  for ((pointer_type, pointer_id), (px, py)) in pointers {
     let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(px, py));
     let new_ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
-    update_hover(ctx, engine_state, (pointer_type, pointer_id), px, py, modifiers, new_ids);
+    update_hover(ctx, &state, (pointer_type, pointer_id), px, py, modifiers, new_ids);
   }
 }
 
@@ -108,7 +147,7 @@ pub fn refresh_hover(ctx: &Ctx<'_>, input_state: &InputState, engine_state: &Eng
 // hovered-path delta, then stores the new path.
 fn update_hover(
   ctx: &Ctx<'_>,
-  engine_state: &EngineState,
+  state: &EngineState,
   key: PointerKey,
   x: f32,
   y: f32,
@@ -116,7 +155,7 @@ fn update_hover(
   new_ids: Vec<u64>,
 ) {
   let (pointer_type, pointer_id) = key;
-  let old_ids = engine_state.hovered_path(key);
+  let old_ids = state.hovered_path(key);
   if new_ids != old_ids {
     let (left, entered) = path_diff(&old_ids, &new_ids);
     if !left.is_empty() {
@@ -128,5 +167,5 @@ fn update_hover(
       emit_event(ctx, "pointerEnter", obj);
     }
   }
-  engine_state.set_hovered_path(key, new_ids);
+  state.set_hovered_path(key, new_ids);
 }

@@ -1,6 +1,5 @@
-use crate::frame::{EngineState, InputState};
+use crate::frame::InputState;
 use crate::overlay;
-use crate::plugins;
 use alloy::impellers::{DisplayList, DisplayListBuilder};
 use alloy::rendertree::{self, PlatformContext};
 use flux::gui::AlloyContext;
@@ -40,7 +39,6 @@ struct RenderInner {
   platform: Arc<PlatformContext>,
   atx: AlloyContext,
   input_state: Arc<InputState>,
-  engine_state: Arc<EngineState>,
 }
 
 /// Stash the draw bridge's host state in userdata, before any import. The
@@ -50,11 +48,8 @@ pub fn store_state(
   platform: Arc<PlatformContext>,
   atx: AlloyContext,
   input_state: Arc<InputState>,
-  engine_state: Arc<EngineState>,
 ) {
-  ctx
-    .store_userdata(RenderState(Rc::new(RenderInner { platform, atx, input_state, engine_state })))
-    .expect("store render state");
+  ctx.store_userdata(RenderState(Rc::new(RenderInner { platform, atx, input_state }))).expect("store render state");
 }
 
 /// The `srt:render` module: `renderFrame()`, the runner's per-frame draw. Not
@@ -74,7 +69,6 @@ impl ModuleDef for SrtRenderModule {
     let platform = state.0.platform.clone();
     let atx = state.0.atx.clone();
     let input_state = state.0.input_state.clone();
-    let engine_state = state.0.engine_state.clone();
 
     let stats = RefCell::new(overlay::Stats::new());
     let cache: RefCell<Option<DlCache>> = RefCell::new(None);
@@ -157,11 +151,11 @@ impl ModuleDef for SrtRenderModule {
       };
       phases.paint = t.elapsed();
 
-      // Input dispatch happens on event arrival (plugins::input::dispatch);
+      // Input dispatch happens on event arrival (flux::gui::input::dispatch);
       // here we only re-check hover, since this frame's layout may have moved
       // elements under a stationary pointer.
       let t = Instant::now();
-      plugins::input::refresh_hover(&qtx, &input_state, &engine_state);
+      flux::gui::input::refresh_hover(&qtx, input_state.pointers(), input_state.modifiers());
       phases.hover = t.elapsed();
 
       if stats_on {

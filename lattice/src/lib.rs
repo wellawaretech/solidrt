@@ -15,9 +15,10 @@ enum EngineCmd {
 
 use alloy::impellers::{ISize, Rect};
 use alloy::rendertree::{PlatformContext, RenderTree};
+use flux::gui::input::InputEvent;
 use flux::gui::AlloyContext;
 use flux::{emit_event, ExecHandle, FluxEngine};
-use frame::{EngineState, InputEvent, InputState};
+use frame::InputState;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -174,17 +175,11 @@ fn emit_render_event(
 
 /// Queue a pointer event for dispatch on the JS thread against the current
 /// engine's tree. Drops the event when no engine is live (startup, mid-reload):
-/// it was aimed at a tree that does not exist.
-fn dispatch_input(
-  current_exec: &Rc<RefCell<Option<ExecHandle>>>,
-  current_engine_state: &Rc<RefCell<Option<Arc<EngineState>>>>,
-  event: InputEvent,
-) {
-  let Some(es) = current_engine_state.borrow().as_ref().cloned() else {
-    return;
-  };
+/// it was aimed at a tree that does not exist. Hit-testing, hover tracking and
+/// the JS emit all live in flux (next to the tree they read).
+fn dispatch_input(current_exec: &Rc<RefCell<Option<ExecHandle>>>, event: InputEvent) {
   if let Some(eh) = current_exec.borrow().as_ref() {
-    eh.exec(move |ctx| plugins::input::dispatch(&ctx, event, &es));
+    eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event));
   }
 }
 
@@ -240,11 +235,6 @@ fn ui_thread(
     let local = tokio::task::LocalSet::new();
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
-    // Holds the active engine's state. Replaced on every reload, which
-    // drops the previous EngineState (and any hover paths aimed at the
-    // outgoing tree).
-    let current_engine_state: Rc<RefCell<Option<Arc<EngineState>>>> = Rc::new(RefCell::new(None));
-    let current_engine_state_events = current_engine_state.clone();
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
@@ -290,18 +280,13 @@ fn ui_thread(
           alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
             input_state_events.set_modifiers(modifiers);
-            dispatch_input(
-              &current_exec_events,
-              &current_engine_state_events,
-              InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers },
-            );
+            dispatch_input(&current_exec_events, InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
           }
           alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
             input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
             input_state_events.set_modifiers(modifiers);
             dispatch_input(
               &current_exec_events,
-              &current_engine_state_events,
               InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers },
             );
           }
@@ -314,7 +299,6 @@ fn ui_thread(
             }
             dispatch_input(
               &current_exec_events,
-              &current_engine_state_events,
               InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers },
             );
           }
@@ -322,7 +306,6 @@ fn ui_thread(
             input_state_events.set_modifiers(modifiers);
             dispatch_input(
               &current_exec_events,
-              &current_engine_state_events,
               InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers },
             );
           }
@@ -471,8 +454,6 @@ fn ui_thread(
       atx.close_all_cameras();
       atx.close_all_microphones();
       let input_state = input_state.clone();
-      let engine_state = Arc::new(EngineState::new());
-      *current_engine_state.borrow_mut() = Some(engine_state.clone());
 
       let draw_platform = platform.clone();
       let draw_atx = atx.clone();
@@ -498,9 +479,7 @@ fn ui_thread(
         },
       );
       let builder = builder
-        .plugin(move |ctx| {
-          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, engine_state)
-        })
+        .plugin(move |ctx| plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state))
         .plugin(|ctx| plugins::image::init(ctx))
         .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:render", plugins::draw::SrtRenderModule)
