@@ -36,9 +36,6 @@ function usage(line: string): never {
 // Per-command argument requirements. Called once before dispatch.
 export function validateArgs() {
   switch (command) {
-    case "init":
-      if (!source) usage("srt init <dir>  (the target folder is required)")
-      break
     case "bundle":
       if (values.flux) {
         if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")

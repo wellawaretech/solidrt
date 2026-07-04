@@ -1,7 +1,9 @@
 import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { source, values } from "../args"
-import { select } from "../prompt"
+import { select, text } from "../prompt"
+
+const DEFAULT_NAME = "solidrt-app"
 
 const SCAFFOLD_DIR = join(import.meta.dir, "../../scaffold")
 const TEMPLATES_DIR = join(SCAFFOLD_DIR, "templates")
@@ -61,12 +63,21 @@ async function resolveTemplate(): Promise<string> {
 }
 
 export async function runInitCommand() {
-  // The target folder is required (validateArgs enforces it) and must be empty
-  // or absent, so init can never overwrite files in an existing project.
-  let dir = source!
+  // The target folder comes from the positional arg, or an interactive prompt
+  // (defaulting to a suggested name) when omitted.
+  let dir = source
+  if (!dir) {
+    dir = await text("Project name", DEFAULT_NAME)
+    if (!dir) {
+      console.error("!! A project name is required")
+      process.exit(1)
+    }
+  }
+
+  // The folder must not exist yet, so init can never touch an existing project.
   let existing = await readdir(dir).catch(() => null)
-  if (existing && existing.length > 0) {
-    console.error(`!! ${resolve(dir)} already exists and is not empty; choose a new folder name`)
+  if (existing) {
+    console.error(`!! ${resolve(dir)} already exists; choose a new folder name`)
     process.exit(1)
   }
 

@@ -1,4 +1,19 @@
-import { emitKeypressEvents } from "node:readline"
+import { createInterface, emitKeypressEvents } from "node:readline"
+
+// Single-line text prompt with an optional default (shown in parentheses, used
+// when the answer is blank). Non-TTY stdin resolves the default rather than
+// blocking on input that will never arrive.
+export function text(message: string, def = ""): Promise<string> {
+  return new Promise<string>((resolve) => {
+    if (!process.stdin.isTTY) return resolve(def)
+    let rl = createInterface({ input: process.stdin, output: process.stdout })
+    let suffix = def ? ` (${def})` : ""
+    rl.question(`? ${message}${suffix}: `, (answer) => {
+      rl.close()
+      resolve(answer.trim() || def)
+    })
+  })
+}
 
 // Minimal arrow-key single-select prompt, built on node:readline (same
 // dependency-free approach as repl.ts). Renders the option list, moves the
@@ -9,7 +24,7 @@ export function select(message: string, options: string[]): Promise<string> {
   return new Promise((resolve) => {
     let input = process.stdin
     let output = process.stdout
-    if (!input.isTTY) return resolve(options[0])
+    if (!input.isTTY) return resolve(options[0]!)
 
     let selected = 0
     emitKeypressEvents(input)
@@ -46,7 +61,7 @@ export function select(message: string, options: string[]): Promise<string> {
       } else if (key.name === "return" || key.name === "enter") {
         cleanup()
         output.write("\n")
-        resolve(options[selected])
+        resolve(options[selected]!)
       } else if (key.ctrl && (key.name === "c" || key.name === "d")) {
         cleanup()
         output.write("\n")
