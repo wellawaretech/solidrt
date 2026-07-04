@@ -4,6 +4,7 @@ mod go;
 mod overlay;
 mod paced_clock;
 mod plugins;
+mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
 
@@ -13,12 +14,13 @@ enum EngineCmd {
   Reload(String),
 }
 
-use alloy::impellers::{ISize, Rect};
+use alloy::impellers::ISize;
 use alloy::rendertree::{PlatformContext, RenderTree};
-use flux::gui::input::InputEvent;
+use alloy::AlloyEvent;
 use flux::gui::AlloyContext;
-use flux::{emit_event, ExecHandle, FluxEngine};
+use flux::{ExecHandle, FluxEngine};
 use frame::InputState;
+use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -107,82 +109,6 @@ struct RunOptions {
   dev_server: Option<String>,
 }
 
-fn emit_resize(eh: &ExecHandle, size: ISize, safe_area: Rect, display_scale: f32) {
-  eh.exec(move |ctx| {
-    // All four are insets: distance from the corresponding window edge, like CSS
-    // env(safe-area-inset-*). safe_area is a rect in absolute coords, so the far
-    // edges become (window extent - far edge).
-    let sa = rquickjs::Object::new(ctx.clone()).expect("create safeArea");
-    sa.set("top", safe_area.origin.y).expect("set top");
-    sa.set("left", safe_area.origin.x).expect("set left");
-    sa.set("right", size.width as f32 - (safe_area.origin.x + safe_area.size.width)).expect("set right");
-    sa.set("bottom", size.height as f32 - (safe_area.origin.y + safe_area.size.height)).expect("set bottom");
-    let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-    obj.set("width", size.width).expect("set width");
-    obj.set("height", size.height).expect("set height");
-    obj.set("safeArea", sa).expect("set safeArea");
-    obj.set("displayScale", display_scale).expect("set displayScale");
-    plugins::events::emit_sticky(&ctx, "resize", obj);
-  });
-}
-
-/// Run the per-frame JS work for one frame signal (FrameRendered or idle
-/// Tick): publish the frame index, advance the paced clock, pump cameras and
-/// speech, flush rAF callbacks, and emit the "render" event. `next_frame` is
-/// the present index the frame being computed would get.
-fn emit_render_event(
-  eh: &ExecHandle,
-  next_frame: u64,
-  record_frame: Arc<AtomicU64>,
-  paced: Option<paced_clock::PacedClock>,
-  platform: Arc<PlatformContext>,
-) {
-  eh.exec(move |ctx| {
-    // Publish the present being computed before reading the clock, so in
-    // record mode the clock reports this frame's virtual time.
-    record_frame.store(next_frame, Ordering::Relaxed);
-    // rAF and the render event use the paced clock in run mode (see
-    // paced_clock); record mode and performance.now() read flux::Clock
-    // directly. Idle Ticks arrive at the refresh cadence, so ticking the
-    // paced clock for them preserves its one-period-per-call model. Render
-    // event carries seconds; JS scales to ms.
-    let raw = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
-    let ts = match &paced {
-      Some(pc) => {
-        pc.tick(raw);
-        pc.now_ms()
-      }
-      None => raw,
-    };
-    if flux::gui::camera::tick(&ctx) {
-      // A camera frame landed in its texture; the screen content changed
-      // even though the tree did not.
-      platform.request_frame();
-    }
-    #[cfg(feature = "speech")]
-    plugins::speech::tick(&ctx);
-    flux::gui::raf::flush(&ctx, ts);
-    let time = ts / 1000.0;
-    let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-    obj.set("frame", next_frame).expect("set frame");
-    obj.set("time", time).expect("set time");
-    // Stamp the start of the JS render handler so draw() can measure onFrame +
-    // flush without any timing call crossing into JS (see frame::RENDER_START).
-    crate::frame::RENDER_START.with(|c| c.set(Some(std::time::Instant::now())));
-    emit_event(&ctx, "render", obj);
-  });
-}
-
-/// Queue a pointer event for dispatch on the JS thread against the current
-/// engine's tree. Drops the event when no engine is live (startup, mid-reload):
-/// it was aimed at a tree that does not exist. Hit-testing, hover tracking and
-/// the JS emit all live in flux (next to the tree they read).
-fn dispatch_input(current_exec: &Rc<RefCell<Option<ExecHandle>>>, event: InputEvent) {
-  if let Some(eh) = current_exec.borrow().as_ref() {
-    eh.exec(move |ctx| flux::gui::input::dispatch(&ctx, event));
-  }
-}
-
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -239,174 +165,60 @@ fn ui_thread(
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
     // Virtual present counter the record-mode clock derives time from (frame/fps),
-    // published by the FrameRendered handler. Unused in run mode.
+    // published by the frame verb. Unused in run mode.
     let record_frame = Arc::new(AtomicU64::new(0));
-    let record_frame_events = record_frame.clone();
     // Run-mode pacing for the animation timestamps (see paced_clock). None in
     // record mode, which uses the deterministic frame/fps clock.
-    let paced_clock_events = match record_fps {
+    let paced_clock = match record_fps {
       Some(rfps) if rfps > 0 => None,
       _ => Some(paced_clock::PacedClock::new()),
     };
+    let mut ui_runtime =
+      runtime::FluxRuntime::new(current_exec_events, record_frame.clone(), paced_clock, platform.clone());
     local.spawn_local(async move {
       while let Some(event) = ev_rx.recv().await {
-        // Lattice-only input bookkeeping (the modifier state pointer dispatch
-        // reads); the key events themselves are marshalled by flux below.
-        if let alloy::AlloyEvent::KeyDown { modifiers, .. } | alloy::AlloyEvent::KeyUp { modifiers, .. } = &event {
-          input_state_events.set_modifiers(*modifiers);
-        }
-        // flux owns the marshalling of the engine-agnostic window / keyboard /
-        // device events into the JS bus; the runner keeps only the policy events
-        // (pacing, sticky, hit-testing) in the match below.
-        if let Some(eh) = current_exec_events.borrow().as_ref() {
-          if flux::gui::events::forward(eh, &event) {
-            continue;
+        // Runner bookkeeping: device and window facts that outlive any single
+        // engine (the pointer positions hover refresh reads, the platform's
+        // window geometry, fps). Everything engine-facing happens behind the
+        // UiRuntime verbs below.
+        match &event {
+          AlloyEvent::Quit => std::process::exit(0),
+          AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
+            input_state_events.set_modifiers(*modifiers);
           }
+          AlloyEvent::Resize { size, safe_area, display_scale } => {
+            platform_events.set_window_size(size.width as f32, size.height as f32);
+            platform_events.set_display_scale(*display_scale);
+            platform_events.set_safe_area(*safe_area);
+          }
+          AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers }
+          | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+            input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
+            input_state_events.set_modifiers(*modifiers);
+          }
+          AlloyEvent::PointerUp { pointer_id, pointer_type, x, y, modifiers, .. } => {
+            input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
+            input_state_events.set_modifiers(*modifiers);
+            // Touch pointers end at release; mouse pointers persist.
+            if *pointer_type == alloy::PointerType::Touch {
+              input_state_events.remove_pointer((*pointer_type, *pointer_id));
+            }
+          }
+          AlloyEvent::Wheel { modifiers, .. } => input_state_events.set_modifiers(*modifiers),
+          AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => platform_events.set_fps(*fps),
+          _ => {}
         }
         match event {
-          alloy::AlloyEvent::Quit => std::process::exit(0),
-          alloy::AlloyEvent::Resize { size, safe_area, display_scale } => {
-            platform_events.set_window_size(size.width as f32, size.height as f32);
-            platform_events.set_display_scale(display_scale);
-            platform_events.set_safe_area(safe_area);
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              emit_resize(eh, size, safe_area, display_scale);
-            }
-          }
-          // Pointer events dispatch on arrival (hit test against the last
-          // computed layout, like Flutter): no frame is needed to deliver
-          // them. Handlers that mutate state request the next frame through
-          // their ffi calls.
-          alloy::AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-            input_state_events.set_modifiers(modifiers);
-            dispatch_input(&current_exec_events, InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers });
-          }
-          alloy::AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
-            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-            input_state_events.set_modifiers(modifiers);
-            dispatch_input(
-              &current_exec_events,
-              InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers },
-            );
-          }
-          alloy::AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-            input_state_events.set_pointer_pos((pointer_type, pointer_id), x, y);
-            input_state_events.set_modifiers(modifiers);
-            // Touch pointers end at release; mouse pointers persist.
-            if pointer_type == alloy::PointerType::Touch {
-              input_state_events.remove_pointer((pointer_type, pointer_id));
-            }
-            dispatch_input(
-              &current_exec_events,
-              InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers },
-            );
-          }
-          alloy::AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
-            input_state_events.set_modifiers(modifiers);
-            dispatch_input(
-              &current_exec_events,
-              InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers },
-            );
-          }
-          alloy::AlloyEvent::FrameRendered { frame, fps, time: _ } => {
-            platform_events.set_fps(fps);
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              // FrameRendered reports the frame native just finished
-              // drawing. JS uses the "render" event to compute the NEXT
-              // frame's state, so shift the field by +1. The JS-side
-              // bootstrap owns frame 0; without the shift, record mode
-              // re-runs frame 0 at tick 0 and duplicates a PNG.
-              emit_render_event(
-                eh,
-                frame + 1,
-                record_frame_events.clone(),
-                paced_clock_events.clone(),
-                platform_events.clone(),
-              );
-            }
-          }
-          alloy::AlloyEvent::Tick { frame, fps } => {
-            platform_events.set_fps(fps);
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              // Tick's frame is already the next present index (one past the
-              // last FrameRendered), so no +1 here.
-              emit_render_event(
-                eh,
-                frame,
-                record_frame_events.clone(),
-                paced_clock_events.clone(),
-                platform_events.clone(),
-              );
-            }
-          }
-          alloy::AlloyEvent::DisplayRefreshRate { hz } => {
-            if let Some(pc) = &paced_clock_events {
-              pc.set_hz(hz);
-            }
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("hz", hz).expect("set hz");
-                plugins::events::emit_sticky(&ctx, "displayRefreshRate", obj);
-              });
-            }
-          }
-          // Sticky environment facts (like resize / displayRefreshRate): a late
-          // subscriber still sees the current value.
-          alloy::AlloyEvent::SystemTheme { theme } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              let name = match theme {
-                alloy::sdl_utils::SystemTheme::Dark => "dark",
-                alloy::sdl_utils::SystemTheme::Light => "light",
-                alloy::sdl_utils::SystemTheme::Unknown => "unknown",
-              };
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("theme", name).expect("set theme");
-                plugins::events::emit_sticky(&ctx, "systemTheme", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::InputDevices { keyboard, mouse, touch } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("keyboard", keyboard).expect("set keyboard");
-                obj.set("mouse", mouse).expect("set mouse");
-                obj.set("touch", touch).expect("set touch");
-                plugins::events::emit_sticky(&ctx, "inputDevices", obj);
-              });
-            }
-          }
-          alloy::AlloyEvent::DisplayOrientation { orientation } => {
-            if let Some(eh) = current_exec_events.borrow().as_ref() {
-              use alloy::sdl3::video::Orientation;
-              let name = match orientation {
-                Orientation::Portrait => "portrait",
-                Orientation::PortraitFlipped => "portraitFlipped",
-                Orientation::Landscape => "landscape",
-                Orientation::LandscapeFlipped => "landscapeFlipped",
-                Orientation::Unknown => "unknown",
-              };
-              eh.exec(move |ctx| {
-                let obj = rquickjs::Object::new(ctx.clone()).expect("create object");
-                obj.set("orientation", name).expect("set orientation");
-                plugins::events::emit_sticky(&ctx, "displayOrientation", obj);
-              });
-            }
-          }
-          // Marshalled by flux::gui::events::forward when an engine is live; they
-          // only reach here pre-engine (startup) or mid-reload, where they are
-          // safely ignored.
-          alloy::AlloyEvent::WindowFocus
-          | alloy::AlloyEvent::WindowBlur
-          | alloy::AlloyEvent::KeyDown { .. }
-          | alloy::AlloyEvent::KeyUp { .. }
-          | alloy::AlloyEvent::TextInput { .. }
-          | alloy::AlloyEvent::KeyboardVisibility { .. }
-          | alloy::AlloyEvent::CameraDeviceChange { .. }
-          | alloy::AlloyEvent::PowerStatus { .. } => {}
+          // FrameRendered reports the frame native just finished drawing. JS
+          // uses the "render" event to compute the NEXT frame's state, so
+          // shift the field by +1. The JS-side bootstrap owns frame 0;
+          // without the shift, record mode re-runs frame 0 at tick 0 and
+          // duplicates a PNG.
+          AlloyEvent::FrameRendered { frame, .. } => ui_runtime.frame(frame + 1),
+          // Tick's frame is already the next present index (one past the
+          // last FrameRendered), so no +1 here.
+          AlloyEvent::Tick { frame, .. } => ui_runtime.frame(frame),
+          event => ui_runtime.event(&event),
         }
       }
     });
@@ -481,7 +293,6 @@ fn ui_thread(
       let builder = builder
         .plugin(move |ctx| plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state))
         .plugin(|ctx| plugins::image::init(ctx))
-        .plugin(|ctx| plugins::events::init(&ctx))
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)

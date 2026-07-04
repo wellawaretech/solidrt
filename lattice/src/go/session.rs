@@ -152,6 +152,6 @@ fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
       arr.set(i, a).expect("set recent");
     }
     obj.set("recents", arr).expect("set recents");
-    crate::plugins::events::emit_sticky(&ctx, "dev", obj);
+    flux::emit_sticky(&ctx, "dev", obj);
   });
 }
