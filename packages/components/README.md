@@ -28,6 +28,41 @@ setTheme({ color: { primary: "#ff2d55" } })   // override one token
 
 The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`, `onPrimary`, `danger`, and `scrim` (modal dim). Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (font sizes), shared across presets.
 
+## Policies
+
+Theme answers "how does it look"; policies answer "how does it behave". Policies are a second reactive layer, derived from the platform facts in `@solidrt/core` (`capabilities`, `env`), so components adapt to touch vs. desktop, window size, and display without every app wiring that logic itself.
+
+```jsx
+import { policy, setPolicy, densityScale } from "@solidrt/components"
+
+policy.interaction   // touch vs. desktop affordances (hover, long-press, ...)
+policy.density       // control/spacing scale
+```
+
+`policy` fields:
+
+| Field             | Type                                          | Description                                                                 |
+| ----------------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| `interaction`     | `"touch" \| "desktop" \| "hybrid"`             | Which interaction affordances a component shows (hover states vs. long-press). |
+| `density`         | `"comfortable" \| "compact" \| "dense"`        | Control/hit-target/spacing scale; see `densityScale()`.                       |
+| `motion`          | `"normal" \| "reduced" \| "none"`              | Animation intensity.                                                          |
+| `focusRing`       | `boolean`                                      | Whether focused controls draw a visible focus indicator.                      |
+| `textScale`       | `number`                                       | Multiplier on type-scale font sizes; defaults to the OS text-scale preference. |
+| `textWeightDelta` | `number`                                       | Weight compensation (in steps of 100) for light-on-dark text on low-DPI displays. |
+| `navigation`      | `"bottomTabs" \| "rail" \| "sidebar"`          | Recommended nav layout, derived from window size class.                       |
+| `layout`          | `"singlePane" \| "twoPane"`                    | Recommended single vs. two-pane layout, derived from window size class.       |
+
+Reads are reactive like `theme`, so a window resize or the first mouse move on a touch-capable device updates every consuming component live.
+
+```jsx
+setPolicy({ density: "compact" })    // pin a field, overriding the derived value
+setPolicy({ density: undefined })    // hand it back to the resolver
+```
+
+`setPolicyResolver((caps) => Policies)` replaces the whole system-derivation function for full custom control; `defaultPolicyResolver` is exported to wrap or extend instead of replacing it outright.
+
+`densityScale()` is a reactive multiplier (1 / 0.85 / 0.7 for comfortable/compact/dense) driven by `policy.density`, used internally for spacing and hit-target sizing.
+
 ## Layout and style
 
 Most components group their props into two objects:

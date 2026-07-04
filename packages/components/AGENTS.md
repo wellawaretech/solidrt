@@ -85,6 +85,23 @@ Most components group props into two objects, plus top-level event handlers:
   `setTheme({...})` merges a one-level-deep override. Default is dark. Color
   tokens: `background`, `surface`, `surfaceAlt`, `text`, `textMuted`, `border`,
   `primary`, `onPrimary`, `danger`, `scrim`.
+- `policy` / `setPolicy` / `setPolicyResolver` / `defaultPolicyResolver` /
+  `densityScale` - shared REACTIVE behavior (theme answers "how does it look",
+  policy answers "how does it behave"). Derived from `@solidrt/core`'s
+  `capabilities`/`env` (touch vs. desktop, window size class, display scale).
+  Fields: `interaction` (`"touch" | "desktop" | "hybrid"`, gates hover vs.
+  long-press affordances), `density` (`"comfortable" | "compact" | "dense"`,
+  drives `densityScale()`: 1 / 0.85 / 0.7), `motion` (`"normal" | "reduced" |
+  "none"`), `focusRing` (boolean), `textScale`/`textWeightDelta` (Dynamic-Type
+  and low-DPI weight compensation, consumed by `Text`), `navigation`
+  (`"bottomTabs" | "rail" | "sidebar"`) and `layout` (`"singlePane" |
+  "twoPane"`, both recommendations derived from window size class). Read
+  `policy.*` directly (reactive getters, like `theme`); `setPolicy({ field:
+  value })` pins one field regardless of the derived value, `setPolicy({
+  field: undefined })` hands it back to the resolver; `setPolicyResolver(caps
+  => Policies)` replaces the whole derivation for full custom control.
+  `Tooltip`, `Select`, `ContextMenu` fork on `policy.interaction`; `NavShell`
+  on `policy.navigation`; `SplitView` on `policy.layout`.
 
 ## Minimal app (verified to render)
 
