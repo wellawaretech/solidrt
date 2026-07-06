@@ -291,7 +291,7 @@ Accepts all pointer event props, plus:
 | `ref`        | `(node: { id: number }) => void` | Reference to the outer box.                   |
 | `children`   | `any`                            | Scrollable content.                          |
 
-The underlying geometry primitive `createScroll` is available from `@solidrt/core/scroll` for building custom scrollers.
+The underlying geometry primitive `createScroll` is available from `@solidrt/core` for building custom scrollers.
 
 ### Pressable
 

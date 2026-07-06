@@ -1,4 +1,4 @@
-import { createScroll } from "@solidrt/core/scroll"
+import { createScroll } from "@solidrt/core"
 import type { LayoutProps, PointerEvent, PointerProps, WheelEvent } from "@solidrt/core"
 import type { StyleProps } from "./types"
 

@@ -37,7 +37,7 @@ Most components group props into two objects, plus top-level event handlers:
   uncontrolled, plus `placeholder`, `maxLength`, `autoFocus`, `disabled`.
 - `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
   Wheel + drag, no momentum yet. Backed by `createScroll` from
-  `@solidrt/core/scroll` (headless offset+clamp geometry).
+  `@solidrt/core` (headless offset+clamp geometry).
 - `Pressable` - pressable box; `onPress` on a primary press released inside,
   `disabled` opts out. `children`/`style` can be functions of `{ pressed,
   hovered }`. No pointer capture: a drag out cancels via onPointerLeave.

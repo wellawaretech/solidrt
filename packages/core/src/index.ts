@@ -13,6 +13,8 @@ export type { Capabilities, WindowSizeClass } from "./capabilities"
 export { createTexture } from "./gpu"
 export { createImage, decodeImage } from "./image"
 export type { DecodedImage, ImageSource } from "./image"
+export { createScroll } from "./scroll"
+export type { Scroll, ScrollAxis, ScrollOffset, ScrollOptions } from "./scroll"
 export type {
   LayoutProps,
   TransformProps,

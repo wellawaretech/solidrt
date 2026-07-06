@@ -16,6 +16,12 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `frame-animation.tsx` - `onFrame` driving a transform animation each frame.
 - `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `d-path`.
 
+## Performance
+- `repaint-boundary.tsx` - `repaintBoundary` on a `<view>` to keep static content from rebuilding while a neighbor animates: `{true}` retains the recorded draw list, `"snapshot"` also retains the rasterized pixels as a GPU texture (for raster-expensive, screen-aligned, static subtrees).
+
+## Scrolling
+- `scroll.tsx` - `createScroll`, the headless scroll primitive: it owns only the clamped offset (re-clamped on layout); you supply the viewport/content nodes via refs, apply the offset to `scrollX`/`scrollY`, and wire input (e.g. `onWheel`) to `scrollBy` yourself.
+
 ## Window state
 - `window-signals.tsx` - reactive `windowSize()` / `safeArea()` accessors (prefer over `onResize`).
 

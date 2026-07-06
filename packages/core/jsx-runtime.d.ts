@@ -23,26 +23,30 @@ export namespace JSX {
   type RefCallback<T> = (el: T) => unknown
   type Ref<T> = T | RefCallback<T>
 
-  interface IntrinsicAttributes {
+  // ref lives on the element prop types (intersected into every entry below)
+  // rather than in IntrinsicAttributes: under our config, declaring it only in
+  // IntrinsicAttributes did not make it reach intrinsic elements, so `ref` on a
+  // host element was reported as an excess property.
+  interface ElementRef {
     ref?: Ref<{ id: number }> | undefined
   }
 
   interface IntrinsicElements {
-    window: WindowProps
-    view: ViewProps
-    text: TextProps & LayoutProps
-    rect: RectProps & LayoutProps
-    oval: OvalProps & LayoutProps
-    path: PathProps & LayoutProps
-    svg: SvgProps & LayoutProps
-    texture: TextureProps & LayoutProps
-    audio: AudioProps
-    "d-view": ViewProps
-    "d-rect": RectProps
-    "d-oval": OvalProps
-    "d-path": PathProps
-    "d-svg": SvgProps
-    "d-texture": TextureProps
-    "d-text": TextProps
+    window: WindowProps & ElementRef
+    view: ViewProps & ElementRef
+    text: TextProps & LayoutProps & ElementRef
+    rect: RectProps & LayoutProps & ElementRef
+    oval: OvalProps & LayoutProps & ElementRef
+    path: PathProps & LayoutProps & ElementRef
+    svg: SvgProps & LayoutProps & ElementRef
+    texture: TextureProps & LayoutProps & ElementRef
+    audio: AudioProps & ElementRef
+    "d-view": ViewProps & ElementRef
+    "d-rect": RectProps & ElementRef
+    "d-oval": OvalProps & ElementRef
+    "d-path": PathProps & ElementRef
+    "d-svg": SvgProps & ElementRef
+    "d-texture": TextureProps & ElementRef
+    "d-text": TextProps & ElementRef
   }
 }
