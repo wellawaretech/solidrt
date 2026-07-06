@@ -8,8 +8,13 @@
 // (this is the 2.0 async mechanic, not a manual undefined-signal + <Show>); a
 // load failure surfaces to <Errored>. Pass an accessor (createImage(() => src()))
 // to make the source reactive - the image reloads and the old texture is freed.
-// For manual control, decodeImage + createTexture (from @solidrt/core/gpu) are
-// the primitives underneath.
+//
+// The rule: createImage always suspends (needs <Loading>), because it is an
+// async value. For bytes you already hold - a `with { type: "binary" }` import
+// or anything in memory - skip it: decodeImage(bytes) + createTexture (both
+// synchronous) build the texture with no boundary at all. See inline-image.tsx.
+// createImage earns its async only when it fetches a string URL or swaps source
+// reactively; decodeImage + createTexture are the primitives underneath.
 //
 // Raster vs vector: a texture has a fixed source resolution, so it softens when
 // drawn larger than (displayed size x env.displayScale) on a hi-DPI display.

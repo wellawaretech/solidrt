@@ -34,6 +34,12 @@ export type ImageSource = string | Uint8Array
  * current texture is freed when the owner is disposed. Display it with
  * `<texture src={id()} />`; the texture carries its own pixel size, so no
  * width/height is needed unless you want to scale it.
+ *
+ * For bytes you already hold (a `with { type: "binary" }` import, or anything in
+ * memory) this suspends needlessly: `decodeImage` + `createTexture` are both
+ * synchronous, so reach for them directly and skip the `<Loading>` boundary.
+ * `createImage` earns its async only for a fetched string URL or a reactive
+ * source.
  */
 export function createImage(src: ImageSource | (() => ImageSource)): () => number {
   let getSrc = typeof src === "function" ? src : () => src

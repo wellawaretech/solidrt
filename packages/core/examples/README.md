@@ -24,16 +24,18 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 
 ## Window state
 - `window-signals.tsx` - reactive `windowSize()` / `safeArea()` accessors (prefer over `onResize`).
+- `responsive-grid.tsx` - one app across phone/tablet/desktop: `capabilities.windowSizeClass` (Material 3 breakpoints, a reactive getter) drives the column count and `windowSize()` sizes each card; reflows on resize.
 
 ## Overlays
 - `portal.tsx` - `createPortal` relocating content to the window root to escape clipping.
 
 ## Images and GPU
 - `image.tsx` - `createImage` (async value: fetch + decode + upload) read inside a `<Loading>` boundary and shown with `<texture>`.
-- `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated via `setShaderParams`.
+- `inline-image.tsx` - bytes already in memory: `decodeImage` + `createTexture` (both synchronous) show an image with no `<Loading>` boundary. The sync counterpart to `image.tsx`.
+- `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop.
 
 ## Vector graphics
 - `svg.tsx` - `<svg src={...}>` draws a whole SVG *document string* (not HTML/JSX children); multi-color fills vs a `currentColor` icon recolored by the `color` prop. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `src`.
 
 ## Bundling assets
-- `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (combine with `image.tsx` to display an inlined image). `with { type: "text" }` works the same way for a string.
+- `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path). `with { type: "text" }` works the same way for a string.
