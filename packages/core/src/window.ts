@@ -93,7 +93,9 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 // Singleton accessors over the same events as onResize / onWindowFocus. There
 // is one window, so these are bare accessors rather than a createX instance.
 // Lazily subscribed on first read (resize is sticky, so the first read sees the
-// current value); app-lifetime, so no onCleanup.
+// current value); app-lifetime, so no onCleanup. `ownedWrite: true` on the
+// signals below is the sticky-replay-into-a-tracked-scope case explained on
+// the ensure* functions in environment.ts.
 
 let sizeAccessor: (() => { width: number; height: number }) | undefined
 let safeAreaAccessor: (() => SafeArea) | undefined
@@ -101,9 +103,9 @@ let displayScaleAccessor: (() => number) | undefined
 
 function ensureResizeState() {
   if (sizeAccessor) return
-  let [size, setSize] = createSignal({ width: 0, height: 0 })
-  let [safe, setSafe] = createSignal<SafeArea>({ top: 0, left: 0, right: 0, bottom: 0 })
-  let [scale, setScale] = createSignal(1)
+  let [size, setSize] = createSignal({ width: 0, height: 0 }, { ownedWrite: true })
+  let [safe, setSafe] = createSignal<SafeArea>({ top: 0, left: 0, right: 0, bottom: 0 }, { ownedWrite: true })
+  let [scale, setScale] = createSignal(1, { ownedWrite: true })
   on("resize", (e: ResizeEvent) => {
     setSize({ width: e.width, height: e.height })
     setSafe(e.safeArea)
