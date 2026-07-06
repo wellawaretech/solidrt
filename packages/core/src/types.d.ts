@@ -212,7 +212,7 @@ interface Position {
 
 // Primitives
 
-export interface WindowProps extends LayoutProps {
+export interface WindowProps extends LayoutProps, PointerProps {
   children?: Children
   title?: string
   fullscreen?: boolean
@@ -309,7 +309,7 @@ export interface TextProps extends Position, PaintProps, PointerProps {
   maxLines?: number
 }
 
-export interface TextureProps extends Position {
+export interface TextureProps extends Position, PointerProps {
   src?: number
   w?: number
   h?: number

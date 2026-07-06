@@ -68,15 +68,17 @@ pub fn apply_jsx(
   }
 
   // Element-level, kind-independent: controls hit testing (see hit.rs). Paint/hit
-  // only, no layout invalidation. Components forward this even when unset, so a
-  // null resets to the default (Auto).
+  // only, no layout invalidation. `pointerEvents` is inherited (like CSS): a
+  // null clears any local override rather than forcing Auto, so components
+  // that forward this prop even when the app never set it do not break
+  // inheritance from an ancestor that did.
   if name == "pointerEvents" {
     let pointer_events = match value {
-      PropValue::Null => PointerEvents::Auto,
+      PropValue::Null => None,
       _ => match str_of(value, "pointerEvents") {
-        "auto" => PointerEvents::Auto,
-        "none" => PointerEvents::None,
-        "all" => PointerEvents::All,
+        "auto" => Some(PointerEvents::Auto),
+        "none" => Some(PointerEvents::None),
+        "all" => Some(PointerEvents::All),
         v => panic!("unknown pointerEvents value '{v}'"),
       },
     };

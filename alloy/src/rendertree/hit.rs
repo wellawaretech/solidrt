@@ -14,12 +14,18 @@ pub enum PointerEvents {
 }
 
 pub struct HitConfig {
-  pub pointer_events: PointerEvents,
+  // `None` means "not explicitly set" - the element inherits its effective
+  // value from the nearest ancestor that does set one (root default: Auto).
+  // This mirrors CSS `pointer-events`, which is itself inherited: a `None` on
+  // a container is expected to make everything under it non-hittable unless
+  // a descendant opts back in explicitly, so a caller doesn't have to repeat
+  // the same value on every leaf under a "click-through" overlay.
+  pub pointer_events: Option<PointerEvents>,
 }
 
 impl Default for HitConfig {
   fn default() -> Self {
-    Self { pointer_events: PointerEvents::Auto }
+    Self { pointer_events: None }
   }
 }
 
@@ -93,15 +99,24 @@ impl HitTester for DefaultHitTester {
       .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
       .unwrap_or_default();
     let mut path = Vec::new();
-    hit_recursive(tree, root_id, point, size, &mut path);
+    hit_recursive(tree, root_id, point, size, PointerEvents::Auto, &mut path);
     path
   }
 }
 
-fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mut Vec<HitEntry>) -> bool {
+fn hit_recursive(
+  tree: &RenderTree,
+  node_id: u64,
+  point: XY,
+  size: WH,
+  inherited: PointerEvents,
+  path: &mut Vec<HitEntry>,
+) -> bool {
   let element = tree.node(node_id);
 
-  let pointer_events = element.interaction.as_ref().map(|i| i.pointer_events).unwrap_or(PointerEvents::Auto);
+  // An explicit local value wins; otherwise the resolved value cascades down
+  // from the parent (see the comment on HitConfig::pointer_events).
+  let pointer_events = element.interaction.as_ref().and_then(|i| i.pointer_events).unwrap_or(inherited);
 
   let ctx = HitContext { size };
   let local = element.kind.transform_to_local(point, &ctx);
@@ -146,7 +161,7 @@ fn hit_recursive(tree: &RenderTree, node_id: u64, point: XY, size: WH, path: &mu
     let child_pos =
       child.layout.as_ref().map(|l| XY::new(l.computed.location.x, l.computed.location.y)).unwrap_or_default();
     let child_point = XY::new(local.x - child_pos.x + scroll.x, local.y - child_pos.y + scroll.y);
-    if hit_recursive(tree, child_id, child_point, child_size, path) {
+    if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {
       if pointer_events == PointerEvents::None {
         path.remove(my_index);
       }

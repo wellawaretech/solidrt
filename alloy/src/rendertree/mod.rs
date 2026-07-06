@@ -334,8 +334,10 @@ impl Element {
   }
 
   /// Sets how this element participates in hit testing. Paint/hit only; never
-  /// affects layout.
-  pub fn set_pointer_events(&mut self, pointer_events: PointerEvents) {
+  /// affects layout. `None` clears any local override, so the element goes
+  /// back to inheriting its effective value from the nearest ancestor that
+  /// sets one (see HitConfig::pointer_events).
+  pub fn set_pointer_events(&mut self, pointer_events: Option<PointerEvents>) {
     self.interaction.get_or_insert_with(HitConfig::default).pointer_events = pointer_events;
   }
 
