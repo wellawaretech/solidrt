@@ -7,6 +7,61 @@ trust this file and the types in src/types.d.ts and jsx-runtime.d.ts.
 SolidRT is a custom SolidJS renderer: it paints through a Rust runtime, not the
 DOM. There is no HTML, no CSS cascade, no `className`.
 
+## The window is device-sized - design fluid
+
+A SolidRT window is host-sized and resizable, and the SAME app runs on phones,
+tablets, and desktops. There is no default "desktop" size to design against.
+Design fluid by default: derive sizing and layout from the live window, do not
+hardcode desktop pixels.
+
+- Size the layout from `windowSize()` / `capabilities.windowSizeClass`, not from
+  fixed pixel widths. Let flex (`flex`, `flexWrap`, `gap`) and percentages carry
+  the layout so it reflows on resize instead of clipping or leaving dead space.
+- Gate hover-only affordances on `capabilities.hover`. Hover-zoom, hover-reveal,
+  and tooltips are dead on a touch device with no pointer that can rest. When
+  `capabilities.touch`, provide a tap/press path to the same action.
+- `windowSizeClass` uses Material 3 width breakpoints (logical px): `compact`
+  (<600), `medium` (600-840), `expanded` (>=840). Drive column counts / layout
+  switches off it (see the responsive-grid example).
+
+`env` and `capabilities` (both exported from `@solidrt/core`) are the two
+objects that expose this. They are plain objects with REACTIVE GETTERS, not
+functions - read them as `capabilities.windowSizeClass`, `env.displayScale`
+(NOT `capabilities()`); the getter reads reactive state underneath, so a read
+inside JSX / a memo / an effect re-runs when it changes. (`windowSize()` and
+`safeArea()` from `./window` ARE functions - call those.)
+
+```ts
+import { env, capabilities } from "@solidrt/core"
+
+env.windowSize        // { width, height } (same value as windowSize())
+env.displayScale      // device pixel ratio (hi-DPI factor)
+env.safeArea          // inset distances from each edge
+env.systemTheme       // "dark" | "light" | "unknown" (resolves after startup)
+env.orientation       // "portrait" | "landscape" | ... | "unknown"
+
+capabilities.windowSizeClass   // "compact" | "medium" | "expanded"
+capabilities.hover             // a pointer can rest over content (mouse/trackpad)
+capabilities.touch             // direct touch input present
+capabilities.precisePointer    // pixel-precise pointing (mouse/trackpad)
+capabilities.keyboardNav       // hardware-key navigation available
+```
+
+Read behavior decisions through `capabilities`; read `env` directly only when
+you need the raw fact (e.g. `env.displayScale` for asset sizing below).
+
+### Vectors vs raster, and hi-DPI
+
+Because the drawn size is fluid and the display DPI varies, asset format is a
+real design decision, not an afterthought:
+
+- Prefer VECTORS (`<svg>`, `<d-path>`) whenever the render size is fluid or DPI
+  varies - they stay crisp at any size x `displayScale()`.
+- RASTER (`<texture>` / `createImage`) needs source resolution >= displayed size
+  x `env.displayScale`, or it softens on hi-DPI. Author raster at 2-3x the
+  largest size you will ever draw it. A 256px PNG blown up large on a hi-DPI
+  tablet will look soft; the same art as SVG will not.
+
 ## Setup
 
 ```sh

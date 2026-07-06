@@ -71,8 +71,6 @@ function App() {
 | ------------ | ------------- | ------- | ---------------------------------- |
 | `title`      | `string`      | -       | Window title.                      |
 | `fullscreen` | `boolean`     | -       | Open fullscreen.                   |
-| `vsync`      | `boolean`     | -       | Enable vsync.                      |
-| `fps`        | `boolean`     | -       | Show an FPS counter.               |
 | `layout`     | `LayoutProps` | -       | Layout properties.                 |
 | `style`      | `StyleProps`  | -       | Only `backgroundColor` is applied. |
 | `children`   | `any`         | -       | Content.                           |

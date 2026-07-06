@@ -10,6 +10,10 @@
 // "currentColor" is recolored by the host `color` prop. For per-shape authored
 // or animated vector art, compose <d-path> instead of this document layer.
 //
+// Being a vector, an <svg> is resolution-independent: it stays crisp at any
+// drawn size x displayScale(). Prefer it over a raster <texture> (image.tsx)
+// whenever the render size is fluid or the display DPI varies.
+//
 // This is how you use an existing icon library (Lucide, Heroicons, Feather,
 // Material, etc.): those ship SVG source, so import/inline the icon string and
 // hand it to `src`. The `currentColor` convention they follow means the `color`
