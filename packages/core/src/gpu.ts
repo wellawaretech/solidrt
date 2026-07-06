@@ -1,17 +1,22 @@
 // GPU textures and shaders, reactive (SolidJS) layer: the create* helpers free
-// their texture automatically when the reactive owner is disposed. The imperative
-// primitive lives in the `flux:gpu` module; import { uploadTexture,
-// setShaderParams, destroyTexture, ... } from "flux:gpu" for non-reactive use.
+// their texture automatically when the reactive owner is disposed. Drive a
+// shader's uniforms declaratively with `<texture src={id} params={{...}} />`
+// (see TextureProps) - the preferred way, deferred to the next real repaint so
+// a fast-changing signal stays paced to actual frames. setShaderParams is the
+// imperative exception: reach for it only when there is no `<texture>` element
+// to hold a params prop, e.g. a shader that only feeds another shader as a
+// sampler2D input. The imperative primitives (uploadTexture, setShaderParams,
+// destroyTexture, ...) live in the `flux:gpu` module.
 
 import { getOwner, onCleanup } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
 
-// Imperative companions to the reactive create* helpers, re-exported so callers
-// that depend on @solidrt/core -- like @solidrt/components -- need not import flux
-// directly: destroyTexture for the manual-cleanup path (textures made outside a
-// reactive scope, e.g. after an await, are not auto-freed), setShaderParams to
-// drive a shader's uniforms over time, and uploadTexture to push new pixels into
-// a mutable texture.
+// Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
+// -- need not import flux directly: destroyTexture for the manual-cleanup path
+// (textures made outside a reactive scope, e.g. after an await, are not
+// auto-freed), uploadTexture to push new pixels into a mutable texture, and
+// setShaderParams as the non-reactive exception described above - prefer
+// `<texture params={...}>` when a `<texture>` element is already in the tree.
 export { destroyTexture, setShaderParams, uploadTexture } from "flux:gpu"
 
 /**
@@ -48,12 +53,14 @@ export function createMutableTexture(data: Uint8Array, width: number, height: nu
  * Compiles a GLSL ES 3.00 fragment shader and renders it into a texture,
  * returning the texture id (usable anywhere a normal texture id is, e.g.
  * `<texture src>`). The fragment body may reference `vUV` (0..1, top-left
- * origin), `iResolution`, `iTime`, and any `uniform float` it declares; pass
- * their values via `params`. `textures` binds each declared `uniform sampler2D`
- * to an existing texture id (e.g. a camera or decoded image) so the shader can
- * read it; those inputs are re-sampled on every `setShaderParams` call, so live
- * sources stay current. Frees the texture and shader program when the reactive
- * owner is disposed; create outside any reactive scope for app-lifetime shaders.
+ * origin), `iResolution`, `iTime`, and any `uniform float` it declares; drive
+ * their values with `<texture src={id} params={{...}} />` (preferred) or, when
+ * there is no `<texture>` element for it, imperatively with `setShaderParams`.
+ * `textures` binds each declared `uniform sampler2D` to an existing texture id
+ * (e.g. a camera or decoded image) so the shader can read it; those inputs are
+ * re-sampled on every params update, so live sources stay current. Frees the
+ * texture and shader program when the reactive owner is disposed; create
+ * outside any reactive scope for app-lifetime shaders.
  */
 export function createShader(
   fragmentSrc: string,

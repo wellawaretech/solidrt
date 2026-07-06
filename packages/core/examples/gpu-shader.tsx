@@ -6,10 +6,11 @@
 // disposed.
 //
 // iResolution is filled in for you, but iTime is NOT - drive it (and any other
-// uniform) yourself with setShaderParams from onFrame to animate. The shader's
-// size is baked in at creation.
-import { render, onFrame } from "@solidrt/core"
-import { createShader, setShaderParams } from "@solidrt/core/gpu"
+// uniform) declaratively via the <texture> element's params prop; it applies at
+// the next repaint, so a signal updated every frame stays paced to actual frames.
+// The shader's size is baked in at creation.
+import { render, onFrame, createSignal } from "@solidrt/core"
+import { createShader } from "@solidrt/core/gpu"
 
 let FRAGMENT = `
 void main() {
@@ -24,11 +25,12 @@ void main() {
 
 function App() {
   let id = createShader(FRAGMENT, 512, 512, { iTime: 0 })
-  onFrame((tick) => setShaderParams(id, { iTime: tick / 1000 }))
+  let [time, setTime] = createSignal(0)
+  onFrame((tick) => setTime(tick / 1000))
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={id} width={400} height={400} />
+      <texture src={id} params={{ iTime: time() }} width={400} height={400} />
     </window>
   )
 }

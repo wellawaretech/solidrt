@@ -28,7 +28,7 @@ Most components group props into two objects, plus top-level event handlers:
 
 - `Window` - root surface; renders a core `<window>`, so `render()` accepts it.
   Applies `layout` and `style.backgroundColor` only (a window cannot be
-  transformed or bordered). Also: `title`, `fullscreen`, `vsync`, `fps`.
+  transformed or bordered). Also: `title`, `fullscreen`.
 - `View` - general box; draws a background/border when the matching `style`
   props are set.
 - `Text` - text in a layout box; font fields go in `layout`, `color` in `style`.

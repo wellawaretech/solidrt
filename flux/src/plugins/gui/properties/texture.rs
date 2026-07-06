@@ -15,6 +15,19 @@ pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<Damage>
     "srcY" => tex.set_src_y(f32_of(value, "srcY")),
     "srcW" => tex.set_src_w(f32_of(value, "srcW")),
     "srcH" => tex.set_src_h(f32_of(value, "srcH")),
+    "x" => tex.set_x(f32_of(value, "x")),
+    "y" => tex.set_y(f32_of(value, "y")),
+    "w" => tex.set_w(f32_of(value, "w")),
+    "h" => tex.set_h(f32_of(value, "h")),
+    "params" => tex.set_params(decode_params(value)),
     _ => return None,
   })
+}
+
+// { name: number } shader uniform values; non-numeric entries are skipped.
+fn decode_params(value: &PropValue) -> Vec<(String, f32)> {
+  value
+    .as_map()
+    .map(|entries| entries.iter().filter_map(|(k, v)| v.as_f64().map(|n| (k.clone(), n as f32))).collect())
+    .unwrap_or_default()
 }

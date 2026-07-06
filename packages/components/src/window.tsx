@@ -5,8 +5,6 @@ export interface WindowProps extends PointerProps {
   children?: any
   title?: string
   fullscreen?: boolean
-  vsync?: boolean
-  fps?: boolean
   layout?: LayoutProps
   style?: StyleProps
 }
@@ -19,8 +17,6 @@ export function Window(props: WindowProps) {
       {...props.layout}
       title={props.title}
       fullscreen={props.fullscreen}
-      vsync={props.vsync}
-      fps={props.fps}
       onPointerEnter={props.onPointerEnter}
       onPointerLeave={props.onPointerLeave}
       onPointerDown={props.onPointerDown}

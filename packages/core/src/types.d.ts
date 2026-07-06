@@ -37,10 +37,17 @@ export interface ElementChildrenAttribute {
 
 type Children = Element
 
+// Doc-comment policy for this file: JSX props mostly mirror CSS/DOM, which any
+// developer or agent already knows, so a comment restating standard semantics
+// is noise. Add one only where a prop deviates from that standard, is bespoke
+// to this engine, or has an interaction that isn't decidable from the type
+// alone (e.g. shorthand-vs-longhand precedence, a subsetted value range).
+
 interface FlexboxProps {
   gap?: number
   rowGap?: number
   columnGap?: number
+  /** Shorthand; overridden by flexGrow/flexShrink/flexBasis when they're also set. */
   flex?: number | "none" | "auto" | (string & {})
   flexGrow?: number
   flexShrink?: number
@@ -54,6 +61,7 @@ interface FlexboxProps {
   justifyContent?: "start" | "end" | "flex-start" | "flex-end" | "center" | "stretch" | "space-between" | "space-evenly" | "space-around"
 }
 
+/** CSS grid subset: line-based placement only, no named lines, no grid-template-areas, and auto tracks take a fixed size (no minmax/fr/keyword). */
 interface GridProps {
   gridAutoFlow?: "row" | "column" | "row-dense" | "column-dense"
   gridAutoColumns?: number
@@ -66,10 +74,17 @@ interface GridProps {
   gridTemplateRows?: string
 }
 
+/** A layout length: a bare number is pixels, plus "auto" and percent strings. */
 type Dimension = number | "auto" | `${number}%`
 
 export interface LayoutProps extends FlexboxProps, GridProps {
   display?: "block" | "flex" | "grid" | "none"
+  /**
+   * No "fixed" or "sticky". Unlike CSS, `absolute` does not itself become a
+   * containing block: an absolute element resolves against the nearest
+   * ancestor with `position: relative`, so a chain of absolute elements
+   * resolves against whatever relative element is above all of them.
+   */
   position?: "relative" | "absolute"
 
   top?: Dimension
@@ -201,8 +216,6 @@ export interface WindowProps extends LayoutProps {
   children?: Children
   title?: string
   fullscreen?: boolean
-  vsync?: boolean
-  fps?: boolean
 }
 
 export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
@@ -229,6 +242,11 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   repaintBoundary?: boolean | "snapshot"
 }
 
+/**
+ * Not implemented: there is no native `audio` element kind yet, so using
+ * `<audio>` panics ("unknown node kind: audio"). Typed ahead of the backing
+ * work; treat this interface as a plan, not a working API.
+ */
 export interface AudioProps {
   src?: Uint8Array
   play?: number
@@ -245,7 +263,9 @@ export interface RectProps extends Position, PaintProps, PointerProps {
 }
 
 export interface OvalProps extends Position, PaintProps, PointerProps {
+  /** Bounding box width of the ellipse (not a radius); defaults to the layout box. */
   w?: number
+  /** Bounding box height of the ellipse (not a radius); defaults to the layout box. */
   h?: number
 }
 
@@ -254,7 +274,9 @@ export interface LineProps extends PaintProps, PointerProps {
   y1?: number
   x2?: number
   y2?: number
+  /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   onLength?: number
+  /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   offLength?: number
 }
 
@@ -289,11 +311,14 @@ export interface TextProps extends Position, PaintProps, PointerProps {
 
 export interface TextureProps extends Position {
   src?: number
-  imageWidth?: number
-  imageHeight?: number
+  w?: number
+  h?: number
   srcX?: number
   srcY?: number
   srcW?: number
   srcH?: number
+  // Shader uniform values, when src names a shader texture. Applied at the
+  // next repaint (not synchronously), so a fast-changing signal stays paced
+  // to real frames rather than triggering a GL render pass per write.
   params?: Record<string, number>
 }
