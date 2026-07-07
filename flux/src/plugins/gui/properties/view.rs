@@ -7,7 +7,13 @@ use alloy::rendertree::View;
 pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
     "rotate" => view.set_rotate(f32_of(value, "rotate")),
-    "scale" => view.set_scale(f32_of(value, "scale")),
+    "scale" => {
+      // Uniform scale is a JS convenience; the rendertree is per-axis, so fan
+      // it out to both. Last write wins if scale and scaleX/scaleY are mixed.
+      let v = f32_of(value, "scale");
+      view.set_scale_x(v);
+      view.set_scale_y(v)
+    }
     "scaleX" => view.set_scale_x(f32_of(value, "scaleX")),
     "scaleY" => view.set_scale_y(f32_of(value, "scaleY")),
     "rotateX" => view.set_rotate_x(f32_of(value, "rotateX")),
@@ -15,10 +21,8 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
     "perspective" => view.set_perspective(f32_of(value, "perspective")),
     "x" => view.set_x(f32_of(value, "x")),
     "y" => view.set_y(f32_of(value, "y")),
-    "transformOrigin" => {
-      let (x, y) = decode_origin(value);
-      view.set_origin(x, y)
-    }
+    "originX" => view.set_origin_x(decode_origin_axis(value)),
+    "originY" => view.set_origin_y(decode_origin_axis(value)),
     "opacity" => view.set_opacity(f32_of(value, "opacity")),
     "scrollX" => view.set_scroll_x(f32_of(value, "scrollX")),
     "scrollY" => view.set_scroll_y(f32_of(value, "scrollY")),
@@ -27,36 +31,9 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
   })
 }
 
-// transformOrigin: `[x, y]` sets the axes independently; a single value applies
-// to both, except a directional keyword ("left"/"top"/...) which sets its own
-// axis and leaves the other centered (matching CSS `transform-origin`). Each
-// axis is a pixel number, a `pct(n)` fraction, or a position keyword.
-fn decode_origin(value: &PropValue) -> (OriginCoord, OriginCoord) {
-  if let Some(items) = value.as_list() {
-    if items.len() != 2 {
-      panic!("transformOrigin array must have 2 elements [x, y]");
-    }
-    return (decode_origin_axis(&items[0]), decode_origin_axis(&items[1]));
-  }
-
-  let center = OriginCoord::Fraction(0.5);
-  if let Some(s) = value.as_str() {
-    return match s {
-      "left" => (OriginCoord::Fraction(0.0), center),
-      "right" => (OriginCoord::Fraction(1.0), center),
-      "top" => (center, OriginCoord::Fraction(0.0)),
-      "bottom" => (center, OriginCoord::Fraction(1.0)),
-      "center" => (center, center),
-      _ => panic!("unknown transformOrigin keyword '{s}'"),
-    };
-  }
-
-  let both = decode_origin_axis(value);
-  (both, both)
-}
-
-// One axis of a transform origin: a pixel number, a `pct(n)` fraction, or a
-// position keyword (left/top = 0, center = 0.5, right/bottom = 1).
+// One axis of the transform origin (originX / originY): a pixel number, a
+// `pct(n)` fraction, or a position keyword (left/top = 0, center = 0.5,
+// right/bottom = 1).
 fn decode_origin_axis(value: &PropValue) -> OriginCoord {
   if let Some(n) = value.as_f64() {
     return OriginCoord::Px(n as f32);

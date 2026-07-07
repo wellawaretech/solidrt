@@ -140,11 +140,12 @@ export interface PaintProps {
 /** A percentage value, from `pct(50)`. Resolves against the element box. */
 export type Pct = { readonly __unit: "pct"; v: number }
 
-type OriginKeyword = "left" | "center" | "right" | "top" | "bottom"
-
-// One axis of a transform origin: a pixel `number`, a `pct(n)` fraction of the
-// box, or a CSS position keyword (left/center/right on x, top/center/bottom on y).
-type Origin = number | Pct | OriginKeyword
+// One axis of the transform origin (the point rotate/scale/3D pivot around),
+// split per axis to match the engine's x/y prop convention. A bare number is
+// pixels; `pct(50)` is a fraction of the box, so a percentage origin tracks the
+// layout size with no reactive wiring. Unset defaults to the axis center.
+type OriginX = number | Pct | "left" | "center" | "right"
+type OriginY = number | Pct | "top" | "center" | "bottom"
 
 export interface TransformProps {
   rotate?: number
@@ -164,11 +165,8 @@ export interface TransformProps {
   perspective?: number
   x?: number
   y?: number
-  // The point that rotate/scale/3D pivot around (CSS `transform-origin`),
-  // default center. One value sets both axes; a `[x, y]` tuple sets them
-  // independently. A bare number is pixels; `pct(50)` is a fraction of the box,
-  // so a percentage origin tracks the layout size without any reactive wiring.
-  transformOrigin?: Origin | [Origin, Origin]
+  originX?: OriginX
+  originY?: OriginY
   // Group opacity in 0..1: children are composited together, then faded as a
   // whole (CSS `opacity`). Does not affect hit testing.
   opacity?: number

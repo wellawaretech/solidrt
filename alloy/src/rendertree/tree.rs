@@ -301,7 +301,7 @@ impl RenderTree {
         y += parent_layout.computed.location.y;
       }
       if let ElementKind::View(v) = &parent.kind {
-        if let Some(p) = v.pos {
+        if let Some(p) = v.translate {
           x += p.x;
           y += p.y;
         }

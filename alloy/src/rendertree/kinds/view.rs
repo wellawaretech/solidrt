@@ -37,9 +37,9 @@ impl OriginCoord {
 #[derive(Clone, Debug, Default)]
 pub struct View {
   pub rotate: Option<f32>,
-  // Uniform scale; scale_x/scale_y override it per axis (anisotropic scaling,
-  // e.g. a horizontal squash for a card-flip animation).
-  pub scale: Option<f32>,
+  // Per-axis scale (anisotropic scaling, e.g. a horizontal squash for a
+  // card-flip animation). A uniform JS `scale` is expanded to both axes in the
+  // plugin layer; the rendertree only knows the two axes.
   pub scale_x: Option<f32>,
   pub scale_y: Option<f32>,
   // 3D rotation about the horizontal (X) axis, in radians (a top/bottom tilt).
@@ -51,10 +51,14 @@ pub struct View {
   // Perspective viewing distance in pixels (CSS `perspective`). Larger is a
   // shallower, less dramatic 3D effect. Applied around the rotation center.
   pub perspective: Option<f32>,
-  pub pos: Option<XY>,
-  // Transform origin per axis (CSS `transform-origin`). None on either axis
-  // falls back to the box center. See OriginCoord for the Px/Fraction split.
-  pub origin: Option<(OriginCoord, OriginCoord)>,
+  // Transform-space translation (CSS `translate`), applied after the rotation
+  // center is restored so it shifts in screen space. Not the layout position.
+  pub translate: Option<XY>,
+  // Transform origin, one independent field per axis (CSS `transform-origin`).
+  // None on an axis falls back to that axis's box center. See OriginCoord for
+  // the Px/Fraction split.
+  pub origin_x: Option<OriginCoord>,
+  pub origin_y: Option<OriginCoord>,
   // Scroll offset applied to children at build time, after the clip is set.
   // Positive values shift content leftward/upward (web convention: positive
   // scrollX means scrolled "into" the content from the left).
@@ -72,15 +76,14 @@ pub struct View {
 }
 
 impl View {
-  fn resolve_pos(&self) -> XY {
-    self.pos.unwrap_or_default()
+  fn resolve_translate(&self) -> XY {
+    self.translate.unwrap_or_default()
   }
 
   fn resolve_center(&self, size: WH) -> XY {
-    match self.origin {
-      Some((x, y)) => XY::new(x.resolve(size.w), y.resolve(size.h)),
-      None => XY::new(size.w / 2.0, size.h / 2.0),
-    }
+    let x = self.origin_x.map_or(size.w / 2.0, |c| c.resolve(size.w));
+    let y = self.origin_y.map_or(size.h / 2.0, |c| c.resolve(size.h));
+    XY::new(x, y)
   }
 
   // Returns the memoized transform for `size`, recomposing (and re-inverting)
@@ -106,7 +109,7 @@ impl View {
   // For the pure-2D case (no rotate_x/rotate_y/perspective) this reduces exactly
   // to the previous translate/scale/rotate op sequence.
   fn compose(&self, size: WH) -> Matrix {
-    let p = self.resolve_pos();
+    let p = self.resolve_translate();
     let c = self.resolve_center(size);
 
     // Move the rotation center to the origin.
@@ -119,10 +122,8 @@ impl View {
       m = m.then(&Matrix::new_2d(co, s, -s, co, 0.0, 0.0));
     }
 
-    let sx = self.scale_x.or(self.scale);
-    let sy = self.scale_y.or(self.scale);
-    if sx.is_some() || sy.is_some() {
-      m = m.then(&Matrix::scale(sx.unwrap_or(1.0), sy.unwrap_or(1.0), 1.0));
+    if self.scale_x.is_some() || self.scale_y.is_some() {
+      m = m.then(&Matrix::scale(self.scale_x.unwrap_or(1.0), self.scale_y.unwrap_or(1.0), 1.0));
     }
 
     // 3D rotations about the centered card (X = top/bottom tilt, Y = card-flip),
@@ -181,7 +182,7 @@ impl Buildable for View {
 
 impl Bounded for View {
   fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
-    let p = self.pos.unwrap_or_default();
+    let p = self.translate.unwrap_or_default();
     BoundingBox { x: p.x, y: p.y, width: fallback.width, height: fallback.height }
   }
 }
@@ -211,7 +212,7 @@ impl Hittable for View {
 }
 
 impl View {
-  // Matrix props (pos, origin, rotate, scale, 3D) invalidate the memoized
+  // Matrix props (translate, origin, rotate, scale, 3D) invalidate the memoized
   // matrix and report Damage::Transform: the View's own cached content stays
   // valid because composite applies the current matrix around it. Scroll
   // reports Damage::Scroll: a Recording cache survives (offset applied at
@@ -219,11 +220,6 @@ impl View {
   // in it). clip_radius is baked into recorded content, so it reports Paint.
   pub fn set_rotate(&mut self, v: f32) -> Damage {
     self.rotate = Some(v);
-    self.invalidate();
-    Damage::Transform
-  }
-  pub fn set_scale(&mut self, v: f32) -> Damage {
-    self.scale = Some(v);
     self.invalidate();
     Damage::Transform
   }
@@ -253,17 +249,22 @@ impl View {
     Damage::Transform
   }
   pub fn set_x(&mut self, v: f32) -> Damage {
-    self.pos.get_or_insert_with(XY::default).x = v;
+    self.translate.get_or_insert_with(XY::default).x = v;
     self.invalidate();
     Damage::Transform
   }
   pub fn set_y(&mut self, v: f32) -> Damage {
-    self.pos.get_or_insert_with(XY::default).y = v;
+    self.translate.get_or_insert_with(XY::default).y = v;
     self.invalidate();
     Damage::Transform
   }
-  pub fn set_origin(&mut self, x: OriginCoord, y: OriginCoord) -> Damage {
-    self.origin = Some((x, y));
+  pub fn set_origin_x(&mut self, x: OriginCoord) -> Damage {
+    self.origin_x = Some(x);
+    self.invalidate();
+    Damage::Transform
+  }
+  pub fn set_origin_y(&mut self, y: OriginCoord) -> Damage {
+    self.origin_y = Some(y);
     self.invalidate();
     Damage::Transform
   }
@@ -312,8 +313,9 @@ mod tests {
   #[test]
   fn fraction_origin_tracks_size() {
     let mut v = View::default();
-    v.set_origin(OriginCoord::Fraction(0.0), OriginCoord::Fraction(1.0));
-    // Top-left on x, bottom on y, resolved against the live extent.
+    v.set_origin_x(OriginCoord::Fraction(0.0));
+    v.set_origin_y(OriginCoord::Fraction(1.0));
+    // Left on x, bottom on y, resolved against the live extent.
     let c = v.resolve_center(WH::new(200.0, 100.0));
     assert_eq!((c.x, c.y), (0.0, 100.0));
     // Same fractions, a different size: the pivot moves with the box.
@@ -322,9 +324,19 @@ mod tests {
   }
 
   #[test]
+  fn unset_axis_falls_back_to_center() {
+    let mut v = View::default();
+    // Only x is set; y must still default to the box center.
+    v.set_origin_x(OriginCoord::Px(10.0));
+    let c = v.resolve_center(WH::new(200.0, 100.0));
+    assert_eq!((c.x, c.y), (10.0, 50.0));
+  }
+
+  #[test]
   fn pixel_origin_is_absolute() {
     let mut v = View::default();
-    v.set_origin(OriginCoord::Px(20.0), OriginCoord::Px(30.0));
+    v.set_origin_x(OriginCoord::Px(20.0));
+    v.set_origin_y(OriginCoord::Px(30.0));
     let c = v.resolve_center(WH::new(200.0, 100.0));
     assert_eq!((c.x, c.y), (20.0, 30.0));
     // Unaffected by size, unlike a fraction.
