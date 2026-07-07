@@ -176,7 +176,38 @@ fn ui_thread(
     let mut ui_runtime =
       runtime::FluxRuntime::new(current_exec_events, record_frame.clone(), paced_clock, platform.clone());
     local.spawn_local(async move {
-      while let Some(event) = ev_rx.recv().await {
+      // An event popped ahead while coalescing PointerMove below, held for the
+      // next iteration so it is not reordered past other event types.
+      let mut pending: Option<AlloyEvent> = None;
+      loop {
+        let mut event = match pending.take() {
+          Some(event) => event,
+          None => match ev_rx.recv().await {
+            Some(event) => event,
+            None => break,
+          },
+        };
+        // Coalesce a burst of PointerMove for the same pointer down to the
+        // latest position. Each one costs a hit-test plus a JS dispatch, and a
+        // fast mouse produces motion events faster than that pipeline can
+        // drain them; without this, the unbounded channel backs up and the
+        // hover lag grows for as long as the mouse keeps moving (rendering
+        // stays on its own thread and is unaffected).
+        if let AlloyEvent::PointerMove { pointer_id, pointer_type, .. } = event {
+          while let Ok(next) = ev_rx.try_recv() {
+            match next {
+              AlloyEvent::PointerMove { pointer_id: next_id, pointer_type: next_type, .. }
+                if next_id == pointer_id && next_type == pointer_type =>
+              {
+                event = next;
+              }
+              other => {
+                pending = Some(other);
+                break;
+              }
+            }
+          }
+        }
         // Runner bookkeeping: device and window facts that outlive any single
         // engine (the pointer positions hover refresh reads, the platform's
         // window geometry, fps). Everything engine-facing happens behind the
