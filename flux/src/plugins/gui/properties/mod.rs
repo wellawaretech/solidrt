@@ -122,6 +122,19 @@ pub(super) fn f32_of(value: &PropValue, what: &str) -> f32 {
   value.as_f64().unwrap_or_else(|| panic!("{what} must be a number")) as f32
 }
 
+// The branded `pct(n)` value from JS: { __unit: "pct", v: n }. Returns the
+// fraction (n / 100), or None for any value that is not a pct. Lets a
+// percentage cross the boundary as a first-class value that no consumer has to
+// string-parse; a bare number stays pixels.
+pub(super) fn as_pct_fraction(value: &PropValue) -> Option<f32> {
+  if value.get("__unit").and_then(PropValue::as_str) == Some("pct") {
+    let v = value.get("v").and_then(PropValue::as_f64).expect("pct value must be a number") as f32;
+    Some(v / 100.0)
+  } else {
+    None
+  }
+}
+
 pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> &'a str {
   value.as_str().unwrap_or_else(|| panic!("{what} must be a string"))
 }

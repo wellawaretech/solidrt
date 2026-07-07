@@ -7,8 +7,8 @@ mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
-  Gradient, GradientStop, GradientUnits, Line, Oval, PaintState, Path, Rectangle, Span, Svg, Text, Texture, View,
-  Window,
+  Gradient, GradientStop, GradientUnits, Line, Oval, OriginCoord, PaintState, Path, Rectangle, Span, Svg, Text, Texture,
+  View, Window,
 };
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;

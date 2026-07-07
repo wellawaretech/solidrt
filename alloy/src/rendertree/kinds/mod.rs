@@ -19,5 +19,5 @@ pub use rect::Rectangle;
 pub use svg::Svg;
 pub use text::{Span, Text};
 pub use texture::Texture;
-pub use view::View;
+pub use view::{OriginCoord, View};
 pub use window::Window;

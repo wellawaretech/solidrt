@@ -43,6 +43,11 @@ type Stop = { offset: number; color: number }
 // element's box), so one gradient can be reused on elements of any size. Branded
 // so the renderer can tell it from a solid color string. The object crosses to
 // the runtime as-is and is decoded by key (see properties/paint.rs).
+//
+// These 0..1 coords are deliberately their own normalized space, NOT the pixel/
+// `pct()` length vocabulary used by layout and transformOrigin: a gradient's
+// position is naturally a fraction (like a stop offset), so 0..1 reads cleaner
+// than pct(0)..pct(100). Do not "unify" them onto pct().
 export type Gradient =
   | { readonly __gradient: "linear"; x0: number; y0: number; x1: number; y1: number; stops: Stop[] }
   | { readonly __gradient: "radial"; cx: number; cy: number; r: number; circle: boolean; stops: Stop[] }

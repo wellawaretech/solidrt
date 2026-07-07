@@ -44,9 +44,9 @@ type Children = Element
 // alone (e.g. shorthand-vs-longhand precedence, a subsetted value range).
 
 interface FlexboxProps {
-  gap?: number
-  rowGap?: number
-  columnGap?: number
+  gap?: LengthPercentage
+  rowGap?: LengthPercentage
+  columnGap?: LengthPercentage
   /** Shorthand; overridden by flexGrow/flexShrink/flexBasis when they're also set. */
   flex?: number | "none" | "auto" | (string & {})
   flexGrow?: number
@@ -74,8 +74,14 @@ interface GridProps {
   gridTemplateRows?: string
 }
 
-/** A layout length: a bare number is pixels, plus "auto" and percent strings. */
-type Dimension = number | "auto" | `${number}%`
+/**
+ * A layout length: a bare number is pixels, `pct(n)` is a percentage of the
+ * containing block, plus "auto" and the `"50%"` string form (kept for paste).
+ */
+type Dimension = number | Pct | "auto" | `${number}%`
+
+/** Like {@link Dimension} without "auto" (e.g. gap, which has no auto value). */
+type LengthPercentage = number | Pct | `${number}%`
 
 export interface LayoutProps extends FlexboxProps, GridProps {
   display?: "block" | "flex" | "grid" | "none"
@@ -131,6 +137,15 @@ export interface PaintProps {
   strokeWidth?: number
 }
 
+/** A percentage value, from `pct(50)`. Resolves against the element box. */
+export type Pct = { readonly __unit: "pct"; v: number }
+
+type OriginKeyword = "left" | "center" | "right" | "top" | "bottom"
+
+// One axis of a transform origin: a pixel `number`, a `pct(n)` fraction of the
+// box, or a CSS position keyword (left/center/right on x, top/center/bottom on y).
+type Origin = number | Pct | OriginKeyword
+
 export interface TransformProps {
   rotate?: number
   scale?: number
@@ -149,8 +164,11 @@ export interface TransformProps {
   perspective?: number
   x?: number
   y?: number
-  cx?: number
-  cy?: number
+  // The point that rotate/scale/3D pivot around (CSS `transform-origin`),
+  // default center. One value sets both axes; a `[x, y]` tuple sets them
+  // independently. A bare number is pixels; `pct(50)` is a fraction of the box,
+  // so a percentage origin tracks the layout size without any reactive wiring.
+  transformOrigin?: Origin | [Origin, Origin]
   // Group opacity in 0..1: children are composited together, then faded as a
   // whole (CSS `opacity`). Does not affect hit testing.
   opacity?: number

@@ -34,8 +34,14 @@ export type {
   TextureProps,
   AudioProps,
   Color,
+  Pct,
 } from "./types"
 export type { MeasureTextOptions } from "flux:rendertree"
+
+// A percentage value for dimensional props (e.g. transformOrigin): `pct(50)` is
+// half the element box. Keeps percentages a first-class branded value rather
+// than a string that has to be parsed - a bare number stays pixels.
+export let pct = (v: number): import("./types").Pct => ({ __unit: "pct", v })
 
 // --- Authoring-surface re-exports -------------------------------------------
 // A SolidRT app is built from three substrate packages: @solidjs/signals

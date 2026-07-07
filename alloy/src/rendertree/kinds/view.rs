@@ -16,6 +16,24 @@ struct TransformCache {
   inverse: Option<Matrix>,
 }
 
+// One axis of the transform origin. `Px` is an absolute offset; `Fraction` is a
+// share of the layout extent (0.5 = center), resolved against the live size at
+// compose time so a percentage origin tracks resizes with no external wiring.
+#[derive(Clone, Copy, Debug)]
+pub enum OriginCoord {
+  Px(f32),
+  Fraction(f32),
+}
+
+impl OriginCoord {
+  fn resolve(self, extent: f32) -> f32 {
+    match self {
+      OriginCoord::Px(v) => v,
+      OriginCoord::Fraction(f) => f * extent,
+    }
+  }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct View {
   pub rotate: Option<f32>,
@@ -34,7 +52,9 @@ pub struct View {
   // shallower, less dramatic 3D effect. Applied around the rotation center.
   pub perspective: Option<f32>,
   pub pos: Option<XY>,
-  pub center: Option<XY>,
+  // Transform origin per axis (CSS `transform-origin`). None on either axis
+  // falls back to the box center. See OriginCoord for the Px/Fraction split.
+  pub origin: Option<(OriginCoord, OriginCoord)>,
   // Scroll offset applied to children at build time, after the clip is set.
   // Positive values shift content leftward/upward (web convention: positive
   // scrollX means scrolled "into" the content from the left).
@@ -57,7 +77,10 @@ impl View {
   }
 
   fn resolve_center(&self, size: WH) -> XY {
-    self.center.unwrap_or(XY::new(size.w / 2.0, size.h / 2.0))
+    match self.origin {
+      Some((x, y)) => XY::new(x.resolve(size.w), y.resolve(size.h)),
+      None => XY::new(size.w / 2.0, size.h / 2.0),
+    }
   }
 
   // Returns the memoized transform for `size`, recomposing (and re-inverting)
@@ -188,7 +211,7 @@ impl Hittable for View {
 }
 
 impl View {
-  // Matrix props (pos, center, rotate, scale, 3D) invalidate the memoized
+  // Matrix props (pos, origin, rotate, scale, 3D) invalidate the memoized
   // matrix and report Damage::Transform: the View's own cached content stays
   // valid because composite applies the current matrix around it. Scroll
   // reports Damage::Scroll: a Recording cache survives (offset applied at
@@ -239,13 +262,8 @@ impl View {
     self.invalidate();
     Damage::Transform
   }
-  pub fn set_cx(&mut self, v: f32) -> Damage {
-    self.center.get_or_insert_with(XY::default).x = v;
-    self.invalidate();
-    Damage::Transform
-  }
-  pub fn set_cy(&mut self, v: f32) -> Damage {
-    self.center.get_or_insert_with(XY::default).y = v;
+  pub fn set_origin(&mut self, x: OriginCoord, y: OriginCoord) -> Damage {
+    self.origin = Some((x, y));
     self.invalidate();
     Damage::Transform
   }
@@ -277,5 +295,40 @@ impl View {
 
   pub fn no_layout(self) -> Element {
     Element::no_layout(ElementKind::View(self))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn origin_defaults_to_center() {
+    let v = View::default();
+    let c = v.resolve_center(WH::new(200.0, 100.0));
+    assert_eq!((c.x, c.y), (100.0, 50.0));
+  }
+
+  #[test]
+  fn fraction_origin_tracks_size() {
+    let mut v = View::default();
+    v.set_origin(OriginCoord::Fraction(0.0), OriginCoord::Fraction(1.0));
+    // Top-left on x, bottom on y, resolved against the live extent.
+    let c = v.resolve_center(WH::new(200.0, 100.0));
+    assert_eq!((c.x, c.y), (0.0, 100.0));
+    // Same fractions, a different size: the pivot moves with the box.
+    let c = v.resolve_center(WH::new(40.0, 60.0));
+    assert_eq!((c.x, c.y), (0.0, 60.0));
+  }
+
+  #[test]
+  fn pixel_origin_is_absolute() {
+    let mut v = View::default();
+    v.set_origin(OriginCoord::Px(20.0), OriginCoord::Px(30.0));
+    let c = v.resolve_center(WH::new(200.0, 100.0));
+    assert_eq!((c.x, c.y), (20.0, 30.0));
+    // Unaffected by size, unlike a fraction.
+    let c = v.resolve_center(WH::new(40.0, 60.0));
+    assert_eq!((c.x, c.y), (20.0, 30.0));
   }
 }

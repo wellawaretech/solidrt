@@ -8,7 +8,7 @@ use taffy::prelude::*;
 use taffy::style::Overflow;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
-use super::{f32_of, str_of};
+use super::{as_pct_fraction, f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 
@@ -279,16 +279,20 @@ fn parse_aspect_ratio(value: &PropValue) -> f32 {
 fn parse_dimension(value: &PropValue) -> Dimension {
   if let Some(n) = value.as_f64() {
     Dimension::length(n as f32)
+  } else if let Some(f) = as_pct_fraction(value) {
+    Dimension::percent(f)
   } else if let Some(s) = value.as_str() {
     parse_dimension_str(s)
   } else {
-    panic!("dimension must be a number or string")
+    panic!("dimension must be a number, pct(), or string")
   }
 }
 
 fn parse_length_percentage(value: &PropValue) -> LengthPercentage {
   if let Some(n) = value.as_f64() {
     LengthPercentage::length(n as f32)
+  } else if let Some(f) = as_pct_fraction(value) {
+    LengthPercentage::percent(f)
   } else if let Some(s) = value.as_str() {
     if s.ends_with('%') {
       let n: f32 = s.trim_end_matches('%').parse().expect("percentage value must be a number");
@@ -297,13 +301,15 @@ fn parse_length_percentage(value: &PropValue) -> LengthPercentage {
       panic!("invalid length/percentage value: '{s}'")
     }
   } else {
-    panic!("length/percentage must be a number or percentage string")
+    panic!("length/percentage must be a number, pct(), or percentage string")
   }
 }
 
 fn parse_length_percentage_auto(value: &PropValue) -> LengthPercentageAuto {
   if let Some(n) = value.as_f64() {
     LengthPercentageAuto::length(n as f32)
+  } else if let Some(f) = as_pct_fraction(value) {
+    LengthPercentageAuto::percent(f)
   } else if let Some(s) = value.as_str() {
     if s == "auto" {
       LengthPercentageAuto::auto()
@@ -314,7 +320,7 @@ fn parse_length_percentage_auto(value: &PropValue) -> LengthPercentageAuto {
       panic!("invalid length/percentage/auto value: '{s}'")
     }
   } else {
-    panic!("length/percentage/auto must be a number or string")
+    panic!("length/percentage/auto must be a number, pct(), or string")
   }
 }
 
