@@ -39,8 +39,9 @@ bunx srt <command> [options]
 | `client`  | Start a local client only                                                          |
 | `run`     | Start both dev server and a local client, and run the file                         |
 | `bundle`  | Transpile a `.tsx` file to JavaScript, or compile JavaScript to bytecode           |
-| `package` | Package the program, assets, and runtime into a standalone distributable (planned) |
-| `record`  | Capture frames from a `.tsx` file to produce a video                               |
+| `package`  | Package the program, assets, and runtime into a standalone distributable (planned) |
+| `record`   | Run a `.tsx` file live and record input events to a script file                    |
+| `playback` | Replay a script (optional) and capture frames from a `.tsx` file to produce a video |
 
 ### Command `server`
 
@@ -111,10 +112,27 @@ bunx srt package <file.tsx> [options]
 
 ### Command `record`
 
-Write frames to disk instead of showing on screen. Usage:
+Run a `.tsx` file live (a normal window, interactive) and record its keyboard
+input events (keydown/keyup) to a script file, for replaying later with
+`playback`. The recording stops and the script is written when the window
+closes. Usage:
 
 ```sh
 bunx srt record <file.tsx>
+```
+
+| Flag           | Description                                         |
+| -------------- | ---------------------------------------------------- |
+| `--out <file>` | Script output file (default: `<file>.script.json`)   |
+| `--size <WxH>` | Window size (default: `1280x720`)                     |
+
+### Command `playback`
+
+Write frames to disk instead of showing on screen, optionally replaying a
+script recorded with `record`. Usage:
+
+```sh
+bunx srt playback <file.tsx> [--script <file>]
 ```
 
 Files are written as `png` with file names `frame-<index>.png`.
@@ -124,11 +142,12 @@ Combine them to form a video, for instance using `ffmpeg`:
 ffmpeg -framerate 60 -i frame-%06d.png -c:v libx264 -crf 18 -pix_fmt yuv420p out.mp4
 ```
 
-| Flag             | Description                        |
-| ---------------- | ---------------------------------- |
-| `--size <WxH>`   | Frame size (default: `1280x720`)   |
-| `--fps <N>`      | Frames per second (default: `60`)  |
-| `--duration <N>` | Duration in seconds (default: `1`) |
+| Flag              | Description                                         |
+| ----------------- | ---------------------------------------------------- |
+| `--script <file>` | Script file to replay (default: no scripted input)   |
+| `--size <WxH>`    | Frame size (default: `1280x720`)                      |
+| `--fps <N>`       | Frames per second (default: `60`)                     |
+| `--duration <N>`  | Duration in seconds (default: `1`)                    |
 
 ## Development server REPL
 

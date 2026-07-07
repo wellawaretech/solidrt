@@ -41,19 +41,19 @@ pub struct DevSession {
 
 impl DevSession {
   /// Start the connection supervisor and the state-forwarding task. Returns
-  /// None in record mode (`record_fps` set), which has no dev connection.
+  /// None in playback mode (`playback_fps` set), which has no dev connection.
   /// `current_exec` is the live engine's exec handle, used to push connection
   /// state into whichever engine is current.
   pub fn start(
     handle: &tokio::runtime::Handle,
     engine_cmd_tx: UnboundedSender<crate::EngineCmd>,
-    record_fps: Option<u32>,
+    playback_fps: Option<u32>,
     local: &LocalSet,
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
     stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
     launch_address: Option<String>,
   ) -> Option<DevSession> {
-    if record_fps.is_some() {
+    if playback_fps.is_some() {
       return None;
     }
 

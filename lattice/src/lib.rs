@@ -33,7 +33,7 @@ use std::sync::Arc;
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server);
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, None);
   0
 }
 
@@ -99,14 +99,22 @@ pub enum AppSource {
   Bytecode(Vec<u8>),
 }
 
+/// Where to write a live-recorded input script, driven by `--record <path>`
+/// on the go client's normal interactive run. The recording stops (and the
+/// script is written) when the window closes.
+pub struct RecordInputConfig {
+  pub path: std::path::PathBuf,
+}
+
 /// What to run, threaded from `start` into the UI thread (kept distinct from the
 /// runtime plumbing it travels with: the tokio handle, alloy context, channels).
 struct RunOptions {
   app: Option<AppSource>,
-  record_fps: Option<u32>,
+  playback_fps: Option<u32>,
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
+  record_input: Option<RecordInputConfig>,
 }
 
 fn ui_thread(
@@ -116,7 +124,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, record_fps, stats, dev_server } = opts;
+  let RunOptions { app, playback_fps, stats, dev_server, record_input } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -136,10 +144,10 @@ fn ui_thread(
   }
 
   let platform = Arc::new(PlatformContext::new());
-  // Record mode renders every frame unconditionally: the lockstep capture
+  // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
   // the demand-driven gate would deadlock it.
-  platform.set_always_render(matches!(record_fps, Some(rfps) if rfps > 0));
+  platform.set_always_render(matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
@@ -164,18 +172,24 @@ fn ui_thread(
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
-    // Virtual present counter the record-mode clock derives time from (frame/fps),
+    // Virtual present counter the playback-mode clock derives time from (frame/fps),
     // published by the frame verb. Unused in run mode.
-    let record_frame = Arc::new(AtomicU64::new(0));
+    let playback_frame = Arc::new(AtomicU64::new(0));
     // Run-mode pacing for the animation timestamps (see paced_clock). None in
-    // record mode, which uses the deterministic frame/fps clock.
-    let paced_clock = match record_fps {
+    // playback mode, which uses the deterministic frame/fps clock.
+    let paced_clock = match playback_fps {
       Some(rfps) if rfps > 0 => None,
       _ => Some(paced_clock::PacedClock::new()),
     };
     let mut ui_runtime =
-      runtime::FluxRuntime::new(current_exec_events, record_frame.clone(), paced_clock, platform.clone());
+      runtime::FluxRuntime::new(current_exec_events, playback_frame.clone(), paced_clock, platform.clone());
     local.spawn_local(async move {
+      // Live input recording (see `record_input`): wall-clock elapsed time
+      // since this task started, and the actions buffered so far. Written out
+      // to `record_input.path` when the window closes (Quit).
+      let record_start = record_input.as_ref().map(|_| std::time::Instant::now());
+      let mut recorded_actions: Vec<alloy::ScriptedAction> = Vec::new();
+
       // An event popped ahead while coalescing PointerMove below, held for the
       // next iteration so it is not reordered past other event types.
       let mut pending: Option<AlloyEvent> = None;
@@ -208,12 +222,22 @@ fn ui_thread(
             }
           }
         }
+        if let Some(start) = record_start {
+          if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
+            recorded_actions.push(alloy::ScriptedAction { at: start.elapsed().as_secs_f64(), event: script_event });
+          }
+        }
         // Runner bookkeeping: device and window facts that outlive any single
         // engine (the pointer positions hover refresh reads, the platform's
         // window geometry, fps). Everything engine-facing happens behind the
         // UiRuntime verbs below.
         match &event {
-          AlloyEvent::Quit => std::process::exit(0),
+          AlloyEvent::Quit => {
+            if let Some(input_cfg) = &record_input {
+              write_recorded_script(&input_cfg.path, &recorded_actions);
+            }
+            std::process::exit(0);
+          }
           AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
             input_state_events.set_modifiers(*modifiers);
           }
@@ -243,7 +267,7 @@ fn ui_thread(
           // FrameRendered reports the frame native just finished drawing. JS
           // uses the "render" event to compute the NEXT frame's state, so
           // shift the field by +1. The JS-side bootstrap owns frame 0;
-          // without the shift, record mode re-runs frame 0 at tick 0 and
+          // without the shift, playback mode re-runs frame 0 at tick 0 and
           // duplicates a PNG.
           AlloyEvent::FrameRendered { frame, .. } => ui_runtime.frame(frame + 1),
           // Tick's frame is already the next present index (one past the
@@ -257,13 +281,13 @@ fn ui_thread(
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
     // The dev-server client: connection supervisor, recents, proxy state and the
-    // srt.dev surface. None in record mode (and entirely absent without the
+    // srt.dev surface. None in playback mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
     #[cfg(feature = "go")]
     let dev_session = go::DevSession::start(
       &handle,
       cmd_tx.clone(),
-      record_fps,
+      playback_fps,
       &local,
       current_exec.clone(),
       platform.stats_handles(),
@@ -273,12 +297,12 @@ fn ui_thread(
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
     // toward it). Injected into each engine; persists across reloads for continuous
     // time.
-    let clock = match record_fps {
-      // Record mode: derive time from the present counter (frame/fps) so the
+    let clock = match playback_fps {
+      // Playback mode: derive time from the present counter (frame/fps) so the
       // whole JS time surface is deterministic and recordings reproducible.
       Some(rfps) if rfps > 0 => {
-        let record_frame = record_frame.clone();
-        flux::Clock::new(move || record_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
+        let playback_frame = playback_frame.clone();
+        flux::Clock::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
       }
       // Run mode: wall clock built on tokio's Instant so the time surface stays
       // controllable under tokio's test clock (pause / advance).
@@ -400,19 +424,58 @@ pub fn start(
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
+  record_input: Option<RecordInputConfig>,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();
-  let record_fps = match &mode {
-    alloy::Mode::Record(record) => Some(record.fps),
+  let playback_fps = match &mode {
+    alloy::Mode::Playback(playback) => Some(playback.fps),
     _ => None,
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, record_fps, stats, dev_server };
+  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, record_input };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });
+}
+
+// Serializes recorded actions to the script JSON schema (`after`-delta steps)
+// and writes them to `path`. Requires serde_json, only pulled in by the `go`
+// feature (the dev client); the plain packed-app binary never records input.
+#[cfg(feature = "go")]
+fn write_recorded_script(path: &std::path::Path, actions: &[alloy::ScriptedAction]) {
+  #[derive(serde::Serialize)]
+  struct ScriptStep {
+    after: f64,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    key: String,
+  }
+
+  let mut prev_at = 0.0;
+  let steps: Vec<ScriptStep> = actions
+    .iter()
+    .map(|action| {
+      let after = action.at - prev_at;
+      prev_at = action.at;
+      let (kind, keycode) = match action.event {
+        alloy::ScriptEvent::KeyDown(k) => ("keydown", k),
+        alloy::ScriptEvent::KeyUp(k) => ("keyup", k),
+      };
+      ScriptStep { after, kind, key: keycode.name() }
+    })
+    .collect();
+
+  let json = serde_json::to_string_pretty(&steps).expect("serialize recorded script");
+  std::fs::write(path, json).unwrap_or_else(|e| panic!("Failed to write '{}': {e}", path.display()));
+  log::info!("[srt] wrote {} scripted action(s) to {}", steps.len(), path.display());
+}
+
+#[cfg(not(feature = "go"))]
+fn write_recorded_script(path: &std::path::Path, actions: &[alloy::ScriptedAction]) {
+  let _ = actions;
+  log::warn!("[srt] input recording requires the go client build; not writing {}", path.display());
 }

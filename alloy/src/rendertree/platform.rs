@@ -19,7 +19,7 @@ pub struct PlatformContext {
   // thread (pointer input, resize), and the dev-server connection thread (see
   // go/connection.rs).
   frame_requested: Arc<AtomicBool>,
-  // Bypass the demand-driven gate and render every frame (record mode).
+  // Bypass the demand-driven gate and render every frame (playback mode).
   always_render: Cell<bool>,
   // Whether the debug stats overlay (HUD) is drawn. Arc'd so the dev-server
   // connection (a different thread, see go/connection.rs) can toggle it.

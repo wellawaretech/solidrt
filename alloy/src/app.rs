@@ -10,7 +10,7 @@ use crate::event::{
 };
 use crate::gl;
 use crate::mode::Mode;
-use crate::record::run_record_loop;
+use crate::playback::run_playback_loop;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
@@ -29,9 +29,9 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // as PointerType::Mouse with a sentinel pointer_id.
   sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
   sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
-  // For recording, force 1:1 pixel mapping so the window is exactly the
+  // For playback, force 1:1 pixel mapping so the window is exactly the
   // requested size in physical pixels regardless of display scale.
-  if mode.is_record() {
+  if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
   }
 
@@ -51,10 +51,10 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   let build_window = |video: &sdl3::VideoSubsystem| {
     let mut builder = video.window(title, width, height);
     builder.opengl().position_centered().high_pixel_density();
-    // A recording window is hidden and fixed-size: keeping it non-resizable stops
+    // A playback window is hidden and fixed-size: keeping it non-resizable stops
     // the compositor from negotiating a different surface size on a scaled display,
     // which would diverge from the requested capture dimensions.
-    if !mode.is_record() {
+    if !mode.is_playback() {
       builder.resizable();
     }
     builder.build()
@@ -67,7 +67,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
       build_window(&video).expect("Failed to create window")
     }
   };
-  if mode.is_record() {
+  if mode.is_playback() {
     window.hide();
   }
 
@@ -81,9 +81,9 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
 }
 
 fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>, mode: &Mode) {
-  // In record mode the surface is fixed at the size captured in setup, which is
+  // In playback mode the surface is fixed at the size captured in setup, which is
   // exactly what the frame readback assumes; ignore resize events.
-  if mode.is_record() {
+  if mode.is_playback() {
     return;
   }
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
@@ -115,8 +115,8 @@ impl App {
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a submitted frame must push an event to be noticed before the
-    // wait's timeout. Record mode blocks on the frame channel directly.
-    let wake: Option<Box<dyn Fn() + Send + Sync>> = if mode.is_record() {
+    // wait's timeout. Playback mode blocks on the frame channel directly.
+    let wake: Option<Box<dyn Fn() + Send + Sync>> = if mode.is_playback() {
       None
     } else {
       let events = sdl_context.event().expect("Failed to get SDL event subsystem");
@@ -132,8 +132,8 @@ impl App {
     apply_main_thread_effects(&initial, &mut render_surface, &mode);
     event_tx.send(initial).ok();
 
-    if let Mode::Record(record) = mode {
-      run_record_loop(window, render_surface, rx, event_tx, record);
+    if let Mode::Playback(playback) = mode {
+      run_playback_loop(window, render_surface, rx, event_tx, playback);
       return;
     }
 

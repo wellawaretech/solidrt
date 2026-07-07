@@ -81,6 +81,6 @@ Authoritative references ship inside the installed packages - read them:
 
 - bunx srt run src/index.tsx     - dev server + window (needs a display)
 - bunx srt bundle src/index.tsx  - exit 0 means it compiles
-- bunx srt record src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
+- bunx srt playback src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
   render to PNG frames (proves it renders; see the cli AGENTS.md for where the
   frames land)

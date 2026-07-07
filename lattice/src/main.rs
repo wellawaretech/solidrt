@@ -32,7 +32,9 @@ fn main() {
   let bytecode: Option<Vec<u8>> = None;
 
   let mut args = std::env::args().skip(1);
-  let mut record = false;
+  let mut playback = false;
+  let mut record_out: Option<String> = None;
+  let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
   let mut duration: u32 = 1;
   let mut size: (u32, u32) = (1280, 720);
@@ -40,8 +42,12 @@ fn main() {
   let mut dev_server: Option<String> = None;
   let mut source_path: Option<String> = None;
   while let Some(arg) = args.next() {
-    if arg == "--record" {
-      record = true;
+    if arg == "--playback" {
+      playback = true;
+    } else if arg == "--record" {
+      record_out = Some(args.next().expect("--record requires an output file path"));
+    } else if arg == "--script" {
+      script_path = Some(args.next().expect("--script requires a file path"));
     } else if arg == "--stats" {
       stats = true;
     } else if arg == "--dev-server" {
@@ -70,15 +76,55 @@ fn main() {
       lattice::AppSource::Text(src)
     }),
   };
-  let mode = if record {
-    alloy::Mode::Record(alloy::RecordConfig {
+  let mode = if playback {
+    alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,
       frames: (duration * fps) as u64,
       output_prefix: "frame".to_string(),
+      script: script_path.map(load_script).unwrap_or_default(),
     })
   } else {
     alloy::Mode::Run
   };
+  let record_input = record_out.map(|path| lattice::RecordInputConfig { path: path.into() });
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, app, mode, size, stats, dev_server);
+  lattice::start(&rt, app, mode, size, stats, dev_server, record_input);
+}
+
+// Parses a `--script` file (see `srt playback --script`) into a ScriptPlayer.
+// Needs serde_json, only pulled in by the `go` feature (the dev client); the
+// plain packed-app binary never replays a script.
+#[cfg(feature = "go")]
+fn load_script(path: String) -> alloy::ScriptPlayer {
+  #[derive(serde::Deserialize)]
+  struct ScriptStep {
+    after: f64,
+    #[serde(rename = "type")]
+    kind: String,
+    key: String,
+  }
+
+  let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
+  let raw: Vec<ScriptStep> = serde_json::from_str(&text).unwrap_or_else(|e| panic!("Failed to parse '{path}': {e}"));
+  let mut at = 0.0;
+  let actions = raw
+    .into_iter()
+    .map(|step| {
+      at += step.after;
+      let keycode = alloy::sdl3::keyboard::Keycode::from_name(&step.key)
+        .unwrap_or_else(|| panic!("Unknown key name '{}' in '{path}'", step.key));
+      let event = match step.kind.as_str() {
+        "keydown" => alloy::ScriptEvent::KeyDown(keycode),
+        "keyup" => alloy::ScriptEvent::KeyUp(keycode),
+        other => panic!("Unknown script step type '{other}' in '{path}'"),
+      };
+      alloy::ScriptedAction { at, event }
+    })
+    .collect();
+  alloy::ScriptPlayer::new(actions)
+}
+
+#[cfg(not(feature = "go"))]
+fn load_script(path: String) -> alloy::ScriptPlayer {
+  panic!("--script requires the go client build (path: {path})");
 }

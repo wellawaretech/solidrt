@@ -10,8 +10,9 @@ mod event;
 mod logging;
 pub mod microphone;
 mod mode;
-mod record;
+mod playback;
 pub mod rendertree;
+mod script;
 mod shader;
 mod texture;
 
@@ -24,7 +25,8 @@ pub use context::Context;
 pub use event::{AlloyCommand, AlloyEvent, Modifiers, PointerType};
 pub use logging::install_logger;
 pub use mode::Mode;
-pub use record::RecordConfig;
+pub use playback::PlaybackConfig;
+pub use script::{ScriptEvent, ScriptedAction, ScriptPlayer};
 pub use texture::{GpuTexture, TextureEntry, TextureRegistry};
 
 use std::sync::atomic::{AtomicI32, Ordering};

@@ -27,7 +27,7 @@ pub struct Context {
   tx: mpsc::Sender<Frame>,
   // Wakes the main thread's event wait after a frame is queued, so a submitted
   // frame presents immediately instead of at the next wait timeout. None in
-  // record mode, whose capture loop blocks on the channel directly.
+  // playback mode, whose capture loop blocks on the channel directly.
   wake: Option<Box<dyn Fn() + Send + Sync>>,
 }
 

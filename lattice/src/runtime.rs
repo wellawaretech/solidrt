@@ -33,11 +33,11 @@ pub trait UiRuntime {
 /// engine that does not exist.
 pub struct FluxRuntime {
   exec: Rc<RefCell<Option<ExecHandle>>>,
-  // Virtual present counter the record-mode clock derives time from,
+  // Virtual present counter the playback-mode clock derives time from,
   // published by frame(). Unused in run mode.
-  record_frame: Arc<AtomicU64>,
+  playback_frame: Arc<AtomicU64>,
   // Run-mode pacing for the animation timestamps (see paced_clock). None in
-  // record mode, which uses the deterministic frame/fps clock.
+  // playback mode, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
   platform: Arc<PlatformContext>,
 }
@@ -45,11 +45,11 @@ pub struct FluxRuntime {
 impl FluxRuntime {
   pub fn new(
     exec: Rc<RefCell<Option<ExecHandle>>>,
-    record_frame: Arc<AtomicU64>,
+    playback_frame: Arc<AtomicU64>,
     paced: Option<PacedClock>,
     platform: Arc<PlatformContext>,
   ) -> Self {
-    Self { exec, record_frame, paced, platform }
+    Self { exec, playback_frame, paced, platform }
   }
 }
 
@@ -134,15 +134,15 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
-    let record_frame = self.record_frame.clone();
+    let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
     let platform = self.platform.clone();
     eh.exec(move |ctx| {
       // Publish the present being computed before reading the clock, so in
-      // record mode the clock reports this frame's virtual time.
-      record_frame.store(next_frame, Ordering::Relaxed);
+      // playback mode the clock reports this frame's virtual time.
+      playback_frame.store(next_frame, Ordering::Relaxed);
       // rAF and the render event use the paced clock in run mode (see
-      // paced_clock); record mode and performance.now() read flux::Clock
+      // paced_clock); playback mode and performance.now() read flux::Clock
       // directly. Idle Ticks arrive at the refresh cadence, so ticking the
       // paced clock for them preserves its one-period-per-call model. Render
       // event carries seconds; JS scales to ms.

@@ -84,7 +84,7 @@ impl ModuleDef for SrtRenderModule {
 
       // Demand-driven gate: when nothing requested a frame, skip it entirely
       // (layout, paint, submit, hover refresh - elements only move when a frame
-      // is produced, so hover cannot have changed either). Record mode renders
+      // is produced, so hover cannot have changed either). Playback mode renders
       // unconditionally: its capture loop blocks waiting for every frame's
       // display list.
       //
@@ -105,7 +105,7 @@ impl ModuleDef for SrtRenderModule {
       // Present-only reuse: nothing that feeds the display list changed, so
       // resubmit the cached one instead of rebuilding. Layout, postLayout and
       // hover refresh are skipped too - the tree and window are unchanged.
-      // Bypassed in record mode to keep its captures identical to a rebuild
+      // Bypassed in playback mode to keep its captures identical to a rebuild
       // (the overlay would otherwise freeze mid-recording).
       if !platform.always_render() && !overlay_due {
         if let Some(c) = cache.borrow().as_ref() {

@@ -13,6 +13,8 @@ export let { values, positionals } = parseArgs({
     fps: { type: "string" },
     duration: { type: "string" },
     size: { type: "string" },
+    script: { type: "string" },
+    out: { type: "string" },
     stats: { type: "boolean", default: false },
     android: { type: "boolean", default: false },
     device: { type: "string" },
@@ -46,6 +48,9 @@ export function validateArgs() {
     case "record":
       if (!source || !isTsx) usage("srt record <entry.[tsx|jsx]>")
       break
+    case "playback":
+      if (!source || !isTsx) usage("srt playback <entry.[tsx|jsx]>")
+      break
     case "pack":
       if (values.flux) {
         if (!source || !isTs) usage("srt pack --flux [options] <entry.[ts|js]>")
@@ -71,7 +76,8 @@ Commands:
   server [file]          Start dev server only
   client                 Start solidrt-go client only
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
-  record <file.tsx|jsx>  Capture frames for video generation
+  record <file.tsx|jsx>  Run live and record input events (keypresses) to a script file
+  playback <file.tsx|jsx> Replay a script (optional) and capture frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
 
 init options:
@@ -103,6 +109,11 @@ pack options:
   -o, --output <name>    Output filename
 
 record options:
+      --out <file>       Script output file (default: <entry>.script.json)
+      --size <WxH>       Window size (default: 1280x720)
+
+playback options:
+      --script <file>    Script file to replay (default: no scripted input)
       --fps <N>          Frames per second (default: 60)
       --duration <N>     Duration in seconds (default: 1)
       --size <WxH>       Frame size (default: 1280x720)`)
