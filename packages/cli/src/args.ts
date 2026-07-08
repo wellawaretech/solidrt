@@ -14,7 +14,7 @@ export let { values, positionals } = parseArgs({
     duration: { type: "string" },
     size: { type: "string" },
     script: { type: "string" },
-    out: { type: "string" },
+    capture: { type: "string" },
     stats: { type: "boolean", default: false },
     android: { type: "boolean", default: false },
     device: { type: "string" },
@@ -45,9 +45,6 @@ export function validateArgs() {
         usage("srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
       }
       break
-    case "record":
-      if (!source || !isTsx) usage("srt record <entry.[tsx|jsx]>")
-      break
     case "render":
       if (!source || !isTsx) usage("srt render <entry.[tsx|jsx]>")
       break
@@ -76,7 +73,6 @@ Commands:
   server [file]          Start dev server only
   client                 Start solidrt-go client only
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
-  record <file.tsx|jsx>  Run live and record input events (keypresses) to a script file
   render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
 
@@ -86,6 +82,7 @@ init options:
 run/server options:
       --proxy-files      Route file/dir access through the dev server
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
+      --capture <file>   Record connected clients' key events to a script file
 
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
@@ -107,10 +104,6 @@ pack options:
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename
-
-record options:
-      --out <file>       Script output file (default: <entry>.script.json)
-      --size <WxH>       Window size (default: 1280x720)
 
 render options:
       --script <file>    Script file to replay (default: no scripted input)

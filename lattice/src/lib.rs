@@ -33,7 +33,7 @@ use std::sync::Arc;
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, None);
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server);
   0
 }
 
@@ -99,13 +99,6 @@ pub enum AppSource {
   Bytecode(Vec<u8>),
 }
 
-/// Where to write a live-recorded input script, driven by `--record <path>`
-/// on the go client's normal interactive run. The recording stops (and the
-/// script is written) when the window closes.
-pub struct RecordInputConfig {
-  pub path: std::path::PathBuf,
-}
-
 /// What to run, threaded from `start` into the UI thread (kept distinct from the
 /// runtime plumbing it travels with: the tokio handle, alloy context, channels).
 struct RunOptions {
@@ -114,7 +107,6 @@ struct RunOptions {
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
-  record_input: Option<RecordInputConfig>,
 }
 
 fn ui_thread(
@@ -124,7 +116,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, playback_fps, stats, dev_server, record_input } = opts;
+  let RunOptions { app, playback_fps, stats, dev_server } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -183,13 +175,19 @@ fn ui_thread(
     };
     let mut ui_runtime =
       runtime::FluxRuntime::new(current_exec_events, playback_frame.clone(), paced_clock, platform.clone());
-    local.spawn_local(async move {
-      // Live input recording (see `record_input`): wall-clock elapsed time
-      // since this task started, and the actions buffered so far. Written out
-      // to `record_input.path` when the window closes (Quit).
-      let record_start = record_input.as_ref().map(|_| std::time::Instant::now());
-      let mut recorded_actions: Vec<alloy::ScriptedAction> = Vec::new();
 
+    // Live input capture (see `--capture` in dev-server.ts): set from the
+    // dev server's `welcome`/`capture` messages (see go::DevSession::start
+    // below). Captured events are forwarded to the dev server over
+    // `capture_tx`, not written locally -- the server decides what to do
+    // with them.
+    let capture_enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let capture_enabled_events = capture_enabled.clone();
+    let (capture_tx, capture_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    #[cfg(not(feature = "go"))]
+    let _ = (capture_enabled, capture_rx);
+
+    local.spawn_local(async move {
       // An event popped ahead while coalescing PointerMove below, held for the
       // next iteration so it is not reordered past other event types.
       let mut pending: Option<AlloyEvent> = None;
@@ -222,9 +220,13 @@ fn ui_thread(
             }
           }
         }
-        if let Some(start) = record_start {
+        if capture_enabled_events.load(Ordering::Relaxed) {
           if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
-            recorded_actions.push(alloy::ScriptedAction { at: start.elapsed().as_secs_f64(), event: script_event });
+            let (kind, key) = match script_event {
+              alloy::ScriptEvent::KeyDown(k) => ("keydown", k.name()),
+              alloy::ScriptEvent::KeyUp(k) => ("keyup", k.name()),
+            };
+            let _ = capture_tx.send(format!(r#"{{"type":"capture","kind":"{kind}","key":"{key}"}}"#));
           }
         }
         // Runner bookkeeping: device and window facts that outlive any single
@@ -232,12 +234,7 @@ fn ui_thread(
         // window geometry, fps). Everything engine-facing happens behind the
         // UiRuntime verbs below.
         match &event {
-          AlloyEvent::Quit => {
-            if let Some(input_cfg) = &record_input {
-              write_recorded_script(&input_cfg.path, &recorded_actions);
-            }
-            std::process::exit(0);
-          }
+          AlloyEvent::Quit => std::process::exit(0),
           AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
             input_state_events.set_modifiers(*modifiers);
           }
@@ -291,6 +288,8 @@ fn ui_thread(
       &local,
       current_exec.clone(),
       platform.stats_handles(),
+      capture_enabled,
+      capture_rx,
       dev_server,
     );
 
@@ -424,7 +423,6 @@ pub fn start(
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
-  record_input: Option<RecordInputConfig>,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -436,46 +434,8 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, record_input };
+  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });
-}
-
-// Serializes recorded actions to the script JSON schema (`after`-delta steps)
-// and writes them to `path`. Requires serde_json, only pulled in by the `go`
-// feature (the dev client); the plain packed-app binary never records input.
-#[cfg(feature = "go")]
-fn write_recorded_script(path: &std::path::Path, actions: &[alloy::ScriptedAction]) {
-  #[derive(serde::Serialize)]
-  struct ScriptStep {
-    after: f64,
-    #[serde(rename = "type")]
-    kind: &'static str,
-    key: String,
-  }
-
-  let mut prev_at = 0.0;
-  let steps: Vec<ScriptStep> = actions
-    .iter()
-    .map(|action| {
-      let after = action.at - prev_at;
-      prev_at = action.at;
-      let (kind, keycode) = match action.event {
-        alloy::ScriptEvent::KeyDown(k) => ("keydown", k),
-        alloy::ScriptEvent::KeyUp(k) => ("keyup", k),
-      };
-      ScriptStep { after, kind, key: keycode.name() }
-    })
-    .collect();
-
-  let json = serde_json::to_string_pretty(&steps).expect("serialize recorded script");
-  std::fs::write(path, json).unwrap_or_else(|e| panic!("Failed to write '{}': {e}", path.display()));
-  log::info!("[srt] wrote {} scripted action(s) to {}", steps.len(), path.display());
-}
-
-#[cfg(not(feature = "go"))]
-fn write_recorded_script(path: &std::path::Path, actions: &[alloy::ScriptedAction]) {
-  let _ = actions;
-  log::warn!("[srt] input recording requires the go client build; not writing {}", path.display());
 }

@@ -51,6 +51,8 @@ impl DevSession {
     local: &LocalSet,
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
     stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
+    capture_enabled: Arc<AtomicBool>,
+    capture_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     launch_address: Option<String>,
   ) -> Option<DevSession> {
     if playback_fps.is_some() {
@@ -63,13 +65,14 @@ impl DevSession {
       proxy_http_enabled: Arc::new(AtomicBool::new(false)),
       stats_enabled,
       frame_requested,
+      capture_enabled,
     };
     let dev_server: DevServerCell = Arc::new(std::sync::Mutex::new(None));
     let dev_state = Rc::new(RefCell::new(ConnState::Idle));
     let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(super::config::load().recents));
 
     let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<ConnState>();
-    let dev_cmd_tx = connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone());
+    let dev_cmd_tx = connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone(), capture_rx);
 
     // Forward connection-state changes to JS as the sticky `dev` event,
     // targeting whichever engine is currently live, and keep the held copy in

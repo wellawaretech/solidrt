@@ -18,12 +18,13 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 - `bunx srt bundle src/index.tsx` - transpile to `<file>.srt.js`. With
   `--compile`, emits `.srt.bin` bytecode. `--minify`, `--dev`, `--stdout`,
   `--output` also available.
-- `bunx srt record src/index.tsx [flags]` - run live and record input events
-  (keydown/keyup so far) to a script file, for replaying with `render`.
 - `bunx srt render src/index.tsx [flags]` - render OFFSCREEN to PNG frames,
-  optionally replaying a `--script` file recorded with `record`.
+  optionally replaying a `--script` file recorded via `--capture`.
 - `bunx srt server [file]` / `bunx srt client` - the two halves of `run`
   separately (server distributes code; clients on other devices connect to it).
+- `bunx srt run src/index.tsx --capture out.script.json` - records keydown/keyup
+  from every connected client into one script file (written on client
+  disconnect), for replaying later with `render --script`.
 
 ## Verifying without a display (headless / CI / agent box)
 

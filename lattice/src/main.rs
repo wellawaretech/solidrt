@@ -33,7 +33,6 @@ fn main() {
 
   let mut args = std::env::args().skip(1);
   let mut playback = false;
-  let mut record_out: Option<String> = None;
   let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
   let mut duration: u32 = 1;
@@ -44,8 +43,6 @@ fn main() {
   while let Some(arg) = args.next() {
     if arg == "--playback" {
       playback = true;
-    } else if arg == "--record" {
-      record_out = Some(args.next().expect("--record requires an output file path"));
     } else if arg == "--script" {
       script_path = Some(args.next().expect("--script requires a file path"));
     } else if arg == "--stats" {
@@ -86,31 +83,33 @@ fn main() {
   } else {
     alloy::Mode::Run
   };
-  let record_input = record_out.map(|path| lattice::RecordInputConfig { path: path.into() });
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, app, mode, size, stats, dev_server, record_input);
+  lattice::start(&rt, app, mode, size, stats, dev_server);
 }
 
-// Parses a `--script` file (see `srt playback --script`) into a ScriptPlayer.
+// Parses a `--script` file (see `srt render --script`, written by `srt run
+// --capture`) into a ScriptPlayer. One JSON object per line (JSON Lines), not
+// a single JSON array -- matches dev-server.ts's streaming capture writer.
 // Needs serde_json, only pulled in by the `go` feature (the dev client); the
 // plain packed-app binary never replays a script.
 #[cfg(feature = "go")]
 fn load_script(path: String) -> alloy::ScriptPlayer {
   #[derive(serde::Deserialize)]
   struct ScriptStep {
-    after: f64,
+    after: u64, // milliseconds
     #[serde(rename = "type")]
     kind: String,
     key: String,
   }
 
   let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
-  let raw: Vec<ScriptStep> = serde_json::from_str(&text).unwrap_or_else(|e| panic!("Failed to parse '{path}': {e}"));
   let mut at = 0.0;
-  let actions = raw
-    .into_iter()
-    .map(|step| {
-      at += step.after;
+  let actions = text
+    .lines()
+    .filter(|line| !line.trim().is_empty())
+    .map(|line| {
+      let step: ScriptStep = serde_json::from_str(line).unwrap_or_else(|e| panic!("Failed to parse '{path}': {e}"));
+      at += step.after as f64 / 1000.0;
       let keycode = alloy::sdl3::keyboard::Keycode::from_name(&step.key)
         .unwrap_or_else(|| panic!("Unknown key name '{}' in '{path}'", step.key));
       let event = match step.kind.as_str() {

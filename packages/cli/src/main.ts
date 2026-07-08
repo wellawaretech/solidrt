@@ -4,7 +4,6 @@ import { values, command, validateArgs, printUsage } from "./args"
 import { runInitCommand } from "./commands/init"
 import { runBundleCommand } from "./commands/bundle"
 import { runPackCommand } from "./commands/pack"
-import { runRecordCommand } from "./commands/record"
 import { runRenderCommand } from "./commands/render"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
@@ -23,8 +22,7 @@ validateArgs()
 // the auto-activation by setting NODE_ENV=production. Since that is read at startup,
 // we re-exec rather than mutate process.env. Assumes srt runs via bun (argv is
 // [bun, script, ...]); would need rework if ever shipped as a compiled binary.
-let isProdBuild =
-  (command === "bundle" || command === "record" || command === "render" || command === "pack") && !values.dev
+let isProdBuild = (command === "bundle" || command === "render" || command === "pack") && !values.dev
 if (isProdBuild && process.env.NODE_ENV !== "production") {
   let proc = Bun.spawnSync({
     cmd: [process.execPath, ...process.argv.slice(1)],
@@ -44,8 +42,6 @@ if (command === "init") {
   await runBundleCommand()
 } else if (command === "pack") {
   await runPackCommand()
-} else if (command === "record") {
-  await runRecordCommand()
 } else if (command === "render") {
   await runRenderCommand()
 } else if (command === "client") {

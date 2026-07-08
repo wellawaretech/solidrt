@@ -6,7 +6,8 @@ import type { Server as BunServer } from "bun"
 import type { Bonjour } from "bonjour-service"
 
 export let state = {
-  clients: new Map<any, { platform: string; version: string }>(),
+  clients: new Map<any, { platform: string; version: string; id: number }>(),
+  nextClientId: 0,
   currentCode: null as string | null,
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
@@ -16,6 +17,16 @@ export let state = {
   rl: null as ReadlineInterface | null,
   bonjour: null as Bonjour | null,
   stats: false,
+  // --capture <file>: destination for captured key events, or undefined when
+  // off. Clients only report kind/key; the server stamps `after` itself (one
+  // shared clock from captureStartMs, integer milliseconds) so events from
+  // several connected clients merge into one coherent timeline, tagged by
+  // `device` (see dev-server.ts) so they can be told apart. Streamed to disk
+  // as JSON Lines (one event object per line) as each arrives - see
+  // dev-server.ts's "capture" message handling.
+  capture: undefined as string | undefined,
+  captureStartMs: 0,
+  captureLastAt: 0, // ms, same clock as captureStartMs
 }
 
 // Build target per binary, for the "not found" hint. Run from the repo root.

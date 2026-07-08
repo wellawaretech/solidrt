@@ -40,7 +40,6 @@ bunx srt <command> [options]
 | `run`     | Start both dev server and a local client, and run the file                         |
 | `bundle`  | Transpile a `.tsx` file to JavaScript, or compile JavaScript to bytecode           |
 | `package`  | Package the program, assets, and runtime into a standalone distributable (planned) |
-| `record`   | Run a `.tsx` file live and record input events to a script file                    |
 | `render`   | Replay a script (optional) and render frames from a `.tsx` file to produce a video |
 
 ### Command `server`
@@ -55,10 +54,18 @@ When `file` is provided, it is transpiled and pushed to all connected clients im
 
 When running, a REPL is started. See section Dev server REPL.
 
-| Flag            | Description                                              |
-| --------------- | -------------------------------------------------------- |
-| `--proxy-files` | Route file/dir access through the dev server             |
-| `--proxy-http`  | Route fetch calls through the dev server (cache enabled) |
+| Flag             | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `--proxy-files`  | Route file/dir access through the dev server             |
+| `--proxy-http`   | Route fetch calls through the dev server (cache enabled) |
+| `--capture <file>` | Record connected clients' key events to a script file  |
+
+`--capture` records keyboard input (keydown/keyup) from every connected
+client into one script file, for replaying later with `render --script`.
+Events are streamed to disk as they happen (one JSON object per line, [JSON
+Lines](https://jsonlines.org/) format) rather than buffered in memory. Each
+line is `{"after": <ms since previous event, integer>, "type": "keydown" |
+"keyup", "key": "...", "device": <client id>}`.
 
 ### Command `client`
 
@@ -110,26 +117,10 @@ Package a SolidRT application into a standalone distributable. The package inclu
 bunx srt package <file.tsx> [options]
 ```
 
-### Command `record`
-
-Run a `.tsx` file live (a normal window, interactive) and record its keyboard
-input events (keydown/keyup) to a script file, for replaying later with
-`render`. The recording stops and the script is written when the window
-closes. Usage:
-
-```sh
-bunx srt record <file.tsx>
-```
-
-| Flag           | Description                                         |
-| -------------- | ---------------------------------------------------- |
-| `--out <file>` | Script output file (default: `<file>.script.json`)   |
-| `--size <WxH>` | Window size (default: `1280x720`)                     |
-
 ### Command `render`
 
 Write frames to disk instead of showing on screen, optionally replaying a
-script recorded with `record`. Usage:
+script recorded with `--capture` (see the `server`/`run` flags above). Usage:
 
 ```sh
 bunx srt render <file.tsx> [--script <file>]

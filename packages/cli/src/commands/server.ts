@@ -7,6 +7,7 @@ import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
 import * as cache from "../cache"
 import { resolve, dirname } from "path"
+import { writeFileSync } from "node:fs"
 
 // Brings up the dev server (HTTP/WS + initial bundle + repl + watcher). The
 // `run` command spawns a local client on top of this from main.ts.
@@ -15,6 +16,11 @@ export async function runServerCommand() {
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
   state.stats = values.stats
+  state.capture = values.capture ? resolve(values.capture) : undefined
+  state.captureStartMs = Date.now()
+  // Start each capture from an empty file: appendFileSync (dev-server.ts)
+  // would otherwise tack onto whatever a previous run left behind.
+  if (state.capture) writeFileSync(state.capture, "")
 
   if (values["proxy-http"]) {
     cache.initCache({ dir: process.cwd() })

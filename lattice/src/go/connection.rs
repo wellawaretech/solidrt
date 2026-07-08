@@ -25,6 +25,11 @@ pub struct DevFlags {
   /// Frame-request latch (see PlatformContext::request_frame); set alongside
   /// `stats_enabled` so a toggle is drawn even when the app is idle.
   pub frame_requested: Arc<AtomicBool>,
+  /// Whether the UI thread should forward key events to the dev server; set
+  /// from the `welcome` message's `capture` field. The server decides what to
+  /// do with forwarded events (see `capture_tx` on the caller side and
+  /// `dev-server.ts`'s `capture` message handling).
+  pub capture_enabled: Arc<AtomicBool>,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -76,9 +81,10 @@ pub fn start(
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
   flags: DevFlags,
+  capture_rx: UnboundedReceiver<String>,
 ) -> UnboundedSender<DevCmd> {
   let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
-  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, flags));
+  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, flags, capture_rx));
   cmd_tx
 }
 
@@ -91,6 +97,7 @@ async fn supervisor(
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
   flags: DevFlags,
+  mut capture_rx: UnboundedReceiver<String>,
 ) {
   let mut pending: Option<DevCmd> = None;
   loop {
@@ -106,12 +113,12 @@ async fn supervisor(
         let _ = state_tx.send(ConnState::Idle);
       }
       DevCmd::Connect(addr) => {
-        pending = run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags).await;
+        pending = run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut capture_rx).await;
       }
       DevCmd::Discover => {
         #[cfg(not(target_os = "android"))]
         {
-          pending = run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags).await;
+          pending = run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut capture_rx).await;
         }
         #[cfg(target_os = "android")]
         {
@@ -132,12 +139,13 @@ async fn run_direct(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
+  capture_rx: &mut UnboundedReceiver<String>,
 ) -> Option<DevCmd> {
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
     tokio::select! {
       cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags) => {
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, capture_rx) => {
         // Failed to connect or the connection dropped; pause before retrying,
         // but let a new command interrupt the wait.
         tokio::select! {
@@ -162,6 +170,7 @@ async fn run_discover(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
+  capture_rx: &mut UnboundedReceiver<String>,
 ) -> Option<DevCmd> {
   use mdns_sd::ServiceDaemon;
 
@@ -209,7 +218,7 @@ async fn run_discover(
       let _ = state_tx.send(ConnState::Connecting(server.clone()));
       let connected = tokio::select! {
         cmd = cmd_rx.recv() => return cmd,
-        c = try_serve(&server, engine_tx, state_tx, dev_server, flags) => c,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, flags, capture_rx) => c,
       };
       if connected {
         // Was connected, then dropped: retry the same address.
@@ -278,6 +287,7 @@ async fn try_serve(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
+  capture_rx: &mut UnboundedReceiver<String>,
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
@@ -303,9 +313,18 @@ async fn try_serve(
   let info = format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, flux::platform(), crate::VERSION);
   let _ = client.send(tokio_websockets::Message::text(info)).await;
 
-  while let Some(Ok(msg)) = client.next().await {
-    if let Some(text) = msg.as_text() {
-      if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+  loop {
+    tokio::select! {
+      // Captured key events from the UI thread (see `capture_tx`), forwarded
+      // verbatim to the dev server, which decides what to do with them.
+      Some(text) = capture_rx.recv() => {
+        let _ = client.send(tokio_websockets::Message::text(text)).await;
+        continue;
+      }
+      msg = client.next() => {
+        let Some(Ok(msg)) = msg else { break };
+        let Some(text) = msg.as_text() else { continue };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else { continue };
         match json.get("type").and_then(|t| t.as_str()) {
           Some("welcome") => {
             // The server's self-reported LAN address. Report it as the connected
@@ -321,6 +340,11 @@ async fn try_serve(
             if let Some(stats) = json.get("stats").and_then(|s| s.as_bool()) {
               flags.stats_enabled.store(stats, Ordering::Relaxed);
               flags.frame_requested.store(true, Ordering::Relaxed);
+            }
+            // The dev server's --capture setting: whether the UI thread should
+            // forward key events for this session (see capture_rx below).
+            if let Some(capture) = json.get("capture").and_then(|c| c.as_bool()) {
+              flags.capture_enabled.store(capture, Ordering::Relaxed);
             }
           }
           Some("reload") => {

@@ -1,5 +1,6 @@
 import { resolve } from "path"
 import { stat as fsStat, readdir } from "node:fs/promises"
+import { appendFileSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { Bonjour } from "bonjour-service"
 import qrcode from "qrcode-generator"
@@ -172,11 +173,14 @@ export function startServer() {
     },
     websocket: {
       open(ws) {
-        state.clients.set(ws, { platform: "unknown", version: "unknown" })
+        let id = state.nextClientId++
+        state.clients.set(ws, { platform: "unknown", version: "unknown", id })
         print(`[cli] Client connected ${ws.remoteAddress}`)
         // Advertise our real LAN address so clients dialed over the adb loopback
         // can show/remember the directly reachable address (see connection.rs).
-        ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats }))
+        ws.send(
+          JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!state.capture }),
+        )
         if (state.currentCode) {
           ws.send(buildReload({ code: state.currentCode }))
         }
@@ -195,11 +199,25 @@ export function startServer() {
         try {
           let data = JSON.parse(typeof msg === "string" ? msg : Buffer.from(msg).toString())
           if (data.type === "info") {
+            let existing = state.clients.get(ws)
             state.clients.set(ws, {
               platform: data.platform ?? "unknown",
               version: data.version ?? "unknown",
+              id: existing?.id ?? state.nextClientId++,
             })
             print(`[cli] Client info ${ws.remoteAddress} ${data.platform} (${data.version})`)
+          } else if (data.type === "capture" && state.capture) {
+            let device = state.clients.get(ws)?.id ?? -1
+            // Milliseconds, integer: Date.now() is already integer ms, so the
+            // delta needs no rounding.
+            let at = Date.now() - state.captureStartMs
+            let after = at - state.captureLastAt
+            state.captureLastAt = at
+            // JSON Lines: one event object per line, streamed to disk as it
+            // arrives rather than buffered - no in-memory growth for a long
+            // capture, and the file is always complete on disk mid-session.
+            let line = JSON.stringify({ after, type: data.kind, key: data.key, device }) + "\n"
+            appendFileSync(state.capture, line)
           }
         } catch {}
       },
