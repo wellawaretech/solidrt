@@ -48,8 +48,8 @@ export function validateArgs() {
     case "record":
       if (!source || !isTsx) usage("srt record <entry.[tsx|jsx]>")
       break
-    case "playback":
-      if (!source || !isTsx) usage("srt playback <entry.[tsx|jsx]>")
+    case "render":
+      if (!source || !isTsx) usage("srt render <entry.[tsx|jsx]>")
       break
     case "pack":
       if (values.flux) {
@@ -77,7 +77,7 @@ Commands:
   client                 Start solidrt-go client only
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
   record <file.tsx|jsx>  Run live and record input events (keypresses) to a script file
-  playback <file.tsx|jsx> Replay a script (optional) and capture frames for video generation
+  render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
 
 init options:
@@ -112,7 +112,7 @@ record options:
       --out <file>       Script output file (default: <entry>.script.json)
       --size <WxH>       Window size (default: 1280x720)
 
-playback options:
+render options:
       --script <file>    Script file to replay (default: no scripted input)
       --fps <N>          Frames per second (default: 60)
       --duration <N>     Duration in seconds (default: 1)

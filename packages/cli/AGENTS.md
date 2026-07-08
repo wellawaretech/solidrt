@@ -19,8 +19,8 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
   `--compile`, emits `.srt.bin` bytecode. `--minify`, `--dev`, `--stdout`,
   `--output` also available.
 - `bunx srt record src/index.tsx [flags]` - run live and record input events
-  (keydown/keyup so far) to a script file, for replaying with `playback`.
-- `bunx srt playback src/index.tsx [flags]` - render OFFSCREEN to PNG frames,
+  (keydown/keyup so far) to a script file, for replaying with `render`.
+- `bunx srt render src/index.tsx [flags]` - render OFFSCREEN to PNG frames,
   optionally replaying a `--script` file recorded with `record`.
 - `bunx srt server [file]` / `bunx srt client` - the two halves of `run`
   separately (server distributes code; clients on other devices connect to it).
@@ -30,12 +30,12 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 Two reliable checks that need no GUI:
 
 1. `bunx srt bundle src/index.tsx` - exit 0 means the app compiles. Fast.
-2. `bunx srt playback src/index.tsx --size 480x640 --duration 1 --fps 2` -
+2. `bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2` -
    renders offscreen via EGL/wgpu and writes `frame-NNNNNN.png`. This actually
    proves the app renders. Combine with `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s).
 
-`playback` gotchas:
+`render` gotchas:
 - Frames are written to the RUNTIME's working dir (`~/.local/share/SolidRT/go/`),
   NOT the directory you ran the command from. Look there for the PNGs.
 - The recording includes a debug overlay (FPS/REQ/MiB/CPU) in a corner.

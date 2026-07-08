@@ -41,7 +41,7 @@ bunx srt <command> [options]
 | `bundle`  | Transpile a `.tsx` file to JavaScript, or compile JavaScript to bytecode           |
 | `package`  | Package the program, assets, and runtime into a standalone distributable (planned) |
 | `record`   | Run a `.tsx` file live and record input events to a script file                    |
-| `playback` | Replay a script (optional) and capture frames from a `.tsx` file to produce a video |
+| `render`   | Replay a script (optional) and render frames from a `.tsx` file to produce a video |
 
 ### Command `server`
 
@@ -114,7 +114,7 @@ bunx srt package <file.tsx> [options]
 
 Run a `.tsx` file live (a normal window, interactive) and record its keyboard
 input events (keydown/keyup) to a script file, for replaying later with
-`playback`. The recording stops and the script is written when the window
+`render`. The recording stops and the script is written when the window
 closes. Usage:
 
 ```sh
@@ -126,13 +126,13 @@ bunx srt record <file.tsx>
 | `--out <file>` | Script output file (default: `<file>.script.json`)   |
 | `--size <WxH>` | Window size (default: `1280x720`)                     |
 
-### Command `playback`
+### Command `render`
 
 Write frames to disk instead of showing on screen, optionally replaying a
 script recorded with `record`. Usage:
 
 ```sh
-bunx srt playback <file.tsx> [--script <file>]
+bunx srt render <file.tsx> [--script <file>]
 ```
 
 Files are written as `png` with file names `frame-<index>.png`.
