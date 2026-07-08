@@ -258,16 +258,6 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   repaintBoundary?: boolean | "snapshot"
 }
 
-/**
- * Not implemented: there is no native `audio` element kind yet, so using
- * `<audio>` panics ("unknown node kind: audio"). Typed ahead of the backing
- * work; treat this interface as a plan, not a working API.
- */
-export interface AudioProps {
-  src?: Uint8Array
-  play?: number
-}
-
 // draw primitives
 
 export interface RectProps extends Position, PaintProps, PointerProps {

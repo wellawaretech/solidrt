@@ -32,7 +32,6 @@ export type {
   PathProps,
   TextProps,
   TextureProps,
-  AudioProps,
   Color,
   Pct,
 } from "./types"

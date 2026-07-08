@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc;
 
+use crate::audio::AudioRegistry;
 use crate::backend::{Backend, Frame, GpuFence};
 use crate::camera::CameraRegistry;
 use crate::gl;
@@ -24,6 +25,7 @@ pub struct Context {
   shaders: RefCell<HashMap<u64, crate::shader::ShaderTexture>>,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
+  pub(crate) audio: AudioRegistry,
   tx: mpsc::Sender<Frame>,
   // Wakes the main thread's event wait after a frame is queued, so a submitted
   // frame presents immediately instead of at the next wait timeout. None in
@@ -53,6 +55,7 @@ impl Context {
       shaders: RefCell::new(HashMap::new()),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
+      audio: AudioRegistry::default(),
       tx,
       wake,
     }

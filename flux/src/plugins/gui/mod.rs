@@ -4,6 +4,7 @@
 // them symmetrically. Generic GUI capabilities only; app-specific features
 // (e.g. speech, dev tooling) keep their core + binding in lattice.
 
+pub mod audio;
 pub mod camera;
 pub mod events;
 pub mod input;
@@ -64,7 +65,8 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let tree_atx = AlloyContext(alloy.clone());
   let texture_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
-  let microphone_atx = AlloyContext(alloy);
+  let microphone_atx = AlloyContext(alloy.clone());
+  let audio_atx = AlloyContext(alloy);
   // The render tree and the capture/render devices are all `flux:*` modules
   // (registered below); only the web-standard rAF stays a global. The plugins
   // store each module's host state in userdata before any import; the module
@@ -76,10 +78,12 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
+    .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
     .module_override("flux:camera", camera::CameraModule)
     .module_override("flux:microphone", microphone::MicrophoneModule)
+    .module_override("flux:audio", audio::AudioModule)
     .module_override("flux:gpu", texture::GpuModule)
 }
 
@@ -94,7 +98,7 @@ fn register_capabilities(ctx: Ctx<'_>) {
   let Ok(caps) = flux.get::<_, Array>("capabilities") else {
     return;
   };
-  for name in ["camera", "microphone", "gpu"] {
+  for name in ["camera", "microphone", "audio", "gpu"] {
     let _ = caps.set(caps.len(), name);
   }
 }

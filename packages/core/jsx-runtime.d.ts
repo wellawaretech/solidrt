@@ -7,7 +7,6 @@ import type {
   ViewProps,
   TextProps,
   TextureProps,
-  AudioProps,
   LayoutProps,
   Element as CoreElement,
   ElementChildrenAttribute as CoreElementChildrenAttribute
@@ -40,7 +39,6 @@ export namespace JSX {
     path: PathProps & LayoutProps & ElementRef
     svg: SvgProps & LayoutProps & ElementRef
     texture: TextureProps & LayoutProps & ElementRef
-    audio: AudioProps & ElementRef
     "d-view": ViewProps & ElementRef
     "d-rect": RectProps & ElementRef
     "d-oval": OvalProps & ElementRef

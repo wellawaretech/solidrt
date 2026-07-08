@@ -8,7 +8,11 @@ name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source"] }
+sdl3 = { version = "0.18.4", features = ["build-from-source", "mixer"] }
+# Android's sdl3 uses non-static build-from-source, which forwards only
+# build-from-source (not the vendored static build) to sdl3-mixer-sys, so the
+# vendored static build is requested here explicitly. Ogg/Vorbis + WAV only.
+sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave", "build-static-vendored"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "0.1"
@@ -20,17 +24,23 @@ jni = "0.21"
 [target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
 impellers = { version = "0.4.2", features = ["bindgen_live"] }
 
+# Desktop targets build SDL statically (build-from-source-static), which already
+# forwards build-static-vendored to sdl3-mixer-sys, so the format features alone
+# suffice here. Ogg/Vorbis + WAV only.
 [target.'cfg(target_os = "macos")'.dependencies]
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static"] }
+sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [dependencies]
 log = { workspace = true }

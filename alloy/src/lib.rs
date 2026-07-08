@@ -2,6 +2,7 @@ mod gl;
 pub mod sdl_utils;
 
 mod app;
+pub mod audio;
 mod backend;
 pub mod barcode;
 pub mod camera;

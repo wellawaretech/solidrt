@@ -109,6 +109,7 @@ dependencies = [
  "ndk-context",
  "rxing",
  "sdl3",
+ "sdl3-mixer-sys",
  "svgtypes",
  "taffy",
  "usvg",

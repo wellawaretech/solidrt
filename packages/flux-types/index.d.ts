@@ -25,6 +25,7 @@
 /// <reference path="./gui/rendertree.d.ts" />
 /// <reference path="./gui/camera.d.ts" />
 /// <reference path="./gui/microphone.d.ts" />
+/// <reference path="./gui/audio.d.ts" />
 /// <reference path="./gui/gpu.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
 
