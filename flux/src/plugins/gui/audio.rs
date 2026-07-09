@@ -32,14 +32,16 @@ impl ModuleDef for AudioModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("play")?;
     decl.declare("load")?;
-    decl.declare("stopAll")?;
+    decl.declare("stream")?;
+    decl.declare("stop")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("play", Function::new(ctx.clone(), play_impl)?)?;
     exports.export("load", Function::new(ctx.clone(), load_impl)?)?;
-    exports.export("stopAll", Function::new(ctx.clone(), stop_all_impl)?)?;
+    exports.export("stream", Function::new(ctx.clone(), stream_impl)?)?;
+    exports.export("stop", Function::new(ctx.clone(), stop_all_impl)?)?;
     Ok(())
   }
 }
@@ -93,13 +95,8 @@ fn play_impl<'js>(
   voice_handle(&ctx, id)
 }
 
-/// load(bytes) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Decodes
-/// the clip once; each `play` starts a fresh overlapping voice with no decode.
-fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
-  let bytes = typed_bytes(&ctx, &data, "load")?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state.0.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
-
+/// Wrap a loaded sound id in a `{ play, unload }` handle, keeping the id in Rust.
+fn sound_handle<'js>(ctx: &Ctx<'js>, sound_id: u64) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
   let play_fn = Function::new(
     ctx.clone(),
@@ -109,6 +106,24 @@ fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<
   let unload_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| unload_impl(ctx, sound_id))?;
   obj.set("unload", unload_fn)?;
   Ok(obj)
+}
+
+/// load(bytes) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Decodes
+/// the clip once; each `play` starts a fresh overlapping voice with no decode.
+fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
+  let bytes = typed_bytes(&ctx, &data, "load")?;
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  let sound_id = state.0.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
+  sound_handle(&ctx, sound_id)
+}
+
+/// stream(path) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Opens a
+/// clip from a filesystem path for on-demand decoding (large tracks stay off the
+/// heap). Play it as a single voice; do not overlap a stream with itself.
+fn stream_impl<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  let sound_id = state.0.stream_sound(&path).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  sound_handle(&ctx, sound_id)
 }
 
 fn play_sound_impl<'js>(

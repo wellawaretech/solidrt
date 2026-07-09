@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use sdl3::iostream::IOStream;
 use sdl3::mixer::{Audio, Mixer, Track};
+use sdl3::properties::{Properties, Setter};
 
 use crate::sdl_utils;
 
@@ -63,11 +64,17 @@ impl AudioRegistry {
   fn spawn_track(&self, mixer: &'static Mixer, audio: &Audio, looping: bool, gain: f32) -> Result<u64, String> {
     let track = mixer.create_track().map_err(|e| format!("failed to create audio track: {e}"))?;
     track.set_audio(audio).map_err(|e| format!("failed to assign audio: {e}"))?;
-    if looping {
-      track.set_loops(-1).map_err(|e| format!("failed to set loop: {e}"))?;
-    }
     track.set_gain(gain).map_err(|e| format!("failed to set gain: {e}"))?;
-    track.play().map_err(|e| format!("failed to play audio: {e}"))?;
+    // MIX_PlayTrack resets the loop count from its play options every call, so a
+    // prior set_loops is ignored (see MIX_PROP_PLAY_LOOPS_NUMBER). Pass the loop
+    // count through the play options instead. -1 loops forever.
+    if looping {
+      let opts = Properties::new().map_err(|e| format!("failed to alloc play options: {e:?}"))?;
+      opts.set("SDL_mixer.play.loops", -1i64).map_err(|e| format!("failed to set loop option: {e:?}"))?;
+      track.play_with_options(&opts).map_err(|e| format!("failed to play audio: {e}"))?;
+    } else {
+      track.play().map_err(|e| format!("failed to play audio: {e}"))?;
+    }
     let id = {
       let mut next = self.next_id.borrow_mut();
       *next += 1;
@@ -100,6 +107,23 @@ impl crate::context::Context {
     let mixer = self.audio.mixer()?;
     let io = IOStream::from_bytes(bytes).map_err(|e| format!("audio read failed: {e}"))?;
     let audio = mixer.load_audio_io(&io, true).map_err(|e| format!("audio decode failed: {e}"))?;
+    let id = {
+      let mut next = self.audio.next_sound_id.borrow_mut();
+      *next += 1;
+      *next
+    };
+    self.audio.sounds.borrow_mut().insert(id, audio);
+    Ok(id)
+  }
+
+  /// Open a clip from a filesystem path for streaming playback: it is decoded
+  /// on demand rather than fully into memory, so a large track needs little RAM.
+  /// Returns a sound id used the same way as `load_sound`. A streaming clip
+  /// carries decode state, so play it as a single voice (do not overlap it with
+  /// itself). The path is resolved against the process cwd, like `flux:fs`.
+  pub fn stream_sound(&self, path: &str) -> Result<u64, String> {
+    let mixer = self.audio.mixer()?;
+    let audio = mixer.load_audio(path, false).map_err(|e| format!("audio open failed: {e}"))?;
     let id = {
       let mut next = self.audio.next_sound_id.borrow_mut();
       *next += 1;

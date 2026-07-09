@@ -37,6 +37,14 @@ declare module "flux:audio" {
    * can be replayed cheaply. Call `unload()` on the result when done.
    */
   export function load(bytes: Uint8Array): LoadedSound
+  /**
+   * Open a clip from a filesystem path for streaming: it is decoded on demand
+   * instead of loaded fully into memory, so a large track needs little RAM. The
+   * path resolves like `flux:fs` (relative to the process cwd), so the file must
+   * exist on disk. Play the result as a single voice; do not overlap a stream
+   * with itself. Call `unload()` when done.
+   */
+  export function stream(path: string): LoadedSound
   /** Stop every playing sound. */
-  export function stopAll(): void
+  export function stop(): void
 }
