@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use sdl3::iostream::IOStream;
-use sdl3::mixer::{Mixer, Track};
+use sdl3::mixer::{Audio, Mixer, Track};
 
 use crate::sdl_utils;
 
@@ -26,6 +26,11 @@ pub struct AudioRegistry {
   mixer: RefCell<Option<&'static Mixer>>,
   tracks: RefCell<HashMap<u64, Track<'static>>>,
   next_id: RefCell<u64>,
+  // Decoded clips retained so a sound is decoded once and replayed cheaply.
+  // Audio is independent of the mixer and ref-counted by the C library, so a
+  // clip can be unloaded while its voices keep playing.
+  sounds: RefCell<HashMap<u64, Audio>>,
+  next_sound_id: RefCell<u64>,
 }
 
 impl AudioRegistry {
@@ -52,6 +57,25 @@ impl AudioRegistry {
   fn sweep_finished(&self) {
     self.tracks.borrow_mut().retain(|_, t| t.is_playing() || t.is_paused());
   }
+
+  /// Start a fresh voice for an already-decoded clip and retain it, returning
+  /// the track id. Shared by the fire-and-forget path and `play_sound`.
+  fn spawn_track(&self, mixer: &'static Mixer, audio: &Audio, looping: bool, gain: f32) -> Result<u64, String> {
+    let track = mixer.create_track().map_err(|e| format!("failed to create audio track: {e}"))?;
+    track.set_audio(audio).map_err(|e| format!("failed to assign audio: {e}"))?;
+    if looping {
+      track.set_loops(-1).map_err(|e| format!("failed to set loop: {e}"))?;
+    }
+    track.set_gain(gain).map_err(|e| format!("failed to set gain: {e}"))?;
+    track.play().map_err(|e| format!("failed to play audio: {e}"))?;
+    let id = {
+      let mut next = self.next_id.borrow_mut();
+      *next += 1;
+      *next
+    };
+    self.tracks.borrow_mut().insert(id, track);
+    Ok(id)
+  }
 }
 
 impl crate::context::Context {
@@ -65,22 +89,40 @@ impl crate::context::Context {
     // IOStream nor `bytes` needs to outlive this call.
     let io = IOStream::from_bytes(bytes).map_err(|e| format!("audio read failed: {e}"))?;
     let audio = mixer.load_audio_io(&io, true).map_err(|e| format!("audio decode failed: {e}"))?;
-    let track = mixer.create_track().map_err(|e| format!("failed to create audio track: {e}"))?;
-    track.set_audio(&audio).map_err(|e| format!("failed to assign audio: {e}"))?;
-    if looping {
-      track.set_loops(-1).map_err(|e| format!("failed to set loop: {e}"))?;
-    }
-    track.set_gain(gain).map_err(|e| format!("failed to set gain: {e}"))?;
-    track.play().map_err(|e| format!("failed to play audio: {e}"))?;
-    // The mixer ref-counts audio assigned to a track, so dropping `audio` here
-    // is safe: the track keeps the decoded data alive until it stops.
+    // The mixer ref-counts audio assigned to a track, so dropping `audio` at the
+    // end of this call is safe: the track keeps the decoded data alive.
+    self.audio.spawn_track(mixer, &audio, looping, gain)
+  }
+
+  /// Decode an encoded clip once and retain it, returning a sound id. Replay it
+  /// cheaply with `play_sound` (no re-decode); release it with `unload_sound`.
+  pub fn load_sound(&self, bytes: &[u8]) -> Result<u64, String> {
+    let mixer = self.audio.mixer()?;
+    let io = IOStream::from_bytes(bytes).map_err(|e| format!("audio read failed: {e}"))?;
+    let audio = mixer.load_audio_io(&io, true).map_err(|e| format!("audio decode failed: {e}"))?;
     let id = {
-      let mut next = self.audio.next_id.borrow_mut();
+      let mut next = self.audio.next_sound_id.borrow_mut();
       *next += 1;
       *next
     };
-    self.audio.tracks.borrow_mut().insert(id, track);
+    self.audio.sounds.borrow_mut().insert(id, audio);
     Ok(id)
+  }
+
+  /// Start a fresh voice for a loaded sound, returning a track id usable with
+  /// `stop_audio`. Each call is a new overlapping voice; no decode happens here.
+  pub fn play_sound(&self, sound_id: u64, looping: bool, gain: f32) -> Result<u64, String> {
+    self.audio.sweep_finished();
+    let mixer = self.audio.mixer()?;
+    let sounds = self.audio.sounds.borrow();
+    let audio = sounds.get(&sound_id).ok_or_else(|| format!("unknown sound {sound_id}"))?;
+    self.audio.spawn_track(mixer, audio, looping, gain)
+  }
+
+  /// Release a loaded sound. Any voices already playing keep going (the C
+  /// library ref-counts the decoded data) until they stop on their own.
+  pub fn unload_sound(&self, sound_id: u64) {
+    self.audio.sounds.borrow_mut().remove(&sound_id);
   }
 
   /// Stop and release a single track. A no-op if it already finished.
@@ -94,9 +136,11 @@ impl crate::context::Context {
     self.audio.tracks.borrow_mut().clear();
   }
 
-  /// Release every track. Called between engine runs so a reloaded app never
-  /// inherits (or leaks) a sound left playing. The device itself stays open.
+  /// Release every track and loaded sound. Called between engine runs so a
+  /// reloaded app never inherits (or leaks) a sound left playing or a decoded
+  /// clip. The device itself stays open.
   pub fn close_all_audio(&self) {
     self.audio.tracks.borrow_mut().clear();
+    self.audio.sounds.borrow_mut().clear();
   }
 }

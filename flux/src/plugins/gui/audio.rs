@@ -31,43 +31,100 @@ pub struct AudioModule;
 impl ModuleDef for AudioModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("play")?;
+    decl.declare("load")?;
     decl.declare("stopAll")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("play", Function::new(ctx.clone(), play_impl)?)?;
+    exports.export("load", Function::new(ctx.clone(), load_impl)?)?;
     exports.export("stopAll", Function::new(ctx.clone(), stop_all_impl)?)?;
     Ok(())
   }
 }
 
-/// play(bytes, { loop?, gain? }) -> { stop() }
+/// Force the `for<'js>` HRTB on a capturing closure that returns a `'js`-bound
+/// `Object` (see flux/CLAUDE.md "Ctx and the 'js lifetime").
+fn object_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>, Opt<Object<'js>>) -> rquickjs::Result<Object<'js>>,
+{
+  f
+}
+
+/// Read the shared `{ loop?, gain? }` play options.
+fn read_options(options: &Opt<Object<'_>>) -> rquickjs::Result<(bool, f32)> {
+  let mut looping = false;
+  let mut gain = 1.0f32;
+  if let Some(opts) = &options.0 {
+    looping = opts.get::<_, Option<bool>>("loop")?.unwrap_or(false);
+    gain = opts.get::<_, Option<f32>>("gain")?.unwrap_or(1.0);
+  }
+  Ok((looping, gain))
+}
+
+/// Borrow a TypedArray's bytes. The caller only decodes during the call, so the
+/// borrow need not outlive it.
+fn typed_bytes<'a>(ctx: &Ctx<'_>, data: &'a TypedArray<'_, u8>, who: &str) -> rquickjs::Result<&'a [u8]> {
+  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{who}: detached buffer")))?;
+  Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) })
+}
+
+/// Wrap a started track id in a `{ stop() }` handle so the raw id stays in Rust.
+fn voice_handle<'js>(ctx: &Ctx<'js>, track_id: u64) -> rquickjs::Result<Object<'js>> {
+  let obj = Object::new(ctx.clone())?;
+  let stop_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| stop_impl(ctx, track_id))?;
+  obj.set("stop", stop_fn)?;
+  Ok(obj)
+}
+
+/// play(bytes, { loop?, gain? }) -> { stop() }. Fire-and-forget: decodes and
+/// starts in one call. Use `load` to replay a clip without re-decoding.
 fn play_impl<'js>(
   ctx: Ctx<'js>,
   data: TypedArray<'js, u8>,
   options: Opt<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
-  let mut looping = false;
-  let mut gain = 1.0f32;
-  if let Some(opts) = options.0 {
-    looping = opts.get::<_, Option<bool>>("loop")?.unwrap_or(false);
-    gain = opts.get::<_, Option<f32>>("gain")?.unwrap_or(1.0);
-  }
-
-  let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "play: detached buffer"))?;
-  // `play_audio` fully decodes the clip during the call (predecode), so the
-  // borrowed bytes need not outlive it.
-  let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-
+  let (looping, gain) = read_options(&options)?;
+  let bytes = typed_bytes(&ctx, &data, "play")?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
   let id = state.0.play_audio(bytes, looping, gain).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  voice_handle(&ctx, id)
+}
+
+/// load(bytes) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Decodes
+/// the clip once; each `play` starts a fresh overlapping voice with no decode.
+fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
+  let bytes = typed_bytes(&ctx, &data, "load")?;
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  let sound_id = state.0.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
 
   let obj = Object::new(ctx.clone())?;
-  // stop() is bound to this track id so the raw handle stays in Rust.
-  let stop_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| stop_impl(ctx, id))?;
-  obj.set("stop", stop_fn)?;
+  let play_fn = Function::new(
+    ctx.clone(),
+    object_builder(move |ctx, options| play_sound_impl(ctx, sound_id, options)),
+  )?;
+  obj.set("play", play_fn)?;
+  let unload_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| unload_impl(ctx, sound_id))?;
+  obj.set("unload", unload_fn)?;
   Ok(obj)
+}
+
+fn play_sound_impl<'js>(
+  ctx: Ctx<'js>,
+  sound_id: u64,
+  options: Opt<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
+  let (looping, gain) = read_options(&options)?;
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  let id = state.0.play_sound(sound_id, looping, gain).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  voice_handle(&ctx, id)
+}
+
+fn unload_impl(ctx: Ctx<'_>, sound_id: u64) {
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  state.0.unload_sound(sound_id);
 }
 
 fn stop_impl(ctx: Ctx<'_>, id: u64) {
