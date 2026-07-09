@@ -5,6 +5,7 @@
 // are the shared marshalling toolkit used across all three.
 pub mod js_error;
 pub mod marshal;
+pub mod seekable;
 
 #[cfg(feature = "gui")]
 pub mod gui;

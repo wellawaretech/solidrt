@@ -9,6 +9,9 @@
 
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { load, stream } from "flux:audio"
+import { file } from "flux:fs"
+
+type FluxFile = ReturnType<typeof file>
 
 type LoadedSound = ReturnType<typeof load>
 
@@ -103,12 +106,14 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
 }
 
 /**
- * Streams a large track from a file path, decoding on demand instead of loading
- * it into memory. Single-voice: each play() restarts it. The path resolves like
- * flux:fs (relative to the process cwd), so the file must exist on disk. Owns
+ * Streams a large track, decoding on demand instead of loading it into memory.
+ * Single-voice: each play() restarts it. Pass a path (resolved like flux:fs,
+ * relative to the process cwd) or a `file()` from flux:fs; a path is wrapped in
+ * `file()` for you, so a dev-server-proxied file streams over the proxy. Owns
  * the stream's lifecycle: stopped and released when the reactive owner is
  * disposed. For imperative use, call stream()/play() from "flux:audio".
  */
-export function createSoundStream(path: string, options: SoundStreamOptions = {}): Sound {
-  return reactiveSound(() => stream(path), false, { loop: options.loop, gain: options.gain })
+export function createSoundStream(source: string | FluxFile, options: SoundStreamOptions = {}): Sound {
+  let src = typeof source === "string" ? file(source) : source
+  return reactiveSound(() => stream(src), false, { loop: options.loop, gain: options.gain })
 }

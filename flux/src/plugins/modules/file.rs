@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
+use crate::plugins::seekable::{SeekableReader, SeekableSource};
 use crate::plugins::standards::body::attach_body;
 use forge::fs;
 
@@ -98,6 +99,16 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   )
   .expect("create write function");
   obj.set("write", write_fn)?;
+
+  // Carry a native seekable source so a consumer that needs sync, seekable bytes
+  // off the JS thread (audio streaming) can open the file on demand. Local disk
+  // here; the dev-server proxy attaches a range-backed opener instead.
+  let path_for_open = path.clone();
+  SeekableSource::attach(
+    &ctx,
+    &obj,
+    Rc::new(move || fs::open_seekable(&path_for_open).map(|f| Box::new(f) as SeekableReader)),
+  )?;
 
   Ok(obj)
 }

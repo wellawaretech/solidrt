@@ -203,7 +203,10 @@ impl NetListener {
 impl NetListener {
   /// Async-iterator step: resolve `{ value: Conn, done: false }` for the next
   /// accepted connection. Iteration is open-ended; drop the listener to stop.
-  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Object<'js>>>>> {
+  pub fn next<'js>(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Object<'js>>>>> {
     let inner = self.inner.clone();
     let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
     let ctx2 = ctx.clone();
@@ -394,7 +397,9 @@ fn parse_group_iface(ctx: &Ctx<'_>, group: &str, iface: &Opt<String>) -> rquickj
     .parse::<Ipv4Addr>()
     .map_err(|_| Exception::throw_message(ctx, &format!("invalid multicast group: {group}")))?;
   let iface = match iface.0.as_deref() {
-    Some(s) => s.parse::<Ipv4Addr>().map_err(|_| Exception::throw_message(ctx, &format!("invalid interface address: {s}")))?,
+    Some(s) => {
+      s.parse::<Ipv4Addr>().map_err(|_| Exception::throw_message(ctx, &format!("invalid interface address: {s}")))?
+    }
     None => Ipv4Addr::UNSPECIFIED,
   };
   Ok((group, iface))

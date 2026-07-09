@@ -11,10 +11,7 @@ fn btoa(ctx: Ctx<'_>, data: String) -> rquickjs::Result<String> {
   for ch in data.chars() {
     let code = ch as u32;
     if code > 0xFF {
-      return Err(Exception::throw_message(
-        &ctx,
-        "btoa: string contains a character outside of the Latin1 range",
-      ));
+      return Err(Exception::throw_message(&ctx, "btoa: string contains a character outside of the Latin1 range"));
     }
     bytes.push(code as u8);
   }

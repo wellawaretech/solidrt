@@ -13,6 +13,7 @@ pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::js_error::JsResult;
 pub use plugins::modules::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::modules::process::ProcessArgs;
+pub use plugins::seekable::{SeekableOpener, SeekableReader, SeekableSource};
 pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::standards::fetch::JsResponseData;
 pub use plugins::standards::time::Clock;

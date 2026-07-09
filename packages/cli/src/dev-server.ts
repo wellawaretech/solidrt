@@ -169,7 +169,46 @@ export function startServer() {
         return Response.json(entries, { headers: { "X-SRT-Type": "directory" } })
       }
 
-      return new Response(Bun.file(filePath), { headers: { "X-SRT-Type": "file" } })
+      let file = Bun.file(filePath)
+      let baseHeaders: Record<string, string> = { "X-SRT-Type": "file", "Accept-Ranges": "bytes" }
+
+      // Honor a single byte-range request (e.g. streaming audio decoding on the
+      // client, which seeks and reads on demand). Only the common "bytes=a-b" /
+      // "bytes=a-" / "bytes=-n" forms; anything else falls through to the whole
+      // file. Range makes proxied streaming viable without pulling the whole
+      // track over the wire.
+      let range = req.headers.get("range")
+      let match = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null
+      if (match) {
+        let size = stat.size
+        let start: number
+        let end: number
+        if (match[1] === "") {
+          // Suffix range: the last N bytes.
+          let n = parseInt(match[2], 10)
+          start = isNaN(n) ? 0 : Math.max(0, size - n)
+          end = size - 1
+        } else {
+          start = parseInt(match[1], 10)
+          end = match[2] === "" ? size - 1 : Math.min(parseInt(match[2], 10), size - 1)
+        }
+        if (start > end || start >= size) {
+          return new Response("Range not satisfiable", {
+            status: 416,
+            headers: { ...baseHeaders, "Content-Range": `bytes */${size}` },
+          })
+        }
+        return new Response(file.slice(start, end + 1), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Range": `bytes ${start}-${end}/${size}`,
+            "Content-Length": String(end - start + 1),
+          },
+        })
+      }
+
+      return new Response(file, { headers: baseHeaders })
     },
     websocket: {
       open(ws) {

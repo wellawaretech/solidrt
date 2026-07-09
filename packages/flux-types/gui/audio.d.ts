@@ -38,13 +38,13 @@ declare module "flux:audio" {
    */
   export function load(bytes: Uint8Array): LoadedSound
   /**
-   * Open a clip from a filesystem path for streaming: it is decoded on demand
-   * instead of loaded fully into memory, so a large track needs little RAM. The
-   * path resolves like `flux:fs` (relative to the process cwd), so the file must
-   * exist on disk. Play the result as a single voice; do not overlap a stream
-   * with itself. Call `unload()` when done.
+   * Open a clip for streaming: it is decoded on demand instead of loaded fully
+   * into memory, so a large track needs little RAM. Takes a `file()` from
+   * `flux:fs` (not a path), so the source rides the `file()` proxy override - a
+   * dev-server-proxied file streams from the server. Play the result as a single
+   * voice; do not overlap a stream with itself. Call `unload()` when done.
    */
-  export function stream(path: string): LoadedSound
+  export function stream(source: ReturnType<typeof import("flux:fs").file>): LoadedSound
   /** Stop every playing sound. */
   export function stop(): void
 }

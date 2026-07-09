@@ -9,6 +9,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, JsLifetime, Object, TypedArray};
 
 use super::AlloyContext;
+use crate::plugins::seekable::SeekableSource;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
@@ -98,10 +99,8 @@ fn play_impl<'js>(
 /// Wrap a loaded sound id in a `{ play, unload }` handle, keeping the id in Rust.
 fn sound_handle<'js>(ctx: &Ctx<'js>, sound_id: u64) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
-  let play_fn = Function::new(
-    ctx.clone(),
-    object_builder(move |ctx, options| play_sound_impl(ctx, sound_id, options)),
-  )?;
+  let play_fn =
+    Function::new(ctx.clone(), object_builder(move |ctx, options| play_sound_impl(ctx, sound_id, options)))?;
   obj.set("play", play_fn)?;
   let unload_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>| unload_impl(ctx, sound_id))?;
   obj.set("unload", unload_fn)?;
@@ -117,23 +116,20 @@ fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<
   sound_handle(&ctx, sound_id)
 }
 
-/// stream(path) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Opens a
-/// clip from a filesystem path for on-demand decoding (large tracks stay off the
-/// heap). Play it as a single voice; do not overlap a stream with itself. The
-/// file is opened through forge::fs and fed to SDL_mixer as a custom byte source
-/// rather than by handing SDL the path, so the source is ours to redirect later.
-fn stream_impl<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
-  let file = forge::fs::open_seekable(&path).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+/// stream(source) -> { play({ loop?, gain? }) -> { stop() }, unload() }. `source`
+/// is a `file()` from `flux:fs`; its native seekable source is opened for
+/// on-demand decoding (large tracks stay off the heap) and fed to SDL_mixer as a
+/// custom byte source. Taking the file object rather than a path means streaming
+/// rides the `file()` proxy override: a proxied file streams from the dev server.
+/// Play it as a single voice; do not overlap a stream with itself.
+fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Object<'js>> {
+  let reader = SeekableSource::open_from(&source).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state.0.stream_sound_io(file).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  let sound_id = state.0.stream_sound_io(reader).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
   sound_handle(&ctx, sound_id)
 }
 
-fn play_sound_impl<'js>(
-  ctx: Ctx<'js>,
-  sound_id: u64,
-  options: Opt<Object<'js>>,
-) -> rquickjs::Result<Object<'js>> {
+fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: Opt<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let (looping, gain) = read_options(&options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
   let id = state.0.play_sound(sound_id, looping, gain).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
