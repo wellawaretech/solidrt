@@ -26,6 +26,14 @@ pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
   tokio::fs::write(path, bytes).await.map_err(|e| format!("write {path}: {e}"))
 }
 
+/// Open a file for seekable, on-demand reads (e.g. feeding a streaming audio
+/// decoder) without pulling it into memory. Sync and a plain `std::fs::File`
+/// because the handle is read from a foreign decode thread, not the tokio
+/// runtime.
+pub fn open_seekable(path: &str) -> Result<std::fs::File, String> {
+  std::fs::File::open(path).map_err(|e| format!("open {path}: {e}"))
+}
+
 /// Whether `path` exists and is a regular file. A missing path (or any stat
 /// error) is reported as `false`, not an error.
 pub async fn file_exists(path: &str) -> bool {

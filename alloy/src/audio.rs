@@ -18,6 +18,16 @@ use sdl3::properties::{Properties, Setter};
 
 use crate::sdl_utils;
 
+/// A loaded clip in the registry. A predecoded clip (`load_sound`) is just the
+/// decoded `Audio`; a streamed clip (`stream_sound_io`) also retains its
+/// `IOStream`, because SDL_mixer keeps decoding from it on demand (loaded with
+/// `closeio=false`) and would read a freed source otherwise. Fields drop in
+/// order, so `audio` (MIX_Audio) is destroyed before its backing `_io`.
+struct LoadedSound {
+  audio: Audio,
+  _io: Option<IOStream<'static>>,
+}
+
 #[derive(Default)]
 pub struct AudioRegistry {
   // The mixer (and its MIX_Init guard) are opened once and leaked to `'static`
@@ -30,7 +40,7 @@ pub struct AudioRegistry {
   // Decoded clips retained so a sound is decoded once and replayed cheaply.
   // Audio is independent of the mixer and ref-counted by the C library, so a
   // clip can be unloaded while its voices keep playing.
-  sounds: RefCell<HashMap<u64, Audio>>,
+  sounds: RefCell<HashMap<u64, LoadedSound>>,
   next_sound_id: RefCell<u64>,
 }
 
@@ -112,24 +122,28 @@ impl crate::context::Context {
       *next += 1;
       *next
     };
-    self.audio.sounds.borrow_mut().insert(id, audio);
+    self.audio.sounds.borrow_mut().insert(id, LoadedSound { audio, _io: None });
     Ok(id)
   }
 
-  /// Open a clip from a filesystem path for streaming playback: it is decoded
-  /// on demand rather than fully into memory, so a large track needs little RAM.
-  /// Returns a sound id used the same way as `load_sound`. A streaming clip
-  /// carries decode state, so play it as a single voice (do not overlap it with
-  /// itself). The path is resolved against the process cwd, like `flux:fs`.
-  pub fn stream_sound(&self, path: &str) -> Result<u64, String> {
+  /// Open a seekable byte source for streaming playback: it is decoded on demand
+  /// rather than fully into memory, so a large track needs little RAM. Returns a
+  /// sound id used the same way as `load_sound`. A streaming clip carries decode
+  /// state, so play it as a single voice (do not overlap it with itself), and
+  /// stop its voice before `unload_sound` (SDL keeps decoding from the retained
+  /// source until then; the reactive layer stops before unloading).
+  pub fn stream_sound_io<R: std::io::Read + std::io::Seek + Send + 'static>(&self, reader: R) -> Result<u64, String> {
     let mixer = self.audio.mixer()?;
-    let audio = mixer.load_audio(path, false).map_err(|e| format!("audio open failed: {e}"))?;
+    let io = sdl_utils::iostream_from_reader(reader)?;
+    // predecode=false: SDL decodes on demand and keeps referencing `io`, so it
+    // is retained alongside the Audio (see LoadedSound).
+    let audio = mixer.load_audio_io(&io, false).map_err(|e| format!("audio open failed: {e}"))?;
     let id = {
       let mut next = self.audio.next_sound_id.borrow_mut();
       *next += 1;
       *next
     };
-    self.audio.sounds.borrow_mut().insert(id, audio);
+    self.audio.sounds.borrow_mut().insert(id, LoadedSound { audio, _io: Some(io) });
     Ok(id)
   }
 
@@ -139,8 +153,8 @@ impl crate::context::Context {
     self.audio.sweep_finished();
     let mixer = self.audio.mixer()?;
     let sounds = self.audio.sounds.borrow();
-    let audio = sounds.get(&sound_id).ok_or_else(|| format!("unknown sound {sound_id}"))?;
-    self.audio.spawn_track(mixer, audio, looping, gain)
+    let sound = sounds.get(&sound_id).ok_or_else(|| format!("unknown sound {sound_id}"))?;
+    self.audio.spawn_track(mixer, &sound.audio, looping, gain)
   }
 
   /// Release a loaded sound. Any voices already playing keep going (the C

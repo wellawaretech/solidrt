@@ -119,10 +119,13 @@ fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<
 
 /// stream(path) -> { play({ loop?, gain? }) -> { stop() }, unload() }. Opens a
 /// clip from a filesystem path for on-demand decoding (large tracks stay off the
-/// heap). Play it as a single voice; do not overlap a stream with itself.
+/// heap). Play it as a single voice; do not overlap a stream with itself. The
+/// file is opened through forge::fs and fed to SDL_mixer as a custom byte source
+/// rather than by handing SDL the path, so the source is ours to redirect later.
 fn stream_impl<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+  let file = forge::fs::open_seekable(&path).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state.0.stream_sound(&path).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  let sound_id = state.0.stream_sound_io(file).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
   sound_handle(&ctx, sound_id)
 }
 
