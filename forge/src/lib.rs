@@ -17,7 +17,10 @@ pub mod net;
 pub mod p2p;
 pub mod path;
 pub mod process;
+pub mod seek;
 pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
 pub mod websocket;
+
+pub use seek::{SeekableRead, SeekableReader};

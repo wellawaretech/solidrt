@@ -235,9 +235,7 @@ pub async fn wait_for_stop(rx: &mut watch::Receiver<bool>) {
 pub fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, String> {
   let addr = format!("{hostname}:{port}");
   let listener = std::net::TcpListener::bind(&addr).map_err(|e| format!("serve: failed to bind {addr}: {e}"))?;
-  listener
-    .set_nonblocking(true)
-    .map_err(|e| format!("serve: failed to configure listener on {addr}: {e}"))?;
+  listener.set_nonblocking(true).map_err(|e| format!("serve: failed to configure listener on {addr}: {e}"))?;
   TcpListener::from_std(listener).map_err(|e| format!("serve: failed to register listener on {addr}: {e}"))
 }
 
@@ -246,12 +244,8 @@ pub fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, String> {
 /// keep-alive connection has nothing in flight, so it closes promptly. Generic
 /// over the request `service` so the engine-free core never names the handler's
 /// (script-bound) types.
-pub async fn serve_connection<S>(
-  sock: TcpStream,
-  service: S,
-  logger: Logger,
-  mut shutdown_rx: watch::Receiver<bool>,
-) where
+pub async fn serve_connection<S>(sock: TcpStream, service: S, logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
+where
   S: Service<HyperRequest<Incoming>, Response = HyperResponse<ResBody>, Error = Infallible>,
 {
   let io = TokioIo::new(sock);

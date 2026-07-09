@@ -95,11 +95,7 @@ impl Endpoint {
   /// either a `ticket` (connects directly, no discovery) or a bare endpoint `id`
   /// (needs discovery to resolve the peer's address). Returns the raw iroh parts;
   /// the caller assembles a `Stream` from them.
-  pub async fn connect(
-    &self,
-    peer: String,
-    protocol: String,
-  ) -> Result<(Connection, SendStream, RecvStream), String> {
+  pub async fn connect(&self, peer: String, protocol: String) -> Result<(Connection, SendStream, RecvStream), String> {
     let alpn = protocol.into_bytes();
     let addr = parse_dial(&peer)?;
     let conn = self.inner.connect(addr, &alpn).await.map_err(|e| e.to_string())?;
@@ -290,10 +286,7 @@ async fn build_endpoint(
 /// Accept the next incoming connection matching `alpn` and open its first
 /// bidirectional stream. Returns `None` once the endpoint stops accepting.
 /// Non-matching or failed connections are skipped.
-async fn accept_one(
-  ep: &IrohEndpoint,
-  alpn: &[u8],
-) -> Result<Option<(Connection, SendStream, RecvStream)>, String> {
+async fn accept_one(ep: &IrohEndpoint, alpn: &[u8]) -> Result<Option<(Connection, SendStream, RecvStream)>, String> {
   loop {
     let Some(incoming) = ep.accept().await else {
       return Ok(None);

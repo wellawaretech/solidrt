@@ -33,7 +33,11 @@ pub fn rss() -> u64 {
   let Ok(pid) = sysinfo::get_current_pid() else {
     return 0;
   };
-  system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing().with_memory());
+  system.refresh_processes_specifics(
+    ProcessesToUpdate::Some(&[pid]),
+    true,
+    ProcessRefreshKind::nothing().with_memory(),
+  );
   system.process(pid).map(|proc| proc.memory()).unwrap_or(0)
 }
 

@@ -315,10 +315,7 @@ mod tests {
   async fn interfaces_include_loopback() {
     let ifaces = interfaces();
     assert!(ifaces.iter().any(|i| i.loopback), "expected a loopback interface");
-    assert!(
-      ifaces.iter().any(|i| i.addrs.iter().any(|a| a.ip == "127.0.0.1")),
-      "expected 127.0.0.1 on some interface"
-    );
+    assert!(ifaces.iter().any(|i| i.addrs.iter().any(|a| a.ip == "127.0.0.1")), "expected 127.0.0.1 on some interface");
   }
 
   #[tokio::test]

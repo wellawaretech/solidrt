@@ -3,9 +3,9 @@ use std::rc::Rc;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
-use crate::plugins::seekable::{SeekableReader, SeekableSource};
+use crate::plugins::seekable::SeekableSource;
 use crate::plugins::standards::body::attach_body;
-use forge::fs;
+use forge::{fs, SeekableReader};
 
 // Marshalling for the `file()` reference: forward to the engine-free
 // `forge::fs` disk operations and encode their results back to JS.

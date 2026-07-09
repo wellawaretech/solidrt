@@ -321,9 +321,8 @@ pub async fn run_reader<R, D>(
   // ends the read loop.
   let obligated_sink = sink.clone();
   let mut send_obligated = move |frame: Frame<'_>| {
-    let res = obligated_sink
-      .send_obligated(frame.opcode, frame.payload.into())
-      .map_err(|()| WebSocketError::ConnectionClosed);
+    let res =
+      obligated_sink.send_obligated(frame.opcode, frame.payload.into()).map_err(|()| WebSocketError::ConnectionClosed);
     std::future::ready(res)
   };
 

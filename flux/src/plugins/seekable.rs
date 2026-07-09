@@ -1,10 +1,13 @@
-//! A native, seekable byte source carried on a `flux:fs` `file()` object.
+//! Carrying a native seekable byte source on a `flux:fs` `file()` object.
 //!
-//! `file()` attaches one of these to every file it returns. A consumer that
-//! needs synchronous, seekable, `Send` bytes off the JS thread pulls it back off
-//! the object and opens a reader; audio streaming is the first such consumer
-//! (SDL_mixer decodes on its own thread, so its source must be sync + seekable +
-//! Send, which the async body methods on `file()` cannot be).
+//! The byte-source abstraction itself ([`forge::SeekableReader`]) is engine-free
+//! and lives in forge. This is the flux-side marshalling: `file()` attaches a
+//! `SeekableSource` (an rquickjs class wrapping an opener) to every file it
+//! returns, and a native consumer that needs synchronous, seekable, `Send` bytes
+//! off the JS thread pulls it back off the object and opens a reader. Audio
+//! streaming is the first such consumer (SDL_mixer decodes on its own thread, so
+//! its source must be sync + seekable + Send, which the async body methods on
+//! `file()` cannot be).
 //!
 //! The opener is opaque, so the local `flux:fs` file and the lattice dev-server
 //! proxy file can each attach their own backend (disk vs HTTP range requests)
@@ -12,47 +15,12 @@
 //! `file()` proxy override for free: whichever `file()` is installed hands out
 //! the matching reader.
 
-use std::io::{self, Read, Seek, SeekFrom};
 use std::rc::Rc;
 
 use rquickjs::class::Trace;
 use rquickjs::{Class, Ctx, JsLifetime, Object};
 
-/// Object-safe erasure of `Read + Seek + Send`. Its own `read`/`seek` forward to
-/// the real traits on the concrete type, so `Box<dyn SeekableRead>` can carry any
-/// backend. Declaring the methods here (rather than `Read + Seek` supertraits)
-/// lets the `impl`s below give the box `Read`/`Seek` without recursing.
-pub trait SeekableRead: Send {
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
-  fn seek(&mut self, pos: SeekFrom) -> io::Result<u64>;
-}
-
-impl<T: Read + Seek + Send> SeekableRead for T {
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    Read::read(self, buf)
-  }
-  fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-    Seek::seek(self, pos)
-  }
-}
-
-impl Read for dyn SeekableRead {
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    SeekableRead::read(self, buf)
-  }
-}
-
-impl Seek for dyn SeekableRead {
-  fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-    SeekableRead::seek(self, pos)
-  }
-}
-
-/// A synchronous, seekable, `Send` byte reader. `Send` because it is read from a
-/// foreign decode thread (e.g. SDL_mixer's), not the JS thread. `Box<dyn
-/// SeekableRead>` implements `Read + Seek + Send`, so it feeds `alloy`'s generic
-/// stream sink directly.
-pub type SeekableReader = Box<dyn SeekableRead>;
+use forge::SeekableReader;
 
 /// Opens a fresh reader over the source. Fallible: the open may touch disk or
 /// the network. Not `Send` itself (it runs on the JS thread when a consumer asks
