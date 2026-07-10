@@ -7,12 +7,12 @@ mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
-  Gradient, GradientStop, GradientUnits, Line, Oval, OriginCoord, PaintState, Path, Rectangle, Span, Svg, Text, Texture,
-  View, Window,
+  Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span, Svg, Text,
+  Texture, View, Window,
 };
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
-pub use tree::RenderTree;
+pub use tree::{NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
 use std::cell::RefCell;
@@ -122,6 +122,24 @@ pub enum ElementKind {
 }
 
 impl ElementKind {
+  /// The kind's canonical name, matching the attached-variant names accepted by
+  /// `Element::from_kind`. Whether a node is detached is not part of the kind;
+  /// it lives on `Element::layout`.
+  pub fn name(&self) -> &'static str {
+    match self {
+      ElementKind::Window(_) => "window",
+      ElementKind::View(_) => "view",
+      ElementKind::Rectangle(_) => "rect",
+      ElementKind::Oval(_) => "oval",
+      ElementKind::Line(_) => "line",
+      ElementKind::Path(_) => "path",
+      ElementKind::Svg(_) => "svg",
+      ElementKind::Text(_) => "text",
+      ElementKind::Span(_) => "span",
+      ElementKind::Texture(_) => "texture",
+    }
+  }
+
   pub fn paint_mut(&mut self) -> Option<&mut PaintState> {
     match self {
       ElementKind::Rectangle(r) => Some(&mut r.paint),

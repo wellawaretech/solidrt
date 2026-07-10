@@ -27,9 +27,23 @@ pub struct DevFlags {
   pub frame_requested: Arc<AtomicBool>,
   /// Whether the UI thread should forward key events to the dev server; set
   /// from the `welcome` message's `capture` field. The server decides what to
-  /// do with forwarded events (see `capture_tx` on the caller side and
+  /// do with forwarded events (see the outbound channel on the caller side and
   /// `dev-server.ts`'s `capture` message handling).
   pub capture_enabled: Arc<AtomicBool>,
+  /// True while a dev-server connection is up. Gates senders that would
+  /// otherwise queue unboundedly while offline (log forwarding).
+  pub connected: Arc<AtomicBool>,
+}
+
+/// Send-safe handles the connection answers dev-server queries from, without a
+/// round trip through the UI thread: the stats snapshot the draw loop
+/// publishes, the live engine's exec handle (refreshed on each engine build),
+/// and a sender on the outbound channel for replies produced on the JS thread.
+#[derive(Clone)]
+pub struct QueryHandles {
+  pub stats: Arc<Mutex<crate::overlay::StatsSnapshot>>,
+  pub exec: Arc<Mutex<Option<flux::ExecHandle>>>,
+  pub outbound_tx: UnboundedSender<String>,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -81,10 +95,11 @@ pub fn start(
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
   flags: DevFlags,
-  capture_rx: UnboundedReceiver<String>,
+  outbound_rx: UnboundedReceiver<String>,
+  queries: QueryHandles,
 ) -> UnboundedSender<DevCmd> {
   let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<DevCmd>();
-  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, flags, capture_rx));
+  handle.spawn(supervisor(cmd_rx, engine_tx, state_tx, dev_server, flags, outbound_rx, queries));
   cmd_tx
 }
 
@@ -97,7 +112,8 @@ async fn supervisor(
   state_tx: UnboundedSender<ConnState>,
   dev_server: DevServerCell,
   flags: DevFlags,
-  mut capture_rx: UnboundedReceiver<String>,
+  mut outbound_rx: UnboundedReceiver<String>,
+  queries: QueryHandles,
 ) {
   let mut pending: Option<DevCmd> = None;
   loop {
@@ -113,12 +129,14 @@ async fn supervisor(
         let _ = state_tx.send(ConnState::Idle);
       }
       DevCmd::Connect(addr) => {
-        pending = run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut capture_rx).await;
+        pending =
+          run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries).await;
       }
       DevCmd::Discover => {
         #[cfg(not(target_os = "android"))]
         {
-          pending = run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut capture_rx).await;
+          pending =
+            run_discover(&mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries).await;
         }
         #[cfg(target_os = "android")]
         {
@@ -139,13 +157,14 @@ async fn run_direct(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
-  capture_rx: &mut UnboundedReceiver<String>,
+  outbound_rx: &mut UnboundedReceiver<String>,
+  queries: &QueryHandles,
 ) -> Option<DevCmd> {
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
     tokio::select! {
       cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, capture_rx) => {
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, outbound_rx, queries) => {
         // Failed to connect or the connection dropped; pause before retrying,
         // but let a new command interrupt the wait.
         tokio::select! {
@@ -170,7 +189,8 @@ async fn run_discover(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
-  capture_rx: &mut UnboundedReceiver<String>,
+  outbound_rx: &mut UnboundedReceiver<String>,
+  queries: &QueryHandles,
 ) -> Option<DevCmd> {
   use mdns_sd::ServiceDaemon;
 
@@ -218,7 +238,7 @@ async fn run_discover(
       let _ = state_tx.send(ConnState::Connecting(server.clone()));
       let connected = tokio::select! {
         cmd = cmd_rx.recv() => return cmd,
-        c = try_serve(&server, engine_tx, state_tx, dev_server, flags, capture_rx) => c,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, flags, outbound_rx, queries) => c,
       };
       if connected {
         // Was connected, then dropped: retry the same address.
@@ -287,7 +307,8 @@ async fn try_serve(
   state_tx: &UnboundedSender<ConnState>,
   dev_server: &DevServerCell,
   flags: &DevFlags,
-  capture_rx: &mut UnboundedReceiver<String>,
+  outbound_rx: &mut UnboundedReceiver<String>,
+  queries: &QueryHandles,
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
@@ -304,20 +325,28 @@ async fn try_serve(
 
   log::info!("[sgo] Connected to ws://{addr}");
   let _ = state_tx.send(ConnState::Connected(addr.to_string()));
+  flags.connected.store(true, Ordering::Relaxed);
 
   // Publish the dialed dev server address so the next engine build installs the
   // file/dir proxy against the server we are actually talking to. Overwrites any
   // previous address so reconnecting to a different server repoints the proxy.
   *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
-  let info = format!(r#"{{"type":"info","platform":"{}","version":"{}"}}"#, flux::platform(), crate::VERSION);
-  let _ = client.send(tokio_websockets::Message::text(info)).await;
+  let info = serde_json::json!({
+    "type": "info",
+    "platform": flux::platform(),
+    "version": crate::VERSION,
+    "capabilities": flux::capabilities(),
+  });
+  let _ = client.send(tokio_websockets::Message::text(info.to_string())).await;
 
   loop {
     tokio::select! {
-      // Captured key events from the UI thread (see `capture_tx`), forwarded
-      // verbatim to the dev server, which decides what to do with them.
-      Some(text) = capture_rx.recv() => {
+      // Runtime-to-server traffic produced outside this task: captured key
+      // events from the UI thread, forwarded console/error lines from the
+      // engine logger, and query replies built on the JS thread. Forwarded
+      // verbatim; the server decides what to do with each.
+      Some(text) = outbound_rx.recv() => {
         let _ = client.send(tokio_websockets::Message::text(text)).await;
         continue;
       }
@@ -366,12 +395,110 @@ async fn try_serve(
           Some("stop") => {
             let _ = tx.send(crate::EngineCmd::Stop);
           }
+          Some("query") => {
+            let id = json.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
+            match json.get("kind").and_then(|k| k.as_str()) {
+              Some("stats") => {
+                let snap = *queries.stats.lock().expect("stats snapshot lock poisoned");
+                let _ = client.send(tokio_websockets::Message::text(stats_reply(id, snap))).await;
+              }
+              Some("tree") => {
+                // The render tree lives on the JS thread; snapshot it there and
+                // route the reply back through the outbound channel.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(tree_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              other => {
+                let msg = format!("unknown query kind {other:?}");
+                let _ = client.send(tokio_websockets::Message::text(error_reply(id, &msg))).await;
+              }
+            }
+          }
           _ => {}
         }
       }
     }
   }
 
+  flags.connected.store(false, Ordering::Relaxed);
   log::warn!("[sgo] Connection to ws://{addr} lost");
   true
+}
+
+/// Round to two decimals for the JSON payloads: raw f32s serialize with float
+/// noise (0.1 -> 0.10000000149...) that only bloats the wire format.
+fn round2(v: f32) -> f64 {
+  (v as f64 * 100.0).round() / 100.0
+}
+
+fn error_reply(id: u64, message: &str) -> String {
+  serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
+}
+
+fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
+  serde_json::json!({
+    "type": "result",
+    "id": id,
+    "data": {
+      "fps": s.fps,
+      "cpuPct": round2(s.cpu_pct),
+      "memBytes": s.mem_bytes,
+      "jsMs": round2(s.js_ms),
+      "frameMs": round2(s.frame_ms),
+      "setPropsPerFrame": round2(s.set_count),
+      "layoutMs": round2(s.layout_ms),
+      "postLayoutMs": round2(s.post_ms),
+      "paintMs": round2(s.paint_ms),
+      "hoverMs": round2(s.hover_ms),
+      "reusedPerSec": s.reused,
+      "skippedPerSec": s.skipped,
+      "textures": s.textures,
+    },
+  })
+  .to_string()
+}
+
+/// Snapshot the render tree from the engine's userdata and encode it. Runs on
+/// the JS thread (see the query handling above).
+fn tree_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() else {
+    return error_reply(id, "no render tree");
+  };
+  let snapshot = tree.0.borrow().snapshot();
+  match snapshot {
+    Some(root) => serde_json::json!({"type": "result", "id": id, "data": node_json(&root)}).to_string(),
+    None => error_reply(id, "no render tree (the app has not rendered)"),
+  }
+}
+
+fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {
+  let mut obj = serde_json::json!({
+    "id": node.id,
+    "kind": node.kind,
+    "x": round2(node.x),
+    "y": round2(node.y),
+    "width": round2(node.width),
+    "height": round2(node.height),
+  });
+  let map = obj.as_object_mut().expect("node_json is an object");
+  if node.detached {
+    map.insert("detached".into(), true.into());
+  }
+  if let Some(text) = &node.text {
+    map.insert("text".into(), text.clone().into());
+  }
+  if !node.children.is_empty() {
+    map.insert("children".into(), node.children.iter().map(node_json).collect::<Vec<_>>().into());
+  }
+  obj
 }

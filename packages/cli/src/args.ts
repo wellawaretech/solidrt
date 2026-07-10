@@ -75,6 +75,7 @@ Commands:
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
   render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
+  mcp                    MCP server (stdio) exposing the running dev server to coding agents
 
 init options:
   -t, --template <name>  Start from a named template (skips the interactive picker)

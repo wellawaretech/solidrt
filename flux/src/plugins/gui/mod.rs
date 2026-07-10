@@ -15,13 +15,13 @@ pub mod texture;
 pub mod tree;
 pub mod value;
 
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use rquickjs::{Array, Ctx, JsLifetime, Object};
 
-use alloy::rendertree::{PlatformContext, RenderTree};
 use alloy::AlloyCommand;
+use alloy::rendertree::{PlatformContext, RenderTree};
 
 use crate::engine::FluxEngineBuilder;
 
@@ -87,6 +87,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:gpu", texture::GpuModule)
 }
 
+/// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu"];
+
 /// Append the gui capability names to `Flux.capabilities` so availability checks
 /// are uniform with the other modules (`Flux.capabilities.includes("camera")`).
 /// Runs as a plugin (after `Flux` is created) and only on a gui build, since
@@ -98,7 +101,7 @@ fn register_capabilities(ctx: Ctx<'_>) {
   let Ok(caps) = flux.get::<_, Array>("capabilities") else {
     return;
   };
-  for name in ["camera", "microphone", "audio", "gpu"] {
-    let _ = caps.set(caps.len(), name);
+  for name in GUI_CAPABILITIES {
+    let _ = caps.set(caps.len(), *name);
   }
 }

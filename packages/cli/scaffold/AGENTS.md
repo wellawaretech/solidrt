@@ -84,3 +84,19 @@ Authoritative references ship inside the installed packages - read them:
 - bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
   render to PNG frames (proves it renders; see the cli AGENTS.md for where the
   frames land)
+
+## MCP: inspect the running app
+
+The project ships an MCP server (.mcp.json, `srt mcp`) that talks to the dev
+server `bunx srt run` starts. When it is loaded in your environment, prefer
+its tools over guessing at runtime state:
+
+- list_clients: connected app clients, their platform and runtime capabilities
+- get_logs: console output and runtime errors (seq cursor; `wait_ms` long-poll
+  to catch output right after a reload)
+- get_render_tree: what the app actually rendered - node kinds, text, and
+  window-relative boxes
+- get_stats: fps, CPU/memory, frame phase timings, setProperty rate
+
+The tools need a running app: if list_clients is empty, ask the user to start
+`bunx srt run src/index.tsx`.

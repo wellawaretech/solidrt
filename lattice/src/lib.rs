@@ -14,17 +14,17 @@ enum EngineCmd {
   Reload(String),
 }
 
+use alloy::AlloyEvent;
 use alloy::impellers::ISize;
 use alloy::rendertree::{PlatformContext, RenderTree};
-use alloy::AlloyEvent;
 use flux::gui::AlloyContext;
 use flux::{ExecHandle, FluxEngine};
 use frame::InputState;
 use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // --- Start Android entry point ------------------------------
 
@@ -178,14 +178,28 @@ fn ui_thread(
 
     // Live input capture (see `--capture` in dev-server.ts): set from the
     // dev server's `welcome`/`capture` messages (see go::DevSession::start
-    // below). Captured events are forwarded to the dev server over
-    // `capture_tx`, not written locally -- the server decides what to do
+    // below). Captured events are forwarded to the dev server over the
+    // outbound channel, not written locally -- the server decides what to do
     // with them.
     let capture_enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let capture_enabled_events = capture_enabled.clone();
-    let (capture_tx, capture_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // One outbound text channel to the dev server: capture events, forwarded
+    // log lines, and query replies. The connection task drains it into the
+    // websocket while connected.
+    let (outbound_tx, outbound_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let capture_tx = outbound_tx.clone();
+    // True while a dev-server connection is up; gates log forwarding so an
+    // offline app never queues log lines (see go::dev_logger).
+    let dev_connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Latest stats figures, published by the draw loop every frame; the dev
+    // connection answers stats queries from here without touching this thread.
+    let stats_snapshot = Arc::new(std::sync::Mutex::new(overlay::StatsSnapshot::default()));
+    // Send-safe copy of the live engine's exec handle, refreshed on each engine
+    // build; the dev connection uses it to snapshot the render tree on the JS
+    // thread for tree queries.
+    let query_exec: Arc<std::sync::Mutex<Option<ExecHandle>>> = Arc::new(std::sync::Mutex::new(None));
     #[cfg(not(feature = "go"))]
-    let _ = (capture_enabled, capture_rx);
+    let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx);
 
     local.spawn_local(async move {
       // An event popped ahead while coalescing PointerMove below, held for the
@@ -289,7 +303,9 @@ fn ui_thread(
       current_exec.clone(),
       platform.stats_handles(),
       capture_enabled,
-      capture_rx,
+      dev_connected.clone(),
+      outbound_rx,
+      go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,
     );
 
@@ -325,7 +341,13 @@ fn ui_thread(
       let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
-      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE).logger(|level, msg| match level {
+      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE);
+      // The go client's logger also forwards lines to a connected dev server;
+      // other builds log locally only.
+      #[cfg(feature = "go")]
+      let builder = builder.logger(go::dev_logger(outbound_tx.clone(), dev_connected.clone()));
+      #[cfg(not(feature = "go"))]
+      let builder = builder.logger(|level, msg| match level {
         flux::LogLevel::Debug => log::debug!("{msg}"),
         flux::LogLevel::Log => log::info!("{msg}"),
         flux::LogLevel::Warn => log::warn!("{msg}"),
@@ -344,8 +366,11 @@ fn ui_thread(
           alloy_cmd_tx: alloy_cmd_tx.clone(),
         },
       );
+      let draw_stats = stats_snapshot.clone();
       let builder = builder
-        .plugin(move |ctx| plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state))
+        .plugin(move |ctx| {
+          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, draw_stats)
+        })
         .plugin(|ctx| plugins::image::init(ctx))
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
@@ -361,6 +386,7 @@ fn ui_thread(
       };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
+      *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // Replay the current connection state into this engine so a reload (e.g.
       // a server stop returning to the default app) keeps the right indicator.

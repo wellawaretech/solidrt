@@ -7,6 +7,7 @@ import { runPackCommand } from "./commands/pack"
 import { runRenderCommand } from "./commands/render"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
+import { runMcpCommand } from "./commands/mcp"
 import { spawnClient } from "./dev-client"
 
 // -- Validate args --
@@ -51,6 +52,8 @@ if (command === "init") {
 } else if (command === "run") {
   await runServerCommand()
   spawnClient()
+} else if (command === "mcp") {
+  await runMcpCommand()
 } else {
   printUsage()
   process.exit(1)

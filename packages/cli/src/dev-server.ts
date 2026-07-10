@@ -7,6 +7,7 @@ import qrcode from "qrcode-generator"
 import { state, print } from "./util"
 import { values } from "./args"
 import * as cache from "./cache"
+import { appendLog, handleControl, resolveQuery } from "./control"
 
 export const DEV_HOST = "127.0.0.1"
 export const DEV_PORT = 0x8844
@@ -128,6 +129,10 @@ export function startServer() {
         return handleProxy(req)
       }
 
+      if (path.startsWith("/__control__/")) {
+        return handleControl(req, path)
+      }
+
       let filePath = resolve(state.sourceDir, "." + path)
       if (!filePath.startsWith(state.sourceDir)) {
         return new Response("Forbidden", { status: 403 })
@@ -213,7 +218,7 @@ export function startServer() {
     websocket: {
       open(ws) {
         let id = state.nextClientId++
-        state.clients.set(ws, { platform: "unknown", version: "unknown", id })
+        state.clients.set(ws, { platform: "unknown", version: "unknown", id, capabilities: [] })
         print(`[cli] Client connected ${ws.remoteAddress}`)
         // Advertise our real LAN address so clients dialed over the adb loopback
         // can show/remember the directly reachable address (see connection.rs).
@@ -243,8 +248,19 @@ export function startServer() {
               platform: data.platform ?? "unknown",
               version: data.version ?? "unknown",
               id: existing?.id ?? state.nextClientId++,
+              capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
             })
             print(`[cli] Client info ${ws.remoteAddress} ${data.platform} (${data.version})`)
+          } else if (data.type === "log") {
+            // Forwarded console output / runtime errors from the client's
+            // engine logger, buffered for the control API (see control.ts).
+            // Not printed here: the local client already writes to this
+            // terminal, so echoing would duplicate every line.
+            let device = state.clients.get(ws)?.id ?? -1
+            appendLog(device, String(data.level ?? "log"), String(data.text ?? ""))
+          } else if (data.type === "result") {
+            // Reply to a query the control API forwarded to this client.
+            resolveQuery(data)
           } else if (data.type === "capture" && state.capture) {
             let device = state.clients.get(ws)?.id ?? -1
             // Milliseconds, integer: Date.now() is already integer ms, so the

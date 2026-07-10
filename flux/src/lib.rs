@@ -6,19 +6,30 @@ mod plugins;
 #[cfg(feature = "gui")]
 pub use plugins::gui;
 
-pub use engine::{on_shutdown, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
-pub use forge::fetch::{do_fetch, ResponseData};
+pub use engine::{ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks, on_shutdown};
+pub use forge::fetch::{ResponseData, do_fetch};
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
-pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
+pub use logger::{CtxLogger, LogLevel, Logger, report_uncaught};
 pub use plugins::js_error::JsResult;
 pub use plugins::modules::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use plugins::modules::process::ProcessArgs;
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
-pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
+pub use plugins::standards::body::{JsBytes, JsonValue, attach_body};
 pub use plugins::standards::fetch::JsResponseData;
 pub use plugins::standards::time::Clock;
 pub use rquickjs;
+
+/// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.
+/// Native callers (e.g. a dev client introspecting the runtime) get the same
+/// list without a JS context.
+pub fn capabilities() -> Vec<&'static str> {
+  #[allow(unused_mut)]
+  let mut caps = plugins::BASE_CAPABILITIES.to_vec();
+  #[cfg(feature = "gui")]
+  caps.extend_from_slice(plugins::gui::GUI_CAPABILITIES);
+  caps
+}
 
 #[cfg(feature = "compile")]
 use rquickjs::{CatchResultExt, Context, Module, Runtime, WriteOptions, WriteOptionsEndianness};

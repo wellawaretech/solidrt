@@ -16,6 +16,7 @@ const TEMPLATE_FILES: Array<{ from: string; to: string }> = [
   { from: "package.json", to: "package.json" },
   { from: "tsconfig.json", to: "tsconfig.json" },
   { from: "gitignore", to: ".gitignore" },
+  { from: "mcp.json", to: ".mcp.json" },
   { from: "AGENTS.md", to: "AGENTS.md" },
 ]
 

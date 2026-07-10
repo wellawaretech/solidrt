@@ -31,6 +31,27 @@ struct PhaseEma {
   hover: f32,
 }
 
+/// Plain-data copy of the current stats, published every frame for readers
+/// outside the draw loop (the dev server's stats query). Times are smoothed
+/// milliseconds, same values the overlay renders; reused/skipped are the last
+/// full second's demand-gate counts.
+#[derive(Clone, Copy, Default)]
+pub struct StatsSnapshot {
+  pub fps: u32,
+  pub cpu_pct: f32,
+  pub mem_bytes: u64,
+  pub js_ms: f32,
+  pub frame_ms: f32,
+  pub set_count: f32,
+  pub layout_ms: f32,
+  pub post_ms: f32,
+  pub paint_ms: f32,
+  pub hover_ms: f32,
+  pub reused: u32,
+  pub skipped: u32,
+  pub textures: usize,
+}
+
 // Smoothing time constant (seconds): a value settles to ~63% of a step in this
 // long, ~99% in ~4.6x it. The weight is derived from the wall-clock gap between
 // updates (see smooth), so this holds whether frames arrive at 60 Hz or, when
@@ -162,8 +183,10 @@ impl Stats {
 
   /// JS render-handler time (onFrame + flush, ms) and setProperty count for the
   /// frame. Recorded every frame, before the demand gate, since flush runs even
-  /// when the native draw is skipped.
+  /// when the native draw is skipped. Also drives the once-per-second sample
+  /// (cpu/mem, per-second counters), so those stay fresh with the overlay off.
   pub fn record_js(&mut self, js_ms: f32, set_count: u32) {
+    self.refresh();
     let now = Instant::now();
     let dt = (now - self.last_js).as_secs_f32();
     self.last_js = now;
@@ -172,6 +195,40 @@ impl Stats {
     // The gap between render handlers is the frame period; smoothed the same way
     // as js_ms so percentages built from the two stay consistent.
     self.frame_ms = smooth(self.frame_ms, dt * 1000.0, dt);
+  }
+
+  /// Fold one rebuilt frame's phase timings into the moving averages, weighted
+  /// by the gap since the last rebuild (time-aware smoothing, see smooth).
+  /// Called on every full rebuild, whether or not the overlay draws.
+  pub fn record_frame(&mut self, phases: FramePhases) {
+    let now = Instant::now();
+    let dt = (now - self.last_draw).as_secs_f32();
+    self.last_draw = now;
+    self.phases.layout = smooth(self.phases.layout, phases.layout.as_secs_f32() * 1000.0, dt);
+    self.phases.post = smooth(self.phases.post, phases.post.as_secs_f32() * 1000.0, dt);
+    self.phases.paint = smooth(self.phases.paint, phases.paint.as_secs_f32() * 1000.0, dt);
+    self.phases.hover = smooth(self.phases.hover, phases.hover.as_secs_f32() * 1000.0, dt);
+  }
+
+  /// Plain-data copy of the current figures for readers outside the draw loop.
+  /// `fps` and `textures` are owned by the platform/registry, so the caller
+  /// supplies them.
+  pub fn snapshot(&self, fps: u32, textures: usize) -> StatsSnapshot {
+    StatsSnapshot {
+      fps,
+      cpu_pct: self.proc_cpu,
+      mem_bytes: self.proc_rss,
+      js_ms: self.js_ms,
+      frame_ms: self.frame_ms,
+      set_count: self.set_count,
+      layout_ms: self.phases.layout,
+      post_ms: self.phases.post,
+      paint_ms: self.phases.paint,
+      hover_ms: self.phases.hover,
+      reused: self.reused,
+      skipped: self.skipped,
+      textures,
+    }
   }
 
   /// A frame served from the cached display list (present-only reuse).
@@ -191,21 +248,8 @@ impl Stats {
     safe_area: Rect,
     fps: u32,
     paint_stats: alloy::rendertree::composite::PaintStats,
-    phases: FramePhases,
     textures: usize,
   ) {
-    self.refresh();
-
-    // Fold this frame's phase timings into the moving averages, weighted by the
-    // gap since the last draw (time-aware smoothing, see smooth).
-    let now = Instant::now();
-    let dt = (now - self.last_draw).as_secs_f32();
-    self.last_draw = now;
-    self.phases.layout = smooth(self.phases.layout, phases.layout.as_secs_f32() * 1000.0, dt);
-    self.phases.post = smooth(self.phases.post, phases.post.as_secs_f32() * 1000.0, dt);
-    self.phases.paint = smooth(self.phases.paint, phases.paint.as_secs_f32() * 1000.0, dt);
-    self.phases.hover = smooth(self.phases.hover, phases.hover.as_secs_f32() * 1000.0, dt);
-
     let mut paint = Paint::default();
     paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, 1.0));
 

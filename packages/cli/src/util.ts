@@ -6,7 +6,7 @@ import type { Server as BunServer } from "bun"
 import type { Bonjour } from "bonjour-service"
 
 export let state = {
-  clients: new Map<any, { platform: string; version: string; id: number }>(),
+  clients: new Map<any, { platform: string; version: string; id: number; capabilities: string[] }>(),
   nextClientId: 0,
   currentCode: null as string | null,
   source: undefined as string | undefined,

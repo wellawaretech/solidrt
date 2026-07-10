@@ -6,13 +6,13 @@ use flux::gui::AlloyContext;
 use flux::{
   emit_event,
   rquickjs::{
-    module::{Declarations, Exports, ModuleDef},
     Ctx as QuickJsContext, Function, JsLifetime,
+    module::{Declarations, Exports, ModuleDef},
   },
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 // The last built display list together with the inputs it was built from.
@@ -39,6 +39,9 @@ struct RenderInner {
   platform: Arc<PlatformContext>,
   atx: AlloyContext,
   input_state: Arc<InputState>,
+  // Latest stats figures, published every frame for readers outside the draw
+  // loop (the dev server's stats query answers from here).
+  stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
 }
 
 /// Stash the draw bridge's host state in userdata, before any import. The
@@ -48,8 +51,11 @@ pub fn store_state(
   platform: Arc<PlatformContext>,
   atx: AlloyContext,
   input_state: Arc<InputState>,
+  stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
 ) {
-  ctx.store_userdata(RenderState(Rc::new(RenderInner { platform, atx, input_state }))).expect("store render state");
+  ctx
+    .store_userdata(RenderState(Rc::new(RenderInner { platform, atx, input_state, stats_snapshot })))
+    .expect("store render state");
 }
 
 /// The `srt:render` module: `renderFrame()`, the runner's per-frame draw. Not
@@ -69,6 +75,7 @@ impl ModuleDef for SrtRenderModule {
     let platform = state.0.platform.clone();
     let atx = state.0.atx.clone();
     let input_state = state.0.input_state.clone();
+    let stats_snapshot = state.0.stats_snapshot.clone();
 
     let stats = RefCell::new(overlay::Stats::new());
     let cache: RefCell<Option<DlCache>> = RefCell::new(None);
@@ -81,6 +88,10 @@ impl ModuleDef for SrtRenderModule {
         crate::frame::RENDER_START.with(|c| c.get()).map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
       let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
       stats.borrow_mut().record_js(js_ms, set_count);
+      // Publish for out-of-loop readers on every frame event, gated or not, so
+      // a query sees current numbers even while the demand gate skips draws.
+      *stats_snapshot.lock().expect("stats snapshot lock poisoned") =
+        stats.borrow().snapshot(platform.fps(), atx.textures.len());
 
       // Demand-driven gate: when nothing requested a frame, skip it entirely
       // (layout, paint, submit, hover refresh - elements only move when a frame
@@ -158,6 +169,8 @@ impl ModuleDef for SrtRenderModule {
       flux::gui::input::refresh_hover(&qtx, input_state.pointers(), input_state.modifiers());
       phases.hover = t.elapsed();
 
+      stats.borrow_mut().record_frame(phases);
+
       if stats_on {
         stats.borrow_mut().draw(
           &mut builder,
@@ -165,7 +178,6 @@ impl ModuleDef for SrtRenderModule {
           platform.safe_area(),
           platform.fps(),
           paint_stats,
-          phases,
           atx.textures.len(),
         );
       }

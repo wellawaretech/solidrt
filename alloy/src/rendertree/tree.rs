@@ -244,9 +244,7 @@ impl RenderTree {
   }
 
   /// Bounding box of a node relative to the window root (CSS getBoundingClientRect
-  /// semantics). Kept for callers that want absolute coordinates; not currently
-  /// exposed to JavaScript.
-  #[allow(dead_code)]
+  /// semantics), for callers that want absolute coordinates (e.g. snapshot).
   pub fn bounding_box_viewport(&self, id: u64) -> Option<BoundingBox> {
     self.compute_bounding_box(id, false)
   }
@@ -399,4 +397,47 @@ impl RenderTree {
       current = element.parent;
     }
   }
+
+  /// Plain-data copy of the whole tree for external inspection (debug and dev
+  /// tooling). Engine-free: the caller decides how to encode it. Boxes are
+  /// window-relative (see bounding_box_viewport) and zero before the first
+  /// layout.
+  pub fn snapshot(&self) -> Option<NodeSnapshot> {
+    self.root.and_then(|id| self.snapshot_node(id))
+  }
+
+  fn snapshot_node(&self, id: u64) -> Option<NodeSnapshot> {
+    let node = self.try_node(id)?;
+    let bounds = self.bounding_box_viewport(id).unwrap_or(BoundingBox { x: 0.0, y: 0.0, width: 0.0, height: 0.0 });
+    let text = match &node.kind {
+      ElementKind::Text(t) => Some(t.computed_text.clone()),
+      ElementKind::Span(s) => Some(s.text.clone()),
+      _ => None,
+    };
+    Some(NodeSnapshot {
+      id,
+      kind: node.kind.name(),
+      detached: !node.has_layout(),
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      text,
+      children: node.children.iter().filter_map(|&child| self.snapshot_node(child)).collect(),
+    })
+  }
+}
+
+/// One node of a RenderTree::snapshot: kind, window-relative box, text content
+/// and children.
+pub struct NodeSnapshot {
+  pub id: u64,
+  pub kind: &'static str,
+  pub detached: bool,
+  pub x: f32,
+  pub y: f32,
+  pub width: f32,
+  pub height: f32,
+  pub text: Option<String>,
+  pub children: Vec<NodeSnapshot>,
 }

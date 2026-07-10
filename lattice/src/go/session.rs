@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use flux::rquickjs;
 use flux::{ExecHandle, FluxEngineBuilder};
@@ -16,7 +16,7 @@ use tokio::task::LocalSet;
 
 use super::connection::{self, ConnState, DevCmd, DevFlags, DevServerCell};
 use super::control::install_dev_control;
-use super::proxy::{install_proxy_state, ProxyFsModule};
+use super::proxy::{ProxyFsModule, install_proxy_state};
 
 /// Bundles the dev-server connection state held natively across engine rebuilds.
 pub struct DevSession {
@@ -43,7 +43,9 @@ impl DevSession {
   /// Start the connection supervisor and the state-forwarding task. Returns
   /// None in playback mode (`playback_fps` set), which has no dev connection.
   /// `current_exec` is the live engine's exec handle, used to push connection
-  /// state into whichever engine is current.
+  /// state into whichever engine is current. `outbound_rx` is the runtime's
+  /// text traffic to the server (capture events, log lines, query replies);
+  /// `queries` holds what the connection answers server queries from.
   pub fn start(
     handle: &tokio::runtime::Handle,
     engine_cmd_tx: UnboundedSender<crate::EngineCmd>,
@@ -52,7 +54,9 @@ impl DevSession {
     current_exec: Rc<RefCell<Option<ExecHandle>>>,
     stats_handles: (Arc<AtomicBool>, Arc<AtomicBool>),
     capture_enabled: Arc<AtomicBool>,
-    capture_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    connected: Arc<AtomicBool>,
+    outbound_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    queries: connection::QueryHandles,
     launch_address: Option<String>,
   ) -> Option<DevSession> {
     if playback_fps.is_some() {
@@ -66,13 +70,15 @@ impl DevSession {
       stats_enabled,
       frame_requested,
       capture_enabled,
+      connected,
     };
     let dev_server: DevServerCell = Arc::new(std::sync::Mutex::new(None));
     let dev_state = Rc::new(RefCell::new(ConnState::Idle));
     let dev_recents: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(super::config::load().recents));
 
     let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<ConnState>();
-    let dev_cmd_tx = connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone(), capture_rx);
+    let dev_cmd_tx =
+      connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone(), outbound_rx, queries);
 
     // Forward connection-state changes to JS as the sticky `dev` event,
     // targeting whichever engine is currently live, and keep the held copy in

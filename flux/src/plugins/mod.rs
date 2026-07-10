@@ -163,14 +163,15 @@ pub(crate) async fn init_context(
   (runtime, context, pending, rejections)
 }
 
-/// Feature names this build/runtime provides, surfaced as `Flux.capabilities`.
+/// Feature names every flux build provides, surfaced as `Flux.capabilities`.
 /// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
+pub const BASE_CAPABILITIES: &[&str] = &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess"];
+
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
-  let names = ["sqlite", "fs", "http", "p2p", "process", "path", "subprocess"];
   let arr = Array::new(ctx.clone()).expect("create capabilities array");
-  for (i, name) in names.iter().enumerate() {
+  for (i, name) in BASE_CAPABILITIES.iter().enumerate() {
     arr.set(i, *name).expect("set capability");
   }
   arr
