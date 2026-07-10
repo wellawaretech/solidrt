@@ -159,6 +159,9 @@ impl UiRuntime for FluxRuntime {
         // even though the tree did not.
         platform.request_frame();
       }
+      // Settle any captureSnapshot promises whose captures alloy rendered on the
+      // previous paint pass.
+      flux::gui::texture::tick(&ctx);
       #[cfg(feature = "speech")]
       crate::plugins::speech::tick(&ctx);
       flux::gui::raf::flush(&ctx, ts);

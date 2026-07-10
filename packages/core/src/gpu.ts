@@ -19,6 +19,13 @@ import * as gpu from "flux:gpu"
 // `<texture params={...}>` when a `<texture>` element is already in the tree.
 export { destroyTexture, setShaderParams, uploadTexture } from "flux:gpu"
 
+// captureSnapshot renders a node to a texture and readTexture reads any
+// texture's bytes back. Re-exported raw (no reactive auto-cleanup wrapper):
+// captureSnapshot resolves asynchronously, by which point the reactive owner is
+// no longer current, so the caller owns the returned id and frees it with
+// destroyTexture (as with any texture created after an await).
+export { captureSnapshot, readTexture } from "flux:gpu"
+
 /**
  * Uploads raw RGBA8 pixels to an immutable GPU texture and returns its id (use
  * it as `<texture src={id} />`). `data` must be exactly `width * height * 4`

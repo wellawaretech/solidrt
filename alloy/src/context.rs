@@ -31,6 +31,20 @@ pub struct Context {
   // frame presents immediately instead of at the next wait timeout. None in
   // playback mode, whose capture loop blocks on the channel directly.
   wake: Option<Box<dyn Fn() + Send + Sync>>,
+  // On-demand node captures (captureSnapshot). Requests are keyed by node id
+  // (many requests may target one node) and drained by the paint walk when it
+  // visits that node; results are collected here for the plugin layer to match
+  // back to its JS promises. Both are plain data - no engine types - so the
+  // rendertree stays engine-independent.
+  capture_requests: RefCell<HashMap<u64, Vec<u64>>>,
+  capture_results: RefCell<Vec<CaptureResult>>,
+}
+
+/// Outcome of one queued node capture, matched back to its JS promise by
+/// `request_id` in the plugin layer.
+pub enum CaptureResult {
+  Ok { request_id: u64, texture_id: u64, width: u32, height: u32 },
+  Err { request_id: u64, error: String },
 }
 
 // Safety: Context is asserted Send + Sync but is only ever accessed from the UI
@@ -58,7 +72,50 @@ impl Context {
       audio: AudioRegistry::default(),
       tx,
       wake,
+      capture_requests: RefCell::new(HashMap::new()),
+      capture_results: RefCell::new(Vec::new()),
     }
+  }
+
+  /// Queue a capture of `node_id`'s subtree under `request_id`, serviced on the
+  /// next paint pass that visits the node. If the node is never visited (not in
+  /// the live tree), the request is failed by `fail_unserviced_captures`.
+  pub fn request_capture(&self, node_id: u64, request_id: u64) {
+    self.capture_requests.borrow_mut().entry(node_id).or_default().push(request_id);
+  }
+
+  /// Whether any capture is queued. Checked per visited node on the paint hot
+  /// path, so it stays a cheap borrow with no allocation.
+  pub fn has_pending_captures(&self) -> bool {
+    !self.capture_requests.borrow().is_empty()
+  }
+
+  /// Take (removing) the request ids queued for `node_id`, called by the paint
+  /// walk when it reaches the node.
+  pub fn take_node_captures(&self, node_id: u64) -> Vec<u64> {
+    self.capture_requests.borrow_mut().remove(&node_id).unwrap_or_default()
+  }
+
+  pub fn push_capture_ok(&self, request_id: u64, texture_id: u64, width: u32, height: u32) {
+    self.capture_results.borrow_mut().push(CaptureResult::Ok { request_id, texture_id, width, height });
+  }
+
+  pub fn push_capture_err(&self, request_id: u64, error: String) {
+    self.capture_results.borrow_mut().push(CaptureResult::Err { request_id, error });
+  }
+
+  /// Fail every still-queued request: the paint walk finished without visiting
+  /// their nodes, so they are not in the live tree. Called at end of paint.
+  pub fn fail_unserviced_captures(&self) {
+    let leftover = std::mem::take(&mut *self.capture_requests.borrow_mut());
+    for request_id in leftover.into_values().flatten() {
+      self.push_capture_err(request_id, "capture node is not in the live render tree".to_string());
+    }
+  }
+
+  /// Drain the collected capture results for the plugin layer to settle.
+  pub fn take_capture_results(&self) -> Vec<CaptureResult> {
+    std::mem::take(&mut *self.capture_results.borrow_mut())
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
@@ -209,6 +266,31 @@ impl Context {
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
     }
+  }
+
+  /// Rasterize a display list into a new *registered* texture cropped to
+  /// exactly `width` x `height`, returning its registry id. Composes the
+  /// offscreen rasterize + content-extent readback + exact-size upload:
+  /// `render_display_list_to_texture` over-allocates the render target to a
+  /// 64px tile boundary (an Android requirement), but the content sits at the
+  /// origin, so reading back only `width` x `height` yields the tightly-packed
+  /// content with the padding excluded. The re-uploaded texture is therefore
+  /// unpadded, so `read_texture_by_id` (and any `<texture src>` sampling) sees
+  /// exact dimensions with no origin-specific knowledge. The intermediate
+  /// padded texture drops here, so Impeller frees its GL name.
+  pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
+    let texture = self.render_display_list_to_texture(dl, width, height)?;
+    let pixels = self.read_texture(&texture, width, height)?;
+    Ok(self.create_texture_from_pixels(width, height, &pixels))
+  }
+
+  /// Read back a registered texture's RGBA8 pixels by id, using the entry's
+  /// own dimensions. Errors if the id is not in the registry.
+  pub fn read_texture_by_id(&self, id: u64) -> Result<(u32, u32, Vec<u8>), String> {
+    let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
+    let (width, height) = (entry.width(), entry.height());
+    let pixels = self.read_texture(&entry.impeller, width, height)?;
+    Ok((width, height, pixels))
   }
 
   /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).

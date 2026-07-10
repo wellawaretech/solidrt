@@ -55,6 +55,9 @@ pub fn paint_phase(
   let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = WH::new(width, height);
   build_recursive(tree, root_id, &mut ctx, builder);
+  // Any capture request whose node the walk never visited targets a node that
+  // is not in the live tree; fail it rather than leave its promise pending.
+  alloy.fail_unserviced_captures();
   PaintStats {
     boundaries_reused: ctx.boundaries_reused,
     boundaries_recorded: ctx.boundaries_recorded,
@@ -233,6 +236,17 @@ fn build_recursive<'a>(
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
 ) {
+  // On-demand captures (captureSnapshot) are serviced as the walk reaches the
+  // node, before its own paint. This does not draw into `builder`; the node
+  // still paints normally below. Guarded by a cheap emptiness check so the
+  // no-capture common case costs one borrow per node.
+  if ctx.alloy.has_pending_captures() {
+    let requests = ctx.alloy.take_node_captures(node_id);
+    if !requests.is_empty() {
+      service_captures(scene, node_id, ctx, requests);
+    }
+  }
+
   let element = scene.node(node_id);
   match element.repaint_boundary {
     BoundaryMode::None => record_node(scene, node_id, ctx, builder, Hoist::None),
@@ -340,6 +354,54 @@ fn snapshot_node<'a>(
         b.draw_display_list(&dl, opacity);
         b.restore();
       });
+    }
+  }
+}
+
+// Services captureSnapshot requests for `node_id`: records its subtree into a
+// throwaway display list at display scale (the same path snapshot_node uses to
+// rasterize) and registers one exact-size texture per request. It never draws
+// into the frame's builder - the node still paints normally afterwards - and it
+// isolates the shared ctx (size and boundary stats) so the recording it does
+// here does not perturb the frame being built.
+fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<u64>) {
+  let element = scene.node(node_id);
+  let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
+  let scale = ctx.platform.display_scale();
+  let (tex_w, tex_h) = ((size.width * scale).ceil() as u32, (size.height * scale).ceil() as u32);
+  if tex_w == 0 || tex_h == 0 {
+    for request_id in requests {
+      ctx.alloy.push_capture_err(request_id, "capture node has no layout box (zero size)".to_string());
+    }
+    return;
+  }
+
+  let own = hoisted_matrix(element, ctx.size);
+  let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
+
+  let saved_size = ctx.size;
+  let saved_stats = (ctx.boundaries_reused, ctx.boundaries_recorded, ctx.snapshots_reused, ctx.snapshots_rasterized);
+  let mut sub = DisplayListBuilder::new(None);
+  sub.scale(scale, scale);
+  record_node(scene, node_id, ctx, &mut sub, hoist);
+  ctx.size = saved_size;
+  ctx.boundaries_reused = saved_stats.0;
+  ctx.boundaries_recorded = saved_stats.1;
+  ctx.snapshots_reused = saved_stats.2;
+  ctx.snapshots_rasterized = saved_stats.3;
+
+  let Some(dl) = sub.build() else {
+    for request_id in requests {
+      ctx.alloy.push_capture_err(request_id, "capture produced an empty display list".to_string());
+    }
+    return;
+  };
+
+  // Fresh, independent texture per request (design: a new id per call).
+  for request_id in requests {
+    match ctx.alloy.capture_node_texture(&dl, tex_w, tex_h) {
+      Ok(texture_id) => ctx.alloy.push_capture_ok(request_id, texture_id, tex_w, tex_h),
+      Err(e) => ctx.alloy.push_capture_err(request_id, e),
     }
   }
 }

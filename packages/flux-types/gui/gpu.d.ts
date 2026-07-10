@@ -36,4 +36,21 @@ declare module "flux:gpu" {
   ): number
   /** Update a shader texture's float uniforms by name and re-render it. */
   export function setShaderParams(id: number, params: Record<string, number>): void
+  /**
+   * Capture a render-tree node's subtree into a new GPU texture, resolving once
+   * it has been rendered on the next paint pass. The node must be attached to
+   * the live tree (a detached node is never painted, so its capture rejects).
+   * Rendered at the current display scale, so `width`/`height` are the texture's
+   * actual pixel dimensions (ceil(logicalSize * displayScale)), not logical
+   * points. Each call returns an independent id you must {@link destroyTexture}
+   * when done. Use the returned id anywhere a texture id is accepted
+   * (`<texture src>`, a shader sampler input, {@link readTexture}).
+   */
+  export function captureSnapshot(nodeId: number): Promise<{ id: number; width: number; height: number }>
+  /**
+   * Read back a registered texture's current pixels as RGBA8 (tightly packed,
+   * top-to-bottom rows), for any texture id whatever created it (createTexture,
+   * createShader, captureSnapshot). Synchronous. Throws if the id is unknown.
+   */
+  export function readTexture(id: number): { width: number; height: number; data: Uint8Array }
 }
