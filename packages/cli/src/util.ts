@@ -2,31 +2,26 @@ import { resolveBinary } from "./artifacts"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Interface as ReadlineInterface } from "node:readline"
-import type { Server as BunServer } from "bun"
-import type { Bonjour } from "bonjour-service"
+// import type { Bonjour } from "bonjour-service"  (mDNS advertise, kept - see dev-server.ts)
 
 export let state = {
-  clients: new Map<any, { platform: string; version: string; id: number; capabilities: string[] }>(),
-  nextClientId: 0,
+  // What srt believes the current bundle is; the server process keeps its own
+  // latched copy for late-joining clients (see packages/cli/server/).
   currentCode: null as string | null,
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,
-  server: null as BunServer<undefined> | null,
+  // The spawned flux dev-server process (see dev-server.ts startServer).
+  serverProc: null as ReturnType<typeof Bun.spawn> | null,
+  shuttingDown: false,
   serverUrl: null as string | null,
   rl: null as ReadlineInterface | null,
-  bonjour: null as Bonjour | null,
+  // bonjour: null as Bonjour | null,  (mDNS advertise, kept - see dev-server.ts)
   stats: false,
   // --capture <file>: destination for captured key events, or undefined when
-  // off. Clients only report kind/key; the server stamps `after` itself (one
-  // shared clock from captureStartMs, integer milliseconds) so events from
-  // several connected clients merge into one coherent timeline, tagged by
-  // `device` (see dev-server.ts) so they can be told apart. Streamed to disk
-  // as JSON Lines (one event object per line) as each arrives - see
-  // dev-server.ts's "capture" message handling.
+  // off; the server process owns the capture file and clock (see
+  // packages/cli/server/main.ts's "capture" message handling).
   capture: undefined as string | undefined,
-  captureStartMs: 0,
-  captureLastAt: 0, // ms, same clock as captureStartMs
 }
 
 // Build target per binary, for the "not found" hint. Run from the repo root.
@@ -93,9 +88,25 @@ export function printErr(...args: any[]) {
   state.rl?.prompt(true)
 }
 
+// Pipe a child stream to `out` without mangling the repl prompt: clear the
+// prompt line, write the chunk, redraw the prompt.
+export function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream) {
+  let reader = stream.getReader()
+  ;(async () => {
+    while (true) {
+      let { done, value } = await reader.read()
+      if (done || !value) break
+      process.stdout.write("\r\x1b[K")
+      out.write(value)
+      state.rl?.prompt(true)
+    }
+  })()
+}
+
 export function shutdown() {
+  state.shuttingDown = true
   if (state.child) state.child.kill()
-  if (state.server) state.server.stop()
-  if (state.bonjour) state.bonjour.destroy()
+  if (state.serverProc) state.serverProc.kill()
+  // if (state.bonjour) state.bonjour.destroy()  (mDNS advertise, kept - see dev-server.ts)
   process.exit(0)
 }

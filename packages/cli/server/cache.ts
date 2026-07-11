@@ -1,15 +1,16 @@
 // SQLite-backed HTTP response cache for the dev server's /__proxy__ endpoint.
 //
-// Project-local: stored at <cwd>/.srt-cache.db. Opt-in via the --cache
-// flag. Entries live forever; delete .srt-cache.db to drop them.
+// Project-local: stored at <dir>/.srt-cache.db. Entries live forever; delete
+// .srt-cache.db to drop them.
 //
 // Cached: GET (and HEAD) 2xx responses with no Authorization on the request
 // and no Cache-Control: no-store on either side. The cache key is
-// sha256(method + "\n" + url); headers are intentionally not part of the key.
+// method + "\n" + url, stored raw; headers are intentionally not part of the
+// key. (The Bun predecessor hashed the key with sha256, which was cosmetic:
+// old hashed entries simply miss and re-populate.)
 
-import { Database } from "bun:sqlite"
-import { resolve } from "path"
-import { createHash } from "node:crypto"
+import { Database } from "flux:sqlite"
+import { join } from "flux:path"
 
 const CACHE_FILE = ".srt-cache.db"
 
@@ -27,9 +28,9 @@ export type Entry = {
 let db: Database | null = null
 let enabled = false
 
-export function initCache(opts: { dir: string }) {
-  let d = new Database(resolve(opts.dir, CACHE_FILE), { create: true })
-  d.run(`CREATE TABLE IF NOT EXISTS entries (
+export async function initCache(opts: { dir: string }) {
+  let d = await Database.connect(join(opts.dir, CACHE_FILE), "rw+")
+  await d.exec(`CREATE TABLE IF NOT EXISTS entries (
     key         TEXT PRIMARY KEY,
     method      TEXT NOT NULL,
     url         TEXT NOT NULL,
@@ -46,28 +47,8 @@ export function isEnabled(): boolean {
   return enabled
 }
 
-// Strings returned by bun:sqlite carry an internal representation that
-// Headers.set() rejects, even when value-identical to an acceptable string
-// (Bun bug oven-sh/bun#28266, present through 1.3.14). Rebuilding each char
-// yields a clean string.
-function reflatten(s: string): string {
-  return Array.from(s, (c) => String.fromCharCode(c.charCodeAt(0))).join("")
-}
-
-function reflattenHeaders(obj: Record<string, string>): Record<string, string> {
-  let out: Record<string, string> = {}
-  for (let key in obj) {
-    out[reflatten(key)] = reflatten(obj[key]!)
-  }
-  return out
-}
-
 function keyFor(method: string, url: string): string {
-  let h = createHash("sha256")
-  h.update(method)
-  h.update("\n")
-  h.update(url)
-  return h.digest("hex")
+  return method + "\n" + url
 }
 
 function cacheableMethod(method: string): boolean {
@@ -98,32 +79,23 @@ export function isBypass(reqHeaders: Headers): boolean {
   return false
 }
 
-export function get(method: string, url: string): Entry | null {
+export async function get(method: string, url: string): Promise<Entry | null> {
   if (!db || !enabled) return null
-  let row = db
+  let row = await db
     .query("SELECT method, url, status, headers, body, cached_at FROM entries WHERE key = ?")
-    .get(keyFor(method, url)) as
-    | {
-        method: string
-        url: string
-        status: number
-        headers: string
-        body: Uint8Array
-        cached_at: number
-      }
-    | null
+    .get([keyFor(method, url)])
   if (!row) return null
   return {
-    method: row.method,
-    url: row.url,
-    status: row.status,
-    headers: reflattenHeaders(JSON.parse(row.headers)),
-    body: row.body,
-    cachedAt: row.cached_at,
+    method: row.method as string,
+    url: row.url as string,
+    status: row.status as number,
+    headers: JSON.parse(row.headers as string),
+    body: row.body as Uint8Array,
+    cachedAt: row.cached_at as number,
   }
 }
 
-export function put(
+export async function put(
   method: string,
   url: string,
   status: number,
@@ -133,7 +105,7 @@ export function put(
   if (!db || !enabled) return
   if (status < 200 || status >= 300) return
   if (hasNoStore(headers["cache-control"] ?? null)) return
-  db.run(
+  await db.run(
     `INSERT OR REPLACE INTO entries
      (key, method, url, status, headers, body, cached_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,

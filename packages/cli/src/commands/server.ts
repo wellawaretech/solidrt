@@ -2,44 +2,39 @@ import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
 import { bundle, codeFromOutputs } from "../bundler"
-import { startServer, showBuildFailure } from "../dev-server"
+import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
-import * as cache from "../cache"
 import { resolve, dirname } from "path"
-import { writeFileSync } from "node:fs"
 
-// Brings up the dev server (HTTP/WS + initial bundle + repl + watcher). The
-// `run` command spawns a local client on top of this from main.ts.
+// Brings up the dev server (a spawned flux script serving HTTP/WS) plus the
+// initial bundle, repl, and watcher in this process. The `run` command spawns
+// a local client on top of this from main.ts.
 export async function runServerCommand() {
   // Initialize state from args
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
   state.stats = values.stats
   state.capture = values.capture ? resolve(values.capture) : undefined
-  state.captureStartMs = Date.now()
-  // Start each capture from an empty file: appendFileSync (dev-server.ts)
-  // would otherwise tack onto whatever a previous run left behind.
-  if (state.capture) writeFileSync(state.capture, "")
 
-  if (values["proxy-http"]) {
-    cache.initCache({ dir: process.cwd() })
-    console.log("[cli] HTTP cache enabled")
-  }
-
-  startServer()
+  // Spawns the server process and waits until it answers; it owns the QR and
+  // address announcements, the capture file, and the proxy cache.
+  await startServer()
 
   // Bundle initial code if source file given (after server start so the
-  // dev base URL is available to the bundler).
+  // dev base URL is available to the bundler), and latch it on the server
+  // for the clients about to connect.
   if (source && isSource) {
     let initialResult = await bundle()
     if (initialResult) {
       state.currentCode = await codeFromOutputs(initialResult.outputs)
+      await sendReload(buildReload({ code: state.currentCode }), { latch: true })
     } else {
-      showBuildFailure()
+      await showBuildFailure()
     }
   } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(resolve(source)).text()
+    await sendReload(buildReload({ code: state.currentCode }), { latch: true })
   }
 
   process.on("SIGINT", shutdown)

@@ -2,28 +2,40 @@ import { createInterface } from "node:readline"
 import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
-import { buildReload, broadcast, showBuildFailure } from "./dev-server"
+import { buildReload, getClients, sendReload, sendStop, sendStats, showBuildFailure } from "./dev-server"
 import { bundle, codeFromOutputs } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
-function cmdStop(args: string) {
+// Resolve repl client indexes ("0 2") against the server's client list,
+// printing a complaint for each invalid token. The list order is connect
+// order, matching what `list` shows.
+async function indexesToIds(args: string): Promise<number[]> {
+  let clients = await getClients()
+  let ids: number[] = []
+  for (let token of args.split(/\s+/)) {
+    let idx = parseInt(token, 10)
+    if (isNaN(idx) || idx < 0 || idx >= clients.length) {
+      print(`Invalid client index: ${token}`)
+      continue
+    }
+    ids.push(clients[idx]!.id)
+  }
+  return ids
+}
+
+async function cmdStop(args: string) {
   if (!args) {
     stopWatcher()
     state.currentCode = null
     state.source = undefined
-    broadcast({ type: "stop" })
+    await sendStop()
     print("[cli] Sent stop to all clients")
     return
   }
-  let clientList = [...state.clients.keys()]
-  for (let token of args.split(/\s+/)) {
-    let idx = parseInt(token, 10)
-    if (isNaN(idx) || idx < 0 || idx >= clientList.length) {
-      print(`Invalid client index: ${token}`)
-      continue
-    }
-    clientList[idx].send(JSON.stringify({ type: "stop" }))
-    print(`[cli] Sent stop to client ${idx}`)
+  let ids = await indexesToIds(args)
+  if (ids.length) {
+    await sendStop(ids)
+    print(`[cli] Sent stop to client(s) ${ids.join(", ")}`)
   }
 }
 
@@ -32,30 +44,25 @@ async function cmdReload(args: string) {
     let result = await bundle(state.source)
     if (!result) {
       printErr("[cli] Build failed, reload aborted")
-      showBuildFailure()
+      await showBuildFailure()
       return
     }
     state.currentCode = await codeFromOutputs(result.outputs)
   }
   let msg = buildReload({ code: state.currentCode })
   if (!args) {
-    for (let ws of state.clients.keys()) ws.send(msg)
+    await sendReload(msg, { latch: true })
     print("[cli] Sent reload to all clients")
     return
   }
-  let clientList = [...state.clients.keys()]
-  for (let token of args.split(/\s+/)) {
-    let idx = parseInt(token, 10)
-    if (isNaN(idx) || idx < 0 || idx >= clientList.length) {
-      print(`Invalid client index: ${token}`)
-      continue
-    }
-    clientList[idx].send(msg)
-    print(`[cli] Sent reload to client ${idx}`)
+  let ids = await indexesToIds(args)
+  if (ids.length) {
+    await sendReload(msg, { clients: ids })
+    print(`[cli] Sent reload to client(s) ${ids.join(", ")}`)
   }
 }
 
-function cmdStats(args: string) {
+async function cmdStats(args: string) {
   if (args === "on") {
     state.stats = true
   } else if (args === "off") {
@@ -66,19 +73,20 @@ function cmdStats(args: string) {
     print("Usage: stats [on|off]")
     return
   }
-  broadcast({ type: "stats", stats: state.stats })
+  await sendStats(state.stats)
   print(`[cli] Stats overlay ${state.stats ? "on" : "off"}`)
 }
 
-function cmdList() {
-  if (state.clients.size === 0) {
+async function cmdList() {
+  let clients = await getClients()
+  if (clients.length === 0) {
     print("No connected clients")
     return
   }
-  print(`${state.clients.size} connected client(s):`)
+  print(`${clients.length} connected client(s):`)
   let i = 0
-  for (let [ws, info] of state.clients) {
-    print(`  ${i++}: ${ws.remoteAddress} [${info.platform}, ${info.version}]`)
+  for (let c of clients) {
+    print(`  ${i++}: ${c.address ?? "unknown"} [${c.platform}, ${c.version}]`)
   }
 }
 
@@ -99,8 +107,8 @@ async function cmdLoad(file: string) {
     state.currentCode = await Bun.file(path).text()
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
-    let msg = buildReload({ bytecode: Buffer.from(bytes).toString("base64") })
-    for (let ws of state.clients.keys()) ws.send(msg)
+    // One-shot: bytecode loads are pushed but not latched for late joiners.
+    await sendReload(buildReload({ bytecode: Buffer.from(bytes).toString("base64") }))
     print(`[cli] Loaded ${file} (bytecode, ${bytes.byteLength} bytes)`)
     return
   } else {
@@ -110,10 +118,8 @@ async function cmdLoad(file: string) {
   state.source = path
   state.sourceDir = dirname(path)
   startWatcher()
-  let reloadMsg = buildReload({ code: state.currentCode })
-  for (let ws of state.clients.keys()) {
-    ws.send(reloadMsg)
-  }
+  // The load also moves the server's file-serving root to the new source dir.
+  await sendReload(buildReload({ code: state.currentCode }), { latch: true, sourceDir: state.sourceDir })
   print(`[cli] Loaded ${file}`)
 }
 
@@ -146,6 +152,12 @@ function completer(line: string): [string[], string] {
   return [matches, line]
 }
 
+// Run a repl command, reporting a failed server round-trip instead of leaving
+// an unhandled rejection (e.g. the server process died mid-command).
+function guard(p: Promise<void>) {
+  p.catch((e) => printErr(`[cli] ${String(e)}`))
+}
+
 export function startRepl() {
   state.rl = createInterface({ input: process.stdin, output: process.stdout, completer })
   state.rl.setPrompt("srt> ")
@@ -155,15 +167,15 @@ export function startRepl() {
   state.rl.on("line", (line) => {
     let cmd = line.trim()
     if (cmd === "stop" || cmd.startsWith("stop ")) {
-      cmdStop(cmd.slice(5).trim())
+      guard(cmdStop(cmd.slice(5).trim()))
     } else if (cmd === "reload" || cmd.startsWith("reload ")) {
-      cmdReload(cmd.slice(7).trim())
+      guard(cmdReload(cmd.slice(7).trim()))
     } else if (cmd.startsWith("load ")) {
-      cmdLoad(cmd.slice(5).trim())
+      guard(cmdLoad(cmd.slice(5).trim()))
     } else if (cmd === "list") {
-      cmdList()
+      guard(cmdList())
     } else if (cmd === "stats" || cmd.startsWith("stats ")) {
-      cmdStats(cmd.slice(6).trim())
+      guard(cmdStats(cmd.slice(6).trim()))
     } else if (cmd === "quit" || cmd === "exit") {
       shutdown()
     } else if (cmd.startsWith("!")) {

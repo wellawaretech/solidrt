@@ -1,4 +1,5 @@
-import { state } from "./util"
+import { state } from "./state"
+import type { ServerWebSocket } from "flux:http"
 
 // The control API under /__control__/: read-only introspection of connected
 // app clients, served next to the file routes. The MCP bridge (srt mcp) is the
@@ -23,6 +24,10 @@ let logWaiters: Array<() => void> = []
 let nextQueryId = 1
 let pendingQueries = new Map<number, (msg: any) => void>()
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /// A `log` message arrived from a client: buffer it and wake long-polls.
 export function appendLog(client: number, level: string, text: string) {
   logs.push({ seq: ++logSeq, at: Date.now(), client, level, text })
@@ -42,20 +47,24 @@ export function resolveQuery(msg: { id?: number }) {
   }
 }
 
-function clientList() {
-  return [...state.clients.values()].map((info) => ({
+// The connected-client list. `withAddress` adds each socket's peer address for
+// the internal API (the repl `list` display); the public control shape stays
+// without it.
+export function clientList(withAddress = false) {
+  return [...state.clients.entries()].map(([ws, info]) => ({
     id: info.id,
     platform: info.platform,
     version: info.version,
     capabilities: info.capabilities,
+    ...(withAddress ? { address: ws.remoteAddress ?? null } : {}),
   }))
 }
 
 // Resolve the target client for a query: an explicit ?client=<id>, or the only
 // connected client when the parameter is omitted.
-function findClient(param: string | null): { ws: any } | { error: Response } {
+function findClient(param: string | undefined): { ws: ServerWebSocket } | { error: Response } {
   let entries = [...state.clients.entries()]
-  if (param === null) {
+  if (param === undefined) {
     if (entries.length === 1) return { ws: entries[0]![0] }
     if (entries.length === 0) return { error: Response.json({ error: "No connected clients" }, { status: 503 }) }
     return { error: Response.json({ error: "Multiple clients connected; pass ?client=<id>" }, { status: 400 }) }
@@ -66,15 +75,15 @@ function findClient(param: string | null): { ws: any } | { error: Response } {
   return { ws: entry[0] }
 }
 
-async function handleQuery(url: URL, kind: string): Promise<Response> {
-  let target = findClient(url.searchParams.get("client"))
+async function handleQuery(query: Map<string, string>, kind: string): Promise<Response> {
+  let target = findClient(query.get("client"))
   if ("error" in target) return target.error
   let id = nextQueryId++
   let reply = new Promise<any>((resolve) => {
     pendingQueries.set(id, resolve)
   })
   target.ws.send(JSON.stringify({ type: "query", kind, id }))
-  let msg = await Promise.race([reply, Bun.sleep(QUERY_TIMEOUT_MS)])
+  let msg = await Promise.race([reply, sleep(QUERY_TIMEOUT_MS)])
   pendingQueries.delete(id)
   if (!msg) return Response.json({ error: "Query timed out" }, { status: 504 })
   if (msg.error) return Response.json({ error: msg.error }, { status: 502 })
@@ -85,9 +94,9 @@ async function handleQuery(url: URL, kind: string): Promise<Response> {
 // latest seq as the next cursor. With `wait`, holds the response until a new
 // entry arrives or the timeout passes (long-poll), so a caller can follow the
 // stream without tight polling.
-async function handleLogs(url: URL): Promise<Response> {
-  let since = parseInt(url.searchParams.get("since") ?? "0", 10) || 0
-  let wait = Math.min(parseInt(url.searchParams.get("wait") ?? "0", 10) || 0, MAX_WAIT_MS)
+async function handleLogs(query: Map<string, string>): Promise<Response> {
+  let since = parseInt(query.get("since") ?? "0", 10) || 0
+  let wait = Math.min(parseInt(query.get("wait") ?? "0", 10) || 0, MAX_WAIT_MS)
   let entries = logs.filter((e) => e.seq > since)
   if (entries.length === 0 && wait > 0) {
     await new Promise<void>((resolve) => {
@@ -102,17 +111,16 @@ async function handleLogs(url: URL): Promise<Response> {
   return Response.json({ entries, latest: logSeq })
 }
 
-export async function handleControl(req: Request, path: string): Promise<Response> {
-  let url = new URL(req.url)
+export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
       return Response.json(clientList())
     case "/__control__/logs":
-      return handleLogs(url)
+      return handleLogs(query)
     case "/__control__/tree":
-      return handleQuery(url, "tree")
+      return handleQuery(query, "tree")
     case "/__control__/stats":
-      return handleQuery(url, "stats")
+      return handleQuery(query, "stats")
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })
   }

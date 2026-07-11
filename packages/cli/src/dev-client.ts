@@ -1,19 +1,6 @@
-import { state, print, requireBinary } from "./util"
-import { DEV_HOST, DEV_PORT } from "./dev-server"
+import { state, print, requireBinary, pipeAbovePrompt, shutdown } from "./util"
+import { DEV_HOST, DEV_PORT, getClients, shutdownWhenEmpty } from "./dev-server"
 import { values } from "./args"
-
-function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream) {
-  let reader = stream.getReader()
-  ;(async () => {
-    while (true) {
-      let { done, value } = await reader.read()
-      if (done || !value) break
-      process.stdout.write("\r\x1b[K")
-      out.write(value)
-      state.rl?.prompt(true)
-    }
-  })()
-}
 
 export function spawnClient() {
   let runner = requireBinary("solidrt-go")
@@ -30,11 +17,13 @@ export function spawnClient() {
   if (state.child.stderr && typeof state.child.stderr !== "number")
     pipeAbovePrompt(state.child.stderr, process.stderr)
 
-  state.child.exited.then(() => {
-    if (state.clients.size === 0) {
-      state.server?.stop()
-      process.exit(0)
+  state.child.exited.then(async () => {
+    let clients = await getClients().catch(() => [])
+    if (clients.length === 0) {
+      shutdown()
     }
-    print(`[cli] Local client exited, ${state.clients.size} remote client(s) still connected`)
+    print(`[cli] Local client exited, ${clients.length} remote client(s) still connected`)
+    // From here, exit once the last remote client disconnects.
+    shutdownWhenEmpty()
   })
 }

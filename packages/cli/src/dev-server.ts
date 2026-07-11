@@ -1,27 +1,64 @@
 import { resolve } from "path"
-import { stat as fsStat, readdir } from "node:fs/promises"
-import { appendFileSync } from "node:fs"
-import { networkInterfaces } from "node:os"
-import { Bonjour } from "bonjour-service"
-import qrcode from "qrcode-generator"
-import { state, print } from "./util"
+import { tmpdir, networkInterfaces } from "node:os"
+import { fileURLToPath } from "node:url"
+import { state, print, printErr, requireBinary, pipeAbovePrompt, shutdown } from "./util"
 import { values } from "./args"
-import * as cache from "./cache"
-import { appendLog, handleControl, resolveQuery } from "./control"
 
 export const DEV_HOST = "127.0.0.1"
 export const DEV_PORT = 0x8844
 
-// Dev-server WS protocol helpers: the reload message shape and a broadcast to all clients.
+// The dev server itself is a flux script (packages/cli/server/), spawned by
+// srt: bundling, file watching, and the repl stay here and drive the server
+// process over its loopback-only /__internal__/ routes. See
+// docs/flux-dev-server-plan.md.
+
+const INTERNAL_BASE = `http://${DEV_HOST}:${DEV_PORT}/__internal__`
+
+// Build the reload message for the client protocol. The server latches a
+// broadcast reload verbatim for late-joining clients, so srt owns the message
+// shape (including the proxy flags) end to end.
 export function buildReload(payload: { code?: string | null; bytecode?: string }) {
-  return JSON.stringify({ type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload })
+  return { type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload }
 }
 
-export function broadcast(msg: object) {
-  let text = JSON.stringify(msg)
-  for (let ws of state.clients.keys()) {
-    ws.send(text)
-  }
+async function post(path: string, body: object) {
+  let resp = await fetch(`${INTERNAL_BASE}${path}`, { method: "POST", body: JSON.stringify(body) })
+  if (!resp.ok) throw new Error(`Dev server ${path} failed: ${resp.status}`)
+}
+
+/**
+ * Send a client-protocol message through the server: to the given client ids,
+ * or to every client when omitted. `latch` keeps the message for late-joining
+ * clients (code reloads latch, one-shot bytecode loads do not); `sourceDir`
+ * moves the server's file-serving root (repl `load`).
+ */
+export async function sendReload(message: object, opts: { clients?: number[]; latch?: boolean; sourceDir?: string } = {}) {
+  await post("/reload", { message, ...opts })
+}
+
+/** Send a stop to the given client ids, or all. A broadcast stop clears the server's latched reload. */
+export async function sendStop(clients?: number[]) {
+  await post("/stop", clients ? { clients } : {})
+}
+
+/** Latch the stats-overlay flag on the server (for welcome) and broadcast it. */
+export async function sendStats(stats: boolean) {
+  await post("/stats", { stats })
+}
+
+export type ClientEntry = {
+  id: number
+  platform: string
+  version: string
+  capabilities: string[]
+  address: string | null
+}
+
+/** The connected-client list, in connect order. */
+export async function getClients(): Promise<ClientEntry[]> {
+  let resp = await fetch(`${INTERNAL_BASE}/clients`)
+  if (!resp.ok) throw new Error(`Dev server /clients failed: ${resp.status}`)
+  return resp.json()
 }
 
 // Reload code that fails to start the engine on purpose. The runtime treats a
@@ -33,308 +70,110 @@ const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
 // Called when a bundle fails to compile. Latches the BSOD trigger as the
 // current code (so a client connecting after the failure gets it too) and
 // pushes it to every connected client.
-export function showBuildFailure() {
+export async function showBuildFailure() {
   state.currentCode = BSOD_TRIGGER
-  let msg = buildReload({ code: BSOD_TRIGGER })
-  for (let ws of state.clients.keys()) {
-    ws.send(msg)
-  }
+  await sendReload(buildReload({ code: BSOD_TRIGGER }), { latch: true })
 }
 
-function headersToObject(h: Headers): Record<string, string> {
-  let out: Record<string, string> = {}
-  h.forEach((v, k) => {
-    out[k] = v
-  })
-  return out
-}
-async function handleProxy(req: Request): Promise<Response> {
-  let target = req.headers.get("x-srt-proxy-url")
-  if (!target) {
-    return new Response("Missing X-SRT-Proxy-Url", { status: 400 })
-  }
-
-  let forwardHeaders = new Headers(req.headers)
-  forwardHeaders.delete("host")
-  forwardHeaders.delete("x-srt-proxy-url")
-  forwardHeaders.delete("x-srt-cache")
-  forwardHeaders.delete("content-length")
-
-  let cacheStatus: cache.Decision = "skip"
-  let cacheable = !cache.shouldConsider(req.method, req.headers).skip
-  let bypass = cacheable && cache.isBypass(req.headers)
-
-  if (cacheable && !bypass) {
-    let hit = cache.get(req.method, target)
-    if (hit) {
-      print("[cli] proxy %s %s [cache hit]", req.method, target)
-      let respHeaders = new Headers(hit.headers)
-      respHeaders.set("x-srt-cache", "hit")
-      // await new Promise(resolve => setTimeout(resolve, 1000))
-      return new Response(hit.body, { status: hit.status, headers: respHeaders })
+// The Bun-hosted server used to exit from its ws close handler once the
+// spawned local client had exited and the last remote client disconnected.
+// The server process cannot see the child, so the policy lives here: called
+// after the local client exits, poll the client list and shut down when it
+// empties.
+export function shutdownWhenEmpty() {
+  let timer = setInterval(async () => {
+    let clients = await getClients().catch(() => null)
+    if (clients && clients.length === 0) {
+      clearInterval(timer)
+      print("[cli] All clients disconnected, shutting down")
+      shutdown()
     }
-  }
-
-  let hasBody = req.method !== "GET" && req.method !== "HEAD"
-  if (cacheable) {
-    cacheStatus = bypass ? "bypass" : "miss"
-    print("[cli] proxy %s %s [%s]", req.method, target, cacheStatus)
-  } else {
-    print("[cli] proxy %s %s", req.method, target)
-  }
-
-  try {
-    let upstream = await fetch(target, {
-      method: req.method,
-      headers: forwardHeaders,
-      body: hasBody ? await req.arrayBuffer() : undefined,
-      redirect: "follow",
-    })
-    let respHeaders = new Headers(upstream.headers)
-    respHeaders.delete("content-encoding")
-    respHeaders.delete("transfer-encoding")
-
-    let bodyBytes = new Uint8Array(await upstream.arrayBuffer())
-    if (cacheable) {
-      cache.put(
-        req.method,
-        target,
-        upstream.status,
-        headersToObject(respHeaders),
-        bodyBytes,
-      )
-      respHeaders.set("x-srt-cache", cacheStatus)
-    }
-    return new Response(bodyBytes, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: respHeaders,
-    })
-  } catch (e) {
-    print("[cli] proxy error %s: %s", target, String(e))
-    return new Response(`Proxy error: ${String(e)}`, { status: 502 })
-  }
+  }, 2000)
 }
 
-export function startServer() {
-  state.server = Bun.serve({
-    port: DEV_PORT,
-    async fetch(req, server) {
-      if (server.upgrade(req)) return
-
-      let url = new URL(req.url)
-      let path = decodeURIComponent(url.pathname)
-
-      if (path === "/__proxy__") {
-        return handleProxy(req)
-      }
-
-      if (path.startsWith("/__control__/")) {
-        return handleControl(req, path)
-      }
-
-      let filePath = resolve(state.sourceDir, "." + path)
-      if (!filePath.startsWith(state.sourceDir)) {
-        return new Response("Forbidden", { status: 403 })
-      }
-
-      if (req.method === "PUT") {
-        print("[cli] put", path)
-        let bytes = new Uint8Array(await req.arrayBuffer())
-        await Bun.write(filePath, bytes)
-        return new Response(null, { status: 204 })
-      }
-
-      print("[cli] get", path)
-
-      let stat
-      try {
-        stat = await fsStat(filePath)
-      } catch {
-        print("[cli] file not found %s", path)
-        return new Response("Not found", { status: 404 })
-      }
-
-      if (stat.isDirectory()) {
-        let dirents = await readdir(filePath, { withFileTypes: true })
-        let entries = await Promise.all(
-          dirents.map(async (d) => {
-            let entry = { name: d.name, type: d.isDirectory() ? 2 : 1, size: 0, modified: 0 }
-            if (!d.isDirectory()) {
-              try {
-                let s = await fsStat(resolve(filePath, d.name))
-                entry.size = s.size
-                entry.modified = Math.floor(s.mtimeMs)
-              } catch {}
-            }
-            return entry
-          }),
-        )
-        entries.sort((a, b) => a.name.localeCompare(b.name))
-        return Response.json(entries, { headers: { "X-SRT-Type": "directory" } })
-      }
-
-      let file = Bun.file(filePath)
-      let baseHeaders: Record<string, string> = { "X-SRT-Type": "file", "Accept-Ranges": "bytes" }
-
-      // Honor a single byte-range request (e.g. streaming audio decoding on the
-      // client, which seeks and reads on demand). Only the common "bytes=a-b" /
-      // "bytes=a-" / "bytes=-n" forms; anything else falls through to the whole
-      // file. Range makes proxied streaming viable without pulling the whole
-      // track over the wire.
-      let range = req.headers.get("range")
-      let match = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null
-      if (match) {
-        let size = stat.size
-        let start: number
-        let end: number
-        if (match[1] === "") {
-          // Suffix range: the last N bytes.
-          let n = parseInt(match[2], 10)
-          start = isNaN(n) ? 0 : Math.max(0, size - n)
-          end = size - 1
-        } else {
-          start = parseInt(match[1], 10)
-          end = match[2] === "" ? size - 1 : Math.min(parseInt(match[2], 10), size - 1)
-        }
-        if (start > end || start >= size) {
-          return new Response("Range not satisfiable", {
-            status: 416,
-            headers: { ...baseHeaders, "Content-Range": `bytes */${size}` },
-          })
-        }
-        return new Response(file.slice(start, end + 1), {
-          status: 206,
-          headers: {
-            ...baseHeaders,
-            "Content-Range": `bytes ${start}-${end}/${size}`,
-            "Content-Length": String(end - start + 1),
-          },
-        })
-      }
-
-      return new Response(file, { headers: baseHeaders })
-    },
-    websocket: {
-      open(ws) {
-        let id = state.nextClientId++
-        state.clients.set(ws, { platform: "unknown", version: "unknown", id, capabilities: [] })
-        print(`[cli] Client connected ${ws.remoteAddress}`)
-        // Advertise our real LAN address so clients dialed over the adb loopback
-        // can show/remember the directly reachable address (see connection.rs).
-        ws.send(
-          JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!state.capture }),
-        )
-        if (state.currentCode) {
-          ws.send(buildReload({ code: state.currentCode }))
-        }
-      },
-      close(ws) {
-        let info = state.clients.get(ws)
-        state.clients.delete(ws)
-        print(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
-        if (state.child && state.clients.size === 0 && state.child.exitCode !== null) {
-          print("[cli] All clients disconnected, shutting down")
-          state.server?.stop()
-          process.exit(0)
-        }
-      },
-      message(ws, msg) {
-        try {
-          let data = JSON.parse(typeof msg === "string" ? msg : Buffer.from(msg).toString())
-          if (data.type === "info") {
-            let existing = state.clients.get(ws)
-            state.clients.set(ws, {
-              platform: data.platform ?? "unknown",
-              version: data.version ?? "unknown",
-              id: existing?.id ?? state.nextClientId++,
-              capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
-            })
-            print(`[cli] Client info ${ws.remoteAddress} ${data.platform} (${data.version})`)
-          } else if (data.type === "log") {
-            // Forwarded console output / runtime errors from the client's
-            // engine logger, buffered for the control API (see control.ts).
-            // Not printed here: the local client already writes to this
-            // terminal, so echoing would duplicate every line.
-            let device = state.clients.get(ws)?.id ?? -1
-            appendLog(device, String(data.level ?? "log"), String(data.text ?? ""))
-          } else if (data.type === "result") {
-            // Reply to a query the control API forwarded to this client.
-            resolveQuery(data)
-          } else if (data.type === "capture" && state.capture) {
-            let device = state.clients.get(ws)?.id ?? -1
-            // Milliseconds, integer: Date.now() is already integer ms, so the
-            // delta needs no rounding.
-            let at = Date.now() - state.captureStartMs
-            let after = at - state.captureLastAt
-            state.captureLastAt = at
-            // JSON Lines: one event object per line, streamed to disk as it
-            // arrives rather than buffered - no in-memory growth for a long
-            // capture, and the file is always complete on disk mid-session.
-            let line = JSON.stringify({ after, type: data.kind, key: data.key, device }) + "\n"
-            appendFileSync(state.capture, line)
-          }
-        } catch {}
-      },
-    },
+// Bundle the server script to one plain-JS file the flux binary can run. Bun
+// is already the bundler; the browser target keeps node builtins out, and the
+// flux: capability modules stay external (the runtime provides them).
+async function bundleServer(): Promise<string> {
+  let entry = fileURLToPath(new URL("../server/main.ts", import.meta.url))
+  let outfile = resolve(tmpdir(), `srt-dev-server-${process.pid}.js`)
+  let result = await Bun.build({
+    entrypoints: [entry],
+    target: "browser",
+    format: "esm",
+    external: ["flux:*"],
   })
+  if (!result.success) {
+    printErr("[cli] Failed to bundle the dev server:")
+    for (let log of result.logs) printErr(String(log))
+    process.exit(1)
+  }
+  await Bun.write(outfile, result.outputs[0]!)
+  return outfile
+}
+
+export async function startServer() {
+  let flux = requireBinary("flux")
+  let script = await bundleServer()
 
   let lanAddress = Object.values(networkInterfaces())
     .flat()
     .find((i) => i?.family === "IPv4" && !i.internal)?.address
-
   let address = lanAddress ?? DEV_HOST
-  let serverUrl = `${address}:${state.server.port}`
-  state.serverUrl = serverUrl
+  // The address clients can reach us on; also the dev base URL the bundler
+  // rewrites asset imports against. The server has no OS module, so srt
+  // computes it and passes it down.
+  state.serverUrl = `${address}:${DEV_PORT}`
 
-  console.log("")
-
-  let qr = qrcode(0, "L")
-  qr.addData(serverUrl)
-  qr.make()
-  let modCount = qr.getModuleCount()
-  // Render as a white tile with black modules (explicit ANSI colors) plus the
-  // 4-module quiet zone the QR spec requires. Drawing with the terminal's
-  // default foreground inverts the code on dark themes, which standard
-  // decoders reject.
-  const QR_INK = "\x1b[30;107m" // black modules on bright-white tile (tile = background)
-  const QR_TILE_FG = "\x1b[97m" // bright-white as foreground over the default background
-  const QR_RESET = "\x1b[0m"
-  const QUIET_ZONE = 2 // modules (spec says 4, but scanners cope and it reads tighter)
-  let qrWidth = modCount + 2 * QUIET_ZONE
-  let dark = (y: number, x: number) => y >= 0 && y < modCount && x >= 0 && x < modCount && qr.isDark(y, x)
-  // modCount is always odd, so the tile is a half-line taller than an even row
-  // count. The loop packs two module-rows per line via half-blocks and stops on
-  // the last content row, leaving the bottom quiet zone half a line short of the
-  // full-line top quiet zone.
-  for (let y = -QUIET_ZONE; y < modCount + QUIET_ZONE - 1; y += 2) {
-    let row = "  " + QR_INK
-    for (let x = -QUIET_ZONE; x < modCount + QUIET_ZONE; x++) {
-      let top = dark(y, x)
-      let bot = dark(y + 1, x)
-      row += top && bot ? "\u2588" : top ? "\u2580" : bot ? "\u2584" : " "
-    }
-    console.log(row + QR_RESET)
+  let config = {
+    port: DEV_PORT,
+    sourceDir: state.sourceDir,
+    address,
+    proxyFiles: values["proxy-files"],
+    proxyHttp: values["proxy-http"],
+    cache: values["proxy-http"],
+    cacheDir: process.cwd(),
+    capture: state.capture,
+    stats: state.stats,
   }
-  // Close that gap with a half-height tile line: upper half painted in the tile
-  // color (foreground), lower half the terminal background. The 0.5 here plus
-  // the 0.5 already under the last content row equal the full-line top margin.
-  console.log("  " + QR_TILE_FG + "\u2580".repeat(qrWidth) + QR_RESET)
 
-  console.log("")
-  console.log(`[cli] WebSocket server on ws://${serverUrl}`)
+  state.serverProc = Bun.spawn([flux, script, JSON.stringify(config)], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  if (state.serverProc.stdout && typeof state.serverProc.stdout !== "number")
+    pipeAbovePrompt(state.serverProc.stdout, process.stdout)
+  if (state.serverProc.stderr && typeof state.serverProc.stderr !== "number")
+    pipeAbovePrompt(state.serverProc.stderr, process.stderr)
 
-  // LAN discovery: advertise the dev server as a DNS-SD service so go clients on
-  // the same network can find it (see lattice/src/go/connection.rs). Stored on
-  // state so shutdown() can send the mDNS goodbye.
-  state.bonjour = new Bonjour()
-  state.bonjour.publish({ name: "SolidRT Dev Server", type: "solidrt", protocol: "tcp", port: DEV_PORT })
-  print(`[cli] Advertising _solidrt._tcp on port ${DEV_PORT} via mDNS`)
-
-  // Keepalive
-  setInterval(() => {
-    for (let ws of state.clients.keys()) {
-      ws.ping()
+  state.serverProc.exited.then((code) => {
+    if (!state.shuttingDown) {
+      printErr(`[cli] Dev server exited unexpectedly (${code})`)
+      process.exit(1)
     }
-  }, 5000)
+  })
+
+  // Wait until the server answers on the internal API before anything else
+  // (the initial bundle needs the dev base URL, clients need the port bound).
+  for (let i = 0; ; i++) {
+    try {
+      await getClients()
+      break
+    } catch {
+      if (i >= 100) {
+        printErr("[cli] Dev server did not start")
+        process.exit(1)
+      }
+      await Bun.sleep(100)
+    }
+  }
+
+  // mDNS advertise (dropped, code kept for future use - see
+  // docs/flux-dev-server-plan.md): the p2p ticket is the cross-device connect
+  // story now. If advertise returns, it belongs next to the server (a flux
+  // capability), not here.
+  //
+  // import { Bonjour } from "bonjour-service"  (top of file)
+  // state.bonjour = new Bonjour()
+  // state.bonjour.publish({ name: "SolidRT Dev Server", type: "solidrt", protocol: "tcp", port: DEV_PORT })
+  // print(`[cli] Advertising _solidrt._tcp on port ${DEV_PORT} via mDNS`)
 }

@@ -10,6 +10,7 @@
   "files": [
     "bin/",
     "src/",
+    "server/",
     "scaffold/",
     "AGENTS.md"
   ],
@@ -32,6 +33,7 @@
     "typescript": "^6"
   },
   "devDependencies": {
+    "@solidrt/flux-types": "workspace:*",
     "@types/bun": "latest"
   }
 }
