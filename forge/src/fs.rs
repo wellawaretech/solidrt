@@ -21,6 +21,19 @@ pub async fn read(path: &str) -> Result<Vec<u8>, String> {
   tokio::fs::read(path).await.map_err(|e| format!("read {path}: {e}"))
 }
 
+/// Read `length` bytes starting at byte `offset`. Exact: a range extending past
+/// end-of-file is an error, not a short read (callers clamp against
+/// `stat().size` first, which is what HTTP 206 needs anyway).
+pub async fn read_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+  use tokio::io::{AsyncReadExt, AsyncSeekExt};
+  let err = |e| format!("read {path} at {offset}+{length}: {e}");
+  let mut file = tokio::fs::File::open(path).await.map_err(|e| format!("open {path}: {e}"))?;
+  file.seek(std::io::SeekFrom::Start(offset)).await.map_err(err)?;
+  let mut buf = vec![0u8; usize::try_from(length).map_err(|_| format!("read {path}: length {length} too large"))?];
+  file.read_exact(&mut buf).await.map_err(err)?;
+  Ok(buf)
+}
+
 /// Write bytes to a file, truncating any existing contents.
 pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
   tokio::fs::write(path, bytes).await.map_err(|e| format!("write {path}: {e}"))

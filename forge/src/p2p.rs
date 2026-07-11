@@ -53,7 +53,11 @@ pub struct Endpoint {
 impl Endpoint {
   /// Bind an endpoint. `secret` is the 32-byte key (generated when `None`);
   /// `relay_url` selects a self-hosted relay (`None` uses the public n0 relays);
-  /// `alpns` lists the protocols this endpoint will `accept`.
+  /// `alpns` lists the protocols this endpoint will `accept`. `local` binds in
+  /// local-only mode: relay disabled and no address lookup registered, so
+  /// nothing about the endpoint is published anywhere - the ticket (direct IPs
+  /// only) is the sole carrier of addressing, and peers on the same network
+  /// dial it directly. `local` excludes `relay_url`.
   ///
   /// Bind runs on a worker thread (`tokio::spawn`), not the caller's thread:
   /// iroh's bind does blocking work that otherwise stalls a single-threaded host
@@ -63,8 +67,12 @@ impl Endpoint {
     secret: Option<[u8; 32]>,
     relay_url: Option<String>,
     alpns: Vec<Vec<u8>>,
+    local: bool,
   ) -> Result<Endpoint, String> {
-    match tokio::spawn(build_endpoint(secret, relay_url, alpns)).await {
+    if local && relay_url.is_some() {
+      return Err("local excludes relayUrl: a local-only endpoint uses no relay".to_string());
+    }
+    match tokio::spawn(build_endpoint(secret, relay_url, alpns, local)).await {
       Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret }),
       Ok(Err(e)) => Err(e),
       Err(e) => Err(format!("bind task failed: {e}")),
@@ -263,10 +271,16 @@ fn parse_dial(s: &str) -> Result<EndpointAddr, String> {
 
 /// Build and bind an iroh endpoint. Returns it together with the (possibly
 /// generated) secret-key bytes so the caller can expose them for persistence.
+///
+/// `local` builds from `presets::Minimal` (crypto provider only) instead of
+/// `presets::N0`: N0 unconditionally registers a pkarr publisher + DNS lookup
+/// against n0's public server, which would announce the endpoint's addresses
+/// off-machine regardless of relay choice.
 async fn build_endpoint(
   secret: Option<[u8; 32]>,
   relay_url: Option<String>,
   alpns: Vec<Vec<u8>>,
+  local: bool,
 ) -> Result<(IrohEndpoint, [u8; 32]), String> {
   let secret_key = match secret {
     Some(bytes) => SecretKey::from_bytes(&bytes),
@@ -274,7 +288,12 @@ async fn build_endpoint(
   };
   let bytes = secret_key.to_bytes();
 
-  let mut builder = IrohEndpoint::builder(presets::N0).secret_key(secret_key).alpns(alpns);
+  let mut builder = if local {
+    IrohEndpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
+  } else {
+    IrohEndpoint::builder(presets::N0)
+  };
+  builder = builder.secret_key(secret_key).alpns(alpns);
   if let Some(url) = relay_url {
     let relay: RelayUrl = url.parse().map_err(|e| format!("invalid relayUrl: {e}"))?;
     builder = builder.relay_mode(RelayMode::custom([relay]));

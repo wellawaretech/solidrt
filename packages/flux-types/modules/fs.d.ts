@@ -22,6 +22,12 @@ declare module "flux:fs" {
     exists(): Promise<boolean>
     /** Resolve to the file's metadata (size, type, mtime). */
     stat(): Promise<FileStat>
+    /**
+     * Read exactly `length` bytes starting at byte `offset`. A range extending
+     * past end-of-file rejects rather than short-reading; clamp against
+     * `stat()` size first.
+     */
+    read(offset: number, length: number): Promise<Uint8Array>
     /** Write `data`, replacing any existing contents. */
     write(data: string | Uint8Array): Promise<void>
   }

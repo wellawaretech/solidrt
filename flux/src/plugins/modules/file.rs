@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::seekable::SeekableSource;
-use crate::plugins::standards::body::attach_body;
+use crate::plugins::standards::body::{attach_body, JsBytes};
 use forge::{fs, SeekableReader};
 
 // Marshalling for the `file()` reference: forward to the engine-free
@@ -79,6 +79,25 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   )
   .expect("create stat function");
   obj.set("stat", stat_fn)?;
+
+  // Ranged read: `read(offset, length)` resolves to a Uint8Array of exactly
+  // `length` bytes (a range past end-of-file rejects; clamp against stat size).
+  let read_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>, offset: f64, length: f64| -> rquickjs::Result<Promised<_>> {
+        if offset < 0.0 || offset.fract() != 0.0 || length < 0.0 || length.fract() != 0.0 {
+          return Err(Exception::throw_message(&ctx, "read: offset and length must be non-negative integers"));
+        }
+        let (offset, length) = (offset as u64, length as u64);
+        let path = path.clone();
+        Ok(with_pending(&ctx, async move { fs::read_range(&path, offset, length).await.map(JsBytes) }))
+      }
+    }),
+  )
+  .expect("create read function");
+  obj.set("read", read_fn)?;
 
   let write_fn = Function::new(
     ctx.clone(),

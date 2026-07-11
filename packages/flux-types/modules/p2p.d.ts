@@ -10,6 +10,13 @@ declare module "flux:p2p" {
     relayUrl?: string
     /** Protocols this endpoint will {@link Endpoint.accept}. */
     protocols?: string[]
+    /**
+     * Bind local-only: no relay and no address publishing/lookup, so nothing
+     * about the endpoint leaves the machine except the ticket itself, whose
+     * direct IPs same-network peers dial. Excludes `relayUrl`; a bare-id
+     * `connect` cannot resolve a local endpoint (tickets only).
+     */
+    local?: boolean
   }
 
   /** One transport address from {@link Endpoint.connInfo}. */
@@ -54,7 +61,7 @@ declare module "flux:p2p" {
     /**
      * Bind an endpoint.
      *
-     * @param opts  secretKey, relayUrl, protocols.
+     * @param opts  secretKey, relayUrl, protocols, local.
      */
     static create(opts?: EndpointOptions): Promise<Endpoint>
     /** This endpoint's dial address: the string peers pass to {@link connect}. */

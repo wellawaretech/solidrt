@@ -6,11 +6,12 @@ SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 PROFILE            ?= release
 CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
 
-# Speech recognition (Whisper + wake word) ships in the default feature set.
-# SPEECH=0 drops it (no whisper-rs / livekit-wakeword), for builds that do not
-# want the voice stack -- e.g. the release flow for now. GO_FEATURES /
-# RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
-# (go = client, which already pulls flux/compile; runtime = default minus go).
+# Speech recognition (Whisper + wake word) is an opt-in cargo feature (not in
+# lattice's `default`), so a plain `cargo build` stays voice-free. This
+# Makefile's own default still turns it on for host builds; SPEECH=0 drops it
+# (no whisper-rs / livekit-wakeword). GO_FEATURES / RUNTIME_FEATURES are the
+# resulting cargo feature flags for the two binaries (go = client, which
+# already pulls flux/compile; runtime = default minus go).
 #
 # 32-bit Android ABIs default it off: whisper.cpp inference is impractical on
 # 32-bit ARM/x86 (no reliable NEON fp16 path, tight address space for model +
@@ -26,8 +27,8 @@ ifeq ($(SPEECH),0)
 GO_FEATURES      = --no-default-features --features go
 RUNTIME_FEATURES = --no-default-features --features flux/compile
 else
-GO_FEATURES      = --features go
-RUNTIME_FEATURES =
+GO_FEATURES      = --features go,speech
+RUNTIME_FEATURES = --features speech
 endif
 
 DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx

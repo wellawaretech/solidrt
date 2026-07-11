@@ -63,20 +63,23 @@ impl P2pEndpoint {
     Err(Exception::throw_message(&ctx, "use Endpoint.create() to bind a p2p endpoint"))
   }
 
-  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols? }`.
+  /// Bind an endpoint. `opts`: `{ secretKey?, relayUrl?, protocols?, local? }`.
   /// `secretKey` is 64 hex chars (omit for an ephemeral key); `relayUrl` selects
   /// a self-hosted relay (omit for the public n0 relays); `protocols` lists the
-  /// protocols this endpoint will `accept`.
+  /// protocols this endpoint will `accept`. `local: true` binds local-only: no
+  /// relay and no address publishing/lookup - nothing leaves the machine except
+  /// the ticket itself, whose direct IPs same-network peers dial. Excludes
+  /// `relayUrl`; a bare-id `connect` cannot resolve a local endpoint (tickets
+  /// only).
   #[qjs(static)]
   pub fn create<'js>(
     ctx: Ctx<'js>,
     opts: Opt<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
-    let (secret, relay_url, alpns) = parse_create_opts(&ctx, opts.0)?;
-    Ok(with_pending(
-      &ctx,
-      async move { Endpoint::bind(secret, relay_url, alpns).await.map(|inner| P2pEndpoint { inner }) },
-    ))
+    let (secret, relay_url, alpns, local) = parse_create_opts(&ctx, opts.0)?;
+    Ok(with_pending(&ctx, async move {
+      Endpoint::bind(secret, relay_url, alpns, local).await.map(|inner| P2pEndpoint { inner })
+    }))
   }
 
   /// This endpoint's dial address: the string peers pass to `connect`.
@@ -301,14 +304,14 @@ impl ModuleDef for P2pModule {
   }
 }
 
-/// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns)`, the
-/// native config `Endpoint::bind` takes.
-type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>);
+/// Parsed `create` options: `(secretKey bytes, relayUrl, protocols/alpns,
+/// local)`, the native config `Endpoint::bind` takes.
+type CreateOpts = (Option<[u8; 32]>, Option<String>, Vec<Vec<u8>>, bool);
 
 /// Parse the `create` options object into native config. `opts` may be absent.
 fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs::Result<CreateOpts> {
   let Some(opts) = opts else {
-    return Ok((None, None, Vec::new()));
+    return Ok((None, None, Vec::new(), false));
   };
   let secret = match opts.get::<_, Option<String>>("secretKey")? {
     Some(s) => Some(decode_hex32(&s).map_err(|m| Exception::throw_message(ctx, &m))?),
@@ -317,5 +320,6 @@ fn parse_create_opts<'js>(ctx: &Ctx<'js>, opts: Option<Object<'js>>) -> rquickjs
   let relay_url = opts.get::<_, Option<String>>("relayUrl")?;
   let alpns =
     opts.get::<_, Option<Vec<String>>>("protocols")?.unwrap_or_default().into_iter().map(String::into_bytes).collect();
-  Ok((secret, relay_url, alpns))
+  let local = opts.get::<_, Option<bool>>("local")?.unwrap_or(false);
+  Ok((secret, relay_url, alpns, local))
 }
