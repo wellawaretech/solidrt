@@ -19,7 +19,7 @@ path = "src/main.rs"
 [features]
 #TODO drop the default compile
 default = ["flux/compile"]
-go = ["flux/compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:serde", "dep:serde_json", "dep:reqwest"]
+go = ["flux/compile", "dep:forge", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:serde", "dep:serde_json", "dep:reqwest"]
 # Speech recognition: Whisper transcription (whisper.cpp via whisper-rs, CPU
 # inference) plus wake word detection (livekit-wakeword, ONNX via tract).
 # Opt-in: not part of `default` so a plain `cargo build` stays voice-free.
@@ -32,6 +32,9 @@ log = { workspace = true }
 # bindings are needed in every build config (incl. the --no-default-features
 # runtime and go builds). `compile` is selected per-build via --features.
 flux = { workspace = true, default-features = false, features = ["gui"] }
+# The go client's p2p tunnel (src/go/tunnel.rs) dials tickets with the same
+# engine-free core flux:p2p marshals.
+forge = { workspace = true, optional = true }
 half = "2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render

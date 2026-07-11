@@ -23,7 +23,11 @@ pub fn install_dev_control(
 
   let control = DevControl::new(DevControlInner {
     connect: Box::new(move |addr| {
-      let _ = connect_tx.send(DevCmd::Connect(addr));
+      // A ticket (`id|relay|ips`) connects through the p2p tunnel; a plain
+      // `host:port` dials the dev server directly. Covers every caller,
+      // including the QR scan path, which connects with the decoded payload.
+      let cmd = if addr.contains('|') { DevCmd::ConnectTicket(addr) } else { DevCmd::Connect(addr) };
+      let _ = connect_tx.send(cmd);
     }),
     discover: Box::new(move || {
       let _ = discover_tx.send(DevCmd::Discover);

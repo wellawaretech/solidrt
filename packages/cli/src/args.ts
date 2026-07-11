@@ -15,6 +15,7 @@ export let { values, positionals } = parseArgs({
     size: { type: "string" },
     script: { type: "string" },
     capture: { type: "string" },
+    tunnel: { type: "boolean", default: false },
     stats: { type: "boolean", default: false },
     android: { type: "boolean", default: false },
     device: { type: "string" },
@@ -84,6 +85,7 @@ run/server options:
       --proxy-files      Route file/dir access through the dev server
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
+      --tunnel           Accept ticket-paired clients through the p2p tunnel
 
 run/client options:
       --size <WxH>       Window size (default: 1280x720)

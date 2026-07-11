@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use flux::rquickjs;
 use flux::{ExecHandle, FluxEngineBuilder};
@@ -16,7 +16,7 @@ use tokio::task::LocalSet;
 
 use super::connection::{self, ConnState, DevCmd, DevFlags, DevServerCell};
 use super::control::install_dev_control;
-use super::proxy::{ProxyFsModule, install_proxy_state};
+use super::proxy::{install_proxy_state, ProxyFsModule};
 
 /// Bundles the dev-server connection state held natively across engine rebuilds.
 pub struct DevSession {

@@ -18,6 +18,8 @@ export type Config = {
   /** Destination for captured key events, or unset when off. */
   capture?: string
   stats: boolean
+  /** Accept ticket-paired clients through the p2p tunnel. */
+  tunnel: boolean
 }
 
 export type ClientInfo = { platform: string; version: string; id: number; capabilities: string[] }

@@ -55,6 +55,9 @@ pub enum DevCmd {
   /// Connect to a known `host:port` and keep retrying/reconnecting. Covers the
   /// adb-reverse loopback (`127.0.0.1:DEV_PORT`), manual entry and recents.
   Connect(String),
+  /// Connect through the p2p tunnel by ticket: start a loopback forwarder that
+  /// dials the ticket per connection, then connect to it like `Connect`.
+  ConnectTicket(String),
   /// Browse the LAN for a dev server via mDNS, then connect.
   Discover,
   /// Stop searching and drop any connection, back to idle.
@@ -132,6 +135,10 @@ async fn supervisor(
         pending =
           run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries).await;
       }
+      DevCmd::ConnectTicket(ticket) => {
+        pending =
+          run_ticket(ticket, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries).await;
+      }
       DevCmd::Discover => {
         #[cfg(not(target_os = "android"))]
         {
@@ -174,6 +181,32 @@ async fn run_direct(
       }
     }
   }
+}
+
+/// Bring up the p2p tunnel forwarder for `ticket`, then connect through its
+/// loopback address exactly like a direct connection: the WS handshake rides
+/// the tunnel, and a failed ticket dial surfaces as a failed connect that
+/// `run_direct` retries. The forwarder is torn down when a new command
+/// interrupts (guard drop).
+async fn run_ticket(
+  ticket: String,
+  cmd_rx: &mut UnboundedReceiver<DevCmd>,
+  engine_tx: &UnboundedSender<crate::EngineCmd>,
+  state_tx: &UnboundedSender<ConnState>,
+  dev_server: &DevServerCell,
+  flags: &DevFlags,
+  outbound_rx: &mut UnboundedReceiver<String>,
+  queries: &QueryHandles,
+) -> Option<DevCmd> {
+  let (addr, _tunnel) = match super::tunnel::start(ticket).await {
+    Ok(started) => started,
+    Err(e) => {
+      log::error!("[sgo] Tunnel start failed: {e}");
+      let _ = state_tx.send(ConnState::Idle);
+      return cmd_rx.recv().await;
+    }
+  };
+  run_direct(addr.to_string(), cmd_rx, engine_tx, state_tx, dev_server, flags, outbound_rx, queries).await
 }
 
 /// Browse for the dev server via mDNS, then connect and serve. Once a server is

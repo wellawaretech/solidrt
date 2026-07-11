@@ -135,6 +135,7 @@ export async function startServer() {
     cacheDir: process.cwd(),
     capture: state.capture,
     stats: state.stats,
+    tunnel: values.tunnel,
   }
 
   state.serverProc = Bun.spawn([flux, script, JSON.stringify(config)], {

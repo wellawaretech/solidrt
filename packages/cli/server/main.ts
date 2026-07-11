@@ -14,6 +14,7 @@ import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, clientList, handleControl, resolveQuery } from "./control"
 import { printQr } from "./qr"
+import { startTunnel } from "./tunnel"
 
 // argv layout differs between hosts; the config JSON is always the last argument.
 let config: Config = JSON.parse(argv[argv.length - 1]!)
@@ -266,12 +267,21 @@ serve({
   },
 })
 
-console.log("")
-printQr(state.serverUrl)
-console.log("")
+// One QR on screen: with the tunnel on, the ticket QR (printed by startTunnel)
+// is the pairing story and the address stays text-only; without it, the
+// address QR is the scan target as before.
+if (!config.tunnel) {
+  console.log("")
+  printQr(state.serverUrl)
+  console.log("")
+}
 console.log(`[cli] WebSocket server on ws://${state.serverUrl}`)
-// mDNS advertise is intentionally not implemented here: the p2p ticket becomes
-// the cross-device connect story (see docs/flux-dev-server-plan.md).
+// mDNS advertise is intentionally not implemented here: the p2p ticket is the
+// cross-device connect story (see docs/flux-dev-server-plan.md).
+
+if (config.tunnel) {
+  startTunnel(config.port).catch((e) => console.log(`[cli] Tunnel failed: ${e}`))
+}
 
 // Keepalive
 setInterval(() => {
