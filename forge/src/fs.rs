@@ -39,6 +39,14 @@ pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
   tokio::fs::write(path, bytes).await.map_err(|e| format!("write {path}: {e}"))
 }
 
+/// Append bytes to a file, creating it if missing.
+pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
+  use tokio::io::AsyncWriteExt;
+  let err = |e| format!("append {path}: {e}");
+  let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(path).await.map_err(err)?;
+  file.write_all(bytes).await.map_err(err)
+}
+
 /// Open a file for seekable, on-demand reads (e.g. feeding a streaming audio
 /// decoder) without pulling it into memory. Sync and a plain `std::fs::File`
 /// because the handle is read from a foreign decode thread, not the tokio

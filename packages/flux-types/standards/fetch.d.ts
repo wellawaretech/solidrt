@@ -25,6 +25,12 @@ interface Headers {
   delete(name: string): void
   /** Add a value for `name` without replacing existing ones. */
   append(name: string, value: string): void
+  /**
+   * Call `callback(value, name, headers)` for each entry. Iterates entries as
+   * stored (insertion order, duplicates separate); WHATWG iterates sorted with
+   * duplicate names combined.
+   */
+  forEach(callback: (value: string, name: string, headers: Headers) => void, thisArg?: any): void
 }
 
 declare let Headers: {

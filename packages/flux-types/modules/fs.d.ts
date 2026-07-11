@@ -30,6 +30,8 @@ declare module "flux:fs" {
     read(offset: number, length: number): Promise<Uint8Array>
     /** Write `data`, replacing any existing contents. */
     write(data: string | Uint8Array): Promise<void>
+    /** Append `data` to the end of the file, creating it if missing. */
+    append(data: string | Uint8Array): Promise<void>
   }
 
   type FluxDir = {

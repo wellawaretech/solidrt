@@ -28,6 +28,17 @@ impl<'js> IntoJs<'js> for JsStatInfo {
   }
 }
 
+/// Decode a write/append payload: a string (UTF-8 bytes) or a Uint8Array.
+fn data_bytes<'js, 'v>(ctx: &Ctx<'js>, data: &Value<'v>, what: &str) -> rquickjs::Result<Vec<u8>> {
+  if let Some(s) = data.as_string() {
+    Ok(s.to_string()?.into_bytes())
+  } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
+    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+  } else {
+    Err(Exception::throw_message(ctx, &format!("{what}: data must be string or Uint8Array")))
+  }
+}
+
 fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
   let path = Rc::new(path);
   let obj = Object::new(ctx.clone())?;
@@ -104,13 +115,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
     MutFn::from({
       let path = path.clone();
       move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
-        let bytes = if let Some(s) = data.as_string() {
-          s.to_string()?.into_bytes()
-        } else if let Ok(ta) = TypedArray::<u8>::from_value(data.clone()) {
-          ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()
-        } else {
-          return Err(Exception::throw_message(&ctx, "write: data must be string or Uint8Array"));
-        };
+        let bytes = data_bytes(&ctx, &data, "write")?;
         let path = path.clone();
         Ok(with_pending(&ctx, async move { fs::write(&path, &bytes).await }))
       }
@@ -118,6 +123,20 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   )
   .expect("create write function");
   obj.set("write", write_fn)?;
+
+  let append_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>, data: Value<'_>| -> rquickjs::Result<Promised<_>> {
+        let bytes = data_bytes(&ctx, &data, "append")?;
+        let path = path.clone();
+        Ok(with_pending(&ctx, async move { fs::append(&path, &bytes).await }))
+      }
+    }),
+  )
+  .expect("create append function");
+  obj.set("append", append_fn)?;
 
   // Carry a native seekable source so a consumer that needs sync, seekable bytes
   // off the JS thread (audio streaming) can open the file on demand. Local disk

@@ -36,6 +36,11 @@ pub struct Request<'js> {
   /// server (None for JS-constructed Requests). Consumed by `server.upgrade(req)`.
   #[qjs(skip_trace)]
   pub(crate) upgrade: RefCell<Option<ServeUpgrade<'js>>>,
+  /// The connection's peer address, set only on requests built by the flux:http
+  /// server. Read by `server.requestIP(req)` and carried onto an upgraded
+  /// socket's `remoteAddress`.
+  #[qjs(skip_trace)]
+  pub(crate) remote: Option<std::net::SocketAddr>,
 }
 
 impl<'js> Trace<'js> for Request<'js> {
@@ -65,7 +70,15 @@ impl<'js> Request<'js> {
     let headers_val = init.0.as_ref().and_then(|o| o.get::<_, Value>("headers").ok());
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;
     let params = Object::new(ctx.clone())?;
-    Ok(Request { body: MessageBody::buffered(body_bytes), method, url, headers, params, upgrade: RefCell::new(None) })
+    Ok(Request {
+      body: MessageBody::buffered(body_bytes),
+      method,
+      url,
+      headers,
+      params,
+      upgrade: RefCell::new(None),
+      remote: None,
+    })
   }
 
   #[qjs(get)]
@@ -127,6 +140,7 @@ impl<'js> Request<'js> {
 /// incoming request body stream, read incrementally by the handler rather than
 /// buffered up front. `params` are matched route path parameters; pass an empty
 /// Vec when there is no route match.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn request_from_parts<'js>(
   ctx: &Ctx<'js>,
   method: String,
@@ -135,6 +149,7 @@ pub(crate) fn request_from_parts<'js>(
   headers: Vec<(String, String)>,
   params: Vec<(String, String)>,
   upgrade: Option<OnUpgrade>,
+  remote: Option<std::net::SocketAddr>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;
   let params_obj = Object::new(ctx.clone())?;
@@ -150,6 +165,7 @@ pub(crate) fn request_from_parts<'js>(
       headers,
       params: params_obj,
       upgrade: RefCell::new(upgrade.map(ServeUpgrade::Ready)),
+      remote,
     },
   )
 }

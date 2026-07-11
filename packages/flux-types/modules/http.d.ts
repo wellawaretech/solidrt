@@ -93,6 +93,8 @@ declare module "flux:http" {
     close(code?: number, reason?: string): void
     /** Connection state: CONNECTING 0, OPEN 1, CLOSING 2, CLOSED 3. */
     readonly readyState: number
+    /** The peer's IP address, or undefined when unknown. */
+    readonly remoteAddress: string | undefined
   }
 
   /**
@@ -129,6 +131,15 @@ declare module "flux:http" {
     headers?: Record<string, string> | Headers
   }
 
+  /** A peer address, as returned by {@link Server.requestIP}. */
+  type SocketAddress = {
+    /** The peer's IP address. */
+    address: string
+    /** The peer's port. */
+    port: number
+    family: "IPv4" | "IPv6"
+  }
+
   type Server = {
     /** The bound port. */
     readonly port: number
@@ -151,6 +162,11 @@ declare module "flux:http" {
     publish(topic: string, data: string | Uint8Array): number
     /** How many sockets are currently subscribed to `topic`. */
     subscriberCount(topic: string): number
+    /**
+     * The peer address of the connection `req` arrived on, or null when unknown
+     * (e.g. a JS-constructed Request).
+     */
+    requestIP(req: Request): SocketAddress | null
     /**
      * Stop accepting new connections and gracefully shut down open ones. Safe to
      * call more than once.

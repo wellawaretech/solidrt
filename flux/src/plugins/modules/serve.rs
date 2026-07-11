@@ -206,7 +206,7 @@ fn take_upgrade<'js>(
   logger: &Logger,
 ) -> Option<HyperResponse<ResBody>> {
   let slot = req_class.borrow().upgrade.borrow_mut().take();
-  let Some(ServeUpgrade::Accepted { response, socket, data }) = slot else {
+  let Some(ServeUpgrade::Accepted { response, socket, data, remote }) = slot else {
     return None;
   };
   if !resolved.is_undefined() {
@@ -219,7 +219,7 @@ fn take_upgrade<'js>(
   };
   let server = handlers.server.borrow();
   let shutdown_rx = server.shared.subscribe();
-  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data, server.topics.clone());
+  spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data, remote, server.topics.clone());
   Some(response)
 }
 
@@ -278,6 +278,9 @@ struct RequestParts {
   /// The hyper upgrade handle, carried into the JS Request so the handler can
   /// call `server.upgrade(req)`.
   upgrade: Option<OnUpgrade>,
+  /// The connection's peer address, carried into the JS Request for
+  /// `server.requestIP(req)` and `ws.remoteAddress`.
+  remote: Option<std::net::SocketAddr>,
 }
 
 /// Build the JS `Request` from `parts` (plus any captured path `params`) and run
@@ -291,19 +294,28 @@ async fn dispatch_fn<'js>(
   logger: &Logger,
 ) -> HyperResponse<ResBody> {
   let ctx = f.ctx().clone();
-  let req_class =
-    match request_from_parts(&ctx, parts.method, parts.url, parts.body, parts.headers, params, parts.upgrade) {
-      Ok(c) => c,
-      Err(e) => {
-        logger.warn(&format!("[flux] serve build Request error: {e}"));
-        return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
-      }
-    };
+  let req_class = match request_from_parts(
+    &ctx,
+    parts.method,
+    parts.url,
+    parts.body,
+    parts.headers,
+    params,
+    parts.upgrade,
+    parts.remote,
+  ) {
+    Ok(c) => c,
+    Err(e) => {
+      logger.warn(&format!("[flux] serve build Request error: {e}"));
+      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+    }
+  };
   call_handler(f, req_class, handlers, logger).await
 }
 
 async fn handle_request<'js>(
   mut req: HyperRequest<Incoming>,
+  remote: Option<std::net::SocketAddr>,
   handlers: &Handlers<'js>,
   logger: &Logger,
 ) -> HyperResponse<ResBody> {
@@ -317,7 +329,6 @@ async fn handle_request<'js>(
     .iter()
     .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
     .collect();
-  logger.log(&format!("[flux] serve {} {}", method, url));
 
   // The upgrade handle rides along on the Request so a handler can accept a
   // websocket via server.upgrade(req); unused it is simply dropped.
@@ -328,7 +339,7 @@ async fn handle_request<'js>(
   // req.text()/req.json()/req.bytes() or by iterating req.body. A handler that
   // never reads it (e.g. a static route) just drops the unread stream.
   let body = to_byte_stream(req.into_body().into_data_stream());
-  let parts = RequestParts { method, url, body, headers, upgrade };
+  let parts = RequestParts { method, url, body, headers, upgrade, remote };
 
   // Try the route table first; a match dispatches to its handler. Static routes
   // need neither the body nor a Request, so they serve their snapshot directly.
@@ -418,7 +429,7 @@ impl Server {
     let Some(ServeUpgrade::Ready(on_upgrade)) = slot.take() else {
       return false;
     };
-    match try_upgrade(&headers, on_upgrade, &extra_headers, data) {
+    match try_upgrade(&headers, on_upgrade, &extra_headers, data, req.remote) {
       Ok(accepted) => {
         *slot = Some(accepted);
         true
@@ -441,6 +452,23 @@ impl Server {
   #[qjs(rename = "subscriberCount")]
   pub fn subscriber_count(&self, topic: String) -> usize {
     self.topics.subscriber_count(&topic)
+  }
+
+  /// The peer address of the connection `req` arrived on, as
+  /// `{ address, port, family }`, or null when unknown (e.g. a JS-constructed
+  /// Request). Models Bun's `server.requestIP`.
+  #[qjs(rename = "requestIP")]
+  pub fn request_ip<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>) -> rquickjs::Result<Value<'js>> {
+    match req.borrow().remote {
+      Some(addr) => {
+        let obj = Object::new(ctx)?;
+        obj.set("address", addr.ip().to_string())?;
+        obj.set("port", addr.port())?;
+        obj.set("family", if addr.is_ipv4() { "IPv4" } else { "IPv6" })?;
+        Ok(obj.into_value())
+      }
+      None => Ok(Value::new_null(ctx)),
+    }
   }
 
   /// Stop accepting new connections and gracefully shut down open ones. Safe to
@@ -502,14 +530,15 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     // Each accepted socket spawns its own connection task. Spawning stays here in
     // the marshalling layer (the engine-free core hands sockets back through this
     // closure) so the core never touches `ctx.spawn`.
-    let on_conn = move |sock| {
+    let on_conn = move |sock: tokio::net::TcpStream| {
+      let remote = sock.peer_addr().ok();
       let conn_rx = loop_shared.subscribe();
       let svc_handlers = handlers.clone();
       let svc_logger = loop_logger.clone();
       let service = service_fn(move |req: HyperRequest<Incoming>| {
         let handlers = svc_handlers.clone();
         let logger = svc_logger.clone();
-        async move { Ok::<_, Infallible>(handle_request(req, &handlers, &logger).await) }
+        async move { Ok::<_, Infallible>(handle_request(req, remote, &handlers, &logger).await) }
       });
       loop_ctx.spawn(serve_connection(sock, service, loop_logger.clone(), conn_rx));
     };

@@ -54,9 +54,14 @@ pub(crate) enum ServeUpgrade<'js> {
   /// Not upgraded yet: the hyper upgrade handle taken from the incoming request.
   Ready(hyper::upgrade::OnUpgrade),
   /// Handshake accepted: the 101 response to send, the future resolving to the
-  /// raw socket once hyper releases the connection, and the user value destined
-  /// for `ws.data`.
-  Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut, data: Option<Value<'js>> },
+  /// raw socket once hyper releases the connection, the user value destined
+  /// for `ws.data`, and the peer address destined for `ws.remoteAddress`.
+  Accepted {
+    response: hyper::Response<ResBody>,
+    socket: UpgradeFut,
+    data: Option<Value<'js>>,
+    remote: Option<std::net::SocketAddr>,
+  },
 }
 
 unsafe impl<'js> JsLifetime<'js> for ServeUpgrade<'js> {
@@ -85,6 +90,7 @@ pub(crate) fn try_upgrade<'js>(
   on_upgrade: hyper::upgrade::OnUpgrade,
   extra_headers: &[(String, String)],
   data: Option<Value<'js>>,
+  remote: Option<std::net::SocketAddr>,
 ) -> Result<ServeUpgrade<'js>, String> {
   let mut builder = HyperRequest::builder();
   for (k, v) in headers {
@@ -102,7 +108,7 @@ pub(crate) fn try_upgrade<'js>(
     let value = HeaderValue::from_str(v).map_err(|e| format!("invalid header value for {k}: {e}"))?;
     response.headers_mut().append(name, value);
   }
-  Ok(ServeUpgrade::Accepted { response, socket, data })
+  Ok(ServeUpgrade::Accepted { response, socket, data, remote })
 }
 
 /// Split a message value into its frame opcode and payload bytes: a string
@@ -126,6 +132,8 @@ pub(crate) struct ServerWebSocket<'js> {
   closing: Rc<Notify>,
   /// The user value from `upgrade(req, { data })`; undefined when not given.
   data: RefCell<Value<'js>>,
+  /// The connection's peer address, carried over from the upgraded request.
+  remote: Option<std::net::SocketAddr>,
 }
 
 impl<'js> Trace<'js> for ServerWebSocket<'js> {
@@ -207,6 +215,12 @@ impl<'js> ServerWebSocket<'js> {
     self.sink.state()
   }
 
+  /// The peer's IP address as a string, or undefined when unknown.
+  #[qjs(get, rename = "remoteAddress")]
+  pub fn remote_address(&self) -> Option<String> {
+    self.remote.map(|a| a.ip().to_string())
+  }
+
   #[qjs(get)]
   pub fn data(&self) -> Value<'js> {
     self.data.borrow().clone()
@@ -256,6 +270,7 @@ impl<'js> WsDispatch for JsDispatch<'js> {
 /// peer closes, errors, or the server shuts down. Holds a pending op per task so
 /// the runtime stays alive while the socket is open. Runs on the JS executor:
 /// the callbacks are JS functions.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_socket<'js>(
   ctx: &Ctx<'js>,
   socket: UpgradeFut,
@@ -263,13 +278,14 @@ pub(crate) fn spawn_socket<'js>(
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
   data: Option<Value<'js>>,
+  remote: Option<std::net::SocketAddr>,
   topics: Topics,
 ) {
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
   pending.hold();
   let ctx2 = ctx.clone();
   ctx.spawn(async move {
-    run_socket(ctx2, socket, handlers, shutdown_rx, logger, &pending, data, topics).await;
+    run_socket(ctx2, socket, handlers, shutdown_rx, logger, &pending, data, remote, topics).await;
     pending.release();
   });
 }
@@ -283,6 +299,7 @@ async fn run_socket<'js>(
   logger: Logger,
   pending: &PendingOps,
   data: Option<Value<'js>>,
+  remote: Option<std::net::SocketAddr>,
   topics: Topics,
 ) {
   let ws = match socket.await {
@@ -300,6 +317,7 @@ async fn run_socket<'js>(
     sink: sink.clone(),
     closing: close_notify.clone(),
     data: RefCell::new(data.unwrap_or_else(|| Value::new_undefined(ctx.clone()))),
+    remote,
   };
   let handle = match Class::instance(ctx.clone(), socket_handle) {
     Ok(c) => c,

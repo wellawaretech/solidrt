@@ -1,6 +1,6 @@
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
-use rquickjs::{Class, Ctx, JsLifetime, Value};
+use rquickjs::function::{Opt, This};
+use rquickjs::{Class, Ctx, Function, JsLifetime, Value};
 use std::cell::RefCell;
 
 /// A subset of the WHATWG Headers API. Stores entries case-insensitively
@@ -59,6 +59,26 @@ impl Headers {
 
   pub fn append(&self, name: String, value: String) {
     self.entries.borrow_mut().push((name.to_ascii_lowercase(), value));
+  }
+
+  /// Call `callback(value, name, headers)` for each entry. Iterates entries as
+  /// stored (insertion order, duplicates separate); WHATWG iterates sorted with
+  /// duplicate names combined.
+  #[qjs(rename = "forEach")]
+  pub fn for_each<'js>(
+    this: This<Class<'js, Headers>>,
+    callback: Function<'js>,
+    this_arg: Opt<Value<'js>>,
+  ) -> rquickjs::Result<()> {
+    // Snapshot so the callback may mutate the Headers without holding the borrow.
+    let entries = this.0.borrow().entries();
+    for (name, value) in entries {
+      match &this_arg.0 {
+        Some(t) => callback.call::<_, ()>((This(t.clone()), value, name, this.0.clone()))?,
+        None => callback.call::<_, ()>((value, name, this.0.clone()))?,
+      }
+    }
+    Ok(())
   }
 }
 
