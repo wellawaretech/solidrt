@@ -19,7 +19,7 @@ path = "src/main.rs"
 [features]
 #TODO drop the default compile
 default = ["flux/compile"]
-go = ["flux/compile", "dep:forge", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:serde", "dep:serde_json", "dep:reqwest"]
+go = ["flux/compile", "dep:forge", "dep:tokio-websockets", "dep:futures-util", "dep:http", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:base64"]
 # Speech recognition: Whisper transcription (whisper.cpp via whisper-rs, CPU
 # inference) plus wake word detection (livekit-wakeword, ONNX via tract).
 # Opt-in: not part of `default` so a plain `cargo build` stays voice-free.
@@ -41,6 +41,7 @@ rquickjs = { workspace = true }
 # tree (and its lyon/svgtypes path deps) moved to alloy.
 taffy = "0.12.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = { version = "0.22", optional = true }
 tokio = { workspace = true }
 tokio-websockets = { version = "0.13", features = ["client", "fastrand", "sha1_smol"], optional = true }
 futures-util = { version = "0.3", features = ["sink"], optional = true }

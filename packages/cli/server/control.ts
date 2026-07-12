@@ -75,14 +75,14 @@ function findClient(param: string | undefined): { ws: ServerWebSocket } | { erro
   return { ws: entry[0] }
 }
 
-async function handleQuery(query: Map<string, string>, kind: string): Promise<Response> {
+async function handleQuery(query: Map<string, string>, kind: string, extra?: Record<string, unknown>): Promise<Response> {
   let target = findClient(query.get("client"))
   if ("error" in target) return target.error
   let id = nextQueryId++
   let reply = new Promise<any>((resolve) => {
     pendingQueries.set(id, resolve)
   })
-  target.ws.send(JSON.stringify({ type: "query", kind, id }))
+  target.ws.send(JSON.stringify({ type: "query", kind, id, ...extra }))
   let msg = await Promise.race([reply, sleep(QUERY_TIMEOUT_MS)])
   pendingQueries.delete(id)
   if (!msg) return Response.json({ error: "Query timed out" }, { status: 504 })
@@ -121,6 +121,11 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return handleQuery(query, "tree")
     case "/__control__/stats":
       return handleQuery(query, "stats")
+    case "/__control__/snapshot": {
+      let nodeId = parseInt(query.get("node") ?? "", 10)
+      if (!Number.isFinite(nodeId)) return Response.json({ error: "Snapshot requires ?node=<id>" }, { status: 400 })
+      return handleQuery(query, "snapshot", { nodeId })
+    }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })
   }

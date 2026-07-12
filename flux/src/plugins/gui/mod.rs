@@ -66,6 +66,10 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let texture_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy.clone());
+  // Stored as standalone userdata (below) so the runner can reach the alloy
+  // context off the JS thread's `Ctx` - e.g. to service a dev-server snapshot
+  // query - the way it reaches `SharedRenderTree` for a tree query.
+  let query_atx = AlloyContext(alloy.clone());
   let audio_atx = AlloyContext(alloy);
   // The render tree and the capture/render devices are all `flux:*` modules
   // (registered below); only the web-standard rAF stays a global. The plugins
@@ -73,6 +77,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // surfaces read it in their `evaluate`.
   builder
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
+    .plugin(move |ctx| {
+      ctx.store_userdata(query_atx).expect("store alloy context userdata");
+    })
     .plugin(|ctx| input::store_state(&ctx))
     .plugin(move |ctx| raf::init(&ctx, raf_platform))
     .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))

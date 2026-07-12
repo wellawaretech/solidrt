@@ -9,6 +9,7 @@ use taffy::Point;
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree, WH,
 };
+use crate::{CaptureDone, CaptureInfo};
 
 // Large finite extent used to leave one axis effectively unclipped when only the
 // other axis has non-visible overflow. clip_rect requires a finite rectangle.
@@ -58,6 +59,9 @@ pub fn paint_phase(
   // Any capture request whose node the walk never visited targets a node that
   // is not in the live tree; fail it rather than leave its promise pending.
   alloy.fail_unserviced_captures();
+  // Deliver every capture outcome now the walk is done, so callbacks (which may
+  // read back or free textures) run out of the tree borrow.
+  alloy.deliver_captures();
   PaintStats {
     boundaries_reused: ctx.boundaries_reused,
     boundaries_recorded: ctx.boundaries_recorded,
@@ -364,14 +368,14 @@ fn snapshot_node<'a>(
 // into the frame's builder - the node still paints normally afterwards - and it
 // isolates the shared ctx (size and boundary stats) so the recording it does
 // here does not perturb the frame being built.
-fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<u64>) {
+fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<CaptureDone>) {
   let element = scene.node(node_id);
   let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
   let scale = ctx.platform.display_scale();
   let (tex_w, tex_h) = ((size.width * scale).ceil() as u32, (size.height * scale).ceil() as u32);
   if tex_w == 0 || tex_h == 0 {
-    for request_id in requests {
-      ctx.alloy.push_capture_err(request_id, "capture node has no layout box (zero size)".to_string());
+    for done in requests {
+      ctx.alloy.complete_capture(done, Err("capture node has no layout box (zero size)".to_string()));
     }
     return;
   }
@@ -391,18 +395,19 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   ctx.snapshots_rasterized = saved_stats.3;
 
   let Some(dl) = sub.build() else {
-    for request_id in requests {
-      ctx.alloy.push_capture_err(request_id, "capture produced an empty display list".to_string());
+    for done in requests {
+      ctx.alloy.complete_capture(done, Err("capture produced an empty display list".to_string()));
     }
     return;
   };
 
   // Fresh, independent texture per request (design: a new id per call).
-  for request_id in requests {
-    match ctx.alloy.capture_node_texture(&dl, tex_w, tex_h) {
-      Ok(texture_id) => ctx.alloy.push_capture_ok(request_id, texture_id, tex_w, tex_h),
-      Err(e) => ctx.alloy.push_capture_err(request_id, e),
-    }
+  for done in requests {
+    let result = ctx
+      .alloy
+      .capture_node_texture(&dl, tex_w, tex_h)
+      .map(|texture_id| CaptureInfo { texture_id, width: tex_w, height: tex_h });
+    ctx.alloy.complete_capture(done, result);
   }
 }
 

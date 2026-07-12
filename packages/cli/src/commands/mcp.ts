@@ -79,6 +79,20 @@ let TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "get_snapshot",
+    description:
+      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. The node must be currently mounted and have a non-zero layout box.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodeId: { type: "integer", description: "Id of the node to capture, from get_render_tree" },
+        client: { type: "integer", description: "Client id from list_clients (default: the only connected client)" },
+      },
+      required: ["nodeId"],
+      additionalProperties: false,
+    },
+  },
 ]
 
 function clientParam(args: any): string {
@@ -100,6 +114,12 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       return control(`/stats${clientParam(args)}`)
     case "get_render_tree":
       return control(`/tree${clientParam(args)}`)
+    case "get_snapshot": {
+      if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
+      let params = new URLSearchParams({ node: String(args.nodeId) })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/snapshot?${params.toString()}`)
+    }
     default:
       return { ok: false, message: `Unknown tool: ${name}` }
   }
@@ -115,9 +135,19 @@ export async function runMcpCommand() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
-    let result = await callTool(request.params.name, request.params.arguments ?? {})
+    let name = request.params.name
+    let result = await callTool(name, request.params.arguments ?? {})
     if (!result.ok) {
       return { content: [{ type: "text", text: result.message }], isError: true }
+    }
+    if (name === "get_snapshot") {
+      let { pngBase64, width, height } = result.body
+      return {
+        content: [
+          { type: "image", data: pngBase64, mimeType: "image/png" },
+          { type: "text", text: `Captured node snapshot: ${width}x${height} px` },
+        ],
+      }
     }
     return { content: [{ type: "text", text: JSON.stringify(result.body, null, 2) }] }
   })

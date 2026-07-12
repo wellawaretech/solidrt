@@ -1,3 +1,5 @@
+use base64::Engine as _;
+use image::ImageEncoder as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -468,6 +470,24 @@ async fn try_serve(
                   }
                 }
               }
+              Some("snapshot") => {
+                // Rasterize a node's subtree to a texture on the JS thread and
+                // route the PNG reply back through the outbound channel. The
+                // capture is async (serviced on a paint), so unlike tree/stats
+                // the reply is sent from the capture callback, not here.
+                let node_id = json.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    let frame_requested = flags.frame_requested.clone();
+                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, reply_tx, frame_requested));
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               other => {
                 let msg = format!("unknown query kind {other:?}");
                 let _ = client.send(tokio_websockets::Message::text(error_reply(id, &msg))).await;
@@ -529,6 +549,69 @@ fn tree_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     Some(root) => serde_json::json!({"type": "result", "id": id, "data": node_json(&root)}).to_string(),
     None => error_reply(id, "no render tree (the app has not rendered)"),
   }
+}
+
+/// Queue a snapshot capture of `node_id` on the alloy context (reached from JS
+/// userdata, like `tree_reply` reaches the render tree). The completion callback
+/// runs on this same JS thread during the paint pass that services the capture:
+/// it reads the texture back, PNG-encodes it, frees the texture, and routes the
+/// reply out. Runs on the JS thread via the engine exec handle.
+fn request_snapshot(
+  ctx: &flux::rquickjs::Ctx<'_>,
+  node_id: u64,
+  id: u64,
+  reply_tx: UnboundedSender<String>,
+  frame_requested: Arc<AtomicBool>,
+) {
+  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+    let _ = reply_tx.send(error_reply(id, "no alloy context"));
+    return;
+  };
+  let alloy = atx.0.clone();
+  let encode_alloy = alloy.clone();
+  alloy.request_capture(
+    node_id,
+    Box::new(move |result| {
+      let reply = match result {
+        Ok(info) => {
+          let read = encode_alloy.read_texture_by_id(info.texture_id);
+          encode_alloy.destroy_texture(info.texture_id);
+          match read {
+            Ok((width, height, pixels)) => snapshot_reply(id, width, height, pixels),
+            Err(e) => error_reply(id, &e),
+          }
+        }
+        Err(e) => error_reply(id, &e),
+      };
+      let _ = reply_tx.send(reply);
+    }),
+  );
+  // Latch a frame only after the capture is queued (matching captureSnapshot's
+  // order), so a Tick-driven draw cannot consume the latch before the request
+  // is registered and leave the capture stranded. The app may be idle; the idle
+  // Tick then services it within a refresh period.
+  frame_requested.store(true, Ordering::Relaxed);
+}
+
+/// Encode a captured RGBA8 buffer as a base64 PNG reply. On-demand and rare (a
+/// dev-server query), so encoding inline on the JS thread is fine.
+fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
+  let expected = (width as usize) * (height as usize) * 4;
+  if rgba.len() != expected {
+    return error_reply(id, "snapshot pixel buffer size mismatch");
+  }
+  let mut png = Vec::new();
+  let encoder = image::codecs::png::PngEncoder::new(&mut png);
+  if let Err(e) = encoder.write_image(&rgba, width, height, image::ExtendedColorType::Rgba8) {
+    return error_reply(id, &format!("png encode failed: {e}"));
+  }
+  let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+  serde_json::json!({
+    "type": "result",
+    "id": id,
+    "data": { "pngBase64": b64, "width": width, "height": height },
+  })
+  .to_string()
 }
 
 fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {

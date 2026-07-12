@@ -1,5 +1,5 @@
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -10,6 +10,7 @@ use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedAr
 
 use super::AlloyContext;
 use alloy::rendertree::PlatformContext;
+use alloy::CaptureInfo;
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
 // (which clears userdata while the runtime is still alive) destroys the GPU
@@ -29,13 +30,15 @@ struct TextureInner {
   // calls destroyTexture itself.
   created: RefCell<HashSet<u64>>,
   // captureSnapshot is async: alloy services the request on a later paint pass
-  // and reports the result back through Context::take_capture_results. These
-  // hold the JS promise sides until `tick` matches a result by request id.
-  next_capture_request: Cell<u64>,
-  pending_captures: RefCell<HashMap<u64, PendingCapture>>,
+  // and invokes our completion callback (during `deliver_captures`), which moves
+  // the outcome plus the promise sides here. `tick` then drains this and settles
+  // each promise with the live `Ctx` it holds (the callback has none). Two hops
+  // because a JS promise can only be touched from the JS thread with a `Ctx`.
+  capture_settle: RefCell<Vec<CaptureSettle>>,
 }
 
-struct PendingCapture {
+struct CaptureSettle {
+  result: Result<CaptureInfo, String>,
   resolve: Persistent<Function<'static>>,
   reject: Persistent<Function<'static>>,
 }
@@ -73,8 +76,7 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformConte
       atx,
       platform,
       created: RefCell::new(HashSet::new()),
-      next_capture_request: Cell::new(0),
-      pending_captures: RefCell::new(HashMap::new()),
+      capture_settle: RefCell::new(Vec::new()),
     })))
     .expect("store texture state");
 }
@@ -226,18 +228,21 @@ impl ModuleDef for GpuModule {
 }
 
 /// Queue a node capture and return a promise settled from `tick` once alloy
-/// renders it on a later paint pass (see PendingCapture / take_capture_results).
+/// renders it on a later paint pass. The completion callback (run on the UI
+/// thread with no `Ctx`) only stashes the outcome and the promise sides into
+/// `capture_settle`; `tick` does the JS-facing settle (see CaptureSettle).
 fn capture_snapshot_impl<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<Promise<'js>> {
   let state = ctx.userdata::<TextureState>().expect("texture state userdata");
   let (promise, resolve, reject) = Promise::new(&ctx)?;
-  let request_id = state.0.next_capture_request.get();
-  state.0.next_capture_request.set(request_id.wrapping_add(1));
-  state
-    .0
-    .pending_captures
-    .borrow_mut()
-    .insert(request_id, PendingCapture { resolve: Persistent::save(&ctx, resolve), reject: Persistent::save(&ctx, reject) });
-  state.0.atx.request_capture(node_id, request_id);
+  let resolve = Persistent::save(&ctx, resolve);
+  let reject = Persistent::save(&ctx, reject);
+  // The callback holds an Rc to our state so it can enqueue the outcome. Alloy
+  // owns the callback until the capture is serviced, keeping the state alive
+  // while the request is in flight (no cycle: alloy is not owned by the state).
+  let inner = state.0.clone();
+  state.0.atx.request_capture(node_id, Box::new(move |result| {
+    inner.capture_settle.borrow_mut().push(CaptureSettle { result, resolve, reject });
+  }));
   // The capture is serviced during a paint; make sure one happens.
   state.0.platform.request_frame();
   Ok(promise)
@@ -269,19 +274,16 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
 }
 
 /// Per-frame hook, called alongside `camera::tick` / `raf::flush`. Drains the
-/// capture results alloy produced during the last paint and settles each
-/// matching promise, tracking the new texture id for reload cleanup.
+/// capture outcomes the completion callbacks enqueued during the last paint and
+/// settles each promise, tracking the new texture id for reload cleanup.
 pub fn tick(ctx: &Ctx<'_>) {
   let Some(state) = ctx.userdata::<TextureState>() else {
     return;
   };
-  let results = state.0.atx.take_capture_results();
-  for result in results {
+  let settles = std::mem::take(&mut *state.0.capture_settle.borrow_mut());
+  for CaptureSettle { result, resolve, reject } in settles {
     match result {
-      alloy::CaptureResult::Ok { request_id, texture_id, width, height } => {
-        let Some(pending) = state.0.pending_captures.borrow_mut().remove(&request_id) else {
-          continue;
-        };
+      Ok(CaptureInfo { texture_id, width, height }) => {
         // Same reload-cleanup bookkeeping the create* functions do.
         state.0.created.borrow_mut().insert(texture_id);
         let settle = || -> rquickjs::Result<()> {
@@ -289,18 +291,13 @@ pub fn tick(ctx: &Ctx<'_>) {
           obj.set("id", texture_id)?;
           obj.set("width", width)?;
           obj.set("height", height)?;
-          pending.resolve.restore(ctx)?.call::<_, ()>((obj,))
+          resolve.restore(ctx)?.call::<_, ()>((obj,))
         };
         if let Err(e) = settle() {
           log::warn!("[gpu] capture resolve failed: {e}");
         }
       }
-      alloy::CaptureResult::Err { request_id, error } => {
-        let Some(pending) = state.0.pending_captures.borrow_mut().remove(&request_id) else {
-          continue;
-        };
-        reject_with(ctx, pending.reject, &error);
-      }
+      Err(error) => reject_with(ctx, reject, &error),
     }
   }
 }
