@@ -170,7 +170,7 @@ impl Texture {
         display: Display::Block,
         // Replaced-element default: opt out of flex `align-items: stretch`,
         // matching HTML <img>. User can override via align-self prop.
-        align_self: Some(AlignSelf::Start),
+        align_self: Some(AlignSelf::START),
         ..Default::default()
       },
     )

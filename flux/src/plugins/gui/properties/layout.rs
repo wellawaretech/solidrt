@@ -74,41 +74,41 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<Damage>
     }
     "alignItems" => {
       style.align_items = Some(match str_of(value, "alignItems") {
-        "start" => AlignItems::Start,
-        "end" => AlignItems::End,
-        "flex-start" => AlignItems::FlexStart,
-        "flex-end" => AlignItems::FlexEnd,
-        "center" => AlignItems::Center,
-        "baseline" => AlignItems::Baseline,
-        "stretch" => AlignItems::Stretch,
+        "start" => AlignItems::START,
+        "end" => AlignItems::END,
+        "flex-start" => AlignItems::FLEX_START,
+        "flex-end" => AlignItems::FLEX_END,
+        "center" => AlignItems::CENTER,
+        "baseline" => AlignItems::BASELINE,
+        "stretch" => AlignItems::STRETCH,
         v => panic!("unknown alignItems value '{v}'"),
       });
     }
     "justifyContent" => {
       style.justify_content = Some(match str_of(value, "justifyContent") {
-        "start" => JustifyContent::Start,
-        "end" => JustifyContent::End,
-        "flex-start" => JustifyContent::FlexStart,
-        "flex-end" => JustifyContent::FlexEnd,
-        "center" => JustifyContent::Center,
-        "space-between" => JustifyContent::SpaceBetween,
-        "space-around" => JustifyContent::SpaceAround,
-        "space-evenly" => JustifyContent::SpaceEvenly,
-        "stretch" => JustifyContent::Stretch,
+        "start" => JustifyContent::START,
+        "end" => JustifyContent::END,
+        "flex-start" => JustifyContent::FLEX_START,
+        "flex-end" => JustifyContent::FLEX_END,
+        "center" => JustifyContent::CENTER,
+        "space-between" => JustifyContent::SPACE_BETWEEN,
+        "space-around" => JustifyContent::SPACE_AROUND,
+        "space-evenly" => JustifyContent::SPACE_EVENLY,
+        "stretch" => JustifyContent::STRETCH,
         v => panic!("unknown justifyContent value '{v}'"),
       });
     }
     "alignContent" => {
       style.align_content = Some(match str_of(value, "alignContent") {
-        "start" => AlignContent::Start,
-        "end" => AlignContent::End,
-        "flex-start" => AlignContent::FlexStart,
-        "flex-end" => AlignContent::FlexEnd,
-        "center" => AlignContent::Center,
-        "space-between" => AlignContent::SpaceBetween,
-        "space-around" => AlignContent::SpaceAround,
-        "space-evenly" => AlignContent::SpaceEvenly,
-        "stretch" => AlignContent::Stretch,
+        "start" => AlignContent::START,
+        "end" => AlignContent::END,
+        "flex-start" => AlignContent::FLEX_START,
+        "flex-end" => AlignContent::FLEX_END,
+        "center" => AlignContent::CENTER,
+        "space-between" => AlignContent::SPACE_BETWEEN,
+        "space-around" => AlignContent::SPACE_AROUND,
+        "space-evenly" => AlignContent::SPACE_EVENLY,
+        "stretch" => AlignContent::STRETCH,
         v => panic!("unknown alignContent value '{v}'"),
       });
     }
@@ -157,13 +157,13 @@ pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Option<Damage>
     "flexBasis" => style.flex_basis = parse_dimension(value),
     "alignSelf" => {
       style.align_self = Some(match str_of(value, "alignSelf") {
-        "start" => AlignSelf::Start,
-        "end" => AlignSelf::End,
-        "flex-start" => AlignSelf::FlexStart,
-        "flex-end" => AlignSelf::FlexEnd,
-        "center" => AlignSelf::Center,
-        "baseline" => AlignSelf::Baseline,
-        "stretch" => AlignSelf::Stretch,
+        "start" => AlignSelf::START,
+        "end" => AlignSelf::END,
+        "flex-start" => AlignSelf::FLEX_START,
+        "flex-end" => AlignSelf::FLEX_END,
+        "center" => AlignSelf::CENTER,
+        "baseline" => AlignSelf::BASELINE,
+        "stretch" => AlignSelf::STRETCH,
         v => panic!("unknown alignSelf value '{v}'"),
       });
     }
