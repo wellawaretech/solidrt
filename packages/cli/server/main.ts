@@ -191,7 +191,7 @@ async function handleFiles(req: FluxRequest, path: string): Promise<Response> {
 
 // Ticket-paired clients connect through this endpoint; serve() accepts its
 // connections directly alongside the TCP listener.
-let tunnel = config.tunnel ? await createTunnelEndpoint() : null
+let tunnel = config.tunnel ? await createTunnelEndpoint(config.port, config.cacheDir) : null
 
 serve({
   port: config.port,
@@ -272,9 +272,9 @@ serve({
   },
 })
 
-// One QR on screen: with the tunnel on, the ticket QR (printed by startTunnel)
-// is the pairing story and the address stays text-only; without it, the
-// address QR is the scan target as before.
+// One QR on screen: with the tunnel on, the ticket QR (printed by
+// createTunnelEndpoint) is the pairing story and the address stays text-only;
+// without it, the address QR is the scan target as before.
 if (!config.tunnel) {
   console.log("")
   printQr(state.serverUrl)

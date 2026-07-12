@@ -3169,9 +3169,9 @@ var displayScaleAccessor;
 function ensureResizeState() {
   if (sizeAccessor)
     return;
-  let [size, setSize] = createSignal({ width: 0, height: 0 });
-  let [safe, setSafe] = createSignal({ top: 0, left: 0, right: 0, bottom: 0 });
-  let [scale, setScale] = createSignal(1);
+  let [size, setSize] = createSignal({ width: 0, height: 0 }, { ownedWrite: true });
+  let [safe, setSafe] = createSignal({ top: 0, left: 0, right: 0, bottom: 0 }, { ownedWrite: true });
+  let [scale, setScale] = createSignal(1, { ownedWrite: true });
   on("resize", (e) => {
     setSize({ width: e.width, height: e.height });
     setSafe(e.safeArea);
@@ -3528,11 +3528,70 @@ function names_default(e2, f2) {
   }, "name"]);
 }
 
+// node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/mix.mjs
+var t2 = function(t3, a2, n2) {
+  return a2 === undefined && (a2 = 0), n2 === undefined && (n2 = 1), t3 > n2 ? n2 : t3 > a2 ? t3 : a2;
+};
+var a2 = function(t3) {
+  var a3 = t3 / 255;
+  return a3 < 0.04045 ? a3 / 12.92 : Math.pow((a3 + 0.055) / 1.055, 2.4);
+};
+var n2 = function(t3) {
+  return 255 * (t3 > 0.0031308 ? 1.055 * Math.pow(t3, 1 / 2.4) - 0.055 : 12.92 * t3);
+};
+var r2 = 96.422;
+var o2 = 100;
+var u2 = 82.521;
+var e2 = function(a3) {
+  var r3, o3, u3 = { x: 0.9555766 * (r3 = a3).x + -0.0230393 * r3.y + 0.0631636 * r3.z, y: -0.0282895 * r3.x + 1.0099416 * r3.y + 0.0210077 * r3.z, z: 0.0122982 * r3.x + -0.020483 * r3.y + 1.3299098 * r3.z };
+  return o3 = { r: n2(0.032404542 * u3.x - 0.015371385 * u3.y - 0.004985314 * u3.z), g: n2(-0.00969266 * u3.x + 0.018760108 * u3.y + 0.00041556 * u3.z), b: n2(0.000556434 * u3.x - 0.002040259 * u3.y + 0.010572252 * u3.z), a: a3.a }, { r: t2(o3.r, 0, 255), g: t2(o3.g, 0, 255), b: t2(o3.b, 0, 255), a: t2(o3.a) };
+};
+var i2 = function(n3) {
+  var e3 = a2(n3.r), i3 = a2(n3.g), p2 = a2(n3.b);
+  return function(a3) {
+    return { x: t2(a3.x, 0, r2), y: t2(a3.y, 0, o2), z: t2(a3.z, 0, u2), a: t2(a3.a) };
+  }(function(t3) {
+    return { x: 1.0478112 * t3.x + 0.0228866 * t3.y + -0.050127 * t3.z, y: 0.0295424 * t3.x + 0.9904844 * t3.y + -0.0170491 * t3.z, z: -0.0092345 * t3.x + 0.0150436 * t3.y + 0.7521316 * t3.z, a: t3.a };
+  }({ x: 100 * (0.4124564 * e3 + 0.3575761 * i3 + 0.1804375 * p2), y: 100 * (0.2126729 * e3 + 0.7151522 * i3 + 0.072175 * p2), z: 100 * (0.0193339 * e3 + 0.119192 * i3 + 0.9503041 * p2), a: n3.a }));
+};
+var p2 = 216 / 24389;
+var h2 = 24389 / 27;
+var f2 = function(t3) {
+  var a3 = i2(t3), n3 = a3.x / r2, e3 = a3.y / o2, f3 = a3.z / u2;
+  return n3 = n3 > p2 ? Math.cbrt(n3) : (h2 * n3 + 16) / 116, { l: 116 * (e3 = e3 > p2 ? Math.cbrt(e3) : (h2 * e3 + 16) / 116) - 16, a: 500 * (n3 - e3), b: 200 * (e3 - (f3 = f3 > p2 ? Math.cbrt(f3) : (h2 * f3 + 16) / 116)), alpha: a3.a };
+};
+var c2 = function(a3, n3, i3) {
+  var c3, y2 = f2(a3), x2 = f2(n3);
+  return function(t3) {
+    var a4 = (t3.l + 16) / 116, n4 = t3.a / 500 + a4, i4 = a4 - t3.b / 200;
+    return e2({ x: (Math.pow(n4, 3) > p2 ? Math.pow(n4, 3) : (116 * n4 - 16) / h2) * r2, y: (t3.l > 8 ? Math.pow((t3.l + 16) / 116, 3) : t3.l / h2) * o2, z: (Math.pow(i4, 3) > p2 ? Math.pow(i4, 3) : (116 * i4 - 16) / h2) * u2, a: t3.alpha });
+  }({ l: t2((c3 = { l: y2.l * (1 - i3) + x2.l * i3, a: y2.a * (1 - i3) + x2.a * i3, b: y2.b * (1 - i3) + x2.b * i3, alpha: y2.alpha * (1 - i3) + x2.alpha * i3 }).l, 0, 400), a: c3.a, b: c3.b, alpha: t2(c3.alpha) });
+};
+function mix_default(t3) {
+  function a3(t4, a4, n3) {
+    n3 === undefined && (n3 = 5);
+    for (var r3 = [], o3 = 1 / (n3 - 1), u3 = 0;u3 <= n3 - 1; u3++)
+      r3.push(t4.mix(a4, o3 * u3));
+    return r3;
+  }
+  t3.prototype.mix = function(a4, n3) {
+    n3 === undefined && (n3 = 0.5);
+    var r3 = a4 instanceof t3 ? a4 : new t3(a4), o3 = c2(this.toRgb(), r3.toRgb(), n3);
+    return new t3(o3);
+  }, t3.prototype.tints = function(t4) {
+    return a3(this, "#fff", t4);
+  }, t3.prototype.shades = function(t4) {
+    return a3(this, "#000", t4);
+  }, t3.prototype.tones = function(t4) {
+    return a3(this, "#808080", t4);
+  };
+}
+
 // packages/core/src/color.ts
-k([names_default]);
+k([names_default, mix_default]);
 function parseColor(color) {
-  let { r: r2, g: g2, b: b2, a: a2 } = w(color).toRgb();
-  return ((r2 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a2 * 255 & 255) >>> 0;
+  let { r: r3, g: g2, b: b2, a: a3 } = w(color).toRgb();
+  return ((r3 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a3 * 255 & 255) >>> 0;
 }
 function isGradient(value) {
   return typeof value === "object" && value !== null && "__gradient" in value;
@@ -3551,14 +3610,14 @@ var pendingDestroy = new Map;
 var destroyScheduled = false;
 function destroyNode2(node) {
   tree2.destroyNode(node.id);
-  let cleanup2 = (n2) => {
-    for (let child of n2.children)
-      if (child.parent === n2)
+  let cleanup2 = (n3) => {
+    for (let child of n3.children)
+      if (child.parent === n3)
         cleanup2(child);
-    if (n2.id === getFocusedNodeId())
+    if (n3.id === getFocusedNodeId())
       setFocus(null);
-    nodes.delete(n2.id);
-    cleanupNodeHandlers(n2.id);
+    nodes.delete(n3.id);
+    cleanupNodeHandlers(n3.id);
   };
   cleanup2(node);
 }
@@ -3687,6 +3746,7 @@ import { on as on2 } from "srt:events";
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, setShaderParams, uploadTexture } from "flux:gpu";
+import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
 import { on as on3 } from "srt:events";
@@ -3718,7 +3778,7 @@ function createCamera(options = {}) {
     setTexture(cam.texture);
     setWidth(cam.width);
     setHeight(cam.height);
-  }).catch((e2) => setError(e2 instanceof Error ? e2 : new Error(String(e2))));
+  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
   onCleanup(() => {
     disposed = true;
     if (session) {
@@ -3769,9 +3829,9 @@ function shapeCenter(shape, rotate) {
   let area = 0;
   let cx = 0;
   let cy = 0;
-  for (let i2 = 0;i2 < pts.length; i2++) {
-    let [x0, y0] = pts[i2];
-    let [x1, y1] = pts[(i2 + 1) % pts.length];
+  for (let i3 = 0;i3 < pts.length; i3++) {
+    let [x0, y0] = pts[i3];
+    let [x1, y1] = pts[(i3 + 1) % pts.length];
     let cross = x0 * y1 - x1 * y0;
     area += cross;
     cx += (x0 + x1) * cross;
@@ -4127,61 +4187,61 @@ function TangramLetter(props) {
   let [dist, setDist] = createSignal(EXPLODE_DIST);
   let letterCx = props.letter.width / 2;
   let letterCy = props.letter.height / 2;
-  let pieceVectors = props.letter.pieces.map((p2) => {
-    let [scx, scy] = shapeCenter(p2.shape, p2.rot);
-    return [p2.x + scx - letterCx, p2.y + scy - letterCy];
+  let pieceVectors = props.letter.pieces.map((p3) => {
+    let [scx, scy] = shapeCenter(p3.shape, p3.rot);
+    return [p3.x + scx - letterCx, p3.y + scy - letterCy];
   });
-  let pieceSpins = props.letter.pieces.map((_, i2) => ((i2 * 7 + 3) % 11 - 5) * 30);
+  let pieceSpins = props.letter.pieces.map((_, i3) => ((i3 * 7 + 3) % 11 - 5) * 30);
   onFrame((tick, frame) => {
     let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED;
-    let t2 = (tick - props.delay) % cycleLen;
-    if (t2 < 0) {
+    let t3 = (tick - props.delay) % cycleLen;
+    if (t3 < 0) {
       setDist(EXPLODE_DIST);
-    } else if (t2 < ANIM_DURATION) {
-      let p2 = t2 / ANIM_DURATION;
-      let ease = p2 * p2 * (3 - 2 * p2);
+    } else if (t3 < ANIM_DURATION) {
+      let p3 = t3 / ANIM_DURATION;
+      let ease = p3 * p3 * (3 - 2 * p3);
       setDist((1 - ease) * EXPLODE_DIST);
-    } else if (t2 < ANIM_DURATION + HOLD_ASSEMBLED) {
+    } else if (t3 < ANIM_DURATION + HOLD_ASSEMBLED) {
       setDist(0);
-    } else if (t2 < 2 * ANIM_DURATION + HOLD_ASSEMBLED) {
-      let p2 = (t2 - ANIM_DURATION - HOLD_ASSEMBLED) / ANIM_DURATION;
-      let ease = p2 * p2 * (3 - 2 * p2);
+    } else if (t3 < 2 * ANIM_DURATION + HOLD_ASSEMBLED) {
+      let p3 = (t3 - ANIM_DURATION - HOLD_ASSEMBLED) / ANIM_DURATION;
+      let ease = p3 * p3 * (3 - 2 * p3);
       setDist(ease * EXPLODE_DIST);
     } else {
       setDist(EXPLODE_DIST);
     }
   });
   var _el$ = createElement("view");
-  insert(_el$, () => props.letter.pieces.map((p2, i2) => (() => {
+  insert(_el$, () => props.letter.pieces.map((p3, i3) => (() => {
     var _el$2 = createElement("view"), _el$3 = createElement("d-path");
     insertNode2(_el$2, _el$3);
     effect3(() => ({
-      e: pieceVectors[i2][0] * dist(),
-      t: pieceVectors[i2][1] * dist(),
+      e: pieceVectors[i3][0] * dist(),
+      t: pieceVectors[i3][1] * dist(),
       a: 1 + dist() * 0.5,
-      o: pieceSpins[i2] * dist() / EXPLODE_DIST / 150,
-      i: props.colors[p2.shade],
-      n: p2.x,
-      s: p2.y,
-      h: path(p2.shape, p2.rot)
+      o: pieceSpins[i3] * dist() / EXPLODE_DIST / 150,
+      i: props.colors[p3.shade],
+      n: p3.x,
+      s: p3.y,
+      h: path(p3.shape, p3.rot)
     }), ({
-      e: e2,
-      t: t2,
-      a: a2,
-      o: o2,
-      i: i3,
-      n: n2,
+      e: e3,
+      t: t3,
+      a: a3,
+      o: o3,
+      i: i4,
+      n: n3,
       s: s2,
-      h: h2
+      h: h3
     }, _p$) => {
-      e2 !== _p$?.e && setProp(_el$2, "x", e2, _p$?.e);
-      t2 !== _p$?.t && setProp(_el$2, "y", t2, _p$?.t);
-      a2 !== _p$?.a && setProp(_el$2, "scale", a2, _p$?.a);
-      o2 !== _p$?.o && setProp(_el$2, "rotate", o2, _p$?.o);
-      i3 !== _p$?.i && setProp(_el$3, "color", i3, _p$?.i);
-      n2 !== _p$?.n && setProp(_el$3, "x", n2, _p$?.n);
+      e3 !== _p$?.e && setProp(_el$2, "x", e3, _p$?.e);
+      t3 !== _p$?.t && setProp(_el$2, "y", t3, _p$?.t);
+      a3 !== _p$?.a && setProp(_el$2, "scale", a3, _p$?.a);
+      o3 !== _p$?.o && setProp(_el$2, "rotate", o3, _p$?.o);
+      i4 !== _p$?.i && setProp(_el$3, "color", i4, _p$?.i);
+      n3 !== _p$?.n && setProp(_el$3, "x", n3, _p$?.n);
       s2 !== _p$?.s && setProp(_el$3, "y", s2, _p$?.s);
-      h2 !== _p$?.h && setProp(_el$3, "d", h2, _p$?.h);
+      h3 !== _p$?.h && setProp(_el$3, "d", h3, _p$?.h);
     });
     return _el$2;
   })()));
@@ -4190,13 +4250,13 @@ function TangramLetter(props) {
     t: props.letter.height,
     a: props.letter.scale
   }), ({
-    e: e2,
-    t: t2,
-    a: a2
+    e: e3,
+    t: t3,
+    a: a3
   }, _p$) => {
-    e2 !== _p$?.e && setProp(_el$, "width", e2, _p$?.e);
-    t2 !== _p$?.t && setProp(_el$, "height", t2, _p$?.t);
-    a2 !== _p$?.a && setProp(_el$, "scale", a2, _p$?.a);
+    e3 !== _p$?.e && setProp(_el$, "width", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$, "height", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$, "scale", a3, _p$?.a);
   });
   return _el$;
 }
@@ -4211,20 +4271,20 @@ function Logo() {
   setProp(_el$5, "gap", 30);
   setProp(_el$5, "flexDirection", "row");
   setProp(_el$5, "alignItems", "flex-end");
-  insert(_el$5, () => letters.map((letter, i2) => createComponent2(TangramLetter, {
+  insert(_el$5, () => letters.map((letter, i3) => createComponent2(TangramLetter, {
     letter,
-    colors: i2 < 5 ? SOLID_COLORS : RT_COLORS,
-    delay: i2 * STAGGER_DELAY
+    colors: i3 < 5 ? SOLID_COLORS : RT_COLORS,
+    delay: i3 * STAGGER_DELAY
   })));
   effect3(() => ({
     e: LOGO_HEIGHT * scale(),
     t: scale()
   }), ({
-    e: e2,
-    t: t2
+    e: e3,
+    t: t3
   }, _p$) => {
-    e2 !== _p$?.e && setProp(_el$4, "height", e2, _p$?.e);
-    t2 !== _p$?.t && setProp(_el$4, "scale", t2, _p$?.t);
+    e3 !== _p$?.e && setProp(_el$4, "height", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$4, "scale", t3, _p$?.t);
   });
   return _el$4;
 }
@@ -4256,11 +4316,11 @@ function Button(props) {
     e: props.onTap,
     t: props.color
   }), ({
-    e: e2,
-    t: t2
+    e: e3,
+    t: t3
   }, _p$) => {
-    e2 !== _p$?.e && setProp(_el$, "onPointerDown", e2, _p$?.e);
-    t2 !== _p$?.t && setProp(_el$2, "color", t2, _p$?.t);
+    e3 !== _p$?.e && setProp(_el$, "onPointerDown", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "color", t3, _p$?.t);
   });
   return _el$;
 }
@@ -4273,22 +4333,28 @@ function CameraView(props) {
     if (b2)
       props.onBarcode?.(b2);
   });
-  createEffect(() => cam.error(), (e2) => {
-    if (e2)
-      props.onError?.(e2);
+  createEffect(() => cam.error(), (e3) => {
+    if (e3)
+      props.onError?.(e3);
   });
   var _el$4 = createElement("texture");
   effect3(() => ({
     e: cam.texture(),
     t: props.width
   }), ({
-    e: e2,
-    t: t2
+    e: e3,
+    t: t3
   }, _p$) => {
-    e2 !== _p$?.e && setProp(_el$4, "src", e2, _p$?.e);
-    t2 !== _p$?.t && setProp(_el$4, "width", t2, _p$?.t);
+    e3 !== _p$?.e && setProp(_el$4, "src", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$4, "width", t3, _p$?.t);
   });
   return _el$4;
+}
+function recentLabel(entry) {
+  if (!entry.includes("|"))
+    return entry;
+  let id2 = entry.split("|")[0];
+  return "ticket " + id2.slice(0, 8);
 }
 function App() {
   let dev = devAvailable;
@@ -4299,12 +4365,12 @@ function App() {
   let [scanning, setScanning] = createSignal(false);
   let [scanError, setScanError] = createSignal(null);
   if (dev) {
-    on4("dev", (e2) => {
-      setState(e2.state);
-      setAddress(e2.address);
-      if (e2.recents) {
-        setRecents(e2.recents);
-        console.log("got recents", e2.recents);
+    on4("dev", (e3) => {
+      setState(e3.state);
+      setAddress(e3.address);
+      if (e3.recents) {
+        setRecents(e3.recents);
+        console.log("got recents", e3.recents);
       }
     });
   }
@@ -4347,9 +4413,9 @@ function App() {
       return createComponent2(CameraView, {
         width: 280,
         scan: ["qr"],
-        onBarcode: (r2) => onScanned(r2.data),
-        onError: (e2) => {
-          setScanError(`camera: ${e2.message}`);
+        onBarcode: (r3) => onScanned(r3.data),
+        onError: (e3) => {
+          setScanError(`camera: ${e3.message}`);
           setScanning(false);
         }
       });
@@ -4424,7 +4490,9 @@ function App() {
           return recents();
         },
         children: (addr) => createComponent2(Button, {
-          label: addr,
+          get label() {
+            return recentLabel(addr);
+          },
           color: "#333",
           onTap: () => connect(addr)
         })

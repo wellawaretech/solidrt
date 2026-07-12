@@ -35,8 +35,9 @@ impl Drop for Tunnel {
 /// place of the dev server, plus the forwarder guard.
 pub async fn start(ticket: String) -> Result<(SocketAddr, Tunnel), String> {
   // Dial-only and local: the client never accepts, needs no relay of its own,
-  // and must not publish addresses. The ticket carries the server's.
-  let endpoint = forge::p2p::Endpoint::bind(None, None, Vec::new(), true).await?;
+  // and must not publish addresses. The ticket carries the server's. An
+  // ephemeral bind port is fine here - the dialer is never itself dialed.
+  let endpoint = forge::p2p::Endpoint::bind(None, None, Vec::new(), true, None).await?;
   let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("bind loopback: {e}"))?;
   let addr = listener.local_addr().map_err(|e| format!("loopback addr: {e}"))?;
   let task = tokio::spawn(accept_loop(listener, endpoint.clone(), ticket));

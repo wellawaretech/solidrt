@@ -17,6 +17,12 @@ declare module "flux:p2p" {
      * `connect` cannot resolve a local endpoint (tickets only).
      */
     local?: boolean
+    /**
+     * Pin the UDP bind port (IPv4-only). With a persisted `secretKey` this keeps
+     * the whole ticket stable across restarts, so a paired client can re-dial
+     * the old ticket. Omit for an ephemeral port.
+     */
+    port?: number
   }
 
   /** One transport address from {@link Endpoint.connInfo}. */
@@ -61,7 +67,7 @@ declare module "flux:p2p" {
     /**
      * Bind an endpoint.
      *
-     * @param opts  secretKey, relayUrl, protocols, local.
+     * @param opts  secretKey, relayUrl, protocols, local, port.
      */
     static create(opts?: EndpointOptions): Promise<Endpoint>
     /** This endpoint's dial address: the string peers pass to {@link connect}. */

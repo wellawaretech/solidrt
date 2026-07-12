@@ -52,6 +52,15 @@ function CameraView(props: {
   return <texture src={cam.texture()} width={props.width} />
 }
 
+// A recent entry is either a `host:port` address or a p2p ticket (which
+// contains `|`). Tickets are long, so show a short "ticket <id-prefix>" label
+// while still dialing the full string.
+function recentLabel(entry: string): string {
+  if (!entry.includes("|")) return entry
+  let id = entry.split("|")[0]
+  return "ticket " + id.slice(0, 8)
+}
+
 function App() {
   let dev = devAvailable
   let hasCamera = () => cameraDevices().length > 0
@@ -147,7 +156,7 @@ function App() {
             <view flexDirection="column" alignItems="center" gap={8}>
               <text color="grey">recent</text>
               <For each={recents()}>
-                {(addr) => <Button label={addr} color="#333" onTap={() => connect(addr)} />}
+                {(addr) => <Button label={recentLabel(addr)} color="#333" onTap={() => connect(addr)} />}
               </For>
             </view>
           </Show>

@@ -75,7 +75,15 @@ pub enum ConnState {
   #[cfg_attr(target_os = "android", allow(dead_code))]
   Searching,
   Connecting(String),
-  Connected(String),
+  /// `addr` is the address to display (the server's self-reported LAN address
+  /// once known). `recent` is the reconnectable identifier to remember, when it
+  /// differs from `addr`: a ticket connection displays the LAN address but must
+  /// remember the ticket (the loopback socket it dials is not reconnectable on
+  /// its own). `None` for direct connections, which remember `addr`.
+  Connected {
+    addr: String,
+    recent: Option<String>,
+  },
 }
 
 impl ConnState {
@@ -85,7 +93,7 @@ impl ConnState {
       ConnState::Idle => ("idle", None),
       ConnState::Searching => ("searching", None),
       ConnState::Connecting(addr) => ("connecting", Some(addr)),
-      ConnState::Connected(addr) => ("connected", Some(addr)),
+      ConnState::Connected { addr, .. } => ("connected", Some(addr)),
     }
   }
 }
@@ -133,7 +141,8 @@ async fn supervisor(
       }
       DevCmd::Connect(addr) => {
         pending =
-          run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries).await;
+          run_direct(addr, &mut cmd_rx, &engine_tx, &state_tx, &dev_server, &flags, &mut outbound_rx, &queries, None)
+            .await;
       }
       DevCmd::ConnectTicket(ticket) => {
         pending =
@@ -166,12 +175,13 @@ async fn run_direct(
   flags: &DevFlags,
   outbound_rx: &mut UnboundedReceiver<String>,
   queries: &QueryHandles,
+  recent_key: Option<&str>,
 ) -> Option<DevCmd> {
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
     tokio::select! {
       cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, outbound_rx, queries) => {
+      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, outbound_rx, queries, recent_key) => {
         // Failed to connect or the connection dropped; pause before retrying,
         // but let a new command interrupt the wait.
         tokio::select! {
@@ -198,7 +208,7 @@ async fn run_ticket(
   outbound_rx: &mut UnboundedReceiver<String>,
   queries: &QueryHandles,
 ) -> Option<DevCmd> {
-  let (addr, _tunnel) = match super::tunnel::start(ticket).await {
+  let (addr, _tunnel) = match super::tunnel::start(ticket.clone()).await {
     Ok(started) => started,
     Err(e) => {
       log::error!("[sgo] Tunnel start failed: {e}");
@@ -206,7 +216,10 @@ async fn run_ticket(
       return cmd_rx.recv().await;
     }
   };
-  run_direct(addr.to_string(), cmd_rx, engine_tx, state_tx, dev_server, flags, outbound_rx, queries).await
+  // Remember the ticket, not the loopback address it dials: the ticket is the
+  // reconnectable identifier (stable across dev-server restarts).
+  run_direct(addr.to_string(), cmd_rx, engine_tx, state_tx, dev_server, flags, outbound_rx, queries, Some(&ticket))
+    .await
 }
 
 /// Browse for the dev server via mDNS, then connect and serve. Once a server is
@@ -271,7 +284,7 @@ async fn run_discover(
       let _ = state_tx.send(ConnState::Connecting(server.clone()));
       let connected = tokio::select! {
         cmd = cmd_rx.recv() => return cmd,
-        c = try_serve(&server, engine_tx, state_tx, dev_server, flags, outbound_rx, queries) => c,
+        c = try_serve(&server, engine_tx, state_tx, dev_server, flags, outbound_rx, queries, None) => c,
       };
       if connected {
         // Was connected, then dropped: retry the same address.
@@ -342,6 +355,7 @@ async fn try_serve(
   flags: &DevFlags,
   outbound_rx: &mut UnboundedReceiver<String>,
   queries: &QueryHandles,
+  recent_key: Option<&str>,
 ) -> bool {
   use futures_util::{SinkExt, StreamExt};
 
@@ -357,7 +371,7 @@ async fn try_serve(
   };
 
   log::info!("[sgo] Connected to ws://{addr}");
-  let _ = state_tx.send(ConnState::Connected(addr.to_string()));
+  let _ = state_tx.send(ConnState::Connected { addr: addr.to_string(), recent: recent_key.map(str::to_string) });
   flags.connected.store(true, Ordering::Relaxed);
 
   // Publish the dialed dev server address so the next engine build installs the
@@ -394,7 +408,8 @@ async fn try_serve(
             // loopback tunnel; the dev_server proxy base stays on the dialed addr.
             if let Some(server_addr) = json.get("address").and_then(|a| a.as_str()) {
               if !server_addr.is_empty() && server_addr != addr {
-                let _ = state_tx.send(ConnState::Connected(server_addr.to_string()));
+                let _ = state_tx
+                  .send(ConnState::Connected { addr: server_addr.to_string(), recent: recent_key.map(str::to_string) });
               }
             }
             // The dev server's --stats setting for this session, applied to the

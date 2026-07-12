@@ -57,7 +57,11 @@ impl Endpoint {
   /// local-only mode: relay disabled and no address lookup registered, so
   /// nothing about the endpoint is published anywhere - the ticket (direct IPs
   /// only) is the sole carrier of addressing, and peers on the same network
-  /// dial it directly. `local` excludes `relay_url`.
+  /// dial it directly. `local` excludes `relay_url`. `bind_port` pins the UDP
+  /// port (IPv4-only) so the ticket's direct address stays fixed across
+  /// restarts; paired with a persisted `secret` this makes the whole ticket
+  /// stable, so a client can re-dial the old ticket after a restart. `None`
+  /// lets iroh pick an ephemeral port.
   ///
   /// Bind runs on a worker thread (`tokio::spawn`), not the caller's thread:
   /// iroh's bind does blocking work that otherwise stalls a single-threaded host
@@ -68,11 +72,12 @@ impl Endpoint {
     relay_url: Option<String>,
     alpns: Vec<Vec<u8>>,
     local: bool,
+    bind_port: Option<u16>,
   ) -> Result<Endpoint, String> {
     if local && relay_url.is_some() {
       return Err("local excludes relayUrl: a local-only endpoint uses no relay".to_string());
     }
-    match tokio::spawn(build_endpoint(secret, relay_url, alpns, local)).await {
+    match tokio::spawn(build_endpoint(secret, relay_url, alpns, local, bind_port)).await {
       Ok(Ok((inner, secret))) => Ok(Endpoint { inner, secret }),
       Ok(Err(e)) => Err(e),
       Err(e) => Err(format!("bind task failed: {e}")),
@@ -351,6 +356,7 @@ async fn build_endpoint(
   relay_url: Option<String>,
   alpns: Vec<Vec<u8>>,
   local: bool,
+  bind_port: Option<u16>,
 ) -> Result<(IrohEndpoint, [u8; 32]), String> {
   let secret_key = match secret {
     Some(bytes) => SecretKey::from_bytes(&bytes),
@@ -364,6 +370,16 @@ async fn build_endpoint(
     IrohEndpoint::builder(presets::N0)
   };
   builder = builder.secret_key(secret_key).alpns(alpns);
+  if let Some(port) = bind_port {
+    // Pin the UDP port so the ticket's direct address is stable across restarts
+    // (paired with a persisted key). `clear_ip_transports` drops the
+    // pre-configured unspecified sockets, then `bind_addr` binds exactly one
+    // IPv4 socket on the requested port - IPv4-only, which is the LAN dev path.
+    builder = builder
+      .clear_ip_transports()
+      .bind_addr((std::net::Ipv4Addr::UNSPECIFIED, port))
+      .map_err(|e| format!("invalid bind port: {e}"))?;
+  }
   if let Some(url) = relay_url {
     let relay: RelayUrl = url.parse().map_err(|e| format!("invalid relayUrl: {e}"))?;
     builder = builder.relay_mode(RelayMode::custom([relay]));

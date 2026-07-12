@@ -7,20 +7,43 @@
 // relay support is a future opt-in flag, not the default.
 
 import { Endpoint } from "flux:p2p"
+import { file } from "flux:fs"
+import { join } from "flux:path"
 import { printQr } from "./qr"
 
 // The tunnel's ALPN. A protocol change bumps the suffix so old clients fail
 // the handshake instead of desyncing.
 export const TUNNEL_PROTOCOL = "solidrt-dev/0"
 
+// The persisted identity file, project-local next to the HTTP cache. Delete it
+// to rotate the tunnel's identity (which invalidates any old ticket).
+const KEY_FILE = ".srt-tunnel-key"
+
 /**
- * Bind the tunnel endpoint and print its ticket (text + QR). The key is
- * ephemeral on purpose: a ticket embeds the endpoint's bound port, which
- * changes every run anyway, so persisting the key would not make the ticket
- * stable.
+ * Bind the tunnel endpoint and print its ticket (text + QR). The endpoint is
+ * kept stable across restarts so a paired client can re-dial the old ticket
+ * without re-scanning: the UDP port is pinned to the dev server's port, and the
+ * secret key is persisted in <cacheDir>/.srt-tunnel-key (generated on first
+ * run). Both are needed - a moving port or a fresh key each start would change
+ * the ticket. Stable across restarts on the same network only; a new machine IP
+ * still stales the ticket's addresses (that is the discovery/off-LAN story).
  */
-export async function createTunnelEndpoint(): Promise<Endpoint> {
-  let endpoint = await Endpoint.create({ local: true, protocols: [TUNNEL_PROTOCOL] })
+export async function createTunnelEndpoint(port: number, cacheDir: string): Promise<Endpoint> {
+  let keyPath = join(cacheDir, KEY_FILE)
+
+  let secretKey: string | undefined
+  let keyFile = file(keyPath)
+  if (await keyFile.exists()) {
+    let saved = (await keyFile.text()).trim()
+    if (saved.length === 64) secretKey = saved
+  }
+
+  let endpoint = await Endpoint.create({ local: true, protocols: [TUNNEL_PROTOCOL], port, secretKey })
+
+  // First run (no saved key): persist the freshly generated one so the next run
+  // reuses it and the ticket stays the same.
+  if (!secretKey) await keyFile.write(endpoint.secretKey)
+
   let ticket = await endpoint.ticket()
   console.log("")
   printQr(ticket)

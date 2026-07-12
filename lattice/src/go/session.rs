@@ -87,8 +87,8 @@ impl DevSession {
     let dev_recents_task = dev_recents.clone();
     local.spawn_local(async move {
       while let Some(st) = state_rx.recv().await {
-        if let ConnState::Connected(addr) = &st {
-          if add_recent(&dev_recents_task, addr) {
+        if let ConnState::Connected { addr, recent } = &st {
+          if add_recent(&dev_recents_task, addr, recent.as_deref()) {
             super::config::save_recents(&dev_recents_task.borrow());
           }
         }
@@ -128,17 +128,24 @@ impl DevSession {
   }
 }
 
-// Record a successfully connected address as the most-recent entry. Loopback /
-// tunnel addresses are skipped since they aren't reconnectable on their own.
-// Returns true if the list changed (so the caller can persist it), false for a
-// skipped address.
-fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str) -> bool {
-  if addr.starts_with("127.") || addr.starts_with("localhost") || addr.starts_with("[::1]") {
-    return false;
-  }
+// Record a reconnectable connection as the most-recent entry. `recent`, when
+// present, is the identifier to remember (a ticket, for tunnel connections);
+// otherwise the connected `addr` is used, and loopback / tunnel addresses are
+// skipped since they aren't reconnectable on their own. Returns true if the
+// list changed (so the caller can persist it), false for a skipped address.
+fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str, recent: Option<&str>) -> bool {
+  let key = match recent {
+    Some(t) => t,
+    None => {
+      if addr.starts_with("127.") || addr.starts_with("localhost") || addr.starts_with("[::1]") {
+        return false;
+      }
+      addr
+    }
+  };
   let mut r = recents.borrow_mut();
-  r.retain(|a| a != addr);
-  r.insert(0, addr.to_string());
+  r.retain(|a| a != key);
+  r.insert(0, key.to_string());
   r.truncate(8);
   true
 }
