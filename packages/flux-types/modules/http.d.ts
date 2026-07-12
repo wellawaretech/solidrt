@@ -1,4 +1,6 @@
 declare module "flux:http" {
+  import type { Endpoint } from "flux:p2p"
+
   /** Path parameters captured from a route pattern (e.g. ":page"). */
   type RouteParams = Record<string, string>
 
@@ -180,6 +182,14 @@ declare module "flux:http" {
     stop(): void
   }
 
+  /** Options for accepting `flux:p2p` connections alongside the TCP listener. */
+  type P2pOptions = {
+    /** The `flux:p2p` Endpoint to accept connections on. */
+    endpoint: Endpoint
+    /** ALPN protocol matched against each incoming connection. */
+    protocol: string
+  }
+
   type ServeOptions = {
     /** Port to listen on. */
     port: number
@@ -212,7 +222,7 @@ declare module "flux:http" {
      * protocol spoken over its first bidirectional stream. `server.stop()`
      * stops accepting; the endpoint itself stays open for its owner.
      */
-    p2p?: { endpoint: import("flux:p2p").Endpoint; protocol: string }
+    p2p?: P2pOptions
   }
 
   /**
