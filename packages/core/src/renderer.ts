@@ -87,6 +87,34 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
   }
 }
 
+// Applies a single prop to a node: routes events to the handler registry,
+// parses color strings/gradients, and forwards everything else to the tree.
+// Shared by the renderer's setProperty hook and by createElement, which since
+// the dom-expressions "universal" template passes static props inline as a
+// second argument rather than as separate setProp calls.
+function applyProp<T>(node: ProxyNode, name: string, value: T): void {
+  if (!node) return
+
+  // console.debug("[srt] applyProp", node.id, name, value)
+
+  if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
+    setEventHandler(node.id, name, value as Function | null | undefined)
+    return
+  }
+
+  if (name === "color" && isGradient(value)) {
+    tree.setProperty(node.id, name, value)
+    return
+  }
+
+  if (name === "color" && typeof value === "string") {
+    tree.setProperty(node.id, name, parseColor(value))
+    return
+  }
+
+  tree.setProperty(node.id, name, value)
+}
+
 export let {
   effect,
   memo,
@@ -101,13 +129,22 @@ export let {
   applyRef,
   ref,
 } = createRenderer<ProxyNode>({
-  createElement: (elementType: string): ProxyNode => {
+  createElement: (elementType: string, props?: Record<string, any>): ProxyNode => {
     let proxy = createProxyNode(elementType)
 
     // console.debug("[srt] createElement", proxy.id, elementType)
 
     if (elementType === "window") tree.createRoot(proxy.id)
     else tree.createNode(proxy.id, elementType)
+
+    // The universal JSX template hands static props here as an object; children
+    // and ref arrive through their own hooks, so skip them.
+    if (props) {
+      for (let name in props) {
+        if (name === "children" || name === "ref") continue
+        applyProp(proxy, name, props[name])
+      }
+    }
 
     return proxy
   },
@@ -127,26 +164,8 @@ export let {
 
   isTextNode: (node: ProxyNode): boolean => node?.elementType === "d-span",
   setProperty: <T>(node: ProxyNode, name: string, value: T): void => {
-    if (!node) return
-
     // console.debug("[srt] setProperty", node.id, name, value)
-
-    if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
-      setEventHandler(node.id, name, value as Function | null | undefined)
-      return
-    }
-
-    if (name === "color" && isGradient(value)) {
-      tree.setProperty(node.id, name, value)
-      return
-    }
-
-    if (name === "color" && typeof value === "string") {
-      tree.setProperty(node.id, name, parseColor(value))
-      return
-    }
-
-    tree.setProperty(node.id, name, value)
+    applyProp(node, name, value)
   },
 
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
