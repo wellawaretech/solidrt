@@ -156,13 +156,14 @@ fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str, recent: Option<&st
 // the default app but leaves the websocket up).
 fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
   eh.exec(move |ctx| {
-    let (state, addr) = st.parts();
+    let (state, addr, tunneled) = st.parts();
     let obj = rquickjs::Object::new(ctx.clone()).expect("create dev event object");
     obj.set("state", state).expect("set state");
     match addr {
       Some(a) => obj.set("address", a).expect("set address"),
       None => obj.set("address", rquickjs::Null).expect("set address null"),
     }
+    obj.set("tunneled", tunneled).expect("set tunneled");
     let arr = rquickjs::Array::new(ctx.clone()).expect("create recents array");
     for (i, a) in recents.into_iter().enumerate() {
       arr.set(i, a).expect("set recent");

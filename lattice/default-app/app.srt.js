@@ -4361,6 +4361,7 @@ function App() {
   let hasCamera = () => cameraDevices().length > 0;
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
+  let [tunneled, setTunneled] = createSignal(false);
   let [recents, setRecents] = createSignal(initialRecents);
   let [scanning, setScanning] = createSignal(false);
   let [scanError, setScanError] = createSignal(null);
@@ -4368,19 +4369,20 @@ function App() {
     on4("dev", (e3) => {
       setState(e3.state);
       setAddress(e3.address);
+      setTunneled(e3.tunneled);
       if (e3.recents) {
         setRecents(e3.recents);
         console.log("got recents", e3.recents);
       }
     });
   }
-  if (dev && launchAddress) {
+  if (dev && launchAddress && state() === "idle") {
     connect(launchAddress);
   }
   let idle = () => state() === "idle";
   let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
-  let status = () => scanning() ? "scan the dev server QR code" : connected() ? `connected to ${address()}` : scanError() ?? STATUS_TEXT[state()];
+  let status = () => scanning() ? "scan the dev server QR code" : connected() ? `connected to ${address()}${tunneled() ? " (tunneled)" : ""}` : scanError() ?? STATUS_TEXT[state()];
   let startScan = () => {
     setScanError(null);
     setScanning(true);

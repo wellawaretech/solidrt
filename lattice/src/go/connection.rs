@@ -87,13 +87,15 @@ pub enum ConnState {
 }
 
 impl ConnState {
-  /// (state string, optional address) for the JS event payload.
-  pub fn parts(&self) -> (&'static str, Option<&str>) {
+  /// (state string, optional address, tunneled) for the JS event payload.
+  /// `tunneled` is true when this connection was made by ticket (p2p, e2e
+  /// encrypted) rather than a direct `host:port` dial.
+  pub fn parts(&self) -> (&'static str, Option<&str>, bool) {
     match self {
-      ConnState::Idle => ("idle", None),
-      ConnState::Searching => ("searching", None),
-      ConnState::Connecting(addr) => ("connecting", Some(addr)),
-      ConnState::Connected { addr, .. } => ("connected", Some(addr)),
+      ConnState::Idle => ("idle", None, false),
+      ConnState::Searching => ("searching", None, false),
+      ConnState::Connecting(addr) => ("connecting", Some(addr), false),
+      ConnState::Connected { addr, recent } => ("connected", Some(addr), recent.is_some()),
     }
   }
 }

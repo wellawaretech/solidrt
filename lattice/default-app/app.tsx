@@ -67,6 +67,7 @@ function App() {
 
   let [state, setState] = createSignal<DevState>("idle")
   let [address, setAddress] = createSignal<string | null>(null)
+  let [tunneled, setTunneled] = createSignal(false)
   let [recents, setRecents] = createSignal<string[]>(initialRecents)
   // QR pairing is app-local: a camera scan view that feeds connect() with the
   // decoded address (the supervisor only ever sees a plain Connect).
@@ -74,9 +75,10 @@ function App() {
   let [scanError, setScanError] = createSignal<string | null>(null)
 
   if (dev) {
-    on("dev", (e: { state: DevState; address: string | null; recents?: string[] }) => {
+    on("dev", (e: { state: DevState; address: string | null; tunneled: boolean; recents?: string[] }) => {
       setState(e.state)
       setAddress(e.address)
+      setTunneled(e.tunneled)
       if (e.recents) {
         setRecents(e.recents)
         console.log("got recents", e.recents)
@@ -86,8 +88,11 @@ function App() {
 
   // Launched with a dev-server address (srt client --android delivers it as an
   // intent extra -> argv): connect immediately so no on-device interaction is
-  // needed (e.g. on a TV with no manual entry).
-  if (dev && launchAddress) {
+  // needed (e.g. on a TV with no manual entry). Gated on idle: this effect also
+  // reruns when a `stop` reload remounts the default app mid-session, and must
+  // not clobber an already-live connection (e.g. a tunneled one) by dialing the
+  // plain launch address over it.
+  if (dev && launchAddress && state() === "idle") {
     connect(launchAddress)
   }
 
@@ -99,7 +104,7 @@ function App() {
     scanning()
       ? "scan the dev server QR code"
       : connected()
-        ? `connected to ${address()}`
+        ? `connected to ${address()}${tunneled() ? " (tunneled)" : ""}`
         : (scanError() ?? STATUS_TEXT[state()])
 
   let startScan = () => {
