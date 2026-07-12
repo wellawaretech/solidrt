@@ -117,6 +117,19 @@ impl Endpoint {
     accept_one(&self.inner, alpn).await
   }
 
+  /// Like `accept_one`, but packaged as a byte duplex: the remote peer's id plus
+  /// a `ConnIo` over the connection's first bi-stream, ready for a byte-oriented
+  /// consumer (the HTTP server serves it like an accepted TCP socket).
+  pub async fn accept_io(&self, alpn: &[u8]) -> Result<Option<(String, ConnIo)>, String> {
+    match accept_one(&self.inner, alpn).await? {
+      Some((conn, send, recv)) => {
+        let remote = conn.remote_id().to_string();
+        Ok(Some((remote, ConnIo { io: tokio::io::join(recv, send), conn })))
+      }
+      None => Ok(None),
+    }
+  }
+
   /// Snapshot of how the connection to `id` is currently carried; see `ConnInfo`.
   /// iroh starts on the relay and upgrades to direct after hole-punching, so poll
   /// this to watch the path settle.
@@ -233,6 +246,63 @@ impl Stream {
   /// The remote peer's endpoint id.
   pub fn remote_id(&self) -> String {
     self.conn.remote_id().to_string()
+  }
+}
+
+/// One connection as a tokio byte duplex: the joined recv/send halves of its
+/// first bi-stream, holding the `Connection` so the QUIC connection lives
+/// exactly as long as the io handle. Built by `Endpoint::accept_io`.
+pub struct ConnIo {
+  conn: Connection,
+  io: tokio::io::Join<RecvStream, SendStream>,
+}
+
+impl ConnIo {
+  /// A future resolving once the QUIC connection fully closes (peer close or
+  /// idle timeout). Await it after the io has been consumed and served: bytes
+  /// written to QUIC are only guaranteed delivery while a connection handle is
+  /// alive, so dropping the io right after the final write can discard the
+  /// unacknowledged tail. The future holds its own handle, keeping the
+  /// connection up until the peer has read everything and closed.
+  pub fn closed(&self) -> impl std::future::Future<Output = ()> {
+    let conn = self.conn.clone();
+    async move {
+      conn.closed().await;
+    }
+  }
+}
+
+impl tokio::io::AsyncRead for ConnIo {
+  fn poll_read(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+    buf: &mut tokio::io::ReadBuf<'_>,
+  ) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.io).poll_read(cx, buf)
+  }
+}
+
+impl tokio::io::AsyncWrite for ConnIo {
+  fn poll_write(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+    buf: &[u8],
+  ) -> std::task::Poll<std::io::Result<usize>> {
+    std::pin::Pin::new(&mut self.io).poll_write(cx, buf)
+  }
+
+  fn poll_flush(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.io).poll_flush(cx)
+  }
+
+  fn poll_shutdown(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<std::io::Result<()>> {
+    std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
   }
 }
 

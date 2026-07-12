@@ -93,7 +93,10 @@ declare module "flux:http" {
     close(code?: number, reason?: string): void
     /** Connection state: CONNECTING 0, OPEN 1, CLOSING 2, CLOSED 3. */
     readonly readyState: number
-    /** The peer's IP address, or undefined when unknown. */
+    /**
+     * The peer's IP address (or, for a connection accepted over the `p2p`
+     * option, the peer's endpoint id), or undefined when unknown.
+     */
     readonly remoteAddress: string | undefined
   }
 
@@ -131,13 +134,16 @@ declare module "flux:http" {
     headers?: Record<string, string> | Headers
   }
 
-  /** A peer address, as returned by {@link Server.requestIP}. */
+  /**
+   * A peer address, as returned by {@link Server.requestIP}. A p2p peer has no
+   * IP: `address` is its endpoint id, `port` is 0, and `family` is `"p2p"`.
+   */
   type SocketAddress = {
-    /** The peer's IP address. */
+    /** The peer's IP address, or a p2p peer's endpoint id. */
     address: string
-    /** The peer's port. */
+    /** The peer's port (0 for a p2p peer). */
     port: number
-    family: "IPv4" | "IPv6"
+    family: "IPv4" | "IPv6" | "p2p"
   }
 
   type Server = {
@@ -200,6 +206,13 @@ declare module "flux:http" {
      * without it `upgrade()` always returns false.
      */
     websocket?: WebSocketHandlers
+    /**
+     * Accept connections on a `flux:p2p` Endpoint alongside the TCP listener:
+     * each incoming connection whose ALPN matches `protocol` has the HTTP/WS
+     * protocol spoken over its first bidirectional stream. `server.stop()`
+     * stops accepting; the endpoint itself stays open for its owner.
+     */
+    p2p?: { endpoint: import("flux:p2p").Endpoint; protocol: string }
   }
 
   /**

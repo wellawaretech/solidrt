@@ -14,7 +14,7 @@ import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, clientList, handleControl, resolveQuery } from "./control"
 import { printQr } from "./qr"
-import { startTunnel } from "./tunnel"
+import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 
 // argv layout differs between hosts; the config JSON is always the last argument.
 let config: Config = JSON.parse(argv[argv.length - 1]!)
@@ -189,8 +189,13 @@ async function handleFiles(req: FluxRequest, path: string): Promise<Response> {
   return new Response(await file(filePath).bytes(), { headers: baseHeaders })
 }
 
+// Ticket-paired clients connect through this endpoint; serve() accepts its
+// connections directly alongside the TCP listener.
+let tunnel = config.tunnel ? await createTunnelEndpoint() : null
+
 serve({
   port: config.port,
+  p2p: tunnel ? { endpoint: tunnel, protocol: TUNNEL_PROTOCOL } : undefined,
   async fetch(req, server) {
     if (server.upgrade(req)) return
 
@@ -278,10 +283,6 @@ if (!config.tunnel) {
 console.log(`[cli] WebSocket server on ws://${state.serverUrl}`)
 // mDNS advertise is intentionally not implemented here: the p2p ticket is the
 // cross-device connect story (see docs/flux-dev-server-plan.md).
-
-if (config.tunnel) {
-  startTunnel(config.port).catch((e) => console.log(`[cli] Tunnel failed: ${e}`))
-}
 
 // Keepalive
 setInterval(() => {

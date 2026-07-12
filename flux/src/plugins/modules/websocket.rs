@@ -13,7 +13,7 @@ use tokio::sync::{watch, Notify};
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::standards::body::{extract_body_value, JsBytes};
-use forge::http::ResBody;
+use forge::http::{Remote, ResBody};
 use forge::websocket::{
   run_reader, run_writer, SocketSink, Topics, WsDispatch, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
 };
@@ -56,12 +56,7 @@ pub(crate) enum ServeUpgrade<'js> {
   /// Handshake accepted: the 101 response to send, the future resolving to the
   /// raw socket once hyper releases the connection, the user value destined
   /// for `ws.data`, and the peer address destined for `ws.remoteAddress`.
-  Accepted {
-    response: hyper::Response<ResBody>,
-    socket: UpgradeFut,
-    data: Option<Value<'js>>,
-    remote: Option<std::net::SocketAddr>,
-  },
+  Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut, data: Option<Value<'js>>, remote: Option<Remote> },
 }
 
 unsafe impl<'js> JsLifetime<'js> for ServeUpgrade<'js> {
@@ -90,7 +85,7 @@ pub(crate) fn try_upgrade<'js>(
   on_upgrade: hyper::upgrade::OnUpgrade,
   extra_headers: &[(String, String)],
   data: Option<Value<'js>>,
-  remote: Option<std::net::SocketAddr>,
+  remote: Option<Remote>,
 ) -> Result<ServeUpgrade<'js>, String> {
   let mut builder = HyperRequest::builder();
   for (k, v) in headers {
@@ -132,8 +127,8 @@ pub(crate) struct ServerWebSocket<'js> {
   closing: Rc<Notify>,
   /// The user value from `upgrade(req, { data })`; undefined when not given.
   data: RefCell<Value<'js>>,
-  /// The connection's peer address, carried over from the upgraded request.
-  remote: Option<std::net::SocketAddr>,
+  /// The connection's peer, carried over from the upgraded request.
+  remote: Option<Remote>,
 }
 
 impl<'js> Trace<'js> for ServerWebSocket<'js> {
@@ -215,10 +210,14 @@ impl<'js> ServerWebSocket<'js> {
     self.sink.state()
   }
 
-  /// The peer's IP address as a string, or undefined when unknown.
+  /// The peer as a string (an IP address, or a p2p peer's endpoint id), or
+  /// undefined when unknown.
   #[qjs(get, rename = "remoteAddress")]
   pub fn remote_address(&self) -> Option<String> {
-    self.remote.map(|a| a.ip().to_string())
+    self.remote.as_ref().map(|r| match r {
+      Remote::Ip(a) => a.ip().to_string(),
+      Remote::Peer(id) => id.clone(),
+    })
   }
 
   #[qjs(get)]
@@ -278,7 +277,7 @@ pub(crate) fn spawn_socket<'js>(
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
   data: Option<Value<'js>>,
-  remote: Option<std::net::SocketAddr>,
+  remote: Option<Remote>,
   topics: Topics,
 ) {
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
@@ -299,7 +298,7 @@ async fn run_socket<'js>(
   logger: Logger,
   pending: &PendingOps,
   data: Option<Value<'js>>,
-  remote: Option<std::net::SocketAddr>,
+  remote: Option<Remote>,
   topics: Topics,
 ) {
   let ws = match socket.await {

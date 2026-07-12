@@ -239,16 +239,27 @@ pub fn bind_listener(hostname: &str, port: u16) -> Result<TcpListener, String> {
   TcpListener::from_std(listener).map_err(|e| format!("serve: failed to register listener on {addr}: {e}"))
 }
 
+/// The peer on the other side of an accepted connection: a TCP peer address, or
+/// a p2p peer's endpoint id. Carried onto requests and upgraded sockets so the
+/// marshalling layer can expose it (`server.requestIP`, `ws.remoteAddress`).
+#[derive(Clone)]
+pub enum Remote {
+  Ip(std::net::SocketAddr),
+  Peer(String),
+}
+
 /// Serve one accepted connection: run HTTP/1 with websocket upgrades and graceful
 /// shutdown. On a stop signal, finish any in-flight request then close; an idle
 /// keep-alive connection has nothing in flight, so it closes promptly. Generic
 /// over the request `service` so the engine-free core never names the handler's
-/// (script-bound) types.
-pub async fn serve_connection<S>(sock: TcpStream, service: S, logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
+/// (script-bound) types, and over the `io` so any byte duplex serves (an accepted
+/// TCP socket, a p2p connection's `ConnIo`).
+pub async fn serve_connection<I, S>(io: I, service: S, logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
 where
+  I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
   S: Service<HyperRequest<Incoming>, Response = HyperResponse<ResBody>, Error = Infallible>,
 {
-  let io = TokioIo::new(sock);
+  let io = TokioIo::new(io);
   // with_upgrades keeps the connection alive past a 101 response so hyper can
   // hand the raw stream to the websocket tasks.
   let conn = http1::Builder::new().serve_connection(io, service).with_upgrades();
@@ -289,6 +300,35 @@ pub async fn accept_loop<F>(
         match accepted {
           Ok((sock, _)) => on_conn(sock),
           Err(e) => logger.warn(&format!("[flux] serve accept error: {e}")),
+        }
+      }
+      _ = wait_for_stop(&mut shutdown_rx) => break,
+    }
+  }
+}
+
+/// The p2p sibling of `accept_loop`: accept incoming connections on `endpoint`
+/// whose ALPN matches `alpn` until shutdown (or the endpoint closes), handing
+/// each connection's first bi-stream to `on_conn` as a byte duplex plus the
+/// remote peer's endpoint id. One QUIC connection carries one HTTP connection,
+/// mirroring how the dev tunnel client dials (lattice/src/go/tunnel.rs). The
+/// shutdown only stops accepting; the endpoint stays open for its owner.
+pub async fn accept_loop_p2p<F>(
+  endpoint: crate::p2p::Endpoint,
+  alpn: Vec<u8>,
+  logger: Logger,
+  mut shutdown_rx: watch::Receiver<bool>,
+  mut on_conn: F,
+) where
+  F: FnMut(String, crate::p2p::ConnIo),
+{
+  loop {
+    tokio::select! {
+      accepted = endpoint.accept_io(&alpn) => {
+        match accepted {
+          Ok(Some((remote, io))) => on_conn(remote, io),
+          Ok(None) => break,
+          Err(e) => logger.warn(&format!("[flux] serve p2p accept error: {e}")),
         }
       }
       _ = wait_for_stop(&mut shutdown_rx) => break,

@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::modules::p2p::P2pEndpoint;
 use crate::plugins::modules::websocket::{
   message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
 };
@@ -23,8 +24,8 @@ use crate::plugins::standards::headers::headers_from_init;
 use crate::plugins::standards::request::{request_from_parts, Request};
 use crate::plugins::standards::response::Response;
 use forge::http::{
-  accept_loop, bind_listener, build_response, channel_body, full_body, serve_connection, text_response, ResBody, Route,
-  RouteTable, ServerShared,
+  accept_loop, accept_loop_p2p, bind_listener, build_response, channel_body, full_body, serve_connection,
+  text_response, Remote, ResBody, Route, RouteTable, ServerShared,
 };
 use forge::websocket::Topics;
 
@@ -278,9 +279,9 @@ struct RequestParts {
   /// The hyper upgrade handle, carried into the JS Request so the handler can
   /// call `server.upgrade(req)`.
   upgrade: Option<OnUpgrade>,
-  /// The connection's peer address, carried into the JS Request for
+  /// The connection's peer, carried into the JS Request for
   /// `server.requestIP(req)` and `ws.remoteAddress`.
-  remote: Option<std::net::SocketAddr>,
+  remote: Option<Remote>,
 }
 
 /// Build the JS `Request` from `parts` (plus any captured path `params`) and run
@@ -315,7 +316,7 @@ async fn dispatch_fn<'js>(
 
 async fn handle_request<'js>(
   mut req: HyperRequest<Incoming>,
-  remote: Option<std::net::SocketAddr>,
+  remote: Option<Remote>,
   handlers: &Handlers<'js>,
   logger: &Logger,
 ) -> HyperResponse<ResBody> {
@@ -429,7 +430,7 @@ impl Server {
     let Some(ServeUpgrade::Ready(on_upgrade)) = slot.take() else {
       return false;
     };
-    match try_upgrade(&headers, on_upgrade, &extra_headers, data, req.remote) {
+    match try_upgrade(&headers, on_upgrade, &extra_headers, data, req.remote.clone()) {
       Ok(accepted) => {
         *slot = Some(accepted);
         true
@@ -454,17 +455,25 @@ impl Server {
     self.topics.subscriber_count(&topic)
   }
 
-  /// The peer address of the connection `req` arrived on, as
-  /// `{ address, port, family }`, or null when unknown (e.g. a JS-constructed
-  /// Request). Models Bun's `server.requestIP`.
+  /// The peer of the connection `req` arrived on, as `{ address, port,
+  /// family }`, or null when unknown (e.g. a JS-constructed Request). Models
+  /// Bun's `server.requestIP`. A p2p peer has no IP: `address` is its endpoint
+  /// id, `port` is 0, and `family` is `"p2p"`.
   #[qjs(rename = "requestIP")]
   pub fn request_ip<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>) -> rquickjs::Result<Value<'js>> {
-    match req.borrow().remote {
-      Some(addr) => {
+    match &req.borrow().remote {
+      Some(Remote::Ip(addr)) => {
         let obj = Object::new(ctx)?;
         obj.set("address", addr.ip().to_string())?;
         obj.set("port", addr.port())?;
         obj.set("family", if addr.is_ipv4() { "IPv4" } else { "IPv6" })?;
+        Ok(obj.into_value())
+      }
+      Some(Remote::Peer(id)) => {
+        let obj = Object::new(ctx)?;
+        obj.set("address", id.as_str())?;
+        obj.set("port", 0)?;
+        obj.set("family", "p2p")?;
         Ok(obj.into_value())
       }
       None => Ok(Value::new_null(ctx)),
@@ -493,6 +502,22 @@ impl Server {
   }
 }
 
+/// Build the per-connection hyper service: each request dispatches into the JS
+/// handlers with the connection's peer identity attached. Shared by the TCP and
+/// p2p accept loops.
+fn connection_service<'js>(
+  handlers: Handlers<'js>,
+  logger: Logger,
+  remote: Option<Remote>,
+) -> impl hyper::service::Service<HyperRequest<Incoming>, Response = HyperResponse<ResBody>, Error = Infallible> + 'js {
+  service_fn(move |req: HyperRequest<Incoming>| {
+    let handlers = handlers.clone();
+    let logger = logger.clone();
+    let remote = remote.clone();
+    async move { Ok::<_, Infallible>(handle_request(req, remote, &handlers, &logger).await) }
+  })
+}
+
 /// `serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
 /// A free function (not a closure) so its `'js` is properly higher-ranked, which
 /// the invariant `Class<'js, Server>` return type requires.
@@ -504,6 +529,20 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let logger = ctx.logger();
   let routes = parse_routes(&opts, &logger)?;
   let websocket = parse_ws_handlers(&opts)?;
+
+  // The `p2p: { endpoint, protocol }` option: a flux:p2p Endpoint to accept
+  // connections on next to the TCP listener, and the protocol (ALPN) to accept.
+  // Cloning the forge core out here keeps the accept loop free of JS types.
+  let p2p = match opts.get::<_, Option<Object<'js>>>("p2p")? {
+    Some(o) => {
+      let endpoint: Option<Class<'js, P2pEndpoint>> = o.get("endpoint")?;
+      match (endpoint, o.get::<_, Option<String>>("protocol")?) {
+        (Some(ep), Some(protocol)) => Some((ep.borrow().core(), protocol.into_bytes())),
+        _ => return Err(Exception::throw_message(&ctx, "serve: p2p requires an endpoint and a protocol")),
+      }
+    }
+    None => None,
+  };
 
   let hostname: Option<String> = opts.get("hostname")?;
   let hostname = hostname.unwrap_or_else(|| "0.0.0.0".to_string());
@@ -524,6 +563,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let loop_logger = logger.clone();
   let loop_shared = shared.clone();
   let loop_pending = pending.clone();
+  let loop_handlers = handlers.clone();
   ctx.spawn(async move {
     let shutdown_rx = loop_shared.subscribe();
     let accept_logger = loop_logger.clone();
@@ -531,15 +571,9 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     // the marshalling layer (the engine-free core hands sockets back through this
     // closure) so the core never touches `ctx.spawn`.
     let on_conn = move |sock: tokio::net::TcpStream| {
-      let remote = sock.peer_addr().ok();
+      let remote = sock.peer_addr().ok().map(Remote::Ip);
       let conn_rx = loop_shared.subscribe();
-      let svc_handlers = handlers.clone();
-      let svc_logger = loop_logger.clone();
-      let service = service_fn(move |req: HyperRequest<Incoming>| {
-        let handlers = svc_handlers.clone();
-        let logger = svc_logger.clone();
-        async move { Ok::<_, Infallible>(handle_request(req, remote, &handlers, &logger).await) }
-      });
+      let service = connection_service(loop_handlers.clone(), loop_logger.clone(), remote);
       loop_ctx.spawn(serve_connection(sock, service, loop_logger.clone(), conn_rx));
     };
     accept_loop(listener, accept_logger, shutdown_rx, on_conn).await;
@@ -547,6 +581,36 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     // same signal, so the runtime drains and the engine can exit.
     loop_pending.release();
   });
+
+  // The p2p twin of the TCP loop: a connection's io is its first bi-stream, its
+  // peer identity the remote endpoint id. `stop()` stops both loops through the
+  // shared shutdown signal; the endpoint itself stays open for its owner.
+  if let Some((endpoint, alpn)) = p2p {
+    pending.hold();
+    let loop_ctx = ctx.clone();
+    let loop_logger = logger.clone();
+    let loop_shared = shared.clone();
+    let loop_pending = pending.clone();
+    ctx.spawn(async move {
+      let shutdown_rx = loop_shared.subscribe();
+      let accept_logger = loop_logger.clone();
+      let on_conn = move |remote: String, io: forge::p2p::ConnIo| {
+        let conn_rx = loop_shared.subscribe();
+        let service = connection_service(handlers.clone(), loop_logger.clone(), Some(Remote::Peer(remote)));
+        // Hold the QUIC connection past the served io: dropping it on the heels
+        // of the final write would discard the unacknowledged tail (see
+        // `ConnIo::closed`).
+        let closed = io.closed();
+        let conn_logger = loop_logger.clone();
+        loop_ctx.spawn(async move {
+          serve_connection(io, service, conn_logger, conn_rx).await;
+          closed.await;
+        });
+      };
+      accept_loop_p2p(endpoint, alpn, accept_logger, shutdown_rx, on_conn).await;
+      loop_pending.release();
+    });
+  }
 
   Ok(server)
 }
