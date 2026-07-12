@@ -55,7 +55,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rxing = "0.9.1"
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
-taffy = "0.10.1"
+taffy = "0.12.1"
 svgtypes = "0.16"
 lyon_path = "1"
 lyon_algorithms = "1"
