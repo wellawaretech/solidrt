@@ -1,0 +1,385 @@
+//! The `flux:wasm` module: a generic WebAssembly host for flux.
+//!
+//! Marshalling only: decode JS args into the native types of the engine-free
+//! `forge::wasm` core (a wasmi interpreter), drive its `WasmModule` /
+//! `WasmInstance` methods, and encode the results back to JS. All module
+//! parsing, linking, execution, and the resumable-call host-import bridge live
+//! in `forge::wasm`.
+//!
+//! This is a GENERIC wasm host, not tailored to any one module. It exposes the
+//! primitives - parse a module, inspect its imports, instantiate it with host
+//! functions, call exports, read/write its linear memory - and nothing about
+//! any particular guest.
+//!
+//! Everything here is synchronous: wasmi is a pure interpreter with no I/O, and
+//! it runs on the JS thread, so there is no `Promised`/async plumbing. A host
+//! import calls straight back into the supplied JS function during the export
+//! call; a throw from that function aborts the wasm call and propagates.
+//!
+//! JS surface:
+//! ```js
+//! import { Module } from "flux:wasm";
+//!
+//! let mod = new Module(bytes);          // Uint8Array | ArrayBuffer; wat text also accepted
+//! mod.imports;                          // [{ module, name, params, results }]
+//! let instance = mod.instantiate({      // host functions, keyed like the standard
+//!   env: { mul: (a, b) => a * b },
+//! });
+//! instance.exports;                     // [{ name, kind, params?, results? }]
+//! instance.call("run", 6);              // scalar / undefined / array by result count
+//! instance.memorySize;                  // bytes, or undefined if no exported memory
+//! instance.readMemory(ptr, len);        // Uint8Array
+//! instance.writeMemory(ptr, bytes);     // void
+//! ```
+//!
+//! Value marshalling: i32/f32/f64 <-> JS number; i64 <-> JS BigInt (an i64 does
+//! not fit a JS number without precision loss). A number is also accepted where
+//! an i64 is expected.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use rquickjs::class::Trace;
+use rquickjs::function::Rest;
+use rquickjs::module::{Declarations, Exports, ModuleDef};
+use rquickjs::{
+  ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
+};
+
+use forge::wasm::{ExportInfo, ImportInfo, WasmType, WasmValue};
+
+// Per-instance host functions live here, in context userdata, NOT in the
+// `Instance` class. A `Persistent` held inside a class instance is a GC root
+// released only by the class finalizer, which runs too late and trips QuickJS's
+// shutdown assertion (`gc_obj_list` not empty). Userdata is dropped with the
+// context, before the runtime is freed, so all Persistents release in order -
+// the same pattern raf/events use. Entries linger until context teardown (or
+// engine reload, which recreates the userdata); a GC'd instance leaves a small
+// dead entry, released at teardown.
+#[derive(Clone, JsLifetime, Default)]
+struct WasmHandlers(#[qjs(skip_trace)] Rc<RefCell<HandlerStore>>);
+
+#[derive(Default)]
+struct HandlerStore {
+  next_id: u64,
+  by_id: HashMap<u64, Vec<Persistent<Function<'static>>>>,
+}
+
+/// Get the per-context handler registry, creating it on first use.
+fn handler_store(ctx: &Ctx<'_>) -> WasmHandlers {
+  if let Some(existing) = ctx.userdata::<WasmHandlers>() {
+    return existing.clone();
+  }
+  let store = WasmHandlers::default();
+  ctx.store_userdata(store.clone()).expect("store wasm handler registry");
+  store
+}
+
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class(rename = "Module")]
+pub struct Module {
+  #[qjs(skip_trace)]
+  inner: Rc<forge::wasm::WasmModule>,
+}
+
+#[rquickjs::methods]
+impl Module {
+  /// Parse and validate a wasm binary (or wat text). Throws on invalid input
+  /// or on an unsupported import (non-function, or non-scalar signature).
+  #[qjs(constructor)]
+  pub fn new<'js>(ctx: Ctx<'js>, bytes: Value<'js>) -> rquickjs::Result<Module> {
+    let bytes = value_to_bytes(&ctx, &bytes)?;
+    let module = forge::wasm::WasmModule::parse(&bytes).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    Ok(Module { inner: Rc::new(module) })
+  }
+
+  /// The function imports this module requires, in the order the host functions
+  /// are indexed: `[{ module, name, params, results }]`.
+  #[qjs(get)]
+  pub fn imports<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let arr = rquickjs::Array::new(ctx.clone())?;
+    for (i, info) in self.inner.imports().iter().enumerate() {
+      let obj = Object::new(ctx.clone())?;
+      obj.set("module", info.module.clone())?;
+      obj.set("name", info.name.clone())?;
+      obj.set("params", type_names(&ctx, &info.sig.params)?)?;
+      obj.set("results", type_names(&ctx, &info.sig.results)?)?;
+      arr.set(i, obj)?;
+    }
+    Ok(arr.into_value())
+  }
+
+  /// Instantiate with host functions supplied as a nested import object
+  /// (`{ env: { mul: fn } }`, matching the standard). Every listed import must
+  /// resolve to a function; a missing or non-function entry throws.
+  pub fn instantiate<'js>(&self, ctx: Ctx<'js>, imports: Object<'js>) -> rquickjs::Result<Class<'js, Instance>> {
+    let infos = self.inner.imports().to_vec();
+    let mut handlers: Vec<Persistent<Function<'static>>> = Vec::with_capacity(infos.len());
+    for info in &infos {
+      let module: Option<Object> = imports.get(info.module.as_str())?;
+      let func: Option<Function> = match module {
+        Some(m) => m.get(info.name.as_str())?,
+        None => None,
+      };
+      let Some(func) = func else {
+        return Err(Exception::throw_message(&ctx, &format!("missing import function {}.{}", info.module, info.name)));
+      };
+      handlers.push(Persistent::save(&ctx, func));
+    }
+
+    let inst = self.inner.instantiate().map_err(|m| Exception::throw_message(&ctx, &m))?;
+
+    let store = handler_store(&ctx);
+    let id = {
+      let mut s = store.0.borrow_mut();
+      let id = s.next_id;
+      s.next_id += 1;
+      s.by_id.insert(id, handlers);
+      id
+    };
+
+    Class::instance(ctx, Instance { inner: Rc::new(inst), id, imports: Rc::new(infos) })
+  }
+}
+
+#[derive(Trace, JsLifetime)]
+#[rquickjs::class(rename = "Instance")]
+pub struct Instance {
+  #[qjs(skip_trace)]
+  inner: Rc<forge::wasm::WasmInstance>,
+  // Only the id keying this instance's host functions in the userdata registry.
+  // The class must NOT hold the registry Rc: userdata is cleared before the
+  // runtime is freed, so a clone kept here would pin the Persistents past that
+  // point (until the class finalizer) and trip QuickJS's shutdown assertion.
+  // `call` looks the registry up from `ctx` instead.
+  #[qjs(skip_trace)]
+  id: u64,
+  #[qjs(skip_trace)]
+  imports: Rc<Vec<ImportInfo>>,
+}
+
+#[rquickjs::methods]
+impl Instance {
+  /// The module's exports: `[{ name, kind, params?, results? }]`. `kind` is
+  /// `"function"`, `"memory"`, or `"other"`; `params`/`results` are present
+  /// only for functions with all-scalar signatures.
+  #[qjs(get)]
+  pub fn exports<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let arr = rquickjs::Array::new(ctx.clone())?;
+    for (i, (name, info)) in self.inner.exports().iter().enumerate() {
+      let obj = Object::new(ctx.clone())?;
+      obj.set("name", name.clone())?;
+      match info {
+        ExportInfo::Func(sig) => {
+          obj.set("kind", "function")?;
+          obj.set("params", type_names(&ctx, &sig.params)?)?;
+          obj.set("results", type_names(&ctx, &sig.results)?)?;
+        }
+        ExportInfo::Memory => obj.set("kind", "memory")?,
+        ExportInfo::Other => obj.set("kind", "other")?,
+      }
+      arr.set(i, obj)?;
+    }
+    Ok(arr.into_value())
+  }
+
+  /// Call an exported function. Arguments are coerced to the export's declared
+  /// parameter types. Returns `undefined` for no results, the single value for
+  /// one, or an array for several. Host imports hit during the call dispatch to
+  /// the functions passed to `instantiate`; a throw from one aborts the call.
+  pub fn call<'js>(&self, ctx: Ctx<'js>, name: String, args: Rest<Value<'js>>) -> rquickjs::Result<Value<'js>> {
+    let Some(sig) = self.inner.export_sig(&name) else {
+      return Err(Exception::throw_message(&ctx, &format!("no exported function named {name}")));
+    };
+    if args.0.len() != sig.params.len() {
+      return Err(Exception::throw_message(
+        &ctx,
+        &format!("{name} expects {} argument(s), got {}", sig.params.len(), args.0.len()),
+      ));
+    }
+    let mut wasm_args = Vec::with_capacity(args.0.len());
+    for (value, ty) in args.0.iter().zip(sig.params.iter()) {
+      wasm_args.push(js_to_wasm(&ctx, value, *ty).map_err(|m| Exception::throw_message(&ctx, &m))?);
+    }
+
+    // The host handler dispatches a guest import call to its JS function. It runs
+    // with no borrow of the wasm store held (see forge::wasm), so a handler may
+    // freely re-enter this instance. A JS throw is captured and rethrown after
+    // the call unwinds, preserving the original exception.
+    let imports = self.imports.clone();
+    let handlers = handler_store(&ctx);
+    let id = self.id;
+    let mut thrown: Option<rquickjs::Error> = None;
+    let mut host = |index: usize, host_args: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
+      // Clone the Persistent out under a short borrow, then drop the borrow
+      // before calling into JS: a re-entrant call/instantiate borrows the same
+      // registry.
+      let saved = handlers.0.borrow().by_id.get(&id).and_then(|v| v.get(index)).cloned();
+      let func = saved.ok_or_else(|| "wasm host function missing from registry".to_string())?;
+      let func = func.restore(&ctx).map_err(err_string)?;
+      let js_args: Vec<Value> = host_args.into_iter().map(|v| wasm_to_js(&ctx, v)).collect::<Result<_, _>>()?;
+      let ret: Value = match func.call((Rest(js_args),)) {
+        Ok(v) => v,
+        Err(e) => {
+          // Stash the real JS exception; return a placeholder Err to unwind.
+          thrown = Some(e);
+          return Err("host function threw".to_string());
+        }
+      };
+      results_from_js(&ctx, ret, &imports[index].sig.results)
+    };
+
+    let out = self.inner.call(&name, wasm_args, &mut host);
+    if let Some(e) = thrown {
+      return Err(e);
+    }
+    let out = out.map_err(|m| Exception::throw_message(&ctx, &m))?;
+    results_to_js(&ctx, out)
+  }
+
+  /// The exported memory's current size in bytes, or `undefined` if the module
+  /// exports no memory.
+  #[qjs(get, rename = "memorySize")]
+  pub fn memory_size<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    match self.inner.memory_size() {
+      Some(n) => (n as f64).into_js(&ctx),
+      None => Ok(Value::new_undefined(ctx)),
+    }
+  }
+
+  /// Copy `len` bytes out of the exported memory at `ptr`, as a `Uint8Array`.
+  #[qjs(rename = "readMemory")]
+  pub fn read_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, len: usize) -> rquickjs::Result<Value<'js>> {
+    let bytes = self.inner.memory_read(ptr, len).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    Ok(TypedArray::new(ctx.clone(), bytes)?.into_value())
+  }
+
+  /// Copy `bytes` (a `Uint8Array` or `ArrayBuffer`) into the exported memory at
+  /// `ptr`.
+  #[qjs(rename = "writeMemory")]
+  pub fn write_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, bytes: Value<'js>) -> rquickjs::Result<()> {
+    let bytes = value_to_bytes(&ctx, &bytes)?;
+    self.inner.memory_write(ptr, &bytes).map_err(|m| Exception::throw_message(&ctx, &m))
+  }
+}
+
+// ---- value marshalling ------------------------------------------------------
+
+fn err_string<E: std::fmt::Display>(e: E) -> String {
+  e.to_string()
+}
+
+fn type_name(t: WasmType) -> &'static str {
+  match t {
+    WasmType::I32 => "i32",
+    WasmType::I64 => "i64",
+    WasmType::F32 => "f32",
+    WasmType::F64 => "f64",
+  }
+}
+
+fn type_names<'js>(ctx: &Ctx<'js>, types: &[WasmType]) -> rquickjs::Result<rquickjs::Array<'js>> {
+  let arr = rquickjs::Array::new(ctx.clone())?;
+  for (i, t) in types.iter().enumerate() {
+    arr.set(i, type_name(*t))?;
+  }
+  Ok(arr)
+}
+
+/// Decode a JS `Uint8Array` or `ArrayBuffer` into owned bytes.
+fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>> {
+  if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
+    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+  } else if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
+    Ok(ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
+  } else {
+    Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"))
+  }
+}
+
+/// Coerce a JS value to a scalar wasm value of the declared type.
+fn js_to_wasm(_ctx: &Ctx<'_>, value: &Value<'_>, ty: WasmType) -> Result<WasmValue, String> {
+  match ty {
+    WasmType::I32 => number(value).map(|n| WasmValue::I32(n as i32)),
+    WasmType::F32 => number(value).map(|n| WasmValue::F32(n as f32)),
+    WasmType::F64 => number(value).map(WasmValue::F64),
+    WasmType::I64 => {
+      if let Some(b) = value.as_big_int() {
+        b.clone().to_i64().map(WasmValue::I64).map_err(|_| "invalid BigInt for i64 argument".to_string())
+      } else {
+        number(value).map(|n| WasmValue::I64(n as i64))
+      }
+    }
+  }
+}
+
+fn number(value: &Value<'_>) -> Result<f64, String> {
+  value.as_number().ok_or_else(|| "expected a number argument".to_string())
+}
+
+/// Encode a scalar wasm value as a JS value (i64 -> BigInt, rest -> number).
+fn wasm_to_js<'js>(ctx: &Ctx<'js>, v: WasmValue) -> Result<Value<'js>, String> {
+  let r = match v {
+    WasmValue::I32(x) => (x as f64).into_js(ctx),
+    WasmValue::F32(x) => (x as f64).into_js(ctx),
+    WasmValue::F64(x) => x.into_js(ctx),
+    WasmValue::I64(x) => Value::new_big_int(ctx.clone(), x),
+  };
+  r.map_err(err_string)
+}
+
+/// Encode an export's result list: `undefined` / scalar / array by arity.
+fn results_to_js<'js>(ctx: &Ctx<'js>, mut out: Vec<WasmValue>) -> rquickjs::Result<Value<'js>> {
+  match out.len() {
+    0 => Ok(Value::new_undefined(ctx.clone())),
+    1 => wasm_to_js(ctx, out.remove(0)).map_err(|m| Exception::throw_message(ctx, &m)),
+    _ => {
+      let arr = rquickjs::Array::new(ctx.clone())?;
+      for (i, v) in out.into_iter().enumerate() {
+        let jv = wasm_to_js(ctx, v).map_err(|m| Exception::throw_message(ctx, &m))?;
+        arr.set(i, jv)?;
+      }
+      Ok(arr.into_value())
+    }
+  }
+}
+
+/// Decode a host function's return value into result values matching the
+/// import's declared result types. `undefined`/no-return is allowed only for a
+/// zero-result import; a single value covers one result; an array covers many.
+fn results_from_js(ctx: &Ctx<'_>, ret: Value<'_>, results: &[WasmType]) -> Result<Vec<WasmValue>, String> {
+  if results.is_empty() {
+    return Ok(Vec::new());
+  }
+  if results.len() == 1 {
+    return Ok(vec![js_to_wasm(ctx, &ret, results[0])?]);
+  }
+  let Some(arr) = ret.into_array() else {
+    return Err(format!("host function must return an array of {} results", results.len()));
+  };
+  if arr.len() != results.len() {
+    return Err(format!("host function returned {} results, expected {}", arr.len(), results.len()));
+  }
+  let mut out = Vec::with_capacity(results.len());
+  for (i, ty) in results.iter().enumerate() {
+    let v: Value = arr.get(i).map_err(err_string)?;
+    out.push(js_to_wasm(ctx, &v, *ty)?);
+  }
+  Ok(out)
+}
+
+pub struct WasmModuleDef;
+
+impl ModuleDef for WasmModuleDef {
+  fn declare(decl: &Declarations<'_>) -> rquickjs::Result<()> {
+    decl.declare("Module")?;
+    Ok(())
+  }
+
+  fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    let ctor = Class::<Module>::create_constructor(ctx)?.expect("Module class has a constructor");
+    exports.export("Module", ctor)?;
+    Ok(())
+  }
+}

@@ -21,6 +21,7 @@ pub mod seek;
 pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
+pub mod wasm;
 pub mod websocket;
 
 pub use seek::{SeekableRead, SeekableReader};

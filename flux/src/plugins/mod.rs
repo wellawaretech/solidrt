@@ -118,6 +118,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:subprocess");
   loader.add_module("flux:subprocess", modules::subprocess::SubprocessModule);
 
+  resolver.add_module("flux:wasm");
+  loader.add_module("flux:wasm", modules::wasm::WasmModuleDef);
+
   for f in module_overrides {
     f(&mut resolver, &mut loader);
   }
@@ -167,7 +170,7 @@ pub(crate) async fn init_context(
 /// JS branches on availability (`Flux.capabilities.includes("subprocess")`)
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
-pub const BASE_CAPABILITIES: &[&str] = &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess"];
+pub const BASE_CAPABILITIES: &[&str] = &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "wasm"];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");
