@@ -81,24 +81,25 @@ function solidPlugin(): BunPlugin {
   }
 }
 
-export async function bundle(entry = source) {
-  let result = null
+export type BundleOptions = { entry: string; devBase?: string; dev: boolean; minify: boolean }
 
-  let devBase = state.serverUrl ?? undefined
-  let dev = !!devBase || values.dev
-  // Keep stdout clean when the bundle itself is written to stdout.
-  if (!values.stdout) print(`[cli] Bundling (${dev ? "development" : "production"})`)
+// The pure bundle: every input is explicit, so it runs identically in the srt
+// (Bun) process and in the standalone bundle-cli subprocess the dev server
+// spawns. It never touches the ambient args/state singletons and never prints
+// progress (callers own that), so its stdout stays clean for subprocess use.
+export async function bundleWith(opts: BundleOptions) {
   let define: Record<string, string> = {
-    "process.env.NODE_ENV": dev ? "development" : "production",
+    "process.env.NODE_ENV": opts.dev ? "development" : "production",
   }
-  if (devBase) define.__SRT_DEV_BASE__ = devBase
+  if (opts.devBase) define.__SRT_DEV_BASE__ = opts.devBase
 
+  let result = null
   try {
     result = await Bun.build({
-      entrypoints: [entry!],
+      entrypoints: [opts.entry],
       target: "browser",
       format: "esm",
-      minify: values.minify,
+      minify: opts.minify,
       external: ["flux:*", "srt:*"],
       define,
       loader: { ".svg": "text" },
@@ -109,14 +110,17 @@ export async function bundle(entry = source) {
     return null
   }
 
-  if (result?.success) {
-    return result
-  }
-
-  if (result) {
-    for (let msg of result?.logs) console.error(msg)
-  }
+  if (result.success) return result
+  for (let msg of result.logs) console.error(msg)
   return null
+}
+
+export async function bundle(entry = source) {
+  let devBase = state.serverUrl ?? undefined
+  let dev = !!devBase || values.dev
+  // Keep stdout clean when the bundle itself is written to stdout.
+  if (!values.stdout) print(`[cli] Bundling (${dev ? "development" : "production"})`)
+  return bundleWith({ entry: entry!, devBase, dev, minify: values.minify })
 }
 
 export async function bundleTo(outfile: string) {

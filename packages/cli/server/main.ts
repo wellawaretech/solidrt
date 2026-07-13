@@ -80,6 +80,9 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
       // file-serving root (repl `load`).
       let body = await req.json()
       if (typeof body.sourceDir === "string") state.sourceDir = body.sourceDir
+      // Keep the rebuild entry in sync when `load` moves it, so a later MCP
+      // reload bundles the newly loaded file, not the launch-time one.
+      if (typeof body.entry === "string") state.config.entry = body.entry
       let text = JSON.stringify(body.message)
       if (body.latch) state.currentReload = text
       sendTo(body.clients, text)

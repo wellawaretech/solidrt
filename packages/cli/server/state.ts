@@ -11,6 +11,15 @@ export type Config = {
   address: string
   proxyFiles: boolean
   proxyHttp: boolean
+  /** The app entry (absolute .tsx/.jsx path) the server rebuilds on an
+   * MCP-triggered reload, or undefined when srt was started without a source.
+   * Moved by the repl `load` command via /__internal__/reload. */
+  entry?: string
+  /** Minify the rebuild output, mirroring the srt --minify flag. */
+  minify: boolean
+  /** How the server invokes the external bundler: [bunPath, bundleCliPath],
+   * spawned with a JSON params argument appended (see rebuild.ts). */
+  bundlerCmd: string[]
   /** Enable the sqlite-backed proxy cache. */
   cache: boolean
   /** Directory holding .srt-cache.db. */

@@ -118,8 +118,13 @@ async function cmdLoad(file: string) {
   state.source = path
   state.sourceDir = dirname(path)
   startWatcher()
-  // The load also moves the server's file-serving root to the new source dir.
-  await sendReload(buildReload({ code: state.currentCode }), { latch: true, sourceDir: state.sourceDir })
+  // The load also moves the server's file-serving root to the new source dir,
+  // and its rebuild entry to the new file (for a later MCP reload).
+  await sendReload(buildReload({ code: state.currentCode }), {
+    latch: true,
+    sourceDir: state.sourceDir,
+    entry: file.endsWith(".tsx") ? path : undefined,
+  })
   print(`[cli] Loaded ${file}`)
 }
 

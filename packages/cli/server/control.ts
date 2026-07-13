@@ -1,4 +1,5 @@
 import { state } from "./state"
+import { rebuildAndBroadcast } from "./rebuild"
 import type { ServerWebSocket } from "flux:http"
 
 // The control API under /__control__/: read-only introspection of connected
@@ -125,6 +126,15 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let nodeId = parseInt(query.get("node") ?? "", 10)
       if (!Number.isFinite(nodeId)) return Response.json({ error: "Snapshot requires ?node=<id>" }, { status: 400 })
       return handleQuery(query, "snapshot", { nodeId })
+    }
+    case "/__control__/reload": {
+      // Explicit rebuild-and-push, the primary way a coding agent applies its
+      // edits (srt mcp's reload tool). Unlike the repl's file watcher this is
+      // on demand, so a burst of edits collapses into one reload.
+      if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
+      let error = await rebuildAndBroadcast()
+      if (error) return Response.json({ error }, { status: 502 })
+      return Response.json({ ok: true, clients: state.clients.size })
     }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })

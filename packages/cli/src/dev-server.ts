@@ -32,7 +32,10 @@ async function post(path: string, body: object) {
  * clients (code reloads latch, one-shot bytecode loads do not); `sourceDir`
  * moves the server's file-serving root (repl `load`).
  */
-export async function sendReload(message: object, opts: { clients?: number[]; latch?: boolean; sourceDir?: string } = {}) {
+export async function sendReload(
+  message: object,
+  opts: { clients?: number[]; latch?: boolean; sourceDir?: string; entry?: string } = {},
+) {
   await post("/reload", { message, ...opts })
 }
 
@@ -125,12 +128,20 @@ export async function startServer() {
   // computes it and passes it down.
   state.serverUrl = `${address}:${DEV_PORT}`
 
+  // How the server rebuilds on an MCP-triggered reload: it cannot call
+  // Bun.build itself (it is a flux process), so it spawns srt's own bun on the
+  // standalone bundle-cli entry. Both paths are known here at spawn time.
+  let bundleCli = fileURLToPath(new URL("./bundle-cli.ts", import.meta.url))
+
   let config = {
     port: DEV_PORT,
     sourceDir: state.sourceDir,
     address,
     proxyFiles: values["proxy-files"],
     proxyHttp: values["proxy-http"],
+    entry: state.source,
+    minify: values.minify,
+    bundlerCmd: [process.execPath, bundleCli],
     cache: values["proxy-http"],
     cacheDir: process.cwd(),
     capture: state.capture,
