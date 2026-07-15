@@ -229,7 +229,20 @@ impl FfiLibrary {
 
   /// Load a shared library from bytes (written to a temp file first, so it
   /// can ride inside an app bundle the way a wasm module does).
+  ///
+  /// Not supported on Android: SELinux forbids untrusted apps (targetSdk 29+)
+  /// from executing native code out of any app-writable storage, so the
+  /// write-then-dlopen route is a dead end there by OS policy. Android
+  /// libraries must ship inside the APK and be opened by path.
   pub fn open_bytes(bytes: &[u8], decls: Vec<(String, FfiSig)>) -> Result<FfiLibrary, String> {
+    if cfg!(target_os = "android") {
+      return Err(
+        "Loading a library from bytes is not supported on Android: the OS forbids executing \
+         native code from app-writable storage. Ship the library inside the APK and open it \
+         by path instead"
+          .to_string(),
+      );
+    }
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let path = std::env::temp_dir().join(format!("forge-ffi-{}-{}.so", std::process::id(), nanos));
     std::fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
