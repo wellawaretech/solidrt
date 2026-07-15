@@ -2,7 +2,7 @@ import { watch } from "node:fs"
 import { resolve, dirname } from "path"
 import { state, print, printErr } from "./util"
 import { buildReload, sendReload, showBuildFailure } from "./dev-server"
-import { bundle, codeFromOutputs } from "./bundler"
+import { bundle } from "./bundler"
 
 let currentWatcher: ReturnType<typeof watch> | null = null
 
@@ -31,7 +31,8 @@ export function startWatcher() {
       await showBuildFailure()
       return
     }
-    state.currentCode = await codeFromOutputs(result.outputs)
-    await sendReload(buildReload({ code: state.currentCode }), { latch: true })
+    state.currentCode = result.code
+    state.currentMap = result.map
+    await sendReload(buildReload({ code: state.currentCode }), { latch: true, map: state.currentMap })
   })
 }

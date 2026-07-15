@@ -3,7 +3,7 @@ import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, showBuildFailure } from "./dev-server"
-import { bundle, codeFromOutputs } from "./bundler"
+import { bundle } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
 // Resolve repl client indexes ("0 2") against the server's client list,
@@ -27,6 +27,7 @@ async function cmdStop(args: string) {
   if (!args) {
     stopWatcher()
     state.currentCode = null
+    state.currentMap = null
     state.source = undefined
     await sendStop()
     print("[cli] Sent stop to all clients")
@@ -47,17 +48,18 @@ async function cmdReload(args: string) {
       await showBuildFailure()
       return
     }
-    state.currentCode = await codeFromOutputs(result.outputs)
+    state.currentCode = result.code
+    state.currentMap = result.map
   }
   let msg = buildReload({ code: state.currentCode })
   if (!args) {
-    await sendReload(msg, { latch: true })
+    await sendReload(msg, { latch: true, map: state.currentMap })
     print("[cli] Sent reload to all clients")
     return
   }
   let ids = await indexesToIds(args)
   if (ids.length) {
-    await sendReload(msg, { clients: ids })
+    await sendReload(msg, { clients: ids, map: state.currentMap })
     print(`[cli] Sent reload to client(s) ${ids.join(", ")}`)
   }
 }
@@ -102,9 +104,11 @@ async function cmdLoad(file: string) {
       printErr("[cli] Build failed")
       return
     }
-    state.currentCode = await codeFromOutputs(result.outputs)
+    state.currentCode = result.code
+    state.currentMap = result.map
   } else if (file.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(path).text()
+    state.currentMap = null
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
     // One-shot: bytecode loads are pushed but not latched for late joiners.
@@ -124,6 +128,7 @@ async function cmdLoad(file: string) {
     latch: true,
     sourceDir: state.sourceDir,
     entry: file.endsWith(".tsx") ? path : undefined,
+    map: state.currentMap,
   })
   print(`[cli] Loaded ${file}`)
 }

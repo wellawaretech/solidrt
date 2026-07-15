@@ -39,8 +39,15 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     return `Rebuild failed:\n${stderr.trim()}`
   }
 
-  let code = typeof result.stdout === "string" ? result.stdout : ""
-  let text = JSON.stringify(buildReload(code))
+  // bundle-cli writes one JSON object { code, map } to stdout.
+  let bundle: { code?: string; map?: string | null }
+  try {
+    bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
+  } catch {
+    return "Rebuild failed: unreadable bundler output"
+  }
+  state.currentMap = bundle.map ?? null
+  let text = JSON.stringify(buildReload(bundle.code ?? ""))
   state.currentReload = text
   for (let ws of state.clients.keys()) ws.send(text)
   return null

@@ -30,11 +30,13 @@ async function post(path: string, body: object) {
  * Send a client-protocol message through the server: to the given client ids,
  * or to every client when omitted. `latch` keeps the message for late-joining
  * clients (code reloads latch, one-shot bytecode loads do not); `sourceDir`
- * moves the server's file-serving root (repl `load`).
+ * moves the server's file-serving root (repl `load`); `map` is the bundle's
+ * sourcemap, kept server-side for stack-trace remapping (omitting it clears
+ * the server's map, so a mapless reload never remaps against a stale one).
  */
 export async function sendReload(
   message: object,
-  opts: { clients?: number[]; latch?: boolean; sourceDir?: string; entry?: string } = {},
+  opts: { clients?: number[]; latch?: boolean; sourceDir?: string; entry?: string; map?: string | null } = {},
 ) {
   await post("/reload", { message, ...opts })
 }

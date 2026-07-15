@@ -1,7 +1,7 @@
 import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
-import { bundle, codeFromOutputs } from "../bundler"
+import { bundle } from "../bundler"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
@@ -27,8 +27,9 @@ export async function runServerCommand() {
   if (source && isSource) {
     let initialResult = await bundle()
     if (initialResult) {
-      state.currentCode = await codeFromOutputs(initialResult.outputs)
-      await sendReload(buildReload({ code: state.currentCode }), { latch: true })
+      state.currentCode = initialResult.code
+      state.currentMap = initialResult.map
+      await sendReload(buildReload({ code: state.currentCode }), { latch: true, map: state.currentMap })
     } else {
       await showBuildFailure()
     }

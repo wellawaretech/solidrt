@@ -42,6 +42,13 @@ export let state = {
    * Set by /__internal__/reload posts with `latch`, cleared by a broadcast stop.
    */
   currentReload: null as string | null,
+  /**
+   * The running bundle's sourcemap (JSON text, bundle -> .tsx sources), used
+   * to remap stack traces in forwarded client logs (see control.ts). Replaced
+   * on every reload; a reload without a map clears it so frames are never
+   * remapped against a stale map.
+   */
+  currentMap: null as string | null,
   sourceDir: "",
   serverUrl: "",
   stats: false,

@@ -1,5 +1,6 @@
 import { state } from "./state"
 import { rebuildAndBroadcast } from "./rebuild"
+import { remapPositions } from "./remap"
 import type { ServerWebSocket } from "flux:http"
 
 // The control API under /__control__/: read-only introspection of connected
@@ -30,8 +31,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 /// A `log` message arrived from a client: buffer it and wake long-polls.
+/// Bundle positions in stack traces are remapped to .tsx sources on the way in.
 export function appendLog(client: number, level: string, text: string) {
-  logs.push({ seq: ++logSeq, at: Date.now(), client, level, text })
+  logs.push({ seq: ++logSeq, at: Date.now(), client, level, text: remapPositions(text, state.currentMap) })
   if (logs.length > LOG_CAP) logs.splice(0, logs.length - LOG_CAP)
   let waiters = logWaiters
   logWaiters = []

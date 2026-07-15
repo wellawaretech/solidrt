@@ -8,6 +8,9 @@ export let state = {
   // What srt believes the current bundle is; the server process keeps its own
   // latched copy for late-joining clients (see packages/cli/server/).
   currentCode: null as string | null,
+  // The bundle's composed sourcemap (dev builds), sent to the server alongside
+  // reloads so it can remap logged stack traces to .tsx positions.
+  currentMap: null as string | null,
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,

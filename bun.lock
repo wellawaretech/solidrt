@@ -32,6 +32,8 @@
         "@babel/core": "^7.0.0",
         "@babel/plugin-syntax-jsx": "^7.0.0",
         "@babel/preset-typescript": "^7.0.0",
+        "@jridgewell/remapping": "^2.3.0",
+        "@jridgewell/trace-mapping": "^0.3.25",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "babel-preset-solid": "2.0.0-beta.17",
         "bonjour-service": "^1.4.0",
