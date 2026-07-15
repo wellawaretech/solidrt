@@ -27,6 +27,7 @@
 //! });
 //! instance.exports;                     // [{ name, kind, params?, results? }]
 //! instance.call("run", 6);              // scalar / undefined / array by result count
+//! instance.callIndirect(fp, 1, 2);      // call table[fp] via the exported function table
 //! instance.memorySize;                  // bytes, or undefined if no exported memory
 //! instance.readMemory(ptr, len);        // Uint8Array
 //! instance.writeMemory(ptr, bytes);     // void
@@ -47,7 +48,7 @@ use rquickjs::{
   ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
 };
 
-use forge::wasm::{ExportInfo, ImportInfo, WasmType, WasmValue};
+use forge::wasm::{ExportInfo, FuncSig, ImportInfo, WasmType, WasmValue};
 
 // Per-instance host functions live here, in context userdata, NOT in the
 // `Instance` class. A `Persistent` held inside a class instance is a GC root
@@ -189,53 +190,25 @@ impl Instance {
   /// one, or an array for several. Host imports hit during the call dispatch to
   /// the functions passed to `instantiate`; a throw from one aborts the call.
   pub fn call<'js>(&self, ctx: Ctx<'js>, name: String, args: Rest<Value<'js>>) -> rquickjs::Result<Value<'js>> {
-    let Some(sig) = self.inner.export_sig(&name) else {
-      return Err(Exception::throw_message(&ctx, &format!("no exported function named {name}")));
-    };
-    if args.0.len() != sig.params.len() {
-      return Err(Exception::throw_message(
-        &ctx,
-        &format!("{name} expects {} argument(s), got {}", sig.params.len(), args.0.len()),
-      ));
-    }
-    let mut wasm_args = Vec::with_capacity(args.0.len());
-    for (value, ty) in args.0.iter().zip(sig.params.iter()) {
-      wasm_args.push(js_to_wasm(&ctx, value, *ty).map_err(|m| Exception::throw_message(&ctx, &m))?);
-    }
-
-    // The host handler dispatches a guest import call to its JS function. It runs
-    // with no borrow of the wasm store held (see forge::wasm), so a handler may
-    // freely re-enter this instance. A JS throw is captured and rethrown after
-    // the call unwinds, preserving the original exception.
-    let imports = self.imports.clone();
-    let handlers = handler_store(&ctx);
-    let id = self.id;
-    let mut thrown: Option<rquickjs::Error> = None;
-    let mut host = |index: usize, host_args: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
-      // Clone the Persistent out under a short borrow, then drop the borrow
-      // before calling into JS: a re-entrant call/instantiate borrows the same
-      // registry.
-      let saved = handlers.0.borrow().by_id.get(&id).and_then(|v| v.get(index)).cloned();
-      let func = saved.ok_or_else(|| "wasm host function missing from registry".to_string())?;
-      let func = func.restore(&ctx).map_err(err_string)?;
-      let js_args: Vec<Value> = host_args.into_iter().map(|v| wasm_to_js(&ctx, v)).collect::<Result<_, _>>()?;
-      let ret: Value = match func.call((Rest(js_args),)) {
-        Ok(v) => v,
-        Err(e) => {
-          // Stash the real JS exception; return a placeholder Err to unwind.
-          thrown = Some(e);
-          return Err("host function threw".to_string());
-        }
+    let wasm_args = {
+      let Some(sig) = self.inner.export_sig(&name) else {
+        return Err(Exception::throw_message(&ctx, &format!("no exported function named {name}")));
       };
-      results_from_js(&ctx, ret, &imports[index].sig.results)
+      coerce_args(&ctx, &name, sig, &args)?
     };
+    self.invoke(ctx, Target::Export(&name), wasm_args)
+  }
 
-    let out = self.inner.call(&name, wasm_args, &mut host);
-    if let Some(e) = thrown {
-      return Err(e);
-    }
-    let out = out.map_err(|m| Exception::throw_message(&ctx, &m))?;
-    results_to_js(&ctx, out)
+  /// Call a function by its index in the module's exported function table:
+  /// `table[index](...args)`. This is how a host function invokes a guest
+  /// function pointer it received as an integer (e.g. a C callback). Same
+  /// coercion and host-import dispatch rules as `call`; safe to use from
+  /// within a host function (re-entrant).
+  #[qjs(rename = "callIndirect")]
+  pub fn call_indirect<'js>(&self, ctx: Ctx<'js>, index: u32, args: Rest<Value<'js>>) -> rquickjs::Result<Value<'js>> {
+    let sig = self.inner.table_func_sig(index).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    let wasm_args = coerce_args(&ctx, &format!("table[{index}]"), &sig, &args)?;
+    self.invoke(ctx, Target::Table(index), wasm_args)
   }
 
   /// The exported memory's current size in bytes, or `undefined` if the module
@@ -264,7 +237,75 @@ impl Instance {
   }
 }
 
+/// What `Instance::invoke` should run: a named export or a function-table slot.
+enum Target<'a> {
+  Export(&'a str),
+  Table(u32),
+}
+
+impl Instance {
+  /// Shared driver for `call`/`callIndirect`. The host handler dispatches a
+  /// guest import call to its JS function. It runs with no borrow of the wasm
+  /// store held (see forge::wasm), so a handler may freely re-enter this
+  /// instance. A JS throw is captured and rethrown after the call unwinds,
+  /// preserving the original exception.
+  fn invoke<'js>(&self, ctx: Ctx<'js>, target: Target<'_>, wasm_args: Vec<WasmValue>) -> rquickjs::Result<Value<'js>> {
+    let imports = self.imports.clone();
+    let handlers = handler_store(&ctx);
+    let id = self.id;
+    let mut thrown: Option<rquickjs::Error> = None;
+    let mut host = |index: usize, host_args: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
+      // Clone the Persistent out under a short borrow, then drop the borrow
+      // before calling into JS: a re-entrant call/instantiate borrows the same
+      // registry.
+      let saved = handlers.0.borrow().by_id.get(&id).and_then(|v| v.get(index)).cloned();
+      let func = saved.ok_or_else(|| "wasm host function missing from registry".to_string())?;
+      let func = func.restore(&ctx).map_err(err_string)?;
+      let js_args: Vec<Value> = host_args.into_iter().map(|v| wasm_to_js(&ctx, v)).collect::<Result<_, _>>()?;
+      let ret: Value = match func.call((Rest(js_args),)) {
+        Ok(v) => v,
+        Err(e) => {
+          // Stash the real JS exception; return a placeholder Err to unwind.
+          thrown = Some(e);
+          return Err("host function threw".to_string());
+        }
+      };
+      results_from_js(&ctx, ret, &imports[index].sig.results)
+    };
+
+    let out = match target {
+      Target::Export(name) => self.inner.call(name, wasm_args, &mut host),
+      Target::Table(index) => self.inner.call_indirect(index, wasm_args, &mut host),
+    };
+    if let Some(e) = thrown {
+      return Err(e);
+    }
+    let out = out.map_err(|m| Exception::throw_message(&ctx, &m))?;
+    results_to_js(&ctx, out)
+  }
+}
+
 // ---- value marshalling ------------------------------------------------------
+
+/// Check arity and coerce JS arguments to a function's scalar parameter types.
+fn coerce_args<'js>(
+  ctx: &Ctx<'js>,
+  what: &str,
+  sig: &FuncSig,
+  args: &Rest<Value<'js>>,
+) -> rquickjs::Result<Vec<WasmValue>> {
+  if args.0.len() != sig.params.len() {
+    return Err(Exception::throw_message(
+      ctx,
+      &format!("{what} expects {} argument(s), got {}", sig.params.len(), args.0.len()),
+    ));
+  }
+  let mut out = Vec::with_capacity(args.0.len());
+  for (value, ty) in args.0.iter().zip(sig.params.iter()) {
+    out.push(js_to_wasm(ctx, value, *ty).map_err(|m| Exception::throw_message(ctx, &m))?);
+  }
+  Ok(out)
+}
 
 fn err_string<E: std::fmt::Display>(e: E) -> String {
   e.to_string()

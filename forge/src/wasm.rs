@@ -2,9 +2,10 @@
 //!
 //! Hosts precompiled `.wasm` modules (or, with wasmi's `wat` feature, text
 //! format sources): parse and validate a module, resolve its function imports
-//! to host-provided handlers, instantiate it, call its exports, and access its
-//! exported linear memory. Pure Rust, no JIT, so one `.wasm` artifact runs
-//! unmodified on every target.
+//! to host-provided handlers, instantiate it, call its exports (by name, or by
+//! index through its exported function table), and access its exported linear
+//! memory. Pure Rust, no JIT, so one `.wasm` artifact runs unmodified on every
+//! target.
 //!
 //! Host imports are bridged with wasmi's resumable calls: every function
 //! import is registered as a stub that records its arguments and suspends
@@ -28,7 +29,9 @@ use std::cell::RefCell;
 use std::fmt;
 
 use wasmi::errors::HostError;
-use wasmi::{Engine, ExternType, FuncType, Instance, Linker, Memory, Module, ResumableCall, Store, Val, ValType};
+use wasmi::{
+  Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module, ResumableCall, Store, Table, Val, ValType,
+};
 
 /// A scalar wasm value crossing the host boundary.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,6 +75,7 @@ pub enum ExportInfo {
   /// A linear memory (the first one becomes the instance's memory).
   Memory,
   /// Anything not bridged (globals, tables, functions with non-scalar types).
+  /// The first exported table still backs `call_indirect`.
   Other,
 }
 
@@ -176,6 +180,7 @@ impl WasmModule {
 
     let mut exports: Vec<(String, ExportInfo)> = Vec::new();
     let mut memory: Option<Memory> = None;
+    let mut table: Option<Table> = None;
     for exp in self.module.exports() {
       let info = match exp.ty() {
         ExternType::Func(ty) => func_sig(ty).map(ExportInfo::Func).unwrap_or(ExportInfo::Other),
@@ -185,12 +190,20 @@ impl WasmModule {
           }
           ExportInfo::Memory
         }
+        ExternType::Table(_) => {
+          // The first exported table backs call_indirect (C toolchains export
+          // their function table as `__indirect_function_table`).
+          if table.is_none() {
+            table = instance.get_table(&store, exp.name());
+          }
+          ExportInfo::Other
+        }
         _ => ExportInfo::Other,
       };
       exports.push((exp.name().to_string(), info));
     }
 
-    Ok(WasmInstance { store: RefCell::new(store), instance, memory, exports })
+    Ok(WasmInstance { store: RefCell::new(store), instance, memory, table, exports })
   }
 }
 
@@ -202,6 +215,7 @@ pub struct WasmInstance {
   store: RefCell<Store<HostState>>,
   instance: Instance,
   memory: Option<Memory>,
+  table: Option<Table>,
   exports: Vec<(String, ExportInfo)>,
 }
 
@@ -229,12 +243,48 @@ impl WasmInstance {
   /// suspend the wasm frame and are dispatched to `host`; its results resume
   /// the frame. A `host` error aborts and unwinds the wasm call.
   pub fn call(&self, name: &str, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
-    let (func, n_results) = {
+    let func = {
       let store = self.store.borrow();
-      let func =
-        self.instance.get_func(&*store, name).ok_or_else(|| format!("no exported wasm function named {name}"))?;
-      let n_results = func.ty(&*store).results().len();
-      (func, n_results)
+      self.instance.get_func(&*store, name).ok_or_else(|| format!("no exported wasm function named {name}"))?
+    };
+    self.drive(func, args, host)
+  }
+
+  /// Call a function by its index in the exported function table:
+  /// `table[index](args)`. This is how the host invokes a guest function
+  /// pointer it was handed as an integer. Same bridging rules as `call`.
+  pub fn call_indirect(&self, index: u32, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
+    let func = self.table_func(index)?;
+    self.drive(func, args, host)
+  }
+
+  /// The scalar signature of the function at `index` in the exported table,
+  /// for argument coercion.
+  pub fn table_func_sig(&self, index: u32) -> Result<FuncSig, String> {
+    let func = self.table_func(index)?;
+    let store = self.store.borrow();
+    func_sig(&func.ty(&*store)).map_err(|t| format!("table function {index} has unsupported wasm type {t:?}"))
+  }
+
+  /// Resolve a non-null funcref from the exported function table.
+  fn table_func(&self, index: u32) -> Result<Func, String> {
+    let Some(table) = self.table else {
+      return Err("wasm module exports no function table".to_string());
+    };
+    let store = self.store.borrow();
+    let entry =
+      table.get(&*store, u64::from(index)).ok_or_else(|| format!("function table index {index} out of range"))?;
+    let funcref = entry.as_func().ok_or_else(|| format!("function table entry {index} is not a funcref"))?;
+    Option::<&Func>::from(funcref)
+      .cloned()
+      .ok_or_else(|| format!("function table entry {index} is a null function pointer"))
+  }
+
+  /// Run `func` to completion, bridging suspended host-import calls to `host`.
+  fn drive(&self, func: Func, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
+    let n_results = {
+      let store = self.store.borrow();
+      func.ty(&*store).results().len()
     };
     let inputs: Vec<Val> = args.iter().map(|v| to_val(*v)).collect();
     let mut outputs = vec![Val::I32(0); n_results];
@@ -496,5 +546,66 @@ mod tests {
     let wat = r#"(module (import "env" "mem" (memory 1)))"#;
     let err = WasmModule::parse(wat.as_bytes()).map(|_| ()).expect_err("should reject");
     assert!(err.contains("non-function import"), "unexpected error: {err}");
+  }
+
+  #[test]
+  fn call_indirect_via_exported_table() {
+    let wat = r#"(module
+      (table (export "__indirect_function_table") 2 funcref)
+      (func $inc (param i32) (result i32) local.get 0 i32.const 1 i32.add)
+      (elem (i32.const 1) $inc))"#;
+    let inst = WasmModule::parse(wat.as_bytes()).expect("parse").instantiate().expect("instantiate");
+    let sig = inst.table_func_sig(1).expect("sig");
+    assert_eq!(sig.params, vec![WasmType::I32]);
+    assert_eq!(sig.results, vec![WasmType::I32]);
+    let r = inst.call_indirect(1, vec![WasmValue::I32(41)], &mut no_host).expect("call_indirect");
+    assert_eq!(r, vec![WasmValue::I32(42)]);
+    let err = inst.call_indirect(0, vec![], &mut no_host).expect_err("null entry");
+    assert!(err.contains("null function pointer"), "unexpected error: {err}");
+    let err = inst.call_indirect(9, vec![], &mut no_host).expect_err("out of range");
+    assert!(err.contains("out of range"), "unexpected error: {err}");
+  }
+
+  #[test]
+  fn unwind_through_nested_activation() {
+    // The guest protected-call pattern (how a longjmp-free Lua build unwinds):
+    // `run` asks the host to `try` the function at a table slot; that function
+    // `throw`s back through the host. The `try` handler re-enters via
+    // call_indirect, sees the inner activation abort with the matching tag,
+    // and resumes the outer frame with a "caught" flag.
+    let wat = r#"(module
+      (import "env" "try" (func $try (param i32 i32) (result i32)))
+      (import "env" "throw" (func $throw (param i32)))
+      (table (export "__indirect_function_table") 1 funcref)
+      (func $boom (param i32) local.get 0 call $throw)
+      (elem (i32.const 0) $boom)
+      (func (export "run") (param i32) (result i32)
+        i32.const 0 local.get 0 call $try))"#;
+    let module = WasmModule::parse(wat.as_bytes()).expect("parse");
+    let try_index = module.imports().iter().position(|i| i.name == "try").expect("try import");
+    let throw_index = module.imports().iter().position(|i| i.name == "throw").expect("throw import");
+    let inst = module.instantiate().expect("instantiate");
+    let inst_ref = &inst;
+    let mut host = move |index: usize, args: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
+      assert_eq!(index, try_index, "outer activation only calls try");
+      let (WasmValue::I32(slot), WasmValue::I32(tag)) = (args[0], args[1]) else {
+        return Err("bad try args".to_string());
+      };
+      let mut inner = |i: usize, a: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
+        assert_eq!(i, throw_index, "inner activation only calls throw");
+        let WasmValue::I32(t) = a[0] else { return Err("bad throw arg".to_string()) };
+        Err(format!("unwind:{t}"))
+      };
+      match inst_ref.call_indirect(slot as u32, vec![WasmValue::I32(tag)], &mut inner) {
+        Ok(_) => Ok(vec![WasmValue::I32(0)]),
+        Err(e) if e == format!("unwind:{tag}") => Ok(vec![WasmValue::I32(1)]),
+        Err(e) => Err(e),
+      }
+    };
+    let r = inst.call("run", vec![WasmValue::I32(7)], &mut host).expect("run");
+    assert_eq!(r, vec![WasmValue::I32(1)], "unwind caught, outer frame resumed");
+    // The store survived the discarded inner activation: run it again.
+    let r = inst.call("run", vec![WasmValue::I32(9)], &mut host).expect("run again");
+    assert_eq!(r, vec![WasmValue::I32(1)]);
   }
 }

@@ -62,12 +62,16 @@ export async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string>
 }
 
 // Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
-// generate, targeting @solidrt/core) plus the TS preset.
+// generate, targeting @solidrt/core) plus the TS preset. Plain .js/.ts app
+// modules take the same path (solid is a no-op without JSX) so binaryImport
+// can rewrite their `with { type: "binary" }` imports too; dependency code
+// (node_modules) skips the babel detour and keeps Bun's native loaders.
 function solidPlugin(): BunPlugin {
   return {
     name: "bun-plugin-solid",
     setup: (build) => {
-      build.onLoad({ filter: /\.(js|ts)x$/ }, async (args) => {
+      build.onLoad({ filter: /\.(js|ts)x?$/ }, async (args) => {
+        if (!/\.(js|ts)x$/.test(args.path) && args.path.includes("node_modules")) return
         let file = Bun.file(args.path)
         let code = await file.text()
         let transforms = await transformAsync(code, {
