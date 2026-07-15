@@ -83,11 +83,7 @@ async fn unhandled_rejection_is_reported() {
 #[tokio::test]
 async fn handled_rejection_is_not_reported() {
   let out = run_source("Promise.reject(new Error('boom-handled')).catch(() => {})").await;
-  assert!(
-    !out.has_error(),
-    "a synchronously-handled rejection should not be reported, got errors: {:?}",
-    out.errors()
-  );
+  assert!(!out.has_error(), "a synchronously-handled rejection should not be reported, got errors: {:?}", out.errors());
 }
 
 #[tokio::test]
@@ -115,9 +111,5 @@ async fn handled_async_throw_is_not_reported() {
             "#,
   )
   .await;
-  assert!(
-    !out.has_error(),
-    "a caught async rejection should not be reported, got errors: {:?}",
-    out.errors()
-  );
+  assert!(!out.has_error(), "a caught async rejection should not be reported, got errors: {:?}", out.errors());
 }

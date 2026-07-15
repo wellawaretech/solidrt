@@ -15,13 +15,13 @@ pub mod texture;
 pub mod tree;
 pub mod value;
 
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use rquickjs::{Array, Ctx, JsLifetime, Object};
 
-use alloy::AlloyCommand;
 use alloy::rendertree::{PlatformContext, RenderTree};
+use alloy::AlloyCommand;
 
 use crate::engine::FluxEngineBuilder;
 

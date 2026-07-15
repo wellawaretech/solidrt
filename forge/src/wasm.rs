@@ -253,7 +253,12 @@ impl WasmInstance {
   /// Call a function by its index in the exported function table:
   /// `table[index](args)`. This is how the host invokes a guest function
   /// pointer it was handed as an integer. Same bridging rules as `call`.
-  pub fn call_indirect(&self, index: u32, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
+  pub fn call_indirect(
+    &self,
+    index: u32,
+    args: Vec<WasmValue>,
+    host: HostHandler<'_>,
+  ) -> Result<Vec<WasmValue>, String> {
     let func = self.table_func(index)?;
     self.drive(func, args, host)
   }

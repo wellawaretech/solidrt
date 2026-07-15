@@ -240,9 +240,12 @@ fn capture_snapshot_impl<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<P
   // owns the callback until the capture is serviced, keeping the state alive
   // while the request is in flight (no cycle: alloy is not owned by the state).
   let inner = state.0.clone();
-  state.0.atx.request_capture(node_id, Box::new(move |result| {
-    inner.capture_settle.borrow_mut().push(CaptureSettle { result, resolve, reject });
-  }));
+  state.0.atx.request_capture(
+    node_id,
+    Box::new(move |result| {
+      inner.capture_settle.borrow_mut().push(CaptureSettle { result, resolve, reject });
+    }),
+  );
   // The capture is serviced during a paint; make sure one happens.
   state.0.platform.request_frame();
   Ok(promise)
