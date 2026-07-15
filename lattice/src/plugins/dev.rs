@@ -1,8 +1,10 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use flux::rquickjs::function::MutFn;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
-use flux::rquickjs::{Array, Ctx, Function, JsLifetime, Null};
+use flux::rquickjs::{Array, Ctx, Function, JsLifetime, Null, Persistent};
 
 // The `srt:dev` module: the dev-server control surface (connect / discover /
 // stop) used by the default app's connection UI. The actual command plumbing
@@ -41,6 +43,37 @@ pub fn install(ctx: &Ctx<'_>, control: DevControl) {
   ctx.store_userdata(control).expect("store dev control");
 }
 
+/// Debug commands the app registered via `registerDebug`, listed and called
+/// through the dev server (the list_debug / call_debug MCP tools). Context
+/// userdata, so a hot reload's fresh engine starts empty and module init
+/// re-registers. Registration works in every build; only go builds ever call
+/// anything, so elsewhere the registry is a write nothing reads.
+#[derive(Clone, Default, JsLifetime)]
+pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Function<'static>>>>>);
+
+impl DebugRegistry {
+  /// Registered command names, sorted.
+  pub fn names(&self) -> Vec<String> {
+    let mut names: Vec<String> = self.0.borrow().keys().cloned().collect();
+    names.sort();
+    names
+  }
+
+  /// The command's function, if registered.
+  pub fn get(&self, name: &str) -> Option<Persistent<Function<'static>>> {
+    self.0.borrow().get(name).cloned()
+  }
+}
+
+/// `registerDebug(name, fn)`: duplicate names replace. Fetches the registry
+/// from userdata itself so the export needs no captured state.
+fn register_debug_impl<'js>(ctx: Ctx<'js>, name: String, func: Function<'js>) -> flux::rquickjs::Result<()> {
+  let registry = ctx.userdata::<DebugRegistry>().expect("debug registry installed").clone();
+  let persistent = Persistent::save(&ctx, func);
+  registry.0.borrow_mut().insert(name, persistent);
+  Ok(())
+}
+
 pub struct SrtDevModule;
 
 impl ModuleDef for SrtDevModule {
@@ -52,10 +85,18 @@ impl ModuleDef for SrtDevModule {
     decl.declare("canDiscover")?;
     decl.declare("recents")?;
     decl.declare("launchAddress")?;
+    decl.declare("registerDebug")?;
     Ok(())
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
+    // The debug registry exists in every build (unlike the go-only control),
+    // installed on first import of this module.
+    if ctx.userdata::<DebugRegistry>().is_none() {
+      ctx.store_userdata(DebugRegistry::default()).expect("store debug registry");
+    }
+    exports.export("registerDebug", Function::new(ctx.clone(), register_debug_impl)?)?;
+
     match ctx.userdata::<DevControl>() {
       Some(control) => {
         let connect = control.clone();

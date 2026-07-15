@@ -148,3 +148,15 @@ The tools need a running app: if list_clients is empty, ask the user to start
 - After every reload the app restarts from its initial state. If reaching
   the bug site takes navigation, add a dev shortcut (teleport key, noclip,
   initial-state override) before iterating - the round trips add up fast.
+- Clamp onFrame time deltas to [0, cap], not just capped: across a hot
+  reload the runtime's tick counter resets AFTER the new instance's first
+  frame, so the second frame computes a hugely NEGATIVE delta.
+  Math.min(dt, cap) lets it through, and one bad frame can corrupt anything
+  integrated from dt (positions fly off, accumulators go so negative they
+  never recover). Math.max(0, Math.min(dt, cap)) costs nothing.
+- Frames are demand-gated: JS frame callbacks only run when the previous
+  frame changed something (input, signal write, GPU upload). An app whose
+  onFrame returns early without side effects on its first frame never gets
+  a second one - self-running animation (game clocks, shader-driven
+  effects) must make one state change at startup to prime the loop; after
+  that its own writes keep it awake.

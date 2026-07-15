@@ -15,10 +15,15 @@ const CONTROL_BASE = `http://127.0.0.1:${DEV_PORT}/__control__`
 
 type ControlResult = { ok: true; body: any } | { ok: false; message: string }
 
-async function control(path: string, method: "GET" | "POST" = "GET"): Promise<ControlResult> {
+async function control(path: string, method: "GET" | "POST" = "GET", payload?: unknown): Promise<ControlResult> {
   let resp
   try {
-    resp = await fetch(CONTROL_BASE + path, { method })
+    let init: RequestInit = { method }
+    if (payload !== undefined) {
+      init.headers = { "content-type": "application/json" }
+      init.body = JSON.stringify(payload)
+    }
+    resp = await fetch(CONTROL_BASE + path, init)
   } catch {
     return {
       ok: false,
@@ -43,7 +48,7 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   {
     name: "list_clients",
     description:
-      "List the app clients connected to the SolidRT dev server. Each entry has id (pass it as `client` to the other tools), platform, runtime version, and the capability names compiled into that client's runtime.",
+      "List the app clients connected to the SolidRT dev server. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime. Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
@@ -116,6 +121,22 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
     },
   },
   {
+    name: "list_debug",
+    description:
+      "List the debug commands the running app registered via registerDebug from srt:dev. Returns the command names; call one with call_debug. Empty when the app registered none.",
+    inputSchema: { client: CLIENT_ARG },
+  },
+  {
+    name: "call_debug",
+    description:
+      "Call a debug command the running app registered via registerDebug from srt:dev, by name (from list_debug). `args` is passed to the command's function as its single argument; the command's return value comes back JSON-serialized (undefined as null). Commands run synchronously on the app's JS thread - use them to query app state (positions, counters, internal flags) or trigger app behavior (toggle a mode, open a door) without touching its real input handling.",
+    inputSchema: {
+      name: z.string().describe("Debug command name, from list_debug"),
+      args: z.record(z.string(), z.any()).describe("Argument object passed to the command (default: none)").optional(),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "reload",
     description:
       "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. Follow with get_logs to see runtime output from the reloaded app.",
@@ -152,6 +173,14 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "get_gpu_resources":
       return control(`/gpu${clientParam(args)}`)
+    case "list_debug":
+      return control(`/debug${clientParam(args)}`)
+    case "call_debug": {
+      if (typeof args?.name !== "string") return { ok: false, message: "call_debug requires a command name" }
+      let params = new URLSearchParams({ name: args.name })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/debug?${params.toString()}`, "POST", args?.args)
+    }
     case "get_texture": {
       if (typeof args?.id !== "number") return { ok: false, message: "get_texture requires a numeric id" }
       let params = new URLSearchParams({ id: String(args.id) })

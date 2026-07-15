@@ -31,7 +31,7 @@ export type Config = {
   tunnel: boolean
 }
 
-export type ClientInfo = { platform: string; version: string; id: number; capabilities: string[] }
+export type ClientInfo = { platform: string; version: string; profile: string; id: number; capabilities: string[] }
 
 export let state = {
   config: undefined as unknown as Config,

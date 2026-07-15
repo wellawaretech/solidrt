@@ -1,6 +1,6 @@
 # lattice/Makefile
 
-VERSION         ?= $(shell git describe --tags --always)
+VERSION         ?= $(shell git describe --tags --always --dirty)
 SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 
 PROFILE            ?= release

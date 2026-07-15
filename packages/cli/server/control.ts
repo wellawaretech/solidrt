@@ -58,6 +58,7 @@ export function clientList(withAddress = false) {
     id: info.id,
     platform: info.platform,
     version: info.version,
+    profile: info.profile,
     capabilities: info.capabilities,
     ...(withAddress ? { address: ws.remoteAddress ?? null } : {}),
   }))
@@ -89,7 +90,9 @@ async function handleQuery(query: Map<string, string>, kind: string, extra?: Rec
   let msg = await Promise.race([reply, sleep(QUERY_TIMEOUT_MS)])
   pendingQueries.delete(id)
   if (!msg) return Response.json({ error: "Query timed out" }, { status: 504 })
-  if (msg.error) return Response.json({ error: msg.error }, { status: 502 })
+  // Error strings may carry stack traces (e.g. a debug command threw); remap
+  // bundle positions to .tsx sources like appendLog does for forwarded logs.
+  if (msg.error) return Response.json({ error: remapPositions(String(msg.error), state.currentMap) }, { status: 502 })
   return Response.json(msg.data)
 }
 
@@ -131,6 +134,18 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     }
     case "/__control__/gpu":
       return handleQuery(query, "gpu")
+    case "/__control__/debug": {
+      // GET lists the app's registered debug commands; POST calls one, with
+      // an optional JSON body as its args.
+      if (req.method !== "POST") return handleQuery(query, "debug_list")
+      let name = query.get("name")
+      if (!name) return Response.json({ error: "Debug call requires ?name=<command>" }, { status: 400 })
+      let args: unknown = null
+      try {
+        args = await req.json()
+      } catch {}
+      return handleQuery(query, "debug_call", { name, args })
+    }
     case "/__control__/texture": {
       let textureId = parseInt(query.get("id") ?? "", 10)
       if (!Number.isFinite(textureId)) return Response.json({ error: "Texture requires ?id=<textureId>" }, { status: 400 })

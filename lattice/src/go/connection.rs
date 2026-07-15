@@ -387,6 +387,7 @@ async fn try_serve(
     "type": "info",
     "platform": flux::platform(),
     "version": crate::VERSION,
+    "profile": crate::PROFILE,
     "capabilities": flux::capabilities(),
   });
   let _ = client.send(tokio_websockets::Message::text(info.to_string())).await;
@@ -543,6 +544,38 @@ async fn try_serve(
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
                       let _ = reply_tx.send(buffer_reply(&ctx, id, buffer_id, byte_offset, length, &fmt));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("debug_list") => {
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(debug_list_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("debug_call") => {
+                // Call an app-registered debug command on the JS thread, args
+                // in and return value out as JSON.
+                let name = json.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let args = json.get("args").filter(|a| !a.is_null()).cloned();
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(debug_call_reply(&ctx, id, &name, args));
                     });
                   }
                   None => {
@@ -821,6 +854,64 @@ fn buffer_reply(
         },
       })
       .to_string()
+    }
+  }
+}
+
+/// List the app's registered debug commands. Runs on the JS thread.
+fn debug_list_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let commands = match ctx.userdata::<crate::plugins::dev::DebugRegistry>() {
+    Some(registry) => registry.names(),
+    // The registry is installed on first `srt:dev` import; an app that never
+    // imported it simply has no commands.
+    None => Vec::new(),
+  };
+  serde_json::json!({"type": "result", "id": id, "data": {"commands": commands}}).to_string()
+}
+
+/// Call a registered debug command with JSON args and encode its return value
+/// (undefined -> null). JS exceptions become error replies. Runs on the JS
+/// thread.
+fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Option<serde_json::Value>) -> String {
+  let Some(registry) = ctx.userdata::<crate::plugins::dev::DebugRegistry>() else {
+    return error_reply(id, &format!("no debug command '{name}' (none registered)"));
+  };
+  let Some(persistent) = registry.get(name) else {
+    let names = registry.names();
+    let hint =
+      if names.is_empty() { "none registered".to_string() } else { format!("registered: {}", names.join(", ")) };
+    return error_reply(id, &format!("no debug command '{name}' ({hint})"));
+  };
+  let func = match persistent.restore(ctx) {
+    Ok(f) => f,
+    Err(e) => return error_reply(id, &format!("restore failed: {e}")),
+  };
+
+  let result: Result<flux::rquickjs::Value, flux::rquickjs::Error> = match args {
+    Some(a) => match ctx.json_parse(a.to_string()) {
+      Ok(parsed) => func.call((parsed,)),
+      Err(e) => return error_reply(id, &format!("args parse failed: {e}")),
+    },
+    None => func.call(()),
+  };
+
+  match result {
+    Err(e) => error_reply(id, &flux::rquickjs::CaughtError::from_error(ctx, e).to_string()),
+    Ok(value) => {
+      // A returned Promise stringifies as {} - async commands are not
+      // supported (yet); commands must return synchronously.
+      match ctx.json_stringify(value) {
+        Ok(Some(s)) => {
+          let text = s.to_string().unwrap_or_default();
+          let data: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+          serde_json::json!({"type": "result", "id": id, "data": {"value": data}}).to_string()
+        }
+        Ok(None) => serde_json::json!({"type": "result", "id": id, "data": {"value": null}}).to_string(),
+        Err(e) => error_reply(
+          id,
+          &format!("return value is not JSON-serializable: {}", flux::rquickjs::CaughtError::from_error(ctx, e)),
+        ),
+      }
     }
   }
 }

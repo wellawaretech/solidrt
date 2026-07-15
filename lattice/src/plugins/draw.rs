@@ -6,8 +6,8 @@ use flux::gui::AlloyContext;
 use flux::{
   emit_event,
   rquickjs::{
-    Ctx as QuickJsContext, Function, JsLifetime,
     module::{Declarations, Exports, ModuleDef},
+    Ctx as QuickJsContext, Function, JsLifetime,
   },
 };
 use std::cell::RefCell;

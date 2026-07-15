@@ -223,7 +223,7 @@ serve({
   websocket: {
     open(ws) {
       let id = state.nextClientId++
-      state.clients.set(ws, { platform: "unknown", version: "unknown", id, capabilities: [] })
+      state.clients.set(ws, { platform: "unknown", version: "unknown", profile: "unknown", id, capabilities: [] })
       console.log(`[cli] Client connected ${ws.remoteAddress ?? "unknown"}`)
       // Advertise our real LAN address so clients dialed over a loopback hop
       // can show/remember the directly reachable address (see connection.rs).
@@ -247,6 +247,7 @@ serve({
           state.clients.set(ws, {
             platform: data.platform ?? "unknown",
             version: data.version ?? "unknown",
+            profile: data.profile ?? "unknown",
             id: existing?.id ?? state.nextClientId++,
             capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
           })

@@ -40,6 +40,15 @@ declare module "srt:dev" {
   export function connect(address: string): void
   export function discover(): void
   export function stop(): void
+  /**
+   * Register a named debug command, listable and callable from the dev server
+   * (the list_debug / call_debug MCP tools). `args` arrives JSON-parsed; the
+   * return value must be JSON-serializable and synchronous (promises are not
+   * awaited). Re-registering a name replaces it; registrations reset on hot
+   * reload, so register at module init. Callable in every build, but only dev
+   * clients ever invoke commands.
+   */
+  export function registerDebug(name: string, fn: (args?: any) => unknown): void
 }
 
 // Frame draw (lattice runner). renderFrame() synchronously renders the current

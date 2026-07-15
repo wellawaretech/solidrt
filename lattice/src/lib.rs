@@ -17,17 +17,17 @@ enum EngineCmd {
   Reload(String),
 }
 
-use alloy::AlloyEvent;
 use alloy::impellers::ISize;
 use alloy::rendertree::{PlatformContext, RenderTree};
+use alloy::AlloyEvent;
 use flux::gui::AlloyContext;
 use flux::{ExecHandle, FluxEngine};
 use frame::InputState;
 use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
 
@@ -90,6 +90,11 @@ pub(crate) const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
   Some(v) => v,
   None => "0.0.0-dev",
 };
+
+/// Build profile reported to the dev server (list_clients), so "is this a
+/// debug binary" is checkable without inspecting the file.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
+pub(crate) const PROFILE: &str = if cfg!(debug_assertions) { "debug" } else { "release" };
 
 /// QuickJS call-stack soft limit. Sits below the UI thread's native stack (see
 /// alloy gl::run_context) so deep recursion throws a clean "Maximum call stack
