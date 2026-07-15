@@ -36,7 +36,7 @@ hickory-proto = "0.26"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
 # flux:net interfaces() — the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
-netdev = "0.44"
+netdev = "0.45"
 # Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm). No
 # per-platform native build or signing story: one .wasm runs on every target.
 # The default `wat` feature also accepts text-format sources, handy for tests
