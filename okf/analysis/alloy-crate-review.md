@@ -14,7 +14,7 @@ module read, unit + integration tests run (26 tests, all pass).
 Alloy is in very good shape for what it is: a young, GL-only platform layer
 with unusually mature driver-workaround knowledge and excellent internal
 documentation. It is not yet "production level" in the sense of the stated
-ambition (Unity/Unreal-scope, multi-backend): it has exactly one backend,
+ambition (a professional multi-backend engine): it has exactly one backend,
 panics as its API contract at the tree boundary, three broad
 `unsafe impl Send/Sync` assertions the compiler can no longer check, and test
 coverage that touches maybe 15% of the interesting logic. None of these are

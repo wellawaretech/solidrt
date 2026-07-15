@@ -1,8 +1,12 @@
 # Code style
 ASCII characters only. No em-dashes.
 
+User-facing messages (CLI output, errors, logs) are sentence-case: capitalize the first word. Keep it consistent across commands.
+
 ## JavaScript and TypeScript
 Prefer `let` over `const`. Use `const` only for "real" constants of a single value referred to in ALL_CAPS.
+
+This project uses SolidJS 2.0. For the reactivity, control-flow, and props model (props are reactive values not accessors, no destructuring, no top-level reactive reads, etc.) consult `node_modules/solid-js/CHEATSHEET.md` - it is the authoritative reference.
 
 ## Rust
 Never only use `.unwrap()`; use `.expect(..)` or `.unwrap_or(..)` or something similar to explicitly handle the scenario where the result is not Ok.
@@ -11,7 +15,7 @@ Plugins (the `*/plugins/` modules that register `ffi`/global functions) should b
 
 The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
 
-In `flux/src/plugins/`, the root holds generic, web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers). flux-specific modules (the `Flux.*` globals and `flux:*` modules, e.g. `serve`, `file`, `sqlite`) go in the `flux/src/plugins/flux/` subfolder. Put new flux-specific plugins there, not in the root.
+`flux/src/plugins/` has three layers: `standards/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers), `modules/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `gui/` (behind the `gui` feature) for the alloy-backed render/capture bindings. Put new flux-specific modules in `modules/`, not at the root. `js_error.rs`/`marshal.rs` at the root are the shared marshalling toolkit.
 
 # Dependencies
 ## SDL
@@ -19,7 +23,7 @@ SDL is accessed through the sdl3 Rust crate, which does not expose all SDL funct
 
 # Projects
 ## Rust
-- `alloy` combines SDL, Impeller, wgpu
+- `alloy` combines SDL, Impeller, glow (GL)
 - `flux` embeds a JavaScript runtime built on QuickJS
 - `packages/core/lattice` combines Alloy, Crystal and Flux, providing commands to access rendering from JavaScript
 
@@ -29,17 +33,28 @@ SDL is accessed through the sdl3 Rust crate, which does not expose all SDL funct
 
 # Building
 Run from repo root:
-- `make solidrt-go` - build the go binary (release)
-- `make solidrt-go PROFILE=debug` - build the go binary (debug)
+- `make client` - build the go client binary (release)
+- `make client PROFILE=debug` - build the go client binary (debug)
 - `make runtime` - build the production runtime (release)
 
+# Notes (okf/)
+Long-lived notes live under `okf/`, one markdown file per item (OKF-style: YAML frontmatter + freeform body), each folder indexed in its `index.md`. Write new notes there instead of scattering them across root scratch files.
+- `okf/backlog/` - deferred features and ideas. Check there before starting speculative/non-trivial work.
+- `okf/analysis/` - point-in-time assessments of the codebase (crate/package reviews), dated in frontmatter.
+- `okf/research/` - open design research: surveys and direction notes that precede a backlog item or plan.
+
+# Versioning
+Every package/crate version in source is the `0.0.0` placeholder, including the intra-monorepo `@solidrt/*` deps in `packages/cli/scaffold/package.json`. The `.github/workflows/release.yml` action bumps all of these to the real version and pins the intra-monorepo deps at publish time. So a scaffolded project's `bun install` fails in-repo (nothing on npm matches `0.0.0`) but works against the published packages. Do not "fix" the `0.0.0` placeholders in source.
+
 # General
+We are a team. Ask questions if input is not clear. Ask for me to try something if that is much easier. Do not over-engineer, go for minimalistic first.
+
 If you get a prompt which asks to implement something, but there's a non-trivial reason why that is not easy, then point this out and ask for feedback how to continue.
 
 Always ask for user confirmation of your plan before starting to implement.
 
-Prefer minimalistic proposals which do the bare minimum, while focussing on elegant, correct code. Example: when implementing a text input component, the bare minimum would be to enable and disable the keyboard when focussing on the element and leaving; blinking cursors, cursors that can move, text selection, they are all extra's.
+Prefer staged proposals where the first stage is always to do the bare minimum, while focussing on elegant, correct code. 
 
 If you get a question without asking for an implementation, then just answer the question instead of implementing anything.
 
-If you do not know something, or if instructions are ambiguous, then explicitly say so and ask for feedback.
+If you need to think a lot, give short intermediary status updates what you are doing.
