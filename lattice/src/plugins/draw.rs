@@ -117,8 +117,10 @@ impl ModuleDef for SrtRenderModule {
       // resubmit the cached one instead of rebuilding. Layout, postLayout and
       // hover refresh are skipped too - the tree and window are unchanged.
       // Bypassed in playback mode to keep its captures identical to a rebuild
-      // (the overlay would otherwise freeze mid-recording).
-      if !platform.always_render() && !overlay_due {
+      // (the overlay would otherwise freeze mid-recording), and when captures
+      // are pending: they are serviced by the paint walk, which the reuse
+      // path skips, so reusing would strand them.
+      if !platform.always_render() && !overlay_due && !atx.has_pending_captures() {
         if let Some(c) = cache.borrow().as_ref() {
           if c.revision == tree.0.borrow().revision()
             && c.textures_generation == atx.textures.generation()
