@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
-use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
+use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
 use super::AlloyContext;
 use alloy::rendertree::PlatformContext;
@@ -29,6 +29,8 @@ struct TextureInner {
   // without this a reload leaks the previous app's textures - the app rarely
   // calls destroyTexture itself.
   created: RefCell<HashSet<u64>>,
+  // Same bookkeeping for vertex buffers (their own id space in alloy).
+  created_buffers: RefCell<HashSet<u64>>,
   // captureSnapshot is async: alloy services the request on a later paint pass
   // and invokes our completion callback (during `deliver_captures`), which moves
   // the outcome plus the promise sides here. `tick` then drains this and settles
@@ -45,8 +47,13 @@ struct CaptureSettle {
 
 impl Drop for TextureInner {
   fn drop(&mut self) {
+    // Textures first: destroying a pipeline before its buffer is the
+    // documented order for destroy_gpu_buffer.
     for id in self.created.borrow_mut().drain() {
       self.atx.destroy_texture(id);
+    }
+    for id in self.created_buffers.borrow_mut().drain() {
+      self.atx.destroy_gpu_buffer(id);
     }
   }
 }
@@ -76,6 +83,7 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformConte
       atx,
       platform,
       created: RefCell::new(HashSet::new()),
+      created_buffers: RefCell::new(HashSet::new()),
       capture_settle: RefCell::new(Vec::new()),
     })))
     .expect("store texture state");
@@ -94,6 +102,11 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyTexture")?;
     decl.declare("createShader")?;
     decl.declare("setShaderParams")?;
+    decl.declare("createPipeline")?;
+    decl.declare("createBuffer")?;
+    decl.declare("writeBuffer")?;
+    decl.declare("destroyBuffer")?;
+    decl.declare("setDrawCount")?;
     decl.declare("captureSnapshot")?;
     decl.declare("readTexture")?;
     Ok(())
@@ -203,6 +216,135 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setShaderParams");
 
+    // createPipeline(vertexSrc, fragmentSrc, width, height, opts?) -> texture id.
+    // opts: { params, textures, attributes: [{name, format}], buffer, topology,
+    // vertexCount, depth, clearColor }. Marshalling only; alloy validates.
+    let create_pipeline_atx = atx.clone();
+    let create_pipeline = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>,
+            vertex_src: String,
+            fragment_src: String,
+            width: u32,
+            height: u32,
+            opts: Opt<Object<'_>>|
+            -> rquickjs::Result<u64> {
+        let opts = opts.0;
+        let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
+          match &opts {
+            Some(o) => o.get::<_, Option<Object>>(name),
+            None => Ok(None),
+          }
+        };
+        let params = get_obj("params")?.as_ref().map(collect_params).unwrap_or_default();
+        let textures = get_obj("textures")?.as_ref().map(collect_textures).unwrap_or_default();
+
+        let mut attributes: Vec<(String, String)> = Vec::new();
+        if let Some(opts) = &opts {
+          if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
+            for item in arr.iter::<Object>() {
+              let entry = item?;
+              attributes.push((entry.get("name")?, entry.get("format")?));
+            }
+          }
+        }
+
+        let buffer_id = match &opts {
+          Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
+          None => 0,
+        };
+        let topology = match &opts {
+          Some(o) => o.get::<_, Option<String>>("topology")?.unwrap_or_else(|| "triangles".to_string()),
+          None => "triangles".to_string(),
+        };
+        let draw_count = match &opts {
+          Some(o) => o.get::<_, Option<i32>>("vertexCount")?.unwrap_or(-1),
+          None => -1,
+        };
+        let depth = match &opts {
+          Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
+          None => false,
+        };
+        let mut clear_color = [0f32; 4];
+        if let Some(opts) = &opts {
+          if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
+            for (slot, v) in clear_color.iter_mut().zip(arr) {
+              *slot = v as f32;
+            }
+          }
+        }
+
+        let id = create_pipeline_atx
+          .create_pipeline_texture(&alloy::PipelineSpec {
+            width,
+            height,
+            vertex_src: &vertex_src,
+            fragment_src: &fragment_src,
+            params: &params,
+            textures: &textures,
+            attributes: &attributes,
+            buffer_id,
+            topology: &topology,
+            draw_count,
+            depth,
+            clear_color,
+          })
+          .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created.borrow_mut().insert(id);
+        Ok(id)
+      },
+    )
+    .expect("create createPipeline");
+
+    let create_buffer_atx = atx.clone();
+    let create_buffer =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, data: TypedArray<'_, u8>| -> rquickjs::Result<u64> {
+        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
+        let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+        let id = create_buffer_atx.create_gpu_buffer(bytes).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created_buffers.borrow_mut().insert(id);
+        Ok(id)
+      })
+      .expect("create createBuffer");
+
+    // A write re-renders the pipelines drawing from the buffer (alloy does
+    // that), so the screen changes without any tree mutation: request a frame.
+    let write_buffer_atx = atx.clone();
+    let write_buffer_platform = platform.clone();
+    let write_buffer = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> rquickjs::Result<()> {
+        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "writeBuffer: detached buffer"))?;
+        let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+        write_buffer_atx
+          .write_gpu_buffer(id, bytes, offset.0.unwrap_or(0))
+          .map_err(|e| throw_str(&ctx, &format!("writeBuffer: {e}")))?;
+        write_buffer_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create writeBuffer");
+
+    let destroy_buffer_atx = atx.clone();
+    let destroy_buffer = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
+      let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      state.0.created_buffers.borrow_mut().remove(&id);
+      destroy_buffer_atx.destroy_gpu_buffer(id);
+    })
+    .expect("create destroyBuffer");
+
+    let set_draw_count_atx = atx.clone();
+    let set_draw_count_platform = platform.clone();
+    let set_draw_count =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, count: i32| -> rquickjs::Result<()> {
+        set_draw_count_atx.set_draw_count(id, count).map_err(|e| throw_str(&ctx, &format!("setDrawCount: {e}")))?;
+        set_draw_count_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setDrawCount");
+
     let destroy_atx = atx.clone();
     let destroy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
@@ -217,6 +359,11 @@ impl ModuleDef for GpuModule {
     exports.export("destroyTexture", destroy_texture)?;
     exports.export("createShader", create_shader)?;
     exports.export("setShaderParams", set_shader_params)?;
+    exports.export("createPipeline", create_pipeline)?;
+    exports.export("createBuffer", create_buffer)?;
+    exports.export("writeBuffer", write_buffer)?;
+    exports.export("destroyBuffer", destroy_buffer)?;
+    exports.export("setDrawCount", set_draw_count)?;
     // Named generic fns, not closures: `captureSnapshot` returns a Promise and
     // `readTexture` an Object, whose 'js lifetime must unify with the Ctx arg -
     // a closure gives them independent invariant lifetimes and will not compile

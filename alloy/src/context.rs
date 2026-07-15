@@ -20,9 +20,14 @@ pub struct Context {
   gl: glow::Context,
   impeller_ctx: RefCell<ImpellerContext>,
   pub textures: TextureRegistry,
-  // Compiled fragment-shader targets, keyed by the texture id their output is
-  // registered under, so update_shader_params can re-render into the same id.
+  // Compiled shader targets (fullscreen fragment passes and vertex+fragment
+  // pipelines), keyed by the texture id their output is registered under, so
+  // update_shader_params can re-render into the same id.
   shaders: RefCell<HashMap<u64, crate::shader::ShaderTexture>>,
+  // Vertex buffers pipelines draw from, in their own id space (not texture
+  // ids). A write re-renders every pipeline referencing the buffer.
+  buffers: RefCell<HashMap<u64, crate::shader::GpuBuffer>>,
+  next_buffer_id: std::cell::Cell<u64>,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   pub(crate) audio: AudioRegistry,
@@ -40,6 +45,26 @@ pub struct Context {
   // supplies its own and the rendertree stays engine-independent.
   capture_requests: RefCell<HashMap<u64, Vec<CaptureDone>>>,
   capture_ready: RefCell<Vec<(CaptureDone, Result<CaptureInfo, String>)>>,
+}
+
+/// Everything `create_pipeline_texture` needs to build a vertex+fragment
+/// pipeline target. `attributes` is (name, format) with the string formats
+/// `AttrFormat::parse` accepts, describing one interleaved vertex in the
+/// buffer `buffer_id` (0 = attributeless rendering via gl_VertexID). A
+/// negative `draw_count` derives the count from buffer size / vertex stride.
+pub struct PipelineSpec<'a> {
+  pub width: u32,
+  pub height: u32,
+  pub vertex_src: &'a str,
+  pub fragment_src: &'a str,
+  pub params: &'a [(String, f32)],
+  pub textures: &'a [(String, u64)],
+  pub attributes: &'a [(String, String)],
+  pub buffer_id: u64,
+  pub topology: &'a str,
+  pub draw_count: i32,
+  pub depth: bool,
+  pub clear_color: [f32; 4],
 }
 
 /// The successful outcome of a node capture: the registry id of the texture the
@@ -76,6 +101,8 @@ impl Context {
       impeller_ctx: RefCell::new(impeller_ctx),
       textures: TextureRegistry::new(),
       shaders: RefCell::new(HashMap::new()),
+      buffers: RefCell::new(HashMap::new()),
+      next_buffer_id: std::cell::Cell::new(1),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
       audio: AudioRegistry::default(),
@@ -247,6 +274,115 @@ impl Context {
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     let resolved = self.resolve_sampler_bindings(shader);
     shader.render(&self.gl, params, &resolved);
+    Ok(())
+  }
+
+  /// Create an interleaved vertex buffer from raw bytes, returning its id.
+  /// Buffer ids are their own space (not texture ids); pipelines reference the
+  /// buffer via `PipelineSpec::buffer_id`.
+  pub fn create_gpu_buffer(&self, data: &[u8]) -> Result<u64, String> {
+    let buffer = crate::shader::GpuBuffer::new(&self.gl, data)?;
+    let id = self.next_buffer_id.get();
+    self.next_buffer_id.set(id + 1);
+    self.buffers.borrow_mut().insert(id, buffer);
+    Ok(id)
+  }
+
+  /// Overwrite part of a vertex buffer (`data` at `byte_offset`, within the
+  /// buffer's original size), then re-render every pipeline drawing from it
+  /// with its last-applied params, so geometry-only changes reach the screen
+  /// even when no new params arrive. The caller must request a frame.
+  pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
+    {
+      let buffers = self.buffers.borrow();
+      let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+      buffer.write(&self.gl, data, byte_offset)?;
+    }
+    let shaders = self.shaders.borrow();
+    for shader in shaders.values() {
+      if shader.buffer_id() == Some(id) {
+        let resolved = self.resolve_sampler_bindings(shader);
+        shader.render(&self.gl, &shader.last_params(), &resolved);
+      }
+    }
+    Ok(())
+  }
+
+  /// Free a vertex buffer. Destroy pipelines drawing from it first: the VAO
+  /// reference keeps the GL storage alive so they keep rendering stale
+  /// geometry, but further writes to the id error.
+  pub fn destroy_gpu_buffer(&self, id: u64) {
+    if let Some(buffer) = self.buffers.borrow_mut().remove(&id) {
+      buffer.destroy(&self.gl);
+    }
+  }
+
+  /// Compile a vertex+fragment pipeline, render it once into a new RGBA8
+  /// target texture, and register the output exactly like
+  /// `create_shader_texture` (same id space; `update_shader_params`,
+  /// `destroy_texture`, and `<texture src>` all apply).
+  pub fn create_pipeline_texture(&self, spec: &PipelineSpec) -> Result<u64, String> {
+    let mut attrs = Vec::with_capacity(spec.attributes.len());
+    for (name, fmt) in spec.attributes {
+      attrs.push((name.clone(), crate::shader::AttrFormat::parse(fmt)?));
+    }
+    let topology = crate::shader::parse_topology(spec.topology)?;
+
+    let shader = {
+      let buffers = self.buffers.borrow();
+      let vbo = if spec.buffer_id != 0 {
+        Some(buffers.get(&spec.buffer_id).ok_or_else(|| format!("buffer {} not found", spec.buffer_id))?)
+      } else {
+        None
+      };
+      // A negative draw count means "the whole buffer": derived from the
+      // buffer size and the interleaved stride.
+      let draw_count = if spec.draw_count >= 0 {
+        spec.draw_count
+      } else {
+        let stride = crate::shader::vertex_stride(&attrs);
+        match vbo {
+          Some(b) if stride > 0 => (b.size / stride as usize) as i32,
+          _ => 0,
+        }
+      };
+      crate::shader::ShaderTexture::new_pipeline(
+        &self.gl,
+        spec.width,
+        spec.height,
+        spec.vertex_src,
+        spec.fragment_src,
+        spec.textures.to_vec(),
+        &attrs,
+        vbo.map(|b| b.vbo),
+        spec.buffer_id,
+        topology,
+        draw_count,
+        spec.depth,
+        spec.clear_color,
+      )?
+    };
+    let resolved = self.resolve_sampler_bindings(&shader);
+    shader.render(&self.gl, spec.params, &resolved);
+
+    let size = ISize::new(spec.width as i64, spec.height as i64);
+    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width: spec.width, height: spec.height };
+    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt pipeline texture failed".to_string())?;
+
+    let id = self.textures.allocate_id();
+    self.textures.insert(id, TextureEntry { gpu, impeller });
+    self.shaders.borrow_mut().insert(id, shader);
+    Ok(id)
+  }
+
+  /// Set a pipeline texture's vertex draw count and re-render it with its
+  /// last-applied params. The caller must request a frame.
+  pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
+    let shaders = self.shaders.borrow();
+    let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    shader.set_draw_count(count)?;
+    let resolved = self.resolve_sampler_bindings(shader);
+    shader.render(&self.gl, &shader.last_params(), &resolved);
     Ok(())
   }
 
