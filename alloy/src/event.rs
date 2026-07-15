@@ -56,6 +56,18 @@ impl From<sdl3::keyboard::Mod> for Modifiers {
   }
 }
 
+// One connected gamepad's current state. `buttons` holds the names of the
+// currently-pressed buttons (SDL3 positional names: "south", "dpadUp", ...);
+// `axes` holds every axis as (name, value) with sticks in -1..1 and triggers
+// in 0..1.
+#[derive(Clone)]
+pub struct GamepadState {
+  pub id: u32,
+  pub name: String,
+  pub buttons: Vec<&'static str>,
+  pub axes: Vec<(&'static str, f32)>,
+}
+
 #[derive(Clone)]
 pub enum AlloyEvent {
   Quit,
@@ -103,6 +115,11 @@ pub enum AlloyEvent {
   // Orientation of the display the window is on. Emitted at init and on
   // rotation.
   DisplayOrientation { orientation: sdl3::video::Orientation },
+  // Full connected-gamepad state, emitted whenever any pad connects,
+  // disconnects, or changes a button/axis (coalesced to at most one per main
+  // loop iteration), plus once at init. Slots are stable for a pad's whole
+  // connection; a disconnect leaves a None hole that the next connect reuses.
+  Gamepads { pads: Vec<Option<GamepadState>> },
   // Camera hotplug. Carries no device id (subscribers re-enumerate via
   // camera::list_cameras()). SDL only delivers these once the camera
   // subsystem is initialized, i.e. after the first list/open call.

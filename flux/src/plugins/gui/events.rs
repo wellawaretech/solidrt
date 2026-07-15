@@ -2,7 +2,7 @@ use alloy::sdl3::keyboard::{Keycode, Scancode};
 use alloy::sdl3::video::Orientation;
 use alloy::sdl_utils::{PowerState, SystemTheme};
 use alloy::{AlloyEvent, Modifiers};
-use rquickjs::{Null, Object};
+use rquickjs::{Array, Null, Object};
 
 use crate::{emit_event, emit_sticky, ExecHandle};
 
@@ -106,6 +106,39 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         let obj = Object::new(ctx.clone()).expect("create object");
         obj.set("added", added).expect("set added");
         emit_event(&ctx, "cameraDeviceChange", obj);
+      });
+    }
+    AlloyEvent::Gamepads { pads } => {
+      let pads = pads.clone();
+      exec.exec(move |ctx| {
+        // Sticky like the other device facts: a subscriber arriving after the
+        // last change still sees the current pad state. `pads` is slot-stable:
+        // a pad keeps its index while connected, disconnects become null.
+        let arr = Array::new(ctx.clone()).expect("create pads array");
+        for (i, pad) in pads.iter().enumerate() {
+          match pad {
+            Some(p) => {
+              let buttons = Array::new(ctx.clone()).expect("create buttons");
+              for (j, b) in p.buttons.iter().enumerate() {
+                buttons.set(j, *b).expect("set button");
+              }
+              let axes = Object::new(ctx.clone()).expect("create axes");
+              for (name, value) in &p.axes {
+                axes.set(*name, *value).expect("set axis");
+              }
+              let obj = Object::new(ctx.clone()).expect("create pad");
+              obj.set("id", p.id).expect("set id");
+              obj.set("name", p.name.clone()).expect("set name");
+              obj.set("buttons", buttons).expect("set buttons");
+              obj.set("axes", axes).expect("set axes");
+              arr.set(i, obj).expect("set pad");
+            }
+            None => arr.set(i, Null).expect("set pad null"),
+          }
+        }
+        let obj = Object::new(ctx.clone()).expect("create object");
+        obj.set("pads", arr).expect("set pads");
+        emit_sticky(&ctx, "gamepads", obj);
       });
     }
     AlloyEvent::PowerStatus { info } => {

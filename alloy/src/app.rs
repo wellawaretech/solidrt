@@ -138,6 +138,9 @@ impl App {
     }
 
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
+    // None when SDL has no gamepad support on this platform; pads already
+    // plugged in surface through the Added events SDL emits on subsystem init.
+    let mut gamepads = crate::gamepad::Gamepads::new(&sdl_context);
     let mut frame: u64 = 0;
 
     // Raw facts only: a wall-clock timestamp sampled at present, plus the display
@@ -243,10 +246,18 @@ impl App {
             }
           }
         }
+        if let Some(g) = gamepads.as_mut() {
+          g.handle_event(&sdl_event);
+        }
         if let Some(e) = translate_event(sdl_event, &window) {
           apply_main_thread_effects(&e, &mut render_surface, &mode);
           event_tx.send(e).ok();
         }
+      }
+      // At most one gamepad snapshot per iteration, however many pad events
+      // were drained above.
+      if let Some(e) = gamepads.as_mut().and_then(|g| g.take_snapshot_if_dirty()) {
+        event_tx.send(e).ok();
       }
       while let Ok(cmd) = cmd_rx.try_recv() {
         match cmd {
@@ -258,6 +269,9 @@ impl App {
             event_tx.send(current_system_theme_event()).ok();
             event_tx.send(current_input_devices_event()).ok();
             event_tx.send(current_orientation_event(&window)).ok();
+            if let Some(g) = gamepads.as_ref() {
+              event_tx.send(g.snapshot_event()).ok();
+            }
           }
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {
