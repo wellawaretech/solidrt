@@ -488,6 +488,68 @@ async fn try_serve(
                   }
                 }
               }
+              Some("gpu") => {
+                // Alloy's GPU bookkeeping lives on the JS thread (its GL context
+                // is current there); snapshot it there like the render tree.
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(gpu_reply(&ctx, id));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("texture") => {
+                // Read back a registered texture's pixels. Unlike snapshot this
+                // needs no paint pass (the texture already exists), so the reply
+                // is built synchronously on the JS thread.
+                let texture_id = json.get("textureId").and_then(|n| n.as_u64()).unwrap_or(0);
+                let rect = json.get("rect").and_then(|r| {
+                  Some((
+                    r.get("x")?.as_u64()? as u32,
+                    r.get("y")?.as_u64()? as u32,
+                    r.get("width")?.as_u64()? as u32,
+                    r.get("height")?.as_u64()? as u32,
+                  ))
+                });
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(texture_reply(&ctx, id, texture_id, rect));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
+              Some("buffer") => {
+                // Read back part of a vertex buffer, decoded to numbers on the
+                // JS thread (glMapBufferRange needs the GL context current).
+                let buffer_id = json.get("bufferId").and_then(|n| n.as_u64()).unwrap_or(0);
+                let byte_offset = json.get("byteOffset").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+                let length = json.get("length").and_then(|n| n.as_u64()).map(|n| n as usize);
+                let fmt = json.get("as").and_then(|f| f.as_str()).unwrap_or("f32").to_string();
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let _ = reply_tx.send(buffer_reply(&ctx, id, buffer_id, byte_offset, length, &fmt));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
+                  }
+                }
+              }
               other => {
                 let msg = format!("unknown query kind {other:?}");
                 let _ = client.send(tokio_websockets::Message::text(error_reply(id, &msg))).await;
@@ -612,6 +674,155 @@ fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
     "data": { "pngBase64": b64, "width": width, "height": height },
   })
   .to_string()
+}
+
+/// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines) and encode
+/// it. Runs on the JS thread (see the query handling above).
+fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+    return error_reply(id, "no alloy context");
+  };
+  let res = atx.0.gpu_resources();
+
+  let textures: Vec<serde_json::Value> = res
+    .textures
+    .iter()
+    .map(|t| serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target}))
+    .collect();
+  let buffers: Vec<serde_json::Value> =
+    res.buffers.iter().map(|b| serde_json::json!({"id": b.id, "byteLength": b.byte_length})).collect();
+  let pipelines: Vec<serde_json::Value> = res
+    .pipelines
+    .iter()
+    .map(|p| {
+      let mut obj = serde_json::json!({
+        "textureId": p.texture_id,
+        "kind": p.kind,
+        "textures": p.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
+        "params": p.params.iter().map(|(name, v)| (name.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+      });
+      let map = obj.as_object_mut().expect("pipeline json is an object");
+      if let Some(buffer_id) = p.buffer_id {
+        map.insert("bufferId".into(), buffer_id.into());
+      }
+      if let Some(topology) = p.topology {
+        map.insert("topology".into(), topology.into());
+      }
+      if let Some(draw_count) = p.draw_count {
+        map.insert("drawCount".into(), draw_count.into());
+      }
+      if p.depth {
+        map.insert("depth".into(), true.into());
+      }
+      if !p.attributes.is_empty() {
+        let attrs: Vec<serde_json::Value> =
+          p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
+        map.insert("attributes".into(), attrs.into());
+      }
+      obj
+    })
+    .collect();
+
+  serde_json::json!({
+    "type": "result",
+    "id": id,
+    "data": { "textures": textures, "buffers": buffers, "pipelines": pipelines },
+  })
+  .to_string()
+}
+
+/// Read back a registered texture's pixels (optionally cropped to `rect`) and
+/// encode them as a PNG reply. Runs on the JS thread.
+fn texture_reply(
+  ctx: &flux::rquickjs::Ctx<'_>,
+  id: u64,
+  texture_id: u64,
+  rect: Option<(u32, u32, u32, u32)>,
+) -> String {
+  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+    return error_reply(id, "no alloy context");
+  };
+  match atx.0.read_texture_by_id(texture_id) {
+    Err(e) => error_reply(id, &e),
+    Ok((width, height, pixels)) => match rect {
+      None => snapshot_reply(id, width, height, pixels),
+      Some((x, y, w, h)) => {
+        if w == 0 || h == 0 || x.saturating_add(w) > width || y.saturating_add(h) > height {
+          return error_reply(id, &format!("rect {w}x{h} at {x},{y} outside texture {width}x{height}"));
+        }
+        // The full readback is already in hand; cropping CPU-side keeps the
+        // GL path identical to the uncropped case.
+        let mut cropped = Vec::with_capacity((w as usize) * (h as usize) * 4);
+        for row in y..y + h {
+          let start = ((row as usize) * (width as usize) + x as usize) * 4;
+          cropped.extend_from_slice(&pixels[start..start + (w as usize) * 4]);
+        }
+        snapshot_reply(id, w, h, cropped)
+      }
+    },
+  }
+}
+
+// Per-call cap on buffer readback, so one query cannot stall the JS thread on
+// a huge map + JSON encode. Callers page through with byteOffset.
+const BUFFER_READ_CAP_BYTES: usize = 65536;
+
+/// Read back part of a vertex buffer and decode it to numbers. `length` counts
+/// elements of `fmt` (not bytes); omitted means the rest of the buffer, capped.
+/// Runs on the JS thread.
+fn buffer_reply(
+  ctx: &flux::rquickjs::Ctx<'_>,
+  id: u64,
+  buffer_id: u64,
+  byte_offset: usize,
+  length: Option<usize>,
+  fmt: &str,
+) -> String {
+  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+    return error_reply(id, "no alloy context");
+  };
+  let elem_size = match fmt {
+    "f32" => 4,
+    "u16" => 2,
+    "u8" => 1,
+    _ => return error_reply(id, &format!("unsupported as '{fmt}' (expected f32|u16|u8)")),
+  };
+  let total = match atx.0.gpu_buffer_len(buffer_id) {
+    Ok(n) => n,
+    Err(e) => return error_reply(id, &e),
+  };
+  if byte_offset >= total {
+    return error_reply(id, &format!("byteOffset {byte_offset} beyond buffer size {total}"));
+  }
+  let avail = total - byte_offset;
+  let want = length.map(|n| n.saturating_mul(elem_size)).unwrap_or(avail).min(avail);
+  // Whole elements only, so a cap or short buffer never splits a value.
+  let len = (want.min(BUFFER_READ_CAP_BYTES) / elem_size) * elem_size;
+  match atx.0.read_gpu_buffer(buffer_id, byte_offset, len) {
+    Err(e) => error_reply(id, &e),
+    Ok(bytes) => {
+      // Native endianness: the bytes came from typed arrays in this same
+      // process. Non-finite floats serialize as null (JSON has no NaN).
+      let values: Vec<serde_json::Value> = match fmt {
+        "f32" => {
+          bytes.chunks_exact(4).map(|c| serde_json::json!(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))).collect()
+        }
+        "u16" => bytes.chunks_exact(2).map(|c| u16::from_ne_bytes([c[0], c[1]]).into()).collect(),
+        _ => bytes.iter().map(|b| (*b).into()).collect(),
+      };
+      serde_json::json!({
+        "type": "result",
+        "id": id,
+        "data": {
+          "values": values,
+          "byteOffset": byte_offset,
+          "byteLength": len,
+          "bufferByteLength": total,
+        },
+      })
+      .to_string()
+    }
+  }
 }
 
 fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {

@@ -97,6 +97,54 @@ its tools over guessing at runtime state:
 - get_render_tree: what the app actually rendered - node kinds, text, and
   window-relative boxes
 - get_stats: fps, CPU/memory, frame phase timings, setProperty rate
+- get_snapshot: PNG capture of any render-tree node's pixels (get node ids
+  from get_render_tree; the window node captures everything)
+- get_gpu_resources: inventory of GPU state - textures (size, render target
+  or not), vertex buffers (byteLength), pipelines (draw count, attribute
+  layout, bound textures, last-applied uniform values)
+- get_texture: any GPU texture read back as a PNG by id - atlases, data
+  textures, and shader/pipeline render targets alike (a render target is
+  "what this pipeline last drew", no frame or snapshot needed); crop with
+  x/y/width/height
+- get_buffer: a vertex-buffer range decoded to numbers (f32/u16/u8, 64 KiB
+  per call) - verify geometry after a writeBuffer instead of inferring it
+  from pixels
+- reload: rebuild from source and push to every client - THE dev loop is
+  edit -> reload -> get_logs -> get_snapshot. reload surfaces build errors
+  but not type errors; run the typecheck separately.
 
 The tools need a running app: if list_clients is empty, ask the user to start
 `bunx srt run src/index.tsx`.
+
+## Debugging a running app (lessons that cost real time)
+
+- console.log + get_logs is your primary probe into runtime state. For state
+  you will want repeatedly (a pose, a mode, a counter), bind a debug key that
+  logs it and read it back via get_logs.
+- Key events are delivered ONLY to the focused node (no bubbling): call
+  setFocus(node.id) from the window's ref or onKeyDown never fires. This
+  runtime names arrow keys "Left"/"Right"/"Up"/"Down", not "ArrowLeft".
+- Idle frames skip work: shaders/pipelines only re-render when their params
+  change, so measure performance while uniforms are actually changing, and
+  a get_snapshot of an idle client can time out - retry, make the app
+  produce a frame, or use get_texture on the pipeline's render target, which
+  reads the last-drawn frame without needing a new one.
+- When a human reports a visual bug: capture a snapshot and SAY WHAT YOU SEE
+  in it before investigating, so you agree on the symptom. If you cannot see
+  the problem in the capture, say that instead of guessing.
+- GPU/geometry bugs: inspect the actual GPU data FIRST - get_gpu_resources
+  for draw counts/uniforms/sizes, get_texture for atlas or data-texture
+  contents ("is this tile blank?" is a ten-second question), get_buffer for
+  vertex data. The pixels only tell you THAT something is wrong; the
+  resources tell you WHERE the data stops being right. In a one-big-pipeline
+  app the render tree is a single <texture> leaf and tells you nothing -
+  these tools are the visibility layer behind it. Only when the GPU data is
+  all correct (so the bug is in producing it, or in the shader), reproduce
+  the math CPU-side in a scratch bun script against the app's real data and
+  print values.
+- Validate assets at load time and log anomalies (missing lumps/files,
+  fully-transparent composites, zero-sized images). Silent fallbacks hide
+  bugs for days; a one-line warning surfaces them the first run.
+- After every reload the app restarts from its initial state. If reaching
+  the bug site takes navigation, add a dev shortcut (teleport key, noclip,
+  initial-state override) before iterating - the round trips add up fast.

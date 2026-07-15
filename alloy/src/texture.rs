@@ -51,6 +51,11 @@ impl TextureRegistry {
     self.entries.borrow().len()
   }
 
+  /// (id, width, height) of every registered texture, unordered.
+  pub fn list(&self) -> Vec<(u64, u32, u32)> {
+    self.entries.borrow().iter().map(|(id, e)| (*id, e.width(), e.height())).collect()
+  }
+
   pub fn is_empty(&self) -> bool {
     self.entries.borrow().is_empty()
   }

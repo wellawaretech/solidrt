@@ -74,6 +74,16 @@ impl AttrFormat {
       AttrFormat::Vec4 => 4,
     }
   }
+
+  /// The string form `parse` accepts, for reporting the layout back out.
+  pub fn name(self) -> &'static str {
+    match self {
+      AttrFormat::F32 => "f32",
+      AttrFormat::Vec2 => "vec2",
+      AttrFormat::Vec3 => "vec3",
+      AttrFormat::Vec4 => "vec4",
+    }
+  }
 }
 
 pub fn parse_topology(s: &str) -> Result<u32, String> {
@@ -85,6 +95,18 @@ pub fn parse_topology(s: &str) -> Result<u32, String> {
     "triangle-strip" => glow::TRIANGLE_STRIP,
     _ => return Err(format!("unsupported topology '{s}'")),
   })
+}
+
+/// The string form `parse_topology` accepts, for reporting back out.
+pub fn topology_name(t: u32) -> &'static str {
+  match t {
+    glow::POINTS => "points",
+    glow::LINES => "lines",
+    glow::LINE_STRIP => "line-strip",
+    glow::TRIANGLES => "triangles",
+    glow::TRIANGLE_STRIP => "triangle-strip",
+    _ => "unknown",
+  }
 }
 
 /// Byte stride of one interleaved vertex for the given attribute list.
@@ -192,6 +214,33 @@ impl GpuBuffer {
     Ok(())
   }
 
+  /// Read back part of the buffer via glMapBufferRange (ES 3.0's only buffer
+  /// readback path; glGetBufferSubData does not exist there). On-demand and
+  /// rare (a dev-server query), so the map stall is acceptable.
+  pub fn read(&self, gl: &glow::Context, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
+    let end = byte_offset.checked_add(len).ok_or_else(|| "offset overflow".to_string())?;
+    if end > self.size {
+      return Err(format!("read of {len} bytes at offset {byte_offset} exceeds buffer size {}", self.size));
+    }
+    if len == 0 {
+      return Ok(Vec::new());
+    }
+    unsafe {
+      let prev = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
+      gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+      let ptr = gl.map_buffer_range(glow::ARRAY_BUFFER, byte_offset as i32, len as i32, glow::MAP_READ_BIT);
+      let result = if ptr.is_null() {
+        Err("glMapBufferRange failed".to_string())
+      } else {
+        let data = std::slice::from_raw_parts(ptr, len).to_vec();
+        gl.unmap_buffer(glow::ARRAY_BUFFER);
+        Ok(data)
+      };
+      gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev));
+      result
+    }
+  }
+
   pub fn destroy(self, gl: &glow::Context) {
     unsafe { gl.delete_buffer(self.vbo) };
   }
@@ -205,6 +254,9 @@ struct MeshState {
   /// Registry id of the interleaved vertex buffer (Context resolves writes to
   /// re-renders through this). 0 when the pipeline is attributeless.
   buffer_id: u64,
+  /// The declared interleaved layout, kept for resource introspection (the VAO
+  /// holds the live GL form).
+  attributes: Vec<(String, AttrFormat)>,
   topology: u32,
   draw_count: Cell<i32>,
   /// Present when the pipeline was created with depth testing; the
@@ -378,7 +430,12 @@ impl ShaderTexture {
       let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
 
       // Cleanup helper for every early exit below.
-      let fail = |gl: &glow::Context, msg: String, target: Option<glow::Texture>, fbo: Option<glow::Framebuffer>, rb: Option<glow::Renderbuffer>, vao: Option<glow::VertexArray>| {
+      let fail = |gl: &glow::Context,
+                  msg: String,
+                  target: Option<glow::Texture>,
+                  fbo: Option<glow::Framebuffer>,
+                  rb: Option<glow::Renderbuffer>,
+                  vao: Option<glow::VertexArray>| {
         if let Some(v) = vao {
           gl.delete_vertex_array(v);
         }
@@ -425,7 +482,14 @@ impl ShaderTexture {
       let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       if status != glow::FRAMEBUFFER_COMPLETE {
-        return fail(gl, format!("pipeline framebuffer incomplete: {status:#x}"), Some(target), Some(fbo), depth_rb, None);
+        return fail(
+          gl,
+          format!("pipeline framebuffer incomplete: {status:#x}"),
+          Some(target),
+          Some(fbo),
+          depth_rb,
+          None,
+        );
       }
 
       // Record the interleaved vertex layout in a VAO. The VAO captures the
@@ -463,7 +527,15 @@ impl ShaderTexture {
         height,
         uniforms,
         sampler_bindings,
-        mesh: Some(MeshState { vao, buffer_id, topology, draw_count: Cell::new(draw_count), depth: depth_rb, clear_color }),
+        mesh: Some(MeshState {
+          vao,
+          buffer_id,
+          attributes: attributes.to_vec(),
+          topology,
+          draw_count: Cell::new(draw_count),
+          depth: depth_rb,
+          clear_color,
+        }),
         last_params: RefCell::new(Vec::new()),
       })
     }
@@ -476,6 +548,34 @@ impl ShaderTexture {
   /// Registry id of the vertex buffer this pipeline draws from, if any.
   pub fn buffer_id(&self) -> Option<u64> {
     self.mesh.as_ref().map(|m| m.buffer_id).filter(|id| *id != 0)
+  }
+
+  /// Whether this is a vertex+fragment pipeline (vs a fullscreen fragment pass).
+  pub fn is_pipeline(&self) -> bool {
+    self.mesh.is_some()
+  }
+
+  /// The number of vertices the next render draws; None on a fragment-only
+  /// shader.
+  pub fn draw_count(&self) -> Option<i32> {
+    self.mesh.as_ref().map(|m| m.draw_count.get())
+  }
+
+  /// The pipeline's topology as the string `parse_topology` accepts; None on a
+  /// fragment-only shader.
+  pub fn topology_name(&self) -> Option<&'static str> {
+    self.mesh.as_ref().map(|m| topology_name(m.topology))
+  }
+
+  /// The declared interleaved attribute layout; empty for fragment-only
+  /// shaders and attributeless pipelines.
+  pub fn attributes(&self) -> &[(String, AttrFormat)] {
+    self.mesh.as_ref().map(|m| m.attributes.as_slice()).unwrap_or(&[])
+  }
+
+  /// Whether the pipeline renders with a depth buffer attached.
+  pub fn has_depth(&self) -> bool {
+    self.mesh.as_ref().is_some_and(|m| m.depth.is_some())
   }
 
   /// Set the number of vertices the next render draws. Errors on a
@@ -523,7 +623,12 @@ impl ShaderTexture {
   /// per-frame fence orders the work ahead of the render thread sampling the
   /// target from its shared GL context, so no glFinish is needed here.
   pub fn render(&self, gl: &glow::Context, params: &[(String, f32)], textures: &[(String, glow::Texture)]) {
-    if self.mesh.is_some() {
+    // Recorded for both kinds: pipelines need it for buffer-write re-renders,
+    // and resource introspection reports it as the last-applied uniforms.
+    // Re-renders triggered with an empty list (a sampled texture's contents
+    // changed before any params update) keep the previous record: uniforms are
+    // program state in GL, so the old values still apply.
+    if !params.is_empty() {
       *self.last_params.borrow_mut() = params.to_vec();
     }
     unsafe {
@@ -650,12 +755,7 @@ impl ShaderTexture {
       if polygon_offset {
         gl.enable(glow::POLYGON_OFFSET_FILL);
       }
-      gl.color_mask(
-        prev_color_mask[0] != 0,
-        prev_color_mask[1] != 0,
-        prev_color_mask[2] != 0,
-        prev_color_mask[3] != 0,
-      );
+      gl.color_mask(prev_color_mask[0] != 0, prev_color_mask[1] != 0, prev_color_mask[2] != 0, prev_color_mask[3] != 0);
       gl.depth_range_f32(prev_depth_range[0], prev_depth_range[1]);
       for (unit, prev) in prev_unit_bindings {
         gl.active_texture(glow::TEXTURE0 + unit);

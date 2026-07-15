@@ -67,6 +67,45 @@ pub struct PipelineSpec<'a> {
   pub clear_color: [f32; 4],
 }
 
+/// A point-in-time inventory of the Context's GPU bookkeeping, for resource
+/// introspection (the dev server's gpu query). Plain data only, so consumers
+/// stay free of GL types.
+pub struct GpuResources {
+  pub textures: Vec<GpuTextureInfo>,
+  pub buffers: Vec<GpuBufferInfo>,
+  pub pipelines: Vec<GpuPipelineInfo>,
+}
+
+pub struct GpuTextureInfo {
+  pub id: u64,
+  pub width: u32,
+  pub height: u32,
+  /// A shader or pipeline renders into this texture (vs a sampled upload).
+  pub target: bool,
+}
+
+pub struct GpuBufferInfo {
+  pub id: u64,
+  pub byte_length: usize,
+}
+
+pub struct GpuPipelineInfo {
+  /// The registry id its output texture is sampleable under.
+  pub texture_id: u64,
+  /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
+  pub kind: &'static str,
+  pub buffer_id: Option<u64>,
+  pub topology: Option<&'static str>,
+  pub draw_count: Option<i32>,
+  pub depth: bool,
+  /// (name, format string) of the declared interleaved vertex layout.
+  pub attributes: Vec<(String, String)>,
+  /// sampler2D uniform name -> source texture id.
+  pub textures: Vec<(String, u64)>,
+  /// The float uniforms applied on the most recent render.
+  pub params: Vec<(String, f32)>,
+}
+
 /// The successful outcome of a node capture: the registry id of the texture the
 /// node's subtree was rasterized into, and its device-pixel dimensions. The
 /// caller owns the texture and must `destroy_texture` it.
@@ -376,7 +415,8 @@ impl Context {
     shader.render(&self.gl, spec.params, &resolved);
 
     let size = ISize::new(spec.width as i64, spec.height as i64);
-    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width: spec.width, height: spec.height };
+    let gpu =
+      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width: spec.width, height: spec.height };
     let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt pipeline texture failed".to_string())?;
 
     let id = self.textures.allocate_id();
@@ -394,6 +434,57 @@ impl Context {
     let resolved = self.resolve_sampler_bindings(shader);
     shader.render(&self.gl, &shader.last_params(), &resolved);
     Ok(())
+  }
+
+  /// Inventory the GPU resources this Context tracks: registered textures,
+  /// vertex buffers, and shader/pipeline targets with their bookkeeping (draw
+  /// state, layout, bindings, last-applied params). Sorted by id for stable
+  /// output.
+  pub fn gpu_resources(&self) -> GpuResources {
+    let shaders = self.shaders.borrow();
+
+    let mut textures: Vec<GpuTextureInfo> = self
+      .textures
+      .list()
+      .into_iter()
+      .map(|(id, width, height)| GpuTextureInfo { id, width, height, target: shaders.contains_key(&id) })
+      .collect();
+    textures.sort_by_key(|t| t.id);
+
+    let mut buffers: Vec<GpuBufferInfo> =
+      self.buffers.borrow().iter().map(|(id, b)| GpuBufferInfo { id: *id, byte_length: b.size }).collect();
+    buffers.sort_by_key(|b| b.id);
+
+    let mut pipelines: Vec<GpuPipelineInfo> = shaders
+      .iter()
+      .map(|(texture_id, shader)| GpuPipelineInfo {
+        texture_id: *texture_id,
+        kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
+        buffer_id: shader.buffer_id(),
+        topology: shader.topology_name(),
+        draw_count: shader.draw_count(),
+        depth: shader.has_depth(),
+        attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
+        textures: shader.sampler_bindings().to_vec(),
+        params: shader.last_params(),
+      })
+      .collect();
+    pipelines.sort_by_key(|p| p.texture_id);
+
+    GpuResources { textures, buffers, pipelines }
+  }
+
+  /// Read back part of a vertex buffer's contents by registry id.
+  pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
+    let buffers = self.buffers.borrow();
+    let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    buffer.read(&self.gl, byte_offset, len)
+  }
+
+  /// Byte length of a vertex buffer by registry id.
+  pub fn gpu_buffer_len(&self, id: u64) -> Result<usize, String> {
+    let buffers = self.buffers.borrow();
+    buffers.get(&id).map(|b| b.size).ok_or_else(|| format!("buffer {id} not found"))
   }
 
   /// Map a shader's (name -> source texture id) bindings to live GL textures,

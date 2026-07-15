@@ -129,6 +129,34 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (!Number.isFinite(nodeId)) return Response.json({ error: "Snapshot requires ?node=<id>" }, { status: 400 })
       return handleQuery(query, "snapshot", { nodeId })
     }
+    case "/__control__/gpu":
+      return handleQuery(query, "gpu")
+    case "/__control__/texture": {
+      let textureId = parseInt(query.get("id") ?? "", 10)
+      if (!Number.isFinite(textureId)) return Response.json({ error: "Texture requires ?id=<textureId>" }, { status: 400 })
+      // Optional crop: all four of x/y/width/height, in texture pixels.
+      let rectParams = ["x", "y", "width", "height"].map((k) => query.get(k))
+      let extra: Record<string, unknown> = { textureId }
+      if (rectParams.some((v) => v !== undefined)) {
+        let [x, y, width, height] = rectParams.map((v) => parseInt(v ?? "", 10))
+        if (![x, y, width, height].every(Number.isFinite))
+          return Response.json({ error: "Texture rect requires all of x, y, width, height" }, { status: 400 })
+        extra.rect = { x, y, width, height }
+      }
+      return handleQuery(query, "texture", extra)
+    }
+    case "/__control__/buffer": {
+      let bufferId = parseInt(query.get("id") ?? "", 10)
+      if (!Number.isFinite(bufferId)) return Response.json({ error: "Buffer requires ?id=<bufferId>" }, { status: 400 })
+      let extra: Record<string, unknown> = { bufferId }
+      let byteOffset = parseInt(query.get("offset") ?? "", 10)
+      if (Number.isFinite(byteOffset)) extra.byteOffset = byteOffset
+      let length = parseInt(query.get("length") ?? "", 10)
+      if (Number.isFinite(length)) extra.length = length
+      let as = query.get("as")
+      if (as !== undefined) extra.as = as
+      return handleQuery(query, "buffer", extra)
+    }
     case "/__control__/reload": {
       // Explicit rebuild-and-push, the primary way a coding agent applies its
       // edits (srt mcp's reload tool). Unlike the repl's file watcher this is
