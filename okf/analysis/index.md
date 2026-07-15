@@ -7,6 +7,12 @@ timestamp: 2026-07-15T00:00:00Z
 
 # Analysis
 
+- [App structure and performance under QuickJS](app-structure-performance.md) -
+  execution-structure review 2026-07-15; JS-decides/Rust-executes split is
+  right; ranked costs: per-prop string-keyed FFI writes, per-frame JS
+  animation, future JS scroll physics, event-object garbage; verdict: keep
+  Solid in JS, move per-frame work native (batch/intern props, native
+  animators, native momentum).
 - [GPU stack maturity — readiness for 3D games](gpu-stack-maturity.md) -
   vertex pipelines shipped 2026-07-15; retro-class 3D feasible now; gaps:
   typed uniforms, index buffers, blending, multi-pass, sampling control,
