@@ -235,6 +235,16 @@ impl Context {
     }
     let size = ISize::new(width as i64, height as i64);
     entry.gpu.upload(&self.gl, &pixels[offset..end], size);
+    // Shader targets sampling this texture show stale output until their next
+    // params update; re-render them now (same contract as write_gpu_buffer, so
+    // data-texture changes are visible without a params change).
+    let shaders = self.shaders.borrow();
+    for shader in shaders.values() {
+      if shader.sampler_bindings().iter().any(|(_, tex)| *tex == id) {
+        let resolved = self.resolve_sampler_bindings(shader);
+        shader.render(&self.gl, &shader.last_params(), &resolved);
+      }
+    }
     Ok(())
   }
 
