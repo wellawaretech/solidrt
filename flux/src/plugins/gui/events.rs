@@ -131,6 +131,7 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
               obj.set("name", p.name.clone()).expect("set name");
               obj.set("buttons", buttons).expect("set buttons");
               obj.set("axes", axes).expect("set axes");
+              obj.set("mapped", p.mapped).expect("set mapped");
               arr.set(i, obj).expect("set pad");
             }
             None => arr.set(i, Null).expect("set pad null"),

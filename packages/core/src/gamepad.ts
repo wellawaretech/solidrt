@@ -22,6 +22,17 @@ export interface GamepadState {
   name: string
   buttons: string[]
   axes: Record<string, number>
+  /**
+   * True when the device has an SDL controller-database mapping, so button
+   * and axis names reflect verified physical positions. False for raw HID
+   * joysticks: they still report, but names are assigned positionally in W3C
+   * standard-mapping order (button 0 is "south", ..., overflow "button17"...;
+   * axes 0-3 are "leftX"..."rightY", overflow "axis4"...), a d-pad hat folds
+   * into the "dpad*" names, and analog triggers, if any, appear wherever the
+   * device puts them (e.g. as *button* names "leftTrigger"/"rightTrigger" at
+   * indices 6/7) rather than as the trigger axes mapped pads have.
+   */
+  mapped: boolean
 }
 
 let gamepadsAccessor: (() => (GamepadState | null)[]) | undefined
@@ -29,7 +40,7 @@ let gamepadsAccessor: (() => (GamepadState | null)[]) | undefined
 /**
  * Connected gamepads as a reactive accessor. Slots are stable web-style: a
  * pad keeps its index for its whole connection, disconnecting leaves a null
- * hole, and the next connect fills the lowest free slot — so slot index works
+ * hole, and the next connect fills the lowest free slot - so slot index works
  * as a persistent player number. Read inside a tracked scope (JSX, memo,
  * effect, onFrame) to re-run on pad activity.
  */

@@ -59,13 +59,16 @@ impl From<sdl3::keyboard::Mod> for Modifiers {
 // One connected gamepad's current state. `buttons` holds the names of the
 // currently-pressed buttons (SDL3 positional names: "south", "dpadUp", ...);
 // `axes` holds every axis as (name, value) with sticks in -1..1 and triggers
-// in 0..1.
+// in 0..1. `mapped` is false for joysticks without an SDL controller-database
+// entry: those still report, but their names are positional guesses following
+// the W3C standard-mapping button/axis order, not device-verified.
 #[derive(Clone)]
 pub struct GamepadState {
   pub id: u32,
   pub name: String,
   pub buttons: Vec<&'static str>,
   pub axes: Vec<(&'static str, f32)>,
+  pub mapped: bool,
 }
 
 #[derive(Clone)]
