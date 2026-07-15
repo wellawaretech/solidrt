@@ -42,5 +42,12 @@ netdev = "0.44"
 # The default `wat` feature also accepts text-format sources, handy for tests
 # and small inline modules.
 wasmi = "2.0.0-beta.7"
-libffi = { version = "5", default-features = false, features = ["system"] }
+# Default features = bundled static libffi built from vendored sources. Do not
+# switch to the "system" feature: Android NDK and Windows have no system libffi.
+libffi = "5"
 libloading = "0.9"
+
+[build-dependencies]
+# Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
+# Android build can link clang_rt.builtins; see build.rs.
+cc = "1"
