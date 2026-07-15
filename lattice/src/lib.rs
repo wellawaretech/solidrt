@@ -8,6 +8,9 @@ mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
   Stop,

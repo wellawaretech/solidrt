@@ -35,7 +35,7 @@ const MDNS_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 /// The mDNS port. Bound with reuse so we coexist with a running avahi/mDNSResponder.
 const MDNS_PORT: u16 = 5353;
 /// The DNS-SD meta-query that enumerates the service types on the link.
-const SERVICE_ENUM: &str = "_services._dns-sd._udp.local.";
+pub(crate) const SERVICE_ENUM: &str = "_services._dns-sd._udp.local.";
 
 /// One discovered DNS-SD service instance. Engine-free: the marshalling layer
 /// encodes this to a JS object.
@@ -172,7 +172,7 @@ async fn collect_responses(udp: &net::Udp, timeout_ms: u64) -> Vec<Message> {
 
 /// Match PTR answers back to the requested reverse names, yielding `(ip, host)`
 /// pairs (deduped). `wanted` is `(reverse-name lowercased, ip)`.
-fn correlate_resolve(messages: &[Message], wanted: &[(String, String)]) -> Vec<(String, String)> {
+pub(crate) fn correlate_resolve(messages: &[Message], wanted: &[(String, String)]) -> Vec<(String, String)> {
   let mut out = Vec::new();
   let mut seen = HashSet::new();
   for m in messages {
@@ -198,7 +198,7 @@ fn correlate_resolve(messages: &[Message], wanted: &[(String, String)]) -> Vec<(
 /// attributes, and the SRV target's A/AAAA give the addresses. Responders bundle
 /// these in the additionals; some split them across packets, so all sections of
 /// every message are indexed.
-fn correlate_browse(messages: &[Message], service_fqdn: &str) -> Vec<ServiceInstance> {
+pub(crate) fn correlate_browse(messages: &[Message], service_fqdn: &str) -> Vec<ServiceInstance> {
   let service_key = service_fqdn.to_ascii_lowercase();
   let service_short = strip_local(service_fqdn);
 
@@ -252,7 +252,7 @@ fn correlate_browse(messages: &[Message], service_fqdn: &str) -> Vec<ServiceInst
 }
 
 /// The A/AAAA addresses advertised for `host` (a dot-trimmed `.local` name).
-fn collect_addrs(messages: &[Message], host: &str) -> Vec<String> {
+pub(crate) fn collect_addrs(messages: &[Message], host: &str) -> Vec<String> {
   let host_key = host.to_ascii_lowercase();
   let mut addrs = Vec::new();
   for m in messages {
@@ -271,7 +271,7 @@ fn collect_addrs(messages: &[Message], host: &str) -> Vec<String> {
 }
 
 /// The service types named by the meta-query's PTR answers, e.g. `"_http._tcp"`.
-fn correlate_services(messages: &[Message]) -> Vec<String> {
+pub(crate) fn correlate_services(messages: &[Message]) -> Vec<String> {
   let meta_key = SERVICE_ENUM.to_ascii_lowercase();
   let mut out = Vec::new();
   for m in messages {
@@ -292,14 +292,14 @@ fn correlate_services(messages: &[Message]) -> Vec<String> {
 // ---- name helpers -----------------------------------------------------------
 
 /// `192.168.1.10` -> `"10.1.168.192.in-addr.arpa."`, the reverse PTR name.
-fn reverse_ptr_name(ip: Ipv4Addr) -> String {
+pub(crate) fn reverse_ptr_name(ip: Ipv4Addr) -> String {
   let [a, b, c, d] = ip.octets();
   format!("{d}.{c}.{b}.{a}.in-addr.arpa.")
 }
 
 /// Fully qualify a service type with `.local.` if it is not already, e.g.
 /// `"_http._tcp"` -> `"_http._tcp.local."`.
-fn ensure_local(service: &str) -> String {
+pub(crate) fn ensure_local(service: &str) -> String {
   let s = trim_dot(service);
   if s.to_ascii_lowercase().ends_with(".local") {
     format!("{s}.")
@@ -310,7 +310,7 @@ fn ensure_local(service: &str) -> String {
 
 /// Drop a trailing `.local` (and the FQDN dot), e.g. `"_http._tcp.local."` ->
 /// `"_http._tcp"`. A name without the suffix is returned dot-trimmed.
-fn strip_local(name: &str) -> String {
+pub(crate) fn strip_local(name: &str) -> String {
   let s = trim_dot(name);
   match s.strip_suffix(".local").or_else(|| s.strip_suffix(".LOCAL")) {
     Some(short) => short.to_string(),
@@ -340,108 +340,5 @@ fn parse_txt_entry(bytes: &[u8]) -> Option<(String, String)> {
     Some((k, v)) => Some((k.to_string(), v.to_string())),
     None if s.is_empty() => None,
     None => Some((s.to_string(), String::new())),
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  // The transport (bind/join/send/recv) needs a real mDNS responder on the link,
-  // so these cover the deterministic pieces: name construction, the query
-  // round-trip, and correlation over a synthetic response built with hickory.
-  use super::*;
-  use hickory_proto::rr::rdata::{A, AAAA, PTR, SRV, TXT};
-  use hickory_proto::rr::Record;
-
-  #[test]
-  fn reverse_name_for_ipv4() {
-    assert_eq!(reverse_ptr_name(Ipv4Addr::new(192, 168, 1, 10)), "10.1.168.192.in-addr.arpa.");
-  }
-
-  #[test]
-  fn service_qualification() {
-    assert_eq!(ensure_local("_http._tcp"), "_http._tcp.local.");
-    assert_eq!(ensure_local("_http._tcp.local"), "_http._tcp.local.");
-    assert_eq!(strip_local("_http._tcp.local."), "_http._tcp");
-  }
-
-  #[test]
-  fn query_round_trips_through_the_wire() {
-    let mut msg = Message::new(0, MessageType::Query, OpCode::Query);
-    let mut q = Query::query(Name::from_ascii("_ipp._tcp.local.").unwrap(), RecordType::PTR);
-    q.set_query_class(DNSClass::IN);
-    msg.add_query(q);
-
-    let bytes = msg.to_vec().expect("encode");
-    let parsed = Message::from_vec(&bytes).expect("decode");
-    let q = parsed.queries.first().expect("a question");
-    assert_eq!(q.name().to_ascii(), "_ipp._tcp.local.");
-    assert_eq!(q.query_type(), RecordType::PTR);
-  }
-
-  #[test]
-  fn correlate_resolve_matches_ptr_answer() {
-    let mut m = Message::new(0, MessageType::Response, OpCode::Query);
-    let rev = Name::from_ascii("10.1.168.192.in-addr.arpa.").unwrap();
-    let host = Name::from_ascii("printer.local.").unwrap();
-    m.answers.push(Record::from_rdata(rev, 120, RData::PTR(PTR(host))));
-
-    let wanted = vec![("10.1.168.192.in-addr.arpa.".to_string(), "192.168.1.10".to_string())];
-    let out = correlate_resolve(&[m], &wanted);
-    assert_eq!(out, vec![("192.168.1.10".to_string(), "printer.local".to_string())]);
-  }
-
-  #[test]
-  fn correlate_browse_assembles_instance() {
-    let service = Name::from_ascii("_ipp._tcp.local.").unwrap();
-    // The instance label carries a space, which is legal on the wire but not in
-    // from_ascii presentation format, so build it from raw labels.
-    let instance =
-      Name::from_labels(vec![b"Office Printer".to_vec(), b"_ipp".to_vec(), b"_tcp".to_vec(), b"local".to_vec()])
-        .unwrap();
-    let host = Name::from_ascii("printer.local.").unwrap();
-
-    let mut m = Message::new(0, MessageType::Response, OpCode::Query);
-    m.answers.push(Record::from_rdata(service, 120, RData::PTR(PTR(instance.clone()))));
-    m.additionals.push(Record::from_rdata(instance.clone(), 120, RData::SRV(SRV::new(0, 0, 631, host.clone()))));
-    m.additionals.push(Record::from_rdata(
-      instance,
-      120,
-      RData::TXT(TXT::new(vec!["rp=ipp/print".into(), "color".into()])),
-    ));
-    m.additionals.push(Record::from_rdata(host, 120, RData::A(A(Ipv4Addr::new(192, 168, 1, 10)))));
-
-    let out = correlate_browse(&[m], "_ipp._tcp.local.");
-    assert_eq!(out.len(), 1);
-    let inst = &out[0];
-    assert_eq!(inst.instance, "Office Printer");
-    assert_eq!(inst.service, "_ipp._tcp");
-    assert_eq!(inst.host, "printer.local");
-    assert_eq!(inst.port, 631);
-    assert_eq!(inst.addrs, vec!["192.168.1.10".to_string()]);
-    assert_eq!(inst.txt, vec![("rp".to_string(), "ipp/print".to_string()), ("color".to_string(), String::new())]);
-  }
-
-  #[test]
-  fn correlate_services_lists_types() {
-    let meta = Name::from_ascii(SERVICE_ENUM).unwrap();
-    let mut m = Message::new(0, MessageType::Response, OpCode::Query);
-    m.answers.push(Record::from_rdata(
-      meta.clone(),
-      120,
-      RData::PTR(PTR(Name::from_ascii("_ipp._tcp.local.").unwrap())),
-    ));
-    m.answers.push(Record::from_rdata(meta, 120, RData::PTR(PTR(Name::from_ascii("_http._tcp.local.").unwrap()))));
-
-    let out = correlate_services(&[m]);
-    assert_eq!(out, vec!["_ipp._tcp".to_string(), "_http._tcp".to_string()]);
-  }
-
-  // AAAA is exercised only for the address-collection path's type coverage.
-  #[test]
-  fn collect_addrs_includes_v6() {
-    let host = Name::from_ascii("printer.local.").unwrap();
-    let mut m = Message::new(0, MessageType::Response, OpCode::Query);
-    m.additionals.push(Record::from_rdata(host, 120, RData::AAAA(AAAA("fe80::1".parse().unwrap()))));
-    assert_eq!(collect_addrs(&[m], "printer.local"), vec!["fe80::1".to_string()]);
   }
 }

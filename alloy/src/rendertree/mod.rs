@@ -1,6 +1,6 @@
 pub mod composite;
 pub mod hit;
-mod kinds;
+pub(crate) mod kinds;
 pub mod layout;
 pub mod platform;
 mod tree;

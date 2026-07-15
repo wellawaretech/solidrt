@@ -3,7 +3,7 @@ mod connection;
 mod control;
 mod proxy;
 mod session;
-mod tunnel;
+pub(crate) mod tunnel;
 
 pub use connection::QueryHandles;
 pub use session::DevSession;

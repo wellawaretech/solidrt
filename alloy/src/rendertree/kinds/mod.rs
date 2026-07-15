@@ -4,7 +4,7 @@ mod oval;
 mod paint;
 mod path;
 mod rect;
-mod svg;
+pub(crate) mod svg;
 mod text;
 mod texture;
 mod view;

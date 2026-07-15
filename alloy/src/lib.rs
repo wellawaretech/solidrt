@@ -17,6 +17,9 @@ mod script;
 mod shader;
 mod texture;
 
+#[cfg(test)]
+mod tests;
+
 pub use impellers;
 pub use sdl3;
 

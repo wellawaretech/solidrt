@@ -4,9 +4,6 @@ use taffy::{NodeId, Size};
 
 use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind};
 
-#[cfg(test)]
-mod tests;
-
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,

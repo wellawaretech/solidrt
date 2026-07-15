@@ -25,4 +25,7 @@ pub mod subprocess;
 pub mod wasm;
 pub mod websocket;
 
+#[cfg(test)]
+mod tests;
+
 pub use seek::{SeekableRead, SeekableReader};
