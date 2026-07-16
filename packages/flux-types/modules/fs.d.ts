@@ -40,6 +40,11 @@ declare module "flux:fs" {
     entries(): Promise<DirEntry[]>
     /** Resolve to whether the directory exists. */
     exists(): Promise<boolean>
+    /**
+     * Create the directory, including any missing parents. Succeeds if it
+     * already exists.
+     */
+    create(): Promise<void>
   }
 
   /**

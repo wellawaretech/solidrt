@@ -1,0 +1,25 @@
+{
+  "page": {
+    "template": "file:./template.html",
+    "navItem": "<li><a href=\"{href}\">{text}</a></li>",
+    "nav": [
+      { "text": "start", "href": "/start/" },
+      { "text": "core", "href": "/core/" },
+      { "text": "frameworks", "href": "/frameworks/" },
+      { "text": "tools", "href": "/tools/" },
+      { "text": "runtime", "href": "/runtime/" },
+      { "text": "architecture", "href": "/architecture/" }
+    ]
+  },
+  "elements": {
+    "heading": "<h{depth} id=\"{slug}\">{text}</h{depth}>\n",
+    "paragraph": "<p>{text}</p>\n",
+    "link": "<a href=\"{href}\">{text}</a>",
+    "image": "<img src=\"{href}\" alt=\"{text}\">",
+    "code": "<pre><code class=\"hljs language-{lang}\">{text}</code></pre>\n",
+    "codespan": "<code>{text}</code>",
+    "blockquote": "<blockquote>{text}</blockquote>\n",
+    "strong": "<strong>{text}</strong>",
+    "em": "<em>{text}</em>"
+  }
+}

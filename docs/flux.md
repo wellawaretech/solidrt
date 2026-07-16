@@ -94,7 +94,8 @@ let obj   = await file("data.json").json()
 let stat  = await file("data.txt").stat()   // { size, type, mtime }
 await file("out.txt").write("hello")
 
-let entries = await dir("./assets").list()  // [{ name, type }, ...]
+let entries = await dir("./assets").entries()  // [{ name, type }, ...]
+await dir("./out/img").create()             // mkdir -p; ok if it exists
 ```
 
 Each entry has a `name` (filename only) and a `type`: `"file"`, `"directory"`, `"symlink"`, or `"other"`.

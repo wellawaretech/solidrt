@@ -54,6 +54,19 @@ fn build_dir<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> 
   .expect("create exists function");
   obj.set("exists", exists_fn)?;
 
+  let create_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        let path = path.clone();
+        Ok(with_pending(&ctx, async move { fs::create_dir(&path).await }))
+      }
+    }),
+  )
+  .expect("create create function");
+  obj.set("create", create_fn)?;
+
   Ok(obj)
 }
 

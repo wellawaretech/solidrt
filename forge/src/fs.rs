@@ -67,6 +67,12 @@ pub async fn stat(path: &str) -> Result<StatInfo, String> {
   Ok(StatInfo { size: meta.len(), file_type: type_str(meta.file_type()), mtime_ms: mtime_ms(&meta) })
 }
 
+/// Create a directory, including any missing parents. Succeeds if it already
+/// exists.
+pub async fn create_dir(path: &str) -> Result<(), String> {
+  tokio::fs::create_dir_all(path).await.map_err(|e| format!("create dir {path}: {e}"))
+}
+
 /// Whether `path` exists and is a directory. A missing path (or any stat error)
 /// is reported as `false`, not an error.
 pub async fn dir_exists(path: &str) -> bool {
