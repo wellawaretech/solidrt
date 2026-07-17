@@ -29,23 +29,48 @@ function packageName(dir: string): string {
 }
 
 const DEFAULT_TEMPLATE = "default"
+const TEMPLATE_MANIFEST = "template.json"
+
+// Each template's template.json declares which level the scaffolded app is
+// written at: "core" (only @solidrt/core, no component framework) or
+// "components" (built with @solidrt/components). The level decides the
+// generated dependencies; the description labels the template in the picker.
+interface TemplateInfo {
+  name: string
+  level: "core" | "components"
+  description: string
+}
 
 // Templates are the directories under scaffold/templates/; each holds the files
-// that become the new project's src/. `default` sorts first as the starting
-// point, the rest alphabetically.
-async function listTemplates(): Promise<string[]> {
+// that become the new project's src/, plus a template.json manifest. `default`
+// sorts first as the starting point, the rest alphabetically.
+async function listTemplates(): Promise<TemplateInfo[]> {
   let entries = await readdir(TEMPLATES_DIR, { withFileTypes: true })
-  return entries
+  let names = entries
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
     .sort((a, b) =>
       a === DEFAULT_TEMPLATE ? -1 : b === DEFAULT_TEMPLATE ? 1 : a.localeCompare(b),
     )
+  let templates: TemplateInfo[] = []
+  for (let name of names) {
+    // A missing manifest falls back to the components level: it keeps every
+    // dependency, so the scaffolded app works at either level.
+    let manifest = await readFile(join(TEMPLATES_DIR, name, TEMPLATE_MANIFEST), "utf8")
+      .then((raw) => JSON.parse(raw))
+      .catch(() => ({}))
+    templates.push({
+      name,
+      level: manifest.level === "core" ? "core" : "components",
+      description: typeof manifest.description === "string" ? manifest.description : "",
+    })
+  }
+  return templates
 }
 
 // Resolve which template to scaffold from: an explicit --template if valid, an
 // interactive picker on a TTY, else `default` (or the first available).
-async function resolveTemplate(): Promise<string> {
+async function resolveTemplate(): Promise<TemplateInfo> {
   let templates = await listTemplates()
   if (templates.length === 0) {
     console.error(`!! No templates found in ${TEMPLATES_DIR}`)
@@ -53,14 +78,25 @@ async function resolveTemplate(): Promise<string> {
   }
   let chosen = values.template
   if (chosen) {
-    if (!templates.includes(chosen)) {
-      console.error(`!! Unknown template "${chosen}"; choose from: ${templates.join(", ")}`)
+    let found = templates.find((t) => t.name === chosen)
+    if (!found) {
+      let names = templates.map((t) => t.name).join(", ")
+      console.error(`!! Unknown template "${chosen}"; choose from: ${names}`)
       process.exit(1)
     }
-    return chosen
+    return found
   }
-  if (process.stdin.isTTY) return select("Select a template", templates)
-  return templates.includes(DEFAULT_TEMPLATE) ? DEFAULT_TEMPLATE : templates[0]!
+  if (process.stdin.isTTY) {
+    let picked = await select(
+      "Select a template",
+      templates.map((t) => ({
+        label: t.description ? `${t.name} - ${t.description}` : t.name,
+        value: t.name,
+      })),
+    )
+    return templates.find((t) => t.name === picked)!
+  }
+  return templates.find((t) => t.name === DEFAULT_TEMPLATE) ?? templates[0]!
 }
 
 export async function runInitCommand() {
@@ -84,7 +120,7 @@ export async function runInitCommand() {
 
   let template = await resolveTemplate()
 
-  console.log(`>> Scaffolding SolidRT project in ${resolve(dir)} (${template})`)
+  console.log(`>> Scaffolding SolidRT project in ${resolve(dir)} (${template.name})`)
   for (let { from, to } of TEMPLATE_FILES) {
     let dest = join(dir, to)
     await mkdir(dirname(dest), { recursive: true })
@@ -93,19 +129,22 @@ export async function runInitCommand() {
   }
 
   // The chosen template's files become the project's src/. Entries may be
-  // nested directories (e.g. an asset folder), so copy recursively.
-  let templateDir = join(TEMPLATES_DIR, template)
+  // nested directories (e.g. an asset folder), so copy recursively. The
+  // manifest describes the template rather than belonging to the app.
+  let templateDir = join(TEMPLATES_DIR, template.name)
   await mkdir(join(dir, "src"), { recursive: true })
   for (let file of await readdir(templateDir)) {
+    if (file === TEMPLATE_MANIFEST) continue
     await cp(join(templateDir, file), join(dir, "src", file), { recursive: true })
     console.log(`   Write src/${file}`)
   }
 
   // The scaffold package.json carries a placeholder name; set it from the
-  // target folder.
+  // target folder. A core-level app gets no component framework dependency.
   let pkgPath = join(dir, "package.json")
   let pkg = JSON.parse(await readFile(pkgPath, "utf8"))
   pkg.name = packageName(dir)
+  if (template.level === "core") delete pkg.dependencies["@solidrt/components"]
   await writeFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
 
   // Deps are declared in scaffold/package.json (Solid peers resolve via

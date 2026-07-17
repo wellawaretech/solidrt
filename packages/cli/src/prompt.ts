@@ -15,16 +15,24 @@ export function text(message: string, def = ""): Promise<string> {
   })
 }
 
+export interface SelectOption {
+  label: string
+  value: string
+}
+
 // Minimal arrow-key single-select prompt, built on node:readline (same
 // dependency-free approach as repl.ts). Renders the option list, moves the
-// highlight on up/down, resolves the chosen value on enter. Callers guard on
-// process.stdin.isTTY; a non-TTY stdin here resolves the first option rather
-// than hanging on input that will never arrive.
-export function select(message: string, options: string[]): Promise<string> {
+// highlight on up/down, resolves the chosen value on enter. Options are plain
+// strings or { label, value } pairs when the display text differs from the
+// resolved value. Callers guard on process.stdin.isTTY; a non-TTY stdin here
+// resolves the first option rather than hanging on input that will never
+// arrive.
+export function select(message: string, options: Array<string | SelectOption>): Promise<string> {
+  let items = options.map((o) => (typeof o === "string" ? { label: o, value: o } : o))
   return new Promise((resolve) => {
     let input = process.stdin
     let output = process.stdout
-    if (!input.isTTY) return resolve(options[0]!)
+    if (!input.isTTY) return resolve(items[0]!.value)
 
     let selected = 0
     emitKeypressEvents(input)
@@ -34,13 +42,13 @@ export function select(message: string, options: string[]): Promise<string> {
     let render = (first = false) => {
       // After the first paint the cursor sits below the block; move it back up
       // to the message line so the list redraws in place.
-      if (!first) output.write(`\x1b[${options.length + 1}A`)
+      if (!first) output.write(`\x1b[${items.length + 1}A`)
       output.write(`\x1b[K? ${message}\n`)
-      for (let i = 0; i < options.length; i++) {
+      for (let i = 0; i < items.length; i++) {
         let active = i === selected
         let pointer = active ? "\x1b[36m> " : "  "
         let reset = active ? "\x1b[0m" : ""
-        output.write(`\x1b[K${pointer}${options[i]}${reset}\n`)
+        output.write(`\x1b[K${pointer}${items[i]!.label}${reset}\n`)
       }
     }
 
@@ -53,15 +61,15 @@ export function select(message: string, options: string[]): Promise<string> {
     let onKey = (_str: string, key: { name: string; ctrl: boolean } | undefined) => {
       if (!key) return
       if (key.name === "up") {
-        selected = (selected - 1 + options.length) % options.length
+        selected = (selected - 1 + items.length) % items.length
         render()
       } else if (key.name === "down") {
-        selected = (selected + 1) % options.length
+        selected = (selected + 1) % items.length
         render()
       } else if (key.name === "return" || key.name === "enter") {
         cleanup()
         output.write("\n")
-        resolve(options[selected]!)
+        resolve(items[selected]!.value)
       } else if (key.ctrl && (key.name === "c" || key.name === "d")) {
         cleanup()
         output.write("\n")

@@ -1,5 +1,5 @@
+// Core-only template: built from @solidrt/core primitives.
 import { render, For, onFrame, createSignal, createLinearGradient } from "@solidrt/core"
-import { View, Window } from "@solidrt/components"
 
 const FADE = 360 
 
@@ -13,7 +13,7 @@ let SEGMENTS = [
   { base: 540, light: "#7ea9ea", dark: "#5681c1", d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z" },
 ]
 
-let LAST = SEGMENTS[SEGMENTS.length - 1].base
+let LAST = SEGMENTS[SEGMENTS.length - 1]!.base
 let IN_DONE = LAST + FADE
 let CYCLE = IN_DONE + LAST + FADE
 
@@ -32,7 +32,7 @@ function Icon() {
   let start = -1
   onFrame((t) => (start < 0 && (start = t), setClock((t - start) % CYCLE)))
   return (
-    <View layout={{ width: 100, height: 100 }} style={{ scale: 3 }}>
+    <view width={100} height={100} scale={3}>
       <For each={SEGMENTS}>
         {(seg) => {
           let a = () => {
@@ -43,7 +43,7 @@ function Icon() {
           return <d-path d={seg.d} color={fill(seg, a())} />
         }}
       </For>
-    </View>
+    </view>
   )
 }
 
@@ -54,12 +54,10 @@ function App() {
   ])
 
   return (
-    <Window
-      layout={{ alignItems: "center", justifyContent: "center" }}
-      style={{ backgroundColor }}
-    >
+    <window alignItems="center" justifyContent="center">
+      <d-rect color={backgroundColor} />
       <Icon />
-    </Window>
+    </window>
   )
 }
 

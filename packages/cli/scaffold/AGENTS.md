@@ -4,6 +4,23 @@ This project uses SolidRT: a custom SolidJS renderer that paints through a Rust
 runtime. No DOM, no HTML, no CSS cascade. If you are an AI assistant, read this
 before writing or editing code here.
 
+## Levels: core, and frameworks on top
+
+- @solidrt/core is the low-level foundation: host intrinsics (`<window>`,
+  `<view>`, `<text>`, the detached `d-*` drawing primitives) with flat props
+  that feed the layout and paint engine directly. An app can be written
+  entirely at this level.
+- Higher-level component frameworks build on core. @solidrt/components is
+  the first-party one: themed widgets (Window, View, Text, Button,
+  ScrollView, SafeArea, ...) with the `layout={{...}}`/`style={{...}}` prop
+  split. It is not privileged - a framework is just functions returning core
+  JSX, and an app can use a third-party one or grow its own.
+
+Match the level the code you are editing already uses. package.json shows
+the choice this app made: if no component framework is among the
+dependencies, the app is core-only - do not add one for a change core
+covers.
+
 Authoritative references ship inside the installed packages - read them:
 - node_modules/solid-js/CHEATSHEET.md          - SolidJS 2.0 reactivity/control-flow model
 - node_modules/@solidrt/components/AGENTS.md   - the component vocabulary; build UI from these
@@ -24,10 +41,10 @@ Authoritative references ship inside the installed packages - read them:
 
 1. This is SolidJS 2.0 (see CHEATSHEET.md for the reactivity/control-flow
    model), rendering through a custom Rust runtime instead of the DOM. Build
-   UI from @solidrt/components (Window, View, Text, Image, TextInput,
-   ScrollView, Pressable, Button, SafeArea, theme/setTheme) - it is the
-   higher-level, batteries-included vocabulary and is where most app code
-   should live.
+   UI at the level the app uses (see "Levels" above): core intrinsics
+   directly, or a component framework such as @solidrt/components (Window,
+   View, Text, Image, TextInput, ScrollView, Pressable, Button, SafeArea,
+   theme/setTheme) - the first-party, batteries-included one.
 2. Most components split their props into two objects: `layout={{...}}` for
    anything that feeds the layout engine (flex/grid, sizing, padding/margin,
    position; font fields for Text) and `style={{...}}` for paint-only
@@ -52,7 +69,8 @@ Authoritative references ship inside the installed packages - read them:
    (runtime-paced, auto-cleans), re-exported from @solidrt/core.
    requestAnimationFrame(t => {}) exists as a web-standard one-shot but is
    not the preferred animation driver.
-8. Reach for @solidrt/core directly only for what components doesn't wrap:
+8. In a components-based app, reach for @solidrt/core directly only for
+   what components doesn't wrap:
    raw host intrinsics and the `d-` (detached, non-layout) primitives like
    `d-rect`/`d-path`/`d-oval` for vector art or perf-sensitive positioned
    drawing, device/GPU subpath imports (@solidrt/core/camera, /microphone,
@@ -87,6 +105,10 @@ Authoritative references ship inside the installed packages - read them:
 15. Signal writes flush on a microtask: a handler that sets a signal and
     immediately reads it back gets the OLD value. Read the new value in an
     effect, or call `flush()` (from @solidjs/signals) to force it through.
+16. Portals cannot mount during the app's initial render: a Modal (or any
+    createPortal content) that is visible at first mount throws "no mount
+    target". Gate it behind a signal that starts false and open it after
+    startup - overlay content is opened, not born open.
 
 ## Run / verify
 
@@ -115,7 +137,12 @@ its tools over guessing at runtime state:
 - client ids and log cursors die with the dev server: list_clients and
   get_logs responses carry `generation`, and a changed generation means
   re-fetch ids and restart cursors
-- get_stats: fps, CPU/memory, frame phase timings, setProperty rate
+- get_stats: fps, CPU/memory, frame phase timings, setProperty rate, plus
+  layout-activity counters for the last rebuild (nodes, measureCalls,
+  paraShapes, dirtiedNodes, cacheGets/cacheHits) - when layoutMs looks
+  wrong, these say whether the cost is text shaping, invalidation breadth,
+  or a defeated layout cache (healthy incremental rebuilds show a near-100%
+  cacheHits rate)
 - get_snapshot: PNG capture of any render-tree node's pixels (get node ids
   from get_render_tree; the window node captures everything). Pass `save_to`
   on get_snapshot or get_texture to also write the PNG to a file - the image
@@ -182,11 +209,14 @@ The tools need a running app: if list_clients is empty, ask the user to start
   a second one - self-running animation (game clocks, shader-driven
   effects) must make one state change at startup to prime the loop; after
   that its own writes keep it awake.
-- Keep mounted list sizes under ~100 rows; paginate or window longer lists.
-  Layout cost grows with every mounted node, and each arriving image texture
-  retriggers the pass - a few hundred text-heavy rows can push layoutMs into
-  the thousands (get_stats shows it) and starve the JS thread until the app
-  looks wedged.
+- Layout is incremental: a change re-solves only the dirty path, and clean
+  subtrees answer from a per-node cache, so long lists no longer cap layout
+  (a thousand-node tree relays out in well under a millisecond). If layoutMs
+  still grows with tree size, read the get_stats counters - a low
+  cacheHits/cacheGets ratio means the layout cache is being defeated, high
+  paraShapes means text is actually reshaping. Very long lists still pay
+  for the initial mount and for memory, so windowing stays sensible at the
+  thousands-of-rows scale.
 - Remote images: createImage (and Image) dedupes repeated URLs, caches the
   bytes on disk, and the runtime rate-limits concurrent asset fetches per
   host - do not build your own promise cache around it. Images are fetched
