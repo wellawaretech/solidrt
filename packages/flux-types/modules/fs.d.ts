@@ -16,6 +16,8 @@ declare module "flux:fs" {
     text(): Promise<string>
     /** Read the whole file as raw bytes. */
     bytes(): Promise<Uint8Array>
+    /** Read the whole file as an ArrayBuffer. */
+    arrayBuffer(): Promise<ArrayBuffer>
     /** Read and parse the file as JSON. */
     json(): Promise<any>
     /** Resolve to whether the file exists. */

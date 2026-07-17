@@ -253,6 +253,10 @@ impl Text {
     self.font_weight = weight;
     Damage::Layout
   }
+  pub fn set_font_style(&mut self, style: FontStyle) -> Damage {
+    self.font_style = style;
+    Damage::Layout
+  }
   pub fn set_text_alignment(&mut self, alignment: TextAlignment) -> Damage {
     self.text_alignment = alignment;
     Damage::Layout

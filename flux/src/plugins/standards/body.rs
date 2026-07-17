@@ -2,7 +2,7 @@ use bytes::Bytes;
 use rquickjs::{
   function::{MutFn, This},
   promise::{MaybePromise, Promised},
-  Ctx, Function, IntoJs, Object, TypedArray, Value,
+  ArrayBuffer, Ctx, Function, IntoJs, Object, TypedArray, Value,
 };
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -148,6 +148,10 @@ pub(crate) async fn collect_text(source: BodySource, pending: PendingOps) -> JsR
 
 pub(crate) async fn collect_bytes(source: BodySource, pending: PendingOps) -> JsResult<JsBytes> {
   JsResult(source.collect(pending).await.map(JsBytes))
+}
+
+pub(crate) async fn collect_array_buffer(source: BodySource, pending: PendingOps) -> JsResult<JsArrayBuffer> {
+  JsResult(source.collect(pending).await.map(JsArrayBuffer))
 }
 
 pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> JsResult<JsonValue> {
@@ -360,6 +364,16 @@ impl<'js> IntoJs<'js> for JsBytes {
   }
 }
 
+/// Body bytes surfaced to JS as an `ArrayBuffer` (the standard `arrayBuffer()`
+/// result), where `JsBytes` surfaces them as a `Uint8Array`.
+pub struct JsArrayBuffer(pub Vec<u8>);
+
+impl<'js> IntoJs<'js> for JsArrayBuffer {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    ArrayBuffer::new(ctx.clone(), self.0).map(|ab| ab.into_value())
+  }
+}
+
 pub struct JsonValue(pub String);
 
 impl<'js> IntoJs<'js> for JsonValue {
@@ -434,6 +448,23 @@ where
   )
   .expect("create bytes function");
 
+  let array_buffer_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let consumed = consumed.clone();
+      let fetch_bytes = fetch_bytes.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        if consume_once && consumed.get() {
+          return Err(throw_consumed(&ctx));
+        }
+        consumed.set(true);
+        let fetch = fetch_bytes.clone();
+        Ok(Promised(async move { JsResult(fetch().await.map(JsArrayBuffer)) }))
+      }
+    }),
+  )
+  .expect("create arrayBuffer function");
+
   let json_fn = Function::new(
     ctx.clone(),
     MutFn::from({
@@ -458,6 +489,7 @@ where
 
   obj.set("text", text_fn)?;
   obj.set("bytes", bytes_fn)?;
+  obj.set("arrayBuffer", array_buffer_fn)?;
   obj.set("json", json_fn)?;
 
   Ok(())

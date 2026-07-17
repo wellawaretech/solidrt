@@ -308,6 +308,11 @@ export interface TextProps extends Position, PaintProps, PointerProps {
   h?: number
   fontFamily?: "sans" | "mono" | (string & {})
   fontSize?: number
+  /**
+   * Line height as a MULTIPLIER of fontSize, not pixels (the theme uses
+   * 1.3-1.6). A CSS-reflex pixel value like 22 makes each line box 22x the
+   * font size, rendering the text as blank space.
+   */
   lineHeight?: number
   fontStyle?: "normal" | "italic"
   fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900

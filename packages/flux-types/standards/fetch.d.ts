@@ -1,6 +1,6 @@
 // The Fetch API cluster (Headers, Request, Response, fetch). A deliberate subset
 // of the WHATWG Fetch standard: flux provides exactly these members and no more
-// (no Blob, FormData, ReadableStream, arrayBuffer(), clone(), AbortSignal, ...).
+// (no Blob, FormData, ReadableStream, clone(), AbortSignal, ...).
 // Grouped in one file because the four share BodyInit/HeadersInit and reference
 // each other.
 
@@ -62,6 +62,8 @@ interface Request {
   text(): Promise<string>
   /** Read the whole body as raw bytes. */
   bytes(): Promise<Uint8Array>
+  /** Read the whole body as an ArrayBuffer. */
+  arrayBuffer(): Promise<ArrayBuffer>
   /** Read and parse the whole body as JSON. */
   json(): Promise<any>
 }
@@ -93,6 +95,8 @@ interface Response {
   text(): Promise<string>
   /** Read the whole body as raw bytes. */
   bytes(): Promise<Uint8Array>
+  /** Read the whole body as an ArrayBuffer. */
+  arrayBuffer(): Promise<ArrayBuffer>
   /** Read and parse the whole body as JSON. */
   json(): Promise<any>
 }

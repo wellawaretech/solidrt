@@ -151,7 +151,7 @@ import { Text } from "@solidrt/components"
 </Text>
 ```
 
-`layout` accepts all `LayoutProps` plus the font fields `fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, and `maxLines`.
+`layout` accepts all `LayoutProps` plus the font fields `fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, and `maxLines`. Note that `lineHeight` is a multiplier of `fontSize` (the theme uses 1.3-1.6), not a pixel value.
 
 **Props**
 
@@ -166,13 +166,21 @@ Accepts all pointer event props, plus:
 
 ### Image
 
-Loads and displays an image from a URL or raw bytes.
+Loads and displays an image from a URL or raw bytes. URL loads are shared
+runtime-wide: mounts of the same URL reuse one fetch and one texture, at most
+four fetches run at once, and a failed URL is not refetched for the session.
 
 ```jsx
 import { Image } from "@solidrt/components"
 
 function Avatar() {
-  return <Image src="https://example.com/avatar.png" layout={{ width: 64, height: 64 }} />
+  return (
+    <Image
+      src="https://example.com/avatar.png"
+      fallback={PLACEHOLDER_PNG}
+      layout={{ width: 64, height: 64 }}
+    />
+  )
 }
 ```
 
@@ -180,9 +188,15 @@ function Avatar() {
 
 Accepts `layout`, `style`, and all pointer event props, plus:
 
-| Prop  | Type                   | Description                                |
-| ----- | ---------------------- | ------------------------------------------ |
-| `src` | `string \| Uint8Array` | URL to fetch, or raw image bytes to decode |
+| Prop       | Type                     | Description                                                                          |
+| ---------- | ------------------------ | ------------------------------------------------------------------------------------ |
+| `src`      | `string \| Uint8Array`   | URL to fetch, or raw image bytes to decode                                            |
+| `fallback` | `string \| Uint8Array`   | Source shown when `src` fails; if it also fails, the `backgroundColor` placeholder stays |
+| `onLoad`   | `() => void`             | Called each time a source finishes loading                                            |
+| `onError`  | `(err: unknown) => void` | Called when `src` fails to load or decode                                             |
+
+A failing `src` is contained by the component (the fallback or placeholder
+shows); it does not propagate to an outer `<Errored>` boundary.
 
 ### TextInput
 

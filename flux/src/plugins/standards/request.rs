@@ -11,8 +11,8 @@ use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::modules::websocket::ServeUpgrade;
 use crate::plugins::standards::body::{
-  collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream, JsBytes, JsonValue,
-  MessageBody,
+  collect_array_buffer, collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream,
+  JsArrayBuffer, JsBytes, JsonValue, MessageBody,
 };
 use crate::plugins::standards::headers::{headers_from_init, headers_from_pairs, Headers};
 
@@ -118,6 +118,12 @@ impl<'js> Request<'js> {
   pub fn bytes(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsBytes>> {
     let (source, pending) = self.reader(&ctx)?;
     Ok(Promised(Box::pin(collect_bytes(source, pending))))
+  }
+
+  #[qjs(rename = "arrayBuffer")]
+  pub fn array_buffer(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsArrayBuffer>> {
+    let (source, pending) = self.reader(&ctx)?;
+    Ok(Promised(Box::pin(collect_array_buffer(source, pending))))
   }
 
   pub fn json(&self, ctx: Ctx<'js>) -> rquickjs::Result<BodyFuture<JsonValue>> {
