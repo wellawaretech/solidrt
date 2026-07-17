@@ -87,7 +87,7 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   {
     name: "get_stats",
     description:
-      "Performance statistics from a running app client: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated).",
+      "Performance statistics from a running app client: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated), cacheGets/cacheHits (layout-cache lookups during the rebuild; a hit on a container skips its whole subtree, so a healthy incremental rebuild shows a near-100% hit rate - a low rate at scale means the layout cache is being defeated).",
     inputSchema: { client: CLIENT_ARG },
   },
   {

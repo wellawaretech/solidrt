@@ -1,18 +1,18 @@
 use taffy::prelude::*;
 use taffy::tree::LayoutInput;
-use taffy::Cache;
 use taffy::{
   compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
   CacheTree, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
 };
 
 use super::super::tree::RenderTree;
+use super::cache::LayoutCache;
 use crate::rendertree::{ElementKind, Measurable, MeasureContext, PlatformContext};
 
 pub struct LayoutData {
   pub style: Style,
   pub computed: Layout,
-  pub cache: Cache,
+  pub cache: LayoutCache,
   pub layout_children: Vec<NodeId>,
   // True only when JSX explicitly set `position="relative"`. taffy's default
   // position is Relative for every node, so this flag is what distinguishes a
@@ -23,7 +23,13 @@ pub struct LayoutData {
 
 impl LayoutData {
   pub fn new(style: Style) -> Self {
-    Self { style, computed: Layout::new(), cache: Cache::new(), layout_children: vec![], positioning_context: false }
+    Self {
+      style,
+      computed: Layout::new(),
+      cache: LayoutCache::new(),
+      layout_children: vec![],
+      positioning_context: false,
+    }
   }
 }
 
@@ -54,7 +60,9 @@ impl<'a> TraversePartialTree for LayoutContext<'a> {
 
 impl<'a> CacheTree for LayoutContext<'a> {
   fn cache_get(&self, node_id: NodeId, input: &LayoutInput) -> Option<taffy::LayoutOutput> {
-    self.render_tree.node(u64::from(node_id)).layout_data().cache.get(input)
+    let out = self.render_tree.node(u64::from(node_id)).layout_data().cache.get(input);
+    crate::rendertree::counters::note_cache_get(out.is_some());
+    out
   }
 
   fn cache_store(&mut self, node_id: NodeId, input: &LayoutInput, layout_output: taffy::LayoutOutput) {

@@ -57,6 +57,8 @@ pub struct StatsSnapshot {
   pub measure_calls: u32,
   pub para_shapes: u32,
   pub dirtied: u32,
+  pub cache_gets: u32,
+  pub cache_hits: u32,
 }
 
 // Smoothing time constant (seconds): a value settles to ~63% of a step in this
@@ -253,6 +255,8 @@ impl Stats {
       measure_calls: self.layout_counters.measure_calls,
       para_shapes: self.layout_counters.para_shapes,
       dirtied: self.layout_counters.dirtied,
+      cache_gets: self.layout_counters.cache_gets,
+      cache_hits: self.layout_counters.cache_hits,
     }
   }
 

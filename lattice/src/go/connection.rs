@@ -637,6 +637,8 @@ fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
       "measureCalls": s.measure_calls,
       "paraShapes": s.para_shapes,
       "dirtiedNodes": s.dirtied,
+      "cacheGets": s.cache_gets,
+      "cacheHits": s.cache_hits,
     },
   })
   .to_string()

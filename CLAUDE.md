@@ -42,6 +42,11 @@ Run from repo root:
 - `make client PROFILE=debug` - build the go client binary (debug)
 - `make runtime` - build the production runtime (release)
 
+Debug builds are for functional verification only: unoptimized Rust (and
+QuickJS especially) is drastically slower, so never quote or record
+performance timings from a debug client - rebuild release first. Counters
+and other behavioral measurements are profile-independent.
+
 # Notes (okf/)
 Long-lived notes live under `okf/`, one markdown file per item (OKF-style: YAML frontmatter + freeform body), each folder indexed in its `index.md`. Write new notes there instead of scattering them across root scratch files.
 - `okf/backlog/` - deferred features and ideas. Check there before starting speculative/non-trivial work.

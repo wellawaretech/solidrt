@@ -11,7 +11,7 @@ pub use kinds::{
   Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span, Svg, Text,
   Texture, View, Window,
 };
-pub use layout::{LayoutContext, LayoutData};
+pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::PlatformContext;
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
