@@ -3,6 +3,7 @@
 import { values, command, validateArgs, printUsage } from "./args"
 import { runInitCommand } from "./commands/init"
 import { runBundleCommand } from "./commands/bundle"
+import { runCheckCommand } from "./commands/check"
 import { runPackCommand } from "./commands/pack"
 import { runRenderCommand } from "./commands/render"
 import { runServerCommand } from "./commands/server"
@@ -41,6 +42,8 @@ if (command === "init") {
   await runInitCommand()
 } else if (command === "bundle") {
   await runBundleCommand()
+} else if (command === "check") {
+  await runCheckCommand()
 } else if (command === "pack") {
   await runPackCommand()
 } else if (command === "render") {

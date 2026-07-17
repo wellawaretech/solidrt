@@ -457,13 +457,18 @@ async fn try_serve(
               }
               Some("tree") => {
                 // The render tree lives on the JS thread; snapshot it there and
-                // route the reply back through the outbound channel.
+                // route the reply back through the outbound channel. Optional
+                // scoping: `root` (subtree), `depth` (level cap), `query`
+                // (kind/text search instead of a snapshot).
+                let root = json.get("root").and_then(|n| n.as_u64());
+                let depth = json.get("depth").and_then(|n| n.as_u64()).map(|n| n as usize);
+                let search = json.get("query").and_then(|q| q.as_str()).map(str::to_string);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(tree_reply(&ctx, id));
+                      let _ = reply_tx.send(tree_reply(&ctx, id, root, depth, search.as_deref()));
                     });
                   }
                   None => {
@@ -633,16 +638,53 @@ fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
   .to_string()
 }
 
-/// Snapshot the render tree from the engine's userdata and encode it. Runs on
-/// the JS thread (see the query handling above).
-fn tree_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+// Search results are for locating nodes, not dumping the app: enough for a
+// "which node is X" question, small enough to never rebuild the 3MB-tree
+// problem the query option exists to avoid.
+const TREE_MATCH_LIMIT: usize = 100;
+
+/// Snapshot the render tree from the engine's userdata and encode it. With
+/// `search`, reply with the matching nodes (id paths included) instead of a
+/// subtree. Runs on the JS thread (see the query handling above).
+fn tree_reply(
+  ctx: &flux::rquickjs::Ctx<'_>,
+  id: u64,
+  root: Option<u64>,
+  depth: Option<usize>,
+  search: Option<&str>,
+) -> String {
   let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() else {
     return error_reply(id, "no render tree");
   };
-  let snapshot = tree.0.borrow().snapshot();
-  match snapshot {
-    Some(root) => serde_json::json!({"type": "result", "id": id, "data": node_json(&root)}).to_string(),
-    None => error_reply(id, "no render tree (the app has not rendered)"),
+  let tree = tree.0.borrow();
+  if let Some(needle) = search {
+    return match tree.snapshot_matches(root, needle, TREE_MATCH_LIMIT) {
+      Some(matches) => {
+        let entries: Vec<_> = matches
+          .iter()
+          .map(|m| {
+            let mut obj = node_json(&m.node);
+            let map = obj.as_object_mut().expect("node_json is an object");
+            map.remove("children");
+            map.insert("path".into(), m.path.clone().into());
+            obj
+          })
+          .collect();
+        serde_json::json!({"type": "result", "id": id, "data": {"matches": entries, "limit": TREE_MATCH_LIMIT}})
+          .to_string()
+      }
+      None => match root {
+        Some(r) => error_reply(id, &format!("no node with id {r}")),
+        None => error_reply(id, "no render tree (the app has not rendered)"),
+      },
+    };
+  }
+  match tree.snapshot_from(root, depth) {
+    Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node)}).to_string(),
+    None => match root {
+      Some(r) => error_reply(id, &format!("no node with id {r}")),
+      None => error_reply(id, "no render tree (the app has not rendered)"),
+    },
   }
 }
 
@@ -934,6 +976,11 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {
   }
   if !node.children.is_empty() {
     map.insert("children".into(), node.children.iter().map(node_json).collect::<Vec<_>>().into());
+  }
+  // A depth cap cut this node's children off: surface how many exist so a
+  // reader knows to descend with root=<id>.
+  if node.children.len() < node.child_count {
+    map.insert("childCount".into(), node.child_count.into());
   }
   obj
 }

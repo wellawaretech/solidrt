@@ -38,6 +38,13 @@ export let state = {
   clients: new Map<ServerWebSocket, ClientInfo>(),
   nextClientId: 0,
   /**
+   * Identity of this server run, included in control responses that carry
+   * cross-call state (client ids, log seq cursors). Both reset on restart, so
+   * a consumer that sees the generation change knows its ids and cursors are
+   * from a dead server and must be re-fetched.
+   */
+  generation: Date.now(),
+  /**
    * The latched reload message (JSON text), replayed to late-joining clients.
    * Set by /__internal__/reload posts with `latch`, cleared by a broadcast stop.
    */

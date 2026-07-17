@@ -76,11 +76,25 @@ Authoritative references ship inside the installed packages - read them:
     `compute` is the tracked read phase; `apply(value, prev)` runs untracked
     and is where side effects/DOM-equivalent writes belong. The old
     single-arg `createEffect(fn)` form is gone - using it is an error.
+13. A scroll container (ScrollView, or anything on createScroll) needs an
+    explicit main-axis size - a height, or flex inside a sized parent. With
+    neither it resolves to 0 and its content silently vanishes; maxHeight
+    alone does not size it (the auto size it would clamp is already 0). The
+    runtime warns when this happens.
+14. Text `lineHeight` is a MULTIPLIER of fontSize (the theme uses 1.3-1.6),
+    not pixels. A CSS-reflex value like 22 makes each line box 22x the font
+    size: the text becomes blank space and the parent balloons.
+15. Signal writes flush on a microtask: a handler that sets a signal and
+    immediately reads it back gets the OLD value. Read the new value in an
+    effect, or call `flush()` (from @solidjs/signals) to force it through.
 
 ## Run / verify
 
 - bunx srt run src/index.tsx     - dev server + window (needs a display)
-- bunx srt bundle src/index.tsx  - exit 0 means it compiles
+- bunx srt check src/index.tsx   - exit 0 means it compiles and the app's
+  types hold (dependency-internal type errors are hidden). Builds in memory:
+  writes nothing and never triggers a dev-server reload, so use this while
+  iterating - `srt bundle` writes output files and reloads connected clients
 - bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
   render to PNG frames (proves it renders; see the cli AGENTS.md for where the
   frames land)
@@ -93,12 +107,20 @@ its tools over guessing at runtime state:
 
 - list_clients: connected app clients, their platform and runtime capabilities
 - get_logs: console output and runtime errors (seq cursor; `wait_ms` long-poll
-  to catch output right after a reload)
+  to catch output right after a reload; `level`/`contains` filters; repeated
+  lines collapse into one entry with a `repeats` count)
 - get_render_tree: what the app actually rendered - node kinds, text, and
-  window-relative boxes
+  window-relative boxes. Whole trees get large: `query` finds nodes by
+  kind/text, then `root` + `depth` inspect just that region
+- client ids and log cursors die with the dev server: list_clients and
+  get_logs responses carry `generation`, and a changed generation means
+  re-fetch ids and restart cursors
 - get_stats: fps, CPU/memory, frame phase timings, setProperty rate
 - get_snapshot: PNG capture of any render-tree node's pixels (get node ids
-  from get_render_tree; the window node captures everything)
+  from get_render_tree; the window node captures everything). Pass `save_to`
+  on get_snapshot or get_texture to also write the PNG to a file - the image
+  in the tool result cannot be saved afterwards, so decide before capturing
+  (e.g. keep a before/after pair to diff)
 - get_gpu_resources: inventory of GPU state - textures (size, render target
   or not), vertex buffers (byteLength), pipelines (draw count, attribute
   layout, bound textures, last-applied uniform values)
@@ -111,7 +133,7 @@ its tools over guessing at runtime state:
   from pixels
 - reload: rebuild from source and push to every client - THE dev loop is
   edit -> reload -> get_logs -> get_snapshot. reload surfaces build errors
-  but not type errors; run the typecheck separately.
+  but not type errors; run `bunx srt check` for those.
 
 The tools need a running app: if list_clients is empty, ask the user to start
 `bunx srt run src/index.tsx`.
@@ -125,10 +147,10 @@ The tools need a running app: if list_clients is empty, ask the user to start
   setFocus(node.id) from the window's ref or onKeyDown never fires. This
   runtime names arrow keys "Left"/"Right"/"Up"/"Down", not "ArrowLeft".
 - Idle frames skip work: shaders/pipelines only re-render when their params
-  change, so measure performance while uniforms are actually changing, and
-  a get_snapshot of an idle client can time out - retry, make the app
-  produce a frame, or use get_texture on the pipeline's render target, which
-  reads the last-drawn frame without needing a new one.
+  change, so measure performance while uniforms are actually changing.
+  get_snapshot works on an idle client (it requests its own frame); a
+  timeout means the JS thread is busy or wedged. get_texture on a pipeline's
+  render target reads the last-drawn frame without needing a new one.
 - When a human reports a visual bug: capture a snapshot and SAY WHAT YOU SEE
   in it before investigating, so you agree on the symptom. If you cannot see
   the problem in the capture, say that instead of guessing.
@@ -160,3 +182,20 @@ The tools need a running app: if list_clients is empty, ask the user to start
   a second one - self-running animation (game clocks, shader-driven
   effects) must make one state change at startup to prime the loop; after
   that its own writes keep it awake.
+- Keep mounted list sizes under ~100 rows; paginate or window longer lists.
+  Layout cost grows with every mounted node, and each arriving image texture
+  retriggers the pass - a few hundred text-heavy rows can push layoutMs into
+  the thousands (get_stats shows it) and starve the JS thread until the app
+  looks wedged.
+- Remote images: createImage (and Image) dedupes repeated URLs, caches the
+  bytes on disk, and the runtime rate-limits concurrent asset fetches per
+  host - do not build your own promise cache around it. Images are fetched
+  with no freshness check (an already-cached URL is never re-checked), so
+  use versioned URLs for content that changes. Use Image's `fallback` prop
+  (an image source) for the broken-image case instead of catching errors
+  yourself.
+- fetch() never caches by default and ignores server cache headers. Caching
+  is explicit and per call: `fetch(url, { cache: "force-cache" })` for
+  assets (serve from disk or fetch-and-store, no freshness),
+  `{ cache: "reload" }` to refresh an entry. Image/createImage already do
+  this for you.

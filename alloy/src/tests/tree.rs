@@ -167,3 +167,70 @@ fn delete_node_removes_subtree() {
   assert!(tree.try_node(2).is_none());
   assert!(tree.try_node(3).is_none());
 }
+
+// A text node with laid-out content, for snapshot query matching.
+fn text(content: &str) -> Element {
+  let mut t = Text::default();
+  t.computed_text = content.to_string();
+  t.with_layout()
+}
+
+#[test]
+fn snapshot_from_caps_depth_and_reports_child_count() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+
+  let full = tree.snapshot().expect("full snapshot");
+  assert_eq!(full.children.len(), 1);
+  assert_eq!(full.children[0].children.len(), 1);
+
+  let capped = tree.snapshot_from(None, Some(1)).expect("capped snapshot");
+  let child = &capped.children[0];
+  assert!(child.children.is_empty());
+  assert_eq!(child.child_count, 1);
+
+  let sub = tree.snapshot_from(Some(2), Some(0)).expect("subtree snapshot");
+  assert_eq!(sub.id, 2);
+  assert!(sub.children.is_empty());
+  assert_eq!(sub.child_count, 1);
+
+  assert!(tree.snapshot_from(Some(99), None).is_none());
+}
+
+#[test]
+fn snapshot_matches_finds_kind_and_text_with_paths() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, text("Alpha Heading"));
+  tree.create_node(3, attached());
+  tree.create_node(4, text("beta"));
+  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 3, None);
+  tree.insert_node(3, 4, None);
+  tree.root = Some(1);
+
+  // Case-insensitive text substring, path from the root down to the match.
+  let hits = tree.snapshot_matches(None, "alpha", 100).expect("text matches");
+  assert_eq!(hits.len(), 1);
+  assert_eq!(hits[0].node.id, 2);
+  assert_eq!(hits[0].path, vec![1, 2]);
+  assert!(hits[0].node.children.is_empty());
+
+  let kinds = tree.snapshot_matches(None, "text", 100).expect("kind matches");
+  assert_eq!(kinds.iter().map(|m| m.node.id).collect::<Vec<_>>(), vec![2, 4]);
+
+  // Scoped search: the path starts at the given root.
+  let scoped = tree.snapshot_matches(Some(3), "text", 100).expect("scoped matches");
+  assert_eq!(scoped.len(), 1);
+  assert_eq!(scoped[0].path, vec![3, 4]);
+
+  let limited = tree.snapshot_matches(None, "text", 1).expect("limited matches");
+  assert_eq!(limited.len(), 1);
+
+  assert!(tree.snapshot_matches(Some(99), "text", 100).is_none());
+}

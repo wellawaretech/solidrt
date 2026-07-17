@@ -75,7 +75,19 @@ function findClient(param: string | undefined): { ws: ServerWebSocket } | { erro
   }
   let id = parseInt(param, 10)
   let entry = entries.find(([, info]) => info.id === id)
-  if (!entry) return { error: Response.json({ error: `No client with id ${param}` }, { status: 404 }) }
+  if (!entry) {
+    let ids = entries.map(([, info]) => info.id)
+    return {
+      error: Response.json(
+        {
+          error:
+            `Client ${param} is gone (connected ids: ${ids.length ? ids.join(", ") : "none"}). ` +
+            "Ids reset when the dev server restarts; call list_clients for current ones.",
+        },
+        { status: 404 },
+      ),
+    }
+  }
   return { ws: entry[0] }
 }
 
@@ -89,42 +101,91 @@ async function handleQuery(query: Map<string, string>, kind: string, extra?: Rec
   target.ws.send(JSON.stringify({ type: "query", kind, id, ...extra }))
   let msg = await Promise.race([reply, sleep(QUERY_TIMEOUT_MS)])
   pendingQueries.delete(id)
-  if (!msg) return Response.json({ error: "Query timed out" }, { status: 504 })
+  if (!msg)
+    return Response.json(
+      { error: "Query timed out: the client is connected but did not answer (JS thread busy or app wedged?)" },
+      { status: 504 },
+    )
   // Error strings may carry stack traces (e.g. a debug command threw); remap
   // bundle positions to .tsx sources like appendLog does for forwarded logs.
   if (msg.error) return Response.json({ error: remapPositions(String(msg.error), state.currentMap) }, { status: 502 })
   return Response.json(msg.data)
 }
 
-// GET /__control__/logs?since=N&wait=MS: entries with seq > since, plus the
-// latest seq as the next cursor. With `wait`, holds the response until a new
-// entry arrives or the timeout passes (long-poll), so a caller can follow the
-// stream without tight polling.
+// Merge runs of consecutive identical entries (same client, level, text) into
+// one entry carrying `repeats` and the run's last seq/at, so 176 copies of one
+// error read as a single line and a `since` cursor still skips the whole run.
+function collapseRepeats(entries: LogEntry[]): (LogEntry & { repeats?: number })[] {
+  let out: (LogEntry & { repeats?: number })[] = []
+  for (let e of entries) {
+    let last = out[out.length - 1]
+    if (last && last.client === e.client && last.level === e.level && last.text === e.text) {
+      last.repeats = (last.repeats ?? 1) + 1
+      last.seq = e.seq
+      last.at = e.at
+    } else {
+      out.push({ ...e })
+    }
+  }
+  return out
+}
+
+// GET /__control__/logs?since=N&wait=MS&level=L1,L2&contains=TEXT: entries with
+// seq > since, plus the latest seq as the next cursor and the server
+// generation. `level` keeps only the listed levels; `contains` keeps entries
+// whose text has the substring (case-insensitive). Consecutive identical
+// entries come back collapsed with a `repeats` count. With `wait`, holds the
+// response until an entry passes the filters or the timeout expires
+// (long-poll), so a caller can follow the stream without tight polling.
 async function handleLogs(query: Map<string, string>): Promise<Response> {
   let since = parseInt(query.get("since") ?? "0", 10) || 0
   let wait = Math.min(parseInt(query.get("wait") ?? "0", 10) || 0, MAX_WAIT_MS)
-  let entries = logs.filter((e) => e.seq > since)
-  if (entries.length === 0 && wait > 0) {
+  let levels = query
+    .get("level")
+    ?.split(",")
+    .map((l) => l.trim())
+    .filter(Boolean)
+  let contains = query.get("contains")?.toLowerCase()
+  let select = () =>
+    logs.filter(
+      (e) =>
+        e.seq > since &&
+        (!levels || levels.length === 0 || levels.includes(e.level)) &&
+        (!contains || e.text.toLowerCase().includes(contains)),
+    )
+  let entries = select()
+  // Filtered long-poll: an append may not pass the filters, so keep waiting
+  // until one does or the deadline runs out.
+  let deadline = Date.now() + wait
+  while (entries.length === 0 && Date.now() < deadline) {
     await new Promise<void>((resolve) => {
-      let timer = setTimeout(resolve, wait)
+      let timer = setTimeout(resolve, deadline - Date.now())
       logWaiters.push(() => {
         clearTimeout(timer)
         resolve()
       })
     })
-    entries = logs.filter((e) => e.seq > since)
+    entries = select()
   }
-  return Response.json({ entries, latest: logSeq })
+  return Response.json({ entries: collapseRepeats(entries), latest: logSeq, generation: state.generation })
 }
 
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
-      return Response.json(clientList())
+      return Response.json({ generation: state.generation, clients: clientList() })
     case "/__control__/logs":
       return handleLogs(query)
-    case "/__control__/tree":
-      return handleQuery(query, "tree")
+    case "/__control__/tree": {
+      let extra: Record<string, unknown> = {}
+      let root = parseInt(query.get("root") ?? "", 10)
+      if (Number.isFinite(root)) extra.root = root
+      let depth = parseInt(query.get("depth") ?? "", 10)
+      if (Number.isFinite(depth)) extra.depth = depth
+      let q = query.get("query")
+      if (q) extra.query = q
+      return handleQuery(query, "tree", extra)
+    }
     case "/__control__/stats":
       return handleQuery(query, "stats")
     case "/__control__/snapshot": {

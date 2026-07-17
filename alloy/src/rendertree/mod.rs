@@ -12,7 +12,7 @@ pub use kinds::{
 };
 pub use layout::{LayoutContext, LayoutData};
 pub use platform::PlatformContext;
-pub use tree::{NodeSnapshot, RenderTree};
+pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
 use std::cell::RefCell;
