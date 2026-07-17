@@ -10,11 +10,15 @@
 use bytes::Bytes;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::cache::Cache;
 use crate::stream::{to_byte_stream, ByteStream};
@@ -108,6 +112,62 @@ pub async fn do_fetch(
   })
 }
 
+/// Per-host concurrency cap for cached (asset-mode) fetches. Uncoordinated
+/// fetch floods (one per mounted image) slow every transfer and get clients
+/// rate-limited; disk hits bypass the limit, and plain `do_fetch` traffic is
+/// deliberately not throttled (API calls, long-polls, and streams must never
+/// queue behind a politeness knob).
+///
+/// A permit is an async RAII value: waiters are pending futures (nothing
+/// blocks), and the permit rides the response body stream so it releases when
+/// the body completes or its consumer drops it.
+pub struct HostLimits {
+  max_per_host: usize,
+  hosts: RefCell<HashMap<String, Arc<Semaphore>>>,
+}
+
+impl HostLimits {
+  pub fn new(max_per_host: usize) -> Self {
+    Self { max_per_host, hosts: RefCell::new(HashMap::new()) }
+  }
+
+  /// Wait for a slot on `host`. The returned permit frees the slot on drop.
+  pub async fn acquire(&self, host: &str) -> OwnedSemaphorePermit {
+    let semaphore = self
+      .hosts
+      .borrow_mut()
+      .entry(host.to_string())
+      .or_insert_with(|| Arc::new(Semaphore::new(self.max_per_host)))
+      .clone();
+    semaphore.acquire_owned().await.expect("host semaphore never closes")
+  }
+}
+
+/// The per-host key: host plus effective port, so `http://x` and `https://x`
+/// count as the same endpoint family only when their ports match.
+fn host_key(url: &str) -> Option<String> {
+  let parsed = reqwest::Url::parse(url).ok()?;
+  let host = parsed.host_str()?;
+  match parsed.port_or_known_default() {
+    Some(port) => Some(format!("{host}:{port}")),
+    None => Some(host.to_string()),
+  }
+}
+
+/// Carries the host permit for the lifetime of the response body.
+struct LimitedStream {
+  inner: ByteStream,
+  _permit: OwnedSemaphorePermit,
+}
+
+impl Stream for LimitedStream {
+  type Item = Result<Bytes, io::Error>;
+
+  fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    self.get_mut().inner.as_mut().poll_next(cx)
+  }
+}
+
 /// Disk-cache policy for `do_fetch_cached`. The uncached default is the
 /// caller using plain `do_fetch` instead.
 #[derive(Clone, Copy, PartialEq)]
@@ -133,7 +193,8 @@ struct CacheMeta {
 /// `do_fetch` with an explicit disk-cache policy. Only GET requests with 2xx
 /// responses are cached, keyed by the request url; anything else degrades to
 /// a plain `do_fetch`. Stored bodies write through as the consumer drains the
-/// response and commit only on clean completion (see `Cache::store`).
+/// response and commit only on clean completion (see `Cache::store`). Cache
+/// misses queue on the per-host limit; disk hits bypass it.
 pub async fn do_fetch_cached(
   client: Rc<reqwest::Client>,
   method: &str,
@@ -142,6 +203,7 @@ pub async fn do_fetch_cached(
   body: Option<reqwest::Body>,
   cache: Rc<Cache>,
   mode: CacheMode,
+  limits: Rc<HostLimits>,
 ) -> Result<ResponseData, String> {
   if method != "GET" {
     return do_fetch(client, method, url, headers, body).await;
@@ -161,11 +223,20 @@ pub async fn do_fetch_cached(
       }
     }
   }
+  let permit = match host_key(url) {
+    Some(host) => Some(limits.acquire(&host).await),
+    // An unparsable url: skip the limit and let do_fetch produce the error.
+    None => None,
+  };
   let resp = do_fetch(client, method, url, headers, body).await?;
-  if !(200..300).contains(&resp.status) {
-    return Ok(resp);
-  }
   let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body } = resp;
+  let resp_body = match permit {
+    Some(permit) => Box::pin(LimitedStream { inner: resp_body, _permit: permit }) as ByteStream,
+    None => resp_body,
+  };
+  if !(200..300).contains(&status) {
+    return Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body });
+  }
   let meta = CacheMeta {
     status,
     status_text: status_text.clone(),

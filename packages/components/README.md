@@ -167,8 +167,11 @@ Accepts all pointer event props, plus:
 ### Image
 
 Loads and displays an image from a URL or raw bytes. URL loads are shared
-runtime-wide: mounts of the same URL reuse one fetch and one texture, at most
-four fetches run at once, and a failed URL is not refetched for the session.
+runtime-wide: mounts of the same URL reuse one fetch and one texture, and the
+bytes are cached on disk (fetched with `cache: "force-cache"` - no freshness
+check, so use versioned URLs for content that changes). The runtime keeps
+concurrent asset fetches polite with a per-host limit; a failed load rejects
+the mounts sharing it and a later remount retries.
 
 ```jsx
 import { Image } from "@solidrt/components"

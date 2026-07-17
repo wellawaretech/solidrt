@@ -53,9 +53,9 @@ timestamp: 2026-07-13T00:00:00Z
 - [Engine-side HTTP disk cache](engine-http-cache.md) - explicit opt-in disk
   cache in the forge fetch layer (design decided 2026-07-17, see
   okf/plans/fetch-cache.md; the original cache-control framing is
-  superseded). Needed by earcraft (many production image fetches); the dev
+  superseded). Needed by a production app (many image fetches); the dev
   server's `--proxy-http` cache only covers dev behind the flag.
-  Status: planned.
+  Status: done (2026-07-17, stages 1+2; named futures in the plan).
 - [Generic home for cross-crate constants and configuration](shared-config-constants.md) -
   `.srt-data`, `.srt-cache.db`, the SolidRT/go identity, size caps: today
   per-site literals; wanted one defined place (config file?). Collects new

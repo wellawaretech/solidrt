@@ -60,6 +60,10 @@ interface RequestInit {
    *
    * Only GET requests with 2xx responses are cached, keyed by URL; on other
    * methods the option is ignored. Unknown values throw.
+   *
+   * Cached fetches queue on a small per-host concurrency limit so asset
+   * floods stay polite; disk hits and plain (uncached) fetches are never
+   * throttled.
    */
   cache?: "force-cache" | "reload" | "default" | "no-store" | "no-cache"
 }

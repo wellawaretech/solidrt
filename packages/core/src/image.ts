@@ -26,49 +26,24 @@ export type ImageSource = string | Uint8Array
 
 // Shared loader for URL sources. Every mount of the same URL shares one
 // fetch/decode/texture (refcounted; the texture is destroyed when the last
-// mount releases it). Failed loads stay cached for the session so remounts
-// do not re-hammer a dead or rate-limited endpoint. Uint8Array sources
-// bypass all of this: no key, per-mount texture.
+// mount releases it). Byte caching and fetch politeness live below, in the
+// runtime's fetch layer (disk cache + per-host limit); this map exists for
+// what a byte cache cannot provide, sharing the decoded GPU texture.
+// Uint8Array sources bypass all of this: no key, per-mount texture.
 type ImageEntry = {
   refs: number
   texture: number
-  failed: boolean
   promise: Promise<number>
 }
 
 let imageCache = new Map<string, ImageEntry>()
 
-// Uncoordinated fetch floods (one per mounted image) slow every transfer and
-// get clients rate-limited; a small global gate keeps loads polite.
-const MAX_CONCURRENT_FETCHES = 4
-let activeFetches = 0
-let fetchWaiters: (() => void)[] = []
-
-async function acquireFetchSlot(): Promise<void> {
-  if (activeFetches < MAX_CONCURRENT_FETCHES) {
-    activeFetches++
-    return
-  }
-  await new Promise<void>(resolve => fetchWaiters.push(resolve))
-  activeFetches++
-}
-
-function releaseFetchSlot(): void {
-  activeFetches--
-  let next = fetchWaiters.shift()
-  if (next) next()
-}
-
 async function loadImage(url: string): Promise<number> {
-  await acquireFetchSlot()
-  let bytes: Uint8Array
-  try {
-    let res = await fetch(url)
-    if (!res.ok) throw new Error(`Image fetch failed: HTTP ${res.status} for ${url}`)
-    bytes = await res.bytes()
-  } finally {
-    releaseFetchSlot()
-  }
+  // Images are assets: cache to disk, no freshness. Use a versioned URL (or
+  // fetch + decodeImage manually) when a URL's content must be re-checked.
+  let res = await fetch(url, { cache: "force-cache" })
+  if (!res.ok) throw new Error(`Image fetch failed: HTTP ${res.status} for ${url}`)
+  let bytes = await res.bytes()
   let decoded: DecodedImage
   try {
     decoded = decodeImage(bytes)
@@ -81,7 +56,7 @@ async function loadImage(url: string): Promise<number> {
 function acquireImage(url: string): ImageEntry {
   let entry = imageCache.get(url)
   if (!entry) {
-    let e: ImageEntry = { refs: 0, texture: -1, failed: false, promise: undefined as never }
+    let e: ImageEntry = { refs: 0, texture: -1, promise: undefined as never }
     e.promise = loadImage(url).then(
       id => {
         // Everyone released while the load was in flight: nothing owns the
@@ -95,7 +70,9 @@ function acquireImage(url: string): ImageEntry {
         return id
       },
       err => {
-        e.failed = true
+        // Concurrent mounts shared this rejection; dropping the entry lets a
+        // later remount retry (a transient failure recovers with the network).
+        imageCache.delete(url)
         throw err
       },
     )
@@ -114,7 +91,6 @@ function releaseImage(url: string): void {
   if (!entry) return
   entry.refs--
   if (entry.refs > 0) return
-  if (entry.failed) return
   if (entry.texture >= 0) {
     destroyTexture(entry.texture)
     imageCache.delete(url)
@@ -134,9 +110,11 @@ function releaseImage(url: string): void {
  * width/height is needed unless you want to scale it.
  *
  * URL loads are shared: mounts of the same URL reuse one fetch and one texture
- * (freed when the last user is disposed), at most four fetches run at once,
- * and a failed URL stays failed for the session instead of refetching per
- * mount.
+ * (freed when the last user is disposed). The bytes are fetched with
+ * `cache: "force-cache"` - images are assets, cached on disk with no
+ * freshness check - so use a versioned URL when the content behind a URL can
+ * change. A failed load rejects every mount sharing it; a later remount
+ * retries.
  *
  * For bytes you already hold (a `with { type: "binary" }` import, or anything in
  * memory) this suspends needlessly: `decodeImage` + `createTexture` are both

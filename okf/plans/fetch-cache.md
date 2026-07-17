@@ -1,7 +1,7 @@
 ---
 type: plan
 title: Fetch disk cache (explicit opt-in, forge fetch core)
-status: stage 1 done
+status: done (stages 1+2; named futures open)
 timestamp: 2026-07-17T00:00:00Z
 ---
 
@@ -71,7 +71,7 @@ Deliberate non-goals, to state in the docs as "what this is not":
   lattice, and everything above ("images only" restriction rejected).
 - Store: one file per entry keyed by URL hash, small metadata header (URL,
   status, response headers), in the per-app data root (`.srt-data` in dev -
-  which also fixes the kaas hot-reload refetch problem without
+  which also fixes the postmortem's hot-reload refetch problem without
   `--proxy-http`; the prod org/app path once the update-mechanism data roots
   land). No sqlite, no index file.
 - Eviction: LRU by file mtime, fixed size cap (default 256 MB) enforced
@@ -95,19 +95,36 @@ disk hit) verified. Interim locations resolved this way until the
 update-mechanism data roots land; the `SolidRT`/`go`/`.srt-data` literals
 are collected in okf/backlog/shared-config-constants.md.
 
-**Stage 2 - politeness moves down, core shrinks.** In-flight GET coalescing
-(two concurrent fetches of one URL share one network request) and a per-host
-concurrency limit in the same fetch layer. Then `packages/core/src/image.ts`
-deletes its 4-slot fetch gate and session failure cache, keeps only
-`decodeImage` plus the refcounted URL -> texture map (decode+upload dedupe is
-the irreducible JS part - a byte cache cannot provide texture sharing), and
-`createImage` passes `force-cache` by default (images are assets; the layer
-that knows chooses the policy).
+**Stage 2 - politeness moves down, core shrinks.** DONE 2026-07-17, with one
+scope change: GET coalescing was dropped (see named futures below). A
+per-host concurrency limit for cached fetches lives in the fetch layer
+(`HostLimits` in `forge/src/fetch.rs`: async RAII permits, the permit rides
+the response body stream so it releases when the body completes or is
+dropped; disk hits bypass it; plain `do_fetch` is deliberately never
+throttled - API calls, long-polls, and streams must not queue behind asset
+traffic). `packages/core/src/image.ts` deleted its 4-slot fetch gate and
+session failure cache, keeps `decodeImage` plus the refcounted URL ->
+texture map (decode+upload dedupe is the irreducible JS part - a byte cache
+cannot provide texture sharing), and `createImage` passes `force-cache`
+(images are assets; the layer that knows chooses the policy). Behavior
+change, deliberate: a failed URL now retries on remount instead of staying
+failed for the session (recovers with the network; the per-host cap bounds
+the damage). E2e verified: cached peak = limit, plain fetches unthrottled,
+disk hits bypass.
 
 **Deferred until a need shows up:** cap-size knob, opt-in `maxAge`,
 revalidation.
 
 **Named futures** (recorded so later work does not invent vocabulary):
+
+- In-flight GET coalescing (two concurrent cached fetches of one URL share
+  one network request). Dropped from stage 2: core's refcounted image map
+  already coalesces the motivating path (mounts of one URL share one fetch),
+  and a naive fetch-layer coalescer that waits on the first request's cache
+  commit would make one caller's fetch hang on another caller's body
+  consumption. The correct shape is browser-style response sharing - a
+  waiter streams the in-progress entry file as it grows - which is real
+  machinery to build when a consumer without its own dedupe map needs it.
 
 - Cache management - clear, inspect size, evict one URL. Real even with the
   cache internal; likely surfaces as a dev/MCP concern first. Does not
@@ -124,6 +141,17 @@ revalidation.
   (`FluxEngineBuilder::dev_cache_dir`), lattice uses the generic client's
   SDL pref path (`SolidRT/go/cache`, resolution rule 3 in the
   update-mechanism research). Both interim; relocating a cache is free.
+- Mobile cache placement (noted 2026-07-17). On Android the SDL pref path is
+  the internal *files* dir, so the cache is reported as app data: the user's
+  "Clear cache" cannot remove it and the OS cannot reclaim it under storage
+  pressure. It belongs in `getCacheDir()` (small JNI call via the
+  ndk_context we already hold for p2p; SDL does not expose it). iOS analog:
+  purgeable content belongs in `Library/Caches` (excluded from backup), not
+  `Application Support`. Robustness is already covered - entries are
+  self-contained files and OS deletion at any moment just means a miss - so
+  this is purely placement, and moving a cache costs nothing. Fold into the
+  update-mechanism data-root resolution (its tree already separates
+  `cache/` from app data).
 - Whether `--proxy-http`'s dev-server cache keeps its own store or delegates
   once this exists (revisit after stage 1; keep it as-is meanwhile).
 - Exact default for the size cap (256 MB is a placeholder number, a const in

@@ -16,6 +16,12 @@ that exist today:
 - `.srt-cache.db` - the dev server proxy cache file (`packages/cli`).
 - `SolidRT` / `go` - the generic client's pref-path identity (lattice).
 - The fetch cache size cap (flux, placeholder 256 MB).
+- The per-host concurrency limit for cached fetches (flux,
+  `FETCHES_PER_HOST`).
+
+Convention until then: the value lives in exactly ONE code constant; docs
+and JSDoc describe the behavior without repeating the number, so making a
+knob configurable later means touching one site.
 
 Wanted: one generic place to define these - possibly a config file the
 runtime reads, possibly a shared constants module per language with a parity

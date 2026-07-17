@@ -8,10 +8,14 @@ use crate::plugins::standards::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::standards::http::HttpClient;
 use crate::plugins::standards::response::response_from_parts;
 use forge::cache::Cache;
-use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, ResponseData};
+use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, ResponseData};
 
 /// Placeholder cap until a real default is decided (plan open question).
 const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Browser convention for per-host connection concurrency; applies to cached
+/// (asset-mode) fetches only.
+const FETCHES_PER_HOST: usize = 6;
 
 /// Builder-provided fetch cache directory (`FluxEngineBuilder::cache_dir`).
 #[derive(Clone, JsLifetime)]
@@ -22,6 +26,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
 
   let cache: Option<Rc<Cache>> =
     ctx.userdata::<FetchCacheDir>().map(|dir| Rc::new(Cache::new(dir.0.clone(), FETCH_CACHE_MAX_BYTES)));
+  let limits = Rc::new(HostLimits::new(FETCHES_PER_HOST));
 
   let fetch_fn = Function::new(
     ctx.clone(),
@@ -42,6 +47,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
             },
           };
         let cache = cache.clone();
+        let limits = limits.clone();
 
         let method = opts
           .0
@@ -98,7 +104,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
 
         Ok(with_pending(&ctx, async move {
           match (cache, cache_mode) {
-            (Some(cache), Some(mode)) => do_fetch_cached(client, &method, &url, headers, body, cache, mode).await,
+            (Some(cache), Some(mode)) => do_fetch_cached(client, &method, &url, headers, body, cache, mode, limits).await,
             _ => do_fetch(client, &method, &url, headers, body).await,
           }
           .map(JsResponseData)
