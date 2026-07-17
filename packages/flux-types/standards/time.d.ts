@@ -7,15 +7,15 @@
  * {@link clearTimeout}.
  */
 declare function setTimeout(callback: () => void, ms: number): number
-/** Cancel a pending timeout. Throws on an unknown id. */
-declare function clearTimeout(id: number): void
+/** Cancel a pending timeout. Unknown or missing ids are ignored. */
+declare function clearTimeout(id?: number): void
 /**
  * Run `callback` every `ms` milliseconds. Returns a timer id for
  * {@link clearInterval}.
  */
 declare function setInterval(callback: () => void, ms: number): number
-/** Cancel a running interval. Throws on an unknown id. */
-declare function clearInterval(id: number): void
+/** Cancel a running interval. Unknown or missing ids are ignored. */
+declare function clearInterval(id?: number): void
 /**
  * Queue `callback` to run as a microtask: after the current job finishes, before
  * any timer fires.

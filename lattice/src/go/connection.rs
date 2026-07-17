@@ -633,6 +633,10 @@ fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
       "reusedPerSec": s.reused,
       "skippedPerSec": s.skipped,
       "textures": s.textures,
+      "nodes": s.node_count,
+      "measureCalls": s.measure_calls,
+      "paraShapes": s.para_shapes,
+      "dirtiedNodes": s.dirtied,
     },
   })
   .to_string()

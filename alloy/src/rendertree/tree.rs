@@ -391,8 +391,14 @@ impl RenderTree {
         break;
       }
       layout.cache.clear();
+      crate::rendertree::counters::note_dirtied();
       current = element.parent;
     }
+  }
+
+  /// Number of live nodes (attached and detached), for the stats counters.
+  pub fn node_count(&self) -> usize {
+    self.nodes.len()
   }
 
   /// Plain-data copy of the whole tree for external inspection (debug and dev

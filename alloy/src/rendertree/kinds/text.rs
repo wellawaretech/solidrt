@@ -132,6 +132,7 @@ impl Buildable for Text {
 
 impl Measurable for Text {
   fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
+    crate::rendertree::counters::note_measure_call();
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return Size { width: w, height: h };
     }
@@ -183,6 +184,7 @@ impl Text {
     if let Some((_, paragraph)) = cache.entries.iter().find(|(w, _)| *w == width) {
       return Some(paragraph.clone());
     }
+    crate::rendertree::counters::note_para_shape();
 
     let mut style = ParagraphStyle::default();
     let paint = self.paint.to_paint();

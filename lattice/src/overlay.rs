@@ -50,6 +50,13 @@ pub struct StatsSnapshot {
   pub reused: u32,
   pub skipped: u32,
   pub textures: usize,
+  /// Layout-activity counters from the last full rebuild, raw (not smoothed):
+  /// these are counts to reason about, not rates to watch. See
+  /// alloy::rendertree::counters.
+  pub node_count: usize,
+  pub measure_calls: u32,
+  pub para_shapes: u32,
+  pub dirtied: u32,
 }
 
 // Smoothing time constant (seconds): a value settles to ~63% of a step in this
@@ -105,6 +112,10 @@ pub struct Stats {
   skipped_acc: u32,
   reused: u32,
   skipped: u32,
+  // Layout activity of the last full rebuild (see StatsSnapshot); latched
+  // raw so an idle app keeps reporting its last rebuild's figures.
+  node_count: usize,
+  layout_counters: alloy::rendertree::counters::LayoutCounters,
 }
 
 impl Stats {
@@ -129,6 +140,8 @@ impl Stats {
       skipped_acc: 0,
       reused: 0,
       skipped: 0,
+      node_count: 0,
+      layout_counters: alloy::rendertree::counters::LayoutCounters::default(),
     };
     stats.sample();
     stats
@@ -210,6 +223,14 @@ impl Stats {
     self.phases.hover = smooth(self.phases.hover, phases.hover.as_secs_f32() * 1000.0, dt);
   }
 
+  /// Latch one rebuild's layout activity: live node count plus the counters
+  /// taken from the rendertree (measure calls, paragraph shapes, dirtied
+  /// caches since the previous rebuild).
+  pub fn record_layout_activity(&mut self, nodes: usize, counters: alloy::rendertree::counters::LayoutCounters) {
+    self.node_count = nodes;
+    self.layout_counters = counters;
+  }
+
   /// Plain-data copy of the current figures for readers outside the draw loop.
   /// `fps` and `textures` are owned by the platform/registry, so the caller
   /// supplies them.
@@ -228,6 +249,10 @@ impl Stats {
       reused: self.reused,
       skipped: self.skipped,
       textures,
+      node_count: self.node_count,
+      measure_calls: self.layout_counters.measure_calls,
+      para_shapes: self.layout_counters.para_shapes,
+      dirtied: self.layout_counters.dirtied,
     }
   }
 

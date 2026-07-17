@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onCleanup } from "@solidjs/signals"
 import { measureText, setFocus } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
-import type { LayoutProps } from "@solidrt/core"
+import type { Color, Gradient, LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -166,7 +166,7 @@ export function TextInput(props: TextInputProps) {
     }),
   )
 
-  let textStyle = (color: string) => ({
+  let textStyle = (color: Color | Gradient) => ({
     w: TEXT_SHAPE_WIDTH,
     fontSize: fontSize(),
     lineHeight: theme.text.body.lineHeight,

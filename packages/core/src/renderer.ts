@@ -1,5 +1,6 @@
 import { createRoot, onCleanup } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
+import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
 import { setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
@@ -264,12 +265,23 @@ export function render(code: () => any) {
  * The default mount is the window's flex root, so a portaled node that is not
  * `position: "absolute"` will take flow space and displace app content. Position
  * the portal root absolutely, or pass a `mount` target that does it for you.
+ *
+ * Returns null (nothing in place), so a component may return a portal directly.
+ *
+ * Portals cannot mount during the initial render: the default target is the
+ * window root, which exists only after the app's first build returns, so a
+ * portal created during that build throws. This is the contract, not a bug:
+ * portal content is overlay content, opened by a signal that starts false.
  */
-export function createPortal(node: ProxyNode, mount?: ProxyNode): void {
+export function createPortal(node: Element, mount?: ProxyNode): null {
   let target = mount ?? windowRoot
   if (!target) {
-    throw new Error("createPortal: no mount target (called before render()?)")
+    throw new Error("createPortal: no mount target (portals cannot mount during the initial render; open them after mount)")
   }
-  insertNode(target, node)
-  onCleanup(() => removeNode(target, node))
+  if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    throw new Error("createPortal: node must be a single built element")
+  }
+  insertNode(target, node as ProxyNode)
+  onCleanup(() => removeNode(target, node as ProxyNode))
+  return null
 }

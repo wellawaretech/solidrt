@@ -20,7 +20,9 @@ export interface ModalProps {
  * escapes the layout and stacking of its surrounding tree. It fills the window
  * with a dimming backdrop and centers `children` on top. Control visibility by
  * mounting/unmounting it, e.g. `<Show when={open()}><Modal .../></Show>`: the
- * portal's onCleanup removes it when the surrounding scope disposes.
+ * portal's onCleanup removes it when the surrounding scope disposes. The
+ * gating signal must start false: portals cannot mount during the app's
+ * initial render (see createPortal), so a modal visible at startup throws.
  *
  * Pressing the backdrop calls `onClose`; pressing the content does not. This
  * works because pointer events dispatch to the whole hit path with no

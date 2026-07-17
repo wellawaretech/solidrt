@@ -1,4 +1,5 @@
 pub mod composite;
+pub mod counters;
 pub mod hit;
 pub(crate) mod kinds;
 pub mod layout;

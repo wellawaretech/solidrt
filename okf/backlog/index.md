@@ -64,6 +64,17 @@ timestamp: 2026-07-13T00:00:00Z
   decided convention: throw in dev, ignore-with-warning in prod; the item is
   the missing runtime signal + a shared helper. Today everything is dev, so
   validation sites throw. Status: deferred.
+- [Portals cannot mount during the initial render](portal-initial-mount.md) -
+  a portal visible at first mount throws "no mount target" (windowRoot is set
+  only after the initial build). Decided: by design, documented in
+  createPortal/Modal doc comments + clearer error; no fix. Status: done
+  (2026-07-17).
+- [Release readiness checklist and pre-publish artifact checks](release-readiness-checks.md) -
+  no defined procedure exists between "tree looks good" and "on npm": wanted
+  a pre-build readiness gate (types/runtime lockstep, srt check clean, tests,
+  version placeholders intact) plus post-build artifact sanity checks (pack +
+  install-from-tarball smoke test, client binary launch) before the
+  irreversible npm publish. Status: deferred.
 - [Android APK packaging for flux:ffi libraries](ffi-android-apk-packaging.md) -
   ship an app's ffi libraries in an asset folder, packaged into the APK's
   native-lib dir and opened by path automatically (byte-loading from the dev

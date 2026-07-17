@@ -171,7 +171,13 @@ impl ModuleDef for SrtRenderModule {
       flux::gui::input::refresh_hover(&qtx, input_state.pointers(), input_state.modifiers());
       phases.hover = t.elapsed();
 
-      stats.borrow_mut().record_frame(phases);
+      {
+        let mut s = stats.borrow_mut();
+        s.record_frame(phases);
+        // Taken after paint so the counters cover the whole rebuild (paint
+        // shapes paragraphs too), plus the writes that led into it.
+        s.record_layout_activity(tree.0.borrow().node_count(), rendertree::counters::take());
+      }
 
       if stats_on {
         stats.borrow_mut().draw(
