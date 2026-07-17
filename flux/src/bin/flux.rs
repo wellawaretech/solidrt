@@ -28,6 +28,6 @@ async fn main() {
     }),
   };
 
-  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
+  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).dev_cache_dir().build();
   engine.eval_source(&source).await;
 }

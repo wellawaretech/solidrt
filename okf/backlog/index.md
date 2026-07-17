@@ -50,6 +50,20 @@ timestamp: 2026-07-13T00:00:00Z
   version / profile per connected client, so "does this binary have my
   engine fix" is checkable. Status: done (2026-07-15; build timestamp +
   HEAD-staleness comparison still deferred).
+- [Engine-side HTTP disk cache](engine-http-cache.md) - explicit opt-in disk
+  cache in the forge fetch layer (design decided 2026-07-17, see
+  okf/plans/fetch-cache.md; the original cache-control framing is
+  superseded). Needed by earcraft (many production image fetches); the dev
+  server's `--proxy-http` cache only covers dev behind the flag.
+  Status: planned.
+- [Generic home for cross-crate constants and configuration](shared-config-constants.md) -
+  `.srt-data`, `.srt-cache.db`, the SolidRT/go identity, size caps: today
+  per-site literals; wanted one defined place (config file?). Collects new
+  sites until designed. Status: deferred.
+- [Runtime dev/prod signal for the validation policy](dev-prod-validation-policy.md) -
+  decided convention: throw in dev, ignore-with-warning in prod; the item is
+  the missing runtime signal + a shared helper. Today everything is dev, so
+  validation sites throw. Status: deferred.
 - [Android APK packaging for flux:ffi libraries](ffi-android-apk-packaging.md) -
   ship an app's ffi libraries in an asset folder, packaged into the APK's
   native-lib dir and opened by path automatically (byte-loading from the dev

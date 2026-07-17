@@ -17,6 +17,15 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 futures-core = "0.3"
+# Entry file names for forge::cache (hash of the cache key). Already in the
+# tree (iroh depends on it).
+blake3 = "1"
+# ReaderStream: cached entry file -> ByteStream for forge::cache lookups.
+# Already in the tree (hyper-util/iroh depend on it).
+tokio-util = { version = "0.7", features = ["io"] }
+# The fetch cache's metadata blob (response snapshot stored next to the body).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 percent-encoding = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 path-clean = "1"

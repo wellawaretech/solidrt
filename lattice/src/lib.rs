@@ -335,6 +335,17 @@ fn ui_thread(
       }
     };
 
+    // Fetch disk cache location: the generic client's pref path, resolution
+    // rule 3 in okf/research/update-mechanism.md. Interim until the
+    // update-mechanism data roots land; relocating a cache costs nothing.
+    let fetch_cache_dir = match alloy::sdl3::filesystem::get_pref_path("SolidRT", "go") {
+      Ok(path) => Some(path.join("cache")),
+      Err(e) => {
+        log::warn!("No fetch cache dir ({e}); fetch caching disabled");
+        None
+      }
+    };
+
     loop {
       let render_tree = RenderTree::new();
       let platform = platform.clone();
@@ -350,6 +361,10 @@ fn ui_thread(
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
       let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE);
+      let builder = match &fetch_cache_dir {
+        Some(dir) => builder.cache_dir(dir.clone()),
+        None => builder,
+      };
       // The go client's logger also forwards lines to a connected dev server;
       // other builds log locally only.
       #[cfg(feature = "go")]

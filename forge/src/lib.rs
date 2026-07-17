@@ -7,6 +7,7 @@
 //! websocket, the shared byte-stream primitive, and the logging sink. The
 //! scripting host (flux) depends on this crate and supplies all the marshalling.
 
+pub mod cache;
 pub mod events;
 pub mod fetch;
 pub mod ffi;

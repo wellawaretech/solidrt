@@ -1384,6 +1384,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forge"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "bytes",
  "cc",
  "fastwebsockets",
@@ -1401,9 +1402,12 @@ dependencies = [
  "percent-encoding",
  "reqwest 0.12.28",
  "rusqlite",
+ "serde",
+ "serde_json",
  "socket2",
  "sysinfo",
  "tokio",
+ "tokio-util",
  "wasmi",
  "which",
 ]

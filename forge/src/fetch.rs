@@ -9,12 +9,14 @@
 
 use bytes::Bytes;
 use futures_core::Stream;
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 
+use crate::cache::Cache;
 use crate::stream::{to_byte_stream, ByteStream};
 
 /// The retained parts of an HTTP response: status, resolved url, headers, and a
@@ -104,4 +106,73 @@ pub async fn do_fetch(
     headers: resp_headers,
     body,
   })
+}
+
+/// Disk-cache policy for `do_fetch_cached`. The uncached default is the
+/// caller using plain `do_fetch` instead.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CacheMode {
+  /// Serve from disk if present, otherwise fetch and store. No freshness
+  /// model: the entry lives until evicted.
+  ForceCache,
+  /// Fetch fresh and overwrite the stored entry.
+  Reload,
+}
+
+/// The response snapshot stored as an entry's metadata blob (the body follows
+/// it in the entry file). `url` is the resolved url, which can differ from
+/// the request url the entry is keyed by (redirects).
+#[derive(Serialize, Deserialize)]
+struct CacheMeta {
+  status: u16,
+  status_text: String,
+  url: String,
+  headers: Vec<(String, String)>,
+}
+
+/// `do_fetch` with an explicit disk-cache policy. Only GET requests with 2xx
+/// responses are cached, keyed by the request url; anything else degrades to
+/// a plain `do_fetch`. Stored bodies write through as the consumer drains the
+/// response and commit only on clean completion (see `Cache::store`).
+pub async fn do_fetch_cached(
+  client: Rc<reqwest::Client>,
+  method: &str,
+  url: &str,
+  headers: Vec<(String, String)>,
+  body: Option<reqwest::Body>,
+  cache: Rc<Cache>,
+  mode: CacheMode,
+) -> Result<ResponseData, String> {
+  if method != "GET" {
+    return do_fetch(client, method, url, headers, body).await;
+  }
+  if mode == CacheMode::ForceCache {
+    if let Some((meta, cached_body)) = cache.lookup(url).await {
+      // A meta blob that does not parse is a corrupt or foreign entry:
+      // fall through to the network, which overwrites it.
+      if let Ok(m) = serde_json::from_slice::<CacheMeta>(&meta) {
+        return Ok(ResponseData {
+          status: m.status,
+          status_text: m.status_text,
+          url: m.url,
+          headers: m.headers,
+          body: cached_body,
+        });
+      }
+    }
+  }
+  let resp = do_fetch(client, method, url, headers, body).await?;
+  if !(200..300).contains(&resp.status) {
+    return Ok(resp);
+  }
+  let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body } = resp;
+  let meta = CacheMeta {
+    status,
+    status_text: status_text.clone(),
+    url: resolved_url.clone(),
+    headers: resp_headers.clone(),
+  };
+  let meta = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
+  let body = cache.store(url, meta, resp_body);
+  Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body })
 }

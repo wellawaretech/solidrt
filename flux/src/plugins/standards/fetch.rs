@@ -1,20 +1,47 @@
-use rquickjs::{function::MutFn, promise::Promised, Ctx, Function, IntoJs, Object, TypedArray, Value};
+use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
+use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::logger::CtxLogger;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::standards::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::standards::http::HttpClient;
 use crate::plugins::standards::response::response_from_parts;
-use forge::fetch::{channel_request_body, do_fetch, ResponseData};
+use forge::cache::Cache;
+use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, ResponseData};
+
+/// Placeholder cap until a real default is decided (plan open question).
+const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Builder-provided fetch cache directory (`FluxEngineBuilder::cache_dir`).
+#[derive(Clone, JsLifetime)]
+pub struct FetchCacheDir(#[qjs(skip_trace)] pub PathBuf);
 
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let globals = ctx.globals();
 
+  let cache: Option<Rc<Cache>> =
+    ctx.userdata::<FetchCacheDir>().map(|dir| Rc::new(Cache::new(dir.0.clone(), FETCH_CACHE_MAX_BYTES)));
+
   let fetch_fn = Function::new(
     ctx.clone(),
     MutFn::from(
-      |ctx: Ctx<'_>, url: String, opts: rquickjs::function::Opt<Object<'_>>| -> rquickjs::Result<Promised<_>> {
+      move |ctx: Ctx<'_>, url: String, opts: rquickjs::function::Opt<Object<'_>>| -> rquickjs::Result<Promised<_>> {
         let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
+
+        let cache_mode: Option<CacheMode> =
+          match opts.0.as_ref().and_then(|o| o.get::<_, Option<String>>("cache").ok().flatten()) {
+            None => None,
+            Some(v) => match v.as_str() {
+              "force-cache" => Some(CacheMode::ForceCache),
+              "reload" => Some(CacheMode::Reload),
+              // The rest of the standard vocabulary all means "just hit the
+              // network" in this model (no freshness, no revalidation).
+              "default" | "no-store" | "no-cache" => None,
+              _ => return Err(Exception::throw_message(&ctx, &format!("Unknown cache mode: {v}"))),
+            },
+          };
+        let cache = cache.clone();
 
         let method = opts
           .0
@@ -69,7 +96,13 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           })
           .unwrap_or_default();
 
-        Ok(with_pending(&ctx, async move { do_fetch(client, &method, &url, headers, body).await.map(JsResponseData) }))
+        Ok(with_pending(&ctx, async move {
+          match (cache, cache_mode) {
+            (Some(cache), Some(mode)) => do_fetch_cached(client, &method, &url, headers, body, cache, mode).await,
+            _ => do_fetch(client, &method, &url, headers, body).await,
+          }
+          .map(JsResponseData)
+        }))
       },
     ),
   )

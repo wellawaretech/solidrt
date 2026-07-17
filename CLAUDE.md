@@ -17,6 +17,11 @@ The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaS
 
 `flux/src/plugins/` has three layers: `standards/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers), `modules/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `gui/` (behind the `gui` feature) for the alloy-backed render/capture bindings. Put new flux-specific modules in `modules/`, not at the root. `js_error.rs`/`marshal.rs` at the root are the shared marshalling toolkit.
 
+# API design
+Look at standard (web) functionality through a solidrt lens: solidrt runs a single known application, not the whole internet. Keep the standard names and shapes, but simplify the semantics to what an app needs, and document the simplified contract plainly.
+
+API input validation: throw in dev, ignore-with-warning in prod. No runtime dev/prod signal exists yet (see `okf/backlog/dev-prod-validation-policy.md`), and everything running today is dev, so validation sites just throw.
+
 # Dependencies
 ## SDL
 SDL is accessed through the sdl3 Rust crate, which does not expose all SDL functionality. If something is not available in the sdl3 crate, check if it's available in SDL directly, and if so, add a wrapper function in `alloy/src/sdl_utils.rs`.
@@ -42,6 +47,7 @@ Long-lived notes live under `okf/`, one markdown file per item (OKF-style: YAML 
 - `okf/backlog/` - deferred features and ideas. Check there before starting speculative/non-trivial work.
 - `okf/analysis/` - point-in-time assessments of the codebase (crate/package reviews), dated in frontmatter.
 - `okf/research/` - open design research: surveys and direction notes that precede a backlog item or plan.
+- `okf/plans/` - concrete implementation plans for decided work: staging, decisions made, current status.
 
 # Versioning
 Every package/crate version in source is the `0.0.0` placeholder, including the intra-monorepo `@solidrt/*` deps in `packages/cli/scaffold/package.json`. The `.github/workflows/release.yml` action bumps all of these to the real version and pins the intra-monorepo deps at publish time. So a scaffolded project's `bun install` fails in-repo (nothing on npm matches `0.0.0`) but works against the published packages. Do not "fix" the `0.0.0` placeholders in source.

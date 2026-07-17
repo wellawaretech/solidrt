@@ -44,6 +44,24 @@ interface RequestInit {
   body?: BodyInit | null
   /** Request headers. */
   headers?: HeadersInit
+  /**
+   * Disk-cache policy, explicit and per call. flux never caches by default
+   * (like Node/Bun/Deno), and server cache headers (`cache-control`,
+   * `expires`, `etag`) are ignored entirely: the caller decides.
+   *
+   * - `"force-cache"`: serve from disk if stored, otherwise fetch and store.
+   *   No freshness, no TTL: the entry lives until evicted by the size cap or
+   *   overwritten by `"reload"`. Use for assets (images, audio, fonts);
+   *   versioned URLs are the normal way to handle updatable assets.
+   * - `"reload"`: fetch fresh and overwrite the stored entry.
+   * - `"default"`, `"no-store"`, `"no-cache"`: accepted, plain network
+   *   request (all equivalent to omitting the option here; there is no
+   *   freshness model to modulate).
+   *
+   * Only GET requests with 2xx responses are cached, keyed by URL; on other
+   * methods the option is ignored. Unknown values throw.
+   */
+  cache?: "force-cache" | "reload" | "default" | "no-store" | "no-cache"
 }
 
 /**
