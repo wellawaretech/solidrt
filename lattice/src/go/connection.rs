@@ -452,8 +452,27 @@ async fn try_serve(
             let id = json.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
             match json.get("kind").and_then(|k| k.as_str()) {
               Some("stats") => {
+                // The snapshot answers from the draw loop's latch; the mounted
+                // count is derived from the live tree on the JS thread when an
+                // engine runs, so mounted-vs-orphan is exact at query time (an
+                // orphan gap growing at a stable tree shape is an unmount leak).
                 let snap = *queries.stats.lock().expect("stats snapshot lock poisoned");
-                let _ = client.send(tokio_websockets::Message::text(stats_reply(id, snap))).await;
+                let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
+                match exec {
+                  Some(eh) => {
+                    let reply_tx = queries.outbound_tx.clone();
+                    eh.exec(move |ctx| {
+                      let counts = ctx.userdata::<flux::gui::tree::SharedRenderTree>().map(|t| {
+                        let tree = t.0.borrow();
+                        (tree.mounted_count(), tree.node_count())
+                      });
+                      let _ = reply_tx.send(stats_reply(id, snap, counts));
+                    });
+                  }
+                  None => {
+                    let _ = client.send(tokio_websockets::Message::text(stats_reply(id, snap, None))).await;
+                  }
+                }
               }
               Some("tree") => {
                 // The render tree lives on the JS thread; snapshot it there and
@@ -615,11 +634,12 @@ fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
 }
 
-fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
-  serde_json::json!({
-    "type": "result",
-    "id": id,
-    "data": {
+/// `counts` is (mounted, total) from the live tree when the query could run on
+/// the JS thread; the reply then carries mountedNodes and orphanNodes (total -
+/// mounted: nodes unreachable from the root, i.e. leaked or intentionally kept
+/// detached). Without an engine the two fields are simply absent.
+fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot, counts: Option<(usize, usize)>) -> String {
+  let mut data = serde_json::json!({
       "fps": s.fps,
       "cpuPct": round2(s.cpu_pct),
       "memBytes": s.mem_bytes,
@@ -639,9 +659,13 @@ fn stats_reply(id: u64, s: crate::overlay::StatsSnapshot) -> String {
       "dirtiedNodes": s.dirtied,
       "cacheGets": s.cache_gets,
       "cacheHits": s.cache_hits,
-    },
-  })
-  .to_string()
+  });
+  if let Some((mounted, total)) = counts {
+    let map = data.as_object_mut().expect("stats data is an object");
+    map.insert("mountedNodes".into(), mounted.into());
+    map.insert("orphanNodes".into(), total.saturating_sub(mounted).into());
+  }
+  serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
 }
 
 // Search results are for locating nodes, not dumping the app: enough for a

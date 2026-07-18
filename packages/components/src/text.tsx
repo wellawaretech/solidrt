@@ -1,4 +1,4 @@
-import { createMemo } from "@solidjs/signals"
+import { createMemo } from "@solidrt/core"
 import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps } from "./types"
 import { theme, type TextVariant } from "./theme"

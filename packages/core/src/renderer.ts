@@ -88,6 +88,46 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
   }
 }
 
+// ------ Leak sentinel (dev only) --------
+
+// A node created but never inserted is unreachable by the remove -> destroy
+// sweep, so it leaks permanently, natively and in the maps here. The usual
+// cause is an element-valued prop read more than once: every read builds a
+// fresh subtree and only the mounted one is ever freed. Rather than
+// bookkeeping on the hot create/insert paths, orphans are derived from the
+// proxy map itself: parentless, not the window root, and not awaiting the
+// destroy sweep. window.ts runs the scan on a rendered frame every few
+// seconds; dev bundles only (srt always defines process.env.NODE_ENV, so a
+// production bundle folds the check into a constant early return).
+const SENTINEL_INTERVAL_MS = 5000
+let sentinelDue = 0
+let warnedLeakTypes = new Set<string>()
+
+export function scanForOrphans(now: number): void {
+  if (process.env.NODE_ENV === "production") return
+  if (now < sentinelDue) return
+  sentinelDue = now + SENTINEL_INTERVAL_MS
+  let counts = new Map<string, number>()
+  let total = 0
+  for (let node of nodes.values()) {
+    if (node.parent !== undefined || node.elementType === "window" || pendingDestroy.has(node.id)) continue
+    total += 1
+    counts.set(node.elementType, (counts.get(node.elementType) ?? 0) + 1)
+  }
+  if (total === 0) return
+  let fresh = [...counts].filter(([type]) => !warnedLeakTypes.has(type))
+  if (fresh.length === 0) return
+  for (let [type] of fresh) warnedLeakTypes.add(type)
+  let list = fresh.map(([type, n]) => `<${type}> x${n}`).join(", ")
+  console.warn(
+    `Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` +
+      `The usual cause is reading an element-valued prop more than once (every read ` +
+      `builds a new subtree); read it once where it mounts, or resolve it with ` +
+      `children(). If these nodes are intentionally kept for later mounting, ignore ` +
+      `this. Element types already reported are not reported again.`,
+  )
+}
+
 // A property the native tree rejected must not take down the reactive system:
 // a typo'd or not-yet-implemented prop poisons only itself. Warn once per
 // element kind + property with a stack (the dev server remaps its frames to

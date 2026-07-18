@@ -1,3 +1,4 @@
+import { file } from "flux:fs"
 import { state } from "./state"
 import { rebuildAndBroadcast } from "./rebuild"
 import { remapPositions } from "./remap"
@@ -241,6 +242,27 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
       return Response.json({ ok: true, clients: state.clients.size })
+    }
+    case "/__control__/load": {
+      // Load (or switch) the app entry and push it: srt mcp's load tool.
+      // Moves the rebuild entry and the file-serving root like the repl's
+      // `load` command, then reuses the reload path, so a later /reload
+      // rebuilds the newly loaded file. The srt process is not told: a
+      // watcher started on the launch-time source keeps watching that file.
+      if (req.method !== "POST") return Response.json({ error: "Load requires POST" }, { status: 405 })
+      let entry = (await req.json().catch(() => null))?.entry
+      if (typeof entry !== "string" || !entry) {
+        return Response.json({ error: "Load requires { entry: <absolute source path> }" }, { status: 400 })
+      }
+      if (!(await file(entry).exists())) {
+        return Response.json({ error: `Entry not found: ${entry}` }, { status: 400 })
+      }
+      state.config.entry = entry
+      let cut = Math.max(entry.lastIndexOf("/"), entry.lastIndexOf("\\"))
+      if (cut > 0) state.sourceDir = entry.slice(0, cut)
+      let error = await rebuildAndBroadcast()
+      if (error) return Response.json({ error }, { status: 502 })
+      return Response.json({ ok: true, entry, clients: state.clients.size })
     }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })

@@ -52,15 +52,21 @@ let SAVE_TO_ARG = z
   )
   .optional()
 
-let TOOLS: { name: string; description: string; inputSchema: Record<string, z.ZodTypeAny> }[] = [
+// readOnly marks tools that only inspect state; it is surfaced as the
+// MCP-standard readOnlyHint annotation so agent harnesses that honor it can
+// auto-approve the inspection majority. load, reload, and call_debug mutate
+// the running app and stay unannotated.
+let TOOLS: { name: string; description: string; inputSchema: Record<string, z.ZodTypeAny>; readOnly?: boolean }[] = [
   {
     name: "list_clients",
+    readOnly: true,
     description:
       "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors) and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime. Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
     name: "get_logs",
+    readOnly: true,
     description:
       "Read console output and runtime errors from connected app clients. Returns entries (seq, at, client, level, text; consecutive identical entries are collapsed into one with a `repeats` count and the run's last seq), plus `latest` (the newest seq) and `generation` (identity of this server run; if it changed since your last call, your seq cursor and client ids are stale - start over from since 0). Pass `since` (a seq or `latest` from a previous call) to only get newer entries; pass `wait_ms` to hold the call until new output arrives, e.g. right after triggering a reload; pass `level`/`contains` to filter, e.g. level \"error\" to skip chatty output.",
     inputSchema: {
@@ -86,12 +92,14 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   },
   {
     name: "get_stats",
+    readOnly: true,
     description:
-      "Performance statistics from a running app client: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated), cacheGets/cacheHits (layout-cache lookups during the rebuild; a hit on a container skips its whole subtree, so a healthy incremental rebuild shows a near-100% hit rate - a low rate at scale means the layout cache is being defeated).",
+      "Performance statistics from a running app client: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count, mounted AND detached), mountedNodes/orphanNodes (live at query time: nodes reachable from the root vs not - orphans growing at a stable tree shape mean an unmount leak; absent when no engine is running), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated), cacheGets/cacheHits (layout-cache lookups during the rebuild; a hit on a container skips its whole subtree, so a healthy incremental rebuild shows a near-100% hit rate - a low rate at scale means the layout cache is being defeated).",
     inputSchema: { client: CLIENT_ARG },
   },
   {
     name: "get_render_tree",
+    readOnly: true,
     description:
       "Snapshot of a running app client's render tree: node id, kind, window-relative box (x, y, width, height), text content, and children. Use it to verify what the app actually rendered and where. Whole trees get large: prefer `query` to find nodes by kind or text first, then `root` + `depth` to inspect the region around a match. A node whose children were cut off by `depth` carries `childCount`; descend into it with root=<its id>.",
     inputSchema: {
@@ -118,6 +126,7 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   },
   {
     name: "get_snapshot",
+    readOnly: true,
     description:
       "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. The node must be currently mounted and have a non-zero layout box. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle.",
     inputSchema: {
@@ -128,12 +137,14 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   },
   {
     name: "get_gpu_resources",
+    readOnly: true,
     description:
       "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount, depth, attribute layout, bound sampler texture ids, last-applied uniform values). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
     inputSchema: { client: CLIENT_ARG },
   },
   {
     name: "get_texture",
+    readOnly: true,
     description:
       "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShader/createPipeline in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
     inputSchema: {
@@ -148,6 +159,7 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   },
   {
     name: "get_buffer",
+    readOnly: true,
     description:
       "Read back part of a GPU vertex buffer from a running app client, decoded to numbers. Returns values plus byteOffset/byteLength actually read and bufferByteLength. Reads are capped at 64 KiB per call; page through larger buffers with offset. Use it to verify geometry after a writeBuffer, e.g. the dynamic sprite tail of a vertex buffer.",
     inputSchema: {
@@ -160,6 +172,7 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   },
   {
     name: "list_debug",
+    readOnly: true,
     description:
       "List the debug commands the running app registered via registerDebug from srt:dev. Returns the command names; call one with call_debug. Empty when the app registered none.",
     inputSchema: { client: CLIENT_ARG },
@@ -179,6 +192,14 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
     description:
       "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. Follow with get_logs to see runtime output from the reloaded app.",
     inputSchema: {},
+  },
+  {
+    name: "load",
+    description:
+      "Load an app entry: bundle the given .tsx/.jsx source file and push it to every connected client, replacing whatever is running. Use it when the dev server has no app loaded yet, or to switch to a different app; later reload calls rebuild this entry. Returns the number of clients loaded, or a build error if the source failed to compile.",
+    inputSchema: {
+      entry: z.string().describe("App entry source file to load (relative paths resolve against the project root)"),
+    },
   },
 ]
 
@@ -212,6 +233,12 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "reload":
       return control("/reload", "POST")
+    case "load": {
+      if (typeof args?.entry !== "string" || !args.entry) return { ok: false, message: "load requires an entry path" }
+      // Resolved here in the bridge: this process runs at the project root,
+      // the dev server may not.
+      return control("/load", "POST", { entry: resolve(args.entry) })
+    }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
       let params = new URLSearchParams({ node: String(args.nodeId) })
@@ -286,7 +313,11 @@ export async function runMcpCommand() {
   for (let tool of TOOLS) {
     server.registerTool(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema },
+      {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.readOnly ? { readOnlyHint: true } : undefined,
+      },
       async (args: any) => toContent(tool.name, await callTool(tool.name, args ?? {}), args),
     )
   }

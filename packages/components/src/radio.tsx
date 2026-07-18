@@ -1,4 +1,4 @@
-import { createSignal, createContext, useContext, Show } from "@solidrt/core"
+import { createSignal, createContext, useContext, Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"
@@ -72,7 +72,10 @@ export function Radio(props: RadioProps) {
   let selected = () => ctx.value() === props.value
   let disabled = () => props.disabled || ctx.disabled()
   let ringColor = () => (selected() ? theme.color.primary : theme.color.border)
-  let isText = () => typeof props.children === "string" || typeof props.children === "number"
+  // Resolved once via children(): the typeof probe and the mount sites must
+  // share one build - reading the raw getter again would orphan native nodes.
+  let resolved = children(() => props.children)
+  let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
 
   let ring = () => Math.round(RING * densityScale())
   // Inner dot inset as a fraction of the ring, so it scales with the density.
@@ -91,9 +94,9 @@ export function Radio(props: RadioProps) {
           <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} color={theme.color.primary} />
         </Show>
       </view>
-      <Show when={isText()} fallback={props.children}>
+      <Show when={isText()} fallback={resolved()}>
         <text color={theme.color.text} {...typeStyle("body")}>
-          {props.children}
+          {resolved()}
         </text>
       </Show>
     </Pressable>

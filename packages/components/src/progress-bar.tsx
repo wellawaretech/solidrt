@@ -1,5 +1,4 @@
-import { createSignal } from "@solidjs/signals"
-import { onFrame, onLayout, getBoundingBox, Show } from "@solidrt/core"
+import { createSignal, onFrame, onLayout, getBoundingBox, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"

@@ -1,5 +1,4 @@
-import { createEffect, createSignal, onCleanup } from "@solidjs/signals"
-import { measureText, setFocus } from "@solidrt/core"
+import { createEffect, createSignal, onCleanup, measureText, setFocus } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { Color, Gradient, LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"

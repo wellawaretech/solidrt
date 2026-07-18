@@ -1,4 +1,4 @@
-import { createSignal } from "@solidjs/signals"
+import { createSignal, children } from "@solidrt/core"
 import type { LayoutProps, PointerEvent, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -26,7 +26,17 @@ export function Pressable(props: PressableProps) {
 
   let state = (): PressState => ({ pressed: pressed(), hovered: hovered() })
   let style = () => (typeof props.style === "function" ? props.style(state()) : props.style)
-  let kids = () => (typeof props.children === "function" ? props.children(state()) : props.children)
+  // Element-valued props build a fresh native subtree on every read, and a
+  // subtree that is never inserted is never destroyed - probing the raw getter
+  // with typeof would orphan one full copy per evaluation. children() memoizes
+  // the resolve so probe and mount share one build; a render-prop child
+  // ((state) => ...) passes through it intact because flatten only unwraps
+  // zero-arg functions.
+  let resolved = children(() => props.children)
+  let kids = () => {
+    let c = resolved()
+    return typeof c === "function" ? c(state()) : c
+  }
 
   let handleDown = (e: PointerEvent) => {
     if (e.button != null && e.button !== 0) return

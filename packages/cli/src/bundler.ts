@@ -103,8 +103,10 @@ export type BundleResult = {
 // spawns. It never touches the ambient args/state singletons and never prints
 // progress (callers own that), so its stdout stays clean for subprocess use.
 export async function bundleWith(opts: BundleOptions): Promise<BundleResult | null> {
+  // Define values are parsed as expressions, so string values need embedded
+  // quotes - a bare word substitutes as an identifier and crashes at runtime.
   let define: Record<string, string> = {
-    "process.env.NODE_ENV": opts.dev ? "development" : "production",
+    "process.env.NODE_ENV": opts.dev ? '"development"' : '"production"',
   }
   if (opts.devBase) define.__SRT_DEV_BASE__ = opts.devBase
 

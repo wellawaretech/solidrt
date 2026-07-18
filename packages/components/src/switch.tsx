@@ -1,4 +1,4 @@
-import { createSignal } from "@solidjs/signals"
+import { createSignal } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { Pressable } from "./pressable"
 import { theme } from "./theme"

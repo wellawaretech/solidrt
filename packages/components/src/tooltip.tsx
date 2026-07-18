@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, env } from "@solidrt/core"
+import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, env, children } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -66,7 +66,10 @@ export function Tooltip(props: TooltipProps) {
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
     })
-    let isText = () => typeof props.content === "string" || typeof props.content === "number"
+    // Resolved once via children(): the typeof probe and the mount sites must
+    // share one build - reading the raw getter again would orphan native nodes.
+    let content = children(() => props.content)
+    let isText = () => typeof content() === "string" || typeof content() === "number"
     return createPortal(
       <view
         ref={(n: { id: number }) => (bubble = n)}
@@ -83,9 +86,9 @@ export function Tooltip(props: TooltipProps) {
         pointerEvents="none"
       >
         <d-rect color={theme.color.surfaceAlt} radius={theme.radius.sm} />
-        <Show when={isText()} fallback={props.content}>
+        <Show when={isText()} fallback={content()}>
           <text color={theme.color.text} {...typeStyle("body")}>
-            {props.content}
+            {content()}
           </text>
         </Show>
         <d-rect

@@ -1,5 +1,4 @@
-import { createSignal } from "@solidjs/signals"
-import { getBoundingBox, onLayout, setPointerCapture } from "@solidrt/core"
+import { createSignal, getBoundingBox, onLayout, setPointerCapture } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { densityScale } from "./policy"

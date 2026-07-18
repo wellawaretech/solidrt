@@ -3,6 +3,7 @@ import { requestFrame } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
+import { scanForOrphans } from "./renderer"
 
 // ------ Pointer capture -----------------
 
@@ -212,6 +213,7 @@ export function attachWindow(_nodeId: number) {
       for (let fn of frames.values()) fn(t, frame, refreshRate)
     }
     flush()
+    scanForOrphans(t)
     renderFrame()
   }
 

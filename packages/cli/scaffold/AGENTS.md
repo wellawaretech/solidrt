@@ -109,6 +109,14 @@ Authoritative references ship inside the installed packages - read them:
     createPortal content) that is visible at first mount throws "no mount
     target". Gate it behind a signal that starts false and open it after
     startup - overlay content is opened, not born open.
+17. An element-valued prop (children, a content/icon slot) compiles to a
+    getter that builds a fresh native subtree on EVERY read, and a subtree
+    that is never inserted is never freed - native nodes are not garbage
+    collected, so what is only wasted work in DOM Solid is a permanent
+    memory leak here. Read such props exactly once, at the place they are
+    mounted. To inspect children (a typeof probe, counting), resolve them
+    first with the children() helper (re-exported from @solidrt/core) and
+    probe the resolved memo - never `typeof props.children` on the raw prop.
 
 ## Run / verify
 
@@ -161,9 +169,32 @@ its tools over guessing at runtime state:
 - reload: rebuild from source and push to every client - THE dev loop is
   edit -> reload -> get_logs -> get_snapshot. reload surfaces build errors
   but not type errors; run `bunx srt check` for those.
+- load: bundle a given source file and push it to every client, replacing
+  the running app; later reloads rebuild that entry. Use it when the dev
+  server has no app loaded yet, or to switch apps without restarting srt.
 
 The tools need a running app: if list_clients is empty, ask the user to start
 `bunx srt run src/index.tsx`.
+
+- Permission prompts: agents typically ask approval per MCP tool. All of
+  these tools only talk to the local dev server the user started with
+  `bunx srt run` - nothing leaves the machine - so approving the server as
+  a whole is a reasonable default. If repeated prompts get in the way, do
+  not work around them; tell the user they can pre-approve the server in
+  their agent's settings (most agents have a per-server trust or allowlist
+  setting - in Claude Code, add "mcp__solidrt" to `permissions.allow` in
+  ~/.claude/settings.json to cover every solidrt project). This is the
+  user's call to make, once, in their own tooling.
+- Multiple clients: several clients may be attached (desktop window,
+  phone, tablet) with different sizes, display scales, and safe areas.
+  reload pushes to all of them, but call_debug / get_snapshot / log
+  cursors are per client, and interactive state does NOT sync - a flow
+  driven on one client leaves the others sitting on the initial screen,
+  which reads as a crash to a human holding that device. So: when driving
+  state via call_debug, send the same call to every client (or say which
+  client you are using); and before calling a visual change done,
+  snapshot each distinct form factor at least once - a layout that fits
+  one window can clip or overflow another.
 
 ## Debugging a running app (lessons that cost real time)
 

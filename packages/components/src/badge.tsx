@@ -1,4 +1,4 @@
-import { Show } from "@solidrt/core"
+import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { typeStyle, lightOnDark } from "./typography"
@@ -38,7 +38,10 @@ export function Badge(props: BadgeProps) {
   let bg = () => props.style?.backgroundColor ?? colors().bg
   let fg = () => props.style?.color ?? colors().fg
   let radius = () => props.style?.borderRadius ?? RADIUS
-  let isText = () => typeof props.children === "string" || typeof props.children === "number"
+  // Resolved once via children(): the typeof probe and the mount sites must
+  // share one build - reading the raw getter again would orphan native nodes.
+  let resolved = children(() => props.children)
+  let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
   let labelOnDark = () => lightOnDark(fg(), bg())
 
   return (
@@ -58,9 +61,9 @@ export function Badge(props: BadgeProps) {
       opacity={props.style?.opacity}
     >
       <d-rect color={bg()} radius={radius()} />
-      <Show when={isText()} fallback={props.children}>
+      <Show when={isText()} fallback={resolved()}>
         <text color={fg()} {...typeStyle("label", labelOnDark())}>
-          {props.children}
+          {resolved()}
         </text>
       </Show>
     </view>

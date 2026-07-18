@@ -1,4 +1,4 @@
-import { Show } from "@solidrt/core"
+import { Show, children } from "@solidrt/core"
 import { Pressable, type PressState } from "./pressable"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -55,7 +55,11 @@ export function Button(props: ButtonProps) {
         : colors().fill)
   let radius = () => props.style?.borderRadius ?? theme.radius.sm
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
-  let isText = () => typeof props.children === "string" || typeof props.children === "number"
+  // Resolved once via children(): reading the raw children getter builds a new
+  // subtree per read, so the typeof probe and the two mount sites below must
+  // share this single memoized build (an unmounted build leaks native nodes).
+  let resolved = children(() => props.children)
+  let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
   // The label's polarity against the idle fill: onPrimary on a saturated fill
   // is light-on-dark even in a light theme, so it needs the low-DPI weight
   // compensation there too.
@@ -92,9 +96,9 @@ export function Button(props: ButtonProps) {
         scale: (props.style?.scale ?? 1) * (s.pressed && policy.motion !== "none" ? 0.97 : 1),
       })}
     >
-      <Show when={isText()} fallback={props.children}>
+      <Show when={isText()} fallback={resolved()}>
         <text color={label()} {...typeStyle("body", labelOnDark())}>
-          {props.children}
+          {resolved()}
         </text>
       </Show>
     </Pressable>

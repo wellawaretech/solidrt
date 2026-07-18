@@ -1,4 +1,4 @@
-import { createMemo } from "@solidjs/signals"
+import { createMemo } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import qrcode from "qrcode-generator"
 
