@@ -483,17 +483,20 @@ pub fn run_context(
     std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
       let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
       assert!(!egl_display.is_null(), "no EGL display");
-      log::info!("[alloy] EGL display obtained");
 
       let ui_pbuffer = create_ui_pbuffer(egl_display, gl_context_ptr.0);
       make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
-      log::info!("[alloy] GL context made current on pbuffer");
 
       let gl = create_gl_context();
-      log::info!("[alloy] GL bindings loaded");
-
       let impeller_ctx = create_impeller_context();
-      log::info!("[alloy] Impeller context created");
+      unsafe {
+        log::info!(
+          "[alloy] GPU ready: {} | {} | {}",
+          gl.get_parameter_string(glow::VENDOR),
+          gl.get_parameter_string(glow::RENDERER),
+          gl.get_parameter_string(glow::VERSION)
+        );
+      }
 
       let gpu_ctx = Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, tx, wake));
       closure(gpu_ctx);

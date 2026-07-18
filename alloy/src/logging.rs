@@ -29,7 +29,6 @@ static SDL_LOGGER: SdlLogger = SdlLogger;
 
 pub fn install_logger() {
   log::set_logger(&SDL_LOGGER).ok();
-  let default_level = if cfg!(target_os = "android") { log::LevelFilter::Info } else { log::LevelFilter::Debug };
-  let level = std::env::var("SRT_LOG").ok().and_then(|s| s.parse().ok()).unwrap_or(default_level);
+  let level = std::env::var("SRT_LOG").ok().and_then(|s| s.parse().ok()).unwrap_or(log::LevelFilter::Info);
   log::set_max_level(level);
 }
