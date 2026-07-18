@@ -20,10 +20,12 @@ export interface ImageProps extends PointerProps {
 
 // Renders the fallback source when the main one failed. Its own <Errored>
 // keeps a broken fallback from escaping: the placeholder stays instead.
+// Both fallbacks here take the error argument: an arity >= 1 fallback tells
+// <Errored> the error is handled, so dev builds do not console.error it.
 function FallbackTexture(props: { src: ImageSource; width?: number; height?: number }) {
   let tex = createImage(() => props.src)
   return (
-    <Errored fallback={null}>
+    <Errored fallback={(_err: unknown) => null}>
       <texture src={tex()} width={props.width} height={props.height} />
     </Errored>
   )
@@ -79,7 +81,7 @@ export function Image(props: ImageProps) {
       ) : null}
       <Loading fallback={null}>
         <Errored
-          fallback={() =>
+          fallback={(_err: unknown) =>
             props.fallback != null ? <FallbackTexture src={props.fallback} width={texW()} height={texH()} /> : null
           }
         >

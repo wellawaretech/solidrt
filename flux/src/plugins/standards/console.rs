@@ -1,4 +1,4 @@
-use rquickjs::{Ctx, Function, Object, Value};
+use rquickjs::{Coerced, Ctx, Function, Object, Value};
 
 use crate::logger::CtxLogger;
 
@@ -15,9 +15,27 @@ fn format_value<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
     s.to_string().unwrap_or_default()
   } else if let Some(b) = val.as_bool() {
     b.to_string()
+  } else if let Some(obj) = val.as_object().filter(|o| o.is_error()) {
+    format_error(obj)
   } else {
     ctx.json_stringify(val.clone()).ok().flatten().and_then(|s| s.to_string().ok()).unwrap_or_else(|| "[object]".into())
   }
+}
+
+// Error objects have no enumerable own properties, so the JSON fallback would
+// render them as "{}"; format name, message, and stack instead.
+fn format_error(obj: &Object<'_>) -> String {
+  let get = |key: &str| obj.get::<_, Option<Coerced<String>>>(key).ok().flatten().map(|c| c.0);
+  let mut out = get("name").filter(|n| !n.is_empty()).unwrap_or_else(|| "Error".into());
+  if let Some(message) = get("message").filter(|m| !m.is_empty()) {
+    out.push_str(": ");
+    out.push_str(&message);
+  }
+  if let Some(stack) = get("stack").map(|s| s.trim_end().to_string()).filter(|s| !s.is_empty()) {
+    out.push('\n');
+    out.push_str(&stack);
+  }
+  out
 }
 
 fn console_debug<'js>(ctx: Ctx<'js>, args: rquickjs::function::Rest<Value<'js>>) {

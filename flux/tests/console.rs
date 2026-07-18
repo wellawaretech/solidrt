@@ -52,6 +52,23 @@ async fn console_log_no_args() {
 }
 
 #[tokio::test]
+async fn console_error_formats_error_objects() {
+  let out = run_source("console.error(new Error('boom'))").await;
+  let lines = out.lines_at(LogLevel::Error);
+  assert_eq!(lines.len(), 1);
+  assert!(lines[0].starts_with("Error: boom"), "unexpected format: {}", lines[0]);
+  assert!(lines[0].contains('\n'), "stack missing: {}", lines[0]);
+}
+
+#[tokio::test]
+async fn console_error_keeps_error_subclass_name() {
+  let out = run_source("console.error(new TypeError('bad'))").await;
+  let lines = out.lines_at(LogLevel::Error);
+  assert_eq!(lines.len(), 1);
+  assert!(lines[0].starts_with("TypeError: bad"), "unexpected format: {}", lines[0]);
+}
+
+#[tokio::test]
 async fn console_log_object_is_json() {
   let out = run_source("console.log({ a: 1 })").await;
   assert_eq!(out.lines_at(LogLevel::Log), vec![r#"{"a":1}"#]);
