@@ -59,6 +59,13 @@ export let state = {
   sourceDir: "",
   serverUrl: "",
   stats: false,
+  /**
+   * Whether srt's file watcher may auto-reload on source changes. Agents
+   * pause it (MCP watch tool -> /__control__/watch) while creating or
+   * editing files; a successful /reload or /load re-enables it. srt reads
+   * it via /__internal__/watch before acting on a change event.
+   */
+  watch: true,
   // Capture events from all connected clients share one clock (captureStartMs,
   // integer milliseconds) so they merge into one coherent timeline, tagged by
   // `device`. Streamed to disk as JSON Lines - see main.ts's "capture" handling.

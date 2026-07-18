@@ -241,6 +241,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
+      state.watch = true
       return Response.json({ ok: true, clients: state.clients.size })
     }
     case "/__control__/load": {
@@ -262,7 +263,22 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (cut > 0) state.sourceDir = entry.slice(0, cut)
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
+      state.watch = true
       return Response.json({ ok: true, entry, clients: state.clients.size })
+    }
+    case "/__control__/watch": {
+      // Pause/resume srt's auto-reload-on-save: the MCP watch tool. Latched
+      // here because the watcher lives in the srt process; it reads the flag
+      // via /__internal__/watch before acting on a change event. An agent
+      // pauses while creating or editing files so half-finished work is not
+      // pushed; a successful /reload or /load turns it back on.
+      if (req.method !== "POST") return Response.json({ error: "Watch requires POST" }, { status: 405 })
+      let enabled = (await req.json().catch(() => null))?.enabled
+      if (typeof enabled !== "boolean") {
+        return Response.json({ error: "Watch requires { enabled: <boolean> }" }, { status: 400 })
+      }
+      state.watch = enabled
+      return Response.json({ ok: true, enabled })
     }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })

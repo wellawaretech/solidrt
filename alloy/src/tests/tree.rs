@@ -152,6 +152,31 @@ fn destroy_node_frees_detached_subtree() {
 }
 
 #[test]
+fn mounted_count_excludes_orphans() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.root = Some(1);
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  // A node created but never inserted is live but not mounted.
+  tree.create_node(4, attached());
+  assert_eq!(tree.node_count(), 4);
+  assert_eq!(tree.mounted_count(), 3);
+
+  // A detached subtree stays live but leaves the mounted tree.
+  tree.detach_node(1, 2);
+  assert_eq!(tree.node_count(), 4);
+  assert_eq!(tree.mounted_count(), 1);
+
+  // Destroy reclaims the detached subtree; the orphan gap is what remains.
+  tree.destroy_node(2);
+  assert_eq!(tree.node_count(), 2);
+  assert_eq!(tree.mounted_count(), 1);
+}
+
+#[test]
 fn delete_node_removes_subtree() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());

@@ -55,8 +55,17 @@ let SAVE_TO_ARG = z
 // readOnly marks tools that only inspect state; it is surfaced as the
 // MCP-standard readOnlyHint annotation so agent harnesses that honor it can
 // auto-approve the inspection majority. load, reload, and call_debug mutate
-// the running app and stay unannotated.
-let TOOLS: { name: string; description: string; inputSchema: Record<string, z.ZodTypeAny>; readOnly?: boolean }[] = [
+// the running app and keep the default hints (destructive, not idempotent);
+// `annotations` overrides those defaults where a mutating tool is benign
+// (watch: a reversible, idempotent toggle). Every tool gets
+// openWorldHint: false - the bridge only ever talks to the local dev server.
+let TOOLS: {
+  name: string
+  description: string
+  inputSchema: Record<string, z.ZodTypeAny>
+  readOnly?: boolean
+  annotations?: { destructiveHint?: boolean; idempotentHint?: boolean }
+}[] = [
   {
     name: "list_clients",
     readOnly: true,
@@ -190,15 +199,24 @@ let TOOLS: { name: string; description: string; inputSchema: Record<string, z.Zo
   {
     name: "reload",
     description:
-      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. Follow with get_logs to see runtime output from the reloaded app.",
+      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. A successful reload re-enables the file watcher if you paused it with the watch tool. Follow with get_logs to see runtime output from the reloaded app.",
     inputSchema: {},
   },
   {
     name: "load",
     description:
-      "Load an app entry: bundle the given .tsx/.jsx source file and push it to every connected client, replacing whatever is running. Use it when the dev server has no app loaded yet, or to switch to a different app; later reload calls rebuild this entry. Returns the number of clients loaded, or a build error if the source failed to compile.",
+      "Load an app entry: bundle the given .tsx/.jsx source file and push it to every connected client, replacing whatever is running. Use it when the dev server has no app loaded yet, or to switch to a different app; later reload calls rebuild this entry. Returns the number of clients loaded, or a build error if the source failed to compile. A successful load re-enables the file watcher if you paused it with the watch tool.",
     inputSchema: {
       entry: z.string().describe("App entry source file to load (relative paths resolve against the project root)"),
+    },
+  },
+  {
+    name: "watch",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Pause or resume the dev server's automatic reload-on-save. The srt file watcher pushes a rebuild whenever app source changes on disk; call watch with enabled: false BEFORE creating or editing source files so your half-finished work is not pushed to the user's screens mid-burst, then apply everything with one explicit reload (a successful reload or load re-enables the watcher, so pause again before the next burst of file changes). The human's own saves auto-reload only while the watcher is enabled, so do not leave it paused when you stop working.",
+    inputSchema: {
+      enabled: z.boolean().describe("false pauses auto-reload-on-save, true resumes it"),
     },
   },
 ]
@@ -238,6 +256,10 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       // Resolved here in the bridge: this process runs at the project root,
       // the dev server may not.
       return control("/load", "POST", { entry: resolve(args.entry) })
+    }
+    case "watch": {
+      if (typeof args?.enabled !== "boolean") return { ok: false, message: "watch requires enabled: true or false" }
+      return control("/watch", "POST", { enabled: args.enabled })
     }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
@@ -316,7 +338,7 @@ export async function runMcpCommand() {
       {
         description: tool.description,
         inputSchema: tool.inputSchema,
-        annotations: tool.readOnly ? { readOnlyHint: true } : undefined,
+        annotations: { readOnlyHint: !!tool.readOnly, openWorldHint: false, ...tool.annotations },
       },
       async (args: any) => toContent(tool.name, await callTool(tool.name, args ?? {}), args),
     )

@@ -69,6 +69,7 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
   if (!loopback) return new Response("Forbidden", { status: 403 })
 
   if (path === "/__internal__/clients") return Response.json(clientList(true))
+  if (path === "/__internal__/watch" && req.method === "GET") return Response.json({ enabled: state.watch })
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 })
 
   switch (path) {
@@ -99,6 +100,12 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
         state.currentMap = null
       }
       sendTo(body.clients, JSON.stringify({ type: "stop" }))
+      return new Response("", { status: 204 })
+    }
+    case "/__internal__/watch": {
+      // The repl's `watch on|off`; agents use /__control__/watch instead.
+      let body = await req.json()
+      state.watch = !!body.enabled
       return new Response("", { status: 204 })
     }
     case "/__internal__/stats": {

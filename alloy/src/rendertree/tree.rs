@@ -401,6 +401,23 @@ impl RenderTree {
     self.nodes.len()
   }
 
+  /// Number of nodes reachable from the root. The difference to node_count()
+  /// is the orphan population: nodes created but never inserted, or detached
+  /// and never destroyed - a growing gap at a stable tree shape means an
+  /// unmount leak. Walks the mounted tree, so it is meant for on-demand
+  /// diagnostics (the stats query), not per-frame use.
+  pub fn mounted_count(&self) -> usize {
+    let Some(root) = self.root else { return 0 };
+    let mut count = 0;
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+      let Some(node) = self.try_node(id) else { continue };
+      count += 1;
+      stack.extend(node.children.iter().copied());
+    }
+    count
+  }
+
   /// Plain-data copy of the whole tree for external inspection (debug and dev
   /// tooling). Engine-free: the caller decides how to encode it. Boxes are
   /// window-relative (see bounding_box_viewport) and zero before the first

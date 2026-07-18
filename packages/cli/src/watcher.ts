@@ -1,7 +1,7 @@
 import { watch } from "node:fs"
 import { resolve, dirname } from "path"
 import { state, print, printErr } from "./util"
-import { buildReload, sendReload, showBuildFailure } from "./dev-server"
+import { buildReload, sendReload, showBuildFailure, watchAllowed } from "./dev-server"
 import { bundle } from "./bundler"
 
 let currentWatcher: ReturnType<typeof watch> | null = null
@@ -23,6 +23,11 @@ export function startWatcher() {
   currentWatcher = watch(watchDir, { recursive: true }, async (_event, filename) => {
     if (!filename) return
     if (!/\.(tsx?|jsx?)$/.test(filename)) return
+
+    if (!(await watchAllowed())) {
+      print(`[cli] Change detected: ${filename} (auto-reload paused by agent; "watch on" resumes)`)
+      return
+    }
 
     print(`[cli] Change detected: ${filename}`)
     let result = await bundle(state.source)

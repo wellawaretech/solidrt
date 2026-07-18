@@ -51,6 +51,26 @@ export async function sendStats(stats: boolean) {
   await post("/stats", { stats })
 }
 
+/** Latch the auto-reload flag on the server (repl `watch on|off`). */
+export async function sendWatch(enabled: boolean) {
+  await post("/watch", { enabled })
+}
+
+/**
+ * Whether the watcher may auto-reload: agents pause it via the MCP watch
+ * tool, latched on the server. Fails open so an unreachable server surfaces
+ * as a reload error, not a silently ignored change.
+ */
+export async function watchAllowed(): Promise<boolean> {
+  try {
+    let resp = await fetch(`${INTERNAL_BASE}/watch`)
+    if (!resp.ok) return true
+    return (await resp.json()).enabled !== false
+  } catch {
+    return true
+  }
+}
+
 export type ClientEntry = {
   id: number
   platform: string

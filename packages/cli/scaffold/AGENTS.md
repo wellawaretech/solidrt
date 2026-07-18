@@ -172,6 +172,11 @@ its tools over guessing at runtime state:
 - load: bundle a given source file and push it to every client, replacing
   the running app; later reloads rebuild that entry. Use it when the dev
   server has no app loaded yet, or to switch apps without restarting srt.
+- watch: pause (enabled: false) or resume the automatic reload-on-save.
+  Pause BEFORE creating or editing source files so half-finished work is
+  not pushed to the user's screens mid-burst; a successful reload or load
+  resumes it, so pause again before the next burst. Never leave it paused
+  when you stop working - the user's own saves rely on it.
 
 The tools need a running app: if list_clients is empty, ask the user to start
 `bunx srt run src/index.tsx`.
