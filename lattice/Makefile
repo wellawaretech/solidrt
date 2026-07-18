@@ -40,14 +40,7 @@ BSOD_JS  = $(CURDIR)/default-app/bsod.srt.js
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
-HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
-
-PLATFORM_x86_64-unknown-linux-gnu  = linux-x64-gnu
-PLATFORM_aarch64-unknown-linux-gnu = linux-arm64-gnu
-PLATFORM_aarch64-apple-darwin      = darwin-arm64
-PLATFORM_x86_64-pc-windows-msvc   = win32-x64-msvc
-HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
-HOST_DIST      = $(SRT_HOME)/dist/$(HOST_PLATFORM)
+include $(SRT_HOME)/platform.mk
 
 include Makefile.android
 ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
