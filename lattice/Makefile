@@ -43,6 +43,7 @@ SRT_HOME ?= $(abspath $(CURDIR)/..)
 HOST_TARGET := $(shell rustc -vV | sed -n 's/host: //p')
 
 PLATFORM_x86_64-unknown-linux-gnu  = linux-x64-gnu
+PLATFORM_aarch64-unknown-linux-gnu = linux-arm64-gnu
 PLATFORM_aarch64-apple-darwin      = darwin-arm64
 PLATFORM_x86_64-pc-windows-msvc   = win32-x64-msvc
 HOST_PLATFORM := $(PLATFORM_$(HOST_TARGET))
@@ -77,7 +78,7 @@ help:
 	@echo "  client               Build the client (default)"
 	@echo "  runtime              Build production runtime"
 	@echo "  all                  Build both client and runtime"
-	@echo "  dist-linux           Build both into packages/linux-x64-gnu/"
+	@echo "  dist-linux           Build both into packages/$(HOST_PLATFORM)/"
 	@echo ""
 	@echo "Android dev (single ABI=$(ANDROID_ABI)):"
 	@echo "  client-android       Build the client .so"

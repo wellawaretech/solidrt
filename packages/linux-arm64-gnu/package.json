@@ -1,0 +1,16 @@
+{
+  "name": "@solidrt/linux-arm64-gnu",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "SolidRT native binary for Linux arm64 (glibc)",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": [
+    "solidrt-go",
+    "solidrt",
+    "flux",
+    "fluxc",
+    "fluxrt",
+    "LICENSE"
+  ]
+}

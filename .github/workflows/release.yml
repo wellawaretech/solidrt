@@ -66,6 +66,42 @@ jobs:
             packages/linux-x64-gnu/fluxc
             packages/linux-x64-gnu/fluxrt
 
+  # Same recipe as build-linux on GitHub's arm64 runner: the Linux build is
+  # host-native, so the arm64 runner produces aarch64 binaries (Raspberry Pi
+  # 4/5 on a 64-bit OS, arm64 servers). ubuntu-22.04-arm keeps the same glibc
+  # 2.35 baseline (Raspberry Pi OS Bookworm ships 2.36).
+  build-linux-arm:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          key: ubuntu-22.04-arm
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: ./.github/actions/linux-system-deps
+
+      - uses: ./.github/actions/js-install
+
+      - name: Build
+        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-arm64-gnu
+          path: |
+            packages/linux-arm64-gnu/solidrt-go
+            packages/linux-arm64-gnu/solidrt
+            packages/linux-arm64-gnu/flux
+            packages/linux-arm64-gnu/fluxc
+            packages/linux-arm64-gnu/fluxrt
+
   build-darwin:
     runs-on: macos-14
     timeout-minutes: 90
@@ -192,14 +228,15 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: [build-linux, build-darwin, build-windows, build-android]
+    needs: [build-linux, build-linux-arm, build-darwin, build-windows, build-android]
     environment: release
     env:
       NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Single source of truth for which packages get version-bumped and published.
       PUBLISH_DIRS: >-
         packages/core packages/components packages/flux-types
-        packages/darwin-arm64 packages/linux-x64-gnu packages/win32-x64-msvc
+        packages/darwin-arm64 packages/linux-x64-gnu packages/linux-arm64-gnu
+        packages/win32-x64-msvc
         packages/android-arm64-v8a packages/android-armeabi-v7a
         packages/cli packages/create-solidrt
     steps:
@@ -280,7 +317,7 @@ jobs:
 
       - name: Restore executable bit on binaries
         run: |
-          for d in linux-x64-gnu darwin-arm64; do
+          for d in linux-x64-gnu linux-arm64-gnu darwin-arm64; do
             chmod +x packages/$d/solidrt-go packages/$d/solidrt \
               packages/$d/flux packages/$d/fluxc packages/$d/fluxrt
           done

@@ -1,6 +1,8 @@
 # lattice/Makefile.linux
 
-PKG_LINUX := $(CURDIR)/../packages/linux-x64-gnu
+# Host-native: dist-linux stages into the package matching the build host
+# (linux-x64-gnu on x86_64, linux-arm64-gnu on aarch64).
+PKG_LINUX := $(CURDIR)/../packages/$(HOST_PLATFORM)
 
 .PHONY: client runtime dist-linux
 

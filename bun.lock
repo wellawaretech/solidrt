@@ -46,6 +46,7 @@
       },
       "optionalDependencies": {
         "@solidrt/darwin-arm64": "workspace:*",
+        "@solidrt/linux-arm64-gnu": "workspace:*",
         "@solidrt/linux-x64-gnu": "workspace:*",
         "@solidrt/win32-x64-msvc": "workspace:*",
       },
@@ -93,6 +94,10 @@
     },
     "packages/flux-types": {
       "name": "@solidrt/flux-types",
+      "version": "0.0.0",
+    },
+    "packages/linux-arm64-gnu": {
+      "name": "@solidrt/linux-arm64-gnu",
       "version": "0.0.0",
     },
     "packages/linux-x64-gnu": {
@@ -209,6 +214,8 @@
     "@solidrt/darwin-arm64": ["@solidrt/darwin-arm64@workspace:packages/darwin-arm64"],
 
     "@solidrt/flux-types": ["@solidrt/flux-types@workspace:packages/flux-types"],
+
+    "@solidrt/linux-arm64-gnu": ["@solidrt/linux-arm64-gnu@workspace:packages/linux-arm64-gnu"],
 
     "@solidrt/linux-x64-gnu": ["@solidrt/linux-x64-gnu@workspace:packages/linux-x64-gnu"],
 

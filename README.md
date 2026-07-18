@@ -20,6 +20,7 @@ _SolidRT is in pre-alpha stage. Anything can and will be changed._
 **Platform packages**
 
 - `@solidrt/linux-x64-gnu` - Linux x64 (glibc)
+- `@solidrt/linux-arm64-gnu` - Linux arm64 (glibc)
 - `@solidrt/darwin-arm64` - macOS arm64
 - `@solidrt/win32-x64-msvc` - Windows x64 (MSVC)
 
