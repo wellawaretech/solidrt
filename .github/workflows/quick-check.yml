@@ -33,6 +33,10 @@ jobs:
             runner: ubuntu-22.04
             target: dist-linux
             timeout: 60
+          - platform: linux-arm
+            runner: ubuntu-22.04-arm
+            target: dist-linux
+            timeout: 60
           - platform: darwin
             runner: macos-14
             target: dist-darwin
@@ -60,7 +64,7 @@ jobs:
         name: Add MSYS2 tools to PATH
         run: echo "C:/msys64/usr/bin" >> $GITHUB_PATH
 
-      - if: matrix.platform == 'linux'
+      - if: startsWith(matrix.platform, 'linux')
         uses: ./.github/actions/linux-system-deps
 
       - if: matrix.platform == 'android'
