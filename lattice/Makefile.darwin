@@ -13,6 +13,17 @@ ANGLE_GLES       = $(DARWIN_DIST)/libGLESv2.dylib
 
 PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
 
+# Statically linked SDL contains @available checks that compile to
+# ___isPlatformVersionAtLeast calls. That symbol lives in clang's compiler-rt
+# builtins, which rustc's -nodefaultlibs link never pulls in; plain release
+# builds get it from Rust's compiler-builtins instead, but fat LTO
+# (release-opt) internalizes it away since no Rust code references it. Link
+# the archive explicitly so both profiles resolve it. Note RUSTFLAGS replaces
+# .cargo/config.toml's target rustflags entirely, so the @executable_path
+# rpath from there must be repeated here.
+CLANG_RT_OSX   := $(shell clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a
+DARWIN_RUSTFLAGS = RUSTFLAGS="-C link-arg=-Wl,-rpath,@executable_path -C link-arg=$(CLANG_RT_OSX)"
+
 .PHONY: client runtime dist-darwin angle-darwin
 
 angle-darwin:
@@ -52,12 +63,12 @@ endef
 
 client: $(DEFAULT_APP_JS) angle-darwin
 	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
+	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,$(PROFILE),solidrt-go)
 
 runtime: angle-darwin
 	@echo "Building RUNTIME macOS ($(PROFILE)) $(VERSION)"
-	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
+	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-darwin,runtime,$(PROFILE),solidrt)
 
 dist-darwin:
