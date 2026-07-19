@@ -53,6 +53,13 @@ pub fn paint_phase(
 
   layout_phase(tree, platform, alloy);
 
+  // The walk below replaces stale paint caches (dropping their Impeller
+  // textures and display lists) and rasterizes snapshot boundaries; hold the
+  // GL section lock so those releases never interleave with the render
+  // thread's composite/present GL section (observed: access violations inside
+  // ANGLE). Reentrant, so the Context methods called during the walk are fine.
+  let _gl = crate::context::lock_gl();
+
   let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = WH::new(width, height);
   build_recursive(tree, root_id, &mut ctx, builder);
@@ -290,6 +297,15 @@ fn snapshot_node<'a>(
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
 ) {
+  // Under ANGLE the render thread cannot draw a texture rasterized on the UI
+  // thread's Impeller context - the surface draw silently aborts and the
+  // whole frame presents black - so paint the subtree inline like a
+  // non-boundary node instead of caching it as a texture.
+  if !ctx.alloy.cross_context_textures_usable() {
+    record_node(scene, node_id, ctx, builder, Hoist::None);
+    return;
+  }
+
   let element = scene.node(node_id);
   let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
   let (width, height) = (size.width, size.height);

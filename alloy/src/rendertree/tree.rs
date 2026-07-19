@@ -19,6 +19,20 @@ pub struct RenderTree {
 // UI thread and never shared across threads.
 unsafe impl Send for RenderTree {}
 
+// Dropping the tree releases every node's paint cache - Impeller snapshot
+// textures and retained display lists whose deletion reaches the GL driver.
+// This happens on engine teardown (reload replaces the whole tree) while the
+// render thread may be inside its own GL section; serialize with it or the
+// deletes interleave with composite/present (observed: access violations
+// inside ANGLE on nearly every reload on Windows). See
+// okf/backlog/angle-cross-context-impeller-textures.md.
+impl Drop for RenderTree {
+  fn drop(&mut self) {
+    let _gl = crate::context::lock_gl();
+    self.nodes.clear();
+  }
+}
+
 impl RenderTree {
   pub fn new() -> Self {
     Self { nodes: HashMap::new(), root: None, revision: 0 }
@@ -212,6 +226,11 @@ impl RenderTree {
   /// draw_display_list copies commands into the enclosing recording - every
   /// boundary above it as well.
   pub fn invalidate_paint(&self, node_id: u64) {
+    // Dropping a cache releases GL-backed resources (Impeller snapshot
+    // textures, retained display lists). This runs on tree mutations outside
+    // the paint walk's GL section, so serialize with the render thread; see
+    // Element::drop and context::lock_gl.
+    let _gl = crate::context::lock_gl();
     let mut current = Some(node_id);
     while let Some(id) = current {
       let Some(element) = self.try_node(id) else {

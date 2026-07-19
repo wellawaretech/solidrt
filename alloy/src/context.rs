@@ -19,6 +19,12 @@ pub struct Context {
   // because wrap_fbo needs &mut while Context is shared behind Arc.
   gl: glow::Context,
   impeller_ctx: RefCell<ImpellerContext>,
+  // False when a texture created on this (UI) context cannot be drawn by the
+  // render thread's separate Impeller context: under ANGLE that draw silently
+  // aborts the entire surface frame, presenting the clear color (a black
+  // window with healthy fps). Snapshot boundaries check this and paint inline.
+  // See okf/backlog/angle-cross-context-impeller-textures.md.
+  cross_context_textures_usable: bool,
   pub textures: TextureRegistry,
   // Compiled shader targets (fullscreen fragment passes and vertex+fragment
   // pipelines), keyed by the texture id their output is registered under, so
@@ -153,10 +159,19 @@ impl Context {
     tx: mpsc::Sender<Frame>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
+    // Desktop GL drivers draw textures shared across contexts in a share group
+    // fine; ANGLE does not (see the field's comment). Detected once here so
+    // the paint walk can branch without querying GL.
+    let renderer = unsafe { gl.get_parameter_string(glow::RENDERER) };
+    let cross_context_textures_usable = !renderer.contains("ANGLE");
+    if !cross_context_textures_usable {
+      log::info!("[alloy] ANGLE renderer: snapshot boundaries will paint inline (cross-context textures unusable)");
+    }
     Context {
       backend,
       gl,
       impeller_ctx: RefCell::new(impeller_ctx),
+      cross_context_textures_usable,
       textures: TextureRegistry::new(),
       shaders: RefCell::new(HashMap::new()),
       buffers: RefCell::new(HashMap::new()),
@@ -169,6 +184,14 @@ impl Context {
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
     }
+  }
+
+  /// Whether a texture created on this (UI) context can be drawn by the
+  /// render thread's separate Impeller context. False under ANGLE, where such
+  /// a draw silently aborts the whole surface frame; callers with an inline
+  /// fallback (snapshot boundaries) must use it there.
+  pub fn cross_context_textures_usable(&self) -> bool {
+    self.cross_context_textures_usable
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass

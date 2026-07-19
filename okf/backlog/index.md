@@ -113,3 +113,10 @@ timestamp: 2026-07-13T00:00:00Z
   streak, exit(1) after two consecutive failed presents. Remaining:
   GetDeviceRemovedReason garnish on Windows, real context/resource recreation
   designed against the Android lifecycle. Status: partial.
+- [ANGLE cross-context Impeller textures / restart teardown crash](angle-cross-context-impeller-textures.md) -
+  the two Windows client killers found 2026-07-19: a snapshot boundary's
+  retained texture (rasterized on the UI ImpellerContext, drawn by the render
+  thread's) silently blacks the entire window frame under ANGLE while
+  offscreen captures stay perfect; and engine-restart teardown drops GL
+  resources outside lock_gl, crashing the client (AV in libGLESv2) on nearly
+  every reload. Status: open.

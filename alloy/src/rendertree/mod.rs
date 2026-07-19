@@ -275,6 +275,21 @@ pub struct Element {
   pub paint_cache: RefCell<Option<PaintCache>>,
 }
 
+// A dropped paint cache releases an Impeller snapshot texture or a retained
+// display list, and that deletion reaches the GL driver. Elements are dropped
+// on the UI thread outside the paint walk (unmounts, tree teardown), so take
+// the GL section lock for the release; reentrant, so drops that already run
+// under the paint walk's or RenderTree::drop's lock stay cheap. Cache-less
+// elements skip the lock entirely.
+impl Drop for Element {
+  fn drop(&mut self) {
+    if self.paint_cache.get_mut().is_some() {
+      let _gl = crate::context::lock_gl();
+      self.paint_cache.get_mut().take();
+    }
+  }
+}
+
 impl Element {
   pub fn with_layout(kind: ElementKind, style: Style) -> Self {
     Self {
