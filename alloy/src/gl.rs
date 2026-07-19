@@ -411,7 +411,17 @@ pub struct GlSurface {
   // textures; the wait and Impeller's draws share this context, so the GPU
   // orders the wait ahead of compositing.
   gl: glow::Context,
+  // Consecutive failed presents. A lost context / removed device fails every
+  // subsequent present, so a short streak confirms the loss (see present).
+  present_failures: u32,
 }
+
+// Consecutive failed presents that confirm the GL context is gone for good.
+// Two, not more: a demand-driven app may attempt very few presents after the
+// loss (observed frozen-window traces stopped at two), so a higher threshold
+// can leave a dead window open forever; one tolerated failure covers a
+// transient glitch.
+const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
 
 impl GlSurface {
   pub fn create(_window: &sdl3::video::Window, size: ISize) -> Result<Self, Box<dyn std::error::Error>> {
@@ -422,7 +432,7 @@ impl GlSurface {
 
     let gl = create_gl_context();
 
-    Ok(GlSurface { ctx, surface, gl })
+    Ok(GlSurface { ctx, surface, gl, present_failures: 0 })
   }
 }
 
@@ -435,7 +445,22 @@ impl RenderSurface for GlSurface {
   }
 
   fn present(&mut self, window: &sdl3::video::Window) {
-    window.gl_swap_window();
+    // Without this check a lost context / removed device leaves the app
+    // running normally while nothing reaches the screen (a frozen window with
+    // no message). There is no recovery path yet, so a confirmed loss exits
+    // instead: see okf/backlog/gpu-context-loss.md.
+    if crate::sdl_utils::gl_swap_window_checked(window) {
+      self.present_failures = 0;
+      return;
+    }
+    self.present_failures += 1;
+    if self.present_failures == 1 {
+      log::error!("[alloy] present failed: {}", crate::sdl_utils::sdl_error());
+    }
+    if self.present_failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
+      log::error!("[alloy] GPU context lost ({} consecutive failed presents), exiting", self.present_failures);
+      std::process::exit(1);
+    }
   }
 
   fn resize(&mut self, size: ISize) {

@@ -88,6 +88,7 @@ fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn Re
   }
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let phys = ISize::new((size.width as f32 * display_scale) as i64, (size.height as f32 * display_scale) as i64);
+    let _gl = crate::context::lock_gl();
     render_surface.resize(phys);
   }
 }
@@ -185,33 +186,39 @@ impl App {
       // Drain queued frames and present only the newest. Superseded frames'
       // GPU work is subsumed by the newer frame's fence (fences are monotonic
       // on the UI context), so their sync objects are released without waiting.
-      let mut newest: Option<Frame> = None;
       let mut disconnected = false;
-      loop {
-        match rx.try_recv() {
-          Ok(f) => {
-            if let Some(mut superseded) = newest.replace(f) {
-              render_surface.consume_fence(superseded.fence.take(), false);
+      {
+        // GL section (fence release through present); serialized against the
+        // UI thread's GL and released before event handling resumes below.
+        // See context::lock_gl.
+        let _gl = crate::context::lock_gl();
+        let mut newest: Option<Frame> = None;
+        loop {
+          match rx.try_recv() {
+            Ok(f) => {
+              if let Some(mut superseded) = newest.replace(f) {
+                render_surface.consume_fence(superseded.fence.take(), false);
+              }
+            }
+            Err(mpsc::TryRecvError::Empty) => break,
+            Err(mpsc::TryRecvError::Disconnected) => {
+              disconnected = true;
+              break;
             }
           }
-          Err(mpsc::TryRecvError::Empty) => break,
-          Err(mpsc::TryRecvError::Disconnected) => {
-            disconnected = true;
-            break;
-          }
         }
-      }
-      if let Some(mut sub) = newest {
-        fps_frame_count += 1;
-        // Wait on the GPU for the UI thread's frame work to finish before
-        // Impeller samples its textures (replaces the UI thread's glFinish).
-        render_surface.consume_fence(sub.fence.take(), true);
-        render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
-        render_surface.present(&window);
-        let time = start_time.elapsed().as_secs_f64();
-        event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
-        frame += 1;
-        last_frame_signal = Instant::now();
+        if let Some(mut sub) = newest {
+          fps_frame_count += 1;
+          // Wait on the GPU for the UI thread's frame work to finish before
+          // Impeller samples its textures (replaces the UI thread's glFinish).
+          render_surface.consume_fence(sub.fence.take(), true);
+          render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
+          render_surface.present(&window);
+          let time = start_time.elapsed().as_secs_f64();
+          event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+          frame += 1;
+          last_frame_signal = Instant::now();
+        }
       }
       if disconnected {
         break;

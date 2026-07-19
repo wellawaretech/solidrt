@@ -126,6 +126,25 @@ pub type CaptureDone = Box<dyn FnOnce(Result<CaptureInfo, String>)>;
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
+// All GL work is serialized process-wide: the UI thread's GL sections and the
+// render thread's composite/present funnel into one native device underneath
+// (a single D3D11 immediate context under ANGLE on Windows), and truly
+// concurrent shared-context access corrupts driver state there (observed:
+// in-process access violations in the NVIDIA user-mode driver and inside
+// ANGLE's state manager, wedged threads, DXGI device-removed). Mobile GLES
+// drivers have the same reputation, and a lock that only exists on some
+// platforms would leave the locked path undogfooded, so it is unconditional.
+// The GPU fence in `submit` is unrelated: it orders work on the GPU timeline,
+// this lock protects CPU-side driver state.
+static GL_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+
+/// Serialize a CPU-side GL section against the other thread's. Held per
+/// Context method on the UI thread and across composite+present on the render
+/// thread; reentrant so nested Context calls are fine.
+pub fn lock_gl() -> parking_lot::ReentrantMutexGuard<'static, ()> {
+  GL_LOCK.lock()
+}
+
 impl Context {
   pub fn new(
     backend: Backend,
@@ -198,6 +217,7 @@ impl Context {
   }
 
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
+    let _gl = lock_gl();
     // Fence every bit of GPU work this UI-thread frame queued (shader renders,
     // texture uploads, offscreen draws) so the render thread can order its
     // sampling after that work on the GPU timeline, instead of the UI thread
@@ -214,6 +234,7 @@ impl Context {
   }
 
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
+    let _gl = lock_gl();
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
       let gpu = GpuTexture::new(&self.gl, self.backend, size);
@@ -225,6 +246,7 @@ impl Context {
   }
 
   pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
+    let _gl = lock_gl();
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
       let gpu = GpuTexture::new(&self.gl, self.backend, size);
@@ -251,6 +273,7 @@ impl Context {
   /// up the new texture immediately; in-flight users of the old entry keep it
   /// alive until released.
   pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
+    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture::new(&self.gl, self.backend, size);
     gpu.upload(&self.gl, pixels, size);
@@ -262,6 +285,7 @@ impl Context {
   /// buffer holding multiple frames; `offset` selects the frame start. The
   /// frame must match the texture's dimensions exactly.
   pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
+    let _gl = lock_gl();
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height) = (entry.width(), entry.height());
     let frame_size = (width as usize) * (height as usize) * 4;
@@ -300,6 +324,7 @@ impl Context {
     params: &[(String, f32)],
     textures: &[(String, u64)],
   ) -> Result<u64, String> {
+    let _gl = lock_gl();
     let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src, textures.to_vec())?;
     let resolved = self.resolve_sampler_bindings(&shader);
     shader.render(&self.gl, params, &resolved);
@@ -319,6 +344,7 @@ impl Context {
   /// the caller must request a frame for the new pixels to reach the screen.
   /// Sampler inputs are re-resolved, so updated source textures are picked up.
   pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
+    let _gl = lock_gl();
     let shaders = self.shaders.borrow();
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     let resolved = self.resolve_sampler_bindings(shader);
@@ -330,6 +356,7 @@ impl Context {
   /// Buffer ids are their own space (not texture ids); pipelines reference the
   /// buffer via `PipelineSpec::buffer_id`.
   pub fn create_gpu_buffer(&self, data: &[u8]) -> Result<u64, String> {
+    let _gl = lock_gl();
     let buffer = crate::shader::GpuBuffer::new(&self.gl, data)?;
     let id = self.next_buffer_id.get();
     self.next_buffer_id.set(id + 1);
@@ -342,6 +369,7 @@ impl Context {
   /// with its last-applied params, so geometry-only changes reach the screen
   /// even when no new params arrive. The caller must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
+    let _gl = lock_gl();
     {
       let buffers = self.buffers.borrow();
       let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
@@ -361,6 +389,7 @@ impl Context {
   /// reference keeps the GL storage alive so they keep rendering stale
   /// geometry, but further writes to the id error.
   pub fn destroy_gpu_buffer(&self, id: u64) {
+    let _gl = lock_gl();
     if let Some(buffer) = self.buffers.borrow_mut().remove(&id) {
       buffer.destroy(&self.gl);
     }
@@ -371,6 +400,7 @@ impl Context {
   /// `create_shader_texture` (same id space; `update_shader_params`,
   /// `destroy_texture`, and `<texture src>` all apply).
   pub fn create_pipeline_texture(&self, spec: &PipelineSpec) -> Result<u64, String> {
+    let _gl = lock_gl();
     let mut attrs = Vec::with_capacity(spec.attributes.len());
     for (name, fmt) in spec.attributes {
       attrs.push((name.clone(), crate::shader::AttrFormat::parse(fmt)?));
@@ -428,6 +458,7 @@ impl Context {
   /// Set a pipeline texture's vertex draw count and re-render it with its
   /// last-applied params. The caller must request a frame.
   pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
+    let _gl = lock_gl();
     let shaders = self.shaders.borrow();
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     shader.set_draw_count(count)?;
@@ -476,6 +507,7 @@ impl Context {
 
   /// Read back part of a vertex buffer's contents by registry id.
   pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
+    let _gl = lock_gl();
     let buffers = self.buffers.borrow();
     let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
     buffer.read(&self.gl, byte_offset, len)
@@ -501,6 +533,7 @@ impl Context {
   /// ready for sampling. The texture is owned by Impeller (and the caller's
   /// handle), not by wgpu and not by the registry.
   pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
+    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
       Backend::Gl => {
@@ -529,6 +562,7 @@ impl Context {
   /// exact dimensions with no origin-specific knowledge. The intermediate
   /// padded texture drops here, so Impeller frees its GL name.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
+    let _gl = lock_gl();
     let texture = self.render_display_list_to_texture(dl, width, height)?;
     let pixels = self.read_texture(&texture, width, height)?;
     Ok(self.create_texture_from_pixels(width, height, &pixels))
@@ -545,6 +579,7 @@ impl Context {
 
   /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).
   pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
       Backend::Gl => gl::read_texture_pixels(&self.gl, texture, size),
@@ -558,6 +593,7 @@ impl Context {
   /// in-flight display list references keep the texture alive until they drop.
   /// For shader textures also destroys the GL program and FBO.
   pub fn destroy_texture(&self, id: u64) {
+    let _gl = lock_gl();
     self.textures.remove(id);
     if let Some(shader) = self.shaders.borrow_mut().remove(&id) {
       shader.destroy(&self.gl);
@@ -565,6 +601,7 @@ impl Context {
   }
 
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
+    let _gl = lock_gl();
     match gpu_texture.backend {
       Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx.borrow(), size),
       Backend::Vulkan => {

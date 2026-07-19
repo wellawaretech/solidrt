@@ -52,21 +52,25 @@ pub(crate) fn run_playback_loop(
       Err(_) => break,
     };
 
-    // Order the readback after the UI thread's frame work on the GPU.
-    render_surface.consume_fence(sub.fence.take(), true);
-    render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
+    {
+      // GL section; see context::lock_gl.
+      let _gl = crate::context::lock_gl();
+      // Order the readback after the UI thread's frame work on the GPU.
+      render_surface.consume_fence(sub.fence.take(), true);
+      render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
 
-    unsafe {
-      gl_bind_framebuffer(GL_READ_FRAMEBUFFER, 0);
-      gl_read_pixels(
-        0,
-        0,
-        width as i32,
-        height as i32,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        rgba.as_mut_ptr() as *mut std::ffi::c_void,
-      );
+      unsafe {
+        gl_bind_framebuffer(GL_READ_FRAMEBUFFER, 0);
+        gl_read_pixels(
+          0,
+          0,
+          width as i32,
+          height as i32,
+          GL_RGBA,
+          GL_UNSIGNED_BYTE,
+          rgba.as_mut_ptr() as *mut std::ffi::c_void,
+        );
+      }
     }
 
     write_png(&playback.output_prefix, frame, width, height, &rgba);

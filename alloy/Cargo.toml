@@ -44,6 +44,9 @@ sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-
 
 [dependencies]
 log = { workspace = true }
+# Process-wide GL serialization (see context::lock_gl). Reentrant because
+# Context methods nest; parking_lot's is const-constructible.
+parking_lot = "0.12"
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller
 # remains the renderer. glow is loader-based, so one entry covers all targets.
