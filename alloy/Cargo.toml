@@ -47,7 +47,7 @@ log = { workspace = true }
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller
 # remains the renderer. glow is loader-based, so one entry covers all targets.
-glow = "0.16"
+glow = "0.17"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
