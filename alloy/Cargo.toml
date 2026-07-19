@@ -55,7 +55,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
 # rqrr 3/9. ~3.4ms/frame with a code present, ~0.75ms without (desktop release).
-rxing = "0.9.1"
+# Default features off: they pull image with every format enabled (rav1e, exr,
+# webp, ...) into the whole workspace via feature unification. The luma helpers
+# we use need only decoders + multi_barcode_readers + qrcode; encoding_rs
+# covers non-UTF-8 QR payload character sets.
+rxing = { version = "0.9.1", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
 taffy = "0.12.1"

@@ -23,11 +23,8 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # Single source of truth for whether release builds ship the speech stack
-  # (Whisper + wake word). Set to '1' to re-enable. 32-bit Android (armeabi-v7a)
-  # is forced speech-free in lattice/Makefile regardless of this value.
-  SPEECH: '0'
+# Dist builds are always speech-free (no Whisper / wake word): lattice/Makefile
+# forces SPEECH=0 for every dist-* goal, so this workflow does not pass SPEECH.
 
 jobs:
   build-linux:
@@ -53,7 +50,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -89,7 +86,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -119,7 +116,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -168,10 +165,8 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build fat APK (arm64-v8a + x86_64)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}"
 
-      # 32-bit (armeabi-v7a) ships speech-free unconditionally: SPEECH is forced
-      # off for 32-bit ABIs in lattice/Makefile, so this omits the flag.
       - name: Build 32-bit APK (armeabi-v7a)
         run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
 
@@ -210,7 +205,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-windows VERSION="${GITHUB_REF_NAME#v}" SPEECH="${SPEECH}"
+        run: make dist-windows VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

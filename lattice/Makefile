@@ -3,13 +3,30 @@
 VERSION         ?= $(shell git describe --tags --always --dirty)
 SOLIDRT_VERSION  = SOLIDRT_VERSION="$(VERSION)"
 
-PROFILE            ?= release
-CARGO_PROFILE_FLAG  = $(if $(filter release,$(PROFILE)),--release,)
+PROFILE ?= release
+ifeq ($(PROFILE),release)
+  CARGO_PROFILE_FLAG = --release
+else ifeq ($(PROFILE),debug)
+  CARGO_PROFILE_FLAG =
+else
+  CARGO_PROFILE_FLAG = --profile $(PROFILE)
+endif
+
+# Dist (production) builds are always speech-free. This is the single source
+# of truth: any dist-* goal sets DIST=1, exports it to the recursive client/
+# runtime makes, and the override beats even a command-line SPEECH=1.
+ifneq ($(filter dist-%,$(MAKECMDGOALS)),)
+DIST = 1
+endif
+export DIST
+ifeq ($(DIST),1)
+override SPEECH = 0
+endif
 
 # Speech recognition (Whisper + wake word) is an opt-in cargo feature (not in
 # lattice's `default`), so a plain `cargo build` stays voice-free. This
-# Makefile's own default still turns it on for host builds; SPEECH=0 drops it
-# (no whisper-rs / livekit-wakeword). GO_FEATURES / RUNTIME_FEATURES are the
+# Makefile's own default still turns it on for host dev builds; SPEECH=0 drops
+# it (no whisper-rs / livekit-wakeword). GO_FEATURES / RUNTIME_FEATURES are the
 # resulting cargo feature flags for the two binaries (go = client, which
 # already pulls flux/compile; runtime = default minus go).
 #
@@ -83,6 +100,7 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=0 to build without speech recognition (default: on)."
+	@echo "dist-* targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
 	@echo "Default app:"
 	@echo "  default-app-bundle   Regenerate app.srt.js from app.tsx"

@@ -64,5 +64,5 @@ dist-windows:
 	cp $(HOST_DIST)/flux.exe $(PKG_WIN)/flux.exe
 	cp $(HOST_DIST)/fluxc.exe $(PKG_WIN)/fluxc.exe
 	cp $(HOST_DIST)/fluxrt.exe $(PKG_WIN)/fluxrt.exe
-	$(MAKE) runtime
+	$(MAKE) runtime PROFILE=release-opt
 	cp $(HOST_DIST)/solidrt.exe $(PKG_WIN)/solidrt.exe

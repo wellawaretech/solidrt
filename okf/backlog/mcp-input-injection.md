@@ -36,3 +36,13 @@ images.
 
 Safety: dev-server-only surface, same trust level as `reload` (which already
 pushes arbitrary code), so no new trust boundary.
+
+Round-2 additions (app-port feedback 2026-07-17, finding 10): also
+`{ type: "text", text: "g" }` events through the real TextInput path, and
+timed sequences with per-event `delayMs`
+(`[{text:"g"},{text:"o",delayMs:80},...]`) so realistic event rates are one
+call - agent round-trips (~1s each) cannot approximate a 10-keys/sec burst.
+This is the missing half of the verify loop: call_debug sets signals
+directly, bypassing focus/keys/TextInput, so "verified working" never covers
+the real input pipeline where latency lives. Pairs with the tracing items in
+[[mcp-agent-loop-improvements]].

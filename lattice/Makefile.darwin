@@ -69,5 +69,5 @@ dist-darwin:
 	cp $(HOST_DIST)/flux $(PKG_DARWIN)/flux
 	cp $(HOST_DIST)/fluxc $(PKG_DARWIN)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_DARWIN)/fluxrt
-	$(MAKE) runtime
+	$(MAKE) runtime PROFILE=release-opt
 	cp $(HOST_DIST)/solidrt $(PKG_DARWIN)/solidrt

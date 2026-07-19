@@ -7,6 +7,10 @@ timestamp: 2026-07-13T00:00:00Z
 
 # Backlog
 
+- [AVIF decoding in decodeImage](avif-decode.md) - the one practical web
+  format decodeImage lacks (png/jpeg/webp/gif/bmp/ico covered); pure-Rust
+  decode does not exist in the image crate, needs the dav1d C system dep.
+  Status: deferred.
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) - typed (vec/mat4)
   uniforms, index buffers, float data textures, blending, multi-pass targets
   on top of the minimal createPipeline. Status: deferred.
@@ -64,6 +68,11 @@ timestamp: 2026-07-13T00:00:00Z
   decided convention: throw in dev, ignore-with-warning in prod; the item is
   the missing runtime signal + a shared helper. Today everything is dev, so
   validation sites throw. Status: deferred.
+- [Production diagnostics surface for bug reports](production-diagnostics-surface.md) -
+  the always-on layout counters are latched into Stats but only dev-client
+  queries read them; wanted a production consumer (crash-log dump, debug
+  command, or app-facing API) so field bug reports carry the numbers.
+  Status: deferred.
 - [Portals cannot mount during the initial render](portal-initial-mount.md) -
   a portal visible at first mount throws "no mount target" (windowRoot is set
   only after the initial build). Decided: by design, documented in
@@ -75,8 +84,32 @@ timestamp: 2026-07-13T00:00:00Z
   version placeholders intact) plus post-build artifact sanity checks (pack +
   install-from-tarball smoke test, client binary launch) before the
   irreversible npm publish. Status: deferred.
+- [MCP improvements and expansion](mcp-agent-loop-improvements.md) - round-2
+  feedback items on the agent dev loop: readOnlyHint annotations + AGENTS.md
+  permissions paragraph, call_debug broadcast + form-factor fields in
+  list_clients, interaction-performance visibility (tracing, slow-frame
+  warnings, stats high-water marks), leak-diagnostics companions. Status:
+  deferred.
+- [Node/memory leak on unmount](unmount-node-leak.md) - root cause found and
+  fixed 2026-07-18: element-valued props build a native subtree on every
+  read, and typeof probes in components orphaned unmounted builds forever;
+  components now resolve once via children(). Companion tooling shipped:
+  get_stats mountedNodes/orphanNodes, dev-mode leak sentinel (5s proxy-map
+  scan, warn-once per type). Status: done.
+- [Cross-platform GPU usage attribution](gpu-usage-attribution.md) - answer
+  "is the client burning GPU while idle, and on what" portably: engine
+  self-measurement (GPU pass timings, presents/sec) in get_stats, plus a
+  per-OS story for whole-system attribution (the Linux fdinfo probe that
+  caught the present-every-vsync burn is not shippable guidance).
+  Status: deferred.
 - [Android APK packaging for flux:ffi libraries](ffi-android-apk-packaging.md) -
   ship an app's ffi libraries in an asset folder, packaged into the APK's
   native-lib dir and opened by path automatically (byte-loading from the dev
   server is blocked by Android W^X policy). Part of the future APK packaging
-  work. Status: deferred.
+  work. Status: deferred.- [GPU context loss - loud failure and recovery](gpu-context-loss.md) - a lost
+  GL context (D3D device removed, EGL_CONTEXT_LOST, Android backgrounding)
+  used to leave the app running against a dead swapchain (frozen window, no
+  message). Shipped 2026-07-19: swap-result check, one error log per failure
+  streak, exit(1) after two consecutive failed presents. Remaining:
+  GetDeviceRemovedReason garnish on Windows, real context/resource recreation
+  designed against the Android lifecycle. Status: partial.

@@ -1,18 +1,11 @@
 name: Quick Check
 
-# On-demand debug build of any/all platforms, to validate a change before
-# tagging a release. Mirrors the release build jobs but PROFILE=debug and with
-# a speech toggle.
+# On-demand debug build of the solidrt-go client on any/all platforms, to
+# validate a change before tagging a release. The client links everything
+# (including flux), so one binary per platform covers the whole build.
+# Speech-free, like all release builds.
 on:
   workflow_dispatch:
-    inputs:
-      speech:
-        description: 'Include speech stack (Whisper + wake word)'
-        type: choice
-        options:
-          - '0'
-          - '1'
-        default: '0'
 
 permissions:
   contents: read
@@ -31,23 +24,23 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-22.04
-            target: dist-linux
+            target: client
             timeout: 60
           - platform: linux-arm
             runner: ubuntu-22.04-arm
-            target: dist-linux
+            target: client
             timeout: 60
           - platform: darwin
             runner: macos-14
-            target: dist-darwin
+            target: client
             timeout: 60
           - platform: android
             runner: ubuntu-24.04
-            target: dist-android
+            target: client-android
             timeout: 90
           - platform: windows
             runner: windows-latest
-            target: dist-windows
+            target: client
             timeout: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -80,4 +73,4 @@ jobs:
           frozen: 'false'
 
       - name: Build
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make ${{ matrix.target }} VERSION=0.0.0-check PROFILE=debug SPEECH=${{ inputs.speech }}
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make ${{ matrix.target }} VERSION=0.0.0-check PROFILE=debug SPEECH=0

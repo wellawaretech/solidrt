@@ -32,5 +32,5 @@ dist-linux:
 	cp $(HOST_DIST)/flux $(PKG_LINUX)/flux
 	cp $(HOST_DIST)/fluxc $(PKG_LINUX)/fluxc
 	cp $(HOST_DIST)/fluxrt $(PKG_LINUX)/fluxrt
-	$(MAKE) runtime
+	$(MAKE) runtime PROFILE=release-opt
 	cp $(HOST_DIST)/solidrt $(PKG_LINUX)/solidrt
