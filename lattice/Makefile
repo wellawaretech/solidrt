@@ -24,22 +24,17 @@ override SPEECH = 0
 endif
 
 # Speech recognition (Whisper + wake word) is an opt-in cargo feature (not in
-# lattice's `default`), so a plain `cargo build` stays voice-free. This
-# Makefile's own default still turns it on for host dev builds; SPEECH=0 drops
-# it (no whisper-rs / livekit-wakeword). GO_FEATURES / RUNTIME_FEATURES are the
-# resulting cargo feature flags for the two binaries (go = client, which
-# already pulls flux/compile; runtime = default minus go).
+# lattice's `default`), so a plain `cargo build` stays voice-free. The same
+# holds for every Makefile target: speech is off unless explicitly requested
+# with SPEECH=1 (no whisper-rs / livekit-wakeword / ort-tract otherwise), and
+# dist-* builds force it off regardless (see DIST above). GO_FEATURES /
+# RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
+# (go = client, which already pulls flux/compile; runtime = default minus go).
 #
-# 32-bit Android ABIs default it off: whisper.cpp inference is impractical on
-# 32-bit ARM/x86 (no reliable NEON fp16 path, tight address space for model +
-# inference buffers). Still overridable with SPEECH=1 if someone wants to try.
-ANDROID_ABI_32BIT_armeabi-v7a = 1
-ANDROID_ABI_32BIT_x86         = 1
-ifeq ($(ANDROID_ABI_32BIT_$(ANDROID_ABI)),1)
+# Note SPEECH=1 is impractical on 32-bit Android ABIs (armeabi-v7a, x86):
+# whisper.cpp has no reliable NEON fp16 path there and the address space is
+# too tight for model + inference buffers.
 SPEECH ?= 0
-else
-SPEECH ?= 1
-endif
 ifeq ($(SPEECH),0)
 GO_FEATURES      = --no-default-features --features go
 RUNTIME_FEATURES = --no-default-features --features flux/compile
@@ -99,7 +94,7 @@ help:
 	@echo "  dist-android-armeabi-v7a  Build 32-bit APK into packages/android-armeabi-v7a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
-	@echo "Pass SPEECH=0 to build without speech recognition (default: on)."
+	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "dist-* targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
 	@echo "Default app:"

@@ -34,6 +34,9 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `inline-image.tsx` - bytes already in memory: `decodeImage` + `createTexture` (both synchronous) show an image with no `<Loading>` boundary. The sync counterpart to `image.tsx`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop.
 
+## Sound
+- `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. Points to `createSoundStream` for long tracks streamed from a path.
+
 ## Vector graphics
 - `svg.tsx` - `<svg src={...}>` draws a whole SVG *document string* (not HTML/JSX children); multi-color fills vs a `currentColor` icon recolored by the `color` prop. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `src`.
 

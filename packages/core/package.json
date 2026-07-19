@@ -30,8 +30,8 @@
     "@solidrt/flux-types": "workspace:*"
   },
   "peerDependencies": {
-    "@solidjs/signals": "2.0.0-beta.17",
-    "@solidjs/universal": "2.0.0-beta.17",
-    "solid-js": "2.0.0-beta.17"
+    "@solidjs/signals": "2.0.0-beta.20",
+    "@solidjs/universal": "2.0.0-beta.20",
+    "solid-js": "2.0.0-beta.20"
   }
 }

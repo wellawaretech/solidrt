@@ -119,7 +119,7 @@ dist-android: $(GRADLE_WRAPPER_JAR)
 # 32-bit (armeabi-v7a) single-ABI APK staged into packages/android-armeabi-v7a/.
 # Unlike the fat dist-android, -PsrtAbi=armeabi-v7a restricts the bundled native
 # libs to the one ABI even though dist/android may hold other staged ABIs, so the
-# 32-bit package stays 32-bit. SPEECH defaults off for 32-bit (see Makefile).
+# 32-bit package stays 32-bit. SPEECH defaults off everywhere (see Makefile).
 dist-android-armeabi-v7a: $(GRADLE_WRAPPER_JAR)
 	$(MAKE) client-android ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
 	cd android && ./gradlew assembleGoDebug -PsrtAbi=armeabi-v7a
