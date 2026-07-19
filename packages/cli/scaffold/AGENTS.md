@@ -118,6 +118,41 @@ Authoritative references ship inside the installed packages - read them:
     first with the children() helper (re-exported from @solidrt/core) and
     probe the resolved memo - never `typeof props.children` on the raw prop.
 
+## Performance model (JS is the slow lane)
+
+The JS engine is interpreted and every property write crosses an FFI boundary
+into the runtime, so per-frame JS work is the expensive path while GPU work is
+nearly free. Rules, in order of leverage:
+
+1. Continuous effects (snow, particles, animated backgrounds) belong in a
+   fragment shader: createShader (from @solidrt/core/gpu) + `<texture
+   params={{ iTime }}>`. The whole effect then costs one setProperty per
+   frame - the iTime write - regardless of visual complexity. Shader output
+   must be premultiplied alpha (white flakes are `vec4(vec3(a), a)`);
+   straight alpha (`vec4(1,1,1,a)`) composites as opaque white.
+2. Reduce setProperty calls wherever possible: one path string rebuilt per
+   frame beats N elements with N animated positions; a shader beats the path
+   string. get_stats' setPropsPerFrame is the counter to watch.
+3. Never leave onFrame registered while nothing animates: a pending onFrame
+   is a standing frame request, so the runtime renders and presents every
+   vsync even when the callback body does nothing - an invisible 60fps GPU
+   burn that also drags the OS compositor along with it. For an on-demand
+   animation pump (tweens), use a self-rechaining one-shot
+   requestAnimationFrame that stops re-requesting when its work list
+   empties. (Registering onFrame outside a component body also warns
+   NO_OWNER_CLEANUP - it assumes a reactive owner.)
+4. repaintBoundary works like Flutter's: transforms and opacity on the
+   boundary node itself (or any ancestor) are hoisted out of the cache and
+   applied at composite time, so animating x/y/scale/rotate/opacity of a
+   boundary does NOT re-raster it (verified by A/B measurement - the damage
+   system classifies these as Transform and keeps the node's own cache).
+   What DOES invalidate the cache is any paint or content change inside the
+   subtree - colors, path data, text, a Show toggling - so drive animation
+   with transforms and keep the cached content itself static.
+5. "snapshot" boundaries pay first-frame texture allocation + raster:
+   creating many at once (dealing a board of 64 sprites) is a visible
+   one-frame hiccup - pool or pre-warm if that moment matters.
+
 ## Run / verify
 
 - bunx srt run src/index.tsx     - dev server + window (needs a display)
