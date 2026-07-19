@@ -141,9 +141,8 @@ impl GpuTexture {
         glow::PixelUnpackData::Slice(Some(data)),
       );
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      // No glFinish: the upload is part of the UI thread's frame, and
-      // Context::submit's per-frame fence orders it ahead of the render thread
-      // sampling the texture, so the UI thread is not stalled per upload.
+      // No glFinish: the texture is sampled later on this same (single) GL
+      // context, so program order already sequences the upload first.
     }
   }
 }

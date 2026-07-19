@@ -84,6 +84,53 @@ Fix directions:
 - To confirm the exact crash site: enable WER LocalDumps for solidrt-go.exe
   and symbolize the ANGLE offset against the pinned ANGLE build.
 
+## Done (2026-07-19): single-context architecture
+
+Both bugs shared one root: the engine violated Impeller's GLES contract
+(impellers 0.4.2 docs: "the OpenGL ES context can only be created, used,
+and collected on the calling thread"; guidance is one context per app). We
+ran TWO ImpellerContexts on two threads over two shared EGL contexts, with
+textures crossing between them and teardown deletes racing composite.
+Desktop GL tolerated it; ANGLE did not.
+
+Fix: the process now has exactly one GL context and one ImpellerContext,
+both owned by the UI thread. `setup_opengl_platform` creates the single
+context and releases it from the main thread; the UI thread makes it
+current (window surface, `SDL_GL_MakeCurrent` via raw handle) and keeps it
+for the engine's lifetime. `Context::submit` wraps FBO 0 at the current
+size, draws, and presents (`SDL_GL_SwapWindow`) right on the UI thread -
+in playback mode it reads the backbuffer back and ships pixels instead.
+The main thread is a pure SDL event/window loop: it receives Presented
+notifications for fps/FrameRendered bookkeeping and publishes the physical
+framebuffer size through an atomic on resize.
+
+Deleted wholesale: `GL_LOCK`/`lock_gl` and every call site (including the
+teardown `Drop` serializers), `GpuFence` + the per-frame fence/flush,
+`GlSurface`/`RenderSurface`/`create_render_surface`, the UI pbuffer +
+second EGL context, the ANGLE `cross_context_textures_usable` inline
+fallback, and the parking_lot dependency. Snapshot caching now works
+identically on every backend (the cache texture and the surface draw share
+the one context), and adopted/shader textures (`d-texture`, `<image>`) are
+covered by construction.
+
+Bug 2 disappears structurally: teardown drops happen on the same thread as
+all other GL, so there is nothing to race.
+
+Perf note: present now blocks the UI thread at vsync when the app outpaces
+the display - the same stall the GL lock already imposed, minus the lock;
+the main thread's event pump no longer stalls behind present at all.
+
+## Open: dedicated raster thread (deferred, needs evaluation)
+
+The Flutter-shaped end state - JS/UI thread builds DisplayLists only, a
+dedicated raster thread owns the single GL context - is deliberately NOT
+done. It needs either blocking cross-thread round trips for flux's
+synchronous texture APIs (create-and-reference-this-frame, snapshot
+rasterization mid-paint-walk, capture readback) or an async redesign of
+that surface, and upstream Impeller would first need to expose reactor
+workers in the C API to do it properly. Evaluate when the API allows it;
+`Context::submit` remains the seam where a raster thread would slot in.
+
 ## Repro/tooling notes
 
 - Real-window verification needs a desktop screenshot (PowerShell

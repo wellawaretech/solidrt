@@ -82,7 +82,6 @@ dependencies = [
  "lyon_algorithms",
  "lyon_path",
  "ndk-context",
- "parking_lot",
  "rxing",
  "sdl3",
  "sdl3-mixer-sys",

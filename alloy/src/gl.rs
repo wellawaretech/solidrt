@@ -1,65 +1,24 @@
-use crate::backend::{Frame, GpuFence};
-use crate::{Backend, Context, DisplayContext, GpuTexture, RenderSurface};
+use crate::backend::FrameOutput;
+use crate::{Backend, Context, DisplayContext, GpuTexture};
 use glow::HasContext;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
-use sdl3::video::SwapInterval;
 use std::num::NonZeroU32;
+use std::sync::atomic::AtomicU64;
 use std::sync::{mpsc, Arc};
 
 struct SendablePtr(*mut std::ffi::c_void);
 unsafe impl Send for SendablePtr {}
-
-pub fn create_ui_pbuffer(display: *mut std::ffi::c_void, gl_context: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
-  const EGL_NONE: i32 = 0x3038;
-  const EGL_CONFIG_ID: i32 = 0x3028;
-  const EGL_WIDTH: i32 = 0x3057;
-  const EGL_HEIGHT: i32 = 0x3056;
-
-  type EglQueryContextFn = extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, i32, *mut i32) -> u32;
-  type EglChooseConfigFn =
-    extern "C" fn(*mut std::ffi::c_void, *const i32, *mut *mut std::ffi::c_void, i32, *mut i32) -> u32;
-  type EglCreatePbufferFn =
-    extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, *const i32) -> *mut std::ffi::c_void;
-
-  unsafe {
-    let egl_query_context: EglQueryContextFn =
-      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglQueryContext".as_ptr()).unwrap());
-    let egl_choose_config: EglChooseConfigFn =
-      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglChooseConfig".as_ptr()).unwrap());
-    let egl_create_pbuffer: EglCreatePbufferFn =
-      std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglCreatePbufferSurface".as_ptr()).unwrap());
-
-    let mut config_id: i32 = 0;
-    let r = egl_query_context(display, gl_context, EGL_CONFIG_ID, &mut config_id);
-    assert!(r != 0, "eglQueryContext(EGL_CONFIG_ID) failed");
-
-    let select = [EGL_CONFIG_ID, config_id, EGL_NONE];
-    let mut config: *mut std::ffi::c_void = std::ptr::null_mut();
-    let mut num_configs: i32 = 0;
-    let r = egl_choose_config(display, select.as_ptr(), &mut config, 1, &mut num_configs);
-    assert!(r != 0 && num_configs > 0 && !config.is_null(), "eglChooseConfig failed");
-
-    let pb_attribs = [EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE];
-    let pbuffer = egl_create_pbuffer(display, config, pb_attribs.as_ptr());
-    assert!(!pbuffer.is_null(), "eglCreatePbufferSurface failed");
-    pbuffer
+impl SendablePtr {
+  // A method rather than direct field access: closures capture precise paths,
+  // and capturing the raw-pointer field directly would make the closure !Send;
+  // a method call captures the whole Send wrapper.
+  fn get(&self) -> *mut std::ffi::c_void {
+    self.0
   }
 }
 
-pub fn make_current(display: *mut std::ffi::c_void, surface: *mut std::ffi::c_void, gl_context: *mut std::ffi::c_void) {
-  let egl_make_current: extern "C" fn(
-    *mut std::ffi::c_void,
-    *mut std::ffi::c_void,
-    *mut std::ffi::c_void,
-    *mut std::ffi::c_void,
-  ) -> u32 =
-    unsafe { std::mem::transmute(sdl3::sys::video::SDL_EGL_GetProcAddress(c"eglMakeCurrent".as_ptr()).unwrap()) };
-  let result = egl_make_current(display, surface, surface, gl_context);
-  assert!(result != 0, "eglMakeCurrent failed on UI thread");
-}
-
 /// Load GLES bindings from SDL's GL proc-address. Must be called on the UI
-/// thread with its GL context current; the returned context drives all of
+/// thread with the GL context current; the returned context drives all of
 /// alloy's GL work (texture allocation/upload, offscreen FBOs, readback) and
 /// shares the underlying GL objects with Impeller, which renders on the same
 /// context.
@@ -116,10 +75,10 @@ const MSAA_SAMPLES: i32 = 4;
 /// Rasterize a display list into a new GL texture and adopt it into Impeller,
 /// which becomes the single owner of the GL name (adoption transfers handle
 /// ownership per the Impeller API; we never glDeleteTextures it ourselves).
-/// The calling thread must have a GL context current and `impeller_ctx` must
-/// have been created on it. Cross-thread ordering (the texture is sampled on a
-/// separate shared GL context, where its contents are otherwise undefined) is
-/// handled by Context::submit's per-frame fence, so no glFinish is issued here.
+/// The calling thread must have the GL context current and `impeller_ctx` must
+/// have been created on it. The texture is later sampled on this same context
+/// (the process has exactly one), so GL program order covers all ordering and
+/// no glFinish or fence is needed.
 pub fn render_display_list_to_texture(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -351,9 +310,8 @@ fn draw_offscreen(
       gl.delete_renderbuffer(rb);
     }
     gl.delete_renderbuffer(ds_rbo);
-    // No glFinish here: this offscreen draw is part of the UI thread's frame, so
-    // Context::submit's per-frame fence orders it ahead of the render thread
-    // sampling the adopted texture (it waits on that fence before compositing).
+    // No glFinish: the adopted texture is sampled later on this same context,
+    // so GL program order already sequences the draw before the sampling.
 
     match result {
       Ok(()) => OffscreenDraw::Done,
@@ -402,83 +360,19 @@ pub fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: ISize) -
   }
 }
 
-#[allow(dead_code)]
-pub struct GlSurface {
-  ctx: ImpellerContext,
-  surface: impellers::Surface,
-  // GLES bindings for the render thread's main context (current on this thread).
-  // Used to wait on the UI thread's per-frame fence before Impeller samples its
-  // textures; the wait and Impeller's draws share this context, so the GPU
-  // orders the wait ahead of compositing.
-  gl: glow::Context,
-  // Consecutive failed presents. A lost context / removed device fails every
-  // subsequent present, so a short streak confirms the loss (see present).
-  present_failures: u32,
-}
-
-// Consecutive failed presents that confirm the GL context is gone for good.
-// Two, not more: a demand-driven app may attempt very few presents after the
-// loss (observed frozen-window traces stopped at two), so a higher threshold
-// can leave a dead window open forever; one tolerated failure covers a
-// transient glitch.
-const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
-
-impl GlSurface {
-  pub fn create(_window: &sdl3::video::Window, size: ISize) -> Result<Self, Box<dyn std::error::Error>> {
-    let mut ctx = create_impeller_context();
-
-    let surface = unsafe { ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }
-      .ok_or_else(|| Box::new(std::io::Error::other("Failed to wrap framebuffer")) as Box<dyn std::error::Error>)?;
-
-    let gl = create_gl_context();
-
-    Ok(GlSurface { ctx, surface, gl, present_failures: 0 })
+/// Read back the window backbuffer's RGBA8 pixels (FBO 0, bottom-up rows as GL
+/// stores them; the playback encoder flips when writing). Called on the UI
+/// thread right after the frame's draw, which glReadPixels implicitly waits on.
+pub fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
+  let (width, height) = (size.width as i32, size.height as i32);
+  let mut pixels = vec![0u8; (width.max(0) as usize) * (height.max(0) as usize) * 4];
+  unsafe {
+    let prev_fbo = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING);
+    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+    gl.read_pixels(0, 0, width, height, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
+    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, prev_framebuffer(prev_fbo));
   }
-}
-
-impl RenderSurface for GlSurface {
-  fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>> {
-    self
-      .surface
-      .draw_display_list(dl)
-      .map_err(|_| Box::new(std::io::Error::other("Failed to draw display list")) as Box<dyn std::error::Error>)
-  }
-
-  fn present(&mut self, window: &sdl3::video::Window) {
-    // Without this check a lost context / removed device leaves the app
-    // running normally while nothing reaches the screen (a frozen window with
-    // no message). There is no recovery path yet, so a confirmed loss exits
-    // instead: see okf/backlog/gpu-context-loss.md.
-    if crate::sdl_utils::gl_swap_window_checked(window) {
-      self.present_failures = 0;
-      return;
-    }
-    self.present_failures += 1;
-    if self.present_failures == 1 {
-      log::error!("[alloy] present failed: {}", crate::sdl_utils::sdl_error());
-    }
-    if self.present_failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
-      log::error!("[alloy] GPU context lost ({} consecutive failed presents), exiting", self.present_failures);
-      std::process::exit(1);
-    }
-  }
-
-  fn resize(&mut self, size: ISize) {
-    self.surface = unsafe { self.ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.expect("Failed to resize GL surface");
-  }
-
-  fn consume_fence(&self, fence: Option<GpuFence>, wait: bool) {
-    if let Some(GpuFence(sync)) = fence {
-      unsafe {
-        // GPU-side wait: subsequent draws on this context wait for the UI
-        // thread's work to complete, without stalling the render thread's CPU.
-        if wait {
-          self.gl.wait_sync(sync, 0, glow::TIMEOUT_IGNORED);
-        }
-        self.gl.delete_sync(sync);
-      }
-    }
-  }
+  pixels
 }
 
 // Native stack for the UI/JS thread. Large so deep JS recursion behaves the
@@ -497,20 +391,34 @@ const UI_THREAD_STACK_SIZE: usize = 1024 * 1024 * 1024;
 const UI_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 pub fn run_context(
-  ui_context: &sdl3::video::GLContext,
+  window: *mut sdl3::sys::video::SDL_Window,
+  gl_context: &sdl3::video::GLContext,
+  surface_size: Arc<AtomicU64>,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
-  tx: mpsc::Sender<Frame>,
+  tx: mpsc::Sender<FrameOutput>,
   wake: Option<Box<dyn Fn() + Send + Sync>>,
+  capture_frames: bool,
 ) {
-  let gl_context_ptr = Box::new(SendablePtr(unsafe { ui_context.raw() as *mut std::ffi::c_void }));
+  let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
+  let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
 
   let spawn_result =
     std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
-      let egl_display = unsafe { sdl3::sys::video::SDL_EGL_GetCurrentDisplay() };
-      assert!(!egl_display.is_null(), "no EGL display");
-
-      let ui_pbuffer = create_ui_pbuffer(egl_display, gl_context_ptr.0);
-      make_current(egl_display, ui_pbuffer, gl_context_ptr.0);
+      let window = window_ptr.get() as *mut sdl3::sys::video::SDL_Window;
+      // Bind the process's single GL context to this thread; it stays current
+      // here for the engine's lifetime, and every GL consumer (glow, Impeller,
+      // shader passes, window present) runs on this thread. Impeller's GLES
+      // contract requires exactly this: one context, used only on the thread
+      // that created it.
+      let current =
+        unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context_ptr.get() as sdl3::sys::video::SDL_GLContext) };
+      assert!(current, "SDL_GL_MakeCurrent failed on UI thread: {}", crate::sdl_utils::sdl_error());
+      // The swap interval belongs to the current-context binding, so it must be
+      // set on this thread, not where the context was created. Playback never
+      // swaps, so the setting is inert there.
+      if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
+        log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+      }
 
       let gl = create_gl_context();
       let impeller_ctx = create_impeller_context();
@@ -523,7 +431,8 @@ pub fn run_context(
         );
       }
 
-      let gpu_ctx = Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, tx, wake));
+      let gpu_ctx =
+        Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, tx, wake));
       closure(gpu_ctx);
     });
   spawn_result.expect("failed to spawn UI thread");
@@ -553,25 +462,19 @@ pub(crate) fn disable_msaa(video: &sdl3::VideoSubsystem) {
   gl_attr.set_multisample_samples(0);
 }
 
-pub(crate) fn setup_opengl_platform(
-  video: &sdl3::VideoSubsystem,
-  window: &sdl3::video::Window,
-) -> Result<DisplayContext, Box<dyn std::error::Error>> {
-  // Create UI GL context
-  let ui_context = window.gl_create_context().map_err(|e| format!("Failed to create UI GL context: {}", e))?;
+pub(crate) fn setup_opengl_platform(window: &sdl3::video::Window) -> Result<DisplayContext, Box<dyn std::error::Error>> {
+  // The process's single GL context. Creating it makes it current on this
+  // (main) thread; release it right away so the UI thread - the only GL user -
+  // can bind it (a GL context can be current on at most one thread).
+  let gl_context = window.gl_create_context().map_err(|e| format!("Failed to create GL context: {}", e))?;
+  if !unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window.raw(), std::ptr::null_mut()) } {
+    return Err(format!("Failed to release GL context on main thread: {}", crate::sdl_utils::sdl_error()).into());
+  }
 
-  // Enable context sharing for main GL context
-  let gl_attr = video.gl_attr();
-  gl_attr.set_share_with_current_context(true);
-
-  // Create main GL context
-  let main_context = window.gl_create_context().map_err(|e| format!("Failed to create main GL context: {}", e))?;
-
-  // Make main context current on the render thread
-  window.gl_make_current(&main_context).map_err(|e| format!("Failed to make main GL context current: {}", e))?;
-
-  // Set swap interval (vsync) via FFI
-  video.gl_set_swap_interval(SwapInterval::VSync).map_err(|e| format!("Failed to set swap interval: {}", e))?;
-
-  Ok(DisplayContext::Gl { window_opaque: window as *const _ as *const std::ffi::c_void, main_context, ui_context })
+  let (w, h) = window.size_in_pixels();
+  Ok(DisplayContext::Gl {
+    window_raw: window.raw(),
+    gl_context,
+    surface_size: Arc::new(AtomicU64::new(crate::backend::pack_size(w, h))),
+  })
 }

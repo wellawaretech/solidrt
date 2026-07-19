@@ -1,24 +1,30 @@
-use impellers::{DisplayList, ISize};
+use std::sync::atomic::AtomicU64;
 use std::sync::{mpsc, Arc};
 
 use crate::gl;
 use crate::Context;
 
-/// A GPU fence (sync object) the UI thread creates after a frame's GPU work and
-/// hands to the render thread. The render thread waits on it (GPU-side, no CPU
-/// stall) before sampling that work, replacing a blocking glFinish on the UI
-/// thread. The handle is valid across the shared GL context group; Send because
-/// the producing thread passes it to the render thread.
-pub struct GpuFence(pub glow::Fence);
-unsafe impl Send for GpuFence {}
+/// What the UI thread reports to the main loop after finishing a frame. The UI
+/// thread owns the process's single GL context and has already drawn (and, in
+/// interactive mode, presented) by the time this arrives; the main loop only
+/// does frame bookkeeping (fps, FrameRendered events) and playback encoding.
+pub enum FrameOutput {
+  /// Interactive: the frame is on screen.
+  Presented,
+  /// Playback: the frame was drawn to the hidden window's backbuffer and read
+  /// back. RGBA8, bottom-up rows, at the fixed capture size.
+  Captured(Vec<u8>),
+}
 
-/// One composited frame on its way from the UI thread to the render thread: the
-/// display list to draw, plus an optional fence ordering all the UI thread's GPU
-/// work for that frame (shader renders, texture uploads, offscreen draws) ahead
-/// of the render thread sampling it.
-pub struct Frame {
-  pub dl: DisplayList,
-  pub fence: Option<GpuFence>,
+/// Physical framebuffer size packed for atomic hand-off from the main thread
+/// (which receives resize events) to the UI thread (which wraps FBO 0 at this
+/// size each frame).
+pub fn pack_size(width: u32, height: u32) -> u64 {
+  ((width as u64) << 32) | height as u64
+}
+
+pub fn unpack_size(packed: u64) -> (u32, u32) {
+  ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,9 +38,13 @@ pub enum Backend {
 #[allow(dead_code)]
 pub enum DisplayContext {
   Gl {
-    window_opaque: *const std::ffi::c_void,
-    main_context: sdl3::video::GLContext,
-    ui_context: sdl3::video::GLContext,
+    /// The SDL window handle the UI thread presents to. Raw because the sdl3
+    /// Window type is neither Send nor clonable; the Window itself lives in
+    /// App on the main thread for the whole run.
+    window_raw: *mut sdl3::sys::video::SDL_Window,
+    gl_context: sdl3::video::GLContext,
+    /// See `pack_size`.
+    surface_size: Arc<AtomicU64>,
   },
   Vulkan {},
   Metal {},
@@ -42,11 +52,8 @@ pub enum DisplayContext {
 
 #[allow(dead_code)]
 impl DisplayContext {
-  pub fn new_opengl(
-    video: &sdl3::VideoSubsystem,
-    window: &sdl3::video::Window,
-  ) -> Result<Self, Box<dyn std::error::Error>> {
-    gl::setup_opengl_platform(video, window)
+  pub fn new_opengl(window: &sdl3::video::Window) -> Result<Self, Box<dyn std::error::Error>> {
+    gl::setup_opengl_platform(window)
   }
 
   pub fn backend(&self) -> Backend {
@@ -57,42 +64,29 @@ impl DisplayContext {
     }
   }
 
-  pub fn run_context(
-    &self,
-    closure: impl FnOnce(Arc<Context>) + Send + 'static,
-    tx: mpsc::Sender<Frame>,
-    wake: Option<Box<dyn Fn() + Send + Sync>>,
-  ) {
+  /// The main thread's handle for publishing the physical framebuffer size on
+  /// resize.
+  pub fn surface_size_handle(&self) -> Arc<AtomicU64> {
     match self {
-      DisplayContext::Gl { ui_context, .. } => gl::run_context(ui_context, closure, tx, wake),
+      DisplayContext::Gl { surface_size, .. } => surface_size.clone(),
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }
   }
-}
 
-#[allow(dead_code)]
-pub trait RenderSurface {
-  fn draw_display_list(&mut self, dl: &DisplayList) -> Result<(), Box<dyn std::error::Error>>;
-  fn present(&mut self, window: &sdl3::video::Window);
-  fn resize(&mut self, size: ISize);
-  /// Order this surface's subsequent GPU work after the producer's fenced work.
-  /// When `wait`, the surface's later draw commands wait on the fence (GPU-side,
-  /// no CPU stall) so it samples completed textures; either way the sync object
-  /// is released. No-op default for backends that do not use GL fences.
-  fn consume_fence(&self, _fence: Option<GpuFence>, _wait: bool) {}
-}
-
-pub fn create_render_surface(
-  platform: &DisplayContext,
-  size: ISize,
-) -> Result<Box<dyn RenderSurface>, Box<dyn std::error::Error>> {
-  match platform {
-    DisplayContext::Gl { window_opaque, .. } => {
-      let window = unsafe { &*(*window_opaque as *const sdl3::video::Window) };
-      gl::GlSurface::create(window, size).map(|s| Box::new(s) as Box<dyn RenderSurface>)
+  pub fn run_context(
+    &self,
+    closure: impl FnOnce(Arc<Context>) + Send + 'static,
+    tx: mpsc::Sender<FrameOutput>,
+    wake: Option<Box<dyn Fn() + Send + Sync>>,
+    capture_frames: bool,
+  ) {
+    match self {
+      DisplayContext::Gl { window_raw, gl_context, surface_size } => {
+        gl::run_context(*window_raw, gl_context, surface_size.clone(), closure, tx, wake, capture_frames)
+      }
+      DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
+      DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }
-    DisplayContext::Vulkan { .. } => Err("Vulkan backend not yet implemented".into()),
-    DisplayContext::Metal { .. } => Err("Metal backend not yet implemented".into()),
   }
 }

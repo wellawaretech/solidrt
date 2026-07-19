@@ -289,9 +289,11 @@ pub fn audio_stream_destroy(stream: *mut SDL_AudioStream) {
 
 /// SDL's `Window::gl_swap_window` discards `SDL_GL_SwapWindow`'s result, but a
 /// present can fail permanently (EGL context lost / D3D device removed under
-/// ANGLE). Returns false on failure; the detail is in `sdl_error()`.
-pub fn gl_swap_window_checked(window: &sdl3::video::Window) -> bool {
-  unsafe { sdl3::sys::video::SDL_GL_SwapWindow(window.raw()) }
+/// ANGLE). Returns false on failure; the detail is in `sdl_error()`. Takes the
+/// raw handle because the presenting UI thread has no `Window` (it lives on
+/// the main thread); call only from the thread the GL context is current on.
+pub fn gl_swap_window_checked(window: *mut sdl3::sys::video::SDL_Window) -> bool {
+  unsafe { sdl3::sys::video::SDL_GL_SwapWindow(window) }
 }
 
 pub fn sdl_error() -> String {

@@ -25,7 +25,7 @@ pub use impellers;
 pub use sdl3;
 
 pub use app::{setup, App};
-pub use backend::{create_render_surface, Backend, DisplayContext, RenderSurface};
+pub use backend::{Backend, DisplayContext};
 pub use context::{CaptureDone, CaptureInfo, Context, PipelineSpec};
 pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
 pub use logging::install_logger;

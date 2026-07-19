@@ -1,12 +1,12 @@
-use glow::HasContext;
-use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
+use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crate::audio::AudioRegistry;
-use crate::backend::{Backend, Frame, GpuFence};
+use crate::backend::{Backend, FrameOutput};
 use crate::camera::CameraRegistry;
 use crate::gl;
 use crate::microphone::MicrophoneRegistry;
@@ -14,17 +14,24 @@ use crate::texture::{GpuTexture, TextureEntry, TextureRegistry};
 
 pub struct Context {
   backend: Backend,
-  // GLES bindings + the Impeller context. Both are tied to the UI thread's GL
-  // context and only ever touched from the UI thread. RefCell on impeller_ctx
-  // because wrap_fbo needs &mut while Context is shared behind Arc.
+  // GLES bindings + the Impeller context, both tied to the process's single
+  // GL context, which is current on the UI thread for the engine's lifetime
+  // and only ever touched there. RefCell on impeller_ctx because wrap_fbo
+  // needs &mut while Context is shared behind Arc.
   gl: glow::Context,
   impeller_ctx: RefCell<ImpellerContext>,
-  // False when a texture created on this (UI) context cannot be drawn by the
-  // render thread's separate Impeller context: under ANGLE that draw silently
-  // aborts the entire surface frame, presenting the clear color (a black
-  // window with healthy fps). Snapshot boundaries check this and paint inline.
-  // See okf/backlog/angle-cross-context-impeller-textures.md.
-  cross_context_textures_usable: bool,
+  // The window's raw SDL handle, for presenting from the UI thread; the
+  // Window itself lives on the main thread.
+  window: *mut sdl3::sys::video::SDL_Window,
+  // Physical framebuffer size (see backend::pack_size), published by the main
+  // thread on resize and read when wrapping FBO 0 in submit.
+  surface_size: Arc<AtomicU64>,
+  // Playback mode: submit reads the drawn frame back and ships the pixels
+  // instead of presenting.
+  capture_frames: bool,
+  // Consecutive failed presents; a short streak confirms context loss (see
+  // present).
+  present_failures: std::cell::Cell<u32>,
   pub textures: TextureRegistry,
   // Compiled shader targets (fullscreen fragment passes and vertex+fragment
   // pipelines), keyed by the texture id their output is registered under, so
@@ -37,10 +44,11 @@ pub struct Context {
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   pub(crate) audio: AudioRegistry,
-  tx: mpsc::Sender<Frame>,
-  // Wakes the main thread's event wait after a frame is queued, so a submitted
-  // frame presents immediately instead of at the next wait timeout. None in
-  // playback mode, whose capture loop blocks on the channel directly.
+  tx: mpsc::Sender<FrameOutput>,
+  // Wakes the main thread's event wait after a frame is presented, so its
+  // FrameRendered bookkeeping runs immediately instead of at the next wait
+  // timeout. None in playback mode, whose capture loop blocks on the channel
+  // directly.
   wake: Option<Box<dyn Fn() + Send + Sync>>,
   // On-demand node captures (captureSnapshot, dev-server snapshot). Requests are
   // keyed by node id (many requests may target one node) and drained by the
@@ -126,52 +134,52 @@ pub struct CaptureInfo {
 /// UI thread, out of the tree walk (see `deliver_captures`).
 pub type CaptureDone = Box<dyn FnOnce(Result<CaptureInfo, String>)>;
 
-// Safety: Context is asserted Send + Sync but is only ever accessed from the UI
-// thread, where its GL context is current. glow::Context and Impeller::Context
-// both rely on that thread-local GL state; we never touch them concurrently.
+// Safety: Context is asserted Send + Sync (its Arc crosses into the closure
+// that the UI thread runs, and the raw window pointer rides along), but it is
+// only ever accessed from the UI thread, where the process's single GL context
+// is current. glow::Context and Impeller::Context both rely on that
+// thread-local GL state; we never touch them concurrently.
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
-// All GL work is serialized process-wide: the UI thread's GL sections and the
-// render thread's composite/present funnel into one native device underneath
-// (a single D3D11 immediate context under ANGLE on Windows), and truly
-// concurrent shared-context access corrupts driver state there (observed:
-// in-process access violations in the NVIDIA user-mode driver and inside
-// ANGLE's state manager, wedged threads, DXGI device-removed). Mobile GLES
-// drivers have the same reputation, and a lock that only exists on some
-// platforms would leave the locked path undogfooded, so it is unconditional.
-// The GPU fence in `submit` is unrelated: it orders work on the GPU timeline,
-// this lock protects CPU-side driver state.
-static GL_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+// All GL work - texture uploads, shader passes, offscreen rasterization,
+// compositing, present - runs on the UI thread, on the process's single GL
+// context and single Impeller context. That is Impeller's GLES contract (one
+// context, used only on its creating thread), and it is what keeps ANGLE /
+// D3D11 and mobile GLES drivers stable: the previous two-context architecture
+// corrupted driver state under concurrent shared-context access (access
+// violations in the NVIDIA user-mode driver and inside ANGLE's state manager,
+// wedged threads, DXGI device-removed), and its cross-context Impeller
+// textures silently aborted whole frames under ANGLE. See
+// okf/backlog/angle-cross-context-impeller-textures.md.
 
-/// Serialize a CPU-side GL section against the other thread's. Held per
-/// Context method on the UI thread and across composite+present on the render
-/// thread; reentrant so nested Context calls are fine.
-pub fn lock_gl() -> parking_lot::ReentrantMutexGuard<'static, ()> {
-  GL_LOCK.lock()
-}
+// Consecutive failed presents that confirm the GL context is gone for good.
+// Two, not more: a demand-driven app may attempt very few presents after the
+// loss (observed frozen-window traces stopped at two), so a higher threshold
+// can leave a dead window open forever; one tolerated failure covers a
+// transient glitch.
+const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
 
 impl Context {
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
     backend: Backend,
     gl: glow::Context,
     impeller_ctx: ImpellerContext,
-    tx: mpsc::Sender<Frame>,
+    window: *mut sdl3::sys::video::SDL_Window,
+    surface_size: Arc<AtomicU64>,
+    capture_frames: bool,
+    tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
-    // Desktop GL drivers draw textures shared across contexts in a share group
-    // fine; ANGLE does not (see the field's comment). Detected once here so
-    // the paint walk can branch without querying GL.
-    let renderer = unsafe { gl.get_parameter_string(glow::RENDERER) };
-    let cross_context_textures_usable = !renderer.contains("ANGLE");
-    if !cross_context_textures_usable {
-      log::info!("[alloy] ANGLE renderer: snapshot boundaries will paint inline (cross-context textures unusable)");
-    }
     Context {
       backend,
       gl,
       impeller_ctx: RefCell::new(impeller_ctx),
-      cross_context_textures_usable,
+      window,
+      surface_size,
+      capture_frames,
+      present_failures: std::cell::Cell::new(0),
       textures: TextureRegistry::new(),
       shaders: RefCell::new(HashMap::new()),
       buffers: RefCell::new(HashMap::new()),
@@ -184,14 +192,6 @@ impl Context {
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
     }
-  }
-
-  /// Whether a texture created on this (UI) context can be drawn by the
-  /// render thread's separate Impeller context. False under ANGLE, where such
-  /// a draw silently aborts the whole surface frame; callers with an inline
-  /// fallback (snapshot boundaries) must use it there.
-  pub fn cross_context_textures_usable(&self) -> bool {
-    self.cross_context_textures_usable
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass
@@ -239,16 +239,39 @@ impl Context {
     }
   }
 
+  /// Draw the frame's display list to the window backbuffer and hand it on:
+  /// present in interactive mode, read the pixels back in playback mode. Runs
+  /// on the UI thread - the process's single GL thread - then notifies the
+  /// main loop, which only does frame bookkeeping (fps, FrameRendered) and
+  /// playback encoding. Err means the main loop is gone and the engine should
+  /// shut down.
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    let _gl = lock_gl();
-    // Fence every bit of GPU work this UI-thread frame queued (shader renders,
-    // texture uploads, offscreen draws) so the render thread can order its
-    // sampling after that work on the GPU timeline, instead of the UI thread
-    // blocking on glFinish. A sync object is only waitable from the render
-    // context once the producing context has flushed it.
-    let fence = unsafe { self.gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0) }.ok().map(GpuFence);
-    unsafe { self.gl.flush() };
-    self.tx.send(Frame { dl, fence }).map_err(|_| ())?;
+    let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
+    let size = ISize::new(width as i64, height as i64);
+    // Wrap the window's default framebuffer fresh each frame: a draw clears a
+    // surface's previous contents anyway, and wrapping at the current size
+    // picks up resizes without any surface bookkeeping.
+    let drawn = match unsafe { self.impeller_ctx.borrow_mut().wrap_fbo(0, PixelFormat::RGBA8888, size) } {
+      Some(mut surface) => {
+        surface.draw_display_list(&dl).expect("Failed to draw display list");
+        true
+      }
+      None => {
+        // Transient (e.g. a zero-sized minimized window): skip the draw but
+        // still notify below, so lockstep consumers (playback) never stall.
+        log::warn!("[alloy] wrap_fbo(0) failed at {width}x{height}; skipping frame");
+        false
+      }
+    };
+    if self.capture_frames {
+      let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
+      self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
+    } else {
+      if drawn {
+        self.present();
+      }
+      self.tx.send(FrameOutput::Presented).map_err(|_| ())?;
+    }
     // Wake only after the frame is in the channel, so the woken loop finds it.
     if let Some(wake) = &self.wake {
       wake();
@@ -256,8 +279,27 @@ impl Context {
     Ok(())
   }
 
+  /// Swap the window's backbuffer. Without the failure check a lost context /
+  /// removed device leaves the app running normally while nothing reaches the
+  /// screen (a frozen window with no message). There is no recovery path yet,
+  /// so a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
+  fn present(&self) {
+    if crate::sdl_utils::gl_swap_window_checked(self.window) {
+      self.present_failures.set(0);
+      return;
+    }
+    let failures = self.present_failures.get() + 1;
+    self.present_failures.set(failures);
+    if failures == 1 {
+      log::error!("[alloy] present failed: {}", crate::sdl_utils::sdl_error());
+    }
+    if failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
+      log::error!("[alloy] GPU context lost ({failures} consecutive failed presents), exiting");
+      std::process::exit(1);
+    }
+  }
+
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
-    let _gl = lock_gl();
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
       let gpu = GpuTexture::new(&self.gl, self.backend, size);
@@ -269,7 +311,6 @@ impl Context {
   }
 
   pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
-    let _gl = lock_gl();
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
       let gpu = GpuTexture::new(&self.gl, self.backend, size);
@@ -296,7 +337,6 @@ impl Context {
   /// up the new texture immediately; in-flight users of the old entry keep it
   /// alive until released.
   pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
-    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture::new(&self.gl, self.backend, size);
     gpu.upload(&self.gl, pixels, size);
@@ -308,7 +348,6 @@ impl Context {
   /// buffer holding multiple frames; `offset` selects the frame start. The
   /// frame must match the texture's dimensions exactly.
   pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
-    let _gl = lock_gl();
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height) = (entry.width(), entry.height());
     let frame_size = (width as usize) * (height as usize) * 4;
@@ -347,7 +386,6 @@ impl Context {
     params: &[(String, f32)],
     textures: &[(String, u64)],
   ) -> Result<u64, String> {
-    let _gl = lock_gl();
     let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src, textures.to_vec())?;
     let resolved = self.resolve_sampler_bindings(&shader);
     shader.render(&self.gl, params, &resolved);
@@ -367,7 +405,6 @@ impl Context {
   /// the caller must request a frame for the new pixels to reach the screen.
   /// Sampler inputs are re-resolved, so updated source textures are picked up.
   pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
-    let _gl = lock_gl();
     let shaders = self.shaders.borrow();
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     let resolved = self.resolve_sampler_bindings(shader);
@@ -379,7 +416,6 @@ impl Context {
   /// Buffer ids are their own space (not texture ids); pipelines reference the
   /// buffer via `PipelineSpec::buffer_id`.
   pub fn create_gpu_buffer(&self, data: &[u8]) -> Result<u64, String> {
-    let _gl = lock_gl();
     let buffer = crate::shader::GpuBuffer::new(&self.gl, data)?;
     let id = self.next_buffer_id.get();
     self.next_buffer_id.set(id + 1);
@@ -392,7 +428,6 @@ impl Context {
   /// with its last-applied params, so geometry-only changes reach the screen
   /// even when no new params arrive. The caller must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
-    let _gl = lock_gl();
     {
       let buffers = self.buffers.borrow();
       let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
@@ -412,7 +447,6 @@ impl Context {
   /// reference keeps the GL storage alive so they keep rendering stale
   /// geometry, but further writes to the id error.
   pub fn destroy_gpu_buffer(&self, id: u64) {
-    let _gl = lock_gl();
     if let Some(buffer) = self.buffers.borrow_mut().remove(&id) {
       buffer.destroy(&self.gl);
     }
@@ -423,7 +457,6 @@ impl Context {
   /// `create_shader_texture` (same id space; `update_shader_params`,
   /// `destroy_texture`, and `<texture src>` all apply).
   pub fn create_pipeline_texture(&self, spec: &PipelineSpec) -> Result<u64, String> {
-    let _gl = lock_gl();
     let mut attrs = Vec::with_capacity(spec.attributes.len());
     for (name, fmt) in spec.attributes {
       attrs.push((name.clone(), crate::shader::AttrFormat::parse(fmt)?));
@@ -481,7 +514,6 @@ impl Context {
   /// Set a pipeline texture's vertex draw count and re-render it with its
   /// last-applied params. The caller must request a frame.
   pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
-    let _gl = lock_gl();
     let shaders = self.shaders.borrow();
     let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     shader.set_draw_count(count)?;
@@ -530,7 +562,6 @@ impl Context {
 
   /// Read back part of a vertex buffer's contents by registry id.
   pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
-    let _gl = lock_gl();
     let buffers = self.buffers.borrow();
     let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
     buffer.read(&self.gl, byte_offset, len)
@@ -556,7 +587,6 @@ impl Context {
   /// ready for sampling. The texture is owned by Impeller (and the caller's
   /// handle), not by wgpu and not by the registry.
   pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
-    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
       Backend::Gl => {
@@ -585,7 +615,6 @@ impl Context {
   /// exact dimensions with no origin-specific knowledge. The intermediate
   /// padded texture drops here, so Impeller frees its GL name.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
-    let _gl = lock_gl();
     let texture = self.render_display_list_to_texture(dl, width, height)?;
     let pixels = self.read_texture(&texture, width, height)?;
     Ok(self.create_texture_from_pixels(width, height, &pixels))
@@ -602,7 +631,6 @@ impl Context {
 
   /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).
   pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let _gl = lock_gl();
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
       Backend::Gl => gl::read_texture_pixels(&self.gl, texture, size),
@@ -616,7 +644,6 @@ impl Context {
   /// in-flight display list references keep the texture alive until they drop.
   /// For shader textures also destroys the GL program and FBO.
   pub fn destroy_texture(&self, id: u64) {
-    let _gl = lock_gl();
     self.textures.remove(id);
     if let Some(shader) = self.shaders.borrow_mut().remove(&id) {
       shader.destroy(&self.gl);
@@ -624,7 +651,6 @@ impl Context {
   }
 
   pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
-    let _gl = lock_gl();
     match gpu_texture.backend {
       Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx.borrow(), size),
       Backend::Vulkan => {

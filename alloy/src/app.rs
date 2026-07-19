@@ -1,8 +1,9 @@
 use impellers::ISize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use crate::backend::{create_render_surface, DisplayContext, Frame, RenderSurface};
+use crate::backend::{DisplayContext, FrameOutput};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
@@ -16,7 +17,6 @@ pub struct App {
   sdl_context: sdl3::Sdl,
   window: sdl3::video::Window,
   platform: DisplayContext,
-  render_surface: Box<dyn RenderSurface>,
   mode: Mode,
 }
 
@@ -71,25 +71,20 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
     window.hide();
   }
 
-  let platform = DisplayContext::new_opengl(&video, &window).expect("Failed to set up platform");
+  let platform = DisplayContext::new_opengl(&window).expect("Failed to set up platform");
 
-  let (w, h) = window.size_in_pixels();
-  let window_size = ISize::new(w as i64, h as i64);
-  let render_surface = create_render_surface(&platform, window_size).expect("Failed to create render surface");
-
-  App { sdl_context, window, platform, render_surface, mode }
+  App { sdl_context, window, platform, mode }
 }
 
-fn apply_main_thread_effects(event: &AlloyEvent, render_surface: &mut Box<dyn RenderSurface>, mode: &Mode) {
+fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>, mode: &Mode) {
   // In playback mode the surface is fixed at the size captured in setup, which is
   // exactly what the frame readback assumes; ignore resize events.
   if mode.is_playback() {
     return;
   }
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
-    let phys = ISize::new((size.width as f32 * display_scale) as i64, (size.height as f32 * display_scale) as i64);
-    let _gl = crate::context::lock_gl();
-    render_surface.resize(phys);
+    let (w, h) = ((size.width as f32 * display_scale) as u32, (size.height as f32 * display_scale) as u32);
+    surface_size.store(crate::backend::pack_size(w, h), Ordering::Release);
   }
 }
 
@@ -109,13 +104,14 @@ impl App {
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
   ) {
-    let App { sdl_context, mut window, platform, mut render_surface, mode } = self;
+    let App { sdl_context, mut window, platform, mode } = self;
+    let surface_size = platform.surface_size_handle();
 
-    let (tx, rx) = mpsc::channel::<Frame>();
+    let (tx, rx) = mpsc::channel::<FrameOutput>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
-    // queue, so a submitted frame must push an event to be noticed before the
+    // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. Playback mode blocks on the frame channel directly.
     let wake: Option<Box<dyn Fn() + Send + Sync>> = if mode.is_playback() {
       None
@@ -127,14 +123,14 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
-    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake);
+    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback());
 
     let initial = current_resize_event(&window);
-    apply_main_thread_effects(&initial, &mut render_surface, &mode);
+    apply_main_thread_effects(&initial, &surface_size, &mode);
     event_tx.send(initial).ok();
 
     if let Mode::Playback(playback) = mode {
-      run_playback_loop(window, render_surface, rx, event_tx, playback);
+      run_playback_loop(window, rx, event_tx, playback);
       return;
     }
 
@@ -183,41 +179,28 @@ impl App {
         event_pump.wait_event_timeout_ms(ms)
       };
 
-      // Drain queued frames and present only the newest. Superseded frames'
-      // GPU work is subsumed by the newer frame's fence (fences are monotonic
-      // on the UI context), so their sync objects are released without waiting.
+      // Drain the UI thread's frame notifications. Drawing and presenting have
+      // already happened over there (it owns the process's single GL context);
+      // each notification is one on-screen frame, so roll the counters and
+      // emit its FrameRendered.
       let mut disconnected = false;
-      {
-        // GL section (fence release through present); serialized against the
-        // UI thread's GL and released before event handling resumes below.
-        // See context::lock_gl.
-        let _gl = crate::context::lock_gl();
-        let mut newest: Option<Frame> = None;
-        loop {
-          match rx.try_recv() {
-            Ok(f) => {
-              if let Some(mut superseded) = newest.replace(f) {
-                render_surface.consume_fence(superseded.fence.take(), false);
-              }
-            }
-            Err(mpsc::TryRecvError::Empty) => break,
-            Err(mpsc::TryRecvError::Disconnected) => {
-              disconnected = true;
-              break;
-            }
+      loop {
+        match rx.try_recv() {
+          Ok(FrameOutput::Presented) => {
+            fps_frame_count += 1;
+            let time = start_time.elapsed().as_secs_f64();
+            event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+            frame += 1;
+            last_frame_signal = Instant::now();
           }
-        }
-        if let Some(mut sub) = newest {
-          fps_frame_count += 1;
-          // Wait on the GPU for the UI thread's frame work to finish before
-          // Impeller samples its textures (replaces the UI thread's glFinish).
-          render_surface.consume_fence(sub.fence.take(), true);
-          render_surface.draw_display_list(&sub.dl).expect("Failed to draw display list");
-          render_surface.present(&window);
-          let time = start_time.elapsed().as_secs_f64();
-          event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
-          frame += 1;
-          last_frame_signal = Instant::now();
+          // Captured frames only exist in playback mode, which never reaches
+          // this loop.
+          Ok(FrameOutput::Captured(_)) => {}
+          Err(mpsc::TryRecvError::Empty) => break,
+          Err(mpsc::TryRecvError::Disconnected) => {
+            disconnected = true;
+            break;
+          }
         }
       }
       if disconnected {
@@ -257,7 +240,7 @@ impl App {
           g.handle_event(&sdl_event);
         }
         if let Some(e) = translate_event(sdl_event, &window) {
-          apply_main_thread_effects(&e, &mut render_surface, &mode);
+          apply_main_thread_effects(&e, &surface_size, &mode);
           event_tx.send(e).ok();
         }
       }
@@ -270,7 +253,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &mut render_surface, &mode);
+            apply_main_thread_effects(&e, &surface_size, &mode);
             event_tx.send(e).ok();
             event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
             event_tx.send(current_system_theme_event()).ok();
