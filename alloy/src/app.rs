@@ -93,8 +93,8 @@ fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
   window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0)
 }
 
-// Payload-less user event the UI thread pushes onto the SDL queue after
-// submitting a frame, so the main loop's event wait returns immediately
+// Payload-less user event the raster thread pushes onto the SDL queue after
+// presenting a frame, so the main loop's event wait returns immediately
 // instead of at its timeout. It carries nothing: the frame itself travels
 // over the mpsc channel, which the woken loop drains.
 struct FrameReady;
@@ -179,10 +179,10 @@ impl App {
         event_pump.wait_event_timeout_ms(ms)
       };
 
-      // Drain the UI thread's frame notifications. Drawing and presenting have
-      // already happened over there (it owns the process's single GL context);
-      // each notification is one on-screen frame, so roll the counters and
-      // emit its FrameRendered.
+      // Drain the raster thread's frame notifications. Drawing and presenting
+      // have already happened over there (it owns the process's single GL
+      // context); each notification is one on-screen frame, so roll the
+      // counters and emit its FrameRendered.
       let mut disconnected = false;
       loop {
         match rx.try_recv() {

@@ -13,6 +13,7 @@ mod logging;
 pub mod microphone;
 mod mode;
 mod playback;
+mod raster;
 pub mod rendertree;
 mod script;
 mod shader;

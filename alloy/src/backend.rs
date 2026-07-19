@@ -4,10 +4,11 @@ use std::sync::{mpsc, Arc};
 use crate::gl;
 use crate::Context;
 
-/// What the UI thread reports to the main loop after finishing a frame. The UI
-/// thread owns the process's single GL context and has already drawn (and, in
-/// interactive mode, presented) by the time this arrives; the main loop only
-/// does frame bookkeeping (fps, FrameRendered events) and playback encoding.
+/// What the raster thread reports to the main loop after finishing a frame.
+/// The raster thread owns the process's single GL context and has already
+/// drawn (and, in interactive mode, presented) by the time this arrives; the
+/// main loop only does frame bookkeeping (fps, FrameRendered events) and
+/// playback encoding.
 pub enum FrameOutput {
   /// Interactive: the frame is on screen.
   Presented,
@@ -17,8 +18,8 @@ pub enum FrameOutput {
 }
 
 /// Physical framebuffer size packed for atomic hand-off from the main thread
-/// (which receives resize events) to the UI thread (which wraps FBO 0 at this
-/// size each frame).
+/// (which receives resize events) to the raster thread (which wraps FBO 0 at
+/// this size).
 pub fn pack_size(width: u32, height: u32) -> u64 {
   ((width as u64) << 32) | height as u64
 }
@@ -38,9 +39,9 @@ pub enum Backend {
 #[allow(dead_code)]
 pub enum DisplayContext {
   Gl {
-    /// The SDL window handle the UI thread presents to. Raw because the sdl3
-    /// Window type is neither Send nor clonable; the Window itself lives in
-    /// App on the main thread for the whole run.
+    /// The SDL window handle the raster thread presents to. Raw because the
+    /// sdl3 Window type is neither Send nor clonable; the Window itself lives
+    /// in App on the main thread for the whole run.
     window_raw: *mut sdl3::sys::video::SDL_Window,
     gl_context: sdl3::video::GLContext,
     /// See `pack_size`.

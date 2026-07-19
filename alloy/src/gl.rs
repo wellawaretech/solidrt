@@ -1,4 +1,5 @@
 use crate::backend::FrameOutput;
+use crate::raster::{RasterCmd, RasterState};
 use crate::{Backend, Context, DisplayContext, GpuTexture};
 use glow::HasContext;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
@@ -17,11 +18,11 @@ impl SendablePtr {
   }
 }
 
-/// Load GLES bindings from SDL's GL proc-address. Must be called on the UI
-/// thread with the GL context current; the returned context drives all of
-/// alloy's GL work (texture allocation/upload, offscreen FBOs, readback) and
-/// shares the underlying GL objects with Impeller, which renders on the same
-/// context.
+/// Load GLES bindings from SDL's GL proc-address. Must be called on the
+/// raster thread with the GL context current; the returned context drives all
+/// of alloy's GL work (texture allocation/upload, offscreen FBOs, readback)
+/// and shares the underlying GL objects with Impeller, which renders on the
+/// same context.
 pub fn create_gl_context() -> glow::Context {
   unsafe {
     glow::Context::from_loader_function(|name| {
@@ -361,7 +362,7 @@ pub fn read_texture_pixels(gl: &glow::Context, texture: &Texture, size: ISize) -
 }
 
 /// Read back the window backbuffer's RGBA8 pixels (FBO 0, bottom-up rows as GL
-/// stores them; the playback encoder flips when writing). Called on the UI
+/// stores them; the playback encoder flips when writing). Called on the raster
 /// thread right after the frame's draw, which glReadPixels implicitly waits on.
 pub fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
   let (width, height) = (size.width as i32, size.height as i32);
@@ -401,41 +402,48 @@ pub fn run_context(
 ) {
   let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
   let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
+  let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
 
-  let spawn_result =
-    std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
-      let window = window_ptr.get() as *mut sdl3::sys::video::SDL_Window;
-      // Bind the process's single GL context to this thread; it stays current
-      // here for the engine's lifetime, and every GL consumer (glow, Impeller,
-      // shader passes, window present) runs on this thread. Impeller's GLES
-      // contract requires exactly this: one context, used only on the thread
-      // that created it.
-      let current =
-        unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context_ptr.get() as sdl3::sys::video::SDL_GLContext) };
-      assert!(current, "SDL_GL_MakeCurrent failed on UI thread: {}", crate::sdl_utils::sdl_error());
-      // The swap interval belongs to the current-context binding, so it must be
-      // set on this thread, not where the context was created. Playback never
-      // swaps, so the setting is inert there.
-      if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
-        log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
-      }
+  // The raster thread: sole owner of the process's single GL context and
+  // Impeller context for the engine's lifetime. Impeller's GLES contract
+  // requires exactly this: one context, used only on the thread it was
+  // created on. Everything GL arrives over the command channel (raster.rs).
+  let spawn_raster = std::thread::Builder::new().name("srt-raster".into()).spawn(move || {
+    let window = window_ptr.get() as *mut sdl3::sys::video::SDL_Window;
+    let current =
+      unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context_ptr.get() as sdl3::sys::video::SDL_GLContext) };
+    assert!(current, "SDL_GL_MakeCurrent failed on raster thread: {}", crate::sdl_utils::sdl_error());
+    // The swap interval belongs to the current-context binding, so it must be
+    // set on this thread, not where the context was created. Blocking this
+    // thread in the vsync wait is the point: the UI thread stays free to
+    // build the next frame and dispatch input. Playback never swaps, so the
+    // setting is inert there.
+    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
+      log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+    }
 
-      let gl = create_gl_context();
-      let impeller_ctx = create_impeller_context();
-      unsafe {
-        log::info!(
-          "[alloy] GPU ready: {} | {} | {}",
-          gl.get_parameter_string(glow::VENDOR),
-          gl.get_parameter_string(glow::RENDERER),
-          gl.get_parameter_string(glow::VERSION)
-        );
-      }
+    let gl = create_gl_context();
+    let impeller_ctx = create_impeller_context();
+    unsafe {
+      log::info!(
+        "[alloy] GPU ready: {} | {} | {}",
+        gl.get_parameter_string(glow::VENDOR),
+        gl.get_parameter_string(glow::RENDERER),
+        gl.get_parameter_string(glow::VERSION)
+      );
+    }
 
-      let gpu_ctx =
-        Arc::new(Context::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, tx, wake));
-      closure(gpu_ctx);
-    });
-  spawn_result.expect("failed to spawn UI thread");
+    let state = RasterState::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, tx, wake);
+    state.run(raster_rx);
+  });
+  spawn_raster.expect("failed to spawn raster thread");
+
+  // The UI thread: QuickJS, layout, hit-testing, DisplayList building. No GL
+  // at all; the Context it gets marshals GPU work over the command channel.
+  let spawn_ui = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
+    closure(Arc::new(Context::new(raster_tx)));
+  });
+  spawn_ui.expect("failed to spawn UI thread");
 }
 
 /// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.

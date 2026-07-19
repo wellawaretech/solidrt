@@ -1,55 +1,36 @@
-use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
-use std::cell::RefCell;
+use impellers::{DisplayList, ISize, Texture};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 use crate::audio::AudioRegistry;
-use crate::backend::{Backend, FrameOutput};
 use crate::camera::CameraRegistry;
-use crate::gl;
 use crate::microphone::MicrophoneRegistry;
-use crate::texture::{GpuTexture, TextureEntry, TextureRegistry};
+use crate::raster::{PipelineSpecOwned, RasterCmd};
+use crate::texture::{TextureEntry, TextureRegistry};
+
+// All GL work - texture uploads, shader passes, offscreen rasterization,
+// compositing, present - runs on the raster thread, which owns the process's
+// single GL context and single Impeller context (see raster.rs for why).
+// Context is the UI thread's handle on it: methods marshal into RasterCmds,
+// either fire-and-forget sends or blocking RPCs. The UI side keeps just enough
+// bookkeeping (texture dims, shader kinds, buffer sizes) to validate ids and
+// answer size queries without a round trip.
 
 pub struct Context {
-  backend: Backend,
-  // GLES bindings + the Impeller context, both tied to the process's single
-  // GL context, which is current on the UI thread for the engine's lifetime
-  // and only ever touched there. RefCell on impeller_ctx because wrap_fbo
-  // needs &mut while Context is shared behind Arc.
-  gl: glow::Context,
-  impeller_ctx: RefCell<ImpellerContext>,
-  // The window's raw SDL handle, for presenting from the UI thread; the
-  // Window itself lives on the main thread.
-  window: *mut sdl3::sys::video::SDL_Window,
-  // Physical framebuffer size (see backend::pack_size), published by the main
-  // thread on resize and read when wrapping FBO 0 in submit.
-  surface_size: Arc<AtomicU64>,
-  // Playback mode: submit reads the drawn frame back and ships the pixels
-  // instead of presenting.
-  capture_frames: bool,
-  // Consecutive failed presents; a short streak confirms context loss (see
-  // present).
-  present_failures: std::cell::Cell<u32>,
+  raster_tx: mpsc::Sender<RasterCmd>,
   pub textures: TextureRegistry,
-  // Compiled shader targets (fullscreen fragment passes and vertex+fragment
-  // pipelines), keyed by the texture id their output is registered under, so
-  // update_shader_params can re-render into the same id.
-  shaders: RefCell<HashMap<u64, crate::shader::ShaderTexture>>,
-  // Vertex buffers pipelines draw from, in their own id space (not texture
-  // ids). A write re-renders every pipeline referencing the buffer.
-  buffers: RefCell<HashMap<u64, crate::shader::GpuBuffer>>,
-  next_buffer_id: std::cell::Cell<u64>,
+  // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
+  // Enough to validate params/draw-count updates without an RPC.
+  shader_kinds: RefCell<HashMap<u64, bool>>,
+  // UI-side mirror of the raster thread's buffer sizes, for bounds validation
+  // and gpu_buffer_len.
+  buffer_sizes: RefCell<HashMap<u64, usize>>,
+  next_buffer_id: Cell<u64>,
   pub(crate) cameras: CameraRegistry,
   pub(crate) microphones: MicrophoneRegistry,
   pub(crate) audio: AudioRegistry,
-  tx: mpsc::Sender<FrameOutput>,
-  // Wakes the main thread's event wait after a frame is presented, so its
-  // FrameRendered bookkeeping runs immediately instead of at the next wait
-  // timeout. None in playback mode, whose capture loop blocks on the channel
-  // directly.
-  wake: Option<Box<dyn Fn() + Send + Sync>>,
   // On-demand node captures (captureSnapshot, dev-server snapshot). Requests are
   // keyed by node id (many requests may target one node) and drained by the
   // paint walk when it visits that node; each carries its own completion
@@ -81,7 +62,7 @@ pub struct PipelineSpec<'a> {
   pub clear_color: [f32; 4],
 }
 
-/// A point-in-time inventory of the Context's GPU bookkeeping, for resource
+/// A point-in-time inventory of the GPU bookkeeping, for resource
 /// introspection (the dev server's gpu query). Plain data only, so consumers
 /// stay free of GL types.
 pub struct GpuResources {
@@ -135,63 +116,40 @@ pub struct CaptureInfo {
 pub type CaptureDone = Box<dyn FnOnce(Result<CaptureInfo, String>)>;
 
 // Safety: Context is asserted Send + Sync (its Arc crosses into the closure
-// that the UI thread runs, and the raw window pointer rides along), but it is
-// only ever accessed from the UI thread, where the process's single GL context
-// is current. glow::Context and Impeller::Context both rely on that
-// thread-local GL state; we never touch them concurrently.
+// the UI thread runs), but its interior (Rc entries, RefCell maps) is only
+// ever accessed from the UI thread. The raster thread shares nothing with
+// this struct beyond the command channel, whose Sender is Send.
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
-// All GL work - texture uploads, shader passes, offscreen rasterization,
-// compositing, present - runs on the UI thread, on the process's single GL
-// context and single Impeller context. That is Impeller's GLES contract (one
-// context, used only on its creating thread), and it is what keeps ANGLE /
-// D3D11 and mobile GLES drivers stable: the previous two-context architecture
-// corrupted driver state under concurrent shared-context access (access
-// violations in the NVIDIA user-mode driver and inside ANGLE's state manager,
-// wedged threads, DXGI device-removed), and its cross-context Impeller
-// textures silently aborted whole frames under ANGLE. See
-// okf/backlog/angle-cross-context-impeller-textures.md.
-
-// Consecutive failed presents that confirm the GL context is gone for good.
-// Two, not more: a demand-driven app may attempt very few presents after the
-// loss (observed frozen-window traces stopped at two), so a higher threshold
-// can leave a dead window open forever; one tolerated failure covers a
-// transient glitch.
-const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
-
 impl Context {
-  #[allow(clippy::too_many_arguments)]
-  pub fn new(
-    backend: Backend,
-    gl: glow::Context,
-    impeller_ctx: ImpellerContext,
-    window: *mut sdl3::sys::video::SDL_Window,
-    surface_size: Arc<AtomicU64>,
-    capture_frames: bool,
-    tx: mpsc::Sender<FrameOutput>,
-    wake: Option<Box<dyn Fn() + Send + Sync>>,
-  ) -> Self {
+  pub(crate) fn new(raster_tx: mpsc::Sender<RasterCmd>) -> Self {
     Context {
-      backend,
-      gl,
-      impeller_ctx: RefCell::new(impeller_ctx),
-      window,
-      surface_size,
-      capture_frames,
-      present_failures: std::cell::Cell::new(0),
+      raster_tx,
       textures: TextureRegistry::new(),
-      shaders: RefCell::new(HashMap::new()),
-      buffers: RefCell::new(HashMap::new()),
-      next_buffer_id: std::cell::Cell::new(1),
+      shader_kinds: RefCell::new(HashMap::new()),
+      buffer_sizes: RefCell::new(HashMap::new()),
+      next_buffer_id: Cell::new(1),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
       audio: AudioRegistry::default(),
-      tx,
-      wake,
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
     }
+  }
+
+  /// Fire-and-forget command. A send after the raster thread exited (engine
+  /// shutdown) is dropped silently; `submit` is where shutdown is detected.
+  fn send(&self, cmd: RasterCmd) {
+    self.raster_tx.send(cmd).ok();
+  }
+
+  /// Blocking RPC: send a command carrying a reply sender and wait for the
+  /// reply. Err only when the raster thread is gone (engine shutdown).
+  fn rpc<T>(&self, make: impl FnOnce(mpsc::Sender<T>) -> RasterCmd) -> Result<T, String> {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    self.raster_tx.send(make(reply_tx)).map_err(|_| "raster thread exited".to_string())?;
+    reply_rx.recv().map_err(|_| "raster thread exited".to_string())
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass
@@ -239,73 +197,19 @@ impl Context {
     }
   }
 
-  /// Draw the frame's display list to the window backbuffer and hand it on:
-  /// present in interactive mode, read the pixels back in playback mode. Runs
-  /// on the UI thread - the process's single GL thread - then notifies the
-  /// main loop, which only does frame bookkeeping (fps, FrameRendered) and
-  /// playback encoding. Err means the main loop is gone and the engine should
-  /// shut down.
+  /// Hand the frame's display list to the raster thread, which draws and
+  /// presents it (or reads it back in playback mode) and then notifies the
+  /// main loop. Returns immediately; the UI thread is free to build the next
+  /// frame while this one is on the GPU. Err means the raster thread is gone
+  /// and the engine should shut down.
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
-    let size = ISize::new(width as i64, height as i64);
-    // Wrap the window's default framebuffer fresh each frame: a draw clears a
-    // surface's previous contents anyway, and wrapping at the current size
-    // picks up resizes without any surface bookkeeping.
-    let drawn = match unsafe { self.impeller_ctx.borrow_mut().wrap_fbo(0, PixelFormat::RGBA8888, size) } {
-      Some(mut surface) => {
-        surface.draw_display_list(&dl).expect("Failed to draw display list");
-        true
-      }
-      None => {
-        // Transient (e.g. a zero-sized minimized window): skip the draw but
-        // still notify below, so lockstep consumers (playback) never stall.
-        log::warn!("[alloy] wrap_fbo(0) failed at {width}x{height}; skipping frame");
-        false
-      }
-    };
-    if self.capture_frames {
-      let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
-      self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
-    } else {
-      if drawn {
-        self.present();
-      }
-      self.tx.send(FrameOutput::Presented).map_err(|_| ())?;
-    }
-    // Wake only after the frame is in the channel, so the woken loop finds it.
-    if let Some(wake) = &self.wake {
-      wake();
-    }
-    Ok(())
-  }
-
-  /// Swap the window's backbuffer. Without the failure check a lost context /
-  /// removed device leaves the app running normally while nothing reaches the
-  /// screen (a frozen window with no message). There is no recovery path yet,
-  /// so a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
-  fn present(&self) {
-    if crate::sdl_utils::gl_swap_window_checked(self.window) {
-      self.present_failures.set(0);
-      return;
-    }
-    let failures = self.present_failures.get() + 1;
-    self.present_failures.set(failures);
-    if failures == 1 {
-      log::error!("[alloy] present failed: {}", crate::sdl_utils::sdl_error());
-    }
-    if failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
-      log::error!("[alloy] GPU context lost ({failures} consecutive failed presents), exiting");
-      std::process::exit(1);
-    }
+    self.raster_tx.send(RasterCmd::Frame(dl)).map_err(|_| ())
   }
 
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
-      let gpu = GpuTexture::new(&self.gl, self.backend, size);
-      gpu.upload(&self.gl, &pixels, size);
-      let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
-      self.textures.insert(id, TextureEntry { gpu, impeller });
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels);
     }
     self.textures.get(id).expect("texture must exist after insert")
   }
@@ -313,13 +217,9 @@ impl Context {
   pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
-      let gpu = GpuTexture::new(&self.gl, self.backend, size);
-      gpu.upload(&self.gl, &pixels, size);
-      let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
-      self.textures.insert(id, TextureEntry { gpu, impeller });
-    } else {
-      let entry = self.textures.get(id).expect("texture must exist in else branch");
-      entry.gpu.upload(&self.gl, &pixels, size);
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels);
+    } else if let Err(e) = self.update_texture(id, &pixels, 0) {
+      log::warn!("[alloy] texture {id} update failed: {e}");
     }
     self.textures.get(id).expect("texture must exist after insert or update")
   }
@@ -337,11 +237,11 @@ impl Context {
   /// up the new texture immediately; in-flight users of the old entry keep it
   /// alive until released.
   pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
-    let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture::new(&self.gl, self.backend, size);
-    gpu.upload(&self.gl, pixels, size);
-    let impeller = self.adopt_texture(&gpu, size).expect("adopt texture failed");
-    self.textures.insert(id, TextureEntry { gpu, impeller });
+    let impeller = self
+      .rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), reply })
+      .and_then(std::convert::identity)
+      .expect("adopt texture failed");
+    self.textures.insert(id, TextureEntry { impeller, width, height });
   }
 
   /// Re-upload RGBA8 pixels into an existing texture. `pixels` may be a larger
@@ -358,18 +258,7 @@ impl Context {
         pixels.len()
       ));
     }
-    let size = ISize::new(width as i64, height as i64);
-    entry.gpu.upload(&self.gl, &pixels[offset..end], size);
-    // Shader targets sampling this texture show stale output until their next
-    // params update; re-render them now (same contract as write_gpu_buffer, so
-    // data-texture changes are visible without a params change).
-    let shaders = self.shaders.borrow();
-    for shader in shaders.values() {
-      if shader.sampler_bindings().iter().any(|(_, tex)| *tex == id) {
-        let resolved = self.resolve_sampler_bindings(shader);
-        shader.render(&self.gl, &shader.last_params(), &resolved);
-      }
-    }
+    self.send(RasterCmd::UpdateTexture { id, pixels: pixels[offset..end].to_vec() });
     Ok(())
   }
 
@@ -386,17 +275,18 @@ impl Context {
     params: &[(String, f32)],
     textures: &[(String, u64)],
   ) -> Result<u64, String> {
-    let shader = crate::shader::ShaderTexture::new(&self.gl, width, height, fragment_src, textures.to_vec())?;
-    let resolved = self.resolve_sampler_bindings(&shader);
-    shader.render(&self.gl, params, &resolved);
-
-    let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
-    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt shader texture failed".to_string())?;
-
     let id = self.textures.allocate_id();
-    self.textures.insert(id, TextureEntry { gpu, impeller });
-    self.shaders.borrow_mut().insert(id, shader);
+    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTexture {
+      id,
+      width,
+      height,
+      fragment_src: fragment_src.to_string(),
+      params: params.to_vec(),
+      textures: textures.to_vec(),
+      reply,
+    })??;
+    self.textures.insert(id, TextureEntry { impeller, width, height });
+    self.shader_kinds.borrow_mut().insert(id, false);
     Ok(id)
   }
 
@@ -405,10 +295,10 @@ impl Context {
   /// the caller must request a frame for the new pixels to reach the screen.
   /// Sampler inputs are re-resolved, so updated source textures are picked up.
   pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
-    let shaders = self.shaders.borrow();
-    let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    let resolved = self.resolve_sampler_bindings(shader);
-    shader.render(&self.gl, params, &resolved);
+    if !self.shader_kinds.borrow().contains_key(&id) {
+      return Err(format!("shader texture {id} not found"));
+    }
+    self.send(RasterCmd::UpdateShaderParams { id, params: params.to_vec() });
     Ok(())
   }
 
@@ -416,10 +306,10 @@ impl Context {
   /// Buffer ids are their own space (not texture ids); pipelines reference the
   /// buffer via `PipelineSpec::buffer_id`.
   pub fn create_gpu_buffer(&self, data: &[u8]) -> Result<u64, String> {
-    let buffer = crate::shader::GpuBuffer::new(&self.gl, data)?;
     let id = self.next_buffer_id.get();
+    self.rpc(|reply| RasterCmd::CreateBuffer { id, data: data.to_vec(), reply })??;
     self.next_buffer_id.set(id + 1);
-    self.buffers.borrow_mut().insert(id, buffer);
+    self.buffer_sizes.borrow_mut().insert(id, data.len());
     Ok(id)
   }
 
@@ -428,18 +318,12 @@ impl Context {
   /// with its last-applied params, so geometry-only changes reach the screen
   /// even when no new params arrive. The caller must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
-    {
-      let buffers = self.buffers.borrow();
-      let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
-      buffer.write(&self.gl, data, byte_offset)?;
+    let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    let end = byte_offset.checked_add(data.len()).ok_or_else(|| "offset overflow".to_string())?;
+    if end > size {
+      return Err(format!("write of {} bytes at offset {byte_offset} exceeds buffer size {size}", data.len()));
     }
-    let shaders = self.shaders.borrow();
-    for shader in shaders.values() {
-      if shader.buffer_id() == Some(id) {
-        let resolved = self.resolve_sampler_bindings(shader);
-        shader.render(&self.gl, &shader.last_params(), &resolved);
-      }
-    }
+    self.send(RasterCmd::WriteBuffer { id, data: data.to_vec(), byte_offset });
     Ok(())
   }
 
@@ -447,9 +331,8 @@ impl Context {
   /// reference keeps the GL storage alive so they keep rendering stale
   /// geometry, but further writes to the id error.
   pub fn destroy_gpu_buffer(&self, id: u64) {
-    if let Some(buffer) = self.buffers.borrow_mut().remove(&id) {
-      buffer.destroy(&self.gl);
-    }
+    self.buffer_sizes.borrow_mut().remove(&id);
+    self.send(RasterCmd::DestroyBuffer { id });
   }
 
   /// Compile a vertex+fragment pipeline, render it once into a new RGBA8
@@ -457,166 +340,83 @@ impl Context {
   /// `create_shader_texture` (same id space; `update_shader_params`,
   /// `destroy_texture`, and `<texture src>` all apply).
   pub fn create_pipeline_texture(&self, spec: &PipelineSpec) -> Result<u64, String> {
-    let mut attrs = Vec::with_capacity(spec.attributes.len());
-    for (name, fmt) in spec.attributes {
-      attrs.push((name.clone(), crate::shader::AttrFormat::parse(fmt)?));
-    }
-    let topology = crate::shader::parse_topology(spec.topology)?;
-
-    let shader = {
-      let buffers = self.buffers.borrow();
-      let vbo = if spec.buffer_id != 0 {
-        Some(buffers.get(&spec.buffer_id).ok_or_else(|| format!("buffer {} not found", spec.buffer_id))?)
-      } else {
-        None
-      };
-      // A negative draw count means "the whole buffer": derived from the
-      // buffer size and the interleaved stride.
-      let draw_count = if spec.draw_count >= 0 {
-        spec.draw_count
-      } else {
-        let stride = crate::shader::vertex_stride(&attrs);
-        match vbo {
-          Some(b) if stride > 0 => (b.size / stride as usize) as i32,
-          _ => 0,
-        }
-      };
-      crate::shader::ShaderTexture::new_pipeline(
-        &self.gl,
-        spec.width,
-        spec.height,
-        spec.vertex_src,
-        spec.fragment_src,
-        spec.textures.to_vec(),
-        &attrs,
-        vbo.map(|b| b.vbo),
-        spec.buffer_id,
-        topology,
-        draw_count,
-        spec.depth,
-        spec.clear_color,
-      )?
-    };
-    let resolved = self.resolve_sampler_bindings(&shader);
-    shader.render(&self.gl, spec.params, &resolved);
-
-    let size = ISize::new(spec.width as i64, spec.height as i64);
-    let gpu =
-      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width: spec.width, height: spec.height };
-    let impeller = self.adopt_texture(&gpu, size).ok_or_else(|| "adopt pipeline texture failed".to_string())?;
-
     let id = self.textures.allocate_id();
-    self.textures.insert(id, TextureEntry { gpu, impeller });
-    self.shaders.borrow_mut().insert(id, shader);
+    let owned = PipelineSpecOwned {
+      width: spec.width,
+      height: spec.height,
+      vertex_src: spec.vertex_src.to_string(),
+      fragment_src: spec.fragment_src.to_string(),
+      params: spec.params.to_vec(),
+      textures: spec.textures.to_vec(),
+      attributes: spec.attributes.to_vec(),
+      buffer_id: spec.buffer_id,
+      topology: spec.topology.to_string(),
+      draw_count: spec.draw_count,
+      depth: spec.depth,
+      clear_color: spec.clear_color,
+    };
+    let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec: owned, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
+    self.shader_kinds.borrow_mut().insert(id, true);
     Ok(id)
   }
 
   /// Set a pipeline texture's vertex draw count and re-render it with its
   /// last-applied params. The caller must request a frame.
   pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
-    let shaders = self.shaders.borrow();
-    let shader = shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    shader.set_draw_count(count)?;
-    let resolved = self.resolve_sampler_bindings(shader);
-    shader.render(&self.gl, &shader.last_params(), &resolved);
-    Ok(())
+    let kind = self.shader_kinds.borrow().get(&id).copied();
+    match kind {
+      None => Err(format!("shader texture {id} not found")),
+      Some(false) => Err("not a pipeline texture".to_string()),
+      Some(true) => {
+        self.send(RasterCmd::SetDrawCount { id, count });
+        Ok(())
+      }
+    }
   }
 
-  /// Inventory the GPU resources this Context tracks: registered textures,
-  /// vertex buffers, and shader/pipeline targets with their bookkeeping (draw
-  /// state, layout, bindings, last-applied params). Sorted by id for stable
-  /// output.
+  /// Inventory the GPU resources the raster thread tracks: registered
+  /// textures, vertex buffers, and shader/pipeline targets with their
+  /// bookkeeping (draw state, layout, bindings, last-applied params). Sorted
+  /// by id for stable output.
   pub fn gpu_resources(&self) -> GpuResources {
-    let shaders = self.shaders.borrow();
-
-    let mut textures: Vec<GpuTextureInfo> = self
-      .textures
-      .list()
-      .into_iter()
-      .map(|(id, width, height)| GpuTextureInfo { id, width, height, target: shaders.contains_key(&id) })
-      .collect();
-    textures.sort_by_key(|t| t.id);
-
-    let mut buffers: Vec<GpuBufferInfo> =
-      self.buffers.borrow().iter().map(|(id, b)| GpuBufferInfo { id: *id, byte_length: b.size }).collect();
-    buffers.sort_by_key(|b| b.id);
-
-    let mut pipelines: Vec<GpuPipelineInfo> = shaders
-      .iter()
-      .map(|(texture_id, shader)| GpuPipelineInfo {
-        texture_id: *texture_id,
-        kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
-        buffer_id: shader.buffer_id(),
-        topology: shader.topology_name(),
-        draw_count: shader.draw_count(),
-        depth: shader.has_depth(),
-        attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
-        textures: shader.sampler_bindings().to_vec(),
-        params: shader.last_params(),
-      })
-      .collect();
-    pipelines.sort_by_key(|p| p.texture_id);
-
-    GpuResources { textures, buffers, pipelines }
+    self
+      .rpc(|reply| RasterCmd::Resources { reply })
+      .unwrap_or_else(|_| GpuResources { textures: Vec::new(), buffers: Vec::new(), pipelines: Vec::new() })
   }
 
   /// Read back part of a vertex buffer's contents by registry id.
   pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
-    let buffers = self.buffers.borrow();
-    let buffer = buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
-    buffer.read(&self.gl, byte_offset, len)
+    if !self.buffer_sizes.borrow().contains_key(&id) {
+      return Err(format!("buffer {id} not found"));
+    }
+    self.rpc(|reply| RasterCmd::ReadBuffer { id, byte_offset, len, reply })?
   }
 
   /// Byte length of a vertex buffer by registry id.
   pub fn gpu_buffer_len(&self, id: u64) -> Result<usize, String> {
-    let buffers = self.buffers.borrow();
-    buffers.get(&id).map(|b| b.size).ok_or_else(|| format!("buffer {id} not found"))
-  }
-
-  /// Map a shader's (name -> source texture id) bindings to live GL textures,
-  /// dropping any id no longer in the registry (it samples as unbound/black).
-  fn resolve_sampler_bindings(&self, shader: &crate::shader::ShaderTexture) -> Vec<(String, glow::Texture)> {
-    shader
-      .sampler_bindings()
-      .iter()
-      .filter_map(|(name, src_id)| self.textures.get(*src_id).map(|e| (name.clone(), e.gpu.gl_texture)))
-      .collect()
+    self.buffer_sizes.borrow().get(&id).copied().ok_or_else(|| format!("buffer {id} not found"))
   }
 
   /// Rasterize a display list into a new GPU texture of the given pixel size,
   /// ready for sampling. The texture is owned by Impeller (and the caller's
-  /// handle), not by wgpu and not by the registry.
+  /// handle), not by the registry.
   pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
-    let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => {
-        // A wrapped FBO is treated like a window backbuffer, which GL stores
-        // bottom-up; pre-flip the content so the texture ends up upright.
-        let mut flipped = impellers::DisplayListBuilder::new(None);
-        flipped.translate(0.0, height as f32);
-        flipped.scale(1.0, -1.0);
-        flipped.draw_display_list(dl, 1.0);
-        let flipped = flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())?;
-        gl::render_display_list_to_texture(&self.gl, &mut self.impeller_ctx.borrow_mut(), &flipped, size)
-      }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
+    self.rpc(|reply| RasterCmd::RasterizeDl { dl: dl.clone(), width, height, reply })?
   }
 
   /// Rasterize a display list into a new *registered* texture cropped to
-  /// exactly `width` x `height`, returning its registry id. Composes the
-  /// offscreen rasterize + content-extent readback + exact-size upload:
-  /// `render_display_list_to_texture` over-allocates the render target to a
-  /// 64px tile boundary (an Android requirement), but the content sits at the
-  /// origin, so reading back only `width` x `height` yields the tightly-packed
-  /// content with the padding excluded. The re-uploaded texture is therefore
-  /// unpadded, so `read_texture_by_id` (and any `<texture src>` sampling) sees
-  /// exact dimensions with no origin-specific knowledge. The intermediate
-  /// padded texture drops here, so Impeller frees its GL name.
+  /// exactly `width` x `height`, returning its registry id. The raster thread
+  /// rasterizes and reads back in one trip: `render_display_list_to_texture`
+  /// over-allocates the render target to a 64px tile boundary (an Android
+  /// requirement), but the content sits at the origin, so reading back only
+  /// `width` x `height` yields the tightly-packed content with the padding
+  /// excluded. The re-uploaded texture is therefore unpadded, so
+  /// `read_texture_by_id` (and any `<texture src>` sampling) sees exact
+  /// dimensions with no origin-specific knowledge. The intermediate padded
+  /// texture never leaves the raster thread.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
-    let texture = self.render_display_list_to_texture(dl, width, height)?;
-    let pixels = self.read_texture(&texture, width, height)?;
+    let pixels = self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })??;
     Ok(self.create_texture_from_pixels(width, height, &pixels))
   }
 
@@ -631,12 +431,7 @@ impl Context {
 
   /// Read back a texture's RGBA8 pixels (tightly packed top-to-bottom rows).
   pub fn read_texture(&self, texture: &Texture, width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => gl::read_texture_pixels(&self.gl, texture, size),
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
+    self.rpc(|reply| RasterCmd::ReadTexture { texture: texture.clone(), width, height, reply })?
   }
 
   /// Free a texture created via `create_texture_from_pixels`, `create_texture_at`,
@@ -645,20 +440,7 @@ impl Context {
   /// For shader textures also destroys the GL program and FBO.
   pub fn destroy_texture(&self, id: u64) {
     self.textures.remove(id);
-    if let Some(shader) = self.shaders.borrow_mut().remove(&id) {
-      shader.destroy(&self.gl);
-    }
-  }
-
-  pub fn adopt_texture(&self, gpu_texture: &GpuTexture, size: ISize) -> Option<Texture> {
-    match gpu_texture.backend {
-      Backend::Gl => gl::adopt_texture(gpu_texture, &self.impeller_ctx.borrow(), size),
-      Backend::Vulkan => {
-        panic!("Vulkan backend not yet implemented");
-      }
-      Backend::Metal => {
-        panic!("Metal backend not yet implemented");
-      }
-    }
+    self.shader_kinds.borrow_mut().remove(&id);
+    self.send(RasterCmd::DestroyTexture { id });
   }
 }

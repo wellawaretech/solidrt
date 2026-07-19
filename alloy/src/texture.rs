@@ -7,17 +7,21 @@ use std::rc::Rc;
 
 use crate::backend::Backend;
 
+/// The UI thread's view of a registered texture: the adopted Impeller handle
+/// (all a display list needs) plus dimensions for layout measure and update
+/// validation. The GL name behind it lives in the raster thread's map.
 pub struct TextureEntry {
-  pub gpu: GpuTexture,
   pub impeller: Texture,
+  pub width: u32,
+  pub height: u32,
 }
 
 impl TextureEntry {
   pub fn width(&self) -> u32 {
-    self.gpu.width
+    self.width
   }
   pub fn height(&self) -> u32 {
-    self.gpu.height
+    self.height
   }
 }
 
@@ -85,6 +89,7 @@ impl TextureRegistry {
 /// takes ownership of the GL name and deletes it when its Texture drops, so
 /// GpuTexture deliberately does NOT delete the name (no Drop impl) - doing so
 /// would double-free the name and corrupt whatever live texture reuses it.
+/// Raster-thread-only: creation and uploads are GL work.
 pub struct GpuTexture {
   pub gl_texture: glow::Texture,
   pub backend: Backend,

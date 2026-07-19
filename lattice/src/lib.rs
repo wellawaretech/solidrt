@@ -210,89 +210,108 @@ fn ui_thread(
     let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx);
 
     local.spawn_local(async move {
-      // An event popped ahead while coalescing PointerMove below, held for the
-      // next iteration so it is not reordered past other event types.
-      let mut pending: Option<AlloyEvent> = None;
       loop {
-        let mut event = match pending.take() {
-          Some(event) => event,
-          None => match ev_rx.recv().await {
+        // One batch per cycle: block for the first event, then drain whatever
+        // else is queued, with two coalescing rules.
+        // - PointerMove collapses to the latest position per pointer. Each
+        //   move costs a hit-test plus a JS dispatch, and a fast mouse
+        //   produces motion faster than that pipeline drains it.
+        // - Frame signals (FrameRendered / Tick) collapse to the newest one,
+        //   dispatched after the batch's input. A frame signal triggers a
+        //   full paint + present on this thread; when presents stall (driver
+        //   throttling, an occluded window) the signals pile up in the
+        //   unbounded queue, and each stale one replays another paint into
+        //   the saturated swapchain - the loop falls arbitrarily far behind,
+        //   re-animating old hover states and starving input and dev
+        //   queries. Only the newest signal matters; the dropped ones are
+        //   exactly the catch-up frames a browser skips too. Playback mode
+        //   is lockstep (one FrameRendered in flight, no Ticks), so its
+        //   captures never see a collapse.
+        let Some(first) = ev_rx.recv().await else { break };
+        let mut events: Vec<AlloyEvent> = Vec::new();
+        let mut frame_signal: Option<AlloyEvent> = None;
+        let mut incoming = Some(first);
+        loop {
+          let event = match incoming.take() {
             Some(event) => event,
-            None => break,
-          },
-        };
-        // Coalesce a burst of PointerMove for the same pointer down to the
-        // latest position. Each one costs a hit-test plus a JS dispatch, and a
-        // fast mouse produces motion events faster than that pipeline can
-        // drain them; without this, the unbounded channel backs up and the
-        // hover lag grows for as long as the mouse keeps moving (rendering
-        // stays on its own thread and is unaffected).
-        if let AlloyEvent::PointerMove { pointer_id, pointer_type, .. } = event {
-          while let Ok(next) = ev_rx.try_recv() {
-            match next {
-              AlloyEvent::PointerMove { pointer_id: next_id, pointer_type: next_type, .. }
-                if next_id == pointer_id && next_type == pointer_type =>
-              {
-                event = next;
-              }
-              other => {
-                pending = Some(other);
-                break;
-              }
+            None => match ev_rx.try_recv() {
+              Ok(event) => event,
+              Err(_) => break,
+            },
+          };
+          match event {
+            signal @ (AlloyEvent::FrameRendered { .. } | AlloyEvent::Tick { .. }) => frame_signal = Some(signal),
+            event => events.push(event),
+          }
+        }
+        // Walk from the newest: the first move seen per pointer is its latest
+        // position and stays; earlier ones drop.
+        let mut seen_moves: Vec<(alloy::PointerType, u64)> = Vec::new();
+        let mut keep = vec![true; events.len()];
+        for (i, event) in events.iter().enumerate().rev() {
+          if let AlloyEvent::PointerMove { pointer_id, pointer_type, .. } = event {
+            let key = (*pointer_type, *pointer_id);
+            if seen_moves.contains(&key) {
+              keep[i] = false;
+            } else {
+              seen_moves.push(key);
             }
           }
         }
-        if capture_enabled_events.load(Ordering::Relaxed) {
-          if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
-            let (kind, key) = match script_event {
-              alloy::ScriptEvent::KeyDown(k) => ("keydown", k.name()),
-              alloy::ScriptEvent::KeyUp(k) => ("keyup", k.name()),
-            };
-            let _ = capture_tx.send(format!(r#"{{"type":"capture","kind":"{kind}","key":"{key}"}}"#));
-          }
-        }
-        // Runner bookkeeping: device and window facts that outlive any single
-        // engine (the pointer positions hover refresh reads, the platform's
-        // window geometry, fps). Everything engine-facing happens behind the
-        // UiRuntime verbs below.
-        match &event {
-          AlloyEvent::Quit => std::process::exit(0),
-          AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
-            input_state_events.set_modifiers(*modifiers);
-          }
-          AlloyEvent::Resize { size, safe_area, display_scale } => {
-            platform_events.set_window_size(size.width as f32, size.height as f32);
-            platform_events.set_display_scale(*display_scale);
-            platform_events.set_safe_area(*safe_area);
-          }
-          AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers }
-          | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
-            input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
-            input_state_events.set_modifiers(*modifiers);
-          }
-          AlloyEvent::PointerUp { pointer_id, pointer_type, x, y, modifiers, .. } => {
-            input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
-            input_state_events.set_modifiers(*modifiers);
-            // Touch pointers end at release; mouse pointers persist.
-            if *pointer_type == alloy::PointerType::Touch {
-              input_state_events.remove_pointer((*pointer_type, *pointer_id));
+        let batch = events.into_iter().zip(keep).filter_map(|(event, keep)| keep.then_some(event)).chain(frame_signal);
+        for event in batch {
+          if capture_enabled_events.load(Ordering::Relaxed) {
+            if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
+              let (kind, key) = match script_event {
+                alloy::ScriptEvent::KeyDown(k) => ("keydown", k.name()),
+                alloy::ScriptEvent::KeyUp(k) => ("keyup", k.name()),
+              };
+              let _ = capture_tx.send(format!(r#"{{"type":"capture","kind":"{kind}","key":"{key}"}}"#));
             }
           }
-          AlloyEvent::Wheel { modifiers, .. } => input_state_events.set_modifiers(*modifiers),
-          AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => platform_events.set_fps(*fps),
-          _ => {}
-        }
-        match event {
-          // FrameRendered reports the frame native just finished drawing. JS
-          // uses the "render" event to compute the NEXT frame's state, so
-          // shift the field by +1. The JS-side bootstrap owns frame 0;
-          // without the shift, playback mode re-runs frame 0 at tick 0 and
-          // duplicates a PNG.
-          AlloyEvent::FrameRendered { frame, .. } => ui_runtime.frame(frame + 1),
-          // Tick's frame is already the next present index (one past the
-          // last FrameRendered), so no +1 here.
-          AlloyEvent::Tick { frame, .. } => ui_runtime.frame(frame),
-          event => ui_runtime.event(&event),
+          // Runner bookkeeping: device and window facts that outlive any single
+          // engine (the pointer positions hover refresh reads, the platform's
+          // window geometry, fps). Everything engine-facing happens behind the
+          // UiRuntime verbs below.
+          match &event {
+            AlloyEvent::Quit => std::process::exit(0),
+            AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
+              input_state_events.set_modifiers(*modifiers);
+            }
+            AlloyEvent::Resize { size, safe_area, display_scale } => {
+              platform_events.set_window_size(size.width as f32, size.height as f32);
+              platform_events.set_display_scale(*display_scale);
+              platform_events.set_safe_area(*safe_area);
+            }
+            AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers }
+            | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+              input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
+              input_state_events.set_modifiers(*modifiers);
+            }
+            AlloyEvent::PointerUp { pointer_id, pointer_type, x, y, modifiers, .. } => {
+              input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
+              input_state_events.set_modifiers(*modifiers);
+              // Touch pointers end at release; mouse pointers persist.
+              if *pointer_type == alloy::PointerType::Touch {
+                input_state_events.remove_pointer((*pointer_type, *pointer_id));
+              }
+            }
+            AlloyEvent::Wheel { modifiers, .. } => input_state_events.set_modifiers(*modifiers),
+            AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => platform_events.set_fps(*fps),
+            _ => {}
+          }
+          match event {
+            // FrameRendered reports the frame native just finished drawing. JS
+            // uses the "render" event to compute the NEXT frame's state, so
+            // shift the field by +1. The JS-side bootstrap owns frame 0;
+            // without the shift, playback mode re-runs frame 0 at tick 0 and
+            // duplicates a PNG.
+            AlloyEvent::FrameRendered { frame, .. } => ui_runtime.frame(frame + 1),
+            // Tick's frame is already the next present index (one past the
+            // last FrameRendered), so no +1 here.
+            AlloyEvent::Tick { frame, .. } => ui_runtime.frame(frame),
+            event => ui_runtime.event(&event),
+          }
         }
       }
     });

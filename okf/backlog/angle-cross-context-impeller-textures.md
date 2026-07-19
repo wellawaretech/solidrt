@@ -120,16 +120,78 @@ Perf note: present now blocks the UI thread at vsync when the app outpaces
 the display - the same stall the GL lock already imposed, minus the lock;
 the main thread's event pump no longer stalls behind present at all.
 
-## Open: dedicated raster thread (deferred, needs evaluation)
+## Open: dev-query timeouts with two clients connected (unexplained)
 
-The Flutter-shaped end state - JS/UI thread builds DisplayLists only, a
-dedicated raster thread owns the single GL context - is deliberately NOT
-done. It needs either blocking cross-thread round trips for flux's
-synchronous texture APIs (create-and-reference-this-frame, snapshot
-rasterization mid-paint-walk, capture readback) or an async redesign of
-that surface, and upstream Impeller would first need to expose reactor
-workers in the C API to do it properly. Evaluate when the API allows it;
-`Context::submit` remains the seam where a raster thread would slot in.
+During verification (2026-07-19, Hyprland/Wayland, dev server 0.0.30) dev
+queries against a new-architecture client twice fell into permanent 10s
+timeouts. Both episodes occurred while TWO clients were connected to the
+dev server; the affected client's window was visible, its UI thread showed
+normal animation-level CPU (~10-14%), and nothing was logged. A fresh
+single-client session against the same binary was flawless: instant
+queries, full-window snapshot, 61fps, 8 consecutive reloads survived.
+Prime suspect is therefore dev-server-side query routing with multiple
+clients (or across a server-restart generation change), not the client -
+but it was not root-caused. Reproduce with two clients before trusting
+multi-client query results.
+
+## Done (2026-07-19, second pass): dedicated raster thread
+
+The single-context architecture above fixed correctness but ran GL
+submission and the vsync wait inline on the JS thread; on GPU-bound scenes
+(recurse.tsx full-window redraw, 4x MSAA, iGPU) input dispatch throttled to
+GPU pace. Implemented the Flutter-shaped split within the same contract:
+
+- main thread: SDL event pump, window management, frame bookkeeping.
+- srt-ui (JS) thread: QuickJS, layout, hit-testing, DisplayList building -
+  zero GL.
+- srt-raster thread (alloy/src/raster.rs): owns the process's single GL
+  context + ImpellerContext; executes all GL as `RasterCmd`s from one
+  ordered mpsc channel; draws + presents with vsync (blocking this thread
+  is the point); drops superseded frames in interactive mode (load
+  shedding), never in capture mode (playback's contract is exactly one
+  Captured per submit).
+
+Calling conventions: fire-and-forget for frames/uploads/param writes/
+destroys; blocking RPC (send + wait on a reply channel) for creates,
+shader/pipeline compiles (errors must reach JS), rasterize, and readbacks.
+The `Context` API surface was preserved verbatim; flux/lattice/rendertree
+consumers were untouched. UI-side `Context` keeps handle+dims texture
+entries and small mirrors (shader kinds, buffer sizes) for validation;
+raster side keeps the GL-name map, shader/buffer maps, window surface
+cache, present-failure exit, and slow-frame log.
+
+The one docs-trusted assumption - dropping an impellers::Texture on a
+non-context thread defers the GL delete to the context's reactor - was
+verified first by examples/xthread_release.rs: 200 cross-thread drop
+cycles recycled to a single GL name with no GL errors, and a handle
+outliving the ImpellerContext dropped without crash.
+
+The occluded-window JS-starvation concern above is structurally resolved:
+submit no longer blocks, so a stalled present parks the raster thread, not
+JS. Remaining exposure: a blocking RPC issued while a present is stalled
+(occluded window) blocks the JS thread until the swap returns - rare ops
+only, same class as the old GL lock. On Hyprland/Mesa no stall was
+observed (occluded client kept presenting and answering GPU queries);
+other platforms unverified.
+
+## Stage 2 (deferred): non-blocking creates and readbacks
+
+The raster protocol barely changes (blocking recv becomes a reply mailbox
+drained from the JS event loop); what changes is the JS-facing calling
+convention per op:
+
+- Readbacks/captures: easiest - captureSnapshot is already promise-based
+  and capture_requests/capture_ready is already async plumbing.
+- CreateTexture: JS knows the dims; a pending registry entry whose
+  Impeller handle arrives a frame later, paint skips/defers that texture.
+- Shader/pipeline creation: sync-throw becomes promise-rejection - a
+  visible JS API semantics change (interacts with the dev/prod validation
+  policy); decide deliberately.
+- Snapshot repaint boundaries: not an async RPC - move boundary
+  rasterization raster-side entirely (ship the boundary DL with the frame;
+  raster rasterizes and caches - the Flutter model). Additive protocol
+  change.
+- GpuResources: dev tooling; stays blocking.
 
 ## Repro/tooling notes
 

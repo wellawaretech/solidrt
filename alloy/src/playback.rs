@@ -13,11 +13,12 @@ pub struct PlaybackConfig {
   pub script: ScriptPlayer,
 }
 
-// Lockstep capture loop: block until the UI thread (which owns the process's
-// single GL context) has drawn the next frame into the hidden window's
-// backbuffer and read it back, write PNG, send FrameRendered with virtual
-// frame index and configured fps. JS is kept on a fixed virtual clock by
-// lib.rs deriving time from these values.
+// Lockstep capture loop: block until the raster thread (which owns the
+// process's single GL context) has drawn the next frame into the hidden
+// window's backbuffer and read it back, write PNG, send FrameRendered with
+// virtual frame index and configured fps. JS is kept on a fixed virtual clock
+// by lib.rs deriving time from these values. The raster thread never drops
+// frames in capture mode, so the one-Captured-per-submit contract holds.
 pub(crate) fn run_playback_loop(
   window: sdl3::video::Window,
   rx: mpsc::Receiver<FrameOutput>,
@@ -31,8 +32,8 @@ pub(crate) fn run_playback_loop(
   for frame in 0..playback.frames {
     let rgba = match rx.recv() {
       Ok(FrameOutput::Captured(rgba)) => rgba,
-      // Presented is interactive-only; a closed channel means the UI thread
-      // is gone.
+      // Presented is interactive-only; a closed channel means the raster
+      // thread is gone.
       Ok(FrameOutput::Presented) | Err(_) => break,
     };
     if rgba.len() == width * height * 4 {
