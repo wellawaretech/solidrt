@@ -2,6 +2,14 @@ name: Windows Client
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Cargo profile (release for runnable artifacts, debug for functional checks)'
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
 
 jobs:
   build-windows-client:
@@ -28,12 +36,12 @@ jobs:
 
       - name: Build client
         shell: bash
-        run: make client PROFILE=debug SPEECH=0 VERSION=0.0.0-check
+        run: make client PROFILE=${{ inputs.profile }} SPEECH=0 VERSION=0.0.0-check
 
       - name: Upload client
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: solidrt-go-windows-debug
+          name: solidrt-go-windows-${{ inputs.profile }}
           path: |
             dist/win32-x64-msvc/solidrt-go.exe
             dist/win32-x64-msvc/libEGL.dll
