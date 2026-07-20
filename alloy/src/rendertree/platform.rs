@@ -4,8 +4,15 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/NotoSans.ttf");
-const NOTO_SANS_MONO: &[u8] = include_bytes!("../../assets/fonts/NotoSansMono.ttf");
+/// A font to register at startup: raw TTF/OTF bytes plus an optional alias the
+/// font registers under instead of its intrinsic family name ("sans", "serif"
+/// and "mono" by convention). Alloy ships no font data itself; callers supply
+/// fonts (embedded, unpacked from a trailer, read from disk). With none
+/// registered, text falls back to the platform font manager.
+pub struct FontPayload {
+  pub alias: Option<String>,
+  pub bytes: Cow<'static, [u8]>,
+}
 
 pub struct PlatformContext {
   pub typography: TypographyContext,
@@ -31,12 +38,14 @@ unsafe impl Send for PlatformContext {}
 unsafe impl Sync for PlatformContext {}
 
 impl PlatformContext {
-  pub fn new() -> Self {
+  pub fn new(fonts: Vec<FontPayload>) -> Self {
     let mut typography = TypographyContext::default();
-    typography.register_font(Cow::Borrowed(NOTO_SANS), Some("Noto Sans")).expect("Failed to register Noto Sans font");
-    typography
-      .register_font(Cow::Borrowed(NOTO_SANS_MONO), Some("Noto Sans Mono"))
-      .expect("Failed to register Noto Sans Mono font");
+    for font in fonts {
+      let FontPayload { alias, bytes } = font;
+      typography
+        .register_font(bytes, alias.as_deref())
+        .unwrap_or_else(|e| panic!("Failed to register font '{}': {e}", alias.as_deref().unwrap_or("<unaliased>")));
+    }
     Self {
       typography,
       window_size: Cell::new((0.0, 0.0)),

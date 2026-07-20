@@ -284,7 +284,7 @@ impl Stats {
 
     let mut style = ParagraphStyle::default();
     style.set_foreground(&paint);
-    style.set_font_family("Noto Sans Mono");
+    style.set_font_family("mono");
     style.set_font_size(14.0);
     style.set_font_weight(alloy::impellers::FontWeight::Bold);
     style.set_text_alignment(TextAlignment::Right);

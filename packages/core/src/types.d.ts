@@ -306,7 +306,7 @@ export interface TextProps extends Position, PaintProps, PointerProps {
   w?: number
   // Reported-bounds height only; paragraph height always falls out of the text.
   h?: number
-  fontFamily?: "sans" | "mono" | (string & {})
+  fontFamily?: "sans" | "serif" | "mono" | (string & {})
   fontSize?: number
   /**
    * Line height as a MULTIPLIER of fontSize, not pixels (the theme uses

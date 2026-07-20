@@ -12,6 +12,7 @@
     "src/",
     "server/",
     "scaffold/",
+    "fonts/",
     "AGENTS.md"
   ],
   "dependencies": {

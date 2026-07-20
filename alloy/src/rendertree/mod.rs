@@ -12,7 +12,7 @@ pub use kinds::{
   Texture, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
-pub use platform::PlatformContext;
+pub use platform::{FontPayload, PlatformContext};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};

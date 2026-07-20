@@ -114,11 +114,15 @@ default-app-bundle: $(DEFAULT_APP_JS) $(BSOD_JS)
 
 # -- Fonts --------------------------------------------
 
-# Fonts moved to alloy with the render tree (embedded by alloy's platform.rs).
+# The three Noto role defaults (sans/serif/mono). The go client embeds them
+# (lattice lib.rs embedded_fonts); the production runtime ships no fonts, and
+# `srt pack` appends these as trailer sections by default (see
+# okf/plans/packaged-fonts.md).
 FONTS_DIR = $(CURDIR)/../alloy/assets/fonts
 
 download-fonts:
 	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSans.ttf
+	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notoserif/NotoSerif%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSerif.ttf
 	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansmono/NotoSansMono%5Bwdth%2Cwght%5D.ttf" -o $(FONTS_DIR)/NotoSansMono.ttf
 	curl -L "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/OFL.txt" -o $(FONTS_DIR)/OFL.txt
 

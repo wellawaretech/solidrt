@@ -1,35 +1,93 @@
 // Trailer identifying a SolidRT payload appended to this binary by `srt pack`.
-// Must match SOLID_MAGIC in packages/cli/src/pack.ts.
+// Must match the writer in packages/cli/src/packer.ts. Layout after the runner
+// image: each section's bytes, then a table of section entries, then
+// [table offset u64 LE][entry count u32 LE][magic]. Table entry:
+// [kind u32 LE][offset u64 LE][len u64 LE][alias len u8][alias bytes].
+// Offsets are absolute file offsets. The CLI and runners ship pinned together,
+// so there is no format version; every offset/length is bounds-checked and any
+// mismatch degrades to "no payload" instead of misparsing.
 #[cfg(not(feature = "go"))]
 const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
 #[cfg(not(feature = "go"))]
-const EMBED_TRAILER_LEN: usize = 8 + EMBED_MAGIC.len(); // u64 offset + magic
-
-// Read our own image and slice out bytecode appended by `srt pack`, if any.
+const EMBED_TAIL_LEN: usize = 8 + 4 + EMBED_MAGIC.len(); // table offset + entry count + magic
 #[cfg(not(feature = "go"))]
-fn load_embedded_bytecode() -> Option<Vec<u8>> {
+const SECTION_BYTECODE: u32 = 1;
+#[cfg(not(feature = "go"))]
+const SECTION_FONT: u32 = 2;
+
+#[cfg(not(feature = "go"))]
+struct EmbeddedPayload {
+  bytecode: Option<Vec<u8>>,
+  fonts: Vec<alloy::rendertree::FontPayload>,
+}
+
+// Read our own image and slice out the sections appended by `srt pack`, if any.
+#[cfg(not(feature = "go"))]
+fn load_embedded_payload() -> Option<EmbeddedPayload> {
   let exe = std::env::current_exe().ok()?;
   let data = std::fs::read(&exe).ok()?;
-  if data.len() < EMBED_TRAILER_LEN {
+  if data.len() < EMBED_TAIL_LEN {
     return None;
   }
-  let magic_start = data.len() - EMBED_MAGIC.len();
-  if &data[magic_start..] != EMBED_MAGIC {
+  if &data[data.len() - EMBED_MAGIC.len()..] != EMBED_MAGIC {
     return None;
   }
-  let offset_start = data.len() - EMBED_TRAILER_LEN;
-  let offset = u64::from_le_bytes(data[offset_start..offset_start + 8].try_into().ok()?) as usize;
-  if offset >= offset_start {
+  let tail = data.len() - EMBED_TAIL_LEN;
+  let table_offset = u64::from_le_bytes(data[tail..tail + 8].try_into().ok()?);
+  let count = u32::from_le_bytes(data[tail + 8..tail + 12].try_into().ok()?);
+  if table_offset >= tail as u64 || count == 0 {
     return None;
   }
-  Some(data[offset..offset_start].to_vec())
+  let mut cursor = table_offset as usize;
+  let mut payload = EmbeddedPayload { bytecode: None, fonts: Vec::new() };
+  for _ in 0..count {
+    if cursor + 21 > tail {
+      return None;
+    }
+    let kind = u32::from_le_bytes(data[cursor..cursor + 4].try_into().ok()?);
+    let offset = u64::from_le_bytes(data[cursor + 4..cursor + 12].try_into().ok()?);
+    let len = u64::from_le_bytes(data[cursor + 12..cursor + 20].try_into().ok()?);
+    let alias_len = data[cursor + 20] as usize;
+    cursor += 21;
+    if cursor + alias_len > tail {
+      return None;
+    }
+    let alias = match alias_len {
+      0 => None,
+      _ => Some(std::str::from_utf8(&data[cursor..cursor + alias_len]).ok()?.to_string()),
+    };
+    cursor += alias_len;
+    // Sections precede the table.
+    if offset.checked_add(len)? > table_offset {
+      return None;
+    }
+    let bytes = data[offset as usize..(offset + len) as usize].to_vec();
+    match kind {
+      SECTION_BYTECODE => payload.bytecode = Some(bytes),
+      SECTION_FONT => {
+        payload.fonts.push(alloy::rendertree::FontPayload { alias, bytes: std::borrow::Cow::Owned(bytes) })
+      }
+      // Unknown kinds are skipped; pinned CLI/runner versions make this unreachable today.
+      _ => {}
+    }
+  }
+  // The entries must consume the table region exactly.
+  if cursor != tail {
+    return None;
+  }
+  Some(payload)
 }
 
 fn main() {
   #[cfg(not(feature = "go"))]
-  let bytecode = load_embedded_bytecode();
+  let (bytecode, fonts) = match load_embedded_payload() {
+    Some(payload) => (payload.bytecode, payload.fonts),
+    // No trailer (bare runtime): no fonts either; text falls back to the
+    // platform font manager.
+    None => (None, Vec::new()),
+  };
   #[cfg(feature = "go")]
-  let bytecode: Option<Vec<u8>> = None;
+  let (bytecode, fonts): (Option<Vec<u8>>, Vec<alloy::rendertree::FontPayload>) = (None, lattice::embedded_fonts());
 
   let mut args = std::env::args().skip(1);
   let mut playback = false;
@@ -84,7 +142,7 @@ fn main() {
     alloy::Mode::Run
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, app, mode, size, stats, dev_server);
+  lattice::start(&rt, app, mode, size, stats, dev_server, fonts);
 }
 
 // Parses a `--script` file (see `srt render --script`, written by `srt run

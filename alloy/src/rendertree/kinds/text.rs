@@ -48,7 +48,7 @@ impl Default for Text {
   fn default() -> Self {
     Self {
       computed_text: String::new(),
-      font_family: "Noto Sans".to_string(),
+      font_family: "sans".to_string(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
       font_weight: FontWeight::Medium,

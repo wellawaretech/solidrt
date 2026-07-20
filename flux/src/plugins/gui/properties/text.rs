@@ -11,11 +11,9 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<Damage> {
     "y" => text.set_y(f32_of(value, "y")),
     "w" => text.set_w(f32_of(value, "w")),
     "h" => text.set_h(f32_of(value, "h")),
-    "fontFamily" => text.set_font_family(match str_of(value, "fontFamily") {
-      "mono" => "Noto Sans Mono".to_string(),
-      "sans" => "Noto Sans".to_string(),
-      other => other.to_string(),
-    }),
+    // Role names ("sans", "serif", "mono") are registered font aliases; every
+    // family name passes through to the typographer as-is.
+    "fontFamily" => text.set_font_family(str_of(value, "fontFamily").to_string()),
     "fontSize" => text.set_font_size(f32_of(value, "fontSize")),
     "textAlign" => text.set_text_alignment(match str_of(value, "textAlign") {
       "left" => TextAlignment::Left,

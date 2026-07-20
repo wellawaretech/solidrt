@@ -235,11 +235,7 @@ impl ModuleDef for RenderTreeModule {
 
       if let Some(opts) = options.0 {
         if let Ok(v) = opts.get::<_, String>("fontFamily") {
-          node.font_family = match v.as_str() {
-            "mono" => "Noto Sans Mono".to_string(),
-            "sans" => "Noto Sans".to_string(),
-            other => other.to_string(),
-          };
+          node.font_family = v;
         }
         if let Ok(v) = opts.get::<_, f64>("fontSize") {
           node.font_size = v as f32;

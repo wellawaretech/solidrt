@@ -18,7 +18,7 @@ enum EngineCmd {
 }
 
 use alloy::impellers::ISize;
-use alloy::rendertree::{PlatformContext, RenderTree};
+use alloy::rendertree::{FontPayload, PlatformContext, RenderTree};
 use alloy::AlloyEvent;
 use flux::gui::AlloyContext;
 use flux::{ExecHandle, FluxEngine};
@@ -36,7 +36,7 @@ use std::sync::Arc;
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server);
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts());
   0
 }
 
@@ -86,6 +86,30 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 const BSOD_SOURCE: &str = include_str!("../default-app/bsod.srt.js");
 
+/// The dev client's built-in fonts: the three Noto role defaults, matching what
+/// a default packed app carries in its trailer. The dev loop (default screen,
+/// BSOD, HUD, `srt render` golden frames) needs deterministic text without a
+/// packed payload, so these stay compiled in; the production runtime ships no
+/// font data and registers whatever the trailer carries.
+#[cfg(feature = "go")]
+pub fn embedded_fonts() -> Vec<FontPayload> {
+  use std::borrow::Cow;
+  vec![
+    FontPayload {
+      alias: Some("sans".to_string()),
+      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSans.ttf")),
+    },
+    FontPayload {
+      alias: Some("serif".to_string()),
+      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSerif.ttf")),
+    },
+    FontPayload {
+      alias: Some("mono".to_string()),
+      bytes: Cow::Borrowed(include_bytes!("../../alloy/assets/fonts/NotoSansMono.ttf")),
+    },
+  ]
+}
+
 pub(crate) const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
   Some(v) => v,
   None => "0.0.0-dev",
@@ -115,6 +139,9 @@ struct RunOptions {
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
   dev_server: Option<String>,
+  // Fonts to register at startup (see FontPayload): the go client's embedded
+  // Notos, or a packed binary's trailer fonts.
+  fonts: Vec<FontPayload>,
 }
 
 fn ui_thread(
@@ -124,7 +151,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, playback_fps, stats, dev_server } = opts;
+  let RunOptions { app, playback_fps, stats, dev_server, fonts } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -143,7 +170,7 @@ fn ui_thread(
     Err(e) => log::warn!("[srt] no writable pref path, leaving working directory unchanged: {e}"),
   }
 
-  let platform = Arc::new(PlatformContext::new());
+  let platform = Arc::new(PlatformContext::new(fonts));
   // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
   // the demand-driven gate would deadlock it.
@@ -491,6 +518,7 @@ pub fn start(
   size: (u32, u32),
   stats: bool,
   dev_server: Option<String>,
+  fonts: Vec<FontPayload>,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -502,7 +530,7 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server };
+  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });

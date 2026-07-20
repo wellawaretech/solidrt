@@ -7,7 +7,7 @@
 declare module "flux:rendertree" {
   /** Font options for {@link measureText}. */
   export interface MeasureTextOptions {
-    fontFamily?: "sans" | "mono" | (string & {})
+    fontFamily?: "sans" | "serif" | "mono" | (string & {})
     fontSize?: number
     fontStyle?: "normal" | "italic"
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
