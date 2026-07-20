@@ -161,7 +161,7 @@ struct RunOptions {
 // of the same app moves the current version dir.
 #[cfg(feature = "go")]
 fn mount_assets(app_id: &str) {
-  forge::fs::set_assets_base(go::store::current_version_dir(app_id));
+  forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
 // A stored version's font annotations, merged over the embedded defaults: a
@@ -245,7 +245,7 @@ fn ui_thread(
       Some(boot) => {
         log::info!("[sgo] Booting app {} from the version store", boot.app_id);
         anchor_app(&boot.app_id, &mut current_app_id);
-        forge::fs::set_assets_base(Some(boot.version_dir));
+        forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(boot.version_dir)));
         if !boot.fonts.is_empty() {
           log::info!("[sgo] Registering {} font(s) from the version store", boot.fonts.len());
         }

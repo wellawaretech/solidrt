@@ -1,7 +1,7 @@
+import { readFileSync } from "node:fs"
 import { requireBinary } from "./util"
 import { compileToBytecode } from "./bundler"
-import type { PackFont } from "./fonts"
-import type { AppIdentity } from "./project"
+import type { PackFolder } from "./pack-folder"
 
 // Trailer magic identifying the runner an embedded payload belongs to. Must match
 // the runner-side checks: fluxrt -> flux/src/bin/fluxrt.rs, solidrt ->
@@ -11,18 +11,15 @@ const MAGIC = {
   solidrt: Buffer.from([0x53, 0x4f, 0x4c, 0x49, 0x44, 0x52, 0x54, 0x88, 0x44]), // "SOLIDRT\x88\x44"
 }
 
-export type Runner = keyof typeof MAGIC
-
 // Section kinds in the solidrt trailer. Must match lattice/src/main.rs.
-const SECTION_BYTECODE = 1
-const SECTION_FONT = 2
-const SECTION_APP = 3
+const SECTION_MANIFEST = 1
+const SECTION_FILE = 2
 
-type Section = { kind: number; bytes: Buffer; alias?: string }
+type Section = { kind: number; bytes: Buffer; name?: string }
 
 // Append sections to the runner image: each section's bytes, then a table of
 // section entries, then [table offset u64 LE][entry count u32 LE][magic].
-// Table entry: [kind u32 LE][offset u64 LE][len u64 LE][alias len u8][alias].
+// Table entry: [kind u32 LE][offset u64 LE][len u64 LE][name len u16 LE][name].
 // Offsets are absolute file offsets. The runner reads its own image at
 // startup, validates the magic, and slices the sections back out.
 function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): Buffer {
@@ -31,13 +28,13 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
   let offset = runnerBytes.length
   for (let section of sections) {
     parts.push(section.bytes)
-    let alias = Buffer.from(section.alias ?? "", "utf8")
-    let entry = Buffer.allocUnsafe(21 + alias.length)
+    let name = Buffer.from(section.name ?? "", "utf8")
+    let entry = Buffer.allocUnsafe(22 + name.length)
     entry.writeUInt32LE(section.kind, 0)
     entry.writeBigUInt64LE(BigInt(offset), 4)
     entry.writeBigUInt64LE(BigInt(section.bytes.length), 12)
-    entry.writeUInt8(alias.length, 20)
-    alias.copy(entry, 21)
+    entry.writeUInt16LE(name.length, 20)
+    name.copy(entry, 22)
     entries.push(entry)
     offset += section.bytes.length
   }
@@ -47,43 +44,27 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
   return Buffer.concat([...parts, ...entries, tail, magic])
 }
 
-// The app-identity section: three length-prefixed UTF-8 strings
-// [len u8][bytes] (appId, org, displayName). Deliberately not JSON: the
-// packed runner carries no JSON parser outside the JS engine. Must match
-// lattice/src/storage.rs (decode_app_identity).
-function encodeIdentity(identity: AppIdentity): Buffer {
-  let parts: Buffer[] = []
-  for (let field of [identity.appId, identity.org, identity.displayName]) {
-    let bytes = Buffer.from(field, "utf8")
-    parts.push(Buffer.from([bytes.length]), bytes)
-  }
-  return Buffer.concat(parts)
+// The single-file solidrt executable: the runner image plus the pack folder in
+// section form - the canonical manifest verbatim, then every manifest-listed
+// file named by its manifest path. Bundle, fonts, and identity all come from
+// the manifest; assets are read in place via ranged reads at their section
+// offsets, so nothing is unpacked at runtime.
+export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
+  let runnerBytes = readFileSync(requireBinary("solidrt"))
+  let sections: Section[] = [
+    { kind: SECTION_MANIFEST, bytes: Buffer.from(folder.manifest, "utf8") },
+    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
+    ...folder.copies.map((c) => ({ kind: SECTION_FILE, bytes: readFileSync(c.from), name: c.to })),
+  ]
+  return packSections(runnerBytes, sections, MAGIC.solidrt)
 }
 
-// Compile JS to bytecode and append it to the runner binary. solidrt gets the
-// sectioned trailer (bytecode + app identity + fonts); fluxrt keeps the
-// single-payload trailer of [bytecode][u64 offset LE][8-byte magic].
-export async function packRunner(
-  runner: Runner,
-  jsCode: string,
-  fonts: PackFont[] = [],
-  identity?: AppIdentity,
-): Promise<Buffer> {
+// Compile JS to bytecode and append it to the fluxrt runner as its
+// single-payload trailer: [bytecode][u64 offset LE][8-byte magic].
+export async function packFlux(jsCode: string): Promise<Buffer> {
   let bytecode = await compileToBytecode(jsCode)
-
-  let runnerPath = requireBinary(runner)
-  let runnerBytes = Buffer.from(await Bun.file(runnerPath).arrayBuffer())
-
-  if (runner === "solidrt") {
-    let sections: Section[] = [
-      { kind: SECTION_BYTECODE, bytes: bytecode },
-      ...(identity ? [{ kind: SECTION_APP, bytes: encodeIdentity(identity) }] : []),
-      ...fonts.map((f) => ({ kind: SECTION_FONT, bytes: f.bytes, alias: f.alias })),
-    ]
-    return packSections(runnerBytes, sections, MAGIC.solidrt)
-  }
-
+  let runnerBytes = readFileSync(requireBinary("fluxrt"))
   let offsetBuf = Buffer.allocUnsafe(8)
   offsetBuf.writeBigUInt64LE(BigInt(runnerBytes.length))
-  return Buffer.concat([runnerBytes, bytecode, offsetBuf, MAGIC[runner]])
+  return Buffer.concat([runnerBytes, bytecode, offsetBuf, MAGIC.fluxrt])
 }

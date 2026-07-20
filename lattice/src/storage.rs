@@ -30,31 +30,8 @@ pub struct AppIdentity {
   pub display_name: String,
 }
 
-/// Decode the app-identity trailer section: three length-prefixed UTF-8
-/// strings [len u8][bytes] (appId, org, displayName), consumed exactly.
-/// Not JSON: the encoding predates serde_json in packed builds (adopted for
-/// manifest.json in stage 3b) and stays as-is - CLI and runner ship pinned.
-pub fn decode_app_identity(bytes: &[u8]) -> Option<AppIdentity> {
-  fn take<'a>(cursor: &mut &'a [u8]) -> Option<&'a str> {
-    let (&len, rest) = cursor.split_first()?;
-    if rest.len() < len as usize {
-      return None;
-    }
-    let (string, rest) = rest.split_at(len as usize);
-    *cursor = rest;
-    std::str::from_utf8(string).ok()
-  }
-  let mut cursor = bytes;
-  let app_id = take(&mut cursor)?.to_string();
-  let org = take(&mut cursor)?.to_string();
-  let display_name = take(&mut cursor)?.to_string();
-  if !cursor.is_empty() || app_id.is_empty() || org.is_empty() || display_name.is_empty() {
-    return None;
-  }
-  Some(AppIdentity { app_id, org, display_name })
-}
-
-/// Startup inputs the resolution runs on: CLI flags plus the packed identity.
+/// Startup inputs the resolution runs on: CLI flags plus the packed identity
+/// (from the pack manifest since stage 3c).
 pub struct StorageSpec {
   pub data_root: Option<PathBuf>,
   pub client: Option<String>,

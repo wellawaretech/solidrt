@@ -1,32 +1,68 @@
-// Trailer identifying a SolidRT payload appended to this binary by `srt pack`.
-// Must match the writer in packages/cli/src/packer.ts. Layout after the runner
-// image: each section's bytes, then a table of section entries, then
-// [table offset u64 LE][entry count u32 LE][magic]. Table entry:
-// [kind u32 LE][offset u64 LE][len u64 LE][alias len u8][alias bytes].
-// Offsets are absolute file offsets. The CLI and runners ship pinned together,
-// so there is no format version; every offset/length is bounds-checked and any
-// mismatch degrades to "no payload" instead of misparsing.
+// The factory payload a packed distribution boots: either the single-file
+// trailer (the pack folder in section form, appended to this binary by
+// `srt pack`) or a folder next to the runner (`srt pack --folder`). One shape
+// behind both (okf/plans/client-storage-updates.md, stage 3): the manifest
+// defines the version's file set (the runner is deliberately unlisted) and
+// carries the app identity; a .js bundle is JS source, anything else QuickJS
+// bytecode; fonts come from the manifest annotations; assets resolve through
+// the mount (a dir, or ranges inside this executable).
+//
+// Trailer layout, must match packages/cli/src/packer.ts: each section's bytes,
+// then a table of section entries, then [table offset u64 LE][entry count
+// u32 LE][magic]. Table entry: [kind u32 LE][offset u64 LE][len u64 LE]
+// [name len u16 LE][name bytes]. Offsets are absolute file offsets. Sections:
+// 1 = the canonical manifest JSON, 2 = a manifest-listed file (name = its
+// manifest path). The CLI and runners ship pinned together, so there is no
+// format version; every offset/length is bounds-checked and any mismatch
+// degrades to "no payload" instead of misparsing.
 #[cfg(not(feature = "go"))]
 const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
 #[cfg(not(feature = "go"))]
 const EMBED_TAIL_LEN: usize = 8 + 4 + EMBED_MAGIC.len(); // table offset + entry count + magic
 #[cfg(not(feature = "go"))]
-const SECTION_BYTECODE: u32 = 1;
+const SECTION_MANIFEST: u32 = 1;
 #[cfg(not(feature = "go"))]
-const SECTION_FONT: u32 = 2;
-#[cfg(not(feature = "go"))]
-const SECTION_APP: u32 = 3;
+const SECTION_FILE: u32 = 2;
 
 #[cfg(not(feature = "go"))]
-struct EmbeddedPayload {
-  bytecode: Option<Vec<u8>>,
+struct FactoryPayload {
+  app: lattice::AppSource,
   fonts: Vec<alloy::rendertree::FontPayload>,
-  identity: Option<lattice::storage::AppIdentity>,
+  identity: lattice::storage::AppIdentity,
+  base: forge::fs::AssetsBase,
+}
+
+// A plain filename, as the manifest's bundle entry must be: it cannot reach
+// outside its distribution.
+#[cfg(not(feature = "go"))]
+fn plain_bundle_name(manifest: &lattice::manifest::Manifest) -> Option<&str> {
+  let name = manifest.bundle.path.as_deref().unwrap_or("bundle.js");
+  (!name.contains('/') && !name.contains('\\') && !name.starts_with('.')).then_some(name)
+}
+
+#[cfg(not(feature = "go"))]
+fn app_from_bundle(name: &str, bytes: Vec<u8>) -> Option<lattice::AppSource> {
+  if name.ends_with(".js") {
+    Some(lattice::AppSource::Text(String::from_utf8(bytes).ok()?))
+  } else {
+    Some(lattice::AppSource::Bytecode(bytes))
+  }
+}
+
+// Pack manifests carry org/displayName for the storage pref path; a
+// hand-rolled folder from a dev manifest defaults them from the app id.
+#[cfg(not(feature = "go"))]
+fn identity_from(manifest: lattice::manifest::Manifest) -> lattice::storage::AppIdentity {
+  lattice::storage::AppIdentity {
+    org: manifest.org.clone().unwrap_or_else(|| manifest.app_id.clone()),
+    display_name: manifest.display_name.clone().unwrap_or_else(|| manifest.app_id.clone()),
+    app_id: manifest.app_id,
+  }
 }
 
 // Read our own image and slice out the sections appended by `srt pack`, if any.
 #[cfg(not(feature = "go"))]
-fn load_embedded_payload() -> Option<EmbeddedPayload> {
+fn load_embedded_payload() -> Option<FactoryPayload> {
   let exe = std::env::current_exe().ok()?;
   let data = std::fs::read(&exe).ok()?;
   if data.len() < EMBED_TAIL_LEN {
@@ -42,35 +78,34 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
     return None;
   }
   let mut cursor = table_offset as usize;
-  let mut payload = EmbeddedPayload { bytecode: None, fonts: Vec::new(), identity: None };
+  let mut manifest: Option<lattice::manifest::Manifest> = None;
+  let mut index: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
   for _ in 0..count {
-    if cursor + 21 > tail {
+    if cursor + 22 > tail {
       return None;
     }
     let kind = u32::from_le_bytes(data[cursor..cursor + 4].try_into().ok()?);
     let offset = u64::from_le_bytes(data[cursor + 4..cursor + 12].try_into().ok()?);
     let len = u64::from_le_bytes(data[cursor + 12..cursor + 20].try_into().ok()?);
-    let alias_len = data[cursor + 20] as usize;
-    cursor += 21;
-    if cursor + alias_len > tail {
+    let name_len = u16::from_le_bytes(data[cursor + 20..cursor + 22].try_into().ok()?) as usize;
+    cursor += 22;
+    if cursor + name_len > tail {
       return None;
     }
-    let alias = match alias_len {
-      0 => None,
-      _ => Some(std::str::from_utf8(&data[cursor..cursor + alias_len]).ok()?.to_string()),
-    };
-    cursor += alias_len;
+    let name = std::str::from_utf8(&data[cursor..cursor + name_len]).ok()?;
+    cursor += name_len;
     // Sections precede the table.
     if offset.checked_add(len)? > table_offset {
       return None;
     }
-    let bytes = data[offset as usize..(offset + len) as usize].to_vec();
     match kind {
-      SECTION_BYTECODE => payload.bytecode = Some(bytes),
-      SECTION_FONT => {
-        payload.fonts.push(alloy::rendertree::FontPayload { alias, bytes: std::borrow::Cow::Owned(bytes) })
+      SECTION_MANIFEST => {
+        let text = std::str::from_utf8(&data[offset as usize..(offset + len) as usize]).ok()?;
+        manifest = lattice::manifest::Manifest::parse(text).ok();
       }
-      SECTION_APP => payload.identity = lattice::storage::decode_app_identity(&bytes),
+      SECTION_FILE if !name.is_empty() => {
+        index.insert(name.to_string(), (offset, len));
+      }
       // Unknown kinds are skipped; pinned CLI/runner versions make this unreachable today.
       _ => {}
     }
@@ -79,65 +114,40 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
   if cursor != tail {
     return None;
   }
-  Some(payload)
+  let manifest = manifest?;
+  let slice = |&(offset, len): &(u64, u64)| data[offset as usize..(offset + len) as usize].to_vec();
+  let bundle_name = plain_bundle_name(&manifest)?;
+  let app = app_from_bundle(bundle_name, slice(index.get(bundle_name)?))?;
+  let fonts = manifest
+    .fonts
+    .iter()
+    .filter_map(|font| {
+      let bytes = slice(index.get(&font.path)?);
+      Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
+    })
+    .collect();
+  let identity = identity_from(manifest);
+  Some(FactoryPayload { app, fonts, identity, base: forge::fs::AssetsBase::Packed { exe, index } })
 }
 
-// A folder distribution next to this runner (okf/plans/client-storage-updates.md,
-// stage 3b): manifest.json + the bundle it names + assets/. The manifest
-// defines the version's file set (the runner is deliberately unlisted) and
-// carries the app identity; a .js bundle is JS source, anything else QuickJS
-// bytecode. Absent or unreadable pieces degrade to "no folder payload".
+// A folder distribution next to this runner: manifest.json + the bundle it
+// names + assets/. Absent or unreadable pieces degrade to "no folder payload".
 #[cfg(not(feature = "go"))]
-struct FolderPayload {
-  app: lattice::AppSource,
-  fonts: Vec<alloy::rendertree::FontPayload>,
-  identity: lattice::storage::AppIdentity,
-  dir: std::path::PathBuf,
-}
-
-#[cfg(not(feature = "go"))]
-fn load_adjacent_folder() -> Option<FolderPayload> {
+fn load_adjacent_folder() -> Option<FactoryPayload> {
   let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
   let manifest = lattice::manifest::Manifest::load(&dir)?;
-  let bundle_path = manifest.bundle.path.as_deref().unwrap_or("bundle.js");
-  // The bundle name comes from the manifest: a plain filename only, so it
-  // cannot reach outside the folder.
-  if bundle_path.contains('/') || bundle_path.contains('\\') || bundle_path.starts_with('.') {
-    return None;
-  }
-  let bytes = std::fs::read(dir.join(bundle_path)).ok()?;
-  let app = if bundle_path.ends_with(".js") {
-    lattice::AppSource::Text(String::from_utf8(bytes).ok()?)
-  } else {
-    lattice::AppSource::Bytecode(bytes)
-  };
+  let bundle_name = plain_bundle_name(&manifest)?;
+  let app = app_from_bundle(bundle_name, std::fs::read(dir.join(bundle_name)).ok()?)?;
   let fonts = manifest
     .load_fonts(&dir)
     .into_iter()
     .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
     .collect();
-  // Pack manifests carry org/displayName for the storage pref path; a
-  // hand-rolled folder from a dev manifest defaults them from the app id.
-  let identity = lattice::storage::AppIdentity {
-    org: manifest.org.clone().unwrap_or_else(|| manifest.app_id.clone()),
-    display_name: manifest.display_name.clone().unwrap_or_else(|| manifest.app_id.clone()),
-    app_id: manifest.app_id,
-  };
-  Some(FolderPayload { app, fonts, identity, dir })
+  let identity = identity_from(manifest);
+  Some(FactoryPayload { app, fonts, identity, base: forge::fs::AssetsBase::Dir(dir) })
 }
 
 fn main() {
-  #[cfg(not(feature = "go"))]
-  let (bytecode, fonts, identity) = match load_embedded_payload() {
-    Some(payload) => (payload.bytecode, payload.fonts, payload.identity),
-    // No trailer (bare runtime): no fonts either; text falls back to the
-    // platform font manager.
-    None => (None, Vec::new(), None),
-  };
-  #[cfg(feature = "go")]
-  let (bytecode, fonts, identity): (Option<Vec<u8>>, Vec<alloy::rendertree::FontPayload>, Option<lattice::storage::AppIdentity>) =
-    (None, lattice::embedded_fonts(), None);
-
   let mut args = std::env::args().skip(1);
   let mut playback = false;
   let mut script_path: Option<String> = None;
@@ -178,27 +188,30 @@ fn main() {
       source_path = Some(arg);
     }
   }
-  // An embedded payload (packed binary) takes precedence over a path argument.
-  let app = match bytecode {
-    Some(bytes) => Some(lattice::AppSource::Bytecode(bytes)),
-    None => source_path.map(|path| {
-      let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
-      lattice::AppSource::Text(src)
-    }),
+  let path_app = |path: String| {
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
+    lattice::AppSource::Text(src)
   };
-  // With neither, a folder distribution adjacent to the runner boots: its
-  // assets/ tree becomes the assets mount (reads under assets/ resolve there).
+  // Precedence: embedded trailer > explicit path argument > adjacent folder.
+  // A factory payload (trailer or folder) also mounts its assets: reads under
+  // assets/ resolve into the distribution instead of the cwd.
   #[cfg(not(feature = "go"))]
-  let (app, fonts, identity) = match app {
-    None => match load_adjacent_folder() {
-      Some(folder) => {
-        forge::fs::set_assets_base(Some(folder.dir));
-        (Some(folder.app), folder.fonts, Some(folder.identity))
+  let (app, fonts, identity) = {
+    let factory = load_embedded_payload()
+      .or_else(|| if source_path.is_none() { load_adjacent_folder() } else { None });
+    match factory {
+      Some(payload) => {
+        forge::fs::set_assets_base(Some(payload.base));
+        (Some(payload.app), payload.fonts, Some(payload.identity))
       }
-      None => (None, fonts, identity),
-    },
-    app => (app, fonts, identity),
+      // Bare runtime: no fonts either; text falls back to the platform font
+      // manager.
+      None => (source_path.map(path_app), Vec::new(), None),
+    }
   };
+  #[cfg(feature = "go")]
+  let (app, fonts, identity): (_, _, Option<lattice::storage::AppIdentity>) =
+    (source_path.map(path_app), lattice::embedded_fonts(), None);
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,

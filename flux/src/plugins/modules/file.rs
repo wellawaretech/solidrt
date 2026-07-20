@@ -5,7 +5,7 @@ use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::seekable::SeekableSource;
 use crate::plugins::standards::body::{attach_body, JsBytes};
-use forge::{fs, SeekableReader};
+use forge::fs;
 
 // Marshalling for the `file()` reference: forward to the engine-free
 // `forge::fs` disk operations and encode their results back to JS.
@@ -142,11 +142,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   // off the JS thread (audio streaming) can open the file on demand. Local disk
   // here; the dev-server proxy attaches a range-backed opener instead.
   let path_for_open = path.clone();
-  SeekableSource::attach(
-    &ctx,
-    &obj,
-    Rc::new(move || fs::open_seekable(&path_for_open).map(|f| Box::new(f) as SeekableReader)),
-  )?;
+  SeekableSource::attach(&ctx, &obj, Rc::new(move || fs::open_seekable(&path_for_open)))?;
 
   Ok(obj)
 }

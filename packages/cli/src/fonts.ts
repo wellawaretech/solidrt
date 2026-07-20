@@ -15,9 +15,7 @@ import { findProjectPackage } from "./project"
 //     }
 //   }
 
-export type PackFont = { alias: string; bytes: Buffer }
-
-/** A resolved font source: the file behind an alias, before loading. */
+/** A resolved font source: the file behind an alias. */
 export type ResolvedFont = { alias: string; path: string; isDefault: boolean }
 
 let DEFAULT_FONTS: Record<string, string> = {
@@ -48,12 +46,6 @@ function findProjectConfig(sourcePath: string): { dir: string; fonts: unknown } 
 function fail(message: string): never {
   console.error(message)
   process.exit(1)
-}
-
-// Resolve the font set for a pack, loaded into memory (the trailer wrapper's
-// form). Order matches resolvePackFonts.
-export function loadPackFonts(sourcePath: string): PackFont[] {
-  return resolvePackFonts(sourcePath).map((f) => ({ alias: f.alias, bytes: readFileSync(f.path) }))
 }
 
 // Resolve the font set for a pack as file paths: role defaults merged with the

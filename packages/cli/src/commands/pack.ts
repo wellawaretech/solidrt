@@ -1,8 +1,8 @@
 import { values, source } from "../args"
 import { bundleFlux, bundleSolid, compileToBytecode } from "../bundler"
-import { loadPackFonts, resolvePackFonts } from "../fonts"
+import { resolvePackFonts } from "../fonts"
 import { loadAppIdentity } from "../project"
-import { packRunner } from "../packer"
+import { packFlux, packSolid } from "../packer"
 import { buildPackFolder, writePackFolder } from "../pack-folder"
 import { requireBinary } from "../util"
 import { resolve } from "node:path"
@@ -16,27 +16,35 @@ async function writeExecutable(packed: Buffer, outfile: string) {
   console.log(`>> wrote ${packed.length} bytes to ${outfile}`)
 }
 
-function printIdentity() {
+export async function runPackCommand() {
+  if (values.flux) {
+    if (values.folder) {
+      console.error("--folder is for app packs; flux scripts have no folder output")
+      process.exit(1)
+    }
+    let outfile = values.output ?? source!.replace(/\.[jt]sx?$/, "")
+    if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
+      outfile += ".exe"
+    }
+    await writeExecutable(await packFlux(await bundleFlux(source!)), outfile)
+    process.exit()
+  }
+
+  // Both solidrt outputs are the same canonical pack: manifest + bundle.bin +
+  // assets (fonts included). --folder writes it as a flat folder next to a
+  // bare runner; the default single-file exe carries it as trailer sections.
   let identity = loadAppIdentity(source!)
   console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
   if (identity.defaulted) {
     console.warn('>> warning: no "solidrt.appId" in package.json; set a stable reverse-DNS id before distributing')
   }
-}
+  let fonts = resolvePackFonts(source!)
+  console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
 
-export async function runPackCommand() {
+  let bytecode = await compileToBytecode(await bundleSolid())
+  let folder = buildPackFolder(source!, bytecode)
+
   if (values.folder) {
-    // The canonical flat folder (see pack-folder.ts). The single-file exe
-    // remains the default output; it becomes a wrapper over this folder later.
-    if (values.flux) {
-      console.error("--folder is for app packs; flux scripts have no folder output")
-      process.exit(1)
-    }
-    printIdentity()
-    let fonts = resolvePackFonts(source!)
-    console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
-    let bytecode = await compileToBytecode(await bundleSolid())
-    let folder = buildPackFolder(source!, bytecode)
     let outDir = values.output ?? "dist"
     writePackFolder(outDir, requireBinary("solidrt"), bytecode, folder)
     console.log(`>> wrote pack folder to ${resolve(outDir)}`)
@@ -48,15 +56,6 @@ export async function runPackCommand() {
   if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
     outfile += ".exe"
   }
-  let packed: Buffer
-  if (values.flux) {
-    packed = await packRunner("fluxrt", await bundleFlux(source!))
-  } else {
-    printIdentity()
-    let fonts = loadPackFonts(source!)
-    console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
-    packed = await packRunner("solidrt", await bundleSolid(), fonts, loadAppIdentity(source!))
-  }
-  await writeExecutable(packed, outfile)
+  await writeExecutable(packSolid(folder, bytecode), outfile)
   process.exit()
 }
