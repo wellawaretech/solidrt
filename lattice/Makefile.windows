@@ -16,7 +16,11 @@ PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
 # RuntimeLibrary mismatch. whisper-rs-sys forwards CMAKE_* env vars as cmake -D
 # defines; CMP0091=NEW is required so CMAKE_MSVC_RUNTIME_LIBRARY is honored on
 # whisper.cpp's old cmake_minimum_required.
-WIN_RUSTFLAGS := -Ctarget-feature=+crt-static -Clink-arg=/OPT:NOREF,NOICF
+# Do NOT append /OPT flags here: rustc already passes /OPT:REF,ICF and a
+# later /OPT:NOREF,NOICF would win, re-enabling incremental-style layout
+# (~7 MB of int3 padding, no COMDAT folding: solidrt.exe 52.7 -> 38.5 MB
+# when the override was removed, 2026-07-19).
+WIN_RUSTFLAGS := -Ctarget-feature=+crt-static
 WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
 .PHONY: client runtime dist-windows angle-windows
