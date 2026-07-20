@@ -1,15 +1,19 @@
-// Version store under an app dir (okf/plans/client-storage-updates.md, stage 2):
+// Version store under an app dir (okf/plans/client-storage-updates.md,
+// stages 2 + 3):
 //
 //   apps/<app-id>/
-//     versions/<manifest-hash>/   manifest.json + bundle.js
+//     versions/<manifest-hash>/   manifest.json + bundle.js + assets/...
 //     state.json                  {version, current, previous, healthy, launches}
 //
 // A dev push is installed here before the engine reload applies it, so the
 // client can relaunch the app offline. The version id is the sha256 of the
 // manifest's canonical bytes (the exact string the CLI sent, never
-// re-serialized); the bundle's own hash and size are verified against the
-// manifest entry before anything is written. healthy/launches are written but
-// not yet acted on (health/rollback is stage 4).
+// re-serialized); every file's own hash and size are verified against its
+// manifest entry before anything is written. Assets already held by the
+// current or previous version (same path + hash per their manifests) are
+// hardlinked into the new version; the caller fetches the rest
+// (`missing_assets` -> `install`). healthy/launches are written but not yet
+// acted on (health/rollback is stage 4).
 //
 // go-only for now: packed apps receive no installs until OTA (stage 4), and
 // lifting this into every build re-opens the serde-free question for the
@@ -17,6 +21,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const STATE_VERSION: u32 = 1;
@@ -41,12 +46,42 @@ struct Manifest {
   #[serde(rename = "appId")]
   app_id: String,
   bundle: ManifestBundle,
+  #[serde(default)]
+  assets: Vec<AssetEntry>,
+  #[serde(default)]
+  fonts: Vec<FontRef>,
 }
 
 #[derive(Deserialize)]
 struct ManifestBundle {
+  #[serde(default)]
+  path: Option<String>,
   sha256: String,
   size: u64,
+}
+
+/// One collected assets/ file, as the manifest lists it.
+#[derive(Deserialize, Clone)]
+pub struct AssetEntry {
+  pub path: String,
+  pub sha256: String,
+  pub size: u64,
+}
+
+// A font annotation: an assets/ path registered under an alias at startup.
+#[derive(Deserialize)]
+struct FontRef {
+  path: String,
+  alias: String,
+}
+
+// Manifest paths land on disk as-is, so only plain forward-slash relative
+// paths inside assets/ are acceptable; anything else means a malformed or
+// hostile manifest.
+fn safe_asset_path(path: &str) -> bool {
+  path.starts_with("assets/")
+    && !path.contains('\\')
+    && path.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -58,32 +93,126 @@ fn sha256_hex(bytes: &[u8]) -> String {
   hex
 }
 
-/// Install a pushed bundle into the client store. Returns the app id the
-/// version was installed under (from the manifest).
-pub fn install(manifest: &str, code: &str) -> Result<String, String> {
+/// The asset entries a push still needs bytes for: listed in the manifest but
+/// not held (same path + hash) by the current or previous version. Returns
+/// them with the app id; an already-installed version needs nothing.
+pub fn missing_assets(manifest: &str) -> Result<(String, Vec<AssetEntry>), String> {
   let store = crate::storage::get().ok_or("no writable storage")?;
   let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
-  install_at(&store.app_dir(&parsed.app_id), manifest, code)?;
+  let app_dir = store.app_dir(&parsed.app_id);
+  if app_dir.join("versions").join(sha256_hex(manifest.as_bytes())).is_dir() {
+    return Ok((parsed.app_id, Vec::new()));
+  }
+  let held = held_assets(&app_dir);
+  let missing = parsed
+    .assets
+    .iter()
+    .filter(|a| !held.get(&a.path).is_some_and(|(hash, _)| hash.eq_ignore_ascii_case(&a.sha256)))
+    .cloned()
+    .collect();
+  Ok((parsed.app_id, missing))
+}
+
+/// Install a pushed version into the client store: the bundle from the push,
+/// assets from `fetched` (keyed by manifest path) or hardlinked from the
+/// versions already held. Returns the app id the version was installed under.
+pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -> Result<String, String> {
+  let store = crate::storage::get().ok_or("no writable storage")?;
+  let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
+  install_at(&store.app_dir(&parsed.app_id), manifest, code, fetched)?;
   Ok(parsed.app_id)
 }
 
-/// The last-installed app and its current bundle, for offline boot.
-pub fn load_last() -> Option<(String, String)> {
+/// A stored version resolved for boot: the code to run, the version dir (the
+/// assets mount base), and the annotated fonts to register at startup.
+pub struct BootVersion {
+  pub app_id: String,
+  pub code: String,
+  pub version_dir: PathBuf,
+  /// (alias, font bytes) pairs from the manifest's font annotations.
+  pub fonts: Vec<(String, Vec<u8>)>,
+}
+
+/// The last-installed app's current version, for offline boot.
+pub fn load_last() -> Option<BootVersion> {
   let app_id = super::config::load().last_app?;
+  let version_dir = current_version_dir(&app_id)?;
+  let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
+  let fonts = load_fonts_at(&version_dir);
+  Some(BootVersion { app_id, code, version_dir, fonts })
+}
+
+/// The current installed version dir for an app, if the store has one. This is
+/// what the assets mount points at while the app runs.
+pub fn current_version_dir(app_id: &str) -> Option<PathBuf> {
   let store = crate::storage::get()?;
-  let code = load_current_at(&store.app_dir(&app_id))?;
-  Some((app_id, code))
+  let app_dir = store.app_dir(app_id);
+  let state = load_state(&app_dir)?;
+  let dir = app_dir.join("versions").join(&state.current);
+  dir.is_dir().then_some(dir)
+}
+
+// Load the font files a version's manifest annotates. A missing or unreadable
+// font degrades to "not registered" (the embedded defaults cover its role)
+// rather than failing the boot.
+fn load_fonts_at(version_dir: &Path) -> Vec<(String, Vec<u8>)> {
+  let Ok(manifest) = std::fs::read_to_string(version_dir.join("manifest.json")) else { return Vec::new() };
+  let Ok(parsed) = serde_json::from_str::<Manifest>(&manifest) else { return Vec::new() };
+  let mut fonts = Vec::new();
+  for font in &parsed.fonts {
+    if !safe_asset_path(&font.path) {
+      continue;
+    }
+    match std::fs::read(version_dir.join(&font.path)) {
+      Ok(bytes) => fonts.push((font.alias.clone(), bytes)),
+      Err(e) => log::warn!("[sgo] Could not read font {}: {e}", font.path),
+    }
+  }
+  fonts
+}
+
+// The assets held by the versions state.json points at (current first, so its
+// copy wins), as path -> (manifest hash, on-disk file). Trusts the stored
+// manifests: version dirs are immutable once committed.
+fn held_assets(app_dir: &Path) -> HashMap<String, (String, PathBuf)> {
+  let mut held = HashMap::new();
+  let Some(state) = load_state(app_dir) else { return held };
+  for id in std::iter::once(&state.current).chain(state.previous.as_ref()) {
+    let version_dir = app_dir.join("versions").join(id);
+    let Ok(manifest) = std::fs::read_to_string(version_dir.join("manifest.json")) else { continue };
+    let Ok(parsed) = serde_json::from_str::<Manifest>(&manifest) else { continue };
+    for asset in parsed.assets {
+      if !safe_asset_path(&asset.path) {
+        continue;
+      }
+      let file = version_dir.join(&asset.path);
+      if !held.contains_key(&asset.path) && file.is_file() {
+        held.insert(asset.path, (asset.sha256, file));
+      }
+    }
+  }
+  held
 }
 
 /// Verify + write one version and point state.json at it. Pure with respect to
 /// globals (tests drive it against a temp dir). Returns the version id.
-pub(crate) fn install_at(app_dir: &Path, manifest: &str, code: &str) -> Result<String, String> {
+pub(crate) fn install_at(
+  app_dir: &Path,
+  manifest: &str,
+  code: &str,
+  fetched: &HashMap<String, Vec<u8>>,
+) -> Result<String, String> {
   let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
   if !parsed.bundle.sha256.eq_ignore_ascii_case(&sha256_hex(code.as_bytes())) {
     return Err("bundle hash does not match its manifest".to_string());
   }
   if parsed.bundle.size != code.len() as u64 {
     return Err("bundle size does not match its manifest".to_string());
+  }
+  // Dev pushes always name the bundle "bundle.js"; other names are a stage-4
+  // (OTA) concern and refused until then, so path and file cannot disagree.
+  if parsed.bundle.path.as_deref().is_some_and(|p| p != "bundle.js") {
+    return Err(format!("unsupported bundle path {:?}", parsed.bundle.path.as_deref().unwrap_or_default()));
   }
 
   let version = sha256_hex(manifest.as_bytes());
@@ -97,6 +226,30 @@ pub(crate) fn install_at(app_dir: &Path, manifest: &str, code: &str) -> Result<S
     std::fs::create_dir_all(&tmp).map_err(|e| format!("create version dir: {e}"))?;
     std::fs::write(tmp.join("manifest.json"), manifest).map_err(|e| format!("write manifest: {e}"))?;
     std::fs::write(tmp.join("bundle.js"), code).map_err(|e| format!("write bundle: {e}"))?;
+    let held = held_assets(app_dir);
+    for asset in &parsed.assets {
+      if !safe_asset_path(&asset.path) {
+        return Err(format!("unsafe asset path {}", asset.path));
+      }
+      let dest = tmp.join(&asset.path);
+      if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create asset dir: {e}"))?;
+      }
+      if let Some(bytes) = fetched.get(&asset.path) {
+        if !asset.sha256.eq_ignore_ascii_case(&sha256_hex(bytes)) || asset.size != bytes.len() as u64 {
+          return Err(format!("asset {} does not match its manifest", asset.path));
+        }
+        std::fs::write(&dest, bytes).map_err(|e| format!("write asset {}: {e}", asset.path))?;
+      } else if let Some((_, src)) = held.get(&asset.path).filter(|(h, _)| h.eq_ignore_ascii_case(&asset.sha256)) {
+        // Manifest-diff reuse: same path + hash as a held version shares the
+        // file (versions are immutable, so a shared inode is safe).
+        if std::fs::hard_link(src, &dest).is_err() {
+          std::fs::copy(src, &dest).map_err(|e| format!("copy asset {}: {e}", asset.path))?;
+        }
+      } else {
+        return Err(format!("asset {} was neither fetched nor held", asset.path));
+      }
+    }
     std::fs::rename(&tmp, &version_dir).map_err(|e| format!("commit version dir: {e}"))?;
   }
 
@@ -113,7 +266,9 @@ pub(crate) fn install_at(app_dir: &Path, manifest: &str, code: &str) -> Result<S
 }
 
 /// The current installed bundle's code, or None when the store is empty or
-/// unreadable (callers fall back to the next boot source).
+/// unreadable (callers fall back to the next boot source). Only tests read
+/// through this today; `load_last` resolves the richer BootVersion.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn load_current_at(app_dir: &Path) -> Option<String> {
   let state = load_state(app_dir)?;
   std::fs::read_to_string(app_dir.join("versions").join(&state.current).join("bundle.js")).ok()

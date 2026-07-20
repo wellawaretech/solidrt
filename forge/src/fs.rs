@@ -7,6 +7,9 @@
 //! calls, holds `PendingOps` around them, and encodes the results back to JS.
 //! Destined for the `forge` crate (see REDESIGN.md).
 
+use std::path::PathBuf;
+use std::sync::RwLock;
+
 /// A file's metadata, as returned by `stat`. `file_type` is `"file"`,
 /// `"directory"`, `"symlink"`, or `"other"`; `mtime_ms` is the modification time
 /// in milliseconds since the Unix epoch, absent if the platform/file has none.
@@ -16,9 +19,47 @@ pub struct StatInfo {
   pub mtime_ms: Option<i64>,
 }
 
+// The assets mount (okf/plans/client-storage-updates.md, stage 3): when set,
+// relative paths under "assets/" resolve against this base dir instead of the
+// process cwd. The embedder points it at an installed version dir (or a packed
+// app's folder), whose immutable assets/ tree lives next to its bundle; the
+// app's cwd stays its mutable data sandbox. Unset (plain scripts, dev proxy),
+// paths resolve as-is.
+static ASSETS_BASE: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Set or clear the assets mount base: the directory CONTAINING an `assets/`
+/// tree (an installed version dir), not the assets dir itself.
+pub fn set_assets_base(base: Option<PathBuf>) {
+  *ASSETS_BASE.write().expect("assets base lock") = base;
+}
+
+fn is_asset_path(path: &str) -> bool {
+  path == "assets" || path.starts_with("assets/")
+}
+
+/// Apply the assets mount: `assets/...` becomes `<base>/assets/...` when a base
+/// is set; everything else (and absolute paths) passes through untouched.
+fn resolve(path: &str) -> PathBuf {
+  if is_asset_path(path) {
+    if let Some(base) = ASSETS_BASE.read().expect("assets base lock").as_ref() {
+      return base.join(path);
+    }
+  }
+  PathBuf::from(path)
+}
+
+/// Refuse mutation of mounted assets: an installed version is immutable, so
+/// writes under `assets/` error while the mount is active.
+fn check_writable(path: &str, what: &str) -> Result<(), String> {
+  if is_asset_path(path) && ASSETS_BASE.read().expect("assets base lock").is_some() {
+    return Err(format!("{what} {path}: assets are read-only"));
+  }
+  Ok(())
+}
+
 /// Read a file's whole contents.
 pub async fn read(path: &str) -> Result<Vec<u8>, String> {
-  tokio::fs::read(path).await.map_err(|e| format!("read {path}: {e}"))
+  tokio::fs::read(resolve(path)).await.map_err(|e| format!("read {path}: {e}"))
 }
 
 /// Read `length` bytes starting at byte `offset`. Exact: a range extending past
@@ -27,7 +68,7 @@ pub async fn read(path: &str) -> Result<Vec<u8>, String> {
 pub async fn read_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>, String> {
   use tokio::io::{AsyncReadExt, AsyncSeekExt};
   let err = |e| format!("read {path} at {offset}+{length}: {e}");
-  let mut file = tokio::fs::File::open(path).await.map_err(|e| format!("open {path}: {e}"))?;
+  let mut file = tokio::fs::File::open(resolve(path)).await.map_err(|e| format!("open {path}: {e}"))?;
   file.seek(std::io::SeekFrom::Start(offset)).await.map_err(err)?;
   let mut buf = vec![0u8; usize::try_from(length).map_err(|_| format!("read {path}: length {length} too large"))?];
   file.read_exact(&mut buf).await.map_err(err)?;
@@ -36,12 +77,14 @@ pub async fn read_range(path: &str, offset: u64, length: u64) -> Result<Vec<u8>,
 
 /// Write bytes to a file, truncating any existing contents.
 pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
+  check_writable(path, "write")?;
   tokio::fs::write(path, bytes).await.map_err(|e| format!("write {path}: {e}"))
 }
 
 /// Append bytes to a file, creating it if missing.
 pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
   use tokio::io::AsyncWriteExt;
+  check_writable(path, "append")?;
   let err = |e| format!("append {path}: {e}");
   let mut file = tokio::fs::OpenOptions::new().create(true).append(true).open(path).await.map_err(err)?;
   file.write_all(bytes).await.map_err(err)
@@ -52,37 +95,38 @@ pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
 /// because the handle is read from a foreign decode thread, not the tokio
 /// runtime.
 pub fn open_seekable(path: &str) -> Result<std::fs::File, String> {
-  std::fs::File::open(path).map_err(|e| format!("open {path}: {e}"))
+  std::fs::File::open(resolve(path)).map_err(|e| format!("open {path}: {e}"))
 }
 
 /// Whether `path` exists and is a regular file. A missing path (or any stat
 /// error) is reported as `false`, not an error.
 pub async fn file_exists(path: &str) -> bool {
-  tokio::fs::metadata(path).await.map(|m| m.is_file()).unwrap_or(false)
+  tokio::fs::metadata(resolve(path)).await.map(|m| m.is_file()).unwrap_or(false)
 }
 
 /// Stat a path. Errors if it does not exist or cannot be read.
 pub async fn stat(path: &str) -> Result<StatInfo, String> {
-  let meta = tokio::fs::metadata(path).await.map_err(|e| format!("stat {path}: {e}"))?;
+  let meta = tokio::fs::metadata(resolve(path)).await.map_err(|e| format!("stat {path}: {e}"))?;
   Ok(StatInfo { size: meta.len(), file_type: type_str(meta.file_type()), mtime_ms: mtime_ms(&meta) })
 }
 
 /// Create a directory, including any missing parents. Succeeds if it already
 /// exists.
 pub async fn create_dir(path: &str) -> Result<(), String> {
+  check_writable(path, "create dir")?;
   tokio::fs::create_dir_all(path).await.map_err(|e| format!("create dir {path}: {e}"))
 }
 
 /// Whether `path` exists and is a directory. A missing path (or any stat error)
 /// is reported as `false`, not an error.
 pub async fn dir_exists(path: &str) -> bool {
-  tokio::fs::metadata(path).await.map(|m| m.is_dir()).unwrap_or(false)
+  tokio::fs::metadata(resolve(path)).await.map(|m| m.is_dir()).unwrap_or(false)
 }
 
 /// List a directory's entries as `(name, type)` pairs, where type is the same
 /// set as `StatInfo::file_type`.
 pub async fn read_dir(path: &str) -> Result<Vec<(String, &'static str)>, String> {
-  let mut entries = tokio::fs::read_dir(path).await.map_err(|e| format!("read dir {path}: {e}"))?;
+  let mut entries = tokio::fs::read_dir(resolve(path)).await.map_err(|e| format!("read dir {path}: {e}"))?;
   let mut out = Vec::new();
   while let Some(entry) = entries.next_entry().await.map_err(|e| format!("read dir {path}: {e}"))? {
     let name = entry.file_name().to_string_lossy().into_owned();

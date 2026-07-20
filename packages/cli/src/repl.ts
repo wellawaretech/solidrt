@@ -4,7 +4,7 @@ import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, sendWatch, showBuildFailure } from "./dev-server"
 import { bundle } from "./bundler"
-import { buildManifest } from "./project"
+import { buildManifest, projectDirFor } from "./project"
 import { startWatcher, stopWatcher } from "./watcher"
 
 // Resolve repl client indexes ("0 2") against the server's client list,
@@ -126,12 +126,15 @@ async function cmdLoad(file: string) {
   }
   state.source = path
   state.sourceDir = dirname(path)
+  state.projectDir = projectDirFor(path)
   startWatcher()
   // The load also moves the server's file-serving root to the new source dir,
-  // and its rebuild entry to the new file (for a later MCP reload).
+  // its /assets/ root to the new project dir, and its rebuild entry to the
+  // new file (for a later MCP reload).
   await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
     latch: true,
     sourceDir: state.sourceDir,
+    projectDir: state.projectDir,
     entry: file.endsWith(".tsx") ? path : undefined,
     map: state.currentMap,
   })

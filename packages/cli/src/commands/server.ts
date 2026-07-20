@@ -2,7 +2,7 @@ import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
 import { bundle } from "../bundler"
-import { buildManifest } from "../project"
+import { buildManifest, projectDirFor } from "../project"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
@@ -15,6 +15,7 @@ export async function runServerCommand() {
   // Initialize state from args
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
+  state.projectDir = source ? projectDirFor(resolve(source)) : process.cwd()
   state.stats = values.stats
   state.capture = values.capture ? resolve(values.capture) : undefined
 

@@ -348,6 +348,33 @@ fn service_addr(info: &mdns_sd::ResolvedService) -> Option<String> {
   }
 }
 
+/// Install a pushed version, first fetching the assets the store does not
+/// already hold from the dev server's /assets/ route (the same origin the
+/// WebSocket rides on). Runs inline in the connection task: a push is not
+/// applied until its install settles, and dev asset sets are small.
+async fn install_push(addr: &str, manifest: &str, code: &str) -> Result<String, String> {
+  let (_, missing) = super::store::missing_assets(manifest)?;
+  let mut fetched = std::collections::HashMap::new();
+  if !missing.is_empty() {
+    let client = reqwest::Client::builder()
+      .timeout(std::time::Duration::from_secs(30))
+      .build()
+      .map_err(|e| format!("http client: {e}"))?;
+    let base = reqwest::Url::parse(&format!("http://{addr}/")).map_err(|e| format!("server address: {e}"))?;
+    for asset in &missing {
+      let url = base.join(&asset.path).map_err(|e| format!("asset path {}: {e}", asset.path))?;
+      let resp = client.get(url).send().await.map_err(|e| format!("fetch {}: {e}", asset.path))?;
+      if !resp.status().is_success() {
+        return Err(format!("fetch {}: HTTP {}", asset.path, resp.status()));
+      }
+      let bytes = resp.bytes().await.map_err(|e| format!("fetch {}: {e}", asset.path))?;
+      fetched.insert(asset.path.clone(), bytes.to_vec());
+    }
+    log::info!("[sgo] Fetched {} asset(s) from the dev server", fetched.len());
+  }
+  super::store::install(manifest, code, &fetched)
+}
+
 /// Connect to a dev server at `addr` and serve until the connection drops.
 /// Returns true if the connection was established (and has since been lost),
 /// false if the initial connect failed (so the caller can try the next path).
@@ -439,15 +466,13 @@ async fn try_serve(
               // the app relaunches offline, and remember it as the last app.
               // The reload itself applies the in-memory code either way - a
               // failed install degrades to today's ephemeral push.
-              let app_id = json.get("manifest").and_then(|m| m.as_str()).and_then(|manifest| {
-                match super::store::install(manifest, code) {
-                  Ok(app_id) => Some(app_id),
-                  Err(e) => {
-                    log::warn!("[sgo] Version install failed: {e}");
-                    None
-                  }
+              let mut app_id = None;
+              if let Some(manifest) = json.get("manifest").and_then(|m| m.as_str()) {
+                match install_push(addr, manifest, code).await {
+                  Ok(id) => app_id = Some(id),
+                  Err(e) => log::warn!("[sgo] Version install failed: {e}"),
                 }
-              });
+              }
               if let Some(app_id) = &app_id {
                 super::config::save_last_app(app_id);
               }

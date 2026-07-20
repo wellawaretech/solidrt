@@ -20,6 +20,7 @@ import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 let config: Config = JSON.parse(argv[argv.length - 1]!)
 state.config = config
 state.sourceDir = config.sourceDir
+state.projectDir = config.projectDir
 state.stats = config.stats
 state.serverUrl = `${config.address}:${config.port}`
 
@@ -74,14 +75,16 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
 
   switch (path) {
     case "/__internal__/reload": {
-      // { message, clients?, latch?, sourceDir?, map? }: send `message` (a full
-      // client-protocol message, built by srt) to the listed client ids, or to
-      // all when omitted. `latch` keeps it for late-joining clients (code
-      // reloads latch, one-shot bytecode loads do not); `sourceDir` moves the
-      // file-serving root (repl `load`); `map` is the bundle's sourcemap for
-      // log remapping, replaced on every reload (absent means none).
+      // { message, clients?, latch?, sourceDir?, projectDir?, map? }: send
+      // `message` (a full client-protocol message, built by srt) to the listed
+      // client ids, or to all when omitted. `latch` keeps it for late-joining
+      // clients (code reloads latch, one-shot bytecode loads do not);
+      // `sourceDir` moves the file-serving root and `projectDir` the /assets/
+      // root (repl `load`); `map` is the bundle's sourcemap for log remapping,
+      // replaced on every reload (absent means none).
       let body = await req.json()
       if (typeof body.sourceDir === "string") state.sourceDir = body.sourceDir
+      if (typeof body.projectDir === "string") state.projectDir = body.projectDir
       // Keep the rebuild entry in sync when `load` moves it, so a later MCP
       // reload bundles the newly loaded file, not the launch-time one.
       if (typeof body.entry === "string") state.config.entry = body.entry
@@ -120,9 +123,10 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
 }
 
 // The file routes: GET file (with single-range 206 support) or directory
-// listing, PUT file write. All paths are contained in the source directory.
-async function handleFiles(req: FluxRequest, path: string): Promise<Response> {
-  let filePath = resolveWithin(state.sourceDir, "." + path)
+// listing, PUT file write. All paths are contained in `root` (the source
+// directory, or the project dir for the /assets/ convention route).
+async function handleFiles(req: FluxRequest, path: string, root: string): Promise<Response> {
+  let filePath = resolveWithin(root, "." + path)
   if (!filePath) {
     return new Response("Forbidden", { status: 403 })
   }
@@ -225,7 +229,13 @@ serve({
     if (path.startsWith("/__internal__/")) {
       return handleInternal(req, server, path)
     }
-    return handleFiles(req, path)
+    // The assets/ convention roots at the project dir (package.json), which is
+    // not necessarily the entry's dir the file routes serve; clients fetch
+    // manifest asset paths here (live proxy reads and store installs alike).
+    if (path === "/assets" || path.startsWith("/assets/")) {
+      return handleFiles(req, path, state.projectDir)
+    }
+    return handleFiles(req, path, state.sourceDir)
   },
   websocket: {
     open(ws) {

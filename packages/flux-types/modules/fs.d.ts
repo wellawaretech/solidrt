@@ -52,6 +52,10 @@ declare module "flux:fs" {
   /**
    * Reference a file by path. Lazy: no I/O happens until a method is called.
    *
+   * Relative paths resolve against the process cwd. Exception: in a SolidRT
+   * app running an installed version, paths under `assets/` resolve read-only
+   * into that version's immutable assets tree (writes there error).
+   *
    * @param path  Path to the file.
    */
   export function file(path: string): FluxFile

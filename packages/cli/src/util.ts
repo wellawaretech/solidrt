@@ -16,6 +16,9 @@ export let state = {
   currentManifest: null as string | null,
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
+  // The project root the assets/ convention hangs off (see project.ts
+  // projectDirFor); the server's /assets/ route serves from under it.
+  projectDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,
   // The spawned flux dev-server process (see dev-server.ts startServer).
   serverProc: null as ReturnType<typeof Bun.spawn> | null,

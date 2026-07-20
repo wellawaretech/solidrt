@@ -7,6 +7,9 @@ export type Config = {
   port: number
   /** Directory served by the file routes (updatable via /__internal__/reload). */
   sourceDir: string
+  /** Project root whose assets/ folder the /assets/ route serves (updatable
+   * via /__internal__/reload, moves with the repl `load`). */
+  projectDir: string
   /** The address clients can reach this machine on (LAN IP or 127.0.0.1). */
   address: string
   proxyFiles: boolean
@@ -57,6 +60,7 @@ export let state = {
    */
   currentMap: null as string | null,
   sourceDir: "",
+  projectDir: "",
   serverUrl: "",
   stats: false,
   /**

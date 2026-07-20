@@ -153,6 +153,28 @@ struct RunOptions {
   storage: storage::StorageSpec,
 }
 
+// Point the assets mount (see forge::fs) at the app's current installed
+// version, so reads under assets/ resolve into the immutable version dir while
+// the app runs; an app with nothing installed clears it (assets then come over
+// the dev proxy or plain cwd). Re-run on every named reload: a fresh install
+// of the same app moves the current version dir.
+#[cfg(feature = "go")]
+fn mount_assets(app_id: &str) {
+  forge::fs::set_assets_base(go::store::current_version_dir(app_id));
+}
+
+// A stored version's font annotations, merged over the embedded defaults: a
+// custom font claiming a role alias replaces that default outright, because
+// Impeller merges same-alias registrations into one family and would
+// style-match across two different typefaces.
+#[cfg(feature = "go")]
+fn merge_fonts(fonts: &mut Vec<FontPayload>, custom: Vec<(String, Vec<u8>)>) {
+  for (alias, bytes) in custom {
+    fonts.retain(|f| f.alias.as_deref() != Some(alias.as_str()));
+    fonts.push(FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) });
+  }
+}
+
 // Re-anchor the process into `app_id`'s data sandbox (see storage: the cwd is
 // the app's persistent data dir). No-op when already anchored there; on
 // failure the previous anchor stays, matching the startup fallback.
@@ -215,13 +237,20 @@ fn ui_thread(
   #[cfg(feature = "go")]
   let mut dev_auto_connect = false;
   #[cfg(feature = "go")]
+  let mut fonts = fonts;
+  #[cfg(feature = "go")]
   let app = match app {
     None if dev_server.is_some() => match go::store::load_last() {
-      Some((app_id, code)) => {
-        log::info!("[sgo] Booting app {app_id} from the version store");
-        anchor_app(&app_id, &mut current_app_id);
+      Some(boot) => {
+        log::info!("[sgo] Booting app {} from the version store", boot.app_id);
+        anchor_app(&boot.app_id, &mut current_app_id);
+        forge::fs::set_assets_base(Some(boot.version_dir));
+        if !boot.fonts.is_empty() {
+          log::info!("[sgo] Registering {} font(s) from the version store", boot.fonts.len());
+        }
+        merge_fonts(&mut fonts, boot.fonts);
         dev_auto_connect = true;
-        Some(AppSource::Text(code))
+        Some(AppSource::Text(boot.code))
       }
       None => None,
     },
@@ -548,6 +577,8 @@ fn ui_thread(
       if let Some(app) = next_app {
         if let Some(app_id) = &next_app_id {
           anchor_app(app_id, &mut current_app_id);
+          #[cfg(feature = "go")]
+          mount_assets(app_id);
         }
         current_app = app;
         showing_bsod = false;
@@ -563,6 +594,8 @@ fn ui_thread(
           Some(EngineCmd::Reload { code, app_id }) => {
             if let Some(app_id) = &app_id {
               anchor_app(app_id, &mut current_app_id);
+              #[cfg(feature = "go")]
+              mount_assets(app_id);
             }
             current_app = AppSource::Text(code);
             showing_bsod = false;

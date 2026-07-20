@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs"
-import { basename, dirname, resolve } from "node:path"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 // Project configuration lives in the `solidrt` key of the nearest package.json
 // above the entry file (okf/plans/client-storage-updates.md):
@@ -52,18 +52,82 @@ function checkField(value: string, what: string) {
 }
 
 // The version manifest for a bundle (okf/plans/client-storage-updates.md,
-// stage 2): appId + runtimeVersion + the bundle entry. The returned JSON
-// string is canonical - it travels verbatim to clients and its sha256 is the
-// version id, so it must never be re-serialized along the way. runtimeVersion
-// is the constant 1 until the derivation question is settled (see plan).
+// stages 2 + 3): appId + runtimeVersion + the bundle entry + the collected
+// assets/ tree + font annotations. The returned JSON string is canonical - it
+// travels verbatim to clients and its sha256 is the version id, so it must
+// never be re-serialized along the way. runtimeVersion is the constant 1
+// until the derivation question is settled (see plan).
 export function buildManifest(code: string, entry: string): string {
   let identity = loadAppIdentity(entry)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
+  let { assets, fonts } = collectAssets(entry)
   return JSON.stringify({
     appId: identity.appId,
     runtimeVersion: 1,
-    bundle: { sha256, size: Buffer.byteLength(code, "utf8") },
+    bundle: { path: "bundle.js", sha256, size: Buffer.byteLength(code, "utf8") },
+    ...(assets.length ? { assets } : {}),
+    ...(fonts.length ? { fonts } : {}),
   })
+}
+
+export type ManifestAsset = { path: string; sha256: string; size: number }
+export type ManifestFont = { path: string; alias: string }
+
+// The project root the assets/ convention hangs off: the nearest package.json
+// dir, or the entry's own dir when there is none.
+export function projectDirFor(sourcePath: string): string {
+  return findProjectPackage(sourcePath)?.dir ?? resolve(dirname(sourcePath))
+}
+
+function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
+  for (let entry of readdirSync(dir, { withFileTypes: true })) {
+    // Dotfiles (.DS_Store and friends) are tooling noise, not app assets.
+    if (entry.name.startsWith(".")) continue
+    let abs = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      walkAssets(assetsDir, abs, out)
+    } else if (entry.isFile()) {
+      let bytes = readFileSync(abs)
+      let path = "assets/" + relative(assetsDir, abs).split(sep).join("/")
+      out.push({ path, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: bytes.length })
+    }
+  }
+}
+
+// The convention-first asset set: everything under the project's assets/
+// folder (next to package.json), collected wholesale in sorted order so the
+// manifest bytes are deterministic. Fonts are annotations pointing into that
+// set: `solidrt.fonts` path entries must live under assets/ so they reach dev
+// clients and the version store (`false` entries only drop pack defaults and
+// have no manifest presence).
+export function collectAssets(entry: string): { assets: ManifestAsset[]; fonts: ManifestFont[] } {
+  let project = findProjectPackage(entry)
+  let projectDir = projectDirFor(entry)
+  let assetsDir = resolve(projectDir, "assets")
+
+  let assets: ManifestAsset[] = []
+  if (existsSync(assetsDir) && statSync(assetsDir).isDirectory()) {
+    walkAssets(assetsDir, assetsDir, assets)
+    assets.sort((a, b) => (a.path < b.path ? -1 : 1))
+  }
+
+  let fonts: ManifestFont[] = []
+  let map = project?.pkg.solidrt?.fonts
+  if (map && typeof map === "object" && !Array.isArray(map)) {
+    for (let [alias, value] of Object.entries(map)) {
+      if (typeof value !== "string") continue
+      let rel = relative(assetsDir, resolve(projectDir, value))
+      if (rel.startsWith("..") || isAbsolute(rel)) {
+        fail(`"solidrt.fonts": "${alias}": ${value} must live under assets/ (fonts ship as version assets)`)
+      }
+      let path = "assets/" + rel.split(sep).join("/")
+      if (!assets.some((a) => a.path === path)) {
+        fail(`"solidrt.fonts": "${alias}": no such file: ${resolve(projectDir, value)}`)
+      }
+      fonts.push({ path, alias })
+    }
+  }
+  return { assets, fonts }
 }
 
 // Resolve the app identity for a pack. All three fields are guaranteed
