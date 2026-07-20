@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve as resolvePath } from "node:path"
 import { values, source } from "./args"
 import { state, print, requireBinary } from "./util"
+import { buildManifest } from "./project"
 
 // Babel plugin: rewrite `import data from "./x" with { type: "binary" }` into an
 // inline Uint8Array of the file's bytes. The import attribute is invisible to
@@ -96,6 +97,8 @@ export type BundleResult = {
   code: string
   /** Composed sourcemap JSON (bundle -> original .tsx sources), dev builds only. */
   map: string | null
+  /** Version manifest JSON for this bundle; clients install pushes under its hash. */
+  manifest: string
 }
 
 // The pure bundle: every input is explicit, so it runs identically in the srt
@@ -134,7 +137,8 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     return null
   }
 
-  return { code: await codeFromOutputs(result.outputs), map: await composeMap(result.outputs, babelMaps) }
+  let code = await codeFromOutputs(result.outputs)
+  return { code, map: await composeMap(result.outputs, babelMaps), manifest: buildManifest(code, opts.entry) }
 }
 
 // Compose Bun's bundle map (babel output -> bundle) with the per-file Babel

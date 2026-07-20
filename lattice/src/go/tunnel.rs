@@ -31,13 +31,54 @@ impl Drop for Tunnel {
   }
 }
 
+/// The client's persisted p2p identity: 64 hex chars in
+/// clients/<name>/identity/p2p.key. Loaded for every tunnel bind so the dev
+/// server sees one stable node id for this client across restarts; absent or
+/// unreadable falls back to a fresh key (persisted after the bind).
+fn load_secret() -> Option<[u8; 32]> {
+  let store = crate::storage::get()?;
+  let text = std::fs::read_to_string(store.identity_dir().join("p2p.key")).ok()?;
+  decode_hex(text.trim())
+}
+
+pub(crate) fn decode_hex(hex: &str) -> Option<[u8; 32]> {
+  if hex.len() != 64 || !hex.is_ascii() {
+    return None;
+  }
+  let mut out = [0u8; 32];
+  for (i, byte) in out.iter_mut().enumerate() {
+    *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+  }
+  Some(out)
+}
+
+fn persist_secret(hex: &str) {
+  let Some(store) = crate::storage::get() else { return };
+  let path = store.identity_dir().join("p2p.key");
+  if let Err(e) = std::fs::write(&path, hex) {
+    log::warn!("[sgo] Could not persist p2p key: {e}");
+    return;
+  }
+  // A private key: owner-only where the OS supports it.
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+  }
+}
+
 /// Bind the endpoint and the loopback listener. Returns the address to dial in
 /// place of the dev server, plus the forwarder guard.
 pub async fn start(ticket: String) -> Result<(SocketAddr, Tunnel), String> {
   // Dial-only and local: the client never accepts, needs no relay of its own,
   // and must not publish addresses. The ticket carries the server's. An
   // ephemeral bind port is fine here - the dialer is never itself dialed.
-  let endpoint = forge::p2p::Endpoint::bind(None, None, Vec::new(), true, None).await?;
+  // The secret is the client's stable identity (see load_secret).
+  let secret = load_secret();
+  let endpoint = forge::p2p::Endpoint::bind(secret, None, Vec::new(), true, None).await?;
+  if secret.is_none() {
+    persist_secret(&endpoint.secret_key_hex());
+  }
   let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("bind loopback: {e}"))?;
   let addr = listener.local_addr().map_err(|e| format!("loopback addr: {e}"))?;
   let task = tokio::spawn(accept_loop(listener, endpoint.clone(), ticket));

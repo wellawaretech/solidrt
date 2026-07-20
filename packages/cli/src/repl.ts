@@ -4,6 +4,7 @@ import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, sendWatch, showBuildFailure } from "./dev-server"
 import { bundle } from "./bundler"
+import { buildManifest } from "./project"
 import { startWatcher, stopWatcher } from "./watcher"
 
 // Resolve repl client indexes ("0 2") against the server's client list,
@@ -28,6 +29,7 @@ async function cmdStop(args: string) {
     stopWatcher()
     state.currentCode = null
     state.currentMap = null
+    state.currentManifest = null
     state.source = undefined
     await sendStop()
     print("[cli] Sent stop to all clients")
@@ -50,8 +52,9 @@ async function cmdReload(args: string) {
     }
     state.currentCode = result.code
     state.currentMap = result.map
+    state.currentManifest = result.manifest
   }
-  let msg = buildReload({ code: state.currentCode })
+  let msg = buildReload({ code: state.currentCode, manifest: state.currentManifest })
   if (!args) {
     await sendReload(msg, { latch: true, map: state.currentMap })
     print("[cli] Sent reload to all clients")
@@ -106,9 +109,11 @@ async function cmdLoad(file: string) {
     }
     state.currentCode = result.code
     state.currentMap = result.map
+    state.currentManifest = result.manifest
   } else if (file.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(path).text()
     state.currentMap = null
+    state.currentManifest = buildManifest(state.currentCode, path)
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
     // One-shot: bytecode loads are pushed but not latched for late joiners.
@@ -124,7 +129,7 @@ async function cmdLoad(file: string) {
   startWatcher()
   // The load also moves the server's file-serving root to the new source dir,
   // and its rebuild entry to the new file (for a later MCP reload).
-  await sendReload(buildReload({ code: state.currentCode }), {
+  await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
     latch: true,
     sourceDir: state.sourceDir,
     entry: file.endsWith(".tsx") ? path : undefined,

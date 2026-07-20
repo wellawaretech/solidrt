@@ -15,7 +15,11 @@ mod tests;
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
   Stop,
-  Reload(String),
+  // `app_id` names the app a dev push belongs to (from its installed
+  // manifest); the runtime re-anchors into that app's data sandbox before the
+  // reload applies. None for pushes without a manifest (bytecode one-shots,
+  // the BSOD trigger), which keep the current sandbox.
+  Reload { code: String, app_id: Option<String> },
 }
 
 use alloy::impellers::ISize;
@@ -149,6 +153,28 @@ struct RunOptions {
   storage: storage::StorageSpec,
 }
 
+// Re-anchor the process into `app_id`'s data sandbox (see storage: the cwd is
+// the app's persistent data dir). No-op when already anchored there; on
+// failure the previous anchor stays, matching the startup fallback.
+fn anchor_app(app_id: &str, current: &mut Option<String>) {
+  if current.as_deref() == Some(app_id) {
+    return;
+  }
+  let Some(store) = storage::get() else { return };
+  let data_dir = store.app_dir(app_id).join("data");
+  if let Err(e) = std::fs::create_dir_all(&data_dir) {
+    log::warn!("[srt] cannot create app data dir {}: {e}", data_dir.display());
+    return;
+  }
+  match std::env::set_current_dir(&data_dir) {
+    Ok(()) => {
+      log::info!("[srt] working directory set to {}", data_dir.display());
+      *current = Some(app_id.to_string());
+    }
+    Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", data_dir.display()),
+  }
+}
+
 fn ui_thread(
   handle: tokio::runtime::Handle,
   atx: Arc<alloy::Context>,
@@ -174,6 +200,33 @@ fn ui_thread(
     },
     None => log::warn!("[srt] no writable storage, leaving working directory unchanged"),
   }
+  // The app the process is currently anchored to (whose data/ is the cwd);
+  // a dev push naming a different app re-anchors (see anchor_app).
+  let mut current_app_id: Option<String> = Some(match &storage_spec.identity {
+    Some(id) => id.app_id.clone(),
+    None => "default".to_string(),
+  });
+
+  // Offline relaunch (go client): launched with a dev-server address, boot the
+  // last installed app from the version store immediately; the session
+  // auto-connects in the background and the server's latched reload replaces
+  // the app when the connection comes up. Launched without an address, the
+  // connect screen stays the entry point (discover / QR pairing).
+  #[cfg(feature = "go")]
+  let mut dev_auto_connect = false;
+  #[cfg(feature = "go")]
+  let app = match app {
+    None if dev_server.is_some() => match go::store::load_last() {
+      Some((app_id, code)) => {
+        log::info!("[sgo] Booting app {app_id} from the version store");
+        anchor_app(&app_id, &mut current_app_id);
+        dev_auto_connect = true;
+        Some(AppSource::Text(code))
+      }
+      None => None,
+    },
+    app => app,
+  };
 
   let platform = Arc::new(PlatformContext::new(fonts));
   // Playback mode renders every frame unconditionally: the lockstep capture
@@ -366,6 +419,7 @@ fn ui_thread(
       outbound_rx,
       go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,
+      dev_auto_connect,
     );
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects
@@ -469,6 +523,7 @@ fn ui_thread(
 
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
+      let mut next_app_id: Option<String> = None;
       local
         .run_until(async {
           tokio::select! {
@@ -480,7 +535,10 @@ fn ui_thread(
             } => {}
             Some(cmd) = cmd_rx.recv() => {
               match cmd {
-                EngineCmd::Reload(src) => { next_app = Some(AppSource::Text(src)); }
+                EngineCmd::Reload { code, app_id } => {
+                  next_app = Some(AppSource::Text(code));
+                  next_app_id = app_id;
+                }
                 EngineCmd::Stop => { next_app = Some(AppSource::Text(DEFAULT_SOURCE.to_string())); }
               }
             }
@@ -488,6 +546,9 @@ fn ui_thread(
         })
         .await;
       if let Some(app) = next_app {
+        if let Some(app_id) = &next_app_id {
+          anchor_app(app_id, &mut current_app_id);
+        }
         current_app = app;
         showing_bsod = false;
       } else if !showing_bsod {
@@ -499,8 +560,11 @@ fn ui_thread(
       } else {
         // The BSOD itself exited; wait for a command rather than respinning.
         match local.run_until(cmd_rx.recv()).await {
-          Some(EngineCmd::Reload(src)) => {
-            current_app = AppSource::Text(src);
+          Some(EngineCmd::Reload { code, app_id }) => {
+            if let Some(app_id) = &app_id {
+              anchor_app(app_id, &mut current_app_id);
+            }
+            current_app = AppSource::Text(code);
             showing_bsod = false;
           }
           Some(EngineCmd::Stop) => {

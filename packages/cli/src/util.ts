@@ -11,6 +11,9 @@ export let state = {
   // The bundle's composed sourcemap (dev builds), sent to the server alongside
   // reloads so it can remap logged stack traces to .tsx positions.
   currentMap: null as string | null,
+  // The bundle's version manifest (canonical JSON string, see buildManifest);
+  // travels with code reloads so clients install the push as a version.
+  currentManifest: null as string | null,
   source: undefined as string | undefined,
   sourceDir: process.cwd(),
   child: null as ReturnType<typeof Bun.spawn> | null,

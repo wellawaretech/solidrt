@@ -58,6 +58,7 @@ impl DevSession {
     outbound_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     queries: connection::QueryHandles,
     launch_address: Option<String>,
+    auto_connect: bool,
   ) -> Option<DevSession> {
     if playback_fps.is_some() {
       return None;
@@ -79,6 +80,15 @@ impl DevSession {
     let (state_tx, mut state_rx) = tokio::sync::mpsc::unbounded_channel::<ConnState>();
     let dev_cmd_tx =
       connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone(), outbound_rx, queries);
+
+    // Session-level connect for a version-store boot: the running app is not
+    // the default connect screen, so nothing JS-side would dial the launch
+    // address. The default-app path keeps its JS-driven connect (launchAddress).
+    if auto_connect {
+      if let Some(addr) = &launch_address {
+        let _ = dev_cmd_tx.send(DevCmd::Connect(addr.clone()));
+      }
+    }
 
     // Forward connection-state changes to JS as the sticky `dev` event,
     // targeting whichever engine is currently live, and keep the held copy in

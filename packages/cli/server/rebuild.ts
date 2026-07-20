@@ -11,9 +11,15 @@ import { state } from "./state"
 // Build the reload message the same way srt's buildReload does, so a
 // server-triggered reload is indistinguishable from a repl-triggered one to
 // clients. proxyFiles/proxyHttp are message flags, not build inputs.
-function buildReload(code: string) {
+function buildReload(code: string, manifest?: string) {
   let config = state.config
-  return { type: "reload", proxyFiles: config.proxyFiles, proxyHttp: config.proxyHttp, code }
+  return {
+    type: "reload",
+    proxyFiles: config.proxyFiles,
+    proxyHttp: config.proxyHttp,
+    ...(manifest ? { manifest } : {}),
+    code,
+  }
 }
 
 // Rebuild from state.config.entry via the external bundle-cli subprocess, then
@@ -39,15 +45,15 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     return `Rebuild failed:\n${stderr.trim()}`
   }
 
-  // bundle-cli writes one JSON object { code, map } to stdout.
-  let bundle: { code?: string; map?: string | null }
+  // bundle-cli writes one JSON object { code, map, manifest } to stdout.
+  let bundle: { code?: string; map?: string | null; manifest?: string }
   try {
     bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
   } catch {
     return "Rebuild failed: unreadable bundler output"
   }
   state.currentMap = bundle.map ?? null
-  let text = JSON.stringify(buildReload(bundle.code ?? ""))
+  let text = JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest))
   state.currentReload = text
   for (let ws of state.clients.keys()) ws.send(text)
   return null

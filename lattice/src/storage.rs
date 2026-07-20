@@ -70,6 +70,20 @@ pub struct Storage {
   pub cache_dir: PathBuf,
 }
 
+impl Storage {
+  /// `clients/<name>/apps/<app-id>` for an app named at runtime (a dev push's
+  /// manifest appId, unlike the startup identity baked into `data_dir`).
+  /// Unsafe ids fall back to "default" like every other component.
+  pub fn app_dir(&self, app_id: &str) -> PathBuf {
+    self.client_dir.join("apps").join(checked_component(Some(app_id), "app id"))
+  }
+
+  /// `clients/<name>/identity` - persisted client identity (p2p key).
+  pub fn identity_dir(&self) -> PathBuf {
+    self.client_dir.join("identity")
+  }
+}
+
 // A single path component under our control (client name, app id): no
 // separators or traversal, so a flag or trailer value cannot escape the tree.
 fn safe_component(name: &str) -> bool {

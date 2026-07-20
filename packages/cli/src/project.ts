@@ -51,6 +51,21 @@ function checkField(value: string, what: string) {
   if (value === "") fail(`"solidrt": ${what} must not be empty`)
 }
 
+// The version manifest for a bundle (okf/plans/client-storage-updates.md,
+// stage 2): appId + runtimeVersion + the bundle entry. The returned JSON
+// string is canonical - it travels verbatim to clients and its sha256 is the
+// version id, so it must never be re-serialized along the way. runtimeVersion
+// is the constant 1 until the derivation question is settled (see plan).
+export function buildManifest(code: string, entry: string): string {
+  let identity = loadAppIdentity(entry)
+  let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
+  return JSON.stringify({
+    appId: identity.appId,
+    runtimeVersion: 1,
+    bundle: { sha256, size: Buffer.byteLength(code, "utf8") },
+  })
+}
+
 // Resolve the app identity for a pack. All three fields are guaranteed
 // non-empty and 255 bytes max (the trailer encoding's length prefix).
 export function loadAppIdentity(sourcePath: string): AppIdentity {

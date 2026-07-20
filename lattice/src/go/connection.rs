@@ -435,7 +435,23 @@ async fn try_serve(
             flags.proxy_files_enabled.store(proxy_files, Ordering::Relaxed);
             flags.proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
             if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
-              let _ = tx.send(crate::EngineCmd::Reload(code.to_string()));
+              // A push with a manifest is an install: persist the version so
+              // the app relaunches offline, and remember it as the last app.
+              // The reload itself applies the in-memory code either way - a
+              // failed install degrades to today's ephemeral push.
+              let app_id = json.get("manifest").and_then(|m| m.as_str()).and_then(|manifest| {
+                match super::store::install(manifest, code) {
+                  Ok(app_id) => Some(app_id),
+                  Err(e) => {
+                    log::warn!("[sgo] Version install failed: {e}");
+                    None
+                  }
+                }
+              });
+              if let Some(app_id) = &app_id {
+                super::config::save_last_app(app_id);
+              }
+              let _ = tx.send(crate::EngineCmd::Reload { code: code.to_string(), app_id });
             }
           }
           Some("stats") => {

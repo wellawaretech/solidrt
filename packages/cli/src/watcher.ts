@@ -38,6 +38,10 @@ export function startWatcher() {
     }
     state.currentCode = result.code
     state.currentMap = result.map
-    await sendReload(buildReload({ code: state.currentCode }), { latch: true, map: state.currentMap })
+    state.currentManifest = result.manifest
+    await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
+      latch: true,
+      map: state.currentMap,
+    })
   })
 }

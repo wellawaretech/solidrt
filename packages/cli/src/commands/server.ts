@@ -2,6 +2,7 @@ import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown } from "../util"
 import { bundle } from "../bundler"
+import { buildManifest } from "../project"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
@@ -29,13 +30,19 @@ export async function runServerCommand() {
     if (initialResult) {
       state.currentCode = initialResult.code
       state.currentMap = initialResult.map
-      await sendReload(buildReload({ code: state.currentCode }), { latch: true, map: state.currentMap })
+      state.currentManifest = initialResult.manifest
+      await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
+        latch: true,
+        map: state.currentMap,
+      })
     } else {
       await showBuildFailure()
     }
   } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
-    state.currentCode = await Bun.file(resolve(source)).text()
-    await sendReload(buildReload({ code: state.currentCode }), { latch: true })
+    let path = resolve(source)
+    state.currentCode = await Bun.file(path).text()
+    state.currentManifest = buildManifest(state.currentCode, path)
+    await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), { latch: true })
   }
 
   process.on("SIGINT", shutdown)

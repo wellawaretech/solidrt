@@ -16,9 +16,19 @@ const INTERNAL_BASE = `http://${DEV_HOST}:${DEV_PORT}/__internal__`
 
 // Build the reload message for the client protocol. The server latches a
 // broadcast reload verbatim for late-joining clients, so srt owns the message
-// shape (including the proxy flags) end to end.
-export function buildReload(payload: { code?: string | null; bytecode?: string }) {
-  return { type: "reload", proxyFiles: values["proxy-files"], proxyHttp: values["proxy-http"], ...payload }
+// shape (including the proxy flags) end to end. `manifest` is the bundle's
+// version manifest JSON string; when present, clients install the push into
+// their version store before applying it (absent for bytecode one-shots and
+// the BSOD trigger, which must not be installed).
+export function buildReload(payload: { code?: string | null; bytecode?: string; manifest?: string | null }) {
+  let { manifest, ...rest } = payload
+  return {
+    type: "reload",
+    proxyFiles: values["proxy-files"],
+    proxyHttp: values["proxy-http"],
+    ...(manifest ? { manifest } : {}),
+    ...rest,
+  }
 }
 
 async function post(path: string, body: object) {
@@ -97,6 +107,8 @@ const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
 // pushes it to every connected client.
 export async function showBuildFailure() {
   state.currentCode = BSOD_TRIGGER
+  // No manifest: the BSOD trigger is not a version and must never be installed.
+  state.currentManifest = null
   await sendReload(buildReload({ code: BSOD_TRIGGER }), { latch: true })
 }
 
