@@ -82,6 +82,50 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
   Some(payload)
 }
 
+// A folder distribution next to this runner (okf/plans/client-storage-updates.md,
+// stage 3b): manifest.json + the bundle it names + assets/. The manifest
+// defines the version's file set (the runner is deliberately unlisted) and
+// carries the app identity; a .js bundle is JS source, anything else QuickJS
+// bytecode. Absent or unreadable pieces degrade to "no folder payload".
+#[cfg(not(feature = "go"))]
+struct FolderPayload {
+  app: lattice::AppSource,
+  fonts: Vec<alloy::rendertree::FontPayload>,
+  identity: lattice::storage::AppIdentity,
+  dir: std::path::PathBuf,
+}
+
+#[cfg(not(feature = "go"))]
+fn load_adjacent_folder() -> Option<FolderPayload> {
+  let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+  let manifest = lattice::manifest::Manifest::load(&dir)?;
+  let bundle_path = manifest.bundle.path.as_deref().unwrap_or("bundle.js");
+  // The bundle name comes from the manifest: a plain filename only, so it
+  // cannot reach outside the folder.
+  if bundle_path.contains('/') || bundle_path.contains('\\') || bundle_path.starts_with('.') {
+    return None;
+  }
+  let bytes = std::fs::read(dir.join(bundle_path)).ok()?;
+  let app = if bundle_path.ends_with(".js") {
+    lattice::AppSource::Text(String::from_utf8(bytes).ok()?)
+  } else {
+    lattice::AppSource::Bytecode(bytes)
+  };
+  let fonts = manifest
+    .load_fonts(&dir)
+    .into_iter()
+    .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
+    .collect();
+  // Pack manifests carry org/displayName for the storage pref path; a
+  // hand-rolled folder from a dev manifest defaults them from the app id.
+  let identity = lattice::storage::AppIdentity {
+    org: manifest.org.clone().unwrap_or_else(|| manifest.app_id.clone()),
+    display_name: manifest.display_name.clone().unwrap_or_else(|| manifest.app_id.clone()),
+    app_id: manifest.app_id,
+  };
+  Some(FolderPayload { app, fonts, identity, dir })
+}
+
 fn main() {
   #[cfg(not(feature = "go"))]
   let (bytecode, fonts, identity) = match load_embedded_payload() {
@@ -141,6 +185,19 @@ fn main() {
       let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
       lattice::AppSource::Text(src)
     }),
+  };
+  // With neither, a folder distribution adjacent to the runner boots: its
+  // assets/ tree becomes the assets mount (reads under assets/ resolve there).
+  #[cfg(not(feature = "go"))]
+  let (app, fonts, identity) = match app {
+    None => match load_adjacent_folder() {
+      Some(folder) => {
+        forge::fs::set_assets_base(Some(folder.dir));
+        (Some(folder.app), folder.fonts, Some(folder.identity))
+      }
+      None => (None, fonts, identity),
+    },
+    app => (app, fonts, identity),
   };
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {

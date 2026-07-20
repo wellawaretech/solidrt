@@ -3,3 +3,4 @@ node_modules/
 *.srt.bin
 .srt-cache.db
 .srt-data/
+dist/

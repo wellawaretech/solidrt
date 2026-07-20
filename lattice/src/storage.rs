@@ -32,7 +32,8 @@ pub struct AppIdentity {
 
 /// Decode the app-identity trailer section: three length-prefixed UTF-8
 /// strings [len u8][bytes] (appId, org, displayName), consumed exactly.
-/// Deliberately not JSON: packed (non-go) builds carry no serde_json.
+/// Not JSON: the encoding predates serde_json in packed builds (adopted for
+/// manifest.json in stage 3b) and stays as-is - CLI and runner ship pinned.
 pub fn decode_app_identity(bytes: &[u8]) -> Option<AppIdentity> {
   fn take<'a>(cursor: &mut &'a [u8]) -> Option<&'a str> {
     let (&len, rest) = cursor.split_first()?;

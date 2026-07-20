@@ -1,6 +1,7 @@
 mod frame;
 #[cfg(feature = "go")]
 mod go;
+pub mod manifest;
 mod overlay;
 mod paced_clock;
 mod plugins;

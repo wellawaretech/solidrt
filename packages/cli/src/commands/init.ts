@@ -139,6 +139,12 @@ export async function runInitCommand() {
     console.log(`   Write src/${file}`)
   }
 
+  // The assets/ convention folder, created up front: everything in it ships
+  // with the app, and the dev watcher only picks up an assets/ folder that
+  // exists when it starts.
+  await mkdir(join(dir, "assets"), { recursive: true })
+  console.log("   Write assets/")
+
   // The scaffold package.json carries a placeholder name; set it from the
   // target folder. A core-level app gets no component framework dependency.
   let pkgPath = join(dir, "package.json")

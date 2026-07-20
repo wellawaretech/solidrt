@@ -17,6 +17,9 @@ import { findProjectPackage } from "./project"
 
 export type PackFont = { alias: string; bytes: Buffer }
 
+/** A resolved font source: the file behind an alias, before loading. */
+export type ResolvedFont = { alias: string; path: string; isDefault: boolean }
+
 let DEFAULT_FONTS: Record<string, string> = {
   sans: "NotoSans.ttf",
   serif: "NotoSerif.ttf",
@@ -47,10 +50,16 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-// Resolve the font set for a pack: role defaults merged with the project's
-// `solidrt.fonts` map, loaded into memory. Order is roles first (sans, serif,
-// mono), then added aliases in config order.
+// Resolve the font set for a pack, loaded into memory (the trailer wrapper's
+// form). Order matches resolvePackFonts.
 export function loadPackFonts(sourcePath: string): PackFont[] {
+  return resolvePackFonts(sourcePath).map((f) => ({ alias: f.alias, bytes: readFileSync(f.path) }))
+}
+
+// Resolve the font set for a pack as file paths: role defaults merged with the
+// project's `solidrt.fonts` map. Order is roles first (sans, serif, mono),
+// then added aliases in config order.
+export function resolvePackFonts(sourcePath: string): ResolvedFont[] {
   let config = findProjectConfig(sourcePath)
   let overrides = config?.fonts ?? {}
   if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
@@ -73,8 +82,9 @@ export function loadPackFonts(sourcePath: string): PackFont[] {
   }
 
   let defaultsDir: string | null = null
-  let fonts: PackFont[] = []
+  let fonts: ResolvedFont[] = []
   for (let [alias, path] of selected) {
+    let isDefault = path === null
     if (path === null) {
       defaultsDir ??= defaultFontsDir() ?? fail(
         "Could not find the default fonts (NotoSans.ttf and friends).\n" +
@@ -83,7 +93,7 @@ export function loadPackFonts(sourcePath: string): PackFont[] {
       path = resolve(defaultsDir, DEFAULT_FONTS[alias]!)
     }
     if (!existsSync(path)) fail(`"solidrt.fonts": "${alias}": no such file: ${path}`)
-    fonts.push({ alias, bytes: readFileSync(path) })
+    fonts.push({ alias, path, isDefault })
   }
   return fonts
 }

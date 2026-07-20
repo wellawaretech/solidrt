@@ -15,10 +15,11 @@
 // (`missing_assets` -> `install`). healthy/launches are written but not yet
 // acted on (health/rollback is stage 4).
 //
-// go-only for now: packed apps receive no installs until OTA (stage 4), and
-// lifting this into every build re-opens the serde-free question for the
-// packed runner.
+// go-only for now: packed apps receive no installs until OTA (stage 4). The
+// manifest types live in crate::manifest, shared with the packed runner's
+// folder boot (serde_json is in every build since stage 3b).
 
+use crate::manifest::{safe_asset_path, AssetEntry, Manifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -41,49 +42,6 @@ pub struct State {
   pub launches: u32,
 }
 
-#[derive(Deserialize)]
-struct Manifest {
-  #[serde(rename = "appId")]
-  app_id: String,
-  bundle: ManifestBundle,
-  #[serde(default)]
-  assets: Vec<AssetEntry>,
-  #[serde(default)]
-  fonts: Vec<FontRef>,
-}
-
-#[derive(Deserialize)]
-struct ManifestBundle {
-  #[serde(default)]
-  path: Option<String>,
-  sha256: String,
-  size: u64,
-}
-
-/// One collected assets/ file, as the manifest lists it.
-#[derive(Deserialize, Clone)]
-pub struct AssetEntry {
-  pub path: String,
-  pub sha256: String,
-  pub size: u64,
-}
-
-// A font annotation: an assets/ path registered under an alias at startup.
-#[derive(Deserialize)]
-struct FontRef {
-  path: String,
-  alias: String,
-}
-
-// Manifest paths land on disk as-is, so only plain forward-slash relative
-// paths inside assets/ are acceptable; anything else means a malformed or
-// hostile manifest.
-fn safe_asset_path(path: &str) -> bool {
-  path.starts_with("assets/")
-    && !path.contains('\\')
-    && path.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
   let digest = Sha256::digest(bytes);
   let mut hex = String::with_capacity(digest.len() * 2);
@@ -98,7 +56,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// them with the app id; an already-installed version needs nothing.
 pub fn missing_assets(manifest: &str) -> Result<(String, Vec<AssetEntry>), String> {
   let store = crate::storage::get().ok_or("no writable storage")?;
-  let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
+  let parsed = Manifest::parse(manifest)?;
   let app_dir = store.app_dir(&parsed.app_id);
   if app_dir.join("versions").join(sha256_hex(manifest.as_bytes())).is_dir() {
     return Ok((parsed.app_id, Vec::new()));
@@ -118,7 +76,7 @@ pub fn missing_assets(manifest: &str) -> Result<(String, Vec<AssetEntry>), Strin
 /// versions already held. Returns the app id the version was installed under.
 pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -> Result<String, String> {
   let store = crate::storage::get().ok_or("no writable storage")?;
-  let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
+  let parsed = Manifest::parse(manifest)?;
   install_at(&store.app_dir(&parsed.app_id), manifest, code, fetched)?;
   Ok(parsed.app_id)
 }
@@ -138,7 +96,7 @@ pub fn load_last() -> Option<BootVersion> {
   let app_id = super::config::load().last_app?;
   let version_dir = current_version_dir(&app_id)?;
   let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
-  let fonts = load_fonts_at(&version_dir);
+  let fonts = Manifest::load(&version_dir).map(|m| m.load_fonts(&version_dir)).unwrap_or_default();
   Some(BootVersion { app_id, code, version_dir, fonts })
 }
 
@@ -152,24 +110,6 @@ pub fn current_version_dir(app_id: &str) -> Option<PathBuf> {
   dir.is_dir().then_some(dir)
 }
 
-// Load the font files a version's manifest annotates. A missing or unreadable
-// font degrades to "not registered" (the embedded defaults cover its role)
-// rather than failing the boot.
-fn load_fonts_at(version_dir: &Path) -> Vec<(String, Vec<u8>)> {
-  let Ok(manifest) = std::fs::read_to_string(version_dir.join("manifest.json")) else { return Vec::new() };
-  let Ok(parsed) = serde_json::from_str::<Manifest>(&manifest) else { return Vec::new() };
-  let mut fonts = Vec::new();
-  for font in &parsed.fonts {
-    if !safe_asset_path(&font.path) {
-      continue;
-    }
-    match std::fs::read(version_dir.join(&font.path)) {
-      Ok(bytes) => fonts.push((font.alias.clone(), bytes)),
-      Err(e) => log::warn!("[sgo] Could not read font {}: {e}", font.path),
-    }
-  }
-  fonts
-}
 
 // The assets held by the versions state.json points at (current first, so its
 // copy wins), as path -> (manifest hash, on-disk file). Trusts the stored
@@ -179,8 +119,7 @@ fn held_assets(app_dir: &Path) -> HashMap<String, (String, PathBuf)> {
   let Some(state) = load_state(app_dir) else { return held };
   for id in std::iter::once(&state.current).chain(state.previous.as_ref()) {
     let version_dir = app_dir.join("versions").join(id);
-    let Ok(manifest) = std::fs::read_to_string(version_dir.join("manifest.json")) else { continue };
-    let Ok(parsed) = serde_json::from_str::<Manifest>(&manifest) else { continue };
+    let Some(parsed) = Manifest::load(&version_dir) else { continue };
     for asset in parsed.assets {
       if !safe_asset_path(&asset.path) {
         continue;
@@ -202,7 +141,7 @@ pub(crate) fn install_at(
   code: &str,
   fetched: &HashMap<String, Vec<u8>>,
 ) -> Result<String, String> {
-  let parsed: Manifest = serde_json::from_str(manifest).map_err(|e| format!("manifest parse failed: {e}"))?;
+  let parsed = Manifest::parse(manifest)?;
   if !parsed.bundle.sha256.eq_ignore_ascii_case(&sha256_hex(code.as_bytes())) {
     return Err("bundle hash does not match its manifest".to_string());
   }

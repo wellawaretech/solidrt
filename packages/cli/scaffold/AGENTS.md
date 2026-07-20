@@ -153,6 +153,31 @@ nearly free. Rules, in order of leverage:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters.
 
+## Assets and app identity
+
+- Everything under `assets/` ships with the app: the folder is collected
+  wholesale into each build's version manifest (no bundler analysis, no
+  registration step). Reference assets by path - `file("assets/sounds/x.ogg")`
+  from `flux:fs` - and treat them as read-only at runtime; writes belong in
+  plain relative paths, which land in the app's private data dir.
+- Small text-like assets (SVG documents, shaders) can instead be inlined via
+  imports (`import icon from "./icon.svg"` yields the file's text;
+  `with { type: "binary" }` yields a Uint8Array). Inlining trades update
+  granularity for zero I/O - keep big or streamable files (audio, images) in
+  `assets/`.
+- Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
+  map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
+  replace the built-in defaults, `false` drops one, other keys add fonts
+  selectable via fontFamily). A newly added font shows after restarting the
+  client.
+- The `solidrt` key in package.json is the app's identity: set a stable
+  reverse-DNS `appId` (plus `org` and `displayName`) before distributing -
+  they default from the package name in dev, and `srt pack` warns while
+  `appId` is defaulted.
+- `bunx srt pack src/index.tsx` builds a single-file executable;
+  `bunx srt pack --folder src/index.tsx` writes the flat app folder
+  (runner + manifest.json + bundle + assets/) to `dist/`.
+
 ## Run / verify
 
 - bunx srt run src/index.tsx     - dev server + window (needs a display)

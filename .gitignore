@@ -1,3 +1,8 @@
 target/
 node_modules/
 dist/
+.srt-data/
+*.db
+# Default fonts staged into the CLI package at release time (release.yml);
+# in-repo the CLI resolves them from alloy/assets/fonts instead.
+packages/cli/fonts/

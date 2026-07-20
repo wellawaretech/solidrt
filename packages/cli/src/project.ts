@@ -57,13 +57,17 @@ function checkField(value: string, what: string) {
 // travels verbatim to clients and its sha256 is the version id, so it must
 // never be re-serialized along the way. runtimeVersion is the constant 1
 // until the derivation question is settled (see plan).
+// The manifest's runtimeVersion: a manually bumped constant until the
+// derivation question is settled (see plan).
+export const RUNTIME_VERSION = 1
+
 export function buildManifest(code: string, entry: string): string {
   let identity = loadAppIdentity(entry)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
   let { assets, fonts } = collectAssets(entry)
   return JSON.stringify({
     appId: identity.appId,
-    runtimeVersion: 1,
+    runtimeVersion: RUNTIME_VERSION,
     bundle: { path: "bundle.js", sha256, size: Buffer.byteLength(code, "utf8") },
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),
@@ -77,6 +81,14 @@ export type ManifestFont = { path: string; alias: string }
 // dir, or the entry's own dir when there is none.
 export function projectDirFor(sourcePath: string): string {
   return findProjectPackage(sourcePath)?.dir ?? resolve(dirname(sourcePath))
+}
+
+// The manifest asset path for an absolute file inside the project's assets/
+// dir, or null when it lies outside it.
+export function assetPathFor(projectDir: string, abs: string): string | null {
+  let rel = relative(resolve(projectDir, "assets"), abs)
+  if (rel.startsWith("..") || isAbsolute(rel)) return null
+  return "assets/" + rel.split(sep).join("/")
 }
 
 function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
@@ -116,11 +128,10 @@ export function collectAssets(entry: string): { assets: ManifestAsset[]; fonts: 
   if (map && typeof map === "object" && !Array.isArray(map)) {
     for (let [alias, value] of Object.entries(map)) {
       if (typeof value !== "string") continue
-      let rel = relative(assetsDir, resolve(projectDir, value))
-      if (rel.startsWith("..") || isAbsolute(rel)) {
+      let path = assetPathFor(projectDir, resolve(projectDir, value))
+      if (!path) {
         fail(`"solidrt.fonts": "${alias}": ${value} must live under assets/ (fonts ship as version assets)`)
       }
-      let path = "assets/" + rel.split(sep).join("/")
       if (!assets.some((a) => a.path === path)) {
         fail(`"solidrt.fonts": "${alias}": no such file: ${resolve(projectDir, value)}`)
       }

@@ -7,6 +7,7 @@ export let { values, positionals } = parseArgs({
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", short: "c", default: false },
     flux: { type: "boolean", short: "f", default: false },
+    folder: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
     "proxy-files": { type: "boolean", default: false },
@@ -123,6 +124,8 @@ bundle options:
       --stdout           Write bundle to stdout
 
 pack options:
+      --folder           Write the flat app folder (runner + manifest + bundle + assets)
+                         instead of the single-file executable
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename
