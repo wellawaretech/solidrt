@@ -2,3 +2,4 @@ node_modules/
 *.srt.js
 *.srt.bin
 .srt-cache.db
+.srt-data/

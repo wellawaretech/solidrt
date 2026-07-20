@@ -1,6 +1,7 @@
 import { values, source } from "../args"
 import { bundleFlux, bundleSolid } from "../bundler"
 import { loadPackFonts } from "../fonts"
+import { loadAppIdentity } from "../project"
 import { packRunner } from "../packer"
 
 // Write the packed executable, mark it runnable, and report its size.
@@ -22,9 +23,14 @@ export async function runPackCommand() {
   if (values.flux) {
     packed = await packRunner("fluxrt", await bundleFlux(source!))
   } else {
+    let identity = loadAppIdentity(source!)
+    console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
+    if (identity.defaulted) {
+      console.warn('>> warning: no "solidrt.appId" in package.json; set a stable reverse-DNS id before distributing')
+    }
     let fonts = loadPackFonts(source!)
     console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
-    packed = await packRunner("solidrt", await bundleSolid(), fonts)
+    packed = await packRunner("solidrt", await bundleSolid(), fonts, identity)
   }
   await writeExecutable(packed, outfile)
   process.exit()

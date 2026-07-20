@@ -1,12 +1,12 @@
 import { state, print, requireBinary, pipeAbovePrompt, shutdown } from "./util"
 import { DEV_HOST, DEV_PORT, getClients, shutdownWhenEmpty } from "./dev-server"
-import { values } from "./args"
+import { values, clientStorageArgs } from "./args"
 
 export function spawnClient() {
   let runner = requireBinary("solidrt-go")
   // The local client and dev server share this machine, so connect straight to
   // the loopback server: no mDNS discovery or recents lookup is needed for `run`.
-  let args: string[] = ["--dev-server", `${DEV_HOST}:${DEV_PORT}`]
+  let args: string[] = ["--dev-server", `${DEV_HOST}:${DEV_PORT}`, ...clientStorageArgs()]
   if (values.size) args.push("--size", values.size)
   state.child = Bun.spawn([runner, ...args], {
     stdio: ["ignore", "pipe", "pipe"],

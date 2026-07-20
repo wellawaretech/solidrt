@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util"
+import { resolve } from "node:path"
 
 export let { values, positionals } = parseArgs({
   options: {
@@ -17,12 +18,24 @@ export let { values, positionals } = parseArgs({
     capture: { type: "string" },
     tunnel: { type: "boolean", default: false },
     stats: { type: "boolean", default: false },
+    "data-root": { type: "string" },
+    client: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
     template: { type: "string", short: "t" },
   },
   allowPositionals: true,
 })
+
+// Storage flags for a locally spawned client. The data root defaults to the
+// project-local .srt-data so dev state stays with the project; it is passed
+// absolute because the client chdirs into its app sandbox at startup. Remote
+// clients resolve their own local root instead (see lattice/src/storage.rs).
+export function clientStorageArgs(): string[] {
+  let args = ["--data-root", resolve(values["data-root"] ?? ".srt-data")]
+  if (values.client) args.push("--client", values.client)
+  return args
+}
 
 export let command = positionals[0]
 export let source = positionals[1]
@@ -94,6 +107,8 @@ run/server options:
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
+      --data-root <dir>  Client data root (default: ./.srt-data)
+      --client <name>    Client name: its own data dir under the data root (default: "default")
 
 client options:
       --android          Install and launch the client on a connected Android device

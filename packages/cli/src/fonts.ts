@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { resolve } from "node:path"
+import { findProjectPackage } from "./project"
 
 // The fonts `srt pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
@@ -36,19 +37,9 @@ function defaultFontsDir(): string | null {
   return null
 }
 
-// The nearest package.json above the entry file is the project config.
 function findProjectConfig(sourcePath: string): { dir: string; fonts: unknown } | null {
-  let dir = resolve(dirname(sourcePath))
-  while (true) {
-    let pkgPath = resolve(dir, "package.json")
-    if (existsSync(pkgPath)) {
-      let pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-      return { dir, fonts: pkg.solidrt?.fonts }
-    }
-    let parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
+  let project = findProjectPackage(sourcePath)
+  return project && { dir: project.dir, fonts: project.pkg.solidrt?.fonts }
 }
 
 function fail(message: string): never {

@@ -14,11 +14,14 @@ const EMBED_TAIL_LEN: usize = 8 + 4 + EMBED_MAGIC.len(); // table offset + entry
 const SECTION_BYTECODE: u32 = 1;
 #[cfg(not(feature = "go"))]
 const SECTION_FONT: u32 = 2;
+#[cfg(not(feature = "go"))]
+const SECTION_APP: u32 = 3;
 
 #[cfg(not(feature = "go"))]
 struct EmbeddedPayload {
   bytecode: Option<Vec<u8>>,
   fonts: Vec<alloy::rendertree::FontPayload>,
+  identity: Option<lattice::storage::AppIdentity>,
 }
 
 // Read our own image and slice out the sections appended by `srt pack`, if any.
@@ -39,7 +42,7 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
     return None;
   }
   let mut cursor = table_offset as usize;
-  let mut payload = EmbeddedPayload { bytecode: None, fonts: Vec::new() };
+  let mut payload = EmbeddedPayload { bytecode: None, fonts: Vec::new(), identity: None };
   for _ in 0..count {
     if cursor + 21 > tail {
       return None;
@@ -67,6 +70,7 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
       SECTION_FONT => {
         payload.fonts.push(alloy::rendertree::FontPayload { alias, bytes: std::borrow::Cow::Owned(bytes) })
       }
+      SECTION_APP => payload.identity = lattice::storage::decode_app_identity(&bytes),
       // Unknown kinds are skipped; pinned CLI/runner versions make this unreachable today.
       _ => {}
     }
@@ -80,14 +84,15 @@ fn load_embedded_payload() -> Option<EmbeddedPayload> {
 
 fn main() {
   #[cfg(not(feature = "go"))]
-  let (bytecode, fonts) = match load_embedded_payload() {
-    Some(payload) => (payload.bytecode, payload.fonts),
+  let (bytecode, fonts, identity) = match load_embedded_payload() {
+    Some(payload) => (payload.bytecode, payload.fonts, payload.identity),
     // No trailer (bare runtime): no fonts either; text falls back to the
     // platform font manager.
-    None => (None, Vec::new()),
+    None => (None, Vec::new(), None),
   };
   #[cfg(feature = "go")]
-  let (bytecode, fonts): (Option<Vec<u8>>, Vec<alloy::rendertree::FontPayload>) = (None, lattice::embedded_fonts());
+  let (bytecode, fonts, identity): (Option<Vec<u8>>, Vec<alloy::rendertree::FontPayload>, Option<lattice::storage::AppIdentity>) =
+    (None, lattice::embedded_fonts(), None);
 
   let mut args = std::env::args().skip(1);
   let mut playback = false;
@@ -97,10 +102,16 @@ fn main() {
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
   let mut dev_server: Option<String> = None;
+  let mut data_root: Option<String> = None;
+  let mut client: Option<String> = None;
   let mut source_path: Option<String> = None;
   while let Some(arg) = args.next() {
     if arg == "--playback" {
       playback = true;
+    } else if arg == "--data-root" {
+      data_root = Some(args.next().expect("--data-root requires a directory path"));
+    } else if arg == "--client" {
+      client = Some(args.next().expect("--client requires a name"));
     } else if arg == "--script" {
       script_path = Some(args.next().expect("--script requires a file path"));
     } else if arg == "--stats" {
@@ -142,7 +153,8 @@ fn main() {
     alloy::Mode::Run
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  lattice::start(&rt, app, mode, size, stats, dev_server, fonts);
+  let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, identity };
+  lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage);
 }
 
 // Parses a `--script` file (see `srt render --script`, written by `srt run

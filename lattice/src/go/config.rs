@@ -1,5 +1,6 @@
-// Persistent dev-client config, stored as a single `config.json` in the app's
-// per-user writable directory (SDL pref path, cross-platform incl. Android).
+// Persistent dev-client config, stored as a single `config.json` in the
+// client's storage directory (see crate::storage; per client, above the
+// per-app sandboxes).
 //
 // One versioned struct holds everything the dev client remembers across runs;
 // add fields here as more state needs persisting. Writers should load(), mutate,
@@ -9,11 +10,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-// Organization/application names for the SDL pref path. The dev client uses a
-// distinct app name so its store never collides with a packed app's.
-const ORG: &str = "SolidRT";
-const APP: &str = "go";
 
 // Bump when the on-disk shape changes incompatibly and add migration handling
 // in load(). v1 is the initial layout.
@@ -34,10 +30,10 @@ impl Default for Config {
 }
 
 fn config_path() -> Option<PathBuf> {
-  match alloy::sdl3::filesystem::get_pref_path(ORG, APP) {
-    Ok(dir) => Some(dir.join("config.json")),
-    Err(e) => {
-      log::warn!("[sgo] no writable config dir: {e}");
+  match crate::storage::get() {
+    Some(store) => Some(store.client_dir.join("config.json")),
+    None => {
+      log::warn!("[sgo] no writable config dir");
       None
     }
   }

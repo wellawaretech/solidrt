@@ -7,6 +7,7 @@ mod plugins;
 mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
+pub mod storage;
 
 #[cfg(test)]
 mod tests;
@@ -36,7 +37,9 @@ use std::sync::Arc;
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts());
+  // Android resolves its own sandboxed root; no flags, no packed identity.
+  let storage = storage::StorageSpec { data_root: None, client: None, identity: None };
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage);
   0
 }
 
@@ -142,6 +145,8 @@ struct RunOptions {
   // Fonts to register at startup (see FontPayload): the go client's embedded
   // Notos, or a packed binary's trailer fonts.
   fonts: Vec<FontPayload>,
+  // Data-root resolution inputs (see storage::resolve).
+  storage: storage::StorageSpec,
 }
 
 fn ui_thread(
@@ -151,23 +156,23 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, playback_fps, stats, dev_server, fonts } = opts;
+  let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
-  // Anchor the process to a writable directory before any app code runs, so
-  // relative paths (e.g. a flux:sqlite database) resolve to persistent storage.
-  // The launch cwd is unreliable: on Android it is "/" (read-only); on desktop
-  // it is wherever the client was spawned. SDL's pref path is writable and
-  // persistent on every platform (and on Android is the same internal-storage
-  // dir bundled assets are extracted into). The dev client and packed runtime
-  // share one directory. The dev server is a separate process and unaffected.
-  match alloy::sdl3::filesystem::get_pref_path("SolidRT", "go") {
-    Ok(dir) => match std::env::set_current_dir(&dir) {
-      Ok(()) => log::info!("[srt] working directory set to {}", dir.display()),
-      Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", dir.display()),
+  // Resolve the client storage tree, then anchor the process to the app's
+  // data sandbox before any app code runs, so relative paths (e.g. a
+  // flux:sqlite database) resolve to persistent per-app storage. The launch
+  // cwd is unreliable: on Android it is "/" (read-only); on desktop it is
+  // wherever the client was spawned. The dev server is a separate process
+  // and unaffected.
+  storage::init(&storage_spec);
+  match storage::get() {
+    Some(store) => match std::env::set_current_dir(&store.data_dir) {
+      Ok(()) => log::info!("[srt] working directory set to {}", store.data_dir.display()),
+      Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", store.data_dir.display()),
     },
-    Err(e) => log::warn!("[srt] no writable pref path, leaving working directory unchanged: {e}"),
+    None => log::warn!("[srt] no writable storage, leaving working directory unchanged"),
   }
 
   let platform = Arc::new(PlatformContext::new(fonts));
@@ -381,13 +386,11 @@ fn ui_thread(
       }
     };
 
-    // Fetch disk cache location: the generic client's pref path, resolution
-    // rule 3 in okf/research/update-mechanism.md. Interim until the
-    // update-mechanism data roots land; relocating a cache costs nothing.
-    let fetch_cache_dir = match alloy::sdl3::filesystem::get_pref_path("SolidRT", "go") {
-      Ok(path) => Some(path.join("cache")),
-      Err(e) => {
-        log::warn!("No fetch cache dir ({e}); fetch caching disabled");
+    // Fetch disk cache: client-level, shared across the client's apps.
+    let fetch_cache_dir = match storage::get() {
+      Some(store) => Some(store.cache_dir.clone()),
+      None => {
+        log::warn!("No fetch cache dir; fetch caching disabled");
         None
       }
     };
@@ -519,6 +522,7 @@ pub fn start(
   stats: bool,
   dev_server: Option<String>,
   fonts: Vec<FontPayload>,
+  storage: storage::StorageSpec,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -530,7 +534,7 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts };
+  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });

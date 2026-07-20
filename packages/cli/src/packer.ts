@@ -1,6 +1,7 @@
 import { requireBinary } from "./util"
 import { compileToBytecode } from "./bundler"
 import type { PackFont } from "./fonts"
+import type { AppIdentity } from "./project"
 
 // Trailer magic identifying the runner an embedded payload belongs to. Must match
 // the runner-side checks: fluxrt -> flux/src/bin/fluxrt.rs, solidrt ->
@@ -15,6 +16,7 @@ export type Runner = keyof typeof MAGIC
 // Section kinds in the solidrt trailer. Must match lattice/src/main.rs.
 const SECTION_BYTECODE = 1
 const SECTION_FONT = 2
+const SECTION_APP = 3
 
 type Section = { kind: number; bytes: Buffer; alias?: string }
 
@@ -45,10 +47,28 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
   return Buffer.concat([...parts, ...entries, tail, magic])
 }
 
+// The app-identity section: three length-prefixed UTF-8 strings
+// [len u8][bytes] (appId, org, displayName). Deliberately not JSON: the
+// packed runner carries no JSON parser outside the JS engine. Must match
+// lattice/src/storage.rs (decode_app_identity).
+function encodeIdentity(identity: AppIdentity): Buffer {
+  let parts: Buffer[] = []
+  for (let field of [identity.appId, identity.org, identity.displayName]) {
+    let bytes = Buffer.from(field, "utf8")
+    parts.push(Buffer.from([bytes.length]), bytes)
+  }
+  return Buffer.concat(parts)
+}
+
 // Compile JS to bytecode and append it to the runner binary. solidrt gets the
-// sectioned trailer (bytecode + fonts); fluxrt keeps the single-payload
-// trailer of [bytecode][u64 offset LE][8-byte magic].
-export async function packRunner(runner: Runner, jsCode: string, fonts: PackFont[] = []): Promise<Buffer> {
+// sectioned trailer (bytecode + app identity + fonts); fluxrt keeps the
+// single-payload trailer of [bytecode][u64 offset LE][8-byte magic].
+export async function packRunner(
+  runner: Runner,
+  jsCode: string,
+  fonts: PackFont[] = [],
+  identity?: AppIdentity,
+): Promise<Buffer> {
   let bytecode = await compileToBytecode(jsCode)
 
   let runnerPath = requireBinary(runner)
@@ -57,6 +77,7 @@ export async function packRunner(runner: Runner, jsCode: string, fonts: PackFont
   if (runner === "solidrt") {
     let sections: Section[] = [
       { kind: SECTION_BYTECODE, bytes: bytecode },
+      ...(identity ? [{ kind: SECTION_APP, bytes: encodeIdentity(identity) }] : []),
       ...fonts.map((f) => ({ kind: SECTION_FONT, bytes: f.bytes, alias: f.alias })),
     ]
     return packSections(runnerBytes, sections, MAGIC.solidrt)

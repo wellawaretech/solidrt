@@ -1,4 +1,4 @@
-import { values } from "../args"
+import { values, clientStorageArgs } from "../args"
 import { requireBinary, run } from "../util"
 import { spawnAndroidClient } from "../dev-android"
 
@@ -13,7 +13,7 @@ export async function runClientCommand() {
   }
 
   let runner = requireBinary("solidrt-go")
-  let args: string[] = []
+  let args: string[] = [...clientStorageArgs()]
   if (values.size) args.push("--size", values.size)
   //TODO add dev server connection
   // if (source) args.push("--dev-server", source)
