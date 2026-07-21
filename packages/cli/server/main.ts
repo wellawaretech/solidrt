@@ -210,7 +210,7 @@ async function handleFiles(req: FluxRequest, path: string, root: string): Promis
 
 // Ticket-paired clients connect through this endpoint; serve() accepts its
 // connections directly alongside the TCP listener.
-let tunnel = config.tunnel ? await createTunnelEndpoint(config.port, config.cacheDir) : null
+let tunnel = config.tunnel ? await createTunnelEndpoint(config.port, config.keyDir) : null
 
 serve({
   port: config.port,

@@ -43,7 +43,7 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
   // Android resolves its own sandboxed root; no flags, no packed identity.
-  let storage = storage::StorageSpec { data_root: None, client: None, identity: None };
+  let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
   start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage);
   0
 }
@@ -225,10 +225,8 @@ fn ui_thread(
   }
   // The app the process is currently anchored to (whose data/ is the cwd);
   // a dev push naming a different app re-anchors (see anchor_app).
-  let mut current_app_id: Option<String> = Some(match &storage_spec.identity {
-    Some(id) => id.app_id.clone(),
-    None => "default".to_string(),
-  });
+  let mut current_app_id: Option<String> =
+    Some(storage_spec.app_id.clone().unwrap_or_else(|| "default".to_string()));
 
   // Offline relaunch (go client): launched with a dev-server address, boot the
   // last installed app from the version store immediately; the session

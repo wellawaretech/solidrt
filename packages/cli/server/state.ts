@@ -25,8 +25,10 @@ export type Config = {
   bundlerCmd: string[]
   /** Enable the sqlite-backed proxy cache. */
   cache: boolean
-  /** Directory holding .srt-cache.db. */
+  /** Directory holding the proxy cache db (the project-local .srt-data). */
   cacheDir: string
+  /** Directory holding .srt-tunnel-key (the project root). */
+  keyDir: string
   /** Destination for captured key events, or unset when off. */
   capture?: string
   stats: boolean

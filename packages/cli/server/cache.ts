@@ -1,7 +1,7 @@
 // SQLite-backed HTTP response cache for the dev server's /__proxy__ endpoint.
 //
-// Project-local: stored at <dir>/.srt-cache.db. Entries live forever; delete
-// .srt-cache.db to drop them.
+// Project-local: stored at <dir>/http-cache.db, where <dir> is the project's
+// .srt-data. Entries live forever; delete the file to drop them.
 //
 // Cached: GET (and HEAD) 2xx responses with no Authorization on the request
 // and no Cache-Control: no-store on either side. The cache key is
@@ -10,9 +10,10 @@
 // old hashed entries simply miss and re-populate.)
 
 import { Database } from "flux:sqlite"
+import { dir } from "flux:fs"
 import { join } from "flux:path"
 
-const CACHE_FILE = ".srt-cache.db"
+const CACHE_FILE = "http-cache.db"
 
 export type Decision = "hit" | "miss" | "bypass" | "skip"
 
@@ -29,6 +30,7 @@ let db: Database | null = null
 let enabled = false
 
 export async function initCache(opts: { dir: string }) {
+  await dir(opts.dir).create()
   let d = await Database.connect(join(opts.dir, CACHE_FILE), "rw+")
   await d.exec(`CREATE TABLE IF NOT EXISTS entries (
     key         TEXT PRIMARY KEY,

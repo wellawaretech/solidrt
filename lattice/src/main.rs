@@ -28,7 +28,7 @@ const SECTION_FILE: u32 = 2;
 struct FactoryPayload {
   app: lattice::AppSource,
   fonts: Vec<alloy::rendertree::FontPayload>,
-  identity: lattice::storage::AppIdentity,
+  app_id: String,
   base: forge::fs::AssetsBase,
 }
 
@@ -46,17 +46,6 @@ fn app_from_bundle(name: &str, bytes: Vec<u8>) -> Option<lattice::AppSource> {
     Some(lattice::AppSource::Text(String::from_utf8(bytes).ok()?))
   } else {
     Some(lattice::AppSource::Bytecode(bytes))
-  }
-}
-
-// Pack manifests carry org/displayName for the storage pref path; a
-// hand-rolled folder from a dev manifest defaults them from the app id.
-#[cfg(not(feature = "go"))]
-fn identity_from(manifest: lattice::manifest::Manifest) -> lattice::storage::AppIdentity {
-  lattice::storage::AppIdentity {
-    org: manifest.org.clone().unwrap_or_else(|| manifest.app_id.clone()),
-    display_name: manifest.display_name.clone().unwrap_or_else(|| manifest.app_id.clone()),
-    app_id: manifest.app_id,
   }
 }
 
@@ -126,8 +115,7 @@ fn load_embedded_payload() -> Option<FactoryPayload> {
       Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
     })
     .collect();
-  let identity = identity_from(manifest);
-  Some(FactoryPayload { app, fonts, identity, base: forge::fs::AssetsBase::Packed { exe, index } })
+  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Packed { exe, index } })
 }
 
 // A folder distribution next to this runner: manifest.json + the bundle it
@@ -143,8 +131,7 @@ fn load_adjacent_folder() -> Option<FactoryPayload> {
     .into_iter()
     .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
     .collect();
-  let identity = identity_from(manifest);
-  Some(FactoryPayload { app, fonts, identity, base: forge::fs::AssetsBase::Dir(dir) })
+  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Dir(dir) })
 }
 
 fn main() {
@@ -196,13 +183,13 @@ fn main() {
   // A factory payload (trailer or folder) also mounts its assets: reads under
   // assets/ resolve into the distribution instead of the cwd.
   #[cfg(not(feature = "go"))]
-  let (app, fonts, identity) = {
+  let (app, fonts, app_id) = {
     let factory = load_embedded_payload()
       .or_else(|| if source_path.is_none() { load_adjacent_folder() } else { None });
     match factory {
       Some(payload) => {
         forge::fs::set_assets_base(Some(payload.base));
-        (Some(payload.app), payload.fonts, Some(payload.identity))
+        (Some(payload.app), payload.fonts, Some(payload.app_id))
       }
       // Bare runtime: no fonts either; text falls back to the platform font
       // manager.
@@ -210,8 +197,7 @@ fn main() {
     }
   };
   #[cfg(feature = "go")]
-  let (app, fonts, identity): (_, _, Option<lattice::storage::AppIdentity>) =
-    (source_path.map(path_app), lattice::embedded_fonts(), None);
+  let (app, fonts, app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,
@@ -223,7 +209,7 @@ fn main() {
     alloy::Mode::Run
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
-  let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, identity };
+  let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage);
 }
 
