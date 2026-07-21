@@ -196,6 +196,13 @@ fn main() {
       None => (source_path.map(path_app), Vec::new(), None),
     }
   };
+  // The runtime has no built-in screen to fall back to (the connect screen is
+  // go-only); without an app there is nothing to run.
+  #[cfg(not(feature = "go"))]
+  if app.is_none() {
+    eprintln!("No app to run: expected a packed payload, an app folder, or a source path argument");
+    std::process::exit(2);
+  }
   #[cfg(feature = "go")]
   let (app, fonts, app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
   let mode = if playback {

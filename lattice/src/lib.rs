@@ -15,6 +15,8 @@ mod tests;
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
+  // Return to the connect screen; only the dev session sends this.
+  #[cfg(feature = "go")]
   Stop,
   // `app_id` names the app a dev push belongs to (from its installed
   // manifest); the runtime re-anchors into that app's data sandbox before the
@@ -91,6 +93,9 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
 
 // --- End Android entry point ------------------------------
 
+// The connect screen is the go client's home; the production runtime never
+// shows it (it always boots a provided app source), so only go builds embed it.
+#[cfg(feature = "go")]
 const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
 const BSOD_SOURCE: &str = include_str!("../default-app/bsod.srt.js");
 
@@ -263,7 +268,10 @@ fn ui_thread(
   platform.set_always_render(matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
+  #[cfg(feature = "go")]
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
+  #[cfg(not(feature = "go"))]
+  let mut current_app = app.expect("runtime builds must provide an app source");
   let mut showing_bsod = false;
 
   // Bridge the synchronous Alloy event channel onto an async one: a blocking
@@ -567,6 +575,7 @@ fn ui_thread(
                   next_app = Some(AppSource::Text(code));
                   next_app_id = app_id;
                 }
+                #[cfg(feature = "go")]
                 EngineCmd::Stop => { next_app = Some(AppSource::Text(DEFAULT_SOURCE.to_string())); }
               }
             }
@@ -599,6 +608,7 @@ fn ui_thread(
             current_app = AppSource::Text(code);
             showing_bsod = false;
           }
+          #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
             current_app = AppSource::Text(DEFAULT_SOURCE.to_string());
             showing_bsod = false;

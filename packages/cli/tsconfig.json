@@ -5,7 +5,6 @@
   },
   "include": [
     "bin/**/*",
-    "src/**/*",
-    "default-app/**/*"
+    "src/**/*"
   ]
 }
