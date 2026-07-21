@@ -21,6 +21,7 @@ export let { values, positionals } = parseArgs({
     stats: { type: "boolean", default: false },
     "data-root": { type: "string" },
     client: { type: "string" },
+    server: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
     template: { type: "string", short: "t" },
@@ -80,6 +81,11 @@ export function validateArgs() {
   if (values.android && command !== "client") {
     usage("srt client --android  (--android is only valid with the client command)")
   }
+  // --server points a standalone client at a dev server; `run` and `server`
+  // own their server side, so it is only valid for `client`.
+  if (values.server && command !== "client") {
+    usage("srt client --server <host[:port]>  (--server is only valid with the client command)")
+  }
 }
 
 export function printUsage() {
@@ -112,6 +118,7 @@ run/client options:
       --client <name>    Client name: its own data dir under the data root (default: "default")
 
 client options:
+      --server <host[:port]>  Connect to a dev server at this address (default port: 34884)
       --android          Install and launch the client on a connected Android device
       --device <serial>  Target a specific adb device by serial or unique prefix
 
