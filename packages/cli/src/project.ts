@@ -6,8 +6,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 //
 //   "solidrt": {
 //     "appId": "com.example.app",   // stable identity: storage dir, Android package id
-//     "org": "Example",             // publisher, pref-path org component
-//     "displayName": "Example App", // pref-path app component
+//     "org": "Example",             // optional display metadata (publisher)
+//     "displayName": "Example App", // optional display metadata (launcher/window)
 //     "fonts": { ... }              // see fonts.ts
 //   }
 //

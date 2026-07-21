@@ -171,9 +171,10 @@ nearly free. Rules, in order of leverage:
   selectable via fontFamily). A newly added font shows after restarting the
   client.
 - The `solidrt` key in package.json is the app's identity: set a stable
-  reverse-DNS `appId` (plus `org` and `displayName`) before distributing -
-  they default from the package name in dev, and `srt pack` warns while
-  `appId` is defaulted.
+  reverse-DNS `appId` before distributing - it keys the app's storage
+  folder, defaults from the package name in dev, and `srt pack` warns
+  while defaulted. `org` and `displayName` are optional display metadata
+  (future launcher/window naming) with no storage meaning.
 - `bunx srt pack src/index.tsx` builds a single-file executable;
   `bunx srt pack --folder src/index.tsx` writes the flat app folder
   (runner + manifest.json + bundle + assets/) to `dist/`.

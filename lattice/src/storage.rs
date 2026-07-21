@@ -15,13 +15,15 @@
 //
 // Packed app (app id from the pack manifest): an installed app has exactly
 // one client and one app, so neither appears as a directory. The pref path
-// keyed by the app id alone IS the app's folder (empty org skips the vendor
-// level on every platform):
+// under the shared SolidRT vendor level, keyed by the app id, IS the app's
+// folder (Flatpak-style grouping: many small apps do not clutter the
+// platform data dir, and the machine has one SolidRT folder total):
 //
-//   <pref "" app-id>/    e.g. ~/.local/share/com.example.app/
+//   <pref SolidRT/app-id>/    e.g. ~/.local/share/SolidRT/com.example.app/
 //     identity/  data/  cache/  logs/
 //
-// Generic go client (neither): one client per device, many apps:
+// Generic go client (neither): one client per device, many apps, sharing
+// the same vendor level:
 //
 //   <pref SolidRT/go>/
 //     identity/  apps/<app-id>/data/  cache/  logs/
@@ -109,11 +111,11 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
       }
     },
     None => {
-      let (org, app, flat) = match &spec.app_id {
-        Some(app_id) => ("", checked_component(Some(app_id), "app id"), true),
-        None => ("SolidRT", "go".to_string(), false),
+      let (app, flat) = match &spec.app_id {
+        Some(app_id) => (checked_component(Some(app_id), "app id"), true),
+        None => ("go".to_string(), false),
       };
-      match alloy::sdl3::filesystem::get_pref_path(org, &app) {
+      match alloy::sdl3::filesystem::get_pref_path("SolidRT", &app) {
         Ok(dir) => (dir, flat),
         Err(e) => {
           log::warn!("[srt] no writable pref path: {e}");

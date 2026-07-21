@@ -18,10 +18,7 @@ The common workflow is to use the `run` command which will start both the dev se
 
 ## Proxies
 
-SolidRT provides two independent proxies to route traffic through the dev server:
-
-- `--proxy-http` - routes `fetch` calls through the dev server. HTTP responses are cached automatically in an SQLite file named `.srt-cache.db`. To clear the cache, delete that file.
-- `--proxy-files` - routes `Flux.file`, `Flux.dir`, and `Flux.write` calls through the dev server, giving all connected clients access to the files on your development machine. USE WITH CARE!
+- `--proxy-http` - routes `fetch` calls through the dev server. HTTP responses are cached automatically in an SQLite file at `.srt-data/http-cache.db`. To clear the cache, delete that file.
 
 With multiple devices connected, caching is especially useful: a resource fetched once is served from cache on every subsequent reload across all clients.
 
@@ -56,7 +53,6 @@ When running, a REPL is started. See section Dev server REPL.
 
 | Flag             | Description                                              |
 | ---------------- | -------------------------------------------------------- |
-| `--proxy-files`  | Route file/dir access through the dev server             |
 | `--proxy-http`   | Route fetch calls through the dev server (cache enabled) |
 | `--capture <file>` | Record connected clients' key events to a script file  |
 

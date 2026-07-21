@@ -21,7 +21,44 @@ let res = await fetch("https://api.example.com/data")
 let data = await res.json()
 ```
 
-`Request`, `Response`, and `Headers` are also available as globals.
+`Request`, `Response`, and `Headers` are also available as globals. Bodies
+read once via `text()`, `bytes()`, `arrayBuffer()`, or `json()`, or stream
+with `for await (let chunk of res.body)`.
+
+#### Caching
+
+Caching is explicit and per call. By default `fetch` never caches (like
+Node/Bun/Deno): API traffic stays predictable with zero configuration.
+
+```js
+// Serve from disk if stored, otherwise fetch and store. No freshness, no
+// TTL: the entry lives until evicted by the size cap. Asset mode.
+let img = await fetch(url, { cache: "force-cache" })
+
+// Fetch fresh and overwrite the stored entry.
+let img = await fetch(url, { cache: "reload" })
+```
+
+What this is not:
+
+- Server cache headers (`cache-control`, `expires`, `etag`) are ignored
+  entirely. The caller decides, not the server.
+- No freshness model, no TTL, no revalidation, no `Vary`. An unversioned URL
+  cached with `force-cache` never updates until evicted or `reload`ed;
+  versioned URLs are the normal way to handle updatable assets.
+- Only GET requests with 2xx responses are cached, keyed by URL. On other
+  methods the `cache` option is ignored.
+- `"default"`, `"no-store"`, and `"no-cache"` are accepted and all mean a
+  plain network request; unknown values throw.
+
+The store is a size-capped LRU disk cache under the runtime's data
+directory (`.srt-data/cache` for flux scripts, the app's pref path under a
+GUI runtime); an evicted entry is simply refetched next time.
+
+Cached fetches are also polite: a small per-host concurrency limit keeps
+asset floods from swamping a server (misses queue; disk hits are not
+throttled). Plain fetches are never throttled - API calls, long-polls, and
+streams do not queue behind asset traffic.
 
 ### Timers
 
@@ -40,6 +77,9 @@ console.log("info")
 console.warn("warning")
 console.error("error")
 ```
+
+Arguments are joined by spaces. Strings print as-is, Error objects print as
+`name: message` plus their stack, other values are JSON-stringified.
 
 ### performance
 
@@ -89,7 +129,7 @@ off() // unsubscribe
 import { file, dir } from "flux:fs"
 
 let text  = await file("data.txt").text()
-let bytes = await file("img.png").bytes()
+let bytes = await file("img.png").bytes()   // arrayBuffer() for an ArrayBuffer
 let obj   = await file("data.json").json()
 let stat  = await file("data.txt").stat()   // { size, type, mtime }
 await file("out.txt").write("hello")
@@ -99,6 +139,14 @@ await dir("./out/img").create()             // mkdir -p; ok if it exists
 ```
 
 Each entry has a `name` (filename only) and a `type`: `"file"`, `"directory"`, `"symlink"`, or `"other"`.
+
+Relative paths resolve against the process cwd, with one exception: when the
+embedder has set the assets mount (a SolidRT app running an installed or
+packed version), paths under `assets/` resolve read-only into that version's
+immutable `assets/` tree instead - loose files on disk, or byte ranges inside
+a single-file packed executable (reads, ranged reads, and seekable streaming
+work identically in both forms); writes under `assets/` then error. Plain
+flux scripts have no mount and see cwd behavior throughout.
 
 ### flux:http
 
