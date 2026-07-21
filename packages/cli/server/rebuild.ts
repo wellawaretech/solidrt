@@ -10,12 +10,11 @@ import { state } from "./state"
 
 // Build the reload message the same way srt's buildReload does, so a
 // server-triggered reload is indistinguishable from a repl-triggered one to
-// clients. proxyFiles/proxyHttp are message flags, not build inputs.
+// clients. proxyHttp is a message flag, not a build input.
 function buildReload(code: string, manifest?: string) {
   let config = state.config
   return {
     type: "reload",
-    proxyFiles: config.proxyFiles,
     proxyHttp: config.proxyHttp,
     ...(manifest ? { manifest } : {}),
     code,

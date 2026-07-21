@@ -9,11 +9,10 @@
 //! its source must be sync + seekable + Send, which the async body methods on
 //! `file()` cannot be).
 //!
-//! The opener is opaque, so the local `flux:fs` file and the lattice dev-server
-//! proxy file can each attach their own backend (disk vs HTTP range requests)
-//! while the consumer stays backend-agnostic. That is how streaming rides the
-//! `file()` proxy override for free: whichever `file()` is installed hands out
-//! the matching reader.
+//! The opener is opaque, so each `file()` backend attaches its own reader
+//! (plain disk, or a packed trailer's range-read window via forge::fs) while
+//! the consumer stays backend-agnostic: whichever `file()` is installed hands
+//! out the matching reader.
 
 use std::rc::Rc;
 

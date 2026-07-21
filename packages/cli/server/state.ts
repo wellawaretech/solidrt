@@ -12,7 +12,6 @@ export type Config = {
   projectDir: string
   /** The address clients can reach this machine on (LAN IP or 127.0.0.1). */
   address: string
-  proxyFiles: boolean
   proxyHttp: boolean
   /** The app entry (absolute .tsx/.jsx path) the server rebuilds on an
    * MCP-triggered reload, or undefined when srt was started without a source.

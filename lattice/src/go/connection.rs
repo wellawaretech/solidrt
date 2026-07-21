@@ -16,9 +16,6 @@ pub type DevServerCell = Arc<Mutex<Option<String>>>;
 #[derive(Clone)]
 pub struct DevFlags {
   /// Latched from a `reload` message; read when building the next engine to
-  /// decide whether to install the file proxy.
-  pub proxy_files_enabled: Arc<AtomicBool>,
-  /// Latched from a `reload` message; read when building the next engine to
   /// decide whether to install the fetch proxy.
   pub proxy_http_enabled: Arc<AtomicBool>,
   /// Whether the debug stats overlay is drawn; set from the `welcome`
@@ -457,9 +454,7 @@ async fn try_serve(
             }
           }
           Some("reload") => {
-            let proxy_files = json.get("proxyFiles").and_then(|p| p.as_bool()).unwrap_or(false);
             let proxy_http = json.get("proxyHttp").and_then(|p| p.as_bool()).unwrap_or(false);
-            flags.proxy_files_enabled.store(proxy_files, Ordering::Relaxed);
             flags.proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
             if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
               // A push with a manifest is an install: persist the version so

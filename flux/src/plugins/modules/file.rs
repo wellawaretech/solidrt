@@ -139,8 +139,9 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   obj.set("append", append_fn)?;
 
   // Carry a native seekable source so a consumer that needs sync, seekable bytes
-  // off the JS thread (audio streaming) can open the file on demand. Local disk
-  // here; the dev-server proxy attaches a range-backed opener instead.
+  // off the JS thread (audio streaming) can open the file on demand. The opener
+  // resolves through forge::fs, so a packed asset hands out a range-read window
+  // into the exe instead of a plain disk file.
   let path_for_open = path.clone();
   SeekableSource::attach(&ctx, &obj, Rc::new(move || fs::open_seekable(&path_for_open)))?;
 

@@ -16,7 +16,7 @@ use tokio::task::LocalSet;
 
 use super::connection::{self, ConnState, DevCmd, DevFlags, DevServerCell};
 use super::control::install_dev_control;
-use super::proxy::{install_proxy_state, ProxyFsModule};
+use super::proxy::install_proxy_state;
 
 /// Bundles the dev-server connection state held natively across engine rebuilds.
 pub struct DevSession {
@@ -66,7 +66,6 @@ impl DevSession {
 
     let (stats_enabled, frame_requested) = stats_handles;
     let flags = DevFlags {
-      proxy_files_enabled: Arc::new(AtomicBool::new(false)),
       proxy_http_enabled: Arc::new(AtomicBool::new(false)),
       stats_enabled,
       frame_requested,
@@ -113,16 +112,11 @@ impl DevSession {
   }
 
   /// Install the dev-server control surface and, when the server has requested
-  /// it, the file/http proxy onto a freshly created engine builder.
+  /// it, the http proxy onto a freshly created engine builder.
   pub fn augment_builder(&self, mut builder: FluxEngineBuilder) -> FluxEngineBuilder {
-    let proxy_files = self.flags.proxy_files_enabled.load(Ordering::Relaxed);
-    let proxy_http = self.flags.proxy_http_enabled.load(Ordering::Relaxed);
-    if proxy_files || proxy_http {
+    if self.flags.proxy_http_enabled.load(Ordering::Relaxed) {
       if let Some(url) = self.dev_server.lock().expect("dev_server lock poisoned").clone() {
-        if proxy_files {
-          builder = builder.module_override("flux:fs", ProxyFsModule);
-        }
-        builder = builder.plugin(move |ctx| install_proxy_state(ctx, url, proxy_http));
+        builder = builder.plugin(move |ctx| install_proxy_state(ctx, url));
       }
     }
     let dev_cmd_tx = self.dev_cmd_tx.clone();

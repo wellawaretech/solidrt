@@ -46,8 +46,6 @@ Two reliable checks that need no GUI:
 
 - `--proxy-http` - route `fetch` through the dev server; responses cached in
   `.srt-data/http-cache.db` (delete the file to clear).
-- `--proxy-files` - route flux:fs (`file`/`dir`/`write`) through the dev server.
-  Exposes your dev machine's files to all clients; use with care.
 
 ## REPL (opened by `run`/`server`)
 

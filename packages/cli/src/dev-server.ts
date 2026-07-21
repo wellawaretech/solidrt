@@ -24,7 +24,6 @@ export function buildReload(payload: { code?: string | null; bytecode?: string; 
   let { manifest, ...rest } = payload
   return {
     type: "reload",
-    proxyFiles: values["proxy-files"],
     proxyHttp: values["proxy-http"],
     ...(manifest ? { manifest } : {}),
     ...rest,
@@ -180,7 +179,6 @@ export async function startServer() {
     sourceDir: state.sourceDir,
     projectDir: state.projectDir,
     address,
-    proxyFiles: values["proxy-files"],
     proxyHttp: values["proxy-http"],
     entry: state.source,
     minify: values.minify,

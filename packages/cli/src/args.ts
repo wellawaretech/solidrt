@@ -10,7 +10,6 @@ export let { values, positionals } = parseArgs({
     folder: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
-    "proxy-files": { type: "boolean", default: false },
     "proxy-http": { type: "boolean", default: false },
     fps: { type: "string" },
     duration: { type: "string" },
@@ -106,7 +105,6 @@ init options:
   -t, --template <name>  Start from a named template (skips the interactive picker)
 
 run/server options:
-      --proxy-files      Route file/dir access through the dev server
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel

@@ -6,9 +6,9 @@
 
 import { serve } from "flux:http"
 import type { FluxRequest, Server } from "flux:http"
-import { file, dir } from "flux:fs"
+import { file } from "flux:fs"
 import { argv } from "flux:process"
-import { resolveWithin, join } from "flux:path"
+import { resolveWithin } from "flux:path"
 import { state, type Config } from "./state"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
@@ -122,20 +122,13 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
   }
 }
 
-// The file routes: GET file (with single-range 206 support) or directory
-// listing, PUT file write. All paths are contained in `root` (the source
-// directory, or the project dir for the /assets/ convention route).
+// The file routes: GET file with single-range 206 support. All paths are
+// contained in `root` (the source directory, or the project dir for the
+// /assets/ convention route).
 async function handleFiles(req: FluxRequest, path: string, root: string): Promise<Response> {
   let filePath = resolveWithin(root, "." + path)
   if (!filePath) {
     return new Response("Forbidden", { status: 403 })
-  }
-
-  if (req.method === "PUT") {
-    console.log("[cli] put " + path)
-    let bytes = await req.bytes()
-    await file(filePath).write(bytes)
-    return new Response("", { status: 204 })
   }
 
   console.log("[cli] get " + path)
@@ -147,27 +140,11 @@ async function handleFiles(req: FluxRequest, path: string, root: string): Promis
     console.log(`[cli] file not found ${path}`)
     return new Response("Not found", { status: 404 })
   }
-
   if (stat.type === "directory") {
-    let dirents = await dir(filePath).entries()
-    let entries = await Promise.all(
-      dirents.map(async (d) => {
-        let entry = { name: d.name, type: d.type === "directory" ? 2 : 1, size: 0, modified: 0 }
-        if (d.type !== "directory") {
-          try {
-            let s = await file(join(filePath, d.name)).stat()
-            entry.size = s.size
-            entry.modified = Math.floor(s.mtime ?? 0)
-          } catch {}
-        }
-        return entry
-      }),
-    )
-    entries.sort((a, b) => a.name.localeCompare(b.name))
-    return Response.json(entries, { headers: { "X-SRT-Type": "directory" } })
+    return new Response("Not found", { status: 404 })
   }
 
-  let baseHeaders: Record<string, string> = { "X-SRT-Type": "file", "Accept-Ranges": "bytes" }
+  let baseHeaders: Record<string, string> = { "Accept-Ranges": "bytes" }
 
   // Honor a single byte-range request (e.g. streaming audio decoding on the
   // client, which seeks and reads on demand). Only the common "bytes=a-b" /

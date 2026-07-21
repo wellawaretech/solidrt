@@ -120,7 +120,8 @@ fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<
 /// is a `file()` from `flux:fs`; its native seekable source is opened for
 /// on-demand decoding (large tracks stay off the heap) and fed to SDL_mixer as a
 /// custom byte source. Taking the file object rather than a path means streaming
-/// rides the `file()` proxy override: a proxied file streams from the dev server.
+/// rides the file's attached backend: a packed asset streams via range reads
+/// out of the exe instead of a plain disk file.
 /// Play it as a single voice; do not overlap a stream with itself.
 fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Object<'js>> {
   let reader = SeekableSource::open_from(&source).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
