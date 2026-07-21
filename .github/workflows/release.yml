@@ -317,6 +317,17 @@ jobs:
               packages/$d/flux packages/$d/fluxc packages/$d/fluxrt
           done
 
+      # The CLI package ships its own copy of the default fonts: `srt pack`
+      # appends them to packed solidrt binaries (see packages/cli/src/fonts.ts).
+      # They are platform-independent, so the CLI package is the channel, not
+      # the per-platform binary packages.
+      - name: Stage default fonts into the CLI package
+        run: |
+          mkdir -p packages/cli/fonts
+          cp alloy/assets/fonts/NotoSans.ttf alloy/assets/fonts/NotoSerif.ttf \
+             alloy/assets/fonts/NotoSansMono.ttf alloy/assets/fonts/OFL.txt \
+             packages/cli/fonts/
+
       # Pin every intra-monorepo (@solidrt/*) dependency specifier to the release
       # version before publishing. Source uses `workspace:*`; `bun publish` would
       # otherwise resolve those from bun.lock, but a plain `bun install` does not
