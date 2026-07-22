@@ -62,6 +62,14 @@ pub fn paint_phase(
   // Deliver every capture outcome now the walk is done, so callbacks (which may
   // read back or free textures) run out of the tree borrow.
   alloy.deliver_captures();
+  // Deferred destroys: reclaim ids the live tree no longer references. This
+  // frame's display list is already recorded (Rc'd Impeller handles keep its
+  // textures alive), and any still-referenced id stays queued so a build never
+  // finds a hole in the registry. Gated so the tree scan only runs when a
+  // destroy is actually pending.
+  if alloy.has_pending_destroys() {
+    alloy.reclaim_destroyed(&tree.referenced_texture_ids());
+  }
   PaintStats {
     boundaries_reused: ctx.boundaries_reused,
     boundaries_recorded: ctx.boundaries_recorded,

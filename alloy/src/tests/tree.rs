@@ -259,3 +259,36 @@ fn snapshot_matches_finds_kind_and_text_with_paths() {
 
   assert!(tree.snapshot_matches(Some(99), "text", 100).is_none());
 }
+
+#[test]
+fn referenced_texture_ids_covers_attached_and_detached() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.root = Some(1);
+
+  // Attached texture element referencing id 10.
+  let mut tex = Texture::default();
+  tex.texture_id = Some(10);
+  tree.create_node(2, tex.with_layout());
+  tree.insert_node(1, 2, None);
+
+  // Detached (d-texture) element referencing id 20: still live, still counts.
+  let mut dtex = Texture::default();
+  dtex.texture_id = Some(20);
+  tree.create_node(3, dtex.no_layout());
+
+  // Texture element with no src, and a non-texture node: neither contributes.
+  tree.create_node(4, Texture::default().with_layout());
+  tree.insert_node(1, 4, None);
+
+  let ids = tree.referenced_texture_ids();
+  assert!(ids.contains(&10));
+  assert!(ids.contains(&20));
+  assert_eq!(ids.len(), 2);
+
+  // Destroying the referencing node drops its id from the set.
+  tree.destroy_node(3);
+  let ids = tree.referenced_texture_ids();
+  assert!(!ids.contains(&20));
+  assert_eq!(ids.len(), 1);
+}

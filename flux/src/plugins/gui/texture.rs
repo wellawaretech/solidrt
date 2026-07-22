@@ -103,6 +103,7 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyTexture")?;
     decl.declare("createShader")?;
     decl.declare("setShaderParams")?;
+    decl.declare("setShaderTextures")?;
     decl.declare("setShaderSize")?;
     decl.declare("createPipeline")?;
     decl.declare("createBuffer")?;
@@ -239,6 +240,23 @@ impl ModuleDef for GpuModule {
         Ok(())
       })
       .expect("create setShaderParams");
+
+    // Rebind a shader/pipeline target's sampler2D inputs by uniform name -
+    // the sampler analog of setShaderParams: mutate, then re-render with the
+    // last-applied params. Unnamed bindings keep their current source.
+    let set_textures_atx = atx.clone();
+    let set_textures_platform = platform.clone();
+    let set_shader_textures =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, textures: Object<'_>| -> rquickjs::Result<()> {
+        let textures = collect_textures(&textures);
+        set_textures_atx
+          .update_shader_textures(id, &textures)
+          .map_err(|e| throw_str(&ctx, &format!("setShaderTextures: {e}")))?;
+        // New shader output changes the screen without any tree mutation.
+        set_textures_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setShaderTextures");
 
     // Resize a shader/pipeline target in place - the setDrawCount analog for
     // output size: the id, compiled program, last-applied params, and sampler
@@ -386,10 +404,15 @@ impl ModuleDef for GpuModule {
       .expect("create setDrawCount");
 
     let destroy_atx = atx.clone();
+    let destroy_platform = platform.clone();
     let destroy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
       state.0.created.borrow_mut().remove(&id);
       destroy_atx.destroy_texture(id);
+      // Destruction is deferred to the paint loop's reclamation sweep, which
+      // only runs when a frame is produced - request one so a destroy on an
+      // otherwise idle app is not stranded.
+      destroy_platform.request_frame();
     })
     .expect("create destroyTexture");
 
@@ -400,6 +423,7 @@ impl ModuleDef for GpuModule {
     exports.export("destroyTexture", destroy_texture)?;
     exports.export("createShader", create_shader)?;
     exports.export("setShaderParams", set_shader_params)?;
+    exports.export("setShaderTextures", set_shader_textures)?;
     exports.export("setShaderSize", set_shader_size)?;
     exports.export("createPipeline", create_pipeline)?;
     exports.export("createBuffer", create_buffer)?;

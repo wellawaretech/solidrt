@@ -1,6 +1,6 @@
 use impellers::{DisplayList, ISize, Texture};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -40,6 +40,10 @@ pub struct Context {
   // supplies its own and the rendertree stays engine-independent.
   capture_requests: RefCell<HashMap<u64, Vec<CaptureDone>>>,
   capture_ready: RefCell<Vec<(CaptureDone, Result<CaptureInfo, String>)>>,
+  // Ids handed to destroy_texture, awaiting reclamation. Actual destruction
+  // happens in reclaim_destroyed, once the live render tree no longer
+  // references the id (see destroy_texture for why deferral is the contract).
+  pending_destroys: RefCell<Vec<u64>>,
 }
 
 /// Everything `create_pipeline_texture` needs to build a vertex+fragment
@@ -135,6 +139,7 @@ impl Context {
       audio: AudioRegistry::default(),
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
+      pending_destroys: RefCell::new(Vec::new()),
     }
   }
 
@@ -339,6 +344,30 @@ impl Context {
     Ok(())
   }
 
+  /// Rebind an existing shader texture's sampler2D inputs by uniform name and
+  /// re-render it with its last-applied params; bindings not named keep their
+  /// current source. The output keeps its id and Impeller texture (no
+  /// re-adoption), so the caller must request a frame, same as
+  /// `update_shader_params`. Errors if the shader or any source texture id is
+  /// unknown, or a sampler would source the shader's own target (a feedback
+  /// loop, undefined in GL); an unknown uniform name is reported by the
+  /// raster thread as a warning, leaving all bindings unchanged.
+  pub fn update_shader_textures(&self, id: u64, textures: &[(String, u64)]) -> Result<(), String> {
+    if !self.shader_kinds.borrow().contains_key(&id) {
+      return Err(format!("shader texture {id} not found"));
+    }
+    for (name, src_id) in textures {
+      if self.textures.get(*src_id).is_none() {
+        return Err(format!("texture {src_id} (sampler '{name}') not found"));
+      }
+      if *src_id == id {
+        return Err(format!("sampler '{name}' cannot source the shader's own target"));
+      }
+    }
+    self.send(RasterCmd::UpdateShaderTextures { id, textures: textures.to_vec() });
+    Ok(())
+  }
+
   /// Create an interleaved vertex buffer from raw bytes, returning its id.
   /// Buffer ids are their own space (not texture ids); pipelines reference the
   /// buffer via `PipelineSpec::buffer_id`.
@@ -472,12 +501,45 @@ impl Context {
   }
 
   /// Free a texture created via `create_texture_from_pixels`, `create_texture_at`,
-  /// or `create_shader_texture`. Removes the entry from the texture registry so
-  /// in-flight display list references keep the texture alive until they drop.
-  /// For shader textures also destroys the GL program and FBO.
+  /// or `create_shader_texture`. Deferred, not immediate: the id is queued and
+  /// actually reclaimed by `reclaim_destroyed` (run by the paint loop) once the
+  /// live render tree no longer references it. Deferral makes the natural app
+  /// pattern safe - destroy the old id in the same update that repoints
+  /// `<texture src>` at its replacement - regardless of how the reactive flush
+  /// interleaves with frames: any frame built before the swap lands still finds
+  /// the entry and paints the old content instead of a blank. Until
+  /// reclamation the id stays fully usable; afterwards the registry entry and
+  /// raster-side resources (for shaders: GL program and FBO) are gone, while
+  /// in-flight display lists keep the Impeller texture alive until they drop.
   pub fn destroy_texture(&self, id: u64) {
-    self.textures.remove(id);
-    self.shader_kinds.borrow_mut().remove(&id);
-    self.send(RasterCmd::DestroyTexture { id });
+    let mut pending = self.pending_destroys.borrow_mut();
+    if !pending.contains(&id) {
+      pending.push(id);
+    }
+  }
+
+  /// Whether any destroy is awaiting reclamation, so the paint loop can skip
+  /// the tree scan entirely in the common no-destroys case.
+  pub fn has_pending_destroys(&self) -> bool {
+    !self.pending_destroys.borrow().is_empty()
+  }
+
+  /// Reclaim every pending destroy whose id is not in `referenced` (the ids
+  /// the live render tree currently references, see
+  /// `RenderTree::referenced_texture_ids`). Still-referenced ids stay queued -
+  /// and stay alive - until a later sweep finds them unreferenced, so a
+  /// destroyed-but-still-mounted texture keeps drawing rather than glitching
+  /// to blank. Called by the paint loop after each painted frame.
+  pub fn reclaim_destroyed(&self, referenced: &HashSet<u64>) {
+    let mut pending = self.pending_destroys.borrow_mut();
+    pending.retain(|&id| {
+      if referenced.contains(&id) {
+        return true;
+      }
+      self.textures.remove(id);
+      self.shader_kinds.borrow_mut().remove(&id);
+      self.send(RasterCmd::DestroyTexture { id });
+      false
+    });
   }
 }

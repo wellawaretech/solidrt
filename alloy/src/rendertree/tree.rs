@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use taffy::{NodeId, Size};
 
@@ -399,6 +399,23 @@ impl RenderTree {
   /// Number of live nodes (attached and detached), for the stats counters.
   pub fn node_count(&self) -> usize {
     self.nodes.len()
+  }
+
+  /// Texture registry ids referenced by any live element, attached or
+  /// detached (a detached node can be re-inserted, so its reference counts).
+  /// Texture elements are the only kind holding registry ids. Used by the
+  /// deferred-destroy sweep to decide which pending ids are reclaimable; only
+  /// called while destroys are pending, so it stays off the per-frame path.
+  pub fn referenced_texture_ids(&self) -> HashSet<u64> {
+    let mut ids = HashSet::new();
+    for element in self.nodes.values() {
+      if let ElementKind::Texture(t) = &element.kind {
+        if let Some(id) = t.texture_id {
+          ids.insert(id);
+        }
+      }
+    }
+    ids
   }
 
   /// Number of nodes reachable from the root. The difference to node_count()

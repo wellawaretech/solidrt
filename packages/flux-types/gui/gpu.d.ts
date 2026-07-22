@@ -29,7 +29,14 @@ declare module "flux:gpu" {
    * those with {@link setShaderSize}.
    */
   export function resizeTexture(id: number, data: Uint8Array, width: number, height: number): void
-  /** Destroy a texture (immutable, mutable, or shader). */
+  /**
+   * Destroy a texture (immutable, mutable, or shader). Frame-safe: the id is
+   * reclaimed by the runtime once the render tree no longer references it, so
+   * destroying the old id in the same update that repoints `<texture src>` at
+   * its replacement never paints a blank frame, whatever order the two land
+   * in. A destroyed id that stays mounted keeps drawing (and stays allocated)
+   * until it is unmounted or repointed.
+   */
   export function destroyTexture(id: number): void
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
@@ -45,6 +52,16 @@ declare module "flux:gpu" {
   ): number
   /** Update a shader texture's float uniforms by name and re-render it. */
   export function setShaderParams(id: number, params: Record<string, number>): void
+  /**
+   * Rebind a shader texture's sampler2D inputs by uniform name and re-render
+   * it with its last-applied params - the sampler analog of
+   * {@link setShaderParams}. Bindings not named keep their current source, so
+   * a single input can be retargeted (post-process source swap, ping-pong
+   * between two data textures) without recompiling the shader. Throws if the
+   * shader or a source texture id is unknown, or a sampler would source the
+   * shader's own target.
+   */
+  export function setShaderTextures(id: number, textures: Record<string, number>): void
   /**
    * Resize a shader or pipeline target texture in place and re-render it: the
    * id, compiled program, last-applied params, and sampler bindings all carry

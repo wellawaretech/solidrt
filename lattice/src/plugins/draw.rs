@@ -130,6 +130,14 @@ impl ModuleDef for SrtRenderModule {
           {
             stats.borrow_mut().note_reused();
             atx.submit(c.dl.clone()).expect("Failed to submit display list");
+            // The reuse path skips paint_phase, whose end-of-frame sweep
+            // reclaims deferred destroys - run it here too so a destroy with
+            // no other tree change (its requested frame lands in this path)
+            // is not stranded until the next rebuild. The cached list's Rc'd
+            // Impeller handles keep its textures alive regardless.
+            if atx.has_pending_destroys() {
+              atx.reclaim_destroyed(&tree.0.borrow().referenced_texture_ids());
+            }
             return;
           }
         }

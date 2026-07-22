@@ -79,6 +79,10 @@ pub(crate) enum RasterCmd {
   CreatePipelineTexture { id: u64, spec: PipelineSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
   /// Re-render an existing shader/pipeline target with new params.
   UpdateShaderParams { id: u64, params: Vec<(String, f32)> },
+  /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
+  /// name and re-render it with its last-applied params. Unnamed bindings
+  /// keep their current source.
+  UpdateShaderTextures { id: u64, textures: Vec<(String, u64)> },
   /// Recreate a shader/pipeline target at a new size (same compiled program,
   /// params, and bindings), re-render, and adopt the new target. Replies with
   /// the adopted handle so the UI side re-registers it under the same id.
@@ -234,6 +238,23 @@ impl RasterState {
             }
             None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
           },
+          RasterCmd::UpdateShaderTextures { id, textures } => {
+            // Mutate first (needs &mut), then re-borrow shared for the render:
+            // resolve_sampler_bindings reads the whole texture map alongside
+            // the shader.
+            let rebound = match self.shaders.get_mut(&id) {
+              Some(shader) => shader.set_sampler_bindings(&textures),
+              None => Err(format!("shader texture {id} not found")),
+            };
+            match rebound {
+              Ok(()) => {
+                let shader = self.shaders.get(&id).expect("shader present after rebind");
+                let resolved = resolve_sampler_bindings(&self.textures, shader);
+                shader.render(&self.gl, &shader.last_params(), &resolved);
+              }
+              Err(e) => log::warn!("[alloy] shader texture rebind failed: {e}"),
+            }
+          }
           RasterCmd::ResizeShaderTexture { id, width, height, reply: tx } => {
             reply(tx, self.resize_shader_texture(id, width, height));
           }

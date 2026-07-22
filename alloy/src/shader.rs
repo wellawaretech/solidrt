@@ -686,6 +686,26 @@ impl ShaderTexture {
     &self.sampler_bindings
   }
 
+  /// Rebind sampler2D inputs by uniform name; bindings not named keep their
+  /// current source, and a name without an existing binding is added (a
+  /// declared sampler left unbound at creation). Every name is validated
+  /// against the program's active uniforms before anything changes, so a
+  /// failed call leaves all bindings intact. The caller re-renders afterwards.
+  pub fn set_sampler_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
+    for (name, _) in updates {
+      if !self.uniforms.contains_key(name) {
+        return Err(format!("no active uniform named '{name}'"));
+      }
+    }
+    for (name, src_id) in updates {
+      match self.sampler_bindings.iter_mut().find(|(n, _)| n == name) {
+        Some(binding) => binding.1 = *src_id,
+        None => self.sampler_bindings.push((name.clone(), *src_id)),
+      }
+    }
+    Ok(())
+  }
+
   /// Render the shader into its target texture with the given float params and
   /// resolved sampler inputs (uniform name -> source GL texture, in the order
   /// `sampler_bindings` declared them). Saves and restores the GL bindings and
