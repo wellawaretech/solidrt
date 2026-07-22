@@ -79,6 +79,10 @@ pub(crate) enum RasterCmd {
   CreatePipelineTexture { id: u64, spec: PipelineSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
   /// Re-render an existing shader/pipeline target with new params.
   UpdateShaderParams { id: u64, params: Vec<(String, f32)> },
+  /// Recreate a shader/pipeline target at a new size (same compiled program,
+  /// params, and bindings), re-render, and adopt the new target. Replies with
+  /// the adopted handle so the UI side re-registers it under the same id.
+  ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
   /// Set a pipeline's vertex draw count and re-render it.
   SetDrawCount { id: u64, count: i32 },
   /// Drop raster-side bookkeeping for a texture id (and destroy its shader
@@ -230,6 +234,9 @@ impl RasterState {
             }
             None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
           },
+          RasterCmd::ResizeShaderTexture { id, width, height, reply: tx } => {
+            reply(tx, self.resize_shader_texture(id, width, height));
+          }
           RasterCmd::SetDrawCount { id, count } => {
             let result = self.shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found")).and_then(
               |shader| {
@@ -378,7 +385,13 @@ impl RasterState {
     gpu.upload(&self.gl, pixels, size);
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
-        self.textures.insert(id, gpu);
+        let replaced = self.textures.insert(id, gpu).is_some();
+        // Replacing at an existing id (an id-stable resize): same contract as
+        // UpdateTexture - shaders sampling this id re-render so they pick up
+        // the new texture without waiting for a params change.
+        if replaced {
+          self.rerender_samplers_of(id);
+        }
         Ok(impeller)
       }
       None => {
@@ -386,6 +399,44 @@ impl RasterState {
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
         Err("adopt texture failed".to_string())
       }
+    }
+  }
+
+  /// Re-render every shader/pipeline that samples texture id `id` with its
+  /// last-applied params, so a content or registry change to the source is
+  /// visible without a params update.
+  fn rerender_samplers_of(&self, id: u64) {
+    for shader in self.shaders.values() {
+      if shader.sampler_bindings().iter().any(|(_, tex)| *tex == id) {
+        let resolved = resolve_sampler_bindings(&self.textures, shader);
+        shader.render(&self.gl, &shader.last_params(), &resolved);
+      }
+    }
+  }
+
+  /// Resize an existing shader/pipeline target in place: a new target texture
+  /// on the same FBO and program, re-rendered at the new size with the
+  /// last-applied params, then adopted into Impeller. Replies with the new
+  /// handle so the UI side re-registers it under the same id; the old handle
+  /// keeps the old GL name alive until in-flight display lists drop it.
+  fn resize_shader_texture(&mut self, id: u64, width: u32, height: u32) -> Result<Texture, String> {
+    let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    shader.resize(&self.gl, width, height)?;
+    let shader = self.shaders.get(&id).expect("shader present after resize");
+    let resolved = resolve_sampler_bindings(&self.textures, shader);
+    shader.render(&self.gl, &shader.last_params(), &resolved);
+    let size = ISize::new(width as i64, height as i64);
+    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
+    match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
+      Some(impeller) => {
+        self.textures.insert(id, gpu);
+        Ok(impeller)
+      }
+      // Should-not-happen path (adoption of a valid GL name): the shader keeps
+      // rendering into the new target, but the registry entry still shows the
+      // old one. The new name stays referenced by the shader, so nothing is
+      // freed here; the error surfaces to the caller.
+      None => Err("adopt resized shader texture failed".to_string()),
     }
   }
 
@@ -400,12 +451,7 @@ impl RasterState {
     // Shader targets sampling this texture show stale output until their next
     // params update; re-render them now (same contract as WriteBuffer, so
     // data-texture changes are visible without a params change).
-    for shader in self.shaders.values() {
-      if shader.sampler_bindings().iter().any(|(_, tex)| *tex == id) {
-        let resolved = resolve_sampler_bindings(&self.textures, shader);
-        shader.render(&self.gl, &shader.last_params(), &resolved);
-      }
-    }
+    self.rerender_samplers_of(id);
     Ok(())
   }
 

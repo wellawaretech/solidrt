@@ -17,7 +17,11 @@ import * as gpu from "flux:gpu"
 // auto-freed), uploadTexture to push new pixels into a mutable texture, and
 // setShaderParams as the non-reactive exception described above - prefer
 // `<texture params={...}>` when a `<texture>` element is already in the tree.
-export { destroyTexture, setShaderParams, uploadTexture } from "flux:gpu"
+// resizeTexture and setShaderSize resize in place at a stable id (so
+// `<texture src>` and sampler bindings stay valid); because the id survives,
+// the owner-scoped auto-free registered at creation keeps working and no
+// re-registration is needed.
+export { destroyTexture, resizeTexture, setShaderParams, setShaderSize, uploadTexture } from "flux:gpu"
 
 // Pipeline plumbing re-exported raw: setDrawCount re-renders a pipeline after
 // its buffer gained or lost dynamic geometry; destroyBuffer is the manual

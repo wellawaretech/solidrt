@@ -20,6 +20,15 @@ declare module "flux:gpu" {
    * (default 0) selects which frame to upload.
    */
   export function uploadTexture(id: number, data: Uint8Array, offset?: number): void
+  /**
+   * Replace a texture's storage with a new size at the same id (an id-stable
+   * resize): `<texture src>` references and shader sampler bindings keep
+   * working, and shaders sampling the texture re-render. `data` seeds the new
+   * contents and, like {@link createMutableTexture}, must hold at least one
+   * width*height*4 frame. Shader/pipeline target ids are rejected - resize
+   * those with {@link setShaderSize}.
+   */
+  export function resizeTexture(id: number, data: Uint8Array, width: number, height: number): void
   /** Destroy a texture (immutable, mutable, or shader). */
   export function destroyTexture(id: number): void
   /**
@@ -36,6 +45,13 @@ declare module "flux:gpu" {
   ): number
   /** Update a shader texture's float uniforms by name and re-render it. */
   export function setShaderParams(id: number, params: Record<string, number>): void
+  /**
+   * Resize a shader or pipeline target texture in place and re-render it: the
+   * id, compiled program, last-applied params, and sampler bindings all carry
+   * over; only the output size changes. The setDrawCount analog for output
+   * size.
+   */
+  export function setShaderSize(id: number, width: number, height: number): void
 
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**

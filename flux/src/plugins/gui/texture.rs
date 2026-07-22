@@ -99,9 +99,11 @@ impl ModuleDef for GpuModule {
     decl.declare("createTexture")?;
     decl.declare("createMutableTexture")?;
     decl.declare("uploadTexture")?;
+    decl.declare("resizeTexture")?;
     decl.declare("destroyTexture")?;
     decl.declare("createShader")?;
     decl.declare("setShaderParams")?;
+    decl.declare("setShaderSize")?;
     decl.declare("createPipeline")?;
     decl.declare("createBuffer")?;
     decl.declare("writeBuffer")?;
@@ -180,6 +182,28 @@ impl ModuleDef for GpuModule {
     )
     .expect("create uploadTexture");
 
+    // An id-stable resize: replaces the texture's storage at the same id, so
+    // `<texture src>` references and shader sampler bindings stay valid (the
+    // sampling shaders re-render). `data` seeds the new size and, like
+    // createMutableTexture, must hold at least one frame. Alloy validates the
+    // id (shader targets are rejected there; those resize via setShaderSize).
+    let resize_atx = atx.clone();
+    let resize_platform = platform.clone();
+    let resize_texture = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<()> {
+        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "resizeTexture: detached buffer"))?;
+        let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+        resize_atx
+          .resize_texture(id, width, height, pixels)
+          .map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
+        // The replacement changes the screen without any tree mutation.
+        resize_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create resizeTexture");
+
     let create_shader_atx = atx.clone();
     let create_shader = Function::new(
       ctx.clone(),
@@ -215,6 +239,22 @@ impl ModuleDef for GpuModule {
         Ok(())
       })
       .expect("create setShaderParams");
+
+    // Resize a shader/pipeline target in place - the setDrawCount analog for
+    // output size: the id, compiled program, last-applied params, and sampler
+    // bindings all carry over, and the output re-renders at the new size.
+    let shader_size_atx = atx.clone();
+    let shader_size_platform = platform.clone();
+    let set_shader_size =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, width: u32, height: u32| -> rquickjs::Result<()> {
+        shader_size_atx
+          .resize_shader_texture(id, width, height)
+          .map_err(|e| throw_str(&ctx, &format!("setShaderSize: {e}")))?;
+        // New shader output changes the screen without any tree mutation.
+        shader_size_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setShaderSize");
 
     // createPipeline(vertexSrc, fragmentSrc, width, height, opts?) -> texture id.
     // opts: { params, textures, attributes: [{name, format}], buffer, topology,
@@ -356,9 +396,11 @@ impl ModuleDef for GpuModule {
     exports.export("createTexture", create_texture)?;
     exports.export("createMutableTexture", create_mutable_texture)?;
     exports.export("uploadTexture", upload_texture)?;
+    exports.export("resizeTexture", resize_texture)?;
     exports.export("destroyTexture", destroy_texture)?;
     exports.export("createShader", create_shader)?;
     exports.export("setShaderParams", set_shader_params)?;
+    exports.export("setShaderSize", set_shader_size)?;
     exports.export("createPipeline", create_pipeline)?;
     exports.export("createBuffer", create_buffer)?;
     exports.export("writeBuffer", write_buffer)?;

@@ -262,6 +262,43 @@ impl Context {
     Ok(())
   }
 
+  /// Replace a registered pixel texture with one of a new size at the same id
+  /// (an id-stable resize): lookups and shader sampler bindings pick up the
+  /// new texture immediately (shaders sampling it re-render), in-flight users
+  /// of the old entry keep it alive until released. `pixels` seeds the new
+  /// contents and must hold at least one width*height*4 frame. Rejects
+  /// shader/pipeline target ids - resize those with `resize_shader_texture`,
+  /// which carries the compiled program along. The caller must request a
+  /// frame.
+  pub fn resize_texture(&self, id: u64, width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
+    if self.textures.get(id).is_none() {
+      return Err(format!("texture {id} not found"));
+    }
+    if self.shader_kinds.borrow().contains_key(&id) {
+      return Err(format!("texture {id} is a shader target; use resize_shader_texture"));
+    }
+    let frame_size = (width as usize) * (height as usize) * 4;
+    if pixels.len() < frame_size {
+      return Err(format!("need {frame_size} bytes for {width}x{height}, buffer has {}", pixels.len()));
+    }
+    self.create_texture_at(id, width, height, &pixels[..frame_size]);
+    Ok(())
+  }
+
+  /// Recreate a shader/pipeline target at a new size under the same id: the
+  /// compiled program, sampler bindings, last-applied params, and draw state
+  /// carry over, and the output re-renders at the new size immediately.
+  /// Lookups pick up the new target right away; in-flight users of the old
+  /// one keep it alive until released. The caller must request a frame.
+  pub fn resize_shader_texture(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
+    if !self.shader_kinds.borrow().contains_key(&id) {
+      return Err(format!("shader texture {id} not found"));
+    }
+    let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width, height });
+    Ok(())
+  }
+
   /// Compile a GLSL ES fragment shader, render it once into a new RGBA8 target
   /// texture, and register the output in the texture registry. Returns the id
   /// the output is sampleable under (usable anywhere a normal texture id is).

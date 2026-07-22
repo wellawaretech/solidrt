@@ -592,6 +592,76 @@ impl ShaderTexture {
     self.last_params.borrow().clone()
   }
 
+  /// Recreate the render target at a new size, keeping the compiled program,
+  /// FBO, sampler bindings, and draw state; the caller re-renders afterwards.
+  /// The old target texture is NOT deleted here: Impeller owns its GL name via
+  /// the adopted Texture handle (see register_shader_target), which dies with
+  /// the UI side's last reference once the registry entry is replaced. On
+  /// error the old target is left attached and the shader stays usable at its
+  /// previous size.
+  pub fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) -> Result<(), String> {
+    unsafe {
+      let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+
+      let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+      gl.bind_texture(glow::TEXTURE_2D, Some(target));
+      gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        glow::RGBA8 as i32,
+        width as i32,
+        height as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
+      // Same sampling state as create_target: no mips exist, so the default
+      // MIN_FILTER would make the texture sampling-incomplete (reads black).
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+      gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
+
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(target), 0);
+
+      // A pipeline's private depth buffer must match the color target's size
+      // or the FBO goes incomplete.
+      let depth_rb = self.mesh.as_ref().and_then(|m| m.depth);
+      if let Some(rb) = depth_rb {
+        let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, width as i32, height as i32);
+        gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
+      }
+
+      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+      if status != glow::FRAMEBUFFER_COMPLETE {
+        // Roll back to the old target (and depth storage) so the shader keeps
+        // rendering at its previous size.
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.target), 0);
+        if let Some(rb) = depth_rb {
+          let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+          gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+          gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, self.width as i32, self.height as i32);
+          gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
+        }
+        gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+        gl.delete_texture(target);
+        return Err(format!("shader framebuffer incomplete after resize: {status:#x}"));
+      }
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+
+      self.target = target;
+      self.width = width;
+      self.height = height;
+      Ok(())
+    }
+  }
+
   /// Release GL resources owned by this shader (program, FBO, and for
   /// pipelines the VAO and depth renderbuffer). The target texture is NOT
   /// deleted here: Impeller owns it via the adopted Texture handle in the
