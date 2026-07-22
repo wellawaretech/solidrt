@@ -4727,8 +4727,24 @@ function mixColors(a3, b2, t3) {
 function brightness(color) {
   return w(color).brightness();
 }
+function createLinearGradient(x0, y0, x1, y1, stops) {
+  return {
+    __gradient: "linear",
+    x0,
+    y0,
+    x1,
+    y1,
+    stops: parseStops(stops)
+  };
+}
 function isGradient(value) {
   return typeof value === "object" && value !== null && "__gradient" in value;
+}
+function parseStops(stops) {
+  return stops.map((s2) => ({
+    offset: s2.offset,
+    color: parseColor(s2.color)
+  }));
 }
 
 // packages/core/src/renderer.ts
@@ -8039,26 +8055,88 @@ function Icon(props) {
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
 import { available as appsAvailable, list, launch, remove } from "srt:apps";
-
-// lattice/assets/icon-puzzle.svg
-var icon_puzzle_default = `<svg width="100" height="100" viewBox="-6 -6 112 112" xmlns="http://www.w3.org/2000/svg">
-  <path d="M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z" fill="rgb(26,51,128)"/>
-  <path d="M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z" fill="rgb(51,102,179)"/>
-  <path d="M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z" fill="rgb(102,153,230)"/>
-  <path d="M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z" fill="rgb(51,102,179)"/>
-  <path d="M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z" fill="rgb(102,153,230)"/>
-  <path d="M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z" fill="rgb(26,51,128)"/>
-  <path d="M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z" fill="rgb(102,153,230)"/>
-</svg>
-`;
-
-// lattice/launcher/launcher.tsx
 var STATUS_TEXT = {
   idle: "Not connected",
   searching: "Searching...",
   connecting: "Connecting...",
   connected: "Connected"
 };
+var PUZZLE_SEGMENTS = [{
+  light: "#3f5494",
+  dark: "#162b6c",
+  d: "M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z"
+}, {
+  light: "#547ebf",
+  dark: "#2b5696",
+  d: "M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z"
+}, {
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z"
+}, {
+  light: "#547ebf",
+  dark: "#2b5696",
+  d: "M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z"
+}, {
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z"
+}, {
+  light: "#3f5494",
+  dark: "#162b6c",
+  d: "M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z"
+}, {
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z"
+}];
+function PuzzleMark(props) {
+  var _el$ = createElement("view", {
+    justifyContent: "center",
+    alignItems: "center"
+  }), _el$2 = createElement("view", {
+    width: 100,
+    height: 100
+  });
+  insertNode2(_el$, _el$2);
+  insert(_el$2, createComponent2(For, {
+    each: PUZZLE_SEGMENTS,
+    children: (seg) => (() => {
+      var _el$3 = createElement("d-path");
+      effect3(() => ({
+        e: seg.d,
+        t: createLinearGradient(0, 0, 1, 1, [{
+          offset: 0,
+          color: seg.light
+        }, {
+          offset: 1,
+          color: seg.dark
+        }])
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$3, "d", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$3, "color", t3, _p$?.t);
+      });
+      return _el$3;
+    })()
+  }));
+  effect3(() => ({
+    e: props.size,
+    t: props.size,
+    a: props.size / 100
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$, "width", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$, "height", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$2, "scale", a3, _p$?.a);
+  });
+  return _el$;
+}
 var LUCIDE = (body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"` + ` stroke="currentColor" stroke-width="2" stroke-linecap="round"` + ` stroke-linejoin="round">${body}</svg>`;
 var TRASH = LUCIDE(`<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>` + `<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>`);
 function normalizeAddress(raw) {
@@ -8069,6 +8147,8 @@ function recentLabel(entry) {
     return entry;
   return "ticket " + entry.split("|")[0].slice(0, 8);
 }
+var RETICLE_STROKE = 10;
+var RETICLE_RADIUS = 20;
 function ScanScreen(props) {
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
@@ -8102,40 +8182,53 @@ function ScanScreen(props) {
       srcH
     };
   };
-  let marker = () => {
+  let reticle = () => {
     let {
       width: w2,
       height: h3
     } = env.windowSize;
     let s2 = Math.round(Math.min(w2, h3) * 0.55);
     let l2 = Math.round(s2 * 0.18);
+    let i3 = RETICLE_STROKE / 2;
+    let r3 = RETICLE_RADIUS;
     return {
       size: s2,
-      d: `M0 ${l2} L0 0 L${l2} 0 ` + `M${s2 - l2} 0 L${s2} 0 L${s2} ${l2} ` + `M${s2} ${s2 - l2} L${s2} ${s2} L${s2 - l2} ${s2} ` + `M${l2} ${s2} L0 ${s2} L0 ${s2 - l2}`
+      d: `M${i3} ${l2} L${i3} ${i3 + r3} A ${r3} ${r3} 0 0 1 ${i3 + r3} ${i3} L${l2} ${i3} ` + `M${s2 - l2} ${i3} L${s2 - i3 - r3} ${i3} A ${r3} ${r3} 0 0 1 ${s2 - i3} ${i3 + r3} L${s2 - i3} ${l2} ` + `M${s2 - i3} ${s2 - l2} L${s2 - i3} ${s2 - i3 - r3} A ${r3} ${r3} 0 0 1 ${s2 - i3 - r3} ${s2 - i3} L${s2 - l2} ${s2 - i3} ` + `M${l2} ${s2 - i3} L${i3 + r3} ${s2 - i3} A ${r3} ${r3} 0 0 1 ${i3} ${s2 - i3 - r3} L${i3} ${s2 - l2}`
     };
   };
-  var _el$ = createElement("view", {
-    flexGrow: 1
-  }), _el$2 = createElement("d-rect", {
+  var _el$4 = createElement("view", {
+    flexGrow: 1,
+    position: "relative"
+  }), _el$5 = createElement("d-rect", {
     color: "black"
-  }), _el$3 = createElement("view", {
+  }), _el$6 = createElement("view", {
+    position: "absolute",
     width: "100%",
     height: "100%",
     justifyContent: "center",
     alignItems: "center"
-  }), _el$4 = createElement("view"), _el$5 = createElement("d-path", {
+  }), _el$7 = createElement("view"), _el$8 = createElement("d-path", {
     color: "white",
     drawStyle: "stroke",
-    strokeWidth: 3
+    strokeWidth: 10,
+    strokeCap: "round",
+    strokeJoin: "round"
+  }), _el$9 = createElement("view", {
+    position: "absolute",
+    width: "100%",
+    height: "100%"
   });
-  insertNode2(_el$, _el$2);
-  insertNode2(_el$, _el$3);
-  insert(_el$, createComponent2(Show, {
+  insertNode2(_el$4, _el$5);
+  insertNode2(_el$4, _el$6);
+  insertNode2(_el$4, _el$9);
+  insert(_el$4, createComponent2(Show, {
     get when() {
       return memo2(() => cam.texture() != null)() && crop();
     },
     children: (c3) => (() => {
-      var _el$1 = createElement("texture");
+      var _el$13 = createElement("texture", {
+        position: "absolute"
+      });
       effect3(() => ({
         e: cam.texture(),
         t: c3().w,
@@ -8153,63 +8246,63 @@ function ScanScreen(props) {
         n: n3,
         s: s2
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$1, "src", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$1, "w", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$1, "h", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$1, "srcX", o3, _p$?.o);
-        i3 !== _p$?.i && setProp(_el$1, "srcY", i3, _p$?.i);
-        n3 !== _p$?.n && setProp(_el$1, "srcW", n3, _p$?.n);
-        s2 !== _p$?.s && setProp(_el$1, "srcH", s2, _p$?.s);
+        e3 !== _p$?.e && setProp(_el$13, "src", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$13, "w", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$13, "h", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$13, "srcX", o3, _p$?.o);
+        i3 !== _p$?.i && setProp(_el$13, "srcY", i3, _p$?.i);
+        n3 !== _p$?.n && setProp(_el$13, "srcW", n3, _p$?.n);
+        s2 !== _p$?.s && setProp(_el$13, "srcH", s2, _p$?.s);
       });
-      return _el$1;
+      return _el$13;
     })()
-  }), _el$3);
-  insertNode2(_el$3, _el$4);
-  insertNode2(_el$4, _el$5);
-  insert(_el$, createComponent2(SafeArea, {
+  }), _el$6);
+  insertNode2(_el$6, _el$7);
+  insertNode2(_el$7, _el$8);
+  insert(_el$9, createComponent2(SafeArea, {
     get children() {
-      var _el$6 = createElement("view", {
+      var _el$0 = createElement("view", {
         flexGrow: 1,
         flexDirection: "column",
         justifyContent: "space-between"
-      }), _el$7 = createElement("view", {
+      }), _el$1 = createElement("view", {
         flexDirection: "row"
-      }), _el$8 = createElement("view", {
+      }), _el$10 = createElement("view", {
         alignItems: "center"
-      }), _el$9 = createElement("text", {
+      }), _el$11 = createElement("text", {
         color: "white"
       });
-      insertNode2(_el$6, _el$7);
-      insertNode2(_el$6, _el$8);
-      insert(_el$7, createComponent2(Button, {
+      insertNode2(_el$0, _el$1);
+      insertNode2(_el$0, _el$10);
+      insert(_el$1, createComponent2(Button, {
         variant: "secondary",
         get onPress() {
           return props.onCancel;
         },
         children: "Cancel"
       }));
-      insertNode2(_el$8, _el$9);
-      insertNode2(_el$9, createTextNode(`Scan the dev server QR code`));
+      insertNode2(_el$10, _el$11);
+      insertNode2(_el$11, createTextNode(`Scan the dev server QR code`));
       effect3(() => space("xl"), (_v$, _$p) => {
-        setProp(_el$6, "padding", _v$, _$p);
+        setProp(_el$0, "padding", _v$, _$p);
       });
-      return _el$6;
+      return _el$0;
     }
-  }), null);
+  }));
   effect3(() => ({
-    e: marker().size,
-    t: marker().size,
-    a: marker().d
+    e: reticle().size,
+    t: reticle().size,
+    a: reticle().d
   }), ({
     e: e3,
     t: t3,
     a: a3
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$4, "width", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$4, "height", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$5, "d", a3, _p$?.a);
+    e3 !== _p$?.e && setProp(_el$7, "width", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$7, "height", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$8, "d", a3, _p$?.a);
   });
-  return _el$;
+  return _el$4;
 }
 function App() {
   let dev = devAvailable;
@@ -8298,17 +8391,17 @@ function App() {
                   return screen() === "manual";
                 },
                 get children() {
-                  var _el$10 = createElement("view", {
+                  var _el$14 = createElement("view", {
                     flexGrow: 1,
                     alignItems: "center"
-                  }), _el$11 = createElement("view", {
+                  }), _el$15 = createElement("view", {
                     flexDirection: "column",
                     width: "100%",
                     maxWidth: 440,
                     paddingTop: 72
                   });
-                  insertNode2(_el$10, _el$11);
-                  insert(_el$11, createComponent2(View, {
+                  insertNode2(_el$14, _el$15);
+                  insert(_el$15, createComponent2(View, {
                     get layout() {
                       return {
                         flexDirection: "column",
@@ -8335,46 +8428,46 @@ function App() {
                             dial(v2);
                         }
                       }), (() => {
-                        var _el$12 = createElement("view", {
+                        var _el$16 = createElement("view", {
                           flexDirection: "row"
                         });
-                        insert(_el$12, createComponent2(Button, {
+                        insert(_el$16, createComponent2(Button, {
                           onPress: () => {
                             if (manualDraft.trim())
                               dial(manualDraft);
                           },
                           children: "Connect"
                         }), null);
-                        insert(_el$12, createComponent2(Button, {
+                        insert(_el$16, createComponent2(Button, {
                           variant: "ghost",
                           onPress: () => setScreen("home"),
                           children: "Cancel"
                         }), null);
                         effect3(() => space("md"), (_v$, _$p) => {
-                          setProp(_el$12, "gap", _v$, _$p);
+                          setProp(_el$16, "gap", _v$, _$p);
                         });
-                        return _el$12;
+                        return _el$16;
                       })()];
                     }
                   }), null);
-                  insert(_el$11, createComponent2(Show, {
+                  insert(_el$15, createComponent2(Show, {
                     get when() {
                       return recents().length > 0;
                     },
                     get children() {
-                      var _el$13 = createElement("view", {
+                      var _el$17 = createElement("view", {
                         flexDirection: "column"
-                      }), _el$14 = createElement("view", {
+                      }), _el$18 = createElement("view", {
                         flexDirection: "row",
                         flexWrap: "wrap"
                       });
-                      insertNode2(_el$13, _el$14);
-                      insert(_el$13, createComponent2(Text, {
+                      insertNode2(_el$17, _el$18);
+                      insert(_el$17, createComponent2(Text, {
                         variant: "label",
                         muted: true,
                         children: "Recent"
-                      }), _el$14);
-                      insert(_el$14, createComponent2(For, {
+                      }), _el$18);
+                      insert(_el$18, createComponent2(For, {
                         get each() {
                           return recents();
                         },
@@ -8409,10 +8502,10 @@ function App() {
                         e: e3,
                         t: t3
                       }, _p$) => {
-                        e3 !== _p$?.e && setProp(_el$13, "gap", e3, _p$?.e);
-                        t3 !== _p$?.t && setProp(_el$14, "gap", t3, _p$?.t);
+                        e3 !== _p$?.e && setProp(_el$17, "gap", e3, _p$?.e);
+                        t3 !== _p$?.t && setProp(_el$18, "gap", t3, _p$?.t);
                       });
-                      return _el$13;
+                      return _el$17;
                     }
                   }), null);
                   effect3(() => ({
@@ -8422,57 +8515,55 @@ function App() {
                     e: e3,
                     t: t3
                   }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$11, "gap", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$11, "padding", t3, _p$?.t);
+                    e3 !== _p$?.e && setProp(_el$15, "gap", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$15, "padding", t3, _p$?.t);
                   });
-                  return _el$10;
+                  return _el$14;
                 }
               }), createComponent2(Match, {
                 get when() {
                   return screen() === "home";
                 },
                 get children() {
-                  var _el$15 = createElement("view", {
+                  var _el$19 = createElement("view", {
                     flexGrow: 1,
                     alignItems: "center"
-                  }), _el$16 = createElement("view", {
+                  }), _el$20 = createElement("view", {
                     flexDirection: "column",
                     width: "100%",
                     maxWidth: 440,
                     flexGrow: 1
-                  }), _el$17 = createElement("view", {
+                  }), _el$21 = createElement("view", {
                     alignItems: "center"
-                  }), _el$18 = createElement("svg", {
-                    src: icon_puzzle_default,
-                    width: 144,
-                    height: 144
                   });
-                  insertNode2(_el$15, _el$16);
-                  insertNode2(_el$16, _el$17);
-                  insertNode2(_el$17, _el$18);
-                  insert(_el$16, createComponent2(Show, {
+                  insertNode2(_el$19, _el$20);
+                  insertNode2(_el$20, _el$21);
+                  insert(_el$21, createComponent2(PuzzleMark, {
+                    size: 144
+                  }));
+                  insert(_el$20, createComponent2(Show, {
                     get when() {
                       return apps().length > 0;
                     },
                     get fallback() {
-                      var _el$24 = createElement("view", {
+                      var _el$27 = createElement("view", {
                         flexGrow: 1,
                         flexDirection: "column",
                         justifyContent: "center",
                         alignItems: "center"
                       });
-                      insert(_el$24, createComponent2(Text, {
+                      insert(_el$27, createComponent2(Text, {
                         variant: "title",
                         children: "No apps installed"
                       }), null);
-                      insert(_el$24, createComponent2(Text, {
+                      insert(_el$27, createComponent2(Text, {
                         muted: true,
                         children: "Connect a dev server to install apps"
                       }), null);
                       effect3(() => space("md"), (_v$, _$p) => {
-                        setProp(_el$24, "gap", _v$, _$p);
+                        setProp(_el$27, "gap", _v$, _$p);
                       });
-                      return _el$24;
+                      return _el$27;
                     },
                     get children() {
                       return createComponent2(ScrollView, {
@@ -8480,15 +8571,15 @@ function App() {
                           flexGrow: 1
                         },
                         get children() {
-                          var _el$19 = createElement("view", {
+                          var _el$22 = createElement("view", {
                             flexDirection: "column"
                           });
-                          insert(_el$19, createComponent2(Text, {
+                          insert(_el$22, createComponent2(Text, {
                             variant: "label",
                             muted: true,
                             children: "Apps"
                           }), null);
-                          insert(_el$19, createComponent2(For, {
+                          insert(_el$22, createComponent2(For, {
                             get each() {
                               return apps();
                             },
@@ -8511,25 +8602,25 @@ function App() {
                               }),
                               get children() {
                                 return [(() => {
-                                  var _el$25 = createElement("view", {
+                                  var _el$28 = createElement("view", {
                                     flexDirection: "column",
                                     flexGrow: 1,
                                     gap: 2
                                   });
-                                  insert(_el$25, createComponent2(Text, {
+                                  insert(_el$28, createComponent2(Text, {
                                     variant: "title",
                                     get children() {
                                       return app.name;
                                     }
                                   }), null);
-                                  insert(_el$25, createComponent2(Text, {
+                                  insert(_el$28, createComponent2(Text, {
                                     variant: "caption",
                                     muted: true,
                                     get children() {
                                       return `${app.id} - ${app.version.slice(0, 8)}`;
                                     }
                                   }), null);
-                                  return _el$25;
+                                  return _el$28;
                                 })(), createComponent2(Show, {
                                   get when() {
                                     return confirming() === app.id;
@@ -8558,38 +8649,38 @@ function App() {
                                     });
                                   },
                                   get children() {
-                                    var _el$26 = createElement("view", {
+                                    var _el$29 = createElement("view", {
                                       flexDirection: "row",
                                       alignItems: "center"
                                     });
-                                    insert(_el$26, createComponent2(Button, {
+                                    insert(_el$29, createComponent2(Button, {
                                       variant: "danger",
                                       onPress: () => doRemove(app.id),
                                       children: "Remove"
                                     }), null);
-                                    insert(_el$26, createComponent2(Button, {
+                                    insert(_el$29, createComponent2(Button, {
                                       variant: "ghost",
                                       onPress: () => setConfirming(null),
                                       children: "Keep"
                                     }), null);
                                     effect3(() => space("sm"), (_v$, _$p) => {
-                                      setProp(_el$26, "gap", _v$, _$p);
+                                      setProp(_el$29, "gap", _v$, _$p);
                                     });
-                                    return _el$26;
+                                    return _el$29;
                                   }
                                 })];
                               }
                             })
                           }), null);
                           effect3(() => space("md"), (_v$, _$p) => {
-                            setProp(_el$19, "gap", _v$, _$p);
+                            setProp(_el$22, "gap", _v$, _$p);
                           });
-                          return _el$19;
+                          return _el$22;
                         }
                       });
                     }
                   }), null);
-                  insert(_el$16, createComponent2(Show, {
+                  insert(_el$20, createComponent2(Show, {
                     when: dev,
                     get children() {
                       return createComponent2(View, {
@@ -8608,16 +8699,16 @@ function App() {
                         },
                         get children() {
                           return [(() => {
-                            var _el$20 = createElement("view", {
+                            var _el$23 = createElement("view", {
                               flexDirection: "row",
                               alignItems: "center"
-                            }), _el$21 = createElement("view", {
+                            }), _el$24 = createElement("view", {
                               width: 8,
                               height: 8
-                            }), _el$22 = createElement("d-oval");
-                            insertNode2(_el$20, _el$21);
-                            insertNode2(_el$21, _el$22);
-                            insert(_el$20, createComponent2(Text, {
+                            }), _el$25 = createElement("d-oval");
+                            insertNode2(_el$23, _el$24);
+                            insertNode2(_el$24, _el$25);
+                            insert(_el$23, createComponent2(Text, {
                               variant: "caption",
                               muted: true,
                               layout: {
@@ -8634,15 +8725,15 @@ function App() {
                               e: e3,
                               t: t3
                             }, _p$) => {
-                              e3 !== _p$?.e && setProp(_el$20, "gap", e3, _p$?.e);
-                              t3 !== _p$?.t && setProp(_el$22, "color", t3, _p$?.t);
+                              e3 !== _p$?.e && setProp(_el$23, "gap", e3, _p$?.e);
+                              t3 !== _p$?.t && setProp(_el$25, "color", t3, _p$?.t);
                             });
-                            return _el$20;
+                            return _el$23;
                           })(), (() => {
-                            var _el$23 = createElement("view", {
+                            var _el$26 = createElement("view", {
                               flexDirection: "row"
                             });
-                            insert(_el$23, createComponent2(Show, {
+                            insert(_el$26, createComponent2(Show, {
                               get when() {
                                 return idle();
                               },
@@ -8677,7 +8768,7 @@ function App() {
                                 })];
                               }
                             }), null);
-                            insert(_el$23, createComponent2(Show, {
+                            insert(_el$26, createComponent2(Show, {
                               get when() {
                                 return busy();
                               },
@@ -8689,7 +8780,7 @@ function App() {
                                 });
                               }
                             }), null);
-                            insert(_el$23, createComponent2(Show, {
+                            insert(_el$26, createComponent2(Show, {
                               get when() {
                                 return connected();
                               },
@@ -8702,9 +8793,9 @@ function App() {
                               }
                             }), null);
                             effect3(() => space("sm"), (_v$, _$p) => {
-                              setProp(_el$23, "gap", _v$, _$p);
+                              setProp(_el$26, "gap", _v$, _$p);
                             });
-                            return _el$23;
+                            return _el$26;
                           })()];
                         }
                       });
@@ -8721,12 +8812,12 @@ function App() {
                     a: a3,
                     o: o3
                   }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$16, "padding", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$16, "gap", t3, _p$?.t);
-                    a3 !== _p$?.a && setProp(_el$17, "paddingTop", a3, _p$?.a);
-                    o3 !== _p$?.o && setProp(_el$17, "gap", o3, _p$?.o);
+                    e3 !== _p$?.e && setProp(_el$20, "padding", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$20, "gap", t3, _p$?.t);
+                    a3 !== _p$?.a && setProp(_el$21, "paddingTop", a3, _p$?.a);
+                    o3 !== _p$?.o && setProp(_el$21, "gap", o3, _p$?.o);
                   });
-                  return _el$15;
+                  return _el$19;
                 }
               })];
             }

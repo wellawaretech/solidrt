@@ -21,15 +21,11 @@ pub struct Config {
   // Recently connected dev-server addresses, most-recent-first.
   #[serde(default)]
   pub recents: Vec<String>,
-  // The app id of the last installed dev push; the offline-boot pointer into
-  // the version store (see store::load_last).
-  #[serde(default, rename = "lastApp", skip_serializing_if = "Option::is_none")]
-  pub last_app: Option<String>,
 }
 
 impl Default for Config {
   fn default() -> Self {
-    Config { version: CONFIG_VERSION, recents: Vec::new(), last_app: None }
+    Config { version: CONFIG_VERSION, recents: Vec::new() }
   }
 }
 
@@ -82,16 +78,5 @@ pub fn save(config: &Config) {
 pub fn save_recents(recents: &[String]) {
   let mut config = load();
   config.recents = recents.to_vec();
-  save(&config);
-}
-
-/// Convenience: persist just the last-installed app id, preserving any other
-/// fields. Skips the write when unchanged (called on every dev push).
-pub fn save_last_app(app_id: &str) {
-  let mut config = load();
-  if config.last_app.as_deref() == Some(app_id) {
-    return;
-  }
-  config.last_app = Some(app_id.to_string());
   save(&config);
 }

@@ -6,7 +6,8 @@
 //     state.json                  {version, current, previous, healthy, launches}
 //
 // A dev push is installed here before the engine reload applies it, so the
-// client can relaunch the app offline. The version id is the sha256 of the
+// app appears in the launcher's list and can be launched offline. The version
+// id is the sha256 of the
 // manifest's canonical bytes (the exact string the CLI sent, never
 // re-serialized); every file's own hash and size are verified against its
 // manifest entry before anything is written. Assets already held by the
@@ -82,12 +83,15 @@ pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -
 }
 
 /// A stored version resolved for boot: the code to run, the version dir (the
-/// assets mount base), and the annotated fonts to register at startup.
+/// assets mount base), and the annotated fonts.
 pub struct BootVersion {
   pub app_id: String,
   pub code: String,
   pub version_dir: PathBuf,
-  /// (alias, font bytes) pairs from the manifest's font annotations.
+  /// (alias, font bytes) pairs from the manifest's font annotations. Unused
+  /// by the launch path today: fonts register once at client startup, so a
+  /// launched app's custom fonts wait on mid-session registration (see the
+  /// launcher plan's known gap).
   pub fonts: Vec<(String, Vec<u8>)>,
 }
 
@@ -98,11 +102,6 @@ pub fn load(app_id: &str) -> Option<BootVersion> {
   let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
   let fonts = Manifest::load(&version_dir).map(|m| m.load_fonts(&version_dir)).unwrap_or_default();
   Some(BootVersion { app_id: app_id.to_string(), code, version_dir, fonts })
-}
-
-/// The last-installed app's current version, for offline boot.
-pub fn load_last() -> Option<BootVersion> {
-  load(&super::config::load().last_app?)
 }
 
 /// The current installed version dir for an app, if the store has one. This is
@@ -160,17 +159,11 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
 }
 
 /// Full uninstall: the app's entire folder (versions, state.json and the data
-/// sandbox). Clears the offline-boot pointer when it named this app.
+/// sandbox).
 pub fn remove_app(app_id: &str) -> Result<(), String> {
   let store = crate::storage::get().ok_or("no writable storage")?;
   let apps = store.apps_root().ok_or("no apps root in this layout")?;
-  remove_app_at(&apps, app_id)?;
-  let mut config = super::config::load();
-  if config.last_app.as_deref() == Some(app_id) {
-    config.last_app = None;
-    super::config::save(&config);
-  }
-  Ok(())
+  remove_app_at(&apps, app_id)
 }
 
 // Validates the id itself and joins it directly: app_dir's fallback to
@@ -282,7 +275,7 @@ pub(crate) fn install_at(
 
 /// The current installed bundle's code, or None when the store is empty or
 /// unreadable (callers fall back to the next boot source). Only tests read
-/// through this today; `load_last` resolves the richer BootVersion.
+/// through this today; `load` resolves the richer BootVersion.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn load_current_at(app_dir: &Path) -> Option<String> {
   let state = load_state(app_dir)?;

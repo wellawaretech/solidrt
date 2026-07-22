@@ -169,18 +169,6 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
-// A stored version's font annotations, merged over the embedded defaults: a
-// custom font claiming a role alias replaces that default outright, because
-// Impeller merges same-alias registrations into one family and would
-// style-match across two different typefaces.
-#[cfg(feature = "go")]
-fn merge_fonts(fonts: &mut Vec<FontPayload>, custom: Vec<(String, Vec<u8>)>) {
-  for (alias, bytes) in custom {
-    fonts.retain(|f| f.alias.as_deref() != Some(alias.as_str()));
-    fonts.push(FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) });
-  }
-}
-
 // Re-anchor the process into `app_id`'s data sandbox (see storage: the cwd is
 // the app's persistent data dir). No-op when already anchored there; on
 // failure the previous anchor stays, matching the startup fallback.
@@ -233,34 +221,6 @@ fn ui_thread(
   let mut current_app_id: Option<String> =
     Some(storage_spec.app_id.clone().unwrap_or_else(|| "default".to_string()));
 
-  // Offline relaunch (go client): launched with a dev-server address, boot the
-  // last installed app from the version store immediately; the session
-  // auto-connects in the background and the server's latched reload replaces
-  // the app when the connection comes up. Launched without an address, the
-  // launcher stays the entry point (discover / QR pairing).
-  #[cfg(feature = "go")]
-  let mut dev_auto_connect = false;
-  #[cfg(feature = "go")]
-  let mut fonts = fonts;
-  #[cfg(feature = "go")]
-  let app = match app {
-    None if dev_server.is_some() => match go::store::load_last() {
-      Some(boot) => {
-        log::info!("[sgo] Booting app {} from the version store", boot.app_id);
-        anchor_app(&boot.app_id, &mut current_app_id);
-        forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(boot.version_dir)));
-        if !boot.fonts.is_empty() {
-          log::info!("[sgo] Registering {} font(s) from the version store", boot.fonts.len());
-        }
-        merge_fonts(&mut fonts, boot.fonts);
-        dev_auto_connect = true;
-        Some(AppSource::Text(boot.code))
-      }
-      None => None,
-    },
-    app => app,
-  };
-
   let platform = Arc::new(PlatformContext::new(fonts));
   // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
@@ -268,6 +228,10 @@ fn ui_thread(
   platform.set_always_render(matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
+  // The go client's boot rule: no app source means the launcher, always,
+  // online or offline. Launched with a dev-server address, the launcher dials
+  // it (srt:dev launchAddress) and the server's latched push provides the app;
+  // installed apps are launched from the launcher's list, never auto-booted.
   #[cfg(feature = "go")]
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(LAUNCHER_SOURCE.to_string()));
   #[cfg(not(feature = "go"))]
@@ -455,7 +419,6 @@ fn ui_thread(
       outbound_rx,
       go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,
-      dev_auto_connect,
     );
 
     // flux::Clock backs performance.now() (and the run-mode paced clock corrects

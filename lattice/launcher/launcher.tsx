@@ -4,7 +4,7 @@
 // camera view, manual address entry, recents). Built from @solidrt/components;
 // follows the OS dark/light preference. Bundled by `make launcher-bundle` and
 // embedded via include_str! (see lattice/src/lib.rs LAUNCHER_SOURCE).
-import { render, env, createSignal, createEffect, untrack } from "@solidrt/core"
+import { render, env, createSignal, createEffect, untrack, createLinearGradient } from "@solidrt/core"
 import { createCamera, cameraDevices, type BarcodeResult } from "@solidrt/core/camera"
 import { For, Show, Switch, Match } from "solid-js"
 import {
@@ -33,7 +33,6 @@ import {
   launchAddress,
 } from "srt:dev"
 import { available as appsAvailable, list, launch, remove } from "srt:apps"
-import puzzle from "../assets/icon-puzzle.svg"
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
 type Screen = "home" | "scan" | "manual"
@@ -43,6 +42,41 @@ const STATUS_TEXT: Record<DevState, string> = {
   searching: "Searching...",
   connecting: "Connecting...",
   connected: "Connected",
+}
+
+// The puzzle brand mark: the scaffold default template's segment paths (a
+// 100x100 grid), each filled with its own light-to-dark linear gradient.
+// Static here - the template animates them, the launcher never does.
+const PUZZLE_SEGMENTS = [
+  { light: "#3f5494", dark: "#162b6c", d: "M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z" },
+  { light: "#547ebf", dark: "#2b5696", d: "M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z" },
+  { light: "#7ea9ea", dark: "#5681c1", d: "M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z" },
+  { light: "#547ebf", dark: "#2b5696", d: "M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z" },
+  { light: "#7ea9ea", dark: "#5681c1", d: "M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z" },
+  { light: "#3f5494", dark: "#162b6c", d: "M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z" },
+  { light: "#7ea9ea", dark: "#5681c1", d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z" },
+]
+
+// Renders the mark at `size`: the 100x100 segment grid in a scaled inner view
+// so the layout box matches the visual size.
+function PuzzleMark(props: { size: number }) {
+  return (
+    <view width={props.size} height={props.size} justifyContent="center" alignItems="center">
+      <view width={100} height={100} scale={props.size / 100}>
+        <For each={PUZZLE_SEGMENTS}>
+          {(seg) => (
+            <d-path
+              d={seg.d}
+              color={createLinearGradient(0, 0, 1, 1, [
+                { offset: 0, color: seg.light },
+                { offset: 1, color: seg.dark },
+              ])}
+            />
+          )}
+        </For>
+      </view>
+    </view>
+  )
 }
 
 const LUCIDE = (body: string) =>
@@ -68,9 +102,18 @@ function recentLabel(entry: string): string {
   return "ticket " + entry.split("|")[0].slice(0, 8)
 }
 
-// Full-window camera with center cover-crop and a corner-bracket scan marker.
+// The scan reticle's stroke thickness and corner radius (logical px). The
+// bracket paths are inset by half the stroke so the round caps stay inside
+// the reticle box; each corner turns through an arc so the bend itself is
+// rounded, not just the stroke join.
+const RETICLE_STROKE = 10
+const RETICLE_RADIUS = 20
+
+// Full-window camera with center cover-crop and a corner-bracket scan reticle.
 // Mounted only while scanning (under <Match>), so the camera opens with the
-// screen and closes when it leaves.
+// screen and closes when it leaves. The camera, reticle, and controls are
+// absolutely positioned layers: in flow they would stack in the column and
+// push each other off-center.
 function ScanScreen(props: { onScanned: (data: string) => void; onCancel: () => void; onError: (message: string) => void }) {
   let cam = createCamera(untrack(() => ({ scan: ["qr"] as "qr"[] })))
   createEffect(() => cam.barcode(), (b?: BarcodeResult) => { if (b) props.onScanned(b.data) })
@@ -88,26 +131,29 @@ function ScanScreen(props: { onScanned: (data: string) => void; onCancel: () => 
     return { w, h, srcX: (cw - srcW) / 2, srcY: (ch - srcH) / 2, srcW, srcH }
   }
 
-  let marker = () => {
+  let reticle = () => {
     let { width: w, height: h } = env.windowSize
     let s = Math.round(Math.min(w, h) * 0.55)
     let l = Math.round(s * 0.18)
+    let i = RETICLE_STROKE / 2
+    let r = RETICLE_RADIUS
     return {
       size: s,
       d:
-        `M0 ${l} L0 0 L${l} 0 ` +
-        `M${s - l} 0 L${s} 0 L${s} ${l} ` +
-        `M${s} ${s - l} L${s} ${s} L${s - l} ${s} ` +
-        `M${l} ${s} L0 ${s} L0 ${s - l}`,
+        `M${i} ${l} L${i} ${i + r} A ${r} ${r} 0 0 1 ${i + r} ${i} L${l} ${i} ` +
+        `M${s - l} ${i} L${s - i - r} ${i} A ${r} ${r} 0 0 1 ${s - i} ${i + r} L${s - i} ${l} ` +
+        `M${s - i} ${s - l} L${s - i} ${s - i - r} A ${r} ${r} 0 0 1 ${s - i - r} ${s - i} L${s - l} ${s - i} ` +
+        `M${l} ${s - i} L${i + r} ${s - i} A ${r} ${r} 0 0 1 ${i} ${s - i - r} L${i} ${s - l}`,
     }
   }
 
   return (
-    <view flexGrow={1}>
+    <view flexGrow={1} position="relative">
       <d-rect color="black" />
       <Show when={cam.texture() != null && crop()}>
         {(c) => (
           <texture
+            position="absolute"
             src={cam.texture()}
             w={c().w}
             h={c().h}
@@ -118,21 +164,30 @@ function ScanScreen(props: { onScanned: (data: string) => void; onCancel: () => 
           />
         )}
       </Show>
-      <view width="100%" height="100%" justifyContent="center" alignItems="center">
-        <view width={marker().size} height={marker().size}>
-          <d-path d={marker().d} color="white" drawStyle="stroke" strokeWidth={3} />
+      <view position="absolute" width="100%" height="100%" justifyContent="center" alignItems="center">
+        <view width={reticle().size} height={reticle().size}>
+          <d-path
+            d={reticle().d}
+            color="white"
+            drawStyle="stroke"
+            strokeWidth={RETICLE_STROKE}
+            strokeCap="round"
+            strokeJoin="round"
+          />
         </view>
       </view>
-      <SafeArea>
-        <view flexGrow={1} flexDirection="column" justifyContent="space-between" padding={space("xl")}>
-          <view flexDirection="row">
-            <Button variant="secondary" onPress={props.onCancel}>Cancel</Button>
+      <view position="absolute" width="100%" height="100%">
+        <SafeArea>
+          <view flexGrow={1} flexDirection="column" justifyContent="space-between" padding={space("xl")}>
+            <view flexDirection="row">
+              <Button variant="secondary" onPress={props.onCancel}>Cancel</Button>
+            </view>
+            <view alignItems="center">
+              <text color="white">Scan the dev server QR code</text>
+            </view>
           </view>
-          <view alignItems="center">
-            <text color="white">Scan the dev server QR code</text>
-          </view>
-        </view>
-      </SafeArea>
+        </SafeArea>
+      </view>
     </view>
   )
 }
@@ -268,7 +323,7 @@ function App() {
               <view flexDirection="column" width="100%" maxWidth={440} flexGrow={1} padding={space("xl")} gap={space("xl")}>
                 {/* Centered mark. */}
                 <view alignItems="center" paddingTop={space("xl")} gap={space("md")}>
-                  <svg src={puzzle} width={144} height={144} />
+                  <PuzzleMark size={144} />
                 </view>
 
                 <Show
