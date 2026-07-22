@@ -20,6 +20,12 @@ function unwrapStatusError(r) {
   return r instanceof StatusError ? r.cause : r;
 }
 
+class NoOwnerError extends Error {
+  constructor() {
+    super("");
+  }
+}
+
 // node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
@@ -53,6 +59,7 @@ var OVERRIDE_UNDEFINED = {};
 function unwrapOverride(E) {
   return E === OVERRIDE_UNDEFINED ? undefined : E;
 }
+var STORE_SNAPSHOT_PROPS = "sp";
 var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
@@ -148,6 +155,9 @@ var haltNotified = false;
 var syncDepth = 0;
 var projectionWriteActive = false;
 var transientStoreNodes = new Set;
+function registerTransientStoreNode(e) {
+  transientStoreNodes.add(e);
+}
 function canUseSimpleSyncFlush(e) {
   const t = e.N;
   return transitions.size === 0 && activeLanes.size === 0 && e.Qt.length === 0 && t.Be.length === 0 && t._.length === 0 && t.dn.size === 0 && transientStoreNodes.size === 0;
@@ -169,6 +179,9 @@ function sweepTransientStoreNodes() {
     transientStoreNodes.delete(e);
     e.ct?.();
   }
+}
+function setProjectionWriteActive(e) {
+  projectionWriteActive = e;
 }
 function createBatch() {
   return {
@@ -801,6 +814,7 @@ function adjustHeight(e, E) {
 }
 
 // node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/core/owner.js
+var PENDING_OWNER = {};
 function markDisposal(e) {
   let n = e.He;
   while (n) {
@@ -900,6 +914,11 @@ function inheritId(e, n, t) {
 function formatId(e, n) {
   const t = n.toString(36), i = t.length - 1;
   return e + (i ? String.fromCharCode(64 + i) : "") + t;
+}
+function getObserver() {
+  if (pendingCheckActive || latestReadActive)
+    return PENDING_OWNER;
+  return tracking ? context : null;
 }
 function getOwner() {
   return context;
@@ -1829,6 +1848,19 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/core/context.js
+function setContext(e, t, n = getOwner()) {
+  if (!n) {
+    throw new NoOwnerError;
+  }
+  n.we = {
+    ...n.we,
+    [e.id]: isUndefined(t) ? e.defaultValue : t
+  };
+}
+function isUndefined(e) {
+  return typeof e === "undefined";
+}
 // node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, E, e, R) {
   const r = !!R?.user;
@@ -1975,19 +2007,1108 @@ function onSettled(e) {
     e();
   });
 }
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/store/reconcile.js
+function nodeKeys(e) {
+  const t = Object.keys(e);
+  if (symbolKeyedRecords.has(e)) {
+    const r = Object.getOwnPropertySymbols(e);
+    for (let e2 = 0, n = r.length;e2 < n; e2++) {
+      if (r[e2] !== $TRACK)
+        t.push(r[e2]);
+    }
+  }
+  return t;
+}
+function unwrap(e) {
+  if (e === null || typeof e !== "object")
+    return e;
+  return e[$TARGET]?.[STORE_VALUE] ?? e;
+}
+function getOverrideValue(e, t, r, n) {
+  if (n && r in n)
+    return n[r];
+  return t && r in t ? t[r] : e[r];
+}
+function addEnumSymbols(e, t, r) {
+  for (let n = 0, a = t.length;n < a; n++) {
+    if (Object.prototype.propertyIsEnumerable.call(e, t[n]))
+      r.add(t[n]);
+  }
+}
+function getAllKeys(e, t, r) {
+  const n = getKeys(e, t);
+  const a = Object.keys(r);
+  const i = e[$TARGET] ? untrack(() => Object.getOwnPropertySymbols(e)) : Object.getOwnPropertySymbols(e);
+  const o = Object.getOwnPropertySymbols(r);
+  if (i.length === 0 && o.length === 0) {
+    if (n.length === a.length) {
+      let e3 = true;
+      for (let t2 = 0;t2 < n.length; t2++) {
+        if (n[t2] !== a[t2]) {
+          e3 = false;
+          break;
+        }
+      }
+      if (e3)
+        return n;
+    }
+    const e2 = new Set(n);
+    for (let t2 = 0;t2 < a.length; t2++)
+      e2.add(a[t2]);
+    return Array.from(e2);
+  }
+  const l = new Set(n);
+  addEnumSymbols(e, i, l);
+  if (t) {
+    for (const e2 of Reflect.ownKeys(t)) {
+      t[e2] === $DELETED ? l.delete(e2) : l.add(e2);
+    }
+  }
+  for (let e2 = 0;e2 < a.length; e2++)
+    l.add(a[e2]);
+  addEnumSymbols(r, o, l);
+  return Array.from(l);
+}
+function wrapValue(e, t) {
+  return isWrappable(e) ? wrap(e, t) : e;
+}
+function itemKey(e, t) {
+  return isWrappable(e) ? t(e) : e;
+}
+function keyedMatch(e, t, r) {
+  return e === t || isWrappable(e) && isWrappable(t) && r(e) === r(t);
+}
+function syncArrayNodeMembership(e, t) {
+  let r = e[STORE_NODE];
+  if (r) {
+    const e2 = nodeKeys(r);
+    for (let n = 0, a = e2.length;n < a; n++) {
+      const a2 = e2[n];
+      a2 in t || setSignal(r[a2], undefined);
+    }
+  }
+  if (r = e[STORE_HAS]) {
+    const e2 = nodeKeys(r);
+    for (let n = 0, a = e2.length;n < a; n++) {
+      const a2 = e2[n];
+      setSignal(r[a2], a2 in t);
+    }
+  }
+}
+function applyArrayItem(e, t, r, n, a) {
+  if (isWrappable(e) && isWrappable(t)) {
+    const i = wrap(t, r);
+    n && setSignal(n, i);
+    applyState(e, i, a);
+  } else
+    n && setSignal(n, wrapValue(e, r));
+}
+function applyDescendants(e, t, r, n, a, i, o) {
+  const l = r[STORE_LOOKUP] || storeLookup;
+  const s = (i ? getKeys(e, i) : Object.keys(e)).concat(getStoreSymbols(e, i));
+  for (let p = 0, f = s.length;p < f; p++) {
+    const f2 = s[p];
+    if (n?.[f2])
+      continue;
+    const c = unwrap(i ? getOverrideValue(e, i, f2, o) : e[f2]);
+    if (!isWrappable(c))
+      continue;
+    const u = (l.get(c) ?? storeLookup.get(c))?.[$TARGET];
+    if (!u?.[STORE_DESC])
+      continue;
+    const S = unwrap(t[f2]);
+    if (c === S || !isWrappable(S) || Array.isArray(c) !== Array.isArray(S) || a(c) != null && a(c) !== a(S))
+      continue;
+    applyState(S, wrap(c, r), a);
+  }
+}
+function applyState(e, t, r) {
+  e = unwrap(e);
+  const n = t?.[$TARGET];
+  if (!n)
+    return;
+  if (n[STORE_OVERRIDE] || n[STORE_OPTIMISTIC_OVERRIDE]) {
+    applyStateSlow(e, n, r);
+  } else {
+    applyStateFast(e, n, r);
+  }
+}
+function applyStateFast(e, t, r) {
+  const n = t[STORE_VALUE];
+  if (e === n)
+    return;
+  const a = t[STORE_NODE];
+  (t[STORE_LOOKUP] || storeLookup).set(e, t[$PROXY]);
+  t[STORE_VALUE] = e;
+  if (Array.isArray(n)) {
+    let i2 = false;
+    const o2 = n.length;
+    if (e.length && o2 && isWrappable(e[0]) && r(e[0]) != null) {
+      let l, s, p, f, c, u, S, y;
+      for (p = 0, f = Math.min(o2, e.length);p < f && keyedMatch(u = n[p], e[p], r); p++) {
+        isWrappable(u) && isWrappable(e[p]) && applyState(e[p], wrap(u, t), r);
+      }
+      const E = new Array(e.length), O = new Map;
+      for (f = o2 - 1, c = e.length - 1;f >= p && c >= p && keyedMatch(u = n[f], e[c], r); f--, c--) {
+        E[c] = u;
+      }
+      if (p > c || p > f) {
+        for (s = p;s <= c; s++) {
+          i2 = true;
+          a?.[s] && setSignal(a[s], wrapValue(e[s], t));
+        }
+        for (;s < e.length; s++) {
+          i2 = true;
+          applyArrayItem(e[s], E[s], t, a?.[s], r);
+        }
+        syncArrayNodeMembership(t, e);
+        (i2 || o2 !== e.length) && notifySelf(t);
+        o2 !== e.length && a?.length && setSignal(a.length, e.length);
+        return;
+      }
+      S = new Array(c + 1);
+      for (s = c;s >= p; s--) {
+        u = e[s];
+        y = itemKey(u, r);
+        l = O.get(y);
+        S[s] = l === undefined ? -1 : l;
+        O.set(y, s);
+      }
+      for (l = p;l <= f; l++) {
+        u = n[l];
+        y = itemKey(u, r);
+        s = O.get(y);
+        if (s !== undefined && s !== -1) {
+          E[s] = u;
+          s = S[s];
+          O.set(y, s);
+        }
+      }
+      for (s = p;s < e.length; s++) {
+        if (s in E) {
+          applyArrayItem(e[s], E[s], t, a?.[s], r);
+        } else
+          a?.[s] && setSignal(a[s], wrapValue(e[s], t));
+      }
+      if (p < e.length)
+        i2 = true;
+    } else if (e.length) {
+      for (let o3 = 0, l = e.length;o3 < l; o3++) {
+        const l2 = n[o3];
+        if (isWrappable(l2) && isWrappable(e[o3]))
+          applyState(e[o3], wrap(l2, t), r);
+        else {
+          if (l2 !== e[o3])
+            i2 = true;
+          a?.[o3] && setSignal(a[o3], wrapValue(e[o3], t));
+        }
+      }
+    }
+    syncArrayNodeMembership(t, e);
+    if (o2 !== e.length) {
+      i2 = true;
+      a?.length && setSignal(a.length, e.length);
+    }
+    i2 && notifySelf(t);
+    return;
+  }
+  let i = t[STORE_NODE];
+  let o;
+  if (i) {
+    o = i[$TRACK];
+    const a2 = o ? getAllKeys(n, undefined, e) : nodeKeys(i);
+    for (let l = 0, s = a2.length;l < s; l++) {
+      const s2 = a2[l];
+      const p = i[s2];
+      const f = unwrap(n[s2]);
+      let c = unwrap(e[s2]);
+      if (f === c)
+        continue;
+      if (!f || !isWrappable(f) || !isWrappable(c) || Array.isArray(f) !== Array.isArray(c) || r(f) != null && r(f) !== r(c)) {
+        o && setSignal(o, undefined);
+        p && setSignal(p, isWrappable(c) ? wrap(c, t) : c);
+      } else
+        applyState(c, wrap(f, t), r);
+    }
+  }
+  if (!o && t[STORE_DESC])
+    applyDescendants(n, e, t, i, r);
+  if (i = t[STORE_HAS]) {
+    const t2 = nodeKeys(i);
+    for (let r2 = 0, n2 = t2.length;r2 < n2; r2++) {
+      const n3 = t2[r2];
+      setSignal(i[n3], n3 in e);
+    }
+  }
+}
+function applyStateSlow(e, t, r) {
+  const n = t[STORE_VALUE];
+  const a = t[STORE_OVERRIDE];
+  const i = t[STORE_OPTIMISTIC_OVERRIDE];
+  let o = t[STORE_NODE];
+  (t[STORE_LOOKUP] || storeLookup).set(e, t[$PROXY]);
+  t[STORE_VALUE] = e;
+  t[STORE_OVERRIDE] = undefined;
+  if (Array.isArray(n)) {
+    let l2 = false;
+    const s = getOverrideValue(n, a, "length", i);
+    if (e.length && s && isWrappable(e[0]) && r(e[0]) != null) {
+      let p2, f, c, u, S, y, E, O;
+      for (c = 0, u = Math.min(s, e.length);c < u && keyedMatch(y = getOverrideValue(n, a, c, i), e[c], r); c++) {
+        isWrappable(y) && isWrappable(e[c]) && applyState(e[c], wrap(y, t), r);
+      }
+      const R = new Array(e.length), d = new Map;
+      for (u = s - 1, S = e.length - 1;u >= c && S >= c && keyedMatch(y = getOverrideValue(n, a, u, i), e[S], r); u--, S--) {
+        R[S] = y;
+      }
+      if (c > S || c > u) {
+        for (f = c;f <= S; f++) {
+          l2 = true;
+          o?.[f] && setSignal(o[f], wrapValue(e[f], t));
+        }
+        for (;f < e.length; f++) {
+          l2 = true;
+          applyArrayItem(e[f], R[f], t, o?.[f], r);
+        }
+        const n2 = e.length;
+        syncArrayNodeMembership(t, e);
+        (l2 || s !== n2) && notifySelf(t);
+        s !== n2 && o?.length && setSignal(o.length, n2);
+        return;
+      }
+      E = new Array(S + 1);
+      for (f = S;f >= c; f--) {
+        y = e[f];
+        O = itemKey(y, r);
+        p2 = d.get(O);
+        E[f] = p2 === undefined ? -1 : p2;
+        d.set(O, f);
+      }
+      for (p2 = c;p2 <= u; p2++) {
+        y = getOverrideValue(n, a, p2, i);
+        O = itemKey(y, r);
+        f = d.get(O);
+        if (f !== undefined && f !== -1) {
+          R[f] = y;
+          f = E[f];
+          d.set(O, f);
+        }
+      }
+      for (f = c;f < e.length; f++) {
+        if (f in R) {
+          applyArrayItem(e[f], R[f], t, o?.[f], r);
+        } else
+          o?.[f] && setSignal(o[f], wrapValue(e[f], t));
+      }
+      if (c < e.length)
+        l2 = true;
+    } else if (e.length) {
+      for (let s2 = 0, p2 = e.length;s2 < p2; s2++) {
+        const p3 = getOverrideValue(n, a, s2, i);
+        if (isWrappable(p3) && isWrappable(e[s2]))
+          applyState(e[s2], wrap(p3, t), r);
+        else {
+          if (p3 !== e[s2])
+            l2 = true;
+          o?.[s2] && setSignal(o[s2], wrapValue(e[s2], t));
+        }
+      }
+    }
+    const p = e.length;
+    syncArrayNodeMembership(t, e);
+    if (s !== p) {
+      l2 = true;
+      o?.length && setSignal(o.length, p);
+    }
+    l2 && notifySelf(t);
+    return;
+  }
+  let l;
+  if (o) {
+    l = o[$TRACK];
+    const s = l ? getAllKeys(n, a, e) : nodeKeys(o);
+    for (let p = 0, f = s.length;p < f; p++) {
+      const f2 = s[p];
+      const c = o[f2];
+      const u = unwrap(getOverrideValue(n, a, f2, i));
+      let S = unwrap(e[f2]);
+      if (u === S)
+        continue;
+      if (!u || !isWrappable(u) || !isWrappable(S) || Array.isArray(u) !== Array.isArray(S) || r(u) != null && r(u) !== r(S)) {
+        l && setSignal(l, undefined);
+        c && setSignal(c, isWrappable(S) ? wrap(S, t) : S);
+      } else
+        applyState(S, wrap(u, t), r);
+    }
+  }
+  if (!l && t[STORE_DESC])
+    applyDescendants(n, e, t, o, r, a, i);
+  if (o = t[STORE_HAS]) {
+    const t2 = nodeKeys(o);
+    for (let r2 = 0, n2 = t2.length;r2 < n2; r2++) {
+      const n3 = t2[r2];
+      setSignal(o[n3], n3 in e);
+    }
+  }
+}
+function reconcile(e, t) {
+  return (r) => {
+    if (r == null)
+      throw new Error("");
+    const n = typeof t === "string" ? (e2) => e2[t] : t;
+    const a = n(r);
+    if (a !== undefined && n(e) !== a)
+      throw new Error("");
+    applyState(e, r, n);
+  };
+}
+
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/store/projection.js
+function createProjectionInternal(e, r, t) {
+  let o;
+  const i = new WeakMap;
+  const wrapper = (e2) => {
+    e2[STORE_WRAP] = wrapProjection;
+    e2[STORE_LOOKUP] = i;
+    Object.defineProperty(e2, STORE_FIREWALL, {
+      get() {
+        return o;
+      },
+      configurable: true
+    });
+  };
+  const wrapProjection = (e2) => {
+    if (i.has(e2))
+      return i.get(e2);
+    if (e2[$TARGET]?.[STORE_WRAP] === wrapProjection)
+      return e2;
+    const r2 = createStoreProxy(e2, storeTraps, wrapper);
+    i.set(e2, r2);
+    return r2;
+  };
+  const n = wrapProjection(r);
+  o = computed(() => {
+    if (!o)
+      o = getOwner();
+    runProjectionComputed(n, e, t?.key || "id");
+  }, undefined);
+  o.U &= ~CONFIG_AUTO_DISPOSE;
+  return {
+    store: n,
+    node: o
+  };
+}
+function runProjectionComputed(e, r, t, o, i) {
+  const n = getOwner();
+  let c = false;
+  let s;
+  const u = new Proxy(e, createWriteTraps(() => !c || n.Ae === s, i));
+  storeSetter(u, (i2) => {
+    s = r(i2);
+    c = true;
+    const commit = (r2) => {
+      if (r2 === i2 || r2 === undefined)
+        return;
+      const write = () => storeSetter(e, reconcile(r2, t));
+      o ? o(write) : write();
+    };
+    commit(handleAsync(n, s, commit));
+  });
+  return n;
+}
+function createWriteTraps(e, r) {
+  const t = {
+    get(e2, r2) {
+      let o;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        o = e2[r2];
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(false);
+      }
+      if (r2 === $TARGET)
+        return o;
+      return typeof o === "object" && o !== null ? new Proxy(o, t) : o;
+    },
+    has(e2, r2) {
+      let t2;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        t2 = r2 in e2;
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(false);
+      }
+      return t2;
+    },
+    set(t2, o, i) {
+      if (e && !e())
+        return true;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        t2[o] = i;
+        r?.();
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(false);
+      }
+      return true;
+    },
+    deleteProperty(t2, o) {
+      if (e && !e())
+        return true;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        delete t2[o];
+        r?.();
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(false);
+      }
+      return true;
+    }
+  };
+  return t;
+}
+
 // node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
 var $DELETED = Symbol(0);
 var $AFFECTS = Symbol(0);
+var STORE_VALUE = "v";
+var STORE_OVERRIDE = "o";
+var STORE_OPTIMISTIC_OVERRIDE = "x";
+var STORE_NODE = "n";
+var STORE_HAS = "h";
+var STORE_CUSTOM_PROTO = "c";
+var STORE_WRAP = "w";
+var STORE_LOOKUP = "l";
+var STORE_FIREWALL = "f";
+var STORE_OPTIMISTIC = "p";
+var STORE_OPTIMISTIC_OWNERS = "t";
+var STORE_PARENT = "u";
+var STORE_DESC = "d";
 var STORE_SELF_PENDING = Symbol(0);
+function createStoreProxy(e, t = storeTraps, r) {
+  let n;
+  if (Array.isArray(e)) {
+    n = [];
+    n.v = e;
+  } else {
+    n = {
+      v: e
+    };
+    const t2 = e?.[$TARGET]?.[STORE_VALUE] ?? e;
+    const r2 = Object.getPrototypeOf(t2);
+    if (r2 !== null && r2 !== Object.prototype) {
+      n[STORE_CUSTOM_PROTO] = true;
+    }
+  }
+  r && r(n);
+  return n[$PROXY] = new Proxy(n, t);
+}
 var storeLookup = new WeakMap;
 var symbolKeyedRecords = new WeakSet;
+function wrap(e, t) {
+  if (t?.[STORE_WRAP]) {
+    const r2 = t[STORE_WRAP](e, t);
+    const n = r2[$TARGET];
+    if (n && !n[STORE_PARENT] && n !== t)
+      n[STORE_PARENT] = t;
+    return r2;
+  }
+  let r = e[$PROXY] || storeLookup.get(e);
+  if (!r) {
+    storeLookup.set(e, r = createStoreProxy(e));
+    if (t)
+      r[$TARGET][STORE_PARENT] = t;
+  }
+  return r;
+}
+function isWrappable(e) {
+  if (e == null || typeof e !== "object" || Object.isFrozen(e))
+    return false;
+  return typeof Node === "undefined" || !(e instanceof Node);
+}
+var writeOverride = false;
+function setWriteOverride(e) {
+  writeOverride = e;
+}
+function writeOnly(e) {
+  return writeOverride || !!Writing?.has(e);
+}
+function unwrapStoreValue(e, t, r) {
+  const n = e?.[$TARGET] || r?.get(e)?.[$TARGET];
+  if (!n)
+    return e;
+  const o = n[STORE_OVERRIDE];
+  if (!o)
+    return n[STORE_VALUE];
+  if (!t)
+    t = new Map;
+  if (t.has(e))
+    return t.get(e);
+  const i = n[STORE_VALUE];
+  const s = Array.isArray(i);
+  const E = s ? [] : Object.create(Object.getPrototypeOf(i));
+  t.set(e, E);
+  r = n[STORE_LOOKUP] ?? storeLookup;
+  for (const e2 of getStoreKeys(i, o)) {
+    if (s && e2 === "length")
+      continue;
+    const n2 = e2 in o ? o[e2] : i[e2];
+    if (n2 !== $DELETED)
+      E[e2] = unwrapStoreValue(n2, t, r);
+  }
+  if (s)
+    E.length = o.length ?? i.length;
+  return E;
+}
+function isPrototypePollutionKey(e) {
+  return e === "__proto__" || e === "constructor" || e === "prototype";
+}
 function ownEnumerableKeys(e) {
   return Reflect.ownKeys(e).filter((t) => Object.prototype.propertyIsEnumerable.call(e, t));
 }
+function ownEnumerableSymbols(e) {
+  const t = Object.getOwnPropertySymbols(e);
+  const r = [];
+  for (let n = 0, o = t.length;n < o; n++) {
+    const o2 = t[n];
+    if (Object.prototype.propertyIsEnumerable.call(e, o2))
+      r.push(o2);
+  }
+  return r;
+}
+function ownEnumerableKeysPlain(e) {
+  return Object.keys(e).concat(ownEnumerableSymbols(e));
+}
+function getOverlayLayer(e, t) {
+  const r = e[STORE_OPTIMISTIC_OVERRIDE];
+  if (r && t in r)
+    return r;
+  const n = e[STORE_OVERRIDE];
+  if (n && t in n)
+    return n;
+  return;
+}
+function visibleNodeValue(e) {
+  return e.be !== undefined && e.be !== NOT_PENDING ? unwrapOverride(e.be) : e.ge !== NOT_PENDING ? e.ge : e.Ue;
+}
+function hasOwnStoreProperty(e, t) {
+  const r = getOverlayLayer(e, t);
+  if (r)
+    return r[t] !== $DELETED;
+  return Object.prototype.hasOwnProperty.call(unwrapStoreValue(e[STORE_VALUE]), t);
+}
+function hasInheritedAccessor(e, t) {
+  let r = Object.getPrototypeOf(e);
+  while (r && r !== Object.prototype) {
+    const e2 = Reflect.getOwnPropertyDescriptor(r, t);
+    if (e2)
+      return !!e2.get;
+    r = Object.getPrototypeOf(r);
+  }
+  return false;
+}
+function getNodes(e, t) {
+  let r = e[t];
+  if (!r)
+    e[t] = r = Object.create(null);
+  return r;
+}
+function getNode(e, t, r, n, o = isEqual, i) {
+  if (t[r])
+    return t[r];
+  const s = signal(n, {
+    equals: o,
+    unobserved() {
+      if (t[r] === s) {
+        delete t[r];
+        if (typeof r === "symbol" && r !== $TRACK && r !== $AFFECTS && symbolKeyedRecords.has(t)) {
+          const e2 = Object.getOwnPropertySymbols(t);
+          let r2 = false;
+          for (let t2 = 0, n2 = e2.length;t2 < n2; t2++) {
+            if (e2[t2] !== $TRACK && e2[t2] !== $AFFECTS) {
+              r2 = true;
+              break;
+            }
+          }
+          if (!r2)
+            symbolKeyedRecords.delete(t);
+        }
+      }
+    }
+  }, e[STORE_FIREWALL]);
+  if (e[STORE_OPTIMISTIC]) {
+    s.be = NOT_PENDING;
+  }
+  if (i && r in i) {
+    const e2 = i[r];
+    s.Ye = e2 === undefined ? NO_SNAPSHOT : e2;
+    snapshotSources?.add(s);
+  }
+  if (typeof r === "symbol" && r !== $TRACK && r !== $AFFECTS)
+    symbolKeyedRecords.add(t);
+  if (r !== $AFFECTS && affectsScopes.size)
+    inheritAffectsMarks(s, e[STORE_VALUE], r);
+  let E = e;
+  while (E && !E[STORE_DESC]) {
+    E[STORE_DESC] = true;
+    E = E[STORE_PARENT];
+  }
+  return t[r] = s;
+}
+function inheritAffectsMarks(e, t, r) {
+  for (const [n, o] of affectsScopes) {
+    if (n.M && o.scope.has(t) && (o.key === undefined || o.key === r)) {
+      GlobalQueue.D(e);
+      o.inherited.push(e);
+    }
+  }
+}
 var affectsScopes = new Map;
+function witnessAffectsMark(e, t) {
+  const r = e[STORE_NODE]?.[$AFFECTS];
+  if (r?.M)
+    GlobalQueue.wt(r);
+  if (affectsScopes.size) {
+    const n = e[STORE_VALUE];
+    for (const [e2, o] of affectsScopes) {
+      if (e2 !== r && e2.M && o.scope.has(n) && (o.key === undefined || o.key === t))
+        GlobalQueue.wt(e2);
+    }
+  }
+}
+function trackSelf(e, t = $TRACK) {
+  if (!getObserver())
+    return;
+  read(getNode(e, getNodes(e, STORE_NODE), t, undefined, false));
+  if (t === $TRACK && !e[STORE_OVERRIDE] && !e[STORE_OPTIMISTIC_OVERRIDE] && e[STORE_VALUE][$TARGET])
+    e[STORE_VALUE][$TRACK];
+}
+function notifySelf(e) {
+  const t = e[STORE_NODE]?.[$TRACK];
+  t && setSignal(t, e[STORE_OPTIMISTIC] && !projectionWriteActive ? STORE_SELF_PENDING : undefined);
+}
+function getKeysImpl(e, t, r, n) {
+  const o = e[$TARGET] ? untrack(() => r ? n ? ownEnumerableKeys(e) : Object.keys(e) : Reflect.ownKeys(e)) : r ? n ? ownEnumerableKeysPlain(e) : Object.keys(e) : Reflect.ownKeys(e);
+  return t ? mergeOverrideKeys(o, t) : o;
+}
+function getKeys(e, t, r = true) {
+  return getKeysImpl(e, t, r, false);
+}
+function getStoreKeys(e, t) {
+  return getKeysImpl(e, t, true, true);
+}
+function getStoreSymbols(e, t) {
+  const r = e[$TARGET] ? untrack(() => ownEnumerableSymbols(e)) : ownEnumerableSymbols(e);
+  return t ? mergeOverrideKeys(r, t, true) : r;
+}
+function mergeOverrideKeys(e, t, r) {
+  const n = new Set(e);
+  const o = r ? Object.getOwnPropertySymbols(t) : Reflect.ownKeys(t);
+  for (const e2 of o) {
+    if (t[e2] !== $DELETED)
+      n.add(e2);
+    else
+      n.delete(e2);
+  }
+  return Array.from(n);
+}
+function getPropertyDescriptor(e, t, r) {
+  if (t && r in t) {
+    if (t[r] === $DELETED)
+      return;
+    const n = Reflect.getOwnPropertyDescriptor(t, r);
+    if (n?.get || n?.set)
+      return n;
+    const o = Reflect.getOwnPropertyDescriptor(e, r);
+    if (!o)
+      return n;
+    if (o.get || o.set)
+      return o;
+    o.value = t[r];
+    return o;
+  }
+  return Reflect.getOwnPropertyDescriptor(e, r);
+}
+function prepareStoreWrite(e, t, r) {
+  if (e[STORE_OPTIMISTIC]) {
+    const t2 = e[STORE_FIREWALL];
+    if (t2?.ve) {
+      globalQueue.initTransition(t2.ve);
+    }
+  }
+  const n = e[STORE_VALUE];
+  const o = n[r];
+  if (snapshotCaptureActive && typeof r !== "symbol" && !((e[STORE_FIREWALL]?.i ?? 0) & STATUS_PENDING)) {
+    if (!e[STORE_SNAPSHOT_PROPS]) {
+      e[STORE_SNAPSHOT_PROPS] = Object.create(null);
+      snapshotSources?.add(e);
+    }
+    if (!(r in e[STORE_SNAPSHOT_PROPS])) {
+      e[STORE_SNAPSHOT_PROPS][r] = o;
+    }
+  }
+  const i = e[STORE_OPTIMISTIC] && !projectionWriteActive;
+  const s = i ? STORE_OPTIMISTIC_OVERRIDE : STORE_OVERRIDE;
+  return {
+    base: o,
+    overrideKey: s,
+    state: n
+  };
+}
+function armOptimisticStoreWrite(e, t) {
+  if (e[STORE_OPTIMISTIC] && !projectionWriteActive) {
+    GlobalQueue.mn(t);
+  }
+}
+function stampOptimisticOwner(e, t, r) {
+  if (t === STORE_OPTIMISTIC_OVERRIDE)
+    (e[STORE_OPTIMISTIC_OWNERS] ??= Object.create(null))[r] = activeTransition;
+}
+function upsertStoreNode(e, t, r, n, o) {
+  if (t[r])
+    return t[r];
+  const i = isWrappable(n) ? wrap(n, e) : n;
+  const s = getNode(e, t, r, i, isEqual, o);
+  registerTransientStoreNode(s);
+  return s;
+}
+function notifyStoreProperty(e, t, r, n, o, i) {
+  const s = projectionWriteActive || e[STORE_OPTIMISTIC];
+  const E = r !== "delete";
+  const O = e[STORE_HAS]?.[t];
+  if (O) {
+    setSignal(O, E);
+  } else if (!s && r !== "invalidate" && i !== E) {
+    const r2 = upsertStoreNode(e, getNodes(e, STORE_HAS), t, i);
+    setSignal(r2, E);
+  }
+  const c = getNodes(e, STORE_NODE);
+  if (r === "set") {
+    if (c[t]) {
+      setSignal(c[t], () => isWrappable(n) ? wrap(n, e) : n);
+    } else if (!s) {
+      const r2 = upsertStoreNode(e, c, t, o, e[STORE_SNAPSHOT_PROPS]);
+      setSignal(r2, () => isWrappable(n) ? wrap(n, e) : n);
+    }
+  } else if (r === "invalidate") {
+    if (c[t]) {
+      setSignal(c[t], {});
+      delete c[t];
+    }
+  } else {
+    if (c[t]) {
+      setSignal(c[t], undefined);
+    } else if (!s) {
+      const r2 = upsertStoreNode(e, c, t, o, e[STORE_SNAPSHOT_PROPS]);
+      setSignal(r2, undefined);
+    }
+  }
+  notifySelf(e);
+}
+var Writing = null;
+function throwIfUninitialized(e) {
+  const t = e[STORE_FIREWALL];
+  if (t && t.i & STATUS_UNINITIALIZED)
+    throw t.k ?? new NotReadyError(t);
+}
+var storeTraps = {
+  get(e, t, r) {
+    if (t === $TARGET)
+      return e;
+    if (t === $PROXY)
+      return r;
+    if (t === $REFRESH)
+      return e[STORE_FIREWALL];
+    if (pendingCheckActive)
+      witnessAffectsMark(e, t);
+    if (t === $TRACK) {
+      trackSelf(e);
+      return r;
+    }
+    const n = getObserver() === e[STORE_FIREWALL];
+    const o = getNodes(e, STORE_NODE);
+    const i = n ? undefined : o[t];
+    const s = e[STORE_VALUE];
+    if (!i && !e[STORE_OVERRIDE] && !e[STORE_OPTIMISTIC_OVERRIDE] && !e[STORE_CUSTOM_PROTO] && !e[STORE_OPTIMISTIC] && !e[STORE_SNAPSHOT_PROPS] && !s[$TARGET] && !(t in s) && getObserver() && !n && !writeOnly(r)) {
+      return read(getNode(e, o, t, undefined));
+    }
+    const E = getOverlayLayer(e, t);
+    const O = !!E;
+    const c = !!e[STORE_VALUE][$TARGET];
+    const S = E ?? e[STORE_VALUE];
+    if (!i) {
+      const n2 = Object.getOwnPropertyDescriptor(S, t);
+      if (n2 && n2.get)
+        return n2.get.call(r);
+      if (!n2 && !O && e[STORE_CUSTOM_PROTO]) {
+        const e2 = unwrapStoreValue(S);
+        if (hasInheritedAccessor(e2, t)) {
+          return Reflect.get(S, t, r);
+        }
+      }
+    }
+    if (writeOnly(r)) {
+      if (isPrototypePollutionKey(t) && !hasOwnStoreProperty(e, t))
+        return;
+      let r2 = i && (O || !c) ? visibleNodeValue(i) : S[t];
+      r2 === $DELETED && (r2 = undefined);
+      if (!isWrappable(r2))
+        return r2;
+      const n2 = wrap(r2, e);
+      Writing?.add(n2);
+      return n2;
+    }
+    let f = i ? O || !c ? read(o[t]) : (read(o[t]), S[t]) : S[t];
+    f === $DELETED && (f = undefined);
+    if (!i) {
+      if (!O && typeof f === "function" && !Object.prototype.hasOwnProperty.call(S, t)) {
+        let t2;
+        return !Array.isArray(e[STORE_VALUE]) && (t2 = Object.getPrototypeOf(e[STORE_VALUE])) && t2 !== Object.prototype ? f.bind(S) : f;
+      } else if (getObserver() && !n) {
+        return read(getNode(e, o, t, isWrappable(f) ? wrap(f, e) : f, isEqual, e[STORE_SNAPSHOT_PROPS]));
+      }
+    }
+    if (!n)
+      throwIfUninitialized(e);
+    return isWrappable(f) ? wrap(f, e) : f;
+  },
+  has(e, t) {
+    if (t === $PROXY || t === $TRACK || t === "__proto__")
+      return true;
+    if (pendingCheckActive)
+      witnessAffectsMark(e, t);
+    const r = getOverlayLayer(e, t);
+    const n = r ? r[t] !== $DELETED : (t in e[STORE_VALUE]);
+    if (writeOnly(e[$PROXY]) || getObserver() === e[STORE_FIREWALL])
+      return n;
+    const o = getNodes(e, STORE_HAS);
+    if (o[t])
+      return read(o[t]);
+    if (getObserver()) {
+      return read(getNode(e, o, t, n));
+    }
+    throwIfUninitialized(e);
+    return n;
+  },
+  set(e, t, r) {
+    if (t === "__proto__")
+      return true;
+    const n = e[$PROXY];
+    if (writeOnly(n)) {
+      untrack(() => {
+        const { base: o, overrideKey: i, state: s } = prepareStoreWrite(e, n, t);
+        const E = getOverlayLayer(e, t);
+        const O = E ? E[t] : o;
+        const c = E ? E[t] !== $DELETED : (t in e[STORE_VALUE]);
+        const S = unwrapStoreValue(r);
+        const f = typeof t === "string" ? Number(t) : -1;
+        const T = Array.isArray(s) && Number.isInteger(f) && f >= 0 && f < 4294967295 && String(f) === t;
+        const R = T ? f + 1 : 0;
+        const u = T && (getOverlayLayer(e, "length") ?? s).length;
+        const l = T && R > u ? R : undefined;
+        if (O === S && l === undefined)
+          return true;
+        armOptimisticStoreWrite(e, n);
+        if (S !== undefined && S === o && l === undefined) {
+          delete e[i]?.[t];
+          if (i === STORE_OPTIMISTIC_OVERRIDE)
+            delete e[STORE_OPTIMISTIC_OWNERS]?.[t];
+        } else {
+          const r2 = e[i] || (e[i] = Object.create(null));
+          r2[t] = S;
+          stampOptimisticOwner(e, i, t);
+          if (l !== undefined) {
+            r2.length = l;
+            stampOptimisticOwner(e, i, "length");
+          }
+        }
+        notifyStoreProperty(e, t, "set", S, O, c);
+        if (Array.isArray(s) && t === "length" && typeof S === "number" && typeof O === "number" && S < O) {
+          const t2 = e[i] || (e[i] = Object.create(null));
+          for (let r2 = S;r2 < O; r2++) {
+            if (t2[r2] === $DELETED)
+              continue;
+            const n2 = r2 in t2 ? t2[r2] : s[r2];
+            if (!(r2 in t2) && !(r2 in s))
+              continue;
+            t2[r2] = $DELETED;
+            stampOptimisticOwner(e, i, r2);
+            notifyStoreProperty(e, r2, "delete", undefined, n2, true);
+          }
+        }
+        if (Array.isArray(s) && t !== "length" && l !== undefined) {
+          const t2 = getNodes(e, STORE_NODE);
+          if (t2.length) {
+            setSignal(t2.length, l);
+          } else if (!projectionWriteActive && !e[STORE_OPTIMISTIC]) {
+            const r2 = upsertStoreNode(e, t2, "length", u, e[STORE_SNAPSHOT_PROPS]);
+            setSignal(r2, l);
+          }
+        }
+        if (false)
+          ;
+      });
+    }
+    return true;
+  },
+  defineProperty(e, t, r) {
+    if (t === "__proto__")
+      return true;
+    const n = e[$PROXY];
+    if (writeOnly(n)) {
+      untrack(() => {
+        const { base: o, overrideKey: i } = prepareStoreWrite(e, n, t);
+        armOptimisticStoreWrite(e, n);
+        const s = "value" in r ? {
+          ...r,
+          value: unwrapStoreValue(r.value)
+        } : r;
+        Object.defineProperty(e[i] || (e[i] = Object.create(null)), t, s);
+        stampOptimisticOwner(e, i, t);
+        notifyStoreProperty(e, t, "invalidate");
+        if (false)
+          ;
+      });
+    }
+    return true;
+  },
+  deleteProperty(e, t) {
+    if (t === "__proto__")
+      return true;
+    const r = e[STORE_OPTIMISTIC_OVERRIDE]?.[t] === $DELETED;
+    const n = e[STORE_OVERRIDE]?.[t] === $DELETED;
+    if (writeOnly(e[$PROXY]) && !r && !n) {
+      untrack(() => {
+        const r2 = e[STORE_OPTIMISTIC] && !projectionWriteActive;
+        const n2 = r2 ? STORE_OPTIMISTIC_OVERRIDE : STORE_OVERRIDE;
+        const o = getOverlayLayer(e, t);
+        const i = o ? o[t] : e[STORE_VALUE][t];
+        if (t in e[STORE_VALUE] || e[STORE_OVERRIDE] && t in e[STORE_OVERRIDE]) {
+          armOptimisticStoreWrite(e, e[$PROXY]);
+          (e[n2] || (e[n2] = Object.create(null)))[t] = $DELETED;
+          stampOptimisticOwner(e, n2, t);
+        } else if (e[n2] && t in e[n2]) {
+          armOptimisticStoreWrite(e, e[$PROXY]);
+          delete e[n2][t];
+          if (n2 === STORE_OPTIMISTIC_OVERRIDE)
+            delete e[STORE_OPTIMISTIC_OWNERS]?.[t];
+        } else
+          return true;
+        notifyStoreProperty(e, t, "delete", undefined, i, true);
+      });
+    }
+    return true;
+  },
+  ownKeys(e) {
+    if (pendingCheckActive)
+      witnessAffectsMark(e);
+    if (getObserver() !== e[STORE_FIREWALL]) {
+      trackSelf(e);
+      if (!getObserver() && !writeOnly(e[$PROXY]))
+        throwIfUninitialized(e);
+    }
+    let t = getKeys(e[STORE_VALUE], e[STORE_OVERRIDE], false);
+    if (e[STORE_OPTIMISTIC_OVERRIDE]) {
+      const r = new Set(t);
+      for (const t2 of Reflect.ownKeys(e[STORE_OPTIMISTIC_OVERRIDE])) {
+        if (e[STORE_OPTIMISTIC_OVERRIDE][t2] !== $DELETED)
+          r.add(t2);
+        else
+          r.delete(t2);
+      }
+      t = Array.from(r);
+    }
+    return t;
+  },
+  getOwnPropertyDescriptor(e, t) {
+    if (t === $PROXY)
+      return {
+        value: e[$PROXY],
+        writable: true,
+        configurable: true
+      };
+    if (e[STORE_OPTIMISTIC_OVERRIDE] && t in e[STORE_OPTIMISTIC_OVERRIDE]) {
+      if (e[STORE_OPTIMISTIC_OVERRIDE][t] === $DELETED)
+        return;
+      const r2 = Reflect.getOwnPropertyDescriptor(e[STORE_OPTIMISTIC_OVERRIDE], t);
+      if (r2?.get || r2?.set || !(t in e[STORE_VALUE]))
+        return r2;
+      const n = getPropertyDescriptor(e[STORE_VALUE], e[STORE_OVERRIDE], t);
+      if (n) {
+        const r3 = Reflect.getOwnPropertyDescriptor(e, t);
+        const o = !r3 || r3.configurable ? true : n.configurable;
+        return {
+          ...n,
+          configurable: o,
+          value: e[STORE_OPTIMISTIC_OVERRIDE][t]
+        };
+      }
+      return {
+        value: e[STORE_OPTIMISTIC_OVERRIDE][t],
+        writable: true,
+        enumerable: true,
+        configurable: true
+      };
+    }
+    const r = getPropertyDescriptor(e[STORE_VALUE], e[STORE_OVERRIDE], t);
+    if (r && !r.configurable) {
+      const n = Reflect.getOwnPropertyDescriptor(e, t);
+      if (!n || n.configurable)
+        return {
+          ...r,
+          configurable: true
+        };
+    }
+    return r;
+  },
+  getPrototypeOf(e) {
+    return Object.getPrototypeOf(e[STORE_VALUE]);
+  }
+};
+function storeSetter(e, t) {
+  const r = Writing;
+  Writing = new Set;
+  Writing.add(e);
+  try {
+    const r2 = t(e);
+    if (r2 !== e && r2 !== undefined) {
+      if (Array.isArray(r2)) {
+        for (let t2 = 0, n = r2.length;t2 < n; t2++)
+          e[t2] = r2[t2];
+        e.length = r2.length;
+      } else {
+        const t2 = new Set([...ownEnumerableKeys(e), ...ownEnumerableKeys(r2)]);
+        t2.forEach((t3) => {
+          if (t3 in r2)
+            e[t3] = r2[t3];
+          else
+            delete e[t3];
+        });
+      }
+    }
+  } finally {
+    Writing.clear();
+    Writing = r;
+  }
+}
+function createStore(e, t, r) {
+  const n = typeof e === "function", o = n ? createProjectionInternal(e, t, r).store : wrap(e);
+  return [o, n ? (e2) => {
+    suppressComputedRecompute(o[$REFRESH]);
+    storeSetter(o, e2);
+  } : (e2) => storeSetter(o, e2)];
+}
 
 // node_modules/.bun/@solidjs+signals@2.0.0-beta.20/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, i) {
@@ -2552,6 +3673,32 @@ function flattenArray(e, t = [], r) {
 // node_modules/.bun/solid-js@2.0.0-beta.20/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
+function createContext2(defaultValue, options) {
+  const id = Symbol(options && options.name || "");
+  function provider(props) {
+    return createRoot(() => {
+      setContext(provider, props.value);
+      return children(() => props.children);
+    });
+  }
+  provider.id = id;
+  provider.defaultValue = defaultValue;
+  return provider;
+}
+function children(fn) {
+  const c = createMemo(fn, {
+    lazy: true
+  });
+  const memo = createMemo(() => flatten(c()), {
+    lazy: true,
+    sync: true
+  });
+  memo.toArray = () => {
+    const v = memo();
+    return Array.isArray(v) ? v : v != null ? [v] : [];
+  };
+  return memo;
+}
 var NoHydrateContext = {
   id: Symbol("NoHydrateContext"),
   defaultValue: false
@@ -2595,6 +3742,55 @@ function Show(props) {
   }, {
     sync: true
   });
+}
+function Switch(props) {
+  const chs = children(() => props.children);
+  const switchFunc = createMemo(() => {
+    const mps = chs.toArray();
+    let func = () => {
+      return;
+    };
+    for (let i = 0;i < mps.length; i++) {
+      const index = i;
+      const mp = mps[i];
+      if (mp == null)
+        continue;
+      const prevFunc = func;
+      const conditionValue = createMemo(() => prevFunc() ? undefined : mp.when, undefined);
+      const condition = mp.keyed ? conditionValue : createMemo(conditionValue, {
+        equals: (a, b) => !a === !b,
+        sync: true
+      });
+      func = () => {
+        const prev = prevFunc();
+        if (prev)
+          return prev;
+        const c = condition();
+        return c ? [index, c, conditionValue, mp] : undefined;
+      };
+    }
+    return func;
+  }, {
+    sync: true
+  });
+  return createMemo(() => {
+    const sel = switchFunc()();
+    if (!sel)
+      return props.fallback;
+    const [index, value, conditionValue, mp] = sel;
+    const child = mp.children;
+    const fn = typeof child === "function" && child.length > 0;
+    return fn ? mp.keyed ? untrack(() => child(value), IS_DEV) : untrack(() => child(() => {
+      if (untrack(switchFunc)()?.[0] !== index)
+        throw narrowedError("Match");
+      return conditionValue();
+    }), IS_DEV) : child;
+  }, {
+    sync: true
+  });
+}
+function Match(props) {
+  return props;
 }
 
 // node_modules/.bun/@solidjs+universal@2.0.0-beta.20+96ee2375bb65ef1e/node_modules/@solidjs/universal/dist/universal.js
@@ -3002,27 +4198,17 @@ function setFocus(nodeId) {
 function getFocusedNodeId() {
   return focusedNodeId;
 }
+function getBoundingBox2(node) {
+  return tree.getBoundingBox(node.id);
+}
+function measureText2(text, options) {
+  return tree.measureText(text, options);
+}
 
 // packages/core/src/window.ts
 var pointerCaptures = new Map;
-var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
-function onFrame(fn) {
-  let frameId = null;
-  let extendedFn = (tick, frame, rate) => {
-    fn(tick, frame, rate);
-    frameId = nextFrameId++;
-    animationFrames.set(frameId, extendedFn);
-    requestFrame();
-  };
-  frameId = nextFrameId++;
-  animationFrames.set(frameId, extendedFn);
-  requestFrame();
-  let cleanup2 = () => animationFrames.delete(frameId);
-  onCleanup(cleanup2);
-  return cleanup2;
-}
 var sizeAccessor;
 var safeAreaAccessor;
 var displayScaleAccessor;
@@ -3061,6 +4247,40 @@ function ensureResizeState() {
 function windowSize() {
   ensureResizeState();
   return sizeAccessor();
+}
+function safeArea() {
+  ensureResizeState();
+  return safeAreaAccessor();
+}
+function displayScale() {
+  ensureResizeState();
+  return displayScaleAccessor();
+}
+var focusedAccessor;
+function windowFocused() {
+  if (!focusedAccessor) {
+    let [focused, setFocused] = createSignal(true);
+    on("windowFocus", () => setFocused(true));
+    on("windowBlur", () => setFocused(false));
+    focusedAccessor = focused;
+  }
+  return focusedAccessor();
+}
+var keyboardHeightAccessor;
+function keyboardHeight() {
+  if (!keyboardHeightAccessor) {
+    let [height, setHeight] = createSignal(0);
+    on("keyboardVisibility", ({
+      height: h
+    }) => setHeight(h ?? 0));
+    keyboardHeightAccessor = height;
+  }
+  return keyboardHeightAccessor();
+}
+function onLayout(fn) {
+  let unsubscribe = on("postLayout", fn);
+  onCleanup(unsubscribe);
+  return unsubscribe;
 }
 function attachWindow(_nodeId) {
   let unsubscribe = null;
@@ -3501,6 +4721,12 @@ function parseColor(color) {
   } = w(color).toRgb();
   return ((r3 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a3 * 255 & 255) >>> 0;
 }
+function mixColors(a3, b2, t3) {
+  return w(a3).mix(b2, t3).toHex();
+}
+function brightness(color) {
+  return w(color).brightness();
+}
 function isGradient(value) {
   return typeof value === "object" && value !== null && "__gradient" in value;
 }
@@ -3708,8 +4934,161 @@ function render(code) {
 }
 // packages/core/src/environment.ts
 import { on as on2 } from "srt:events";
+var devicesAccessor;
+function ensureDevicesState() {
+  if (devicesAccessor)
+    return;
+  let [devices, setDevices] = createSignal(undefined, {
+    ownedWrite: true
+  });
+  on2("inputDevices", (d2) => {
+    setDevices({
+      keyboard: !!d2.keyboard,
+      mouse: !!d2.mouse,
+      touch: !!d2.touch
+    });
+  });
+  devicesAccessor = devices;
+}
+var systemThemeAccessor;
+function ensureSystemThemeState() {
+  if (systemThemeAccessor)
+    return;
+  let [theme, setTheme] = createSignal("unknown", {
+    ownedWrite: true
+  });
+  on2("systemTheme", (e3) => setTheme(e3.theme ?? "unknown"));
+  systemThemeAccessor = theme;
+}
+var orientationAccessor;
+function ensureOrientationState() {
+  if (orientationAccessor)
+    return;
+  let [orientation, setOrientation] = createSignal("unknown", {
+    ownedWrite: true
+  });
+  on2("displayOrientation", (e3) => {
+    setOrientation(e3.orientation ?? "unknown");
+  });
+  orientationAccessor = orientation;
+}
+var textScaleAccessor;
+function ensureTextScaleState() {
+  if (textScaleAccessor)
+    return;
+  let [scale, setScale] = createSignal(1, {
+    ownedWrite: true
+  });
+  on2("textScale", (e3) => {
+    setScale(typeof e3.scale === "number" && e3.scale > 0 ? e3.scale : 1);
+  });
+  textScaleAccessor = scale;
+}
+var mouseSeenAccessor;
+var touchSeenAccessor;
+function ensurePointerState() {
+  if (mouseSeenAccessor)
+    return;
+  let [mouse, setMouse] = createSignal(false);
+  let [touch, setTouch] = createSignal(false);
+  let sawMouse = false;
+  let sawTouch = false;
+  let unsubs = [];
+  let note = (e3) => {
+    if (e3.pointerType === "mouse" && !sawMouse) {
+      sawMouse = true;
+      setMouse(true);
+    } else if (e3.pointerType === "touch" && !sawTouch) {
+      sawTouch = true;
+      setTouch(true);
+    }
+    if (sawMouse && sawTouch)
+      for (let u3 of unsubs)
+        u3();
+  };
+  unsubs.push(on2("pointerMove", note), on2("pointerDown", note));
+  mouseSeenAccessor = mouse;
+  touchSeenAccessor = touch;
+}
+var keyboardSeenAccessor;
+function ensureKeyboardState() {
+  if (keyboardSeenAccessor)
+    return;
+  let [keyboard, setKeyboard] = createSignal(false);
+  let unsub = on2("keydown", () => {
+    setKeyboard(true);
+    unsub();
+  });
+  keyboardSeenAccessor = keyboard;
+}
+var env = {
+  get windowSize() {
+    return windowSize();
+  },
+  get safeArea() {
+    return safeArea();
+  },
+  get displayScale() {
+    return displayScale();
+  },
+  get windowFocused() {
+    return windowFocused();
+  },
+  get keyboardHeight() {
+    return keyboardHeight();
+  },
+  get inputDevices() {
+    ensureDevicesState();
+    return devicesAccessor();
+  },
+  get systemTheme() {
+    ensureSystemThemeState();
+    return systemThemeAccessor();
+  },
+  get textScale() {
+    ensureTextScaleState();
+    return textScaleAccessor();
+  },
+  get orientation() {
+    ensureOrientationState();
+    return orientationAccessor();
+  },
+  get mouseSeen() {
+    ensurePointerState();
+    return mouseSeenAccessor();
+  },
+  get touchSeen() {
+    ensurePointerState();
+    return touchSeenAccessor();
+  },
+  get keyboardSeen() {
+    ensureKeyboardState();
+    return keyboardSeenAccessor();
+  }
+};
 // packages/core/src/gamepad.ts
 import { on as on3 } from "srt:events";
+// packages/core/src/capabilities.ts
+var MEDIUM_MIN_WIDTH = 600;
+var EXPANDED_MIN_WIDTH = 840;
+var capabilities = {
+  get hover() {
+    return env.inputDevices?.mouse ?? env.mouseSeen;
+  },
+  get precisePointer() {
+    return env.inputDevices?.mouse ?? env.mouseSeen;
+  },
+  get touch() {
+    return env.inputDevices?.touch ?? env.touchSeen;
+  },
+  get keyboardNav() {
+    return env.inputDevices?.keyboard ?? env.keyboardSeen;
+  },
+  get windowSizeClass() {
+    let w2 = env.windowSize.width;
+    return w2 >= EXPANDED_MIN_WIDTH ? "expanded" : w2 >= MEDIUM_MIN_WIDTH ? "medium" : "compact";
+  }
+};
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, setShaderParams, uploadTexture } from "flux:gpu";
@@ -3717,17 +5096,77 @@ import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/image.ts
 var imageCache = new Map;
+// packages/core/src/scroll.ts
+function createScroll(viewport, content, options = {}) {
+  let axis = options.axis ?? "vertical";
+  let canX = axis === "horizontal" || axis === "both";
+  let canY = axis === "vertical" || axis === "both";
+  let [offset, setOffset] = createSignal({
+    x: 0,
+    y: 0
+  });
+  let origin = new Error().stack ?? "";
+  let warnedCollapsed = false;
+  let maxX = 0;
+  let maxY = 0;
+  let clamp = (x2, y2) => ({
+    x: canX ? Math.max(0, Math.min(x2, maxX)) : 0,
+    y: canY ? Math.max(0, Math.min(y2, maxY)) : 0
+  });
+  let set = (x2, y2) => {
+    let cur = offset();
+    let next = clamp(x2, y2);
+    if (next.x !== cur.x || next.y !== cur.y)
+      setOffset(next);
+  };
+  onLayout(() => {
+    let vp = viewport();
+    let ct = content();
+    if (!vp || !ct)
+      return;
+    let vb = getBoundingBox2(vp);
+    let cb = getBoundingBox2(ct);
+    if (!vb || !cb)
+      return;
+    if (!warnedCollapsed) {
+      let zeroY = canY && vb.height === 0 && cb.height > 0;
+      let zeroX = canX && vb.width === 0 && cb.width > 0;
+      if (zeroY || zeroX) {
+        warnedCollapsed = true;
+        let axisName = zeroY ? "height" : "width";
+        console.warn(`Scroll container resolved to ${axisName} 0, so its content is invisible. ` + `Give it an explicit ${axisName} or flex; maxHeight/maxWidth alone does not size it.
+${origin}`);
+      }
+    }
+    maxX = Math.max(0, cb.width - vb.width);
+    maxY = Math.max(0, cb.height - vb.height);
+    let cur = offset();
+    let next = clamp(cur.x, cur.y);
+    if (next.x !== cur.x || next.y !== cur.y) {
+      setOffset(next);
+      flush();
+    }
+  });
+  return {
+    offset,
+    scrollBy: (dx, dy) => {
+      let cur = offset();
+      set(cur.x + dx, cur.y + dy);
+    },
+    scrollTo: (x2, y2) => set(x2, y2)
+  };
+}
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
 import { on as on4 } from "srt:events";
-var devicesAccessor;
+var devicesAccessor2;
 function cameraDevices() {
-  if (!devicesAccessor) {
+  if (!devicesAccessor2) {
     let [devices, setDevices] = createSignal(listCameras());
     on4("cameraDeviceChange", () => setDevices(listCameras()));
-    devicesAccessor = devices;
+    devicesAccessor2 = devices;
   }
-  return devicesAccessor();
+  return devicesAccessor2();
 }
 function createCamera(options = {}) {
   let [texture, setTexture] = createSignal(undefined);
@@ -3765,733 +5204,3536 @@ function createCamera(options = {}) {
   };
 }
 
-// lattice/launcher/launcher.tsx
-import { on as on5 } from "srt:events";
-import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents, launchAddress } from "srt:dev";
-
-// lattice/launcher/logo.tsx
-var EXPLODE_DIST = 3;
-var STAGGER_DELAY = 100;
-var ANIM_DURATION = 600;
-var HOLD_ASSEMBLED = 5000;
-var HOLD_EXPLODED = 0;
-var SOLID_COLORS = {
-  dark: "rgba(26,51,128)",
-  mid: "rgba(51,102,179)",
-  light: "rgba(102,153,230)"
-};
-var RT_COLORS = {
-  dark: "rgba(100,100,100)",
-  mid: "rgba(140,140,140)",
-  light: "rgba(180,180,180)"
-};
-var M2 = 25;
-var R = M2 * Math.SQRT2;
-var T = -0.5 * R;
-var sq = [[0, 0], [2 * M2, 0], [2 * M2, 2 * M2], [0, 2 * M2]];
-var tri1 = [[0, 0], [2 * M2, 0], [0, 2 * M2]];
-var tri2 = [[0, 0], [2 * R, 0], [0, 2 * R]];
-var tri3 = [[0, 0], [4 * M2, 0], [0, 4 * M2]];
-var par1 = [[0, 0], [2 * M2, 0], [4 * M2, 2 * M2], [2 * M2, 2 * M2]];
-var par2 = [[2 * M2, 0], [4 * M2, 0], [2 * M2, 2 * M2], [0, 2 * M2]];
-function shapeCenter(shape, rotate) {
-  let radians = rotate * Math.PI / 4;
-  let cos = Math.cos(radians);
-  let sin = Math.sin(radians);
-  let pts = shape.map(([x2, y2]) => [x2 * cos - y2 * sin, x2 * sin + y2 * cos]);
-  let minX = Math.min(...pts.map(([x2]) => x2));
-  let minY = Math.min(...pts.map(([, y2]) => y2));
-  pts = pts.map(([x2, y2]) => [x2 - minX, y2 - minY]);
-  let area = 0;
-  let cx = 0;
-  let cy = 0;
-  for (let i3 = 0;i3 < pts.length; i3++) {
-    let [x0, y0] = pts[i3];
-    let [x1, y1] = pts[(i3 + 1) % pts.length];
-    let cross = x0 * y1 - x1 * y0;
-    area += cross;
-    cx += (x0 + x1) * cross;
-    cy += (y0 + y1) * cross;
-  }
-  area *= 0.5;
-  cx /= 6 * area;
-  cy /= 6 * area;
-  return [cx, cy];
+// packages/components/src/window.tsx
+function Window(props) {
+  var _el$ = createElement("window");
+  spread(_el$, mergeProps(() => props.layout, {
+    get title() {
+      return props.title;
+    },
+    get fullscreen() {
+      return props.fullscreen;
+    },
+    get onPointerEnter() {
+      return props.onPointerEnter;
+    },
+    get onPointerLeave() {
+      return props.onPointerLeave;
+    },
+    get onPointerDown() {
+      return props.onPointerDown;
+    },
+    get onPointerUp() {
+      return props.onPointerUp;
+    },
+    get onPointerMove() {
+      return props.onPointerMove;
+    },
+    get onWheel() {
+      return props.onWheel;
+    },
+    get onFocus() {
+      return props.onFocus;
+    },
+    get onBlur() {
+      return props.onBlur;
+    },
+    get onKeyDown() {
+      return props.onKeyDown;
+    },
+    get onKeyUp() {
+      return props.onKeyUp;
+    },
+    get onTextInput() {
+      return props.onTextInput;
+    },
+    get pointerEvents() {
+      return props.pointerEvents;
+    }
+  }), true);
+  insert(_el$, (() => {
+    var _c$ = memo2(() => props.style?.backgroundColor != null);
+    return () => _c$() ? (() => {
+      var _el$2 = createElement("d-rect");
+      effect3(() => props.style.backgroundColor, (_v$, _$p) => {
+        setProp(_el$2, "color", _v$, _$p);
+      });
+      return _el$2;
+    })() : null;
+  })(), null);
+  insert(_el$, () => props.children, null);
+  return _el$;
 }
-function path(shape, rotate) {
-  let radians = rotate * Math.PI / 4;
-  let cos = Math.cos(radians);
-  let sin = Math.sin(radians);
-  let rotated = shape.map(([x2, y2]) => [x2 * cos - y2 * sin, x2 * sin + y2 * cos]);
-  let minX = Math.min(...rotated.map(([x2]) => x2));
-  let minY = Math.min(...rotated.map(([, y2]) => y2));
-  let d2 = "M" + rotated.map(([x2, y2]) => `${x2 - minX} ${y2 - minY}`).join("L") + "Z";
-  return d2;
+// packages/components/src/view.tsx
+function View(props) {
+  let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
+  let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
+  var _el$ = createElement("view");
+  var _ref$ = props.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  spread(_el$, mergeProps(() => props.layout, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    },
+    get onPointerEnter() {
+      return props.onPointerEnter;
+    },
+    get onPointerLeave() {
+      return props.onPointerLeave;
+    },
+    get onPointerDown() {
+      return props.onPointerDown;
+    },
+    get onPointerUp() {
+      return props.onPointerUp;
+    },
+    get onPointerMove() {
+      return props.onPointerMove;
+    },
+    get onWheel() {
+      return props.onWheel;
+    },
+    get onFocus() {
+      return props.onFocus;
+    },
+    get onBlur() {
+      return props.onBlur;
+    },
+    get onKeyDown() {
+      return props.onKeyDown;
+    },
+    get onKeyUp() {
+      return props.onKeyUp;
+    },
+    get onTextInput() {
+      return props.onTextInput;
+    },
+    get pointerEvents() {
+      return props.pointerEvents;
+    }
+  }), true);
+  insert(_el$, (() => {
+    var _c$ = memo2(() => !!hasBackground());
+    return () => _c$() ? (() => {
+      var _el$2 = createElement("d-rect");
+      effect3(() => ({
+        e: props.style?.backgroundColor ?? "transparent",
+        t: props.style?.borderRadius
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+      });
+      return _el$2;
+    })() : null;
+  })(), null);
+  insert(_el$, () => props.children, null);
+  insert(_el$, (() => {
+    var _c$2 = memo2(() => !!hasBorder());
+    return () => _c$2() ? (() => {
+      var _el$3 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: props.style?.borderColor ?? "transparent",
+        t: props.style?.borderWidth,
+        a: props.style?.borderRadius
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$3, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$3, "strokeWidth", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$3, "radius", a3, _p$?.a);
+      });
+      return _el$3;
+    })() : null;
+  })(), null);
+  return _el$;
 }
-var letters = [
-  {
-    width: 5 * R - 0.5 * R,
-    height: 6 * R,
-    pieces: [{
-      shape: tri1,
-      x: R,
-      y: 5 * R,
-      rot: 1,
-      shade: "light"
-    }, {
-      shape: sq,
-      x: 0,
-      y: 4 * R,
-      rot: 1,
-      shade: "mid"
-    }, {
-      shape: tri1,
-      x: 2 * R,
-      y: 4 * R,
-      rot: -1,
-      shade: "dark"
-    }, {
-      shape: tri3,
-      x: 3 * R,
-      y: 2 * R,
-      rot: 3,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: R,
-      y: 0,
-      rot: -1,
-      shade: "dark"
-    }, {
-      shape: tri2,
-      x: 3 * R,
-      y: 0,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: par2,
-      x: 5 * R - 2 * M2,
-      y: 0,
-      rot: 0,
-      shade: "light"
-    }]
+// packages/components/src/theme.ts
+var TEXT = {
+  fontFamily: "sans",
+  caption: {
+    size: 11,
+    lineHeight: 1.3,
+    weight: 400
   },
-  {
-    width: 4 * R + 2 * M2 - 0.5 * R,
-    height: 2 * M2 + 4 * R,
-    pieces: [{
-      shape: tri3,
-      x: 0,
-      y: 2 * M2,
-      rot: -1,
-      shade: "dark"
-    }, {
-      shape: sq,
-      x: 2 * R,
-      y: 4 * R,
-      rot: 0,
-      shade: "light"
-    }, {
-      shape: tri3,
-      x: 2 * R + 2 * M2,
-      y: 0,
-      rot: 3,
-      shade: "mid"
-    }, {
-      shape: tri1,
-      x: 2 * R - 2 * M2,
-      y: 2 * M2,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: tri1,
-      x: 2 * R,
-      y: 0,
-      rot: 2,
-      shade: "dark"
-    }, {
-      shape: par1,
-      x: 2 * R + 2 * M2,
-      y: 4 * R - 2 * M2,
-      rot: -2,
-      shade: "dark"
-    }, {
-      shape: tri2,
-      x: 2 * R - 2 * M2,
-      y: 0,
-      rot: 1,
-      shade: "light"
-    }]
+  label: {
+    size: 12,
+    lineHeight: 1.3,
+    weight: 600
   },
-  {
-    width: 4 * M2 + 2 * R,
-    height: 4 * M2 + 4 * R,
-    pieces: [{
-      shape: sq,
-      x: 2 * R - 2 * M2,
-      y: 0,
-      rot: 0,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: 2 * R - 2 * M2,
-      y: 2 * M2,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: 0,
-      y: 2 * M2,
-      rot: -1,
-      shade: "dark"
-    }, {
-      shape: tri3,
-      x: 2 * R - 2 * M2,
-      y: 4 * R,
-      rot: -2,
-      shade: "mid"
-    }, {
-      shape: par1,
-      x: 2 * R,
-      y: 4 * R + 2 * M2,
-      rot: 0,
-      shade: "dark"
-    }, {
-      shape: tri2,
-      x: 4 * M2,
-      y: 2 * R + 4 * M2,
-      rot: 2,
-      shade: "mid"
-    }, {
-      shape: tri1,
-      x: 4 * M2,
-      y: R + 4 * M2,
-      rot: 1,
-      shade: "light"
-    }]
+  body: {
+    size: 14,
+    lineHeight: 1.5,
+    weight: 400
   },
-  {
-    width: 6 * M2,
-    height: 8 * M2,
-    pieces: [{
-      shape: sq,
-      x: 4 * M2,
-      y: 0,
-      rot: 0,
-      shade: "dark"
-    }, {
-      shape: tri3,
-      x: 0,
-      y: 0,
-      rot: 0,
-      shade: "light"
-    }, {
-      shape: par2,
-      x: 2 * M2,
-      y: 2 * M2,
-      rot: -2,
-      shade: "light"
-    }, {
-      shape: tri2,
-      x: 2 * M2,
-      y: 0,
-      rot: -1,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: 2 * M2,
-      y: 4 * M2,
-      rot: -2,
-      shade: "dark"
-    }, {
-      shape: tri1,
-      x: 0,
-      y: 6 * M2,
-      rot: 4,
-      shade: "mid"
-    }, {
-      shape: tri1,
-      x: 4 * M2,
-      y: 6 * M2,
-      rot: 2,
-      shade: "mid"
-    }]
+  title: {
+    size: 18,
+    lineHeight: 1.4,
+    weight: 700
   },
-  {
-    width: 6 * M2,
-    height: 8 * M2,
-    pieces: [{
-      shape: tri3,
-      x: 0,
-      y: 0,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: 0,
-      y: 4 * M2,
-      rot: -2,
-      shade: "dark"
-    }, {
-      shape: tri1,
-      x: 2 * M2,
-      y: 0,
-      rot: 4,
-      shade: "dark"
-    }, {
-      shape: par2,
-      x: 4 * M2,
-      y: 0,
-      rot: 2,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: 4 * M2,
-      y: 2 * M2,
-      rot: -2,
-      shade: "dark"
-    }, {
-      shape: sq,
-      x: 4 * M2,
-      y: 4 * M2,
-      rot: 0,
-      shade: "light"
-    }, {
-      shape: tri2,
-      x: 2 * M2,
-      y: 6 * M2,
-      rot: -3,
-      shade: "mid"
-    }]
-  },
-  {
-    width: 6 * M2,
-    height: 8 * M2,
-    pieces: [{
-      shape: tri3,
-      x: 0,
-      y: 0,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: 0,
-      y: 4 * M2,
-      rot: 0,
-      shade: "dark"
-    }, {
-      shape: tri2,
-      x: 2 * M2,
-      y: 0,
-      rot: 1,
-      shade: "dark"
-    }, {
-      shape: sq,
-      x: 4 * M2 - R,
-      y: 4 * M2,
-      rot: 1,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: 0,
-      y: 6 * M2,
-      rot: 4,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: 4 * M2,
-      y: 4 * M2 + R,
-      rot: -1,
-      shade: "mid"
-    }, {
-      shape: par2,
-      x: 2 * M2,
-      y: 2 * M2,
-      rot: 0,
-      shade: "mid"
-    }]
-  },
-  {
-    width: 6 * M2,
-    height: 4 * M2 + 4 * R,
-    pieces: [{
-      shape: par1,
-      x: T + 2 * R - 2 * M2,
-      y: 0,
-      rot: -2,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: T + 2 * R - 2 * M2,
-      y: 0,
-      rot: 0,
-      shade: "mid"
-    }, {
-      shape: tri3,
-      x: T + 0,
-      y: 2 * M2,
-      rot: -1,
-      shade: "dark"
-    }, {
-      shape: tri3,
-      x: T + 2 * R - 2 * M2,
-      y: 4 * R,
-      rot: -2,
-      shade: "mid"
-    }, {
-      shape: tri2,
-      x: T + 2 * R,
-      y: 2 * M2,
-      rot: -3,
-      shade: "light"
-    }, {
-      shape: tri1,
-      x: T + 2 * R,
-      y: 2 * M2,
-      rot: -2,
-      shade: "mid"
-    }, {
-      shape: sq,
-      x: T + 2 * M2 + R,
-      y: 4 * M2 + 2 * R,
-      rot: 1,
-      shade: "dark"
-    }]
+  heading: {
+    size: 22,
+    lineHeight: 1.3,
+    weight: 700
   }
-];
-function TangramLetter(props) {
-  let [dist, setDist] = createSignal(EXPLODE_DIST);
-  let letterCx = props.letter.width / 2;
-  let letterCy = props.letter.height / 2;
-  let pieceVectors = props.letter.pieces.map((p3) => {
-    let [scx, scy] = shapeCenter(p3.shape, p3.rot);
-    return [p3.x + scx - letterCx, p3.y + scy - letterCy];
-  });
-  let pieceSpins = props.letter.pieces.map((_, i3) => ((i3 * 7 + 3) % 11 - 5) * 30);
-  onFrame((tick, frame) => {
-    let cycleLen = ANIM_DURATION + HOLD_ASSEMBLED + ANIM_DURATION + HOLD_EXPLODED;
-    let t3 = (tick - props.delay) % cycleLen;
-    if (t3 < 0) {
-      setDist(EXPLODE_DIST);
-    } else if (t3 < ANIM_DURATION) {
-      let p3 = t3 / ANIM_DURATION;
-      let ease = p3 * p3 * (3 - 2 * p3);
-      setDist((1 - ease) * EXPLODE_DIST);
-    } else if (t3 < ANIM_DURATION + HOLD_ASSEMBLED) {
-      setDist(0);
-    } else if (t3 < 2 * ANIM_DURATION + HOLD_ASSEMBLED) {
-      let p3 = (t3 - ANIM_DURATION - HOLD_ASSEMBLED) / ANIM_DURATION;
-      let ease = p3 * p3 * (3 - 2 * p3);
-      setDist(ease * EXPLODE_DIST);
-    } else {
-      setDist(EXPLODE_DIST);
+};
+var SPACING = {
+  sm: 4,
+  md: 8,
+  lg: 16,
+  xl: 20
+};
+var RADIUS = {
+  sm: 4,
+  md: 8,
+  lg: 12
+};
+var BORDER_WIDTH = {
+  sm: 1
+};
+var darkTheme = {
+  text: TEXT,
+  color: {
+    background: "#0b0f17",
+    surface: "#161b22",
+    surfaceAlt: "#21262d",
+    surfaceHover: "#262c34",
+    text: "#e6edf3",
+    textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
+    border: "rgba(255,255,255,0.14)",
+    primary: "#1f6feb",
+    primaryHover: "#388bfd",
+    onPrimary: "#ffffff",
+    danger: "#f85149",
+    dangerHover: "#ff7b72",
+    scrim: "rgba(0,0,0,0.6)"
+  },
+  spacing: SPACING,
+  radius: RADIUS,
+  borderWidth: BORDER_WIDTH
+};
+var lightTheme = {
+  text: TEXT,
+  color: {
+    background: "#ffffff",
+    surface: "#f6f8fa",
+    surfaceAlt: "#eaeef2",
+    surfaceHover: "#e0e5eb",
+    text: "#1f2328",
+    textMuted: mixColors("#1f2328", "#ffffff", 0.4),
+    border: "rgba(0,0,0,0.15)",
+    primary: "#1f6feb",
+    primaryHover: "#1a5fd0",
+    onPrimary: "#ffffff",
+    danger: "#cf222e",
+    dangerHover: "#a40e26",
+    scrim: "rgba(0,0,0,0.4)"
+  },
+  spacing: SPACING,
+  radius: RADIUS,
+  borderWidth: BORDER_WIDTH
+};
+var [theme, setThemeStore] = createStore({
+  ...darkTheme
+});
+function setTheme(partial) {
+  setThemeStore((s2) => {
+    for (let key in partial) {
+      let k2 = key;
+      Object.assign(s2[k2], partial[k2]);
     }
   });
-  var _el$ = createElement("view");
-  insert(_el$, () => props.letter.pieces.map((p3, i3) => (() => {
-    var _el$2 = createElement("view"), _el$3 = createElement("d-path");
-    insertNode2(_el$2, _el$3);
-    effect3(() => ({
-      e: pieceVectors[i3][0] * dist(),
-      t: pieceVectors[i3][1] * dist(),
-      a: 1 + dist() * 0.5,
-      o: pieceSpins[i3] * dist() / EXPLODE_DIST / 150,
-      i: props.colors[p3.shade],
-      n: p3.x,
-      s: p3.y,
-      h: path(p3.shape, p3.rot)
-    }), ({
-      e: e3,
-      t: t3,
-      a: a3,
-      o: o3,
-      i: i4,
-      n: n3,
-      s: s2,
-      h: h3
-    }, _p$) => {
-      e3 !== _p$?.e && setProp(_el$2, "x", e3, _p$?.e);
-      t3 !== _p$?.t && setProp(_el$2, "y", t3, _p$?.t);
-      a3 !== _p$?.a && setProp(_el$2, "scale", a3, _p$?.a);
-      o3 !== _p$?.o && setProp(_el$2, "rotate", o3, _p$?.o);
-      i4 !== _p$?.i && setProp(_el$3, "color", i4, _p$?.i);
-      n3 !== _p$?.n && setProp(_el$3, "x", n3, _p$?.n);
-      s2 !== _p$?.s && setProp(_el$3, "y", s2, _p$?.s);
-      h3 !== _p$?.h && setProp(_el$3, "d", h3, _p$?.h);
-    });
-    return _el$2;
-  })()));
+}
+
+// packages/components/src/policy.ts
+function defaultPolicyResolver(caps) {
+  let interaction = caps.touch && caps.precisePointer ? "hybrid" : caps.touch ? "touch" : caps.precisePointer ? "desktop" : "hybrid";
+  return {
+    interaction,
+    density: interaction === "desktop" ? "compact" : "comfortable",
+    motion: "normal",
+    focusRing: caps.keyboardNav,
+    textScale: env.textScale,
+    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
+    navigation: caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
+    layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane"
+  };
+}
+var [resolverBox, setResolverBox] = createSignal({
+  resolve: defaultPolicyResolver
+});
+var [overrides, setOverrides] = createSignal({});
+var resolved = () => resolverBox().resolve(capabilities);
+var policy = {
+  get interaction() {
+    return overrides().interaction ?? resolved().interaction;
+  },
+  get density() {
+    return overrides().density ?? resolved().density;
+  },
+  get motion() {
+    return overrides().motion ?? resolved().motion;
+  },
+  get focusRing() {
+    return overrides().focusRing ?? resolved().focusRing;
+  },
+  get textScale() {
+    return overrides().textScale ?? resolved().textScale;
+  },
+  get textWeightDelta() {
+    return overrides().textWeightDelta ?? resolved().textWeightDelta;
+  },
+  get navigation() {
+    return overrides().navigation ?? resolved().navigation;
+  },
+  get layout() {
+    return overrides().layout ?? resolved().layout;
+  }
+};
+var DENSITY_SCALE = {
+  comfortable: 1,
+  compact: 0.85,
+  dense: 0.7
+};
+function densityScale() {
+  return DENSITY_SCALE[policy.density];
+}
+
+// packages/components/src/typography.ts
+var SMALL_TEXT = 16;
+function lightOnDark(text, fill) {
+  if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
+    return;
+  return brightness(text) > brightness(fill);
+}
+function themeOnDark() {
+  return lightOnDark(theme.color.text, theme.color.background) ?? false;
+}
+function typeWeight(weight, size, onDark) {
+  let delta = onDark ?? themeOnDark() ? policy.textWeightDelta : 0;
+  if (delta > 0 && size < SMALL_TEXT)
+    delta += 100;
+  return Math.min(900, weight + delta);
+}
+function typeStyle(variant, onDark) {
+  let role = theme.text[variant];
+  let size = role.size * policy.textScale;
+  return {
+    fontFamily: theme.text.fontFamily,
+    fontSize: size,
+    lineHeight: role.lineHeight,
+    fontWeight: typeWeight(role.weight, size, onDark)
+  };
+}
+
+// packages/components/src/text.tsx
+var FONT_KEYS = ["fontFamily", "fontSize", "lineHeight", "fontStyle", "fontWeight", "textAlign", "maxLines"];
+function Text(props) {
+  let role = () => theme.text[props.variant ?? "body"];
+  let size = () => (props.layout?.fontSize ?? role().size) * policy.textScale;
+  let color = () => props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")];
+  let box = createMemo(() => {
+    let l2 = props.layout;
+    if (!l2)
+      return {};
+    let out = {};
+    for (let key in l2) {
+      if (!FONT_KEYS.includes(key))
+        out[key] = l2[key];
+    }
+    return out;
+  });
+  var _el$ = createElement("view"), _el$2 = createElement("text");
+  insertNode2(_el$, _el$2);
+  var _ref$ = props.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  spread(_el$, mergeProps(box, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    },
+    get onPointerEnter() {
+      return props.onPointerEnter;
+    },
+    get onPointerLeave() {
+      return props.onPointerLeave;
+    },
+    get onPointerDown() {
+      return props.onPointerDown;
+    },
+    get onPointerUp() {
+      return props.onPointerUp;
+    },
+    get onPointerMove() {
+      return props.onPointerMove;
+    },
+    get onWheel() {
+      return props.onWheel;
+    },
+    get onFocus() {
+      return props.onFocus;
+    },
+    get onBlur() {
+      return props.onBlur;
+    },
+    get onKeyDown() {
+      return props.onKeyDown;
+    },
+    get onKeyUp() {
+      return props.onKeyUp;
+    },
+    get onTextInput() {
+      return props.onTextInput;
+    },
+    get pointerEvents() {
+      return props.pointerEvents;
+    }
+  }), true);
+  insert(_el$2, () => props.children);
   effect3(() => ({
-    e: props.letter.width,
-    t: props.letter.height,
-    a: props.letter.scale
+    e: color(),
+    t: props.layout?.fontFamily ?? theme.text.fontFamily,
+    a: size(),
+    o: props.layout?.lineHeight ?? role().lineHeight,
+    i: props.layout?.fontStyle,
+    n: typeWeight(props.layout?.fontWeight ?? role().weight, size()),
+    s: props.layout?.textAlign,
+    h: props.layout?.maxLines
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3,
+    o: o3,
+    i: i3,
+    n: n3,
+    s: s2,
+    h: h3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "fontFamily", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$2, "fontSize", a3, _p$?.a);
+    o3 !== _p$?.o && setProp(_el$2, "lineHeight", o3, _p$?.o);
+    i3 !== _p$?.i && setProp(_el$2, "fontStyle", i3, _p$?.i);
+    n3 !== _p$?.n && setProp(_el$2, "fontWeight", n3, _p$?.n);
+    s2 !== _p$?.s && setProp(_el$2, "textAlign", s2, _p$?.s);
+    h3 !== _p$?.h && setProp(_el$2, "maxLines", h3, _p$?.h);
+  });
+  return _el$;
+}
+// packages/components/src/safe-area.tsx
+function SafeArea(props) {
+  let pad = (edge) => {
+    let defaultOn = edge === "top" || edge === "bottom";
+    let p3 = props[edge] ?? defaultOn;
+    if (p3 === false)
+      return 0;
+    if (p3 === true)
+      return safeArea()[edge];
+    return Math.max(safeArea()[edge], p3);
+  };
+  var _el$ = createElement("view", {
+    flex: 1,
+    flexDirection: "column"
+  });
+  insert(_el$, () => props.children);
+  effect3(() => ({
+    e: props.relative !== false ? "relative" : undefined,
+    t: pad("top"),
+    a: pad("bottom"),
+    o: pad("left"),
+    i: pad("right")
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3,
+    o: o3,
+    i: i3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$, "position", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$, "marginTop", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$, "marginBottom", a3, _p$?.a);
+    o3 !== _p$?.o && setProp(_el$, "marginLeft", o3, _p$?.o);
+    i3 !== _p$?.i && setProp(_el$, "marginRight", i3, _p$?.i);
+  });
+  return _el$;
+}
+// packages/core/src/text-input.ts
+function createTextBuffer(options = {}) {
+  let initial = options.defaultValue ?? "";
+  let [internalValue, setInternalValue] = createSignal(initial);
+  let [selectionState, setSelectionState] = createSignal({
+    anchor: initial.length,
+    focus: initial.length
+  });
+  let value = () => options.value?.() ?? internalValue();
+  let selection = () => {
+    let len = value().length;
+    let s2 = selectionState();
+    return {
+      anchor: Math.min(s2.anchor, len),
+      focus: Math.min(s2.focus, len)
+    };
+  };
+  let range = () => {
+    let {
+      anchor,
+      focus
+    } = selection();
+    return anchor <= focus ? [anchor, focus] : [focus, anchor];
+  };
+  let setCaret = (offset) => setSelectionState({
+    anchor: offset,
+    focus: offset
+  });
+  let apply = (next, caret) => {
+    let max = options.maxLength?.();
+    if (max != null && next.length > max)
+      next = next.slice(0, max);
+    caret = Math.min(caret, next.length);
+    if (options.value?.() == null)
+      setInternalValue(next);
+    setCaret(caret);
+    options.onInput?.(next);
+  };
+  return {
+    value,
+    selection,
+    caret: () => selection().focus,
+    insertText: (text) => {
+      let v2 = value();
+      let [start, end] = range();
+      apply(v2.slice(0, start) + text + v2.slice(end), start + text.length);
+    },
+    deleteBackward: () => {
+      let v2 = value();
+      let [start, end] = range();
+      if (start !== end)
+        apply(v2.slice(0, start) + v2.slice(end), start);
+      else if (start > 0)
+        apply(v2.slice(0, start - 1) + v2.slice(start), start - 1);
+    },
+    deleteForward: () => {
+      let v2 = value();
+      let [start, end] = range();
+      if (start !== end)
+        apply(v2.slice(0, start) + v2.slice(end), start);
+      else if (end < v2.length)
+        apply(v2.slice(0, end) + v2.slice(end + 1), end);
+    },
+    move: (direction, opts) => {
+      let extend = opts?.extend ?? false;
+      let {
+        anchor,
+        focus
+      } = selection();
+      let len = value().length;
+      if (!extend && anchor !== focus && (direction === "left" || direction === "right")) {
+        setCaret(direction === "left" ? Math.min(anchor, focus) : Math.max(anchor, focus));
+        return;
+      }
+      let next = focus;
+      if (direction === "left")
+        next = Math.max(0, focus - 1);
+      else if (direction === "right")
+        next = Math.min(len, focus + 1);
+      else if (direction === "start")
+        next = 0;
+      else if (direction === "end")
+        next = len;
+      setSelectionState({
+        anchor: extend ? anchor : next,
+        focus: next
+      });
+    },
+    setSelection: (anchor, focus) => {
+      let len = value().length;
+      setSelectionState({
+        anchor: Math.min(anchor, len),
+        focus: Math.min(focus, len)
+      });
+    },
+    setValue: (next) => apply(next, next.length),
+    clear: () => apply("", 0)
+  };
+}
+function createCaretScroll(viewport, input) {
+  let [scrollX, setScrollX] = createSignal(0);
+  onLayout(() => {
+    let node = viewport();
+    if (!node)
+      return;
+    let vw = getBoundingBox2(node)?.width ?? 0;
+    let {
+      text,
+      fontSize,
+      caret,
+      caretWidth = 0
+    } = input();
+    let len = text.length;
+    let c3 = caret == null ? len : Math.max(0, Math.min(caret, len));
+    let totalWidth = measureText2(text, {
+      fontSize
+    }).width;
+    let caretX = c3 >= len ? totalWidth : measureText2(text.slice(0, c3), {
+      fontSize
+    }).width;
+    let maxScroll = Math.max(0, totalWidth + caretWidth - vw);
+    let cur = scrollX();
+    let next = cur;
+    if (vw <= 0) {
+      next = 0;
+    } else if (caretX < cur) {
+      next = caretX;
+    } else if (caretX + caretWidth > cur + vw) {
+      next = caretX + caretWidth - vw;
+    }
+    next = Math.max(0, Math.min(next, maxScroll));
+    if (next !== cur)
+      setScrollX(next);
+    flush();
+  });
+  return scrollX;
+}
+
+// packages/components/src/spacing.ts
+function space(token) {
+  return Math.round(theme.spacing[token] * densityScale());
+}
+
+// packages/components/src/text-input.tsx
+var CARET_WIDTH = 1;
+var TEXT_SHAPE_WIDTH = 1e9;
+function TextInput(props) {
+  let [focused, setFocused] = createSignal(false);
+  let [caretOn, setCaretOn] = createSignal(true);
+  let node;
+  let viewport;
+  let blinkId = null;
+  let buffer = createTextBuffer({
+    value: () => props.value,
+    defaultValue: props.defaultValue,
+    onInput: (v2) => props.onInput?.(v2),
+    maxLength: () => props.maxLength
+  });
+  let value = buffer.value;
+  createEffect(() => props.autoFocus, (autoFocus) => {
+    if (autoFocus && node)
+      setFocus(node.id);
+  });
+  let handlePointerDown = () => {
+    if (props.disabled)
+      return;
+    if (node)
+      setFocus(node.id);
+  };
+  let handleFocus = () => {
+    setFocused(true);
+    setCaretOn(true);
+    if (blinkId == null) {
+      blinkId = setInterval(() => setCaretOn((v2) => !v2), 500);
+    }
+    props.onFocus?.();
+  };
+  let handleBlur = () => {
+    setFocused(false);
+    if (blinkId != null) {
+      clearInterval(blinkId);
+      blinkId = null;
+    }
+    props.onBlur?.();
+  };
+  let handleKeyDown = (e3) => {
+    if (props.disabled)
+      return;
+    if (e3.key === "Backspace") {
+      buffer.deleteBackward();
+      setCaretOn(true);
+    } else if (e3.key === "Delete") {
+      buffer.deleteForward();
+      setCaretOn(true);
+    } else if (e3.key === "Left") {
+      buffer.move("left");
+      setCaretOn(true);
+    } else if (e3.key === "Right") {
+      buffer.move("right");
+      setCaretOn(true);
+    } else if (e3.key === "Home") {
+      buffer.move("start");
+      setCaretOn(true);
+    } else if (e3.key === "End") {
+      buffer.move("end");
+      setCaretOn(true);
+    } else if (e3.key === "Return" || e3.key === "Enter") {
+      props.onSubmit?.(value());
+      setFocus(null);
+    } else if (e3.key === "Escape") {
+      if (node)
+        setFocus(null);
+    }
+  };
+  let handleTextInput = (e3) => {
+    if (props.disabled)
+      return;
+    buffer.insertText(e3.text ?? "");
+    setCaretOn(true);
+  };
+  onCleanup(() => {
+    if (blinkId != null)
+      clearInterval(blinkId);
+  });
+  let textColor = () => props.style?.color ?? theme.color.text;
+  let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface;
+  let borderColor = () => props.style?.borderColor ?? (focused() && policy.focusRing ? theme.color.primary : theme.color.border);
+  let borderWidth = () => props.style?.borderWidth ?? theme.borderWidth.sm;
+  let borderRadius = () => props.style?.borderRadius ?? theme.radius.sm;
+  let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0;
+  let showCaret = () => focused() && caretOn() && !showPlaceholder();
+  let fontSize = () => theme.text.body.size * policy.textScale;
+  let rowHeight = () => Math.round(fontSize() * theme.text.body.lineHeight);
+  let caretX = () => measureText2(value().slice(0, buffer.caret()), {
+    fontSize: fontSize()
+  }).width;
+  let scrollX = createCaretScroll(() => viewport, () => ({
+    text: value(),
+    fontSize: fontSize(),
+    caret: buffer.caret(),
+    caretWidth: CARET_WIDTH
+  }));
+  let textStyle = (color) => ({
+    w: TEXT_SHAPE_WIDTH,
+    fontSize: fontSize(),
+    lineHeight: theme.text.body.lineHeight,
+    color,
+    maxLines: 1
+  });
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect", {
+    drawStyle: "stroke"
+  }), _el$4 = createElement("view", {
+    flex: 1,
+    overflow: "hidden"
+  });
+  insertNode2(_el$, _el$2);
+  insertNode2(_el$, _el$3);
+  insertNode2(_el$, _el$4);
+  ref(() => (n3) => node = n3, _el$);
+  setProp(_el$, "flexDirection", "row");
+  setProp(_el$, "alignItems", "center");
+  spread(_el$, mergeProps({
+    get paddingLeft() {
+      return space("md");
+    },
+    get paddingRight() {
+      return space("md");
+    },
+    get paddingTop() {
+      return space("sm");
+    },
+    get paddingBottom() {
+      return space("sm");
+    }
+  }, () => props.layout, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    },
+    onPointerDown: handlePointerDown,
+    onFocus: handleFocus,
+    onBlur: handleBlur,
+    onKeyDown: handleKeyDown,
+    onTextInput: handleTextInput
+  }), true);
+  ref(() => (n3) => viewport = n3, _el$4);
+  insert(_el$4, (() => {
+    var _c$ = memo2(() => !!showPlaceholder());
+    return () => _c$() ? (() => {
+      var _el$5 = createElement("d-text");
+      spread(_el$5, mergeProps(() => textStyle(theme.color.textMuted)), true);
+      insert(_el$5, () => props.placeholder ?? "");
+      return _el$5;
+    })() : [(() => {
+      var _el$6 = createElement("d-text");
+      spread(_el$6, mergeProps(() => textStyle(textColor())), true);
+      insert(_el$6, value);
+      return _el$6;
+    })(), memo2(() => memo2(() => !!showCaret())() ? (() => {
+      var _el$7 = createElement("d-rect", {
+        w: 1
+      });
+      effect3(() => ({
+        e: textColor(),
+        t: caretX(),
+        a: (rowHeight() - fontSize()) / 2,
+        o: fontSize()
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3,
+        o: o3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$7, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$7, "x", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$7, "y", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$7, "h", o3, _p$?.o);
+      });
+      return _el$7;
+    })() : null)];
+  })());
+  effect3(() => ({
+    e: surfaceColor(),
+    t: borderRadius(),
+    a: borderColor(),
+    o: borderWidth(),
+    i: borderRadius(),
+    n: rowHeight(),
+    s: scrollX()
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3,
+    o: o3,
+    i: i3,
+    n: n3,
+    s: s2
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$3, "color", a3, _p$?.a);
+    o3 !== _p$?.o && setProp(_el$3, "strokeWidth", o3, _p$?.o);
+    i3 !== _p$?.i && setProp(_el$3, "radius", i3, _p$?.i);
+    n3 !== _p$?.n && setProp(_el$4, "height", n3, _p$?.n);
+    s2 !== _p$?.s && setProp(_el$4, "scrollX", s2, _p$?.s);
+  });
+  return _el$;
+}
+// packages/components/src/scroll-view.tsx
+function ScrollView(props) {
+  let viewport;
+  let content;
+  let scroll = createScroll(() => viewport, () => content, {
+    axis: props.horizontal ? "horizontal" : "vertical"
+  });
+  let last = null;
+  let onPointerDown = (e3) => {
+    last = {
+      x: e3.clientX,
+      y: e3.clientY
+    };
+  };
+  let onPointerMove = (e3) => {
+    if (!last)
+      return;
+    scroll.scrollBy(last.x - e3.clientX, last.y - e3.clientY);
+    last = {
+      x: e3.clientX,
+      y: e3.clientY
+    };
+  };
+  let endDrag = () => {
+    last = null;
+  };
+  let onWheel = (e3) => {
+    if (props.horizontal)
+      scroll.scrollBy(e3.deltaX || e3.deltaY, 0);
+    else
+      scroll.scrollBy(e3.deltaX, e3.deltaY);
+  };
+  let direction = () => props.horizontal ? "row" : "column";
+  let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
+  let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
+  var _el$ = createElement("view"), _el$2 = createElement("view", {
+    flex: 1,
+    overflow: "hidden",
+    onPointerDown,
+    onPointerMove,
+    onPointerUp: endDrag,
+    onPointerLeave: endDrag,
+    onWheel
+  }), _el$3 = createElement("view", {
+    flexShrink: 0
+  });
+  insertNode2(_el$, _el$2);
+  var _ref$ = props.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  spread(_el$, mergeProps(() => props.layout, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    },
+    get onPointerEnter() {
+      return props.onPointerEnter;
+    },
+    get onPointerLeave() {
+      return props.onPointerLeave;
+    },
+    get onPointerDown() {
+      return props.onPointerDown;
+    },
+    get onPointerUp() {
+      return props.onPointerUp;
+    },
+    get onPointerMove() {
+      return props.onPointerMove;
+    },
+    get onWheel() {
+      return props.onWheel;
+    },
+    get pointerEvents() {
+      return props.pointerEvents;
+    }
+  }), true);
+  insert(_el$, (() => {
+    var _c$ = memo2(() => !!hasBackground());
+    return () => _c$() ? (() => {
+      var _el$4 = createElement("d-rect");
+      effect3(() => ({
+        e: props.style?.backgroundColor ?? "transparent",
+        t: props.style?.borderRadius
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$4, "radius", t3, _p$?.t);
+      });
+      return _el$4;
+    })() : null;
+  })(), _el$2);
+  insertNode2(_el$2, _el$3);
+  ref(() => (n3) => viewport = n3, _el$2);
+  ref(() => (n3) => content = n3, _el$3);
+  insert(_el$3, () => props.children);
+  insert(_el$, (() => {
+    var _c$2 = memo2(() => !!hasBorder());
+    return () => _c$2() ? (() => {
+      var _el$5 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: props.style?.borderColor ?? "transparent",
+        t: props.style?.borderWidth,
+        a: props.style?.borderRadius
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$5, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$5, "strokeWidth", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$5, "radius", a3, _p$?.a);
+      });
+      return _el$5;
+    })() : null;
+  })(), null);
+  effect3(() => ({
+    e: props.style?.borderRadius,
+    t: direction(),
+    a: scroll.offset().x,
+    o: scroll.offset().y,
+    i: direction()
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3,
+    o: o3,
+    i: i3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "clipRadius", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "flexDirection", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$2, "scrollX", a3, _p$?.a);
+    o3 !== _p$?.o && setProp(_el$2, "scrollY", o3, _p$?.o);
+    i3 !== _p$?.i && setProp(_el$3, "flexDirection", i3, _p$?.i);
+  });
+  return _el$;
+}
+// packages/components/src/pressable.tsx
+function Pressable(props) {
+  let [pressed, setPressed] = createSignal(false);
+  let [hovered, setHovered] = createSignal(false);
+  let state = () => ({
+    pressed: pressed(),
+    hovered: hovered()
+  });
+  let style = () => typeof props.style === "function" ? props.style(state()) : props.style;
+  let resolved2 = children(() => props.children);
+  let kids = () => {
+    let c3 = resolved2();
+    return typeof c3 === "function" ? c3(state()) : c3;
+  };
+  let handleDown = (e3) => {
+    if (e3.button != null && e3.button !== 0)
+      return;
+    setPressed(true);
+    props.onPointerDown?.(e3);
+  };
+  let handleUp = (e3) => {
+    if (pressed())
+      props.onPress?.();
+    setPressed(false);
+    props.onPointerUp?.(e3);
+  };
+  let handleEnter = (e3) => {
+    setHovered(true);
+    props.onPointerEnter?.(e3);
+  };
+  let handleLeave = (e3) => {
+    setHovered(false);
+    setPressed(false);
+    props.onPointerLeave?.(e3);
+  };
+  let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null;
+  let hasBorder = () => (style()?.borderWidth ?? 0) > 0;
+  var _el$ = createElement("view");
+  var _ref$ = props.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  setProp(_el$, "repaintBoundary", true);
+  spread(_el$, mergeProps(() => props.layout, {
+    get x() {
+      return style()?.x;
+    },
+    get y() {
+      return style()?.y;
+    },
+    get scale() {
+      return style()?.scale;
+    },
+    get rotate() {
+      return style()?.rotate;
+    },
+    get opacity() {
+      return style()?.opacity;
+    },
+    onPointerEnter: handleEnter,
+    onPointerLeave: handleLeave,
+    onPointerDown: handleDown,
+    onPointerUp: handleUp,
+    get onPointerMove() {
+      return props.onPointerMove;
+    },
+    get onWheel() {
+      return props.onWheel;
+    },
+    get onFocus() {
+      return props.onFocus;
+    },
+    get onBlur() {
+      return props.onBlur;
+    },
+    get onKeyDown() {
+      return props.onKeyDown;
+    },
+    get onKeyUp() {
+      return props.onKeyUp;
+    },
+    get onTextInput() {
+      return props.onTextInput;
+    },
+    get pointerEvents() {
+      return memo2(() => !!props.disabled)() ? "none" : props.pointerEvents;
+    }
+  }), true);
+  insert(_el$, (() => {
+    var _c$ = memo2(() => !!hasBackground());
+    return () => _c$() ? (() => {
+      var _el$2 = createElement("d-rect");
+      effect3(() => ({
+        e: style()?.backgroundColor ?? "transparent",
+        t: style()?.borderRadius
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+      });
+      return _el$2;
+    })() : null;
+  })(), null);
+  insert(_el$, kids, null);
+  insert(_el$, (() => {
+    var _c$2 = memo2(() => !!hasBorder());
+    return () => _c$2() ? (() => {
+      var _el$3 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: style()?.borderColor ?? "transparent",
+        t: style()?.borderWidth,
+        a: style()?.borderRadius
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$3, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$3, "strokeWidth", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$3, "radius", a3, _p$?.a);
+      });
+      return _el$3;
+    })() : null;
+  })(), null);
+  return _el$;
+}
+// packages/components/src/button.tsx
+function Button(props) {
+  let colors = () => {
+    let c3 = theme.color;
+    switch (props.variant ?? "primary") {
+      case "secondary":
+        return {
+          fill: c3.surface,
+          hover: c3.surfaceHover,
+          label: c3.text,
+          border: c3.border
+        };
+      case "ghost":
+        return {
+          fill: "transparent",
+          hover: c3.surfaceHover,
+          label: c3.text,
+          border: undefined
+        };
+      case "danger":
+        return {
+          fill: c3.danger,
+          hover: c3.dangerHover,
+          label: c3.onPrimary,
+          border: undefined
+        };
+      default:
+        return {
+          fill: c3.primary,
+          hover: c3.primaryHover,
+          label: c3.onPrimary,
+          border: undefined
+        };
+    }
+  };
+  let bg = (s2) => props.style?.backgroundColor ?? (props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : s2.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
+  let radius = () => props.style?.borderRadius ?? theme.radius.sm;
+  let label = () => props.disabled ? theme.color.textMuted : colors().label;
+  let resolved2 = children(() => props.children);
+  let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
+  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? (props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill));
+  return createComponent2(Pressable, {
+    get onPress() {
+      return props.onPress;
+    },
+    get disabled() {
+      return props.disabled;
+    },
+    get layout() {
+      return {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingTop: space("sm"),
+        paddingBottom: space("sm"),
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
+        ...props.layout
+      };
+    },
+    style: (s2) => ({
+      borderColor: colors().border,
+      borderWidth: colors().border != null ? theme.borderWidth.sm : undefined,
+      ...props.style,
+      backgroundColor: bg(s2),
+      borderRadius: radius(),
+      scale: (props.style?.scale ?? 1) * (s2.pressed && policy.motion !== "none" ? 0.97 : 1)
+    }),
+    get children() {
+      return createComponent2(Show, {
+        get when() {
+          return isText();
+        },
+        get fallback() {
+          return resolved2();
+        },
+        get children() {
+          var _el$ = createElement("text");
+          spread(_el$, mergeProps({
+            get color() {
+              return label();
+            }
+          }, () => typeStyle("body", labelOnDark())), true);
+          insert(_el$, resolved2);
+          return _el$;
+        }
+      });
+    }
+  });
+}
+// packages/components/src/radio.tsx
+var RadioContext = createContext2();
+// node_modules/.bun/qrcode-generator@2.0.4/node_modules/qrcode-generator/dist/qrcode.mjs
+var qrcode = function(typeNumber, errorCorrectionLevel) {
+  const PAD0 = 236;
+  const PAD1 = 17;
+  let _typeNumber = typeNumber;
+  const _errorCorrectionLevel = QRErrorCorrectionLevel[errorCorrectionLevel];
+  let _modules = null;
+  let _moduleCount = 0;
+  let _dataCache = null;
+  const _dataList = [];
+  const _this = {};
+  const makeImpl = function(test, maskPattern) {
+    _moduleCount = _typeNumber * 4 + 17;
+    _modules = function(moduleCount) {
+      const modules = new Array(moduleCount);
+      for (let row = 0;row < moduleCount; row += 1) {
+        modules[row] = new Array(moduleCount);
+        for (let col = 0;col < moduleCount; col += 1) {
+          modules[row][col] = null;
+        }
+      }
+      return modules;
+    }(_moduleCount);
+    setupPositionProbePattern(0, 0);
+    setupPositionProbePattern(_moduleCount - 7, 0);
+    setupPositionProbePattern(0, _moduleCount - 7);
+    setupPositionAdjustPattern();
+    setupTimingPattern();
+    setupTypeInfo(test, maskPattern);
+    if (_typeNumber >= 7) {
+      setupTypeNumber(test);
+    }
+    if (_dataCache == null) {
+      _dataCache = createData(_typeNumber, _errorCorrectionLevel, _dataList);
+    }
+    mapData(_dataCache, maskPattern);
+  };
+  const setupPositionProbePattern = function(row, col) {
+    for (let r3 = -1;r3 <= 7; r3 += 1) {
+      if (row + r3 <= -1 || _moduleCount <= row + r3)
+        continue;
+      for (let c3 = -1;c3 <= 7; c3 += 1) {
+        if (col + c3 <= -1 || _moduleCount <= col + c3)
+          continue;
+        if (0 <= r3 && r3 <= 6 && (c3 == 0 || c3 == 6) || 0 <= c3 && c3 <= 6 && (r3 == 0 || r3 == 6) || 2 <= r3 && r3 <= 4 && 2 <= c3 && c3 <= 4) {
+          _modules[row + r3][col + c3] = true;
+        } else {
+          _modules[row + r3][col + c3] = false;
+        }
+      }
+    }
+  };
+  const getBestMaskPattern = function() {
+    let minLostPoint = 0;
+    let pattern = 0;
+    for (let i3 = 0;i3 < 8; i3 += 1) {
+      makeImpl(true, i3);
+      const lostPoint = QRUtil.getLostPoint(_this);
+      if (i3 == 0 || minLostPoint > lostPoint) {
+        minLostPoint = lostPoint;
+        pattern = i3;
+      }
+    }
+    return pattern;
+  };
+  const setupTimingPattern = function() {
+    for (let r3 = 8;r3 < _moduleCount - 8; r3 += 1) {
+      if (_modules[r3][6] != null) {
+        continue;
+      }
+      _modules[r3][6] = r3 % 2 == 0;
+    }
+    for (let c3 = 8;c3 < _moduleCount - 8; c3 += 1) {
+      if (_modules[6][c3] != null) {
+        continue;
+      }
+      _modules[6][c3] = c3 % 2 == 0;
+    }
+  };
+  const setupPositionAdjustPattern = function() {
+    const pos = QRUtil.getPatternPosition(_typeNumber);
+    for (let i3 = 0;i3 < pos.length; i3 += 1) {
+      for (let j2 = 0;j2 < pos.length; j2 += 1) {
+        const row = pos[i3];
+        const col = pos[j2];
+        if (_modules[row][col] != null) {
+          continue;
+        }
+        for (let r3 = -2;r3 <= 2; r3 += 1) {
+          for (let c3 = -2;c3 <= 2; c3 += 1) {
+            if (r3 == -2 || r3 == 2 || c3 == -2 || c3 == 2 || r3 == 0 && c3 == 0) {
+              _modules[row + r3][col + c3] = true;
+            } else {
+              _modules[row + r3][col + c3] = false;
+            }
+          }
+        }
+      }
+    }
+  };
+  const setupTypeNumber = function(test) {
+    const bits = QRUtil.getBCHTypeNumber(_typeNumber);
+    for (let i3 = 0;i3 < 18; i3 += 1) {
+      const mod = !test && (bits >> i3 & 1) == 1;
+      _modules[Math.floor(i3 / 3)][i3 % 3 + _moduleCount - 8 - 3] = mod;
+    }
+    for (let i3 = 0;i3 < 18; i3 += 1) {
+      const mod = !test && (bits >> i3 & 1) == 1;
+      _modules[i3 % 3 + _moduleCount - 8 - 3][Math.floor(i3 / 3)] = mod;
+    }
+  };
+  const setupTypeInfo = function(test, maskPattern) {
+    const data = _errorCorrectionLevel << 3 | maskPattern;
+    const bits = QRUtil.getBCHTypeInfo(data);
+    for (let i3 = 0;i3 < 15; i3 += 1) {
+      const mod = !test && (bits >> i3 & 1) == 1;
+      if (i3 < 6) {
+        _modules[i3][8] = mod;
+      } else if (i3 < 8) {
+        _modules[i3 + 1][8] = mod;
+      } else {
+        _modules[_moduleCount - 15 + i3][8] = mod;
+      }
+    }
+    for (let i3 = 0;i3 < 15; i3 += 1) {
+      const mod = !test && (bits >> i3 & 1) == 1;
+      if (i3 < 8) {
+        _modules[8][_moduleCount - i3 - 1] = mod;
+      } else if (i3 < 9) {
+        _modules[8][15 - i3 - 1 + 1] = mod;
+      } else {
+        _modules[8][15 - i3 - 1] = mod;
+      }
+    }
+    _modules[_moduleCount - 8][8] = !test;
+  };
+  const mapData = function(data, maskPattern) {
+    let inc = -1;
+    let row = _moduleCount - 1;
+    let bitIndex = 7;
+    let byteIndex = 0;
+    const maskFunc = QRUtil.getMaskFunction(maskPattern);
+    for (let col = _moduleCount - 1;col > 0; col -= 2) {
+      if (col == 6)
+        col -= 1;
+      while (true) {
+        for (let c3 = 0;c3 < 2; c3 += 1) {
+          if (_modules[row][col - c3] == null) {
+            let dark = false;
+            if (byteIndex < data.length) {
+              dark = (data[byteIndex] >>> bitIndex & 1) == 1;
+            }
+            const mask = maskFunc(row, col - c3);
+            if (mask) {
+              dark = !dark;
+            }
+            _modules[row][col - c3] = dark;
+            bitIndex -= 1;
+            if (bitIndex == -1) {
+              byteIndex += 1;
+              bitIndex = 7;
+            }
+          }
+        }
+        row += inc;
+        if (row < 0 || _moduleCount <= row) {
+          row -= inc;
+          inc = -inc;
+          break;
+        }
+      }
+    }
+  };
+  const createBytes = function(buffer, rsBlocks) {
+    let offset = 0;
+    let maxDcCount = 0;
+    let maxEcCount = 0;
+    const dcdata = new Array(rsBlocks.length);
+    const ecdata = new Array(rsBlocks.length);
+    for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
+      const dcCount = rsBlocks[r3].dataCount;
+      const ecCount = rsBlocks[r3].totalCount - dcCount;
+      maxDcCount = Math.max(maxDcCount, dcCount);
+      maxEcCount = Math.max(maxEcCount, ecCount);
+      dcdata[r3] = new Array(dcCount);
+      for (let i3 = 0;i3 < dcdata[r3].length; i3 += 1) {
+        dcdata[r3][i3] = 255 & buffer.getBuffer()[i3 + offset];
+      }
+      offset += dcCount;
+      const rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+      const rawPoly = qrPolynomial(dcdata[r3], rsPoly.getLength() - 1);
+      const modPoly = rawPoly.mod(rsPoly);
+      ecdata[r3] = new Array(rsPoly.getLength() - 1);
+      for (let i3 = 0;i3 < ecdata[r3].length; i3 += 1) {
+        const modIndex = i3 + modPoly.getLength() - ecdata[r3].length;
+        ecdata[r3][i3] = modIndex >= 0 ? modPoly.getAt(modIndex) : 0;
+      }
+    }
+    let totalCodeCount = 0;
+    for (let i3 = 0;i3 < rsBlocks.length; i3 += 1) {
+      totalCodeCount += rsBlocks[i3].totalCount;
+    }
+    const data = new Array(totalCodeCount);
+    let index = 0;
+    for (let i3 = 0;i3 < maxDcCount; i3 += 1) {
+      for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
+        if (i3 < dcdata[r3].length) {
+          data[index] = dcdata[r3][i3];
+          index += 1;
+        }
+      }
+    }
+    for (let i3 = 0;i3 < maxEcCount; i3 += 1) {
+      for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
+        if (i3 < ecdata[r3].length) {
+          data[index] = ecdata[r3][i3];
+          index += 1;
+        }
+      }
+    }
+    return data;
+  };
+  const createData = function(typeNumber2, errorCorrectionLevel2, dataList) {
+    const rsBlocks = QRRSBlock.getRSBlocks(typeNumber2, errorCorrectionLevel2);
+    const buffer = qrBitBuffer();
+    for (let i3 = 0;i3 < dataList.length; i3 += 1) {
+      const data = dataList[i3];
+      buffer.put(data.getMode(), 4);
+      buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber2));
+      data.write(buffer);
+    }
+    let totalDataCount = 0;
+    for (let i3 = 0;i3 < rsBlocks.length; i3 += 1) {
+      totalDataCount += rsBlocks[i3].dataCount;
+    }
+    if (buffer.getLengthInBits() > totalDataCount * 8) {
+      throw "code length overflow. (" + buffer.getLengthInBits() + ">" + totalDataCount * 8 + ")";
+    }
+    if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+      buffer.put(0, 4);
+    }
+    while (buffer.getLengthInBits() % 8 != 0) {
+      buffer.putBit(false);
+    }
+    while (true) {
+      if (buffer.getLengthInBits() >= totalDataCount * 8) {
+        break;
+      }
+      buffer.put(PAD0, 8);
+      if (buffer.getLengthInBits() >= totalDataCount * 8) {
+        break;
+      }
+      buffer.put(PAD1, 8);
+    }
+    return createBytes(buffer, rsBlocks);
+  };
+  _this.addData = function(data, mode) {
+    mode = mode || "Byte";
+    let newData = null;
+    switch (mode) {
+      case "Numeric":
+        newData = qrNumber(data);
+        break;
+      case "Alphanumeric":
+        newData = qrAlphaNum(data);
+        break;
+      case "Byte":
+        newData = qr8BitByte(data);
+        break;
+      case "Kanji":
+        newData = qrKanji(data);
+        break;
+      default:
+        throw "mode:" + mode;
+    }
+    _dataList.push(newData);
+    _dataCache = null;
+  };
+  _this.isDark = function(row, col) {
+    if (row < 0 || _moduleCount <= row || col < 0 || _moduleCount <= col) {
+      throw row + "," + col;
+    }
+    return _modules[row][col];
+  };
+  _this.getModuleCount = function() {
+    return _moduleCount;
+  };
+  _this.make = function() {
+    if (_typeNumber < 1) {
+      let typeNumber2 = 1;
+      for (;typeNumber2 < 40; typeNumber2++) {
+        const rsBlocks = QRRSBlock.getRSBlocks(typeNumber2, _errorCorrectionLevel);
+        const buffer = qrBitBuffer();
+        for (let i3 = 0;i3 < _dataList.length; i3++) {
+          const data = _dataList[i3];
+          buffer.put(data.getMode(), 4);
+          buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber2));
+          data.write(buffer);
+        }
+        let totalDataCount = 0;
+        for (let i3 = 0;i3 < rsBlocks.length; i3++) {
+          totalDataCount += rsBlocks[i3].dataCount;
+        }
+        if (buffer.getLengthInBits() <= totalDataCount * 8) {
+          break;
+        }
+      }
+      _typeNumber = typeNumber2;
+    }
+    makeImpl(false, getBestMaskPattern());
+  };
+  _this.createTableTag = function(cellSize, margin) {
+    cellSize = cellSize || 2;
+    margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+    let qrHtml = "";
+    qrHtml += '<table style="';
+    qrHtml += " border-width: 0px; border-style: none;";
+    qrHtml += " border-collapse: collapse;";
+    qrHtml += " padding: 0px; margin: " + margin + "px;";
+    qrHtml += '">';
+    qrHtml += "<tbody>";
+    for (let r3 = 0;r3 < _this.getModuleCount(); r3 += 1) {
+      qrHtml += "<tr>";
+      for (let c3 = 0;c3 < _this.getModuleCount(); c3 += 1) {
+        qrHtml += '<td style="';
+        qrHtml += " border-width: 0px; border-style: none;";
+        qrHtml += " border-collapse: collapse;";
+        qrHtml += " padding: 0px; margin: 0px;";
+        qrHtml += " width: " + cellSize + "px;";
+        qrHtml += " height: " + cellSize + "px;";
+        qrHtml += " background-color: ";
+        qrHtml += _this.isDark(r3, c3) ? "#000000" : "#ffffff";
+        qrHtml += ";";
+        qrHtml += '"/>';
+      }
+      qrHtml += "</tr>";
+    }
+    qrHtml += "</tbody>";
+    qrHtml += "</table>";
+    return qrHtml;
+  };
+  _this.createSvgTag = function(cellSize, margin, alt, title) {
+    let opts = {};
+    if (typeof arguments[0] == "object") {
+      opts = arguments[0];
+      cellSize = opts.cellSize;
+      margin = opts.margin;
+      alt = opts.alt;
+      title = opts.title;
+    }
+    cellSize = cellSize || 2;
+    margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+    alt = typeof alt === "string" ? { text: alt } : alt || {};
+    alt.text = alt.text || null;
+    alt.id = alt.text ? alt.id || "qrcode-description" : null;
+    title = typeof title === "string" ? { text: title } : title || {};
+    title.text = title.text || null;
+    title.id = title.text ? title.id || "qrcode-title" : null;
+    const size = _this.getModuleCount() * cellSize + margin * 2;
+    let c3, mc, r3, mr, qrSvg = "", rect;
+    rect = "l" + cellSize + ",0 0," + cellSize + " -" + cellSize + ",0 0,-" + cellSize + "z ";
+    qrSvg += '<svg version="1.1" xmlns="http://www.w3.org/2000/svg"';
+    qrSvg += !opts.scalable ? ' width="' + size + 'px" height="' + size + 'px"' : "";
+    qrSvg += ' viewBox="0 0 ' + size + " " + size + '" ';
+    qrSvg += ' preserveAspectRatio="xMinYMin meet"';
+    qrSvg += title.text || alt.text ? ' role="img" aria-labelledby="' + escapeXml([title.id, alt.id].join(" ").trim()) + '"' : "";
+    qrSvg += ">";
+    qrSvg += title.text ? '<title id="' + escapeXml(title.id) + '">' + escapeXml(title.text) + "</title>" : "";
+    qrSvg += alt.text ? '<description id="' + escapeXml(alt.id) + '">' + escapeXml(alt.text) + "</description>" : "";
+    qrSvg += '<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>';
+    qrSvg += '<path d="';
+    for (r3 = 0;r3 < _this.getModuleCount(); r3 += 1) {
+      mr = r3 * cellSize + margin;
+      for (c3 = 0;c3 < _this.getModuleCount(); c3 += 1) {
+        if (_this.isDark(r3, c3)) {
+          mc = c3 * cellSize + margin;
+          qrSvg += "M" + mc + "," + mr + rect;
+        }
+      }
+    }
+    qrSvg += '" stroke="transparent" fill="black"/>';
+    qrSvg += "</svg>";
+    return qrSvg;
+  };
+  _this.createDataURL = function(cellSize, margin) {
+    cellSize = cellSize || 2;
+    margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+    const size = _this.getModuleCount() * cellSize + margin * 2;
+    const min = margin;
+    const max = size - margin;
+    return createDataURL(size, size, function(x2, y2) {
+      if (min <= x2 && x2 < max && min <= y2 && y2 < max) {
+        const c3 = Math.floor((x2 - min) / cellSize);
+        const r3 = Math.floor((y2 - min) / cellSize);
+        return _this.isDark(r3, c3) ? 0 : 1;
+      } else {
+        return 1;
+      }
+    });
+  };
+  _this.createImgTag = function(cellSize, margin, alt) {
+    cellSize = cellSize || 2;
+    margin = typeof margin == "undefined" ? cellSize * 4 : margin;
+    const size = _this.getModuleCount() * cellSize + margin * 2;
+    let img = "";
+    img += "<img";
+    img += ' src="';
+    img += _this.createDataURL(cellSize, margin);
+    img += '"';
+    img += ' width="';
+    img += size;
+    img += '"';
+    img += ' height="';
+    img += size;
+    img += '"';
+    if (alt) {
+      img += ' alt="';
+      img += escapeXml(alt);
+      img += '"';
+    }
+    img += "/>";
+    return img;
+  };
+  const escapeXml = function(s2) {
+    let escaped = "";
+    for (let i3 = 0;i3 < s2.length; i3 += 1) {
+      const c3 = s2.charAt(i3);
+      switch (c3) {
+        case "<":
+          escaped += "&lt;";
+          break;
+        case ">":
+          escaped += "&gt;";
+          break;
+        case "&":
+          escaped += "&amp;";
+          break;
+        case '"':
+          escaped += "&quot;";
+          break;
+        default:
+          escaped += c3;
+          break;
+      }
+    }
+    return escaped;
+  };
+  const _createHalfASCII = function(margin) {
+    const cellSize = 1;
+    margin = typeof margin == "undefined" ? cellSize * 2 : margin;
+    const size = _this.getModuleCount() * cellSize + margin * 2;
+    const min = margin;
+    const max = size - margin;
+    let y2, x2, r1, r22, p3;
+    const blocks = {
+      "██": "█",
+      "█ ": "▀",
+      " █": "▄",
+      "  ": " "
+    };
+    const blocksLastLineNoMargin = {
+      "██": "▀",
+      "█ ": "▀",
+      " █": " ",
+      "  ": " "
+    };
+    let ascii = "";
+    for (y2 = 0;y2 < size; y2 += 2) {
+      r1 = Math.floor((y2 - min) / cellSize);
+      r22 = Math.floor((y2 + 1 - min) / cellSize);
+      for (x2 = 0;x2 < size; x2 += 1) {
+        p3 = "█";
+        if (min <= x2 && x2 < max && min <= y2 && y2 < max && _this.isDark(r1, Math.floor((x2 - min) / cellSize))) {
+          p3 = " ";
+        }
+        if (min <= x2 && x2 < max && min <= y2 + 1 && y2 + 1 < max && _this.isDark(r22, Math.floor((x2 - min) / cellSize))) {
+          p3 += " ";
+        } else {
+          p3 += "█";
+        }
+        ascii += margin < 1 && y2 + 1 >= max ? blocksLastLineNoMargin[p3] : blocks[p3];
+      }
+      ascii += `
+`;
+    }
+    if (size % 2 && margin > 0) {
+      return ascii.substring(0, ascii.length - size - 1) + Array(size + 1).join("▀");
+    }
+    return ascii.substring(0, ascii.length - 1);
+  };
+  _this.createASCII = function(cellSize, margin) {
+    cellSize = cellSize || 1;
+    if (cellSize < 2) {
+      return _createHalfASCII(margin);
+    }
+    cellSize -= 1;
+    margin = typeof margin == "undefined" ? cellSize * 2 : margin;
+    const size = _this.getModuleCount() * cellSize + margin * 2;
+    const min = margin;
+    const max = size - margin;
+    let y2, x2, r3, p3;
+    const white = Array(cellSize + 1).join("██");
+    const black = Array(cellSize + 1).join("  ");
+    let ascii = "";
+    let line = "";
+    for (y2 = 0;y2 < size; y2 += 1) {
+      r3 = Math.floor((y2 - min) / cellSize);
+      line = "";
+      for (x2 = 0;x2 < size; x2 += 1) {
+        p3 = 1;
+        if (min <= x2 && x2 < max && min <= y2 && y2 < max && _this.isDark(r3, Math.floor((x2 - min) / cellSize))) {
+          p3 = 0;
+        }
+        line += p3 ? white : black;
+      }
+      for (r3 = 0;r3 < cellSize; r3 += 1) {
+        ascii += line + `
+`;
+      }
+    }
+    return ascii.substring(0, ascii.length - 1);
+  };
+  _this.renderTo2dContext = function(context2, cellSize) {
+    cellSize = cellSize || 2;
+    const length = _this.getModuleCount();
+    for (let row = 0;row < length; row++) {
+      for (let col = 0;col < length; col++) {
+        context2.fillStyle = _this.isDark(row, col) ? "black" : "white";
+        context2.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+      }
+    }
+  };
+  return _this;
+};
+qrcode.stringToBytes = function(s2) {
+  const bytes = [];
+  for (let i3 = 0;i3 < s2.length; i3 += 1) {
+    const c3 = s2.charCodeAt(i3);
+    bytes.push(c3 & 255);
+  }
+  return bytes;
+};
+qrcode.createStringToBytes = function(unicodeData, numChars) {
+  const unicodeMap = function() {
+    const bin = base64DecodeInputStream(unicodeData);
+    const read2 = function() {
+      const b2 = bin.read();
+      if (b2 == -1)
+        throw "eof";
+      return b2;
+    };
+    let count = 0;
+    const unicodeMap2 = {};
+    while (true) {
+      const b0 = bin.read();
+      if (b0 == -1)
+        break;
+      const b1 = read2();
+      const b2 = read2();
+      const b3 = read2();
+      const k2 = String.fromCharCode(b0 << 8 | b1);
+      const v2 = b2 << 8 | b3;
+      unicodeMap2[k2] = v2;
+      count += 1;
+    }
+    if (count != numChars) {
+      throw count + " != " + numChars;
+    }
+    return unicodeMap2;
+  }();
+  const unknownChar = 63;
+  return function(s2) {
+    const bytes = [];
+    for (let i3 = 0;i3 < s2.length; i3 += 1) {
+      const c3 = s2.charCodeAt(i3);
+      if (c3 < 128) {
+        bytes.push(c3);
+      } else {
+        const b2 = unicodeMap[s2.charAt(i3)];
+        if (typeof b2 == "number") {
+          if ((b2 & 255) == b2) {
+            bytes.push(b2);
+          } else {
+            bytes.push(b2 >>> 8);
+            bytes.push(b2 & 255);
+          }
+        } else {
+          bytes.push(unknownChar);
+        }
+      }
+    }
+    return bytes;
+  };
+};
+var QRMode = {
+  MODE_NUMBER: 1 << 0,
+  MODE_ALPHA_NUM: 1 << 1,
+  MODE_8BIT_BYTE: 1 << 2,
+  MODE_KANJI: 1 << 3
+};
+var QRErrorCorrectionLevel = {
+  L: 1,
+  M: 0,
+  Q: 3,
+  H: 2
+};
+var QRMaskPattern = {
+  PATTERN000: 0,
+  PATTERN001: 1,
+  PATTERN010: 2,
+  PATTERN011: 3,
+  PATTERN100: 4,
+  PATTERN101: 5,
+  PATTERN110: 6,
+  PATTERN111: 7
+};
+var QRUtil = function() {
+  const PATTERN_POSITION_TABLE = [
+    [],
+    [6, 18],
+    [6, 22],
+    [6, 26],
+    [6, 30],
+    [6, 34],
+    [6, 22, 38],
+    [6, 24, 42],
+    [6, 26, 46],
+    [6, 28, 50],
+    [6, 30, 54],
+    [6, 32, 58],
+    [6, 34, 62],
+    [6, 26, 46, 66],
+    [6, 26, 48, 70],
+    [6, 26, 50, 74],
+    [6, 30, 54, 78],
+    [6, 30, 56, 82],
+    [6, 30, 58, 86],
+    [6, 34, 62, 90],
+    [6, 28, 50, 72, 94],
+    [6, 26, 50, 74, 98],
+    [6, 30, 54, 78, 102],
+    [6, 28, 54, 80, 106],
+    [6, 32, 58, 84, 110],
+    [6, 30, 58, 86, 114],
+    [6, 34, 62, 90, 118],
+    [6, 26, 50, 74, 98, 122],
+    [6, 30, 54, 78, 102, 126],
+    [6, 26, 52, 78, 104, 130],
+    [6, 30, 56, 82, 108, 134],
+    [6, 34, 60, 86, 112, 138],
+    [6, 30, 58, 86, 114, 142],
+    [6, 34, 62, 90, 118, 146],
+    [6, 30, 54, 78, 102, 126, 150],
+    [6, 24, 50, 76, 102, 128, 154],
+    [6, 28, 54, 80, 106, 132, 158],
+    [6, 32, 58, 84, 110, 136, 162],
+    [6, 26, 54, 82, 110, 138, 166],
+    [6, 30, 58, 86, 114, 142, 170]
+  ];
+  const G15 = 1 << 10 | 1 << 8 | 1 << 5 | 1 << 4 | 1 << 2 | 1 << 1 | 1 << 0;
+  const G18 = 1 << 12 | 1 << 11 | 1 << 10 | 1 << 9 | 1 << 8 | 1 << 5 | 1 << 2 | 1 << 0;
+  const G15_MASK = 1 << 14 | 1 << 12 | 1 << 10 | 1 << 4 | 1 << 1;
+  const _this = {};
+  const getBCHDigit = function(data) {
+    let digit = 0;
+    while (data != 0) {
+      digit += 1;
+      data >>>= 1;
+    }
+    return digit;
+  };
+  _this.getBCHTypeInfo = function(data) {
+    let d2 = data << 10;
+    while (getBCHDigit(d2) - getBCHDigit(G15) >= 0) {
+      d2 ^= G15 << getBCHDigit(d2) - getBCHDigit(G15);
+    }
+    return (data << 10 | d2) ^ G15_MASK;
+  };
+  _this.getBCHTypeNumber = function(data) {
+    let d2 = data << 12;
+    while (getBCHDigit(d2) - getBCHDigit(G18) >= 0) {
+      d2 ^= G18 << getBCHDigit(d2) - getBCHDigit(G18);
+    }
+    return data << 12 | d2;
+  };
+  _this.getPatternPosition = function(typeNumber) {
+    return PATTERN_POSITION_TABLE[typeNumber - 1];
+  };
+  _this.getMaskFunction = function(maskPattern) {
+    switch (maskPattern) {
+      case QRMaskPattern.PATTERN000:
+        return function(i3, j2) {
+          return (i3 + j2) % 2 == 0;
+        };
+      case QRMaskPattern.PATTERN001:
+        return function(i3, j2) {
+          return i3 % 2 == 0;
+        };
+      case QRMaskPattern.PATTERN010:
+        return function(i3, j2) {
+          return j2 % 3 == 0;
+        };
+      case QRMaskPattern.PATTERN011:
+        return function(i3, j2) {
+          return (i3 + j2) % 3 == 0;
+        };
+      case QRMaskPattern.PATTERN100:
+        return function(i3, j2) {
+          return (Math.floor(i3 / 2) + Math.floor(j2 / 3)) % 2 == 0;
+        };
+      case QRMaskPattern.PATTERN101:
+        return function(i3, j2) {
+          return i3 * j2 % 2 + i3 * j2 % 3 == 0;
+        };
+      case QRMaskPattern.PATTERN110:
+        return function(i3, j2) {
+          return (i3 * j2 % 2 + i3 * j2 % 3) % 2 == 0;
+        };
+      case QRMaskPattern.PATTERN111:
+        return function(i3, j2) {
+          return (i3 * j2 % 3 + (i3 + j2) % 2) % 2 == 0;
+        };
+      default:
+        throw "bad maskPattern:" + maskPattern;
+    }
+  };
+  _this.getErrorCorrectPolynomial = function(errorCorrectLength) {
+    let a3 = qrPolynomial([1], 0);
+    for (let i3 = 0;i3 < errorCorrectLength; i3 += 1) {
+      a3 = a3.multiply(qrPolynomial([1, QRMath.gexp(i3)], 0));
+    }
+    return a3;
+  };
+  _this.getLengthInBits = function(mode, type) {
+    if (1 <= type && type < 10) {
+      switch (mode) {
+        case QRMode.MODE_NUMBER:
+          return 10;
+        case QRMode.MODE_ALPHA_NUM:
+          return 9;
+        case QRMode.MODE_8BIT_BYTE:
+          return 8;
+        case QRMode.MODE_KANJI:
+          return 8;
+        default:
+          throw "mode:" + mode;
+      }
+    } else if (type < 27) {
+      switch (mode) {
+        case QRMode.MODE_NUMBER:
+          return 12;
+        case QRMode.MODE_ALPHA_NUM:
+          return 11;
+        case QRMode.MODE_8BIT_BYTE:
+          return 16;
+        case QRMode.MODE_KANJI:
+          return 10;
+        default:
+          throw "mode:" + mode;
+      }
+    } else if (type < 41) {
+      switch (mode) {
+        case QRMode.MODE_NUMBER:
+          return 14;
+        case QRMode.MODE_ALPHA_NUM:
+          return 13;
+        case QRMode.MODE_8BIT_BYTE:
+          return 16;
+        case QRMode.MODE_KANJI:
+          return 12;
+        default:
+          throw "mode:" + mode;
+      }
+    } else {
+      throw "type:" + type;
+    }
+  };
+  _this.getLostPoint = function(qrcode2) {
+    const moduleCount = qrcode2.getModuleCount();
+    let lostPoint = 0;
+    for (let row = 0;row < moduleCount; row += 1) {
+      for (let col = 0;col < moduleCount; col += 1) {
+        let sameCount = 0;
+        const dark = qrcode2.isDark(row, col);
+        for (let r3 = -1;r3 <= 1; r3 += 1) {
+          if (row + r3 < 0 || moduleCount <= row + r3) {
+            continue;
+          }
+          for (let c3 = -1;c3 <= 1; c3 += 1) {
+            if (col + c3 < 0 || moduleCount <= col + c3) {
+              continue;
+            }
+            if (r3 == 0 && c3 == 0) {
+              continue;
+            }
+            if (dark == qrcode2.isDark(row + r3, col + c3)) {
+              sameCount += 1;
+            }
+          }
+        }
+        if (sameCount > 5) {
+          lostPoint += 3 + sameCount - 5;
+        }
+      }
+    }
+    for (let row = 0;row < moduleCount - 1; row += 1) {
+      for (let col = 0;col < moduleCount - 1; col += 1) {
+        let count = 0;
+        if (qrcode2.isDark(row, col))
+          count += 1;
+        if (qrcode2.isDark(row + 1, col))
+          count += 1;
+        if (qrcode2.isDark(row, col + 1))
+          count += 1;
+        if (qrcode2.isDark(row + 1, col + 1))
+          count += 1;
+        if (count == 0 || count == 4) {
+          lostPoint += 3;
+        }
+      }
+    }
+    for (let row = 0;row < moduleCount; row += 1) {
+      for (let col = 0;col < moduleCount - 6; col += 1) {
+        if (qrcode2.isDark(row, col) && !qrcode2.isDark(row, col + 1) && qrcode2.isDark(row, col + 2) && qrcode2.isDark(row, col + 3) && qrcode2.isDark(row, col + 4) && !qrcode2.isDark(row, col + 5) && qrcode2.isDark(row, col + 6)) {
+          lostPoint += 40;
+        }
+      }
+    }
+    for (let col = 0;col < moduleCount; col += 1) {
+      for (let row = 0;row < moduleCount - 6; row += 1) {
+        if (qrcode2.isDark(row, col) && !qrcode2.isDark(row + 1, col) && qrcode2.isDark(row + 2, col) && qrcode2.isDark(row + 3, col) && qrcode2.isDark(row + 4, col) && !qrcode2.isDark(row + 5, col) && qrcode2.isDark(row + 6, col)) {
+          lostPoint += 40;
+        }
+      }
+    }
+    let darkCount = 0;
+    for (let col = 0;col < moduleCount; col += 1) {
+      for (let row = 0;row < moduleCount; row += 1) {
+        if (qrcode2.isDark(row, col)) {
+          darkCount += 1;
+        }
+      }
+    }
+    const ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+    lostPoint += ratio * 10;
+    return lostPoint;
+  };
+  return _this;
+}();
+var QRMath = function() {
+  const EXP_TABLE = new Array(256);
+  const LOG_TABLE = new Array(256);
+  for (let i3 = 0;i3 < 8; i3 += 1) {
+    EXP_TABLE[i3] = 1 << i3;
+  }
+  for (let i3 = 8;i3 < 256; i3 += 1) {
+    EXP_TABLE[i3] = EXP_TABLE[i3 - 4] ^ EXP_TABLE[i3 - 5] ^ EXP_TABLE[i3 - 6] ^ EXP_TABLE[i3 - 8];
+  }
+  for (let i3 = 0;i3 < 255; i3 += 1) {
+    LOG_TABLE[EXP_TABLE[i3]] = i3;
+  }
+  const _this = {};
+  _this.glog = function(n3) {
+    if (n3 < 1) {
+      throw "glog(" + n3 + ")";
+    }
+    return LOG_TABLE[n3];
+  };
+  _this.gexp = function(n3) {
+    while (n3 < 0) {
+      n3 += 255;
+    }
+    while (n3 >= 256) {
+      n3 -= 255;
+    }
+    return EXP_TABLE[n3];
+  };
+  return _this;
+}();
+var qrPolynomial = function(num, shift) {
+  if (typeof num.length == "undefined") {
+    throw num.length + "/" + shift;
+  }
+  const _num = function() {
+    let offset = 0;
+    while (offset < num.length && num[offset] == 0) {
+      offset += 1;
+    }
+    const _num2 = new Array(num.length - offset + shift);
+    for (let i3 = 0;i3 < num.length - offset; i3 += 1) {
+      _num2[i3] = num[i3 + offset];
+    }
+    return _num2;
+  }();
+  const _this = {};
+  _this.getAt = function(index) {
+    return _num[index];
+  };
+  _this.getLength = function() {
+    return _num.length;
+  };
+  _this.multiply = function(e3) {
+    const num2 = new Array(_this.getLength() + e3.getLength() - 1);
+    for (let i3 = 0;i3 < _this.getLength(); i3 += 1) {
+      for (let j2 = 0;j2 < e3.getLength(); j2 += 1) {
+        num2[i3 + j2] ^= QRMath.gexp(QRMath.glog(_this.getAt(i3)) + QRMath.glog(e3.getAt(j2)));
+      }
+    }
+    return qrPolynomial(num2, 0);
+  };
+  _this.mod = function(e3) {
+    if (_this.getLength() - e3.getLength() < 0) {
+      return _this;
+    }
+    const ratio = QRMath.glog(_this.getAt(0)) - QRMath.glog(e3.getAt(0));
+    const num2 = new Array(_this.getLength());
+    for (let i3 = 0;i3 < _this.getLength(); i3 += 1) {
+      num2[i3] = _this.getAt(i3);
+    }
+    for (let i3 = 0;i3 < e3.getLength(); i3 += 1) {
+      num2[i3] ^= QRMath.gexp(QRMath.glog(e3.getAt(i3)) + ratio);
+    }
+    return qrPolynomial(num2, 0).mod(e3);
+  };
+  return _this;
+};
+var QRRSBlock = function() {
+  const RS_BLOCK_TABLE = [
+    [1, 26, 19],
+    [1, 26, 16],
+    [1, 26, 13],
+    [1, 26, 9],
+    [1, 44, 34],
+    [1, 44, 28],
+    [1, 44, 22],
+    [1, 44, 16],
+    [1, 70, 55],
+    [1, 70, 44],
+    [2, 35, 17],
+    [2, 35, 13],
+    [1, 100, 80],
+    [2, 50, 32],
+    [2, 50, 24],
+    [4, 25, 9],
+    [1, 134, 108],
+    [2, 67, 43],
+    [2, 33, 15, 2, 34, 16],
+    [2, 33, 11, 2, 34, 12],
+    [2, 86, 68],
+    [4, 43, 27],
+    [4, 43, 19],
+    [4, 43, 15],
+    [2, 98, 78],
+    [4, 49, 31],
+    [2, 32, 14, 4, 33, 15],
+    [4, 39, 13, 1, 40, 14],
+    [2, 121, 97],
+    [2, 60, 38, 2, 61, 39],
+    [4, 40, 18, 2, 41, 19],
+    [4, 40, 14, 2, 41, 15],
+    [2, 146, 116],
+    [3, 58, 36, 2, 59, 37],
+    [4, 36, 16, 4, 37, 17],
+    [4, 36, 12, 4, 37, 13],
+    [2, 86, 68, 2, 87, 69],
+    [4, 69, 43, 1, 70, 44],
+    [6, 43, 19, 2, 44, 20],
+    [6, 43, 15, 2, 44, 16],
+    [4, 101, 81],
+    [1, 80, 50, 4, 81, 51],
+    [4, 50, 22, 4, 51, 23],
+    [3, 36, 12, 8, 37, 13],
+    [2, 116, 92, 2, 117, 93],
+    [6, 58, 36, 2, 59, 37],
+    [4, 46, 20, 6, 47, 21],
+    [7, 42, 14, 4, 43, 15],
+    [4, 133, 107],
+    [8, 59, 37, 1, 60, 38],
+    [8, 44, 20, 4, 45, 21],
+    [12, 33, 11, 4, 34, 12],
+    [3, 145, 115, 1, 146, 116],
+    [4, 64, 40, 5, 65, 41],
+    [11, 36, 16, 5, 37, 17],
+    [11, 36, 12, 5, 37, 13],
+    [5, 109, 87, 1, 110, 88],
+    [5, 65, 41, 5, 66, 42],
+    [5, 54, 24, 7, 55, 25],
+    [11, 36, 12, 7, 37, 13],
+    [5, 122, 98, 1, 123, 99],
+    [7, 73, 45, 3, 74, 46],
+    [15, 43, 19, 2, 44, 20],
+    [3, 45, 15, 13, 46, 16],
+    [1, 135, 107, 5, 136, 108],
+    [10, 74, 46, 1, 75, 47],
+    [1, 50, 22, 15, 51, 23],
+    [2, 42, 14, 17, 43, 15],
+    [5, 150, 120, 1, 151, 121],
+    [9, 69, 43, 4, 70, 44],
+    [17, 50, 22, 1, 51, 23],
+    [2, 42, 14, 19, 43, 15],
+    [3, 141, 113, 4, 142, 114],
+    [3, 70, 44, 11, 71, 45],
+    [17, 47, 21, 4, 48, 22],
+    [9, 39, 13, 16, 40, 14],
+    [3, 135, 107, 5, 136, 108],
+    [3, 67, 41, 13, 68, 42],
+    [15, 54, 24, 5, 55, 25],
+    [15, 43, 15, 10, 44, 16],
+    [4, 144, 116, 4, 145, 117],
+    [17, 68, 42],
+    [17, 50, 22, 6, 51, 23],
+    [19, 46, 16, 6, 47, 17],
+    [2, 139, 111, 7, 140, 112],
+    [17, 74, 46],
+    [7, 54, 24, 16, 55, 25],
+    [34, 37, 13],
+    [4, 151, 121, 5, 152, 122],
+    [4, 75, 47, 14, 76, 48],
+    [11, 54, 24, 14, 55, 25],
+    [16, 45, 15, 14, 46, 16],
+    [6, 147, 117, 4, 148, 118],
+    [6, 73, 45, 14, 74, 46],
+    [11, 54, 24, 16, 55, 25],
+    [30, 46, 16, 2, 47, 17],
+    [8, 132, 106, 4, 133, 107],
+    [8, 75, 47, 13, 76, 48],
+    [7, 54, 24, 22, 55, 25],
+    [22, 45, 15, 13, 46, 16],
+    [10, 142, 114, 2, 143, 115],
+    [19, 74, 46, 4, 75, 47],
+    [28, 50, 22, 6, 51, 23],
+    [33, 46, 16, 4, 47, 17],
+    [8, 152, 122, 4, 153, 123],
+    [22, 73, 45, 3, 74, 46],
+    [8, 53, 23, 26, 54, 24],
+    [12, 45, 15, 28, 46, 16],
+    [3, 147, 117, 10, 148, 118],
+    [3, 73, 45, 23, 74, 46],
+    [4, 54, 24, 31, 55, 25],
+    [11, 45, 15, 31, 46, 16],
+    [7, 146, 116, 7, 147, 117],
+    [21, 73, 45, 7, 74, 46],
+    [1, 53, 23, 37, 54, 24],
+    [19, 45, 15, 26, 46, 16],
+    [5, 145, 115, 10, 146, 116],
+    [19, 75, 47, 10, 76, 48],
+    [15, 54, 24, 25, 55, 25],
+    [23, 45, 15, 25, 46, 16],
+    [13, 145, 115, 3, 146, 116],
+    [2, 74, 46, 29, 75, 47],
+    [42, 54, 24, 1, 55, 25],
+    [23, 45, 15, 28, 46, 16],
+    [17, 145, 115],
+    [10, 74, 46, 23, 75, 47],
+    [10, 54, 24, 35, 55, 25],
+    [19, 45, 15, 35, 46, 16],
+    [17, 145, 115, 1, 146, 116],
+    [14, 74, 46, 21, 75, 47],
+    [29, 54, 24, 19, 55, 25],
+    [11, 45, 15, 46, 46, 16],
+    [13, 145, 115, 6, 146, 116],
+    [14, 74, 46, 23, 75, 47],
+    [44, 54, 24, 7, 55, 25],
+    [59, 46, 16, 1, 47, 17],
+    [12, 151, 121, 7, 152, 122],
+    [12, 75, 47, 26, 76, 48],
+    [39, 54, 24, 14, 55, 25],
+    [22, 45, 15, 41, 46, 16],
+    [6, 151, 121, 14, 152, 122],
+    [6, 75, 47, 34, 76, 48],
+    [46, 54, 24, 10, 55, 25],
+    [2, 45, 15, 64, 46, 16],
+    [17, 152, 122, 4, 153, 123],
+    [29, 74, 46, 14, 75, 47],
+    [49, 54, 24, 10, 55, 25],
+    [24, 45, 15, 46, 46, 16],
+    [4, 152, 122, 18, 153, 123],
+    [13, 74, 46, 32, 75, 47],
+    [48, 54, 24, 14, 55, 25],
+    [42, 45, 15, 32, 46, 16],
+    [20, 147, 117, 4, 148, 118],
+    [40, 75, 47, 7, 76, 48],
+    [43, 54, 24, 22, 55, 25],
+    [10, 45, 15, 67, 46, 16],
+    [19, 148, 118, 6, 149, 119],
+    [18, 75, 47, 31, 76, 48],
+    [34, 54, 24, 34, 55, 25],
+    [20, 45, 15, 61, 46, 16]
+  ];
+  const qrRSBlock = function(totalCount, dataCount) {
+    const _this2 = {};
+    _this2.totalCount = totalCount;
+    _this2.dataCount = dataCount;
+    return _this2;
+  };
+  const _this = {};
+  const getRsBlockTable = function(typeNumber, errorCorrectionLevel) {
+    switch (errorCorrectionLevel) {
+      case QRErrorCorrectionLevel.L:
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+      case QRErrorCorrectionLevel.M:
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+      case QRErrorCorrectionLevel.Q:
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+      case QRErrorCorrectionLevel.H:
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+      default:
+        return;
+    }
+  };
+  _this.getRSBlocks = function(typeNumber, errorCorrectionLevel) {
+    const rsBlock = getRsBlockTable(typeNumber, errorCorrectionLevel);
+    if (typeof rsBlock == "undefined") {
+      throw "bad rs block @ typeNumber:" + typeNumber + "/errorCorrectionLevel:" + errorCorrectionLevel;
+    }
+    const length = rsBlock.length / 3;
+    const list = [];
+    for (let i3 = 0;i3 < length; i3 += 1) {
+      const count = rsBlock[i3 * 3 + 0];
+      const totalCount = rsBlock[i3 * 3 + 1];
+      const dataCount = rsBlock[i3 * 3 + 2];
+      for (let j2 = 0;j2 < count; j2 += 1) {
+        list.push(qrRSBlock(totalCount, dataCount));
+      }
+    }
+    return list;
+  };
+  return _this;
+}();
+var qrBitBuffer = function() {
+  const _buffer = [];
+  let _length = 0;
+  const _this = {};
+  _this.getBuffer = function() {
+    return _buffer;
+  };
+  _this.getAt = function(index) {
+    const bufIndex = Math.floor(index / 8);
+    return (_buffer[bufIndex] >>> 7 - index % 8 & 1) == 1;
+  };
+  _this.put = function(num, length) {
+    for (let i3 = 0;i3 < length; i3 += 1) {
+      _this.putBit((num >>> length - i3 - 1 & 1) == 1);
+    }
+  };
+  _this.getLengthInBits = function() {
+    return _length;
+  };
+  _this.putBit = function(bit) {
+    const bufIndex = Math.floor(_length / 8);
+    if (_buffer.length <= bufIndex) {
+      _buffer.push(0);
+    }
+    if (bit) {
+      _buffer[bufIndex] |= 128 >>> _length % 8;
+    }
+    _length += 1;
+  };
+  return _this;
+};
+var qrNumber = function(data) {
+  const _mode = QRMode.MODE_NUMBER;
+  const _data = data;
+  const _this = {};
+  _this.getMode = function() {
+    return _mode;
+  };
+  _this.getLength = function(buffer) {
+    return _data.length;
+  };
+  _this.write = function(buffer) {
+    const data2 = _data;
+    let i3 = 0;
+    while (i3 + 2 < data2.length) {
+      buffer.put(strToNum(data2.substring(i3, i3 + 3)), 10);
+      i3 += 3;
+    }
+    if (i3 < data2.length) {
+      if (data2.length - i3 == 1) {
+        buffer.put(strToNum(data2.substring(i3, i3 + 1)), 4);
+      } else if (data2.length - i3 == 2) {
+        buffer.put(strToNum(data2.substring(i3, i3 + 2)), 7);
+      }
+    }
+  };
+  const strToNum = function(s2) {
+    let num = 0;
+    for (let i3 = 0;i3 < s2.length; i3 += 1) {
+      num = num * 10 + chatToNum(s2.charAt(i3));
+    }
+    return num;
+  };
+  const chatToNum = function(c3) {
+    if ("0" <= c3 && c3 <= "9") {
+      return c3.charCodeAt(0) - 48;
+    }
+    throw "illegal char :" + c3;
+  };
+  return _this;
+};
+var qrAlphaNum = function(data) {
+  const _mode = QRMode.MODE_ALPHA_NUM;
+  const _data = data;
+  const _this = {};
+  _this.getMode = function() {
+    return _mode;
+  };
+  _this.getLength = function(buffer) {
+    return _data.length;
+  };
+  _this.write = function(buffer) {
+    const s2 = _data;
+    let i3 = 0;
+    while (i3 + 1 < s2.length) {
+      buffer.put(getCode(s2.charAt(i3)) * 45 + getCode(s2.charAt(i3 + 1)), 11);
+      i3 += 2;
+    }
+    if (i3 < s2.length) {
+      buffer.put(getCode(s2.charAt(i3)), 6);
+    }
+  };
+  const getCode = function(c3) {
+    if ("0" <= c3 && c3 <= "9") {
+      return c3.charCodeAt(0) - 48;
+    } else if ("A" <= c3 && c3 <= "Z") {
+      return c3.charCodeAt(0) - 65 + 10;
+    } else {
+      switch (c3) {
+        case " ":
+          return 36;
+        case "$":
+          return 37;
+        case "%":
+          return 38;
+        case "*":
+          return 39;
+        case "+":
+          return 40;
+        case "-":
+          return 41;
+        case ".":
+          return 42;
+        case "/":
+          return 43;
+        case ":":
+          return 44;
+        default:
+          throw "illegal char :" + c3;
+      }
+    }
+  };
+  return _this;
+};
+var qr8BitByte = function(data) {
+  const _mode = QRMode.MODE_8BIT_BYTE;
+  const _data = data;
+  const _bytes = qrcode.stringToBytes(data);
+  const _this = {};
+  _this.getMode = function() {
+    return _mode;
+  };
+  _this.getLength = function(buffer) {
+    return _bytes.length;
+  };
+  _this.write = function(buffer) {
+    for (let i3 = 0;i3 < _bytes.length; i3 += 1) {
+      buffer.put(_bytes[i3], 8);
+    }
+  };
+  return _this;
+};
+var qrKanji = function(data) {
+  const _mode = QRMode.MODE_KANJI;
+  const _data = data;
+  const stringToBytes = qrcode.stringToBytes;
+  (function(c3, code) {
+    const test = stringToBytes(c3);
+    if (test.length != 2 || (test[0] << 8 | test[1]) != code) {
+      throw "sjis not supported.";
+    }
+  })("友", 38726);
+  const _bytes = stringToBytes(data);
+  const _this = {};
+  _this.getMode = function() {
+    return _mode;
+  };
+  _this.getLength = function(buffer) {
+    return ~~(_bytes.length / 2);
+  };
+  _this.write = function(buffer) {
+    const data2 = _bytes;
+    let i3 = 0;
+    while (i3 + 1 < data2.length) {
+      let c3 = (255 & data2[i3]) << 8 | 255 & data2[i3 + 1];
+      if (33088 <= c3 && c3 <= 40956) {
+        c3 -= 33088;
+      } else if (57408 <= c3 && c3 <= 60351) {
+        c3 -= 49472;
+      } else {
+        throw "illegal char at " + (i3 + 1) + "/" + c3;
+      }
+      c3 = (c3 >>> 8 & 255) * 192 + (c3 & 255);
+      buffer.put(c3, 13);
+      i3 += 2;
+    }
+    if (i3 < data2.length) {
+      throw "illegal char at " + (i3 + 1);
+    }
+  };
+  return _this;
+};
+var byteArrayOutputStream = function() {
+  const _bytes = [];
+  const _this = {};
+  _this.writeByte = function(b2) {
+    _bytes.push(b2 & 255);
+  };
+  _this.writeShort = function(i3) {
+    _this.writeByte(i3);
+    _this.writeByte(i3 >>> 8);
+  };
+  _this.writeBytes = function(b2, off, len) {
+    off = off || 0;
+    len = len || b2.length;
+    for (let i3 = 0;i3 < len; i3 += 1) {
+      _this.writeByte(b2[i3 + off]);
+    }
+  };
+  _this.writeString = function(s2) {
+    for (let i3 = 0;i3 < s2.length; i3 += 1) {
+      _this.writeByte(s2.charCodeAt(i3));
+    }
+  };
+  _this.toByteArray = function() {
+    return _bytes;
+  };
+  _this.toString = function() {
+    let s2 = "";
+    s2 += "[";
+    for (let i3 = 0;i3 < _bytes.length; i3 += 1) {
+      if (i3 > 0) {
+        s2 += ",";
+      }
+      s2 += _bytes[i3];
+    }
+    s2 += "]";
+    return s2;
+  };
+  return _this;
+};
+var base64EncodeOutputStream = function() {
+  let _buffer = 0;
+  let _buflen = 0;
+  let _length = 0;
+  let _base64 = "";
+  const _this = {};
+  const writeEncoded = function(b2) {
+    _base64 += String.fromCharCode(encode(b2 & 63));
+  };
+  const encode = function(n3) {
+    if (n3 < 0) {
+      throw "n:" + n3;
+    } else if (n3 < 26) {
+      return 65 + n3;
+    } else if (n3 < 52) {
+      return 97 + (n3 - 26);
+    } else if (n3 < 62) {
+      return 48 + (n3 - 52);
+    } else if (n3 == 62) {
+      return 43;
+    } else if (n3 == 63) {
+      return 47;
+    } else {
+      throw "n:" + n3;
+    }
+  };
+  _this.writeByte = function(n3) {
+    _buffer = _buffer << 8 | n3 & 255;
+    _buflen += 8;
+    _length += 1;
+    while (_buflen >= 6) {
+      writeEncoded(_buffer >>> _buflen - 6);
+      _buflen -= 6;
+    }
+  };
+  _this.flush = function() {
+    if (_buflen > 0) {
+      writeEncoded(_buffer << 6 - _buflen);
+      _buffer = 0;
+      _buflen = 0;
+    }
+    if (_length % 3 != 0) {
+      const padlen = 3 - _length % 3;
+      for (let i3 = 0;i3 < padlen; i3 += 1) {
+        _base64 += "=";
+      }
+    }
+  };
+  _this.toString = function() {
+    return _base64;
+  };
+  return _this;
+};
+var base64DecodeInputStream = function(str) {
+  const _str = str;
+  let _pos = 0;
+  let _buffer = 0;
+  let _buflen = 0;
+  const _this = {};
+  _this.read = function() {
+    while (_buflen < 8) {
+      if (_pos >= _str.length) {
+        if (_buflen == 0) {
+          return -1;
+        }
+        throw "unexpected end of file./" + _buflen;
+      }
+      const c3 = _str.charAt(_pos);
+      _pos += 1;
+      if (c3 == "=") {
+        _buflen = 0;
+        return -1;
+      } else if (c3.match(/^\s$/)) {
+        continue;
+      }
+      _buffer = _buffer << 6 | decode(c3.charCodeAt(0));
+      _buflen += 6;
+    }
+    const n3 = _buffer >>> _buflen - 8 & 255;
+    _buflen -= 8;
+    return n3;
+  };
+  const decode = function(c3) {
+    if (65 <= c3 && c3 <= 90) {
+      return c3 - 65;
+    } else if (97 <= c3 && c3 <= 122) {
+      return c3 - 97 + 26;
+    } else if (48 <= c3 && c3 <= 57) {
+      return c3 - 48 + 52;
+    } else if (c3 == 43) {
+      return 62;
+    } else if (c3 == 47) {
+      return 63;
+    } else {
+      throw "c:" + c3;
+    }
+  };
+  return _this;
+};
+var gifImage = function(width, height) {
+  const _width = width;
+  const _height = height;
+  const _data = new Array(width * height);
+  const _this = {};
+  _this.setPixel = function(x2, y2, pixel) {
+    _data[y2 * _width + x2] = pixel;
+  };
+  _this.write = function(out) {
+    out.writeString("GIF87a");
+    out.writeShort(_width);
+    out.writeShort(_height);
+    out.writeByte(128);
+    out.writeByte(0);
+    out.writeByte(0);
+    out.writeByte(0);
+    out.writeByte(0);
+    out.writeByte(0);
+    out.writeByte(255);
+    out.writeByte(255);
+    out.writeByte(255);
+    out.writeString(",");
+    out.writeShort(0);
+    out.writeShort(0);
+    out.writeShort(_width);
+    out.writeShort(_height);
+    out.writeByte(0);
+    const lzwMinCodeSize = 2;
+    const raster = getLZWRaster(lzwMinCodeSize);
+    out.writeByte(lzwMinCodeSize);
+    let offset = 0;
+    while (raster.length - offset > 255) {
+      out.writeByte(255);
+      out.writeBytes(raster, offset, 255);
+      offset += 255;
+    }
+    out.writeByte(raster.length - offset);
+    out.writeBytes(raster, offset, raster.length - offset);
+    out.writeByte(0);
+    out.writeString(";");
+  };
+  const bitOutputStream = function(out) {
+    const _out = out;
+    let _bitLength = 0;
+    let _bitBuffer = 0;
+    const _this2 = {};
+    _this2.write = function(data, length) {
+      if (data >>> length != 0) {
+        throw "length over";
+      }
+      while (_bitLength + length >= 8) {
+        _out.writeByte(255 & (data << _bitLength | _bitBuffer));
+        length -= 8 - _bitLength;
+        data >>>= 8 - _bitLength;
+        _bitBuffer = 0;
+        _bitLength = 0;
+      }
+      _bitBuffer = data << _bitLength | _bitBuffer;
+      _bitLength = _bitLength + length;
+    };
+    _this2.flush = function() {
+      if (_bitLength > 0) {
+        _out.writeByte(_bitBuffer);
+      }
+    };
+    return _this2;
+  };
+  const getLZWRaster = function(lzwMinCodeSize) {
+    const clearCode = 1 << lzwMinCodeSize;
+    const endCode = (1 << lzwMinCodeSize) + 1;
+    let bitLength = lzwMinCodeSize + 1;
+    const table = lzwTable();
+    for (let i3 = 0;i3 < clearCode; i3 += 1) {
+      table.add(String.fromCharCode(i3));
+    }
+    table.add(String.fromCharCode(clearCode));
+    table.add(String.fromCharCode(endCode));
+    const byteOut = byteArrayOutputStream();
+    const bitOut = bitOutputStream(byteOut);
+    bitOut.write(clearCode, bitLength);
+    let dataIndex = 0;
+    let s2 = String.fromCharCode(_data[dataIndex]);
+    dataIndex += 1;
+    while (dataIndex < _data.length) {
+      const c3 = String.fromCharCode(_data[dataIndex]);
+      dataIndex += 1;
+      if (table.contains(s2 + c3)) {
+        s2 = s2 + c3;
+      } else {
+        bitOut.write(table.indexOf(s2), bitLength);
+        if (table.size() < 4095) {
+          if (table.size() == 1 << bitLength) {
+            bitLength += 1;
+          }
+          table.add(s2 + c3);
+        }
+        s2 = c3;
+      }
+    }
+    bitOut.write(table.indexOf(s2), bitLength);
+    bitOut.write(endCode, bitLength);
+    bitOut.flush();
+    return byteOut.toByteArray();
+  };
+  const lzwTable = function() {
+    const _map = {};
+    let _size = 0;
+    const _this2 = {};
+    _this2.add = function(key) {
+      if (_this2.contains(key)) {
+        throw "dup key:" + key;
+      }
+      _map[key] = _size;
+      _size += 1;
+    };
+    _this2.size = function() {
+      return _size;
+    };
+    _this2.indexOf = function(key) {
+      return _map[key];
+    };
+    _this2.contains = function(key) {
+      return typeof _map[key] != "undefined";
+    };
+    return _this2;
+  };
+  return _this;
+};
+var createDataURL = function(width, height, getPixel) {
+  const gif = gifImage(width, height);
+  for (let y2 = 0;y2 < height; y2 += 1) {
+    for (let x2 = 0;x2 < width; x2 += 1) {
+      gif.setPixel(x2, y2, getPixel(x2, y2));
+    }
+  }
+  const b2 = byteArrayOutputStream();
+  gif.write(b2);
+  const base64 = base64EncodeOutputStream();
+  const bytes = b2.toByteArray();
+  for (let i3 = 0;i3 < bytes.length; i3 += 1) {
+    base64.writeByte(bytes[i3]);
+  }
+  base64.flush();
+  return "data:image/gif;base64," + base64;
+};
+var stringToBytes = qrcode.stringToBytes;
+// packages/components/src/icon.tsx
+var SIZE = 24;
+function Icon(props) {
+  let size = () => props.size ?? SIZE;
+  var _el$ = createElement("view", {
+    repaintBoundary: true
+  }), _el$2 = createElement("svg");
+  insertNode2(_el$, _el$2);
+  spread(_el$2, mergeProps({
+    get width() {
+      return size();
+    },
+    get height() {
+      return size();
+    },
+    get src() {
+      return props.src;
+    },
+    get color() {
+      return props.color ?? theme.color.text;
+    }
+  }, () => props.layout), false);
+  return _el$;
+}
+// lattice/launcher/launcher.tsx
+import { on as on5 } from "srt:events";
+import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
+import { available as appsAvailable, list, launch, remove } from "srt:apps";
+
+// lattice/assets/icon-puzzle.svg
+var icon_puzzle_default = `<svg width="100" height="100" viewBox="-6 -6 112 112" xmlns="http://www.w3.org/2000/svg">
+  <path d="M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z" fill="rgb(26,51,128)"/>
+  <path d="M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z" fill="rgb(51,102,179)"/>
+  <path d="M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z" fill="rgb(102,153,230)"/>
+  <path d="M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z" fill="rgb(51,102,179)"/>
+  <path d="M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z" fill="rgb(102,153,230)"/>
+  <path d="M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z" fill="rgb(26,51,128)"/>
+  <path d="M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z" fill="rgb(102,153,230)"/>
+</svg>
+`;
+
+// lattice/launcher/launcher.tsx
+var STATUS_TEXT = {
+  idle: "Not connected",
+  searching: "Searching...",
+  connecting: "Connecting...",
+  connected: "Connected"
+};
+var LUCIDE = (body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"` + ` stroke="currentColor" stroke-width="2" stroke-linecap="round"` + ` stroke-linejoin="round">${body}</svg>`;
+var TRASH = LUCIDE(`<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>` + `<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>`);
+function normalizeAddress(raw) {
+  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
+}
+function recentLabel(entry) {
+  if (!entry.includes("|"))
+    return entry;
+  return "ticket " + entry.split("|")[0].slice(0, 8);
+}
+function ScanScreen(props) {
+  let cam = createCamera(untrack(() => ({
+    scan: ["qr"]
+  })));
+  createEffect(() => cam.barcode(), (b2) => {
+    if (b2)
+      props.onScanned(b2.data);
+  });
+  createEffect(() => cam.error(), (e3) => {
+    if (e3)
+      props.onError(e3.message);
+  });
+  let crop = () => {
+    let cw = cam.width();
+    let ch = cam.height();
+    let {
+      width: w2,
+      height: h3
+    } = env.windowSize;
+    if (!cw || !ch || !w2 || !h3)
+      return null;
+    let scale = Math.max(w2 / cw, h3 / ch);
+    let srcW = w2 / scale;
+    let srcH = h3 / scale;
+    return {
+      w: w2,
+      h: h3,
+      srcX: (cw - srcW) / 2,
+      srcY: (ch - srcH) / 2,
+      srcW,
+      srcH
+    };
+  };
+  let marker = () => {
+    let {
+      width: w2,
+      height: h3
+    } = env.windowSize;
+    let s2 = Math.round(Math.min(w2, h3) * 0.55);
+    let l2 = Math.round(s2 * 0.18);
+    return {
+      size: s2,
+      d: `M0 ${l2} L0 0 L${l2} 0 ` + `M${s2 - l2} 0 L${s2} 0 L${s2} ${l2} ` + `M${s2} ${s2 - l2} L${s2} ${s2} L${s2 - l2} ${s2} ` + `M${l2} ${s2} L0 ${s2} L0 ${s2 - l2}`
+    };
+  };
+  var _el$ = createElement("view", {
+    flexGrow: 1
+  }), _el$2 = createElement("d-rect", {
+    color: "black"
+  }), _el$3 = createElement("view", {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center"
+  }), _el$4 = createElement("view"), _el$5 = createElement("d-path", {
+    color: "white",
+    drawStyle: "stroke",
+    strokeWidth: 3
+  });
+  insertNode2(_el$, _el$2);
+  insertNode2(_el$, _el$3);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return memo2(() => cam.texture() != null)() && crop();
+    },
+    children: (c3) => (() => {
+      var _el$1 = createElement("texture");
+      effect3(() => ({
+        e: cam.texture(),
+        t: c3().w,
+        a: c3().h,
+        o: c3().srcX,
+        i: c3().srcY,
+        n: c3().srcW,
+        s: c3().srcH
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3,
+        o: o3,
+        i: i3,
+        n: n3,
+        s: s2
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$1, "src", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$1, "w", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$1, "h", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$1, "srcX", o3, _p$?.o);
+        i3 !== _p$?.i && setProp(_el$1, "srcY", i3, _p$?.i);
+        n3 !== _p$?.n && setProp(_el$1, "srcW", n3, _p$?.n);
+        s2 !== _p$?.s && setProp(_el$1, "srcH", s2, _p$?.s);
+      });
+      return _el$1;
+    })()
+  }), _el$3);
+  insertNode2(_el$3, _el$4);
+  insertNode2(_el$4, _el$5);
+  insert(_el$, createComponent2(SafeArea, {
+    get children() {
+      var _el$6 = createElement("view", {
+        flexGrow: 1,
+        flexDirection: "column",
+        justifyContent: "space-between"
+      }), _el$7 = createElement("view", {
+        flexDirection: "row"
+      }), _el$8 = createElement("view", {
+        alignItems: "center"
+      }), _el$9 = createElement("text", {
+        color: "white"
+      });
+      insertNode2(_el$6, _el$7);
+      insertNode2(_el$6, _el$8);
+      insert(_el$7, createComponent2(Button, {
+        variant: "secondary",
+        get onPress() {
+          return props.onCancel;
+        },
+        children: "Cancel"
+      }));
+      insertNode2(_el$8, _el$9);
+      insertNode2(_el$9, createTextNode(`Scan the dev server QR code`));
+      effect3(() => space("xl"), (_v$, _$p) => {
+        setProp(_el$6, "padding", _v$, _$p);
+      });
+      return _el$6;
+    }
+  }), null);
+  effect3(() => ({
+    e: marker().size,
+    t: marker().size,
+    a: marker().d
   }), ({
     e: e3,
     t: t3,
     a: a3
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$, "width", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$, "height", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$, "scale", a3, _p$?.a);
+    e3 !== _p$?.e && setProp(_el$4, "width", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$4, "height", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$5, "d", a3, _p$?.a);
   });
   return _el$;
-}
-var LOGO_HEIGHT = Math.max(...letters.map((l2) => l2.height));
-function Logo() {
-  let scale = () => windowSize().width * 1.12 / 1500;
-  var _el$4 = createElement("view", {
-    justifyContent: "center",
-    alignItems: "center",
-    width: 1500
-  }), _el$5 = createElement("view", {
-    gap: 30,
-    flexDirection: "row",
-    alignItems: "flex-end"
-  });
-  insertNode2(_el$4, _el$5);
-  insert(_el$5, () => letters.map((letter, i3) => createComponent2(TangramLetter, {
-    letter,
-    colors: i3 < 5 ? SOLID_COLORS : RT_COLORS,
-    delay: i3 * STAGGER_DELAY
-  })));
-  effect3(() => ({
-    e: LOGO_HEIGHT * scale(),
-    t: scale()
-  }), ({
-    e: e3,
-    t: t3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$4, "height", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$4, "scale", t3, _p$?.t);
-  });
-  return _el$4;
-}
-
-// lattice/launcher/launcher.tsx
-var STATUS_TEXT = {
-  idle: "not connected",
-  searching: "searching...",
-  connecting: "connecting...",
-  connected: "connected"
-};
-function normalizeAddress(raw) {
-  return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
-}
-function Button(props) {
-  var _el$ = createElement("view", {
-    paddingLeft: 18,
-    paddingRight: 18,
-    paddingTop: 10,
-    paddingBottom: 10,
-    justifyContent: "center",
-    alignItems: "center"
-  }), _el$2 = createElement("d-rect", {
-    radius: 8
-  }), _el$3 = createElement("text", {
-    color: "white"
-  });
-  insertNode2(_el$, _el$2);
-  insertNode2(_el$, _el$3);
-  insert(_el$3, () => props.label);
-  effect3(() => ({
-    e: props.onTap,
-    t: props.color
-  }), ({
-    e: e3,
-    t: t3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$, "onPointerDown", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "color", t3, _p$?.t);
-  });
-  return _el$;
-}
-function CameraView(props) {
-  let cam = createCamera(untrack(() => ({
-    width: props.width,
-    scan: props.scan
-  })));
-  createEffect(() => cam.barcode(), (b2) => {
-    if (b2)
-      props.onBarcode?.(b2);
-  });
-  createEffect(() => cam.error(), (e3) => {
-    if (e3)
-      props.onError?.(e3);
-  });
-  var _el$4 = createElement("texture");
-  effect3(() => ({
-    e: cam.texture(),
-    t: props.width
-  }), ({
-    e: e3,
-    t: t3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$4, "src", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$4, "width", t3, _p$?.t);
-  });
-  return _el$4;
-}
-function recentLabel(entry) {
-  if (!entry.includes("|"))
-    return entry;
-  let id2 = entry.split("|")[0];
-  return "ticket " + id2.slice(0, 8);
 }
 function App() {
   let dev = devAvailable;
-  let hasCamera = () => cameraDevices().length > 0;
+  createEffect(() => env.systemTheme, (t3) => {
+    if (t3 !== "unknown")
+      setTheme(t3 === "light" ? lightTheme : darkTheme);
+  });
+  let [screen, setScreen] = createSignal("home");
+  let [apps, setApps] = createSignal(appsAvailable ? list() : []);
+  let [confirming, setConfirming] = createSignal(null);
+  let [notice, setNotice] = createSignal(null);
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
   let [tunneled, setTunneled] = createSignal(false);
-  let [recents, setRecents] = createSignal(initialRecents);
-  let [scanning, setScanning] = createSignal(false);
-  let [scanError, setScanError] = createSignal(null);
+  let [recents, setRecents] = createSignal([]);
   if (dev) {
     on5("dev", (e3) => {
       setState(e3.state);
       setAddress(e3.address);
       setTunneled(e3.tunneled);
-      if (e3.recents) {
+      if (e3.recents)
         setRecents(e3.recents);
-        console.log("got recents", e3.recents);
-      }
     });
   }
-  if (dev && launchAddress && state() === "idle") {
+  if (dev && launchAddress && untrack(() => state()) === "idle") {
     connect(launchAddress);
   }
   let idle = () => state() === "idle";
   let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
-  let status = () => scanning() ? "scan the dev server QR code" : connected() ? `connected to ${address()}${tunneled() ? " (tunneled)" : ""}` : scanError() ?? STATUS_TEXT[state()];
-  let startScan = () => {
-    setScanError(null);
-    setScanning(true);
+  let hasCamera = () => cameraDevices().length > 0;
+  let status = () => connected() ? `Connected to ${address()}${tunneled() ? " (tunneled)" : ""}` : notice() ?? STATUS_TEXT[state()];
+  let doLaunch = (id2) => {
+    try {
+      launch(id2);
+    } catch (e3) {
+      setNotice(e3 instanceof Error ? e3.message : String(e3));
+    }
   };
-  let onScanned = (data) => {
-    setScanning(false);
-    connect(normalizeAddress(data));
+  let doRemove = (id2) => {
+    setConfirming(null);
+    try {
+      remove(id2);
+    } catch (e3) {
+      setNotice(e3 instanceof Error ? e3.message : String(e3));
+    }
+    setApps(appsAvailable ? list() : []);
   };
-  var _el$5 = createElement("window", {
-    title: "solidrt-go"
-  }), _el$6 = createElement("d-rect", {
-    color: "#111"
-  }), _el$7 = createElement("view", {
-    flexGrow: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    flexDirection: "column-reverse",
-    gap: 40
-  }), _el$8 = createElement("view", {
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 16
-  }), _el$9 = createElement("text", {
-    color: "lightgrey"
-  }), _el$0 = createElement("view", {
-    flexDirection: "row",
-    gap: 12
-  });
-  insertNode2(_el$5, _el$6);
-  insertNode2(_el$5, _el$7);
-  insertNode2(_el$7, _el$8);
-  insertNode2(_el$8, _el$9);
-  insertNode2(_el$8, _el$0);
-  insert(_el$8, createComponent2(Show, {
-    get when() {
-      return scanning();
+  let dial = (addr) => {
+    setNotice(null);
+    setScreen("home");
+    connect(normalizeAddress(addr));
+  };
+  let manualDraft = "";
+  return createComponent2(Window, {
+    title: "SolidRT",
+    layout: {
+      flexDirection: "column"
+    },
+    get style() {
+      return {
+        backgroundColor: theme.color.background
+      };
     },
     get children() {
-      return createComponent2(CameraView, {
-        width: 280,
-        scan: ["qr"],
-        onBarcode: (r3) => onScanned(r3.data),
-        onError: (e3) => {
-          setScanError(`camera: ${e3.message}`);
-          setScanning(false);
+      return createComponent2(SafeArea, {
+        get children() {
+          return createComponent2(Switch, {
+            get children() {
+              return [createComponent2(Match, {
+                get when() {
+                  return screen() === "scan";
+                },
+                get children() {
+                  return createComponent2(ScanScreen, {
+                    onScanned: (data) => dial(data),
+                    onCancel: () => setScreen("home"),
+                    onError: (m2) => {
+                      setNotice(`Camera: ${m2}`);
+                      setScreen("home");
+                    }
+                  });
+                }
+              }), createComponent2(Match, {
+                get when() {
+                  return screen() === "manual";
+                },
+                get children() {
+                  var _el$10 = createElement("view", {
+                    flexGrow: 1,
+                    alignItems: "center"
+                  }), _el$11 = createElement("view", {
+                    flexDirection: "column",
+                    width: "100%",
+                    maxWidth: 440,
+                    paddingTop: 72
+                  });
+                  insertNode2(_el$10, _el$11);
+                  insert(_el$11, createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "column",
+                        gap: space("lg"),
+                        padding: space("xl")
+                      };
+                    },
+                    get style() {
+                      return {
+                        backgroundColor: theme.color.surface,
+                        borderRadius: theme.radius.lg
+                      };
+                    },
+                    get children() {
+                      return [createComponent2(Text, {
+                        variant: "title",
+                        children: "Connect to a dev server"
+                      }), createComponent2(TextInput, {
+                        placeholder: "host:port",
+                        autoFocus: true,
+                        onInput: (v2) => manualDraft = v2,
+                        onSubmit: (v2) => {
+                          if (v2.trim())
+                            dial(v2);
+                        }
+                      }), (() => {
+                        var _el$12 = createElement("view", {
+                          flexDirection: "row"
+                        });
+                        insert(_el$12, createComponent2(Button, {
+                          onPress: () => {
+                            if (manualDraft.trim())
+                              dial(manualDraft);
+                          },
+                          children: "Connect"
+                        }), null);
+                        insert(_el$12, createComponent2(Button, {
+                          variant: "ghost",
+                          onPress: () => setScreen("home"),
+                          children: "Cancel"
+                        }), null);
+                        effect3(() => space("md"), (_v$, _$p) => {
+                          setProp(_el$12, "gap", _v$, _$p);
+                        });
+                        return _el$12;
+                      })()];
+                    }
+                  }), null);
+                  insert(_el$11, createComponent2(Show, {
+                    get when() {
+                      return recents().length > 0;
+                    },
+                    get children() {
+                      var _el$13 = createElement("view", {
+                        flexDirection: "column"
+                      }), _el$14 = createElement("view", {
+                        flexDirection: "row",
+                        flexWrap: "wrap"
+                      });
+                      insertNode2(_el$13, _el$14);
+                      insert(_el$13, createComponent2(Text, {
+                        variant: "label",
+                        muted: true,
+                        children: "Recent"
+                      }), _el$14);
+                      insert(_el$14, createComponent2(For, {
+                        get each() {
+                          return recents();
+                        },
+                        children: (entry) => createComponent2(Pressable, {
+                          onPress: () => dial(entry),
+                          get layout() {
+                            return {
+                              paddingLeft: space("lg"),
+                              paddingRight: space("lg"),
+                              paddingTop: space("md"),
+                              paddingBottom: space("md")
+                            };
+                          },
+                          style: (s2) => ({
+                            backgroundColor: s2.hovered ? theme.color.surfaceHover : theme.color.surfaceAlt,
+                            borderRadius: theme.radius.lg
+                          }),
+                          get children() {
+                            return createComponent2(Text, {
+                              variant: "label",
+                              get children() {
+                                return recentLabel(entry);
+                              }
+                            });
+                          }
+                        })
+                      }));
+                      effect3(() => ({
+                        e: space("sm"),
+                        t: space("sm")
+                      }), ({
+                        e: e3,
+                        t: t3
+                      }, _p$) => {
+                        e3 !== _p$?.e && setProp(_el$13, "gap", e3, _p$?.e);
+                        t3 !== _p$?.t && setProp(_el$14, "gap", t3, _p$?.t);
+                      });
+                      return _el$13;
+                    }
+                  }), null);
+                  effect3(() => ({
+                    e: space("lg"),
+                    t: space("xl")
+                  }), ({
+                    e: e3,
+                    t: t3
+                  }, _p$) => {
+                    e3 !== _p$?.e && setProp(_el$11, "gap", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$11, "padding", t3, _p$?.t);
+                  });
+                  return _el$10;
+                }
+              }), createComponent2(Match, {
+                get when() {
+                  return screen() === "home";
+                },
+                get children() {
+                  var _el$15 = createElement("view", {
+                    flexGrow: 1,
+                    alignItems: "center"
+                  }), _el$16 = createElement("view", {
+                    flexDirection: "column",
+                    width: "100%",
+                    maxWidth: 440,
+                    flexGrow: 1
+                  }), _el$17 = createElement("view", {
+                    alignItems: "center"
+                  }), _el$18 = createElement("svg", {
+                    src: icon_puzzle_default,
+                    width: 144,
+                    height: 144
+                  });
+                  insertNode2(_el$15, _el$16);
+                  insertNode2(_el$16, _el$17);
+                  insertNode2(_el$17, _el$18);
+                  insert(_el$16, createComponent2(Show, {
+                    get when() {
+                      return apps().length > 0;
+                    },
+                    get fallback() {
+                      var _el$24 = createElement("view", {
+                        flexGrow: 1,
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        alignItems: "center"
+                      });
+                      insert(_el$24, createComponent2(Text, {
+                        variant: "title",
+                        children: "No apps installed"
+                      }), null);
+                      insert(_el$24, createComponent2(Text, {
+                        muted: true,
+                        children: "Connect a dev server to install apps"
+                      }), null);
+                      effect3(() => space("md"), (_v$, _$p) => {
+                        setProp(_el$24, "gap", _v$, _$p);
+                      });
+                      return _el$24;
+                    },
+                    get children() {
+                      return createComponent2(ScrollView, {
+                        layout: {
+                          flexGrow: 1
+                        },
+                        get children() {
+                          var _el$19 = createElement("view", {
+                            flexDirection: "column"
+                          });
+                          insert(_el$19, createComponent2(Text, {
+                            variant: "label",
+                            muted: true,
+                            children: "Apps"
+                          }), null);
+                          insert(_el$19, createComponent2(For, {
+                            get each() {
+                              return apps();
+                            },
+                            children: (app) => createComponent2(Pressable, {
+                              onPress: () => {
+                                if (confirming() !== app.id)
+                                  doLaunch(app.id);
+                              },
+                              get layout() {
+                                return {
+                                  flexDirection: "row",
+                                  alignItems: "center",
+                                  padding: space("xl"),
+                                  gap: space("md")
+                                };
+                              },
+                              style: (s2) => ({
+                                backgroundColor: s2.hovered ? theme.color.surfaceHover : theme.color.surface,
+                                borderRadius: theme.radius.lg
+                              }),
+                              get children() {
+                                return [(() => {
+                                  var _el$25 = createElement("view", {
+                                    flexDirection: "column",
+                                    flexGrow: 1,
+                                    gap: 2
+                                  });
+                                  insert(_el$25, createComponent2(Text, {
+                                    variant: "title",
+                                    get children() {
+                                      return app.name;
+                                    }
+                                  }), null);
+                                  insert(_el$25, createComponent2(Text, {
+                                    variant: "caption",
+                                    muted: true,
+                                    get children() {
+                                      return `${app.id} - ${app.version.slice(0, 8)}`;
+                                    }
+                                  }), null);
+                                  return _el$25;
+                                })(), createComponent2(Show, {
+                                  get when() {
+                                    return confirming() === app.id;
+                                  },
+                                  get fallback() {
+                                    return createComponent2(Pressable, {
+                                      onPress: () => setConfirming(app.id),
+                                      get layout() {
+                                        return {
+                                          padding: space("sm")
+                                        };
+                                      },
+                                      style: (s2) => ({
+                                        backgroundColor: s2.hovered ? theme.color.surfaceAlt : "transparent",
+                                        borderRadius: theme.radius.sm
+                                      }),
+                                      get children() {
+                                        return createComponent2(Icon, {
+                                          src: TRASH,
+                                          size: 18,
+                                          get color() {
+                                            return theme.color.textMuted;
+                                          }
+                                        });
+                                      }
+                                    });
+                                  },
+                                  get children() {
+                                    var _el$26 = createElement("view", {
+                                      flexDirection: "row",
+                                      alignItems: "center"
+                                    });
+                                    insert(_el$26, createComponent2(Button, {
+                                      variant: "danger",
+                                      onPress: () => doRemove(app.id),
+                                      children: "Remove"
+                                    }), null);
+                                    insert(_el$26, createComponent2(Button, {
+                                      variant: "ghost",
+                                      onPress: () => setConfirming(null),
+                                      children: "Keep"
+                                    }), null);
+                                    effect3(() => space("sm"), (_v$, _$p) => {
+                                      setProp(_el$26, "gap", _v$, _$p);
+                                    });
+                                    return _el$26;
+                                  }
+                                })];
+                              }
+                            })
+                          }), null);
+                          effect3(() => space("md"), (_v$, _$p) => {
+                            setProp(_el$19, "gap", _v$, _$p);
+                          });
+                          return _el$19;
+                        }
+                      });
+                    }
+                  }), null);
+                  insert(_el$16, createComponent2(Show, {
+                    when: dev,
+                    get children() {
+                      return createComponent2(View, {
+                        get layout() {
+                          return {
+                            flexDirection: "column",
+                            gap: space("md"),
+                            padding: space("lg")
+                          };
+                        },
+                        get style() {
+                          return {
+                            backgroundColor: theme.color.surface,
+                            borderRadius: theme.radius.lg
+                          };
+                        },
+                        get children() {
+                          return [(() => {
+                            var _el$20 = createElement("view", {
+                              flexDirection: "row",
+                              alignItems: "center"
+                            }), _el$21 = createElement("view", {
+                              width: 8,
+                              height: 8
+                            }), _el$22 = createElement("d-oval");
+                            insertNode2(_el$20, _el$21);
+                            insertNode2(_el$21, _el$22);
+                            insert(_el$20, createComponent2(Text, {
+                              variant: "caption",
+                              muted: true,
+                              layout: {
+                                flexGrow: 1
+                              },
+                              get children() {
+                                return status();
+                              }
+                            }), null);
+                            effect3(() => ({
+                              e: space("md"),
+                              t: connected() || busy() ? theme.color.primary : theme.color.textMuted
+                            }), ({
+                              e: e3,
+                              t: t3
+                            }, _p$) => {
+                              e3 !== _p$?.e && setProp(_el$20, "gap", e3, _p$?.e);
+                              t3 !== _p$?.t && setProp(_el$22, "color", t3, _p$?.t);
+                            });
+                            return _el$20;
+                          })(), (() => {
+                            var _el$23 = createElement("view", {
+                              flexDirection: "row"
+                            });
+                            insert(_el$23, createComponent2(Show, {
+                              get when() {
+                                return idle();
+                              },
+                              get children() {
+                                return [createComponent2(Show, {
+                                  when: canDiscover,
+                                  get children() {
+                                    return createComponent2(Button, {
+                                      variant: "secondary",
+                                      onPress: () => discover(),
+                                      children: "Discover"
+                                    });
+                                  }
+                                }), createComponent2(Show, {
+                                  get when() {
+                                    return hasCamera();
+                                  },
+                                  get children() {
+                                    return createComponent2(Button, {
+                                      variant: "secondary",
+                                      onPress: () => {
+                                        setNotice(null);
+                                        setScreen("scan");
+                                      },
+                                      children: "Scan QR"
+                                    });
+                                  }
+                                }), createComponent2(Button, {
+                                  variant: "secondary",
+                                  onPress: () => setScreen("manual"),
+                                  children: "Address"
+                                })];
+                              }
+                            }), null);
+                            insert(_el$23, createComponent2(Show, {
+                              get when() {
+                                return busy();
+                              },
+                              get children() {
+                                return createComponent2(Button, {
+                                  variant: "secondary",
+                                  onPress: () => stop(),
+                                  children: "Cancel"
+                                });
+                              }
+                            }), null);
+                            insert(_el$23, createComponent2(Show, {
+                              get when() {
+                                return connected();
+                              },
+                              get children() {
+                                return createComponent2(Button, {
+                                  variant: "secondary",
+                                  onPress: () => stop(),
+                                  children: "Disconnect"
+                                });
+                              }
+                            }), null);
+                            effect3(() => space("sm"), (_v$, _$p) => {
+                              setProp(_el$23, "gap", _v$, _$p);
+                            });
+                            return _el$23;
+                          })()];
+                        }
+                      });
+                    }
+                  }), null);
+                  effect3(() => ({
+                    e: space("xl"),
+                    t: space("xl"),
+                    a: space("xl"),
+                    o: space("md")
+                  }), ({
+                    e: e3,
+                    t: t3,
+                    a: a3,
+                    o: o3
+                  }, _p$) => {
+                    e3 !== _p$?.e && setProp(_el$16, "padding", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$16, "gap", t3, _p$?.t);
+                    a3 !== _p$?.a && setProp(_el$17, "paddingTop", a3, _p$?.a);
+                    o3 !== _p$?.o && setProp(_el$17, "gap", o3, _p$?.o);
+                  });
+                  return _el$15;
+                }
+              })];
+            }
+          });
         }
       });
     }
-  }), _el$9);
-  insert(_el$9, status);
-  insert(_el$0, (() => {
-    var _c$ = memo2(() => !!(idle() && !scanning() && canDiscover));
-    return () => _c$() ? createComponent2(Button, {
-      label: "Discover",
-      color: "#3366b3",
-      onTap: () => discover()
-    }) : idle() && !scanning() && canDiscover;
-  })(), null);
-  insert(_el$0, (() => {
-    var _c$2 = memo2(() => !!(idle() && !scanning() && dev && hasCamera()));
-    return () => _c$2() ? createComponent2(Button, {
-      label: "Scan QR",
-      color: "#3366b3",
-      onTap: startScan
-    }) : idle() && !scanning() && dev && hasCamera();
-  })(), null);
-  insert(_el$0, (() => {
-    var _c$3 = memo2(() => !!(idle() && !scanning() && launchAddress));
-    return () => _c$3() ? createComponent2(Button, {
-      label: "Connect",
-      color: "#3366b3",
-      onTap: () => connect(launchAddress)
-    }) : idle() && !scanning() && launchAddress;
-  })(), null);
-  insert(_el$0, (() => {
-    var _c$4 = memo2(() => !!scanning());
-    return () => _c$4() ? createComponent2(Button, {
-      label: "Cancel",
-      color: "#555",
-      onTap: () => setScanning(false)
-    }) : scanning();
-  })(), null);
-  insert(_el$0, (() => {
-    var _c$5 = memo2(() => !!busy());
-    return () => _c$5() ? createComponent2(Button, {
-      label: "Cancel",
-      color: "#555",
-      onTap: () => stop()
-    }) : busy();
-  })(), null);
-  insert(_el$0, (() => {
-    var _c$6 = memo2(() => !!connected());
-    return () => _c$6() ? createComponent2(Button, {
-      label: "Disconnect",
-      color: "#555",
-      onTap: () => stop()
-    }) : connected();
-  })(), null);
-  insert(_el$8, createComponent2(Show, {
-    get when() {
-      return memo2(() => !!(idle() && !scanning()))() ? recents().length > 0 : idle() && !scanning();
-    },
-    get children() {
-      var _el$1 = createElement("view", {
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 8
-      }), _el$10 = createElement("text", {
-        color: "grey"
-      });
-      insertNode2(_el$1, _el$10);
-      insertNode2(_el$10, createTextNode(`recent`));
-      insert(_el$1, createComponent2(For, {
-        get each() {
-          return recents();
-        },
-        children: (addr) => createComponent2(Button, {
-          get label() {
-            return recentLabel(addr);
-          },
-          color: "#333",
-          onTap: () => connect(addr)
-        })
-      }), null);
-      return _el$1;
-    }
-  }), null);
-  insert(_el$7, createComponent2(Logo, {}), null);
-  return _el$5;
+  });
 }
 render(() => createComponent2(App, {}));

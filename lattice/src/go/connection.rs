@@ -167,6 +167,13 @@ async fn supervisor(
 
 /// Connect to a fixed address, retrying until reachable and reconnecting after
 /// drops. Returns when a new command interrupts (or the channel closes).
+///
+/// A connect naming what this loop already dials is redundant and ignored
+/// rather than treated as an interrupt: the launcher re-dials its launch
+/// address on every mount (including the mount a dev push causes), and
+/// tearing down the live connection to redial it would make the server
+/// re-deliver its latched push to the fresh connection, reloading the
+/// launcher into another dial - a reload/reconnect loop that never settles.
 async fn run_direct(
   addr: String,
   cmd_rx: &mut UnboundedReceiver<DevCmd>,
@@ -178,18 +185,39 @@ async fn run_direct(
   queries: &QueryHandles,
   recent_key: Option<&str>,
 ) -> Option<DevCmd> {
+  let redundant = |cmd: &DevCmd| match cmd {
+    DevCmd::Connect(a) => recent_key.is_none() && *a == addr,
+    // Tunnels dial a loopback forwarder; the ticket is their identity.
+    DevCmd::ConnectTicket(t) => recent_key == Some(t.as_str()),
+    _ => false,
+  };
   loop {
     let _ = state_tx.send(ConnState::Connecting(addr.clone()));
-    tokio::select! {
-      cmd = cmd_rx.recv() => return cmd,
-      _ = try_serve(&addr, engine_tx, state_tx, dev_server, flags, outbound_rx, queries, recent_key) => {
-        // Failed to connect or the connection dropped; pause before retrying,
-        // but let a new command interrupt the wait.
+    {
+      let serve = try_serve(&addr, engine_tx, state_tx, dev_server, flags, outbound_rx, queries, recent_key);
+      tokio::pin!(serve);
+      loop {
         tokio::select! {
-          cmd = cmd_rx.recv() => return cmd,
-          _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+          cmd = cmd_rx.recv() => match cmd {
+            Some(ref c) if redundant(c) => {
+              log::debug!("[sgo] Ignoring connect to {addr}: already the active target");
+            }
+            cmd => return cmd,
+          },
+          // Failed to connect or the connection dropped; fall out to the
+          // retry pause.
+          _ = &mut serve => break,
         }
       }
+    }
+    // Pause before retrying, but let a new command interrupt the wait (a
+    // redundant connect just retries immediately).
+    tokio::select! {
+      cmd = cmd_rx.recv() => match cmd {
+        Some(ref c) if redundant(c) => {}
+        cmd => return cmd,
+      },
+      _ = tokio::time::sleep(Duration::from_secs(3)) => {}
     }
   }
 }
