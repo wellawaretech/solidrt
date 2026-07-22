@@ -14,14 +14,14 @@ export interface CardProps {
   style?: StyleProps
 }
 
-// A themed surface container: a padded column box with a subtle border and
-// rounded corners, reading its colors from the theme so it recolors live.
-// Override any paint via style, spacing/sizing via layout.
+// A themed surface container: a padded column box with rounded corners, reading
+// its colors from the theme so it recolors live. Borderless by default; pass
+// style.borderWidth or style.borderColor to draw an outline. Override any paint
+// via style, spacing/sizing via layout.
 export function Card(props: CardProps) {
   let bg = () => props.style?.backgroundColor ?? theme.color.surface
-  let border = () => props.style?.borderColor ?? theme.color.border
-  let width = () => props.style?.borderWidth ?? theme.borderWidth.sm
   let radius = () => props.style?.borderRadius ?? theme.radius.lg
+  let hasBorder = () => props.style?.borderWidth != null || props.style?.borderColor != null
 
   return (
     <view
@@ -44,7 +44,14 @@ export function Card(props: CardProps) {
         </text>
       </Show>
       {props.children}
-      <d-rect drawStyle="stroke" color={border()} strokeWidth={width()} radius={radius()} />
+      <Show when={hasBorder()}>
+        <d-rect
+          drawStyle="stroke"
+          color={props.style?.borderColor ?? theme.color.border}
+          strokeWidth={props.style?.borderWidth ?? theme.borderWidth.sm}
+          radius={radius()}
+        />
+      </Show>
     </view>
   )
 }

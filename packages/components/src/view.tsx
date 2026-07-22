@@ -20,7 +20,15 @@ export function View(props: ViewProps) {
       x={props.style?.x}
       y={props.style?.y}
       scale={props.style?.scale}
+      scaleX={props.style?.scaleX}
+      scaleY={props.style?.scaleY}
       rotate={props.style?.rotate}
+      rotateX={props.style?.rotateX}
+      rotateY={props.style?.rotateY}
+      perspective={props.style?.perspective}
+      originX={props.style?.originX}
+      originY={props.style?.originY}
+      clipRadius={props.style?.clipRadius}
       opacity={props.style?.opacity}
       onPointerEnter={props.onPointerEnter}
       onPointerLeave={props.onPointerLeave}

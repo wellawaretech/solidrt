@@ -8,19 +8,29 @@ import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
+export type ButtonSize = "sm" | "md" | "lg"
 
 export interface ButtonProps {
   // A string/number is rendered as the themed label; anything else is rendered
   // as-is, so a button can hold custom content (an icon, a row, ...).
   children?: any
-  // Visual role: primary (accent fill), secondary (surface fill with border),
-  // ghost (no fill until hover), danger (destructive accent fill).
+  // Visual role: primary (accent fill), secondary (darker-blue fill), ghost
+  // (no fill until hover), danger (destructive accent fill). None draw a border.
   variant?: ButtonVariant
+  // Fixed-width preset: pins the button to a set width (a longer label still
+  // expands past it), so a row of buttons lines up. Omitted, the button
+  // stretches to the container's width (the default). Padding is the same at
+  // every size.
+  size?: ButtonSize
   onPress?: () => void
   disabled?: boolean
   layout?: LayoutProps
   style?: StyleProps
 }
+
+// Minimum width per size preset (logical px). A minimum, not a hard width, so
+// labels wider than the preset never clip.
+const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 
 // Themed convenience over Pressable: a padded, centered, accent-colored box with
 // a label. Press feedback is a slight scale, hover feedback a tint (non-touch
@@ -30,30 +40,34 @@ export interface ButtonProps {
 // its hover variant.
 export function Button(props: ButtonProps) {
   // Fill, hover fill, and label color per variant, read reactively from the
-  // theme. Only secondary draws a border.
+  // theme. No variant draws a border.
   let colors = () => {
     let c = theme.color
     switch (props.variant ?? "primary") {
       case "secondary":
-        return { fill: c.surface, hover: c.surfaceHover, label: c.text, border: c.border }
+        return { fill: c.secondary, hover: c.secondaryHover, label: c.onSecondary }
       case "ghost":
-        return { fill: "transparent", hover: c.surfaceHover, label: c.text, border: undefined }
+        return { fill: "transparent", hover: c.surfaceHover, label: c.text }
       case "danger":
-        return { fill: c.danger, hover: c.dangerHover, label: c.onPrimary, border: undefined }
+        return { fill: c.danger, hover: c.dangerHover, label: c.onPrimary }
       default:
-        return { fill: c.primary, hover: c.primaryHover, label: c.onPrimary, border: undefined }
+        return { fill: c.primary, hover: c.primaryHover, label: c.onPrimary }
     }
   }
-  let bg = (s: PressState) =>
-    props.style?.backgroundColor ??
-    (props.disabled
+  let idleFill = () =>
+    props.disabled
       ? props.variant === "ghost"
         ? "transparent"
         : theme.color.surface
+      : colors().fill
+  let bg = (s: PressState) =>
+    props.style?.backgroundColor ??
+    (props.disabled
+      ? idleFill()
       : s.hovered && policy.interaction !== "touch"
         ? colors().hover
         : colors().fill)
-  let radius = () => props.style?.borderRadius ?? theme.radius.sm
+  let radius = () => props.style?.borderRadius ?? theme.radius.md
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   // Resolved once via children(): reading the raw children getter builds a new
   // subtree per read, so the typeof probe and the two mount sites below must
@@ -63,12 +77,7 @@ export function Button(props: ButtonProps) {
   // The label's polarity against the idle fill: onPrimary on a saturated fill
   // is light-on-dark even in a light theme, so it needs the low-DPI weight
   // compensation there too.
-  let labelOnDark = () =>
-    lightOnDark(
-      label(),
-      props.style?.backgroundColor ??
-        (props.disabled ? (props.variant === "ghost" ? "transparent" : theme.color.surface) : colors().fill),
-    )
+  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill())
 
   return (
     <Pressable
@@ -78,15 +87,14 @@ export function Button(props: ButtonProps) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: space("sm"),
-        paddingBottom: space("sm"),
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
+        paddingTop: space("md"),
+        paddingBottom: space("md"),
+        paddingLeft: space("lg"),
+        paddingRight: space("lg"),
+        ...(props.size ? { minWidth: SIZE_WIDTH[props.size] } : { width: "100%" }),
         ...props.layout,
       }}
       style={(s: PressState) => ({
-        borderColor: colors().border,
-        borderWidth: colors().border != null ? theme.borderWidth.sm : undefined,
         ...props.style,
         backgroundColor: bg(s),
         borderRadius: radius(),

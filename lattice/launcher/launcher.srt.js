@@ -4207,8 +4207,24 @@ function measureText2(text, options) {
 
 // packages/core/src/window.ts
 var pointerCaptures = new Map;
+var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
+function onFrame(fn) {
+  let frameId = null;
+  let extendedFn = (tick, frame, rate) => {
+    fn(tick, frame, rate);
+    frameId = nextFrameId++;
+    animationFrames.set(frameId, extendedFn);
+    requestFrame();
+  };
+  frameId = nextFrameId++;
+  animationFrames.set(frameId, extendedFn);
+  requestFrame();
+  let cleanup2 = () => animationFrames.delete(frameId);
+  onCleanup(cleanup2);
+  return cleanup2;
+}
 var sizeAccessor;
 var safeAreaAccessor;
 var displayScaleAccessor;
@@ -4948,6 +4964,18 @@ function render(code) {
     insert(null, root);
   });
 }
+function createPortal(node, mount) {
+  let target = mount ?? windowRoot;
+  if (!target) {
+    throw new Error("createPortal: no mount target (portals cannot mount during the initial render; open them after mount)");
+  }
+  if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    throw new Error("createPortal: node must be a single built element");
+  }
+  insertNode2(target, node);
+  onCleanup(() => removeNode(target, node));
+  return null;
+}
 // packages/core/src/environment.ts
 import { on as on2 } from "srt:events";
 var devicesAccessor;
@@ -5297,8 +5325,32 @@ function View(props) {
     get scale() {
       return props.style?.scale;
     },
+    get scaleX() {
+      return props.style?.scaleX;
+    },
+    get scaleY() {
+      return props.style?.scaleY;
+    },
     get rotate() {
       return props.style?.rotate;
+    },
+    get rotateX() {
+      return props.style?.rotateX;
+    },
+    get rotateY() {
+      return props.style?.rotateY;
+    },
+    get perspective() {
+      return props.style?.perspective;
+    },
+    get originX() {
+      return props.style?.originX;
+    },
+    get originY() {
+      return props.style?.originY;
+    },
+    get clipRadius() {
+      return props.style?.clipRadius;
     },
     get opacity() {
       return props.style?.opacity;
@@ -5435,9 +5487,12 @@ var darkTheme = {
     text: "#e6edf3",
     textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
     border: "rgba(255,255,255,0.14)",
-    primary: "#1f6feb",
-    primaryHover: "#388bfd",
+    primary: "#547ebf",
+    primaryHover: "#7ea9ea",
     onPrimary: "#ffffff",
+    secondary: "#2b5696",
+    secondaryHover: "#3a68ab",
+    onSecondary: "#ffffff",
     danger: "#f85149",
     dangerHover: "#ff7b72",
     scrim: "rgba(0,0,0,0.6)"
@@ -5456,9 +5511,12 @@ var lightTheme = {
     text: "#1f2328",
     textMuted: mixColors("#1f2328", "#ffffff", 0.4),
     border: "rgba(0,0,0,0.15)",
-    primary: "#1f6feb",
-    primaryHover: "#1a5fd0",
+    primary: "#547ebf",
+    primaryHover: "#3f5494",
     onPrimary: "#ffffff",
+    secondary: "#2b5696",
+    secondaryHover: "#1f4176",
+    onSecondary: "#ffffff",
     danger: "#cf222e",
     dangerHover: "#a40e26",
     scrim: "rgba(0,0,0,0.4)"
@@ -6341,46 +6399,48 @@ function Pressable(props) {
   return _el$;
 }
 // packages/components/src/button.tsx
+var SIZE_WIDTH = {
+  sm: 88,
+  md: 120,
+  lg: 160
+};
 function Button(props) {
   let colors = () => {
     let c3 = theme.color;
     switch (props.variant ?? "primary") {
       case "secondary":
         return {
-          fill: c3.surface,
-          hover: c3.surfaceHover,
-          label: c3.text,
-          border: c3.border
+          fill: c3.secondary,
+          hover: c3.secondaryHover,
+          label: c3.onSecondary
         };
       case "ghost":
         return {
           fill: "transparent",
           hover: c3.surfaceHover,
-          label: c3.text,
-          border: undefined
+          label: c3.text
         };
       case "danger":
         return {
           fill: c3.danger,
           hover: c3.dangerHover,
-          label: c3.onPrimary,
-          border: undefined
+          label: c3.onPrimary
         };
       default:
         return {
           fill: c3.primary,
           hover: c3.primaryHover,
-          label: c3.onPrimary,
-          border: undefined
+          label: c3.onPrimary
         };
     }
   };
-  let bg = (s2) => props.style?.backgroundColor ?? (props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : s2.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
-  let radius = () => props.style?.borderRadius ?? theme.radius.sm;
+  let idleFill = () => props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill;
+  let bg = (s2) => props.style?.backgroundColor ?? (props.disabled ? idleFill() : s2.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
+  let radius = () => props.style?.borderRadius ?? theme.radius.md;
   let label = () => props.disabled ? theme.color.textMuted : colors().label;
   let resolved2 = children(() => props.children);
   let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
-  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? (props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill));
+  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill());
   return createComponent2(Pressable, {
     get onPress() {
       return props.onPress;
@@ -6393,16 +6453,19 @@ function Button(props) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: space("sm"),
-        paddingBottom: space("sm"),
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
+        paddingTop: space("md"),
+        paddingBottom: space("md"),
+        paddingLeft: space("lg"),
+        paddingRight: space("lg"),
+        ...props.size ? {
+          minWidth: SIZE_WIDTH[props.size]
+        } : {
+          width: "100%"
+        },
         ...props.layout
       };
     },
     style: (s2) => ({
-      borderColor: colors().border,
-      borderWidth: colors().border != null ? theme.borderWidth.sm : undefined,
       ...props.style,
       backgroundColor: bg(s2),
       borderRadius: radius(),
@@ -6432,6 +6495,248 @@ function Button(props) {
 }
 // packages/components/src/radio.tsx
 var RadioContext = createContext2();
+// packages/components/src/card.tsx
+function Card(props) {
+  let bg = () => props.style?.backgroundColor ?? theme.color.surface;
+  let radius = () => props.style?.borderRadius ?? theme.radius.lg;
+  let hasBorder = () => props.style?.borderWidth != null || props.style?.borderColor != null;
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
+  insertNode2(_el$, _el$2);
+  var _ref$ = props.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  setProp(_el$, "repaintBoundary", true);
+  setProp(_el$, "flexDirection", "column");
+  spread(_el$, mergeProps({
+    get gap() {
+      return space("lg");
+    },
+    get padding() {
+      return space("xl");
+    }
+  }, () => props.layout, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    }
+  }), true);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return props.title != null;
+    },
+    get children() {
+      var _el$3 = createElement("text");
+      spread(_el$3, mergeProps({
+        get color() {
+          return theme.color.text;
+        }
+      }, () => typeStyle("title")), true);
+      insert(_el$3, () => props.title);
+      return _el$3;
+    }
+  }), null);
+  insert(_el$, () => props.children, null);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return hasBorder();
+    },
+    get children() {
+      var _el$4 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: props.style?.borderColor ?? theme.color.border,
+        t: props.style?.borderWidth ?? theme.borderWidth.sm,
+        a: radius()
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$4, "strokeWidth", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$4, "radius", a3, _p$?.a);
+      });
+      return _el$4;
+    }
+  }), null);
+  effect3(() => ({
+    e: bg(),
+    t: radius()
+  }), ({
+    e: e3,
+    t: t3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+  });
+  return _el$;
+}
+// packages/components/src/spinner.tsx
+var SIZE = 24;
+var THICKNESS = 3;
+function Spinner(props) {
+  let size = () => props.size ?? SIZE;
+  let thickness = () => props.thickness ?? THICKNESS;
+  let color = () => props.style?.color ?? theme.color.primary;
+  let speed = () => props.speed ?? 1;
+  let [angle, setAngle] = createSignal(0);
+  let Animate = () => {
+    onFrame((tick) => setAngle(tick / 1000 * speed() * (policy.motion === "reduced" ? 0.5 : 1) * Math.PI * 2));
+    return null;
+  };
+  let path = () => {
+    let s2 = size();
+    let r3 = (s2 - thickness()) / 2;
+    let c3 = s2 / 2;
+    return `M ${c3} ${c3 - r3} A ${r3} ${r3} 0 1 1 ${c3 - r3} ${c3}`;
+  };
+  var _el$ = createElement("view"), _el$2 = createElement("d-path", {
+    drawStyle: "stroke",
+    strokeCap: "round"
+  });
+  insertNode2(_el$, _el$2);
+  spread(_el$, mergeProps({
+    get width() {
+      return size();
+    },
+    get height() {
+      return size();
+    }
+  }, () => props.layout, {
+    get rotate() {
+      return angle();
+    },
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    }
+  }), true);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return policy.motion !== "none";
+    },
+    get children() {
+      return createComponent2(Animate, {});
+    }
+  }), _el$2);
+  effect3(() => ({
+    e: path(),
+    t: color(),
+    a: thickness()
+  }), ({
+    e: e3,
+    t: t3,
+    a: a3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "d", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "color", t3, _p$?.t);
+    a3 !== _p$?.a && setProp(_el$2, "strokeWidth", a3, _p$?.a);
+  });
+  return _el$;
+}
+// packages/components/src/modal.tsx
+function Modal(props) {
+  let dismiss = (_e) => {
+    if (props.dismissable !== false)
+      props.onClose?.();
+  };
+  return createPortal((() => {
+    var _el$ = createElement("view", {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: "center",
+      justifyContent: "center"
+    }), _el$2 = createElement("view", {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      onPointerDown: dismiss
+    }), _el$3 = createElement("d-rect");
+    insertNode2(_el$, _el$2);
+    insertNode2(_el$2, _el$3);
+    insert(_el$, () => props.children, null);
+    effect3(() => props.backdropColor ?? theme.color.scrim, (_v$, _$p) => {
+      setProp(_el$3, "color", _v$, _$p);
+    });
+    return _el$;
+  })());
+}
+// packages/components/src/split-view.tsx
+var LIST_WIDTH = 320;
+function SplitView(props) {
+  return createComponent2(Show, {
+    get when() {
+      return policy.layout === "twoPane";
+    },
+    get fallback() {
+      var _el$6 = createElement("view");
+      setProp(_el$6, "flexDirection", "column");
+      spread(_el$6, mergeProps(() => props.layout), true);
+      insert(_el$6, createComponent2(Show, {
+        get when() {
+          return props.showDetail;
+        },
+        get fallback() {
+          return props.list;
+        },
+        get children() {
+          return props.detail;
+        }
+      }));
+      return _el$6;
+    },
+    get children() {
+      var _el$ = createElement("view"), _el$2 = createElement("view", {
+        flexDirection: "column"
+      }), _el$3 = createElement("view", {
+        width: 1
+      }), _el$4 = createElement("d-rect"), _el$5 = createElement("view", {
+        flex: 1,
+        flexDirection: "column"
+      });
+      insertNode2(_el$, _el$2);
+      insertNode2(_el$, _el$3);
+      insertNode2(_el$, _el$5);
+      setProp(_el$, "flexDirection", "row");
+      spread(_el$, mergeProps(() => props.layout), true);
+      insert(_el$2, () => props.list);
+      insertNode2(_el$3, _el$4);
+      insert(_el$5, () => props.detail);
+      effect3(() => ({
+        e: props.listWidth ?? LIST_WIDTH,
+        t: theme.color.border
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$2, "width", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$4, "color", t3, _p$?.t);
+      });
+      return _el$;
+    }
+  });
+}
 // node_modules/.bun/qrcode-generator@2.0.4/node_modules/qrcode-generator/dist/qrcode.mjs
 var qrcode = function(typeNumber, errorCorrectionLevel) {
   const PAD0 = 236;
@@ -8027,6 +8332,30 @@ var createDataURL = function(width, height, getPixel) {
   return "data:image/gif;base64," + base64;
 };
 var stringToBytes = qrcode.stringToBytes;
+// packages/components/src/icon.tsx
+var SIZE2 = 24;
+function Icon(props) {
+  let size = () => props.size ?? SIZE2;
+  var _el$ = createElement("view", {
+    repaintBoundary: true
+  }), _el$2 = createElement("svg");
+  insertNode2(_el$, _el$2);
+  spread(_el$2, mergeProps({
+    get width() {
+      return size();
+    },
+    get height() {
+      return size();
+    },
+    get src() {
+      return props.src;
+    },
+    get color() {
+      return props.color ?? theme.color.text;
+    }
+  }, () => props.layout), false);
+  return _el$;
+}
 // lattice/launcher/launcher.tsx
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
@@ -8066,52 +8395,49 @@ var PUZZLE_SEGMENTS = [{
   dark: "#5681c1",
   d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z"
 }];
+var SUN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
+var MOON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
 function PuzzleMark(props) {
-  var _el$ = createElement("view", {
-    justifyContent: "center",
-    alignItems: "center"
-  }), _el$2 = createElement("view", {
-    width: 100,
-    height: 100
-  });
-  insertNode2(_el$, _el$2);
-  insert(_el$2, createComponent2(For, {
-    each: PUZZLE_SEGMENTS,
-    children: (seg) => (() => {
-      var _el$3 = createElement("d-path");
-      effect3(() => ({
-        e: seg.d,
-        t: createLinearGradient(0, 0, 1, 1, [{
-          offset: 0,
-          color: seg.light
-        }, {
-          offset: 1,
-          color: seg.dark
-        }])
-      }), ({
-        e: e3,
-        t: t3
-      }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$3, "d", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$3, "color", t3, _p$?.t);
+  return createComponent2(View, {
+    get layout() {
+      return {
+        width: props.size,
+        height: props.size
+      };
+    },
+    get style() {
+      return {
+        scale: props.size / 100,
+        originX: 0,
+        originY: 0
+      };
+    },
+    get children() {
+      return createComponent2(For, {
+        each: PUZZLE_SEGMENTS,
+        children: (seg) => (() => {
+          var _el$ = createElement("d-path");
+          effect3(() => ({
+            e: seg.d,
+            t: createLinearGradient(0, 0, 1, 1, [{
+              offset: 0,
+              color: seg.light
+            }, {
+              offset: 1,
+              color: seg.dark
+            }])
+          }), ({
+            e: e3,
+            t: t3
+          }, _p$) => {
+            e3 !== _p$?.e && setProp(_el$, "d", e3, _p$?.e);
+            t3 !== _p$?.t && setProp(_el$, "color", t3, _p$?.t);
+          });
+          return _el$;
+        })()
       });
-      return _el$3;
-    })()
-  }));
-  effect3(() => ({
-    e: props.size,
-    t: props.size,
-    a: props.size / 100
-  }), ({
-    e: e3,
-    t: t3,
-    a: a3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$, "width", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$, "height", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$2, "scale", a3, _p$?.a);
+    }
   });
-  return _el$;
 }
 function normalizeAddress(raw) {
   return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
@@ -8181,181 +8507,192 @@ function ScanScreen(props) {
       d: `M${i3} ${l2} L${i3} ${i3 + r3} A ${r3} ${r3} 0 0 1 ${i3 + r3} ${i3} L${l2} ${i3} ` + `M${s2 - l2} ${i3} L${s2 - i3 - r3} ${i3} A ${r3} ${r3} 0 0 1 ${s2 - i3} ${i3 + r3} L${s2 - i3} ${l2} ` + `M${s2 - i3} ${s2 - l2} L${s2 - i3} ${s2 - i3 - r3} A ${r3} ${r3} 0 0 1 ${s2 - i3 - r3} ${s2 - i3} L${s2 - l2} ${s2 - i3} ` + `M${l2} ${s2 - i3} L${i3 + r3} ${s2 - i3} A ${r3} ${r3} 0 0 1 ${i3} ${s2 - i3 - r3} L${i3} ${s2 - l2}`
     };
   };
-  var _el$4 = createElement("view", {
-    flexGrow: 1,
-    position: "relative"
-  }), _el$5 = createElement("d-rect", {
-    color: "black"
-  }), _el$6 = createElement("view", {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
-    justifyContent: "center",
-    alignItems: "center"
-  }), _el$7 = createElement("view"), _el$8 = createElement("d-path", {
-    color: "white",
-    drawStyle: "stroke",
-    strokeWidth: 10,
-    strokeCap: "round",
-    strokeJoin: "round"
-  }), _el$9 = createElement("view", {
-    position: "absolute",
-    width: "100%",
-    height: "100%"
-  });
-  insertNode2(_el$4, _el$5);
-  insertNode2(_el$4, _el$6);
-  insertNode2(_el$4, _el$9);
-  insert(_el$4, createComponent2(Show, {
-    get when() {
-      return memo2(() => cam.texture() != null)() && crop();
+  return createComponent2(View, {
+    layout: {
+      flexGrow: 1,
+      position: "relative"
     },
-    children: (c3) => (() => {
-      var _el$10 = createElement("texture", {
-        position: "absolute"
-      });
-      effect3(() => ({
-        e: cam.texture(),
-        t: c3().w,
-        a: c3().h,
-        o: c3().srcX,
-        i: c3().srcY,
-        n: c3().srcW,
-        s: c3().srcH
-      }), ({
-        e: e3,
-        t: t3,
-        a: a3,
-        o: o3,
-        i: i3,
-        n: n3,
-        s: s2
-      }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$10, "src", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$10, "w", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$10, "h", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$10, "srcX", o3, _p$?.o);
-        i3 !== _p$?.i && setProp(_el$10, "srcY", i3, _p$?.i);
-        n3 !== _p$?.n && setProp(_el$10, "srcW", n3, _p$?.n);
-        s2 !== _p$?.s && setProp(_el$10, "srcH", s2, _p$?.s);
-      });
-      return _el$10;
-    })()
-  }), _el$6);
-  insertNode2(_el$6, _el$7);
-  insertNode2(_el$7, _el$8);
-  insert(_el$9, createComponent2(SafeArea, {
+    style: {
+      backgroundColor: "black"
+    },
     get children() {
-      var _el$0 = createElement("view", {
-        flexGrow: 1
-      }), _el$1 = createElement("view", {
-        flexDirection: "row"
-      });
-      insertNode2(_el$0, _el$1);
-      insert(_el$1, createComponent2(Button, {
-        variant: "secondary",
-        get onPress() {
-          return props.onCancel;
+      return [createComponent2(Show, {
+        get when() {
+          return memo2(() => cam.texture() != null)() && crop();
         },
-        children: "Cancel"
-      }));
-      effect3(() => space("xl"), (_v$, _$p) => {
-        setProp(_el$0, "padding", _v$, _$p);
-      });
-      return _el$0;
+        children: (c3) => (() => {
+          var _el$3 = createElement("texture", {
+            position: "absolute"
+          });
+          effect3(() => ({
+            e: cam.texture(),
+            t: c3().w,
+            a: c3().h,
+            o: c3().srcX,
+            i: c3().srcY,
+            n: c3().srcW,
+            s: c3().srcH
+          }), ({
+            e: e3,
+            t: t3,
+            a: a3,
+            o: o3,
+            i: i3,
+            n: n3,
+            s: s2
+          }, _p$) => {
+            e3 !== _p$?.e && setProp(_el$3, "src", e3, _p$?.e);
+            t3 !== _p$?.t && setProp(_el$3, "w", t3, _p$?.t);
+            a3 !== _p$?.a && setProp(_el$3, "h", a3, _p$?.a);
+            o3 !== _p$?.o && setProp(_el$3, "srcX", o3, _p$?.o);
+            i3 !== _p$?.i && setProp(_el$3, "srcY", i3, _p$?.i);
+            n3 !== _p$?.n && setProp(_el$3, "srcW", n3, _p$?.n);
+            s2 !== _p$?.s && setProp(_el$3, "srcH", s2, _p$?.s);
+          });
+          return _el$3;
+        })()
+      }), createComponent2(View, {
+        layout: {
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          justifyContent: "center",
+          alignItems: "center"
+        },
+        get children() {
+          return createComponent2(View, {
+            get layout() {
+              return {
+                width: reticle().size,
+                height: reticle().size
+              };
+            },
+            get children() {
+              var _el$2 = createElement("d-path", {
+                color: "white",
+                drawStyle: "stroke",
+                strokeWidth: 10,
+                strokeCap: "round",
+                strokeJoin: "round"
+              });
+              effect3(() => reticle().d, (_v$, _$p) => {
+                setProp(_el$2, "d", _v$, _$p);
+              });
+              return _el$2;
+            }
+          });
+        }
+      }), createComponent2(View, {
+        layout: {
+          position: "absolute",
+          width: "100%",
+          height: "100%"
+        },
+        get children() {
+          return createComponent2(SafeArea, {
+            get children() {
+              return createComponent2(View, {
+                get layout() {
+                  return {
+                    flexGrow: 1,
+                    padding: space("xl")
+                  };
+                },
+                get children() {
+                  return createComponent2(View, {
+                    layout: {
+                      flexDirection: "row"
+                    },
+                    get children() {
+                      return createComponent2(Button, {
+                        variant: "secondary",
+                        size: "md",
+                        get onPress() {
+                          return props.onCancel;
+                        },
+                        children: "Cancel"
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          });
+        }
+      })];
     }
-  }));
-  effect3(() => ({
-    e: reticle().size,
-    t: reticle().size,
-    a: reticle().d
-  }), ({
-    e: e3,
-    t: t3,
-    a: a3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$7, "width", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$7, "height", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$8, "d", a3, _p$?.a);
   });
-  return _el$4;
 }
 function AppCard(props) {
   return createComponent2(Pressable, {
     get onPress() {
       return props.onPress;
     },
+    children: (s2) => createComponent2(Card, {
+      layout: {
+        gap: 2
+      },
+      get style() {
+        return {
+          backgroundColor: props.active ? theme.color.surfaceAlt : s2.hovered ? theme.color.surfaceHover : theme.color.surface
+        };
+      },
+      get children() {
+        return [createComponent2(Text, {
+          variant: "title",
+          get children() {
+            return props.app.name;
+          }
+        }), createComponent2(Text, {
+          variant: "body",
+          muted: true,
+          get children() {
+            return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
+          }
+        })];
+      }
+    })
+  });
+}
+function DetailRow(props) {
+  return createComponent2(View, {
     get layout() {
       return {
-        flexDirection: "column",
-        padding: space("xl"),
-        gap: 2
+        flexDirection: "row",
+        justifyContent: "space-between",
+        gap: space("md")
       };
     },
-    style: (s2) => ({
-      backgroundColor: props.active ? theme.color.surfaceAlt : s2.hovered ? theme.color.surfaceHover : theme.color.surface,
-      borderRadius: theme.radius.lg
-    }),
     get children() {
       return [createComponent2(Text, {
-        variant: "title",
-        get children() {
-          return props.app.name;
-        }
-      }), createComponent2(Text, {
-        variant: "caption",
+        variant: "body",
         muted: true,
         get children() {
-          return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
+          return props.label;
+        }
+      }), createComponent2(Text, {
+        variant: "body",
+        get muted() {
+          return props.mutedValue;
+        },
+        get children() {
+          return props.value;
         }
       })];
     }
   });
 }
-function DetailRow(props) {
-  var _el$11 = createElement("view", {
-    flexDirection: "row",
-    justifyContent: "space-between"
-  });
-  insert(_el$11, createComponent2(Text, {
-    variant: "caption",
-    muted: true,
-    get children() {
-      return props.label;
-    }
-  }), null);
-  insert(_el$11, createComponent2(Text, {
-    variant: "caption",
-    get muted() {
-      return props.mutedValue;
-    },
-    get children() {
-      return props.value;
-    }
-  }), null);
-  effect3(() => space("md"), (_v$, _$p) => {
-    setProp(_el$11, "gap", _v$, _$p);
-  });
-  return _el$11;
-}
 function DetailCard(props) {
-  return createComponent2(View, {
+  return createComponent2(Card, {
     get layout() {
       return {
-        flexDirection: "column",
         gap: space("md"),
         padding: space("lg")
       };
     },
-    get style() {
-      return {
-        backgroundColor: theme.color.surface,
-        borderRadius: theme.radius.lg
-      };
-    },
     get children() {
       return [createComponent2(Text, {
-        variant: "label",
+        variant: "title",
         muted: true,
         get children() {
           return props.title;
@@ -8381,217 +8718,454 @@ function AppDetail(props) {
       flexGrow: 1
     },
     get children() {
-      var _el$12 = createElement("view", {
-        flexDirection: "column",
-        width: "100%",
-        maxWidth: 520
-      }), _el$14 = createElement("view", {
-        flexDirection: "column",
-        gap: 2
-      }), _el$15 = createElement("view", {
-        flexDirection: "row"
-      });
-      insertNode2(_el$12, _el$14);
-      insertNode2(_el$12, _el$15);
-      insert(_el$12, createComponent2(Show, {
-        get when() {
-          return props.onBack;
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("lg"),
+            padding: space("xl"),
+            width: "100%",
+            maxWidth: 520
+          };
         },
         get children() {
-          var _el$13 = createElement("view", {
-            flexDirection: "row"
-          });
-          insert(_el$13, createComponent2(Button, {
-            variant: "ghost",
-            onPress: () => props.onBack?.(),
-            children: "Back"
-          }));
-          return _el$13;
-        }
-      }), _el$14);
-      insert(_el$14, createComponent2(Text, {
-        variant: "title",
-        get children() {
-          return props.app.name;
-        }
-      }), null);
-      insert(_el$14, createComponent2(Text, {
-        variant: "caption",
-        muted: true,
-        get children() {
-          return props.app.id;
-        }
-      }), null);
-      insert(_el$15, createComponent2(Button, {
-        onPress: () => props.onLaunch(),
-        children: "Launch"
-      }), null);
-      insert(_el$15, createComponent2(Show, {
-        get when() {
-          return !confirming();
-        },
-        get fallback() {
-          return [createComponent2(Button, {
-            variant: "danger",
-            onPress: () => props.onRemove(),
-            children: "Remove"
-          }), createComponent2(Button, {
-            variant: "ghost",
-            onPress: () => setConfirming(false),
-            children: "Keep"
+          return [createComponent2(Show, {
+            get when() {
+              return props.onBack;
+            },
+            get children() {
+              return createComponent2(View, {
+                layout: {
+                  flexDirection: "row"
+                },
+                get children() {
+                  return createComponent2(Button, {
+                    variant: "ghost",
+                    size: "sm",
+                    onPress: () => props.onBack?.(),
+                    children: "Back"
+                  });
+                }
+              });
+            }
+          }), createComponent2(View, {
+            layout: {
+              flexDirection: "column",
+              gap: 2
+            },
+            get children() {
+              return [createComponent2(Text, {
+                variant: "heading",
+                get children() {
+                  return props.app.name;
+                }
+              }), createComponent2(Text, {
+                variant: "body",
+                muted: true,
+                get children() {
+                  return props.app.id;
+                }
+              })];
+            }
+          }), createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "row",
+                gap: space("md")
+              };
+            },
+            get children() {
+              return [createComponent2(Button, {
+                onPress: () => props.onLaunch(),
+                children: "Launch"
+              }), createComponent2(Button, {
+                variant: "secondary",
+                onPress: () => setConfirming(true),
+                children: "Remove"
+              })];
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return confirming();
+            },
+            get children() {
+              return createComponent2(Modal, {
+                onClose: () => setConfirming(false),
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        width: "100%",
+                        maxWidth: 380,
+                        padding: space("xl")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(Card, {
+                        get layout() {
+                          return {
+                            gap: space("lg")
+                          };
+                        },
+                        get children() {
+                          return [createComponent2(View, {
+                            get layout() {
+                              return {
+                                flexDirection: "column",
+                                gap: space("sm")
+                              };
+                            },
+                            get children() {
+                              return [createComponent2(Text, {
+                                variant: "title",
+                                get children() {
+                                  return ["Remove ", memo2(() => props.app.name), "?"];
+                                }
+                              }), createComponent2(Text, {
+                                variant: "body",
+                                muted: true,
+                                children: "This deletes the app and its stored data. This cannot be undone."
+                              })];
+                            }
+                          }), createComponent2(View, {
+                            get layout() {
+                              return {
+                                flexDirection: "row",
+                                gap: space("md")
+                              };
+                            },
+                            get children() {
+                              return [createComponent2(Button, {
+                                variant: "ghost",
+                                onPress: () => setConfirming(false),
+                                children: "Cancel"
+                              }), createComponent2(Button, {
+                                variant: "danger",
+                                onPress: () => props.onRemove(),
+                                children: "Remove"
+                              })];
+                            }
+                          })];
+                        }
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return details();
+            },
+            children: (d2) => [createComponent2(DetailCard, {
+              title: "Storage",
+              get children() {
+                return [createComponent2(DetailRow, {
+                  label: "App",
+                  get value() {
+                    return formatSize(d2().installSize);
+                  }
+                }), createComponent2(DetailRow, {
+                  label: "Data",
+                  get value() {
+                    return formatSize(d2().dataSize);
+                  }
+                })];
+              }
+            }), createComponent2(DetailCard, {
+              title: "Versions",
+              get children() {
+                return createComponent2(For, {
+                  get each() {
+                    return d2().versions;
+                  },
+                  children: (v2) => createComponent2(DetailRow, {
+                    get label() {
+                      return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
+                    },
+                    get value() {
+                      return formatSize(v2.size);
+                    },
+                    get mutedValue() {
+                      return !v2.current;
+                    }
+                  })
+                });
+              }
+            }), createComponent2(DetailCard, {
+              title: "Assets",
+              get children() {
+                return createComponent2(Show, {
+                  get when() {
+                    return d2().assets.length > 0;
+                  },
+                  get fallback() {
+                    return createComponent2(Text, {
+                      variant: "body",
+                      muted: true,
+                      children: "None declared"
+                    });
+                  },
+                  get children() {
+                    return createComponent2(For, {
+                      get each() {
+                        return d2().assets;
+                      },
+                      children: (f3) => createComponent2(DetailRow, {
+                        get label() {
+                          return f3.path;
+                        },
+                        get value() {
+                          return formatSize(f3.size);
+                        }
+                      })
+                    });
+                  }
+                });
+              }
+            }), createComponent2(DetailCard, {
+              title: "Files",
+              get children() {
+                return createComponent2(For, {
+                  get each() {
+                    return d2().files;
+                  },
+                  children: (f3) => createComponent2(DetailRow, {
+                    get label() {
+                      return f3.path;
+                    },
+                    get value() {
+                      return formatSize(f3.size);
+                    }
+                  })
+                });
+              }
+            }), createComponent2(DetailCard, {
+              title: "Data",
+              get children() {
+                return createComponent2(Show, {
+                  get when() {
+                    return d2().data.length > 0;
+                  },
+                  get fallback() {
+                    return createComponent2(Text, {
+                      variant: "body",
+                      muted: true,
+                      children: "Empty"
+                    });
+                  },
+                  get children() {
+                    return createComponent2(For, {
+                      get each() {
+                        return d2().data;
+                      },
+                      children: (f3) => createComponent2(DetailRow, {
+                        get label() {
+                          return f3.path;
+                        },
+                        get value() {
+                          return formatSize(f3.size);
+                        }
+                      })
+                    });
+                  }
+                });
+              }
+            })]
           })];
+        }
+      });
+    }
+  });
+}
+function AppList(props) {
+  return createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("md")
+          };
         },
         get children() {
-          return createComponent2(Button, {
-            variant: "secondary",
-            onPress: () => setConfirming(true),
-            children: "Remove"
+          return createComponent2(For, {
+            get each() {
+              return props.apps;
+            },
+            children: (app) => createComponent2(AppCard, {
+              app,
+              get active() {
+                return memo2(() => !!props.twoPane)() ? props.selectedId === app.id : props.twoPane;
+              },
+              onPress: () => props.onSelect(app.id)
+            })
           });
         }
-      }), null);
-      insert(_el$12, createComponent2(Show, {
-        get when() {
-          return details();
-        },
-        children: (d2) => [createComponent2(DetailCard, {
-          title: "Storage",
-          get children() {
-            return [createComponent2(DetailRow, {
-              label: "App",
-              get value() {
-                return formatSize(d2().installSize);
-              }
-            }), createComponent2(DetailRow, {
-              label: "Data",
-              get value() {
-                return formatSize(d2().dataSize);
-              }
-            })];
-          }
-        }), createComponent2(DetailCard, {
-          title: "Versions",
-          get children() {
-            return createComponent2(For, {
-              get each() {
-                return d2().versions;
-              },
-              children: (v2) => createComponent2(DetailRow, {
-                get label() {
-                  return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
-                },
-                get value() {
-                  return formatSize(v2.size);
-                },
-                get mutedValue() {
-                  return !v2.current;
-                }
-              })
-            });
-          }
-        }), createComponent2(DetailCard, {
-          title: "Assets",
-          get children() {
-            return createComponent2(Show, {
-              get when() {
-                return d2().assets.length > 0;
-              },
-              get fallback() {
-                return createComponent2(Text, {
-                  variant: "caption",
-                  muted: true,
-                  children: "None declared"
-                });
-              },
-              get children() {
-                return createComponent2(For, {
-                  get each() {
-                    return d2().assets;
-                  },
-                  children: (f3) => createComponent2(DetailRow, {
-                    get label() {
-                      return f3.path;
-                    },
-                    get value() {
-                      return formatSize(f3.size);
-                    }
-                  })
-                });
-              }
-            });
-          }
-        }), createComponent2(DetailCard, {
-          title: "Files",
-          get children() {
-            return createComponent2(For, {
-              get each() {
-                return d2().files;
-              },
-              children: (f3) => createComponent2(DetailRow, {
-                get label() {
-                  return f3.path;
-                },
-                get value() {
-                  return formatSize(f3.size);
-                }
-              })
-            });
-          }
-        }), createComponent2(DetailCard, {
-          title: "Data",
-          get children() {
-            return createComponent2(Show, {
-              get when() {
-                return d2().data.length > 0;
-              },
-              get fallback() {
-                return createComponent2(Text, {
-                  variant: "caption",
-                  muted: true,
-                  children: "Empty"
-                });
-              },
-              get children() {
-                return createComponent2(For, {
-                  get each() {
-                    return d2().data;
-                  },
-                  children: (f3) => createComponent2(DetailRow, {
-                    get label() {
-                      return f3.path;
-                    },
-                    get value() {
-                      return formatSize(f3.size);
-                    }
-                  })
-                });
-              }
-            });
-          }
-        })]
-      }), null);
-      effect3(() => ({
-        e: space("lg"),
-        t: space("xl"),
-        a: space("md")
-      }), ({
-        e: e3,
-        t: t3,
-        a: a3
-      }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$12, "gap", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$12, "padding", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$15, "gap", a3, _p$?.a);
       });
-      return _el$12;
+    }
+  });
+}
+function NoApps() {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        flexGrow: 1,
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: space("md")
+      };
+    },
+    get children() {
+      return [createComponent2(Text, {
+        variant: "title",
+        children: "No apps installed"
+      }), createComponent2(Text, {
+        muted: true,
+        children: "Connect a dev server to install apps"
+      })];
+    }
+  });
+}
+function DevCard(props) {
+  let hasCamera = () => cameraDevices().length > 0;
+  return createComponent2(Card, {
+    get layout() {
+      return {
+        gap: space("md"),
+        padding: space("lg")
+      };
+    },
+    get children() {
+      return [createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: space("md")
+          };
+        },
+        get children() {
+          return [createComponent2(Show, {
+            get when() {
+              return props.busy;
+            },
+            get fallback() {
+              return createComponent2(View, {
+                layout: {
+                  width: 8,
+                  height: 8
+                },
+                get children() {
+                  var _el$4 = createElement("d-oval");
+                  effect3(() => props.connected ? theme.color.primary : theme.color.textMuted, (_v$, _$p) => {
+                    setProp(_el$4, "color", _v$, _$p);
+                  });
+                  return _el$4;
+                }
+              });
+            },
+            get children() {
+              return createComponent2(Spinner, {
+                size: 14,
+                thickness: 2
+              });
+            }
+          }), createComponent2(Text, {
+            variant: "body",
+            muted: true,
+            layout: {
+              flexGrow: 1
+            },
+            get children() {
+              return props.status;
+            }
+          })];
+        }
+      }), createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "row",
+            gap: space("sm")
+          };
+        },
+        get children() {
+          return [createComponent2(Show, {
+            get when() {
+              return props.idle;
+            },
+            get children() {
+              return [createComponent2(Show, {
+                when: canDiscover,
+                get children() {
+                  return createComponent2(Button, {
+                    variant: "secondary",
+                    onPress: () => discover(),
+                    children: "Discover"
+                  });
+                }
+              }), createComponent2(Show, {
+                get when() {
+                  return hasCamera();
+                },
+                get children() {
+                  return createComponent2(Button, {
+                    variant: "secondary",
+                    get onPress() {
+                      return props.onScan;
+                    },
+                    children: "Scan QR"
+                  });
+                }
+              }), createComponent2(Button, {
+                variant: "secondary",
+                get onPress() {
+                  return props.onManual;
+                },
+                children: "Address"
+              })];
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return props.busy;
+            },
+            get children() {
+              return createComponent2(Button, {
+                variant: "secondary",
+                onPress: () => stop(),
+                children: "Cancel"
+              });
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return props.connected;
+            },
+            get children() {
+              return createComponent2(Button, {
+                variant: "secondary",
+                onPress: () => stop(),
+                children: "Disconnect"
+              });
+            }
+          })];
+        }
+      })];
     }
   });
 }
 function App() {
   let dev = devAvailable;
+  let [dark, setDark] = createSignal(true);
   createEffect(() => env.systemTheme, (t3) => {
     if (t3 !== "unknown")
-      setTheme(t3 === "light" ? lightTheme : darkTheme);
+      setDark(t3 === "dark");
   });
+  createEffect(() => dark(), (d2) => setTheme(d2 ? darkTheme : lightTheme));
+  let toggleTheme = () => setDark((d2) => !d2);
   let [screen, setScreen] = createSignal("home");
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
   let [selectedId, setSelectedId] = createSignal(null);
@@ -8615,7 +9189,6 @@ function App() {
   let idle = () => state() === "idle";
   let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
-  let hasCamera = () => cameraDevices().length > 0;
   let twoPane = () => policy.layout === "twoPane";
   let selectedApp = () => apps().find((a3) => a3.id === selectedId()) ?? null;
   let status = () => connected() ? `Connected to ${address()}${tunneled() ? " (tunneled)" : ""}` : notice() ?? STATUS_TEXT[state()];
@@ -8641,173 +9214,6 @@ function App() {
     connect(normalizeAddress(addr));
   };
   let manualDraft = "";
-  let appList = () => createComponent2(ScrollView, {
-    layout: {
-      flexGrow: 1
-    },
-    get children() {
-      var _el$16 = createElement("view", {
-        flexDirection: "column"
-      });
-      insert(_el$16, createComponent2(For, {
-        get each() {
-          return apps();
-        },
-        children: (app) => createComponent2(AppCard, {
-          app,
-          get active() {
-            return memo2(() => !!twoPane())() ? selectedId() === app.id : twoPane();
-          },
-          onPress: () => setSelectedId(app.id)
-        })
-      }));
-      effect3(() => space("md"), (_v$, _$p) => {
-        setProp(_el$16, "gap", _v$, _$p);
-      });
-      return _el$16;
-    }
-  });
-  let noApps = () => (() => {
-    var _el$17 = createElement("view", {
-      flexGrow: 1,
-      flexDirection: "column",
-      justifyContent: "center",
-      alignItems: "center"
-    });
-    insert(_el$17, createComponent2(Text, {
-      variant: "title",
-      children: "No apps installed"
-    }), null);
-    insert(_el$17, createComponent2(Text, {
-      muted: true,
-      children: "Connect a dev server to install apps"
-    }), null);
-    effect3(() => space("md"), (_v$, _$p) => {
-      setProp(_el$17, "gap", _v$, _$p);
-    });
-    return _el$17;
-  })();
-  let devCard = () => createComponent2(Show, {
-    when: dev,
-    get children() {
-      return createComponent2(View, {
-        get layout() {
-          return {
-            flexDirection: "column",
-            gap: space("md"),
-            padding: space("lg")
-          };
-        },
-        get style() {
-          return {
-            backgroundColor: theme.color.surface,
-            borderRadius: theme.radius.lg
-          };
-        },
-        get children() {
-          return [(() => {
-            var _el$18 = createElement("view", {
-              flexDirection: "row",
-              alignItems: "center"
-            }), _el$19 = createElement("view", {
-              width: 8,
-              height: 8
-            }), _el$20 = createElement("d-oval");
-            insertNode2(_el$18, _el$19);
-            insertNode2(_el$19, _el$20);
-            insert(_el$18, createComponent2(Text, {
-              variant: "caption",
-              muted: true,
-              layout: {
-                flexGrow: 1
-              },
-              get children() {
-                return status();
-              }
-            }), null);
-            effect3(() => ({
-              e: space("md"),
-              t: connected() || busy() ? theme.color.primary : theme.color.textMuted
-            }), ({
-              e: e3,
-              t: t3
-            }, _p$) => {
-              e3 !== _p$?.e && setProp(_el$18, "gap", e3, _p$?.e);
-              t3 !== _p$?.t && setProp(_el$20, "color", t3, _p$?.t);
-            });
-            return _el$18;
-          })(), (() => {
-            var _el$21 = createElement("view", {
-              flexDirection: "row"
-            });
-            insert(_el$21, createComponent2(Show, {
-              get when() {
-                return idle();
-              },
-              get children() {
-                return [createComponent2(Show, {
-                  when: canDiscover,
-                  get children() {
-                    return createComponent2(Button, {
-                      variant: "secondary",
-                      onPress: () => discover(),
-                      children: "Discover"
-                    });
-                  }
-                }), createComponent2(Show, {
-                  get when() {
-                    return hasCamera();
-                  },
-                  get children() {
-                    return createComponent2(Button, {
-                      variant: "secondary",
-                      onPress: () => {
-                        setNotice(null);
-                        setScreen("scan");
-                      },
-                      children: "Scan QR"
-                    });
-                  }
-                }), createComponent2(Button, {
-                  variant: "secondary",
-                  onPress: () => setScreen("manual"),
-                  children: "Address"
-                })];
-              }
-            }), null);
-            insert(_el$21, createComponent2(Show, {
-              get when() {
-                return busy();
-              },
-              get children() {
-                return createComponent2(Button, {
-                  variant: "secondary",
-                  onPress: () => stop(),
-                  children: "Cancel"
-                });
-              }
-            }), null);
-            insert(_el$21, createComponent2(Show, {
-              get when() {
-                return connected();
-              },
-              get children() {
-                return createComponent2(Button, {
-                  variant: "secondary",
-                  onPress: () => stop(),
-                  children: "Disconnect"
-                });
-              }
-            }), null);
-            effect3(() => space("sm"), (_v$, _$p) => {
-              setProp(_el$21, "gap", _v$, _$p);
-            });
-            return _el$21;
-          })()];
-        }
-      });
-    }
-  });
   return createComponent2(Window, {
     title: "SolidRT",
     layout: {
@@ -8842,234 +9248,122 @@ function App() {
                   return screen() === "manual";
                 },
                 get children() {
-                  var _el$22 = createElement("view", {
-                    flexGrow: 1,
-                    alignItems: "center"
-                  }), _el$23 = createElement("view", {
-                    flexDirection: "column",
-                    width: "100%",
-                    maxWidth: 440,
-                    paddingTop: 72
-                  });
-                  insertNode2(_el$22, _el$23);
-                  insert(_el$23, createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "column",
-                        gap: space("lg"),
-                        padding: space("xl")
-                      };
-                    },
-                    get style() {
-                      return {
-                        backgroundColor: theme.color.surface,
-                        borderRadius: theme.radius.lg
-                      };
-                    },
-                    get children() {
-                      return [createComponent2(Text, {
-                        variant: "title",
-                        children: "Connect to a dev server"
-                      }), createComponent2(TextInput, {
-                        placeholder: "host:port",
-                        autoFocus: true,
-                        onInput: (v2) => manualDraft = v2,
-                        onSubmit: (v2) => {
-                          if (v2.trim())
-                            dial(v2);
-                        }
-                      }), (() => {
-                        var _el$24 = createElement("view", {
-                          flexDirection: "row"
-                        });
-                        insert(_el$24, createComponent2(Button, {
-                          onPress: () => {
-                            if (manualDraft.trim())
-                              dial(manualDraft);
-                          },
-                          children: "Connect"
-                        }), null);
-                        insert(_el$24, createComponent2(Button, {
-                          variant: "ghost",
-                          onPress: () => setScreen("home"),
-                          children: "Cancel"
-                        }), null);
-                        effect3(() => space("md"), (_v$, _$p) => {
-                          setProp(_el$24, "gap", _v$, _$p);
-                        });
-                        return _el$24;
-                      })()];
-                    }
-                  }), null);
-                  insert(_el$23, createComponent2(Show, {
-                    get when() {
-                      return recents().length > 0;
-                    },
-                    get children() {
-                      var _el$25 = createElement("view", {
-                        flexDirection: "column"
-                      }), _el$26 = createElement("view", {
-                        flexDirection: "row",
-                        flexWrap: "wrap"
-                      });
-                      insertNode2(_el$25, _el$26);
-                      insert(_el$25, createComponent2(Text, {
-                        variant: "label",
-                        muted: true,
-                        children: "Recent"
-                      }), _el$26);
-                      insert(_el$26, createComponent2(For, {
-                        get each() {
-                          return recents();
-                        },
-                        children: (entry) => createComponent2(Pressable, {
-                          onPress: () => dial(entry),
-                          get layout() {
-                            return {
-                              paddingLeft: space("lg"),
-                              paddingRight: space("lg"),
-                              paddingTop: space("md"),
-                              paddingBottom: space("md")
-                            };
-                          },
-                          style: (s2) => ({
-                            backgroundColor: s2.hovered ? theme.color.surfaceHover : theme.color.surfaceAlt,
-                            borderRadius: theme.radius.lg
-                          }),
-                          get children() {
-                            return createComponent2(Text, {
-                              variant: "label",
-                              get children() {
-                                return recentLabel(entry);
-                              }
-                            });
-                          }
-                        })
-                      }));
-                      effect3(() => ({
-                        e: space("sm"),
-                        t: space("sm")
-                      }), ({
-                        e: e3,
-                        t: t3
-                      }, _p$) => {
-                        e3 !== _p$?.e && setProp(_el$25, "gap", e3, _p$?.e);
-                        t3 !== _p$?.t && setProp(_el$26, "gap", t3, _p$?.t);
-                      });
-                      return _el$25;
-                    }
-                  }), null);
-                  effect3(() => ({
-                    e: space("lg"),
-                    t: space("xl")
-                  }), ({
-                    e: e3,
-                    t: t3
-                  }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$23, "gap", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$23, "padding", t3, _p$?.t);
-                  });
-                  return _el$22;
-                }
-              }), createComponent2(Match, {
-                get when() {
-                  return memo2(() => screen() === "home")() && twoPane();
-                },
-                get children() {
-                  var _el$27 = createElement("view", {
-                    flexGrow: 1,
-                    flexDirection: "row"
-                  }), _el$28 = createElement("view", {
-                    flexDirection: "column",
-                    width: 380
-                  }), _el$29 = createElement("view", {
-                    alignItems: "center"
-                  }), _el$30 = createElement("view", {
-                    flexGrow: 1,
-                    flexDirection: "column"
-                  });
-                  insertNode2(_el$27, _el$28);
-                  insertNode2(_el$27, _el$30);
-                  insertNode2(_el$28, _el$29);
-                  insert(_el$29, createComponent2(PuzzleMark, {
-                    size: 96
-                  }));
-                  insert(_el$28, createComponent2(Show, {
-                    get when() {
-                      return apps().length > 0;
-                    },
-                    get fallback() {
-                      return noApps();
-                    },
-                    get children() {
-                      return appList();
-                    }
-                  }), null);
-                  insert(_el$28, devCard, null);
-                  insert(_el$27, createComponent2(View, {
+                  return createComponent2(View, {
                     layout: {
-                      width: 1
+                      flexGrow: 1,
+                      alignItems: "center"
                     },
-                    get style() {
-                      return {
-                        backgroundColor: theme.color.surfaceAlt
-                      };
+                    get children() {
+                      return createComponent2(View, {
+                        get layout() {
+                          return {
+                            flexDirection: "column",
+                            gap: space("lg"),
+                            width: "100%",
+                            maxWidth: 440,
+                            padding: space("xl"),
+                            paddingTop: 72
+                          };
+                        },
+                        get children() {
+                          return [createComponent2(Card, {
+                            get children() {
+                              return [createComponent2(Text, {
+                                variant: "title",
+                                children: "Connect to a dev server"
+                              }), createComponent2(TextInput, {
+                                placeholder: "host:port",
+                                autoFocus: true,
+                                onInput: (v2) => manualDraft = v2,
+                                onSubmit: (v2) => {
+                                  if (v2.trim())
+                                    dial(v2);
+                                }
+                              }), createComponent2(View, {
+                                get layout() {
+                                  return {
+                                    flexDirection: "row",
+                                    gap: space("md")
+                                  };
+                                },
+                                get children() {
+                                  return [createComponent2(Button, {
+                                    onPress: () => {
+                                      if (manualDraft.trim())
+                                        dial(manualDraft);
+                                    },
+                                    children: "Connect"
+                                  }), createComponent2(Button, {
+                                    variant: "ghost",
+                                    onPress: () => setScreen("home"),
+                                    children: "Cancel"
+                                  })];
+                                }
+                              })];
+                            }
+                          }), createComponent2(Show, {
+                            get when() {
+                              return recents().length > 0;
+                            },
+                            get children() {
+                              return createComponent2(View, {
+                                get layout() {
+                                  return {
+                                    flexDirection: "column",
+                                    gap: space("sm")
+                                  };
+                                },
+                                get children() {
+                                  return [createComponent2(Text, {
+                                    variant: "body",
+                                    muted: true,
+                                    children: "Recent"
+                                  }), createComponent2(View, {
+                                    get layout() {
+                                      return {
+                                        flexDirection: "row",
+                                        flexWrap: "wrap",
+                                        gap: space("sm")
+                                      };
+                                    },
+                                    get children() {
+                                      return createComponent2(For, {
+                                        get each() {
+                                          return recents();
+                                        },
+                                        children: (entry) => createComponent2(Pressable, {
+                                          onPress: () => dial(entry),
+                                          get layout() {
+                                            return {
+                                              paddingLeft: space("lg"),
+                                              paddingRight: space("lg"),
+                                              paddingTop: space("md"),
+                                              paddingBottom: space("md")
+                                            };
+                                          },
+                                          style: (s2) => ({
+                                            backgroundColor: s2.hovered ? theme.color.surfaceHover : theme.color.surfaceAlt,
+                                            borderRadius: theme.radius.lg
+                                          }),
+                                          get children() {
+                                            return createComponent2(Text, {
+                                              variant: "body",
+                                              get children() {
+                                                return recentLabel(entry);
+                                              }
+                                            });
+                                          }
+                                        })
+                                      });
+                                    }
+                                  })];
+                                }
+                              });
+                            }
+                          })];
+                        }
+                      });
                     }
-                  }), _el$30);
-                  insert(_el$30, createComponent2(Show, {
-                    get when() {
-                      return selectedApp();
-                    },
-                    get fallback() {
-                      var _el$34 = createElement("view", {
-                        flexGrow: 1,
-                        justifyContent: "center",
-                        alignItems: "center"
-                      });
-                      insert(_el$34, createComponent2(Text, {
-                        muted: true,
-                        children: "Select an app"
-                      }));
-                      effect3(() => space("md"), (_v$, _$p) => {
-                        setProp(_el$34, "gap", _v$, _$p);
-                      });
-                      return _el$34;
-                    },
-                    children: (app) => createComponent2(AppDetail, {
-                      get app() {
-                        return app();
-                      },
-                      onLaunch: () => doLaunch(app().id),
-                      onRemove: () => doRemove(app().id)
-                    })
-                  }));
-                  effect3(() => ({
-                    e: space("xl"),
-                    t: space("xl"),
-                    a: space("lg")
-                  }), ({
-                    e: e3,
-                    t: t3,
-                    a: a3
-                  }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$28, "padding", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$28, "gap", t3, _p$?.t);
-                    a3 !== _p$?.a && setProp(_el$29, "paddingTop", a3, _p$?.a);
-                  });
-                  return _el$27;
-                }
-              }), createComponent2(Match, {
-                get when() {
-                  return memo2(() => screen() === "home")() && selectedApp() != null;
-                },
-                get children() {
-                  return createComponent2(AppDetail, {
-                    get app() {
-                      return selectedApp();
-                    },
-                    onLaunch: () => doLaunch(selectedApp().id),
-                    onRemove: () => doRemove(selectedApp().id),
-                    onBack: () => setSelectedId(null)
                   });
                 }
               }), createComponent2(Match, {
@@ -9077,48 +9371,163 @@ function App() {
                   return screen() === "home";
                 },
                 get children() {
-                  var _el$31 = createElement("view", {
-                    flexGrow: 1,
-                    alignItems: "center"
-                  }), _el$32 = createElement("view", {
-                    flexDirection: "column",
-                    width: "100%",
-                    maxWidth: 440,
-                    flexGrow: 1
-                  }), _el$33 = createElement("view", {
-                    alignItems: "center"
-                  });
-                  insertNode2(_el$31, _el$32);
-                  insertNode2(_el$32, _el$33);
-                  insert(_el$33, createComponent2(PuzzleMark, {
-                    size: 144
-                  }));
-                  insert(_el$32, createComponent2(Show, {
-                    get when() {
-                      return apps().length > 0;
+                  return createComponent2(SplitView, {
+                    layout: {
+                      flexGrow: 1
                     },
-                    get fallback() {
-                      return noApps();
+                    listWidth: 380,
+                    get showDetail() {
+                      return selectedApp() != null;
                     },
-                    get children() {
-                      return appList();
+                    get list() {
+                      return createComponent2(View, {
+                        layout: {
+                          flexGrow: 1,
+                          flexDirection: "column",
+                          alignItems: "center"
+                        },
+                        get children() {
+                          return createComponent2(View, {
+                            get layout() {
+                              return {
+                                flexDirection: "column",
+                                flexGrow: 1,
+                                width: "100%",
+                                maxWidth: twoPane() ? undefined : 440,
+                                padding: space("xl"),
+                                gap: space("xl")
+                              };
+                            },
+                            get children() {
+                              return [createComponent2(View, {
+                                layout: {
+                                  flexDirection: "row",
+                                  justifyContent: "space-between",
+                                  alignItems: "center"
+                                },
+                                get children() {
+                                  return [createComponent2(View, {
+                                    get layout() {
+                                      return {
+                                        flexDirection: "row",
+                                        alignItems: "center",
+                                        gap: space("md")
+                                      };
+                                    },
+                                    get children() {
+                                      return [createComponent2(PuzzleMark, {
+                                        size: 40
+                                      }), createComponent2(Text, {
+                                        variant: "heading",
+                                        children: "SolidRT"
+                                      })];
+                                    }
+                                  }), createComponent2(Pressable, {
+                                    onPress: toggleTheme,
+                                    get layout() {
+                                      return {
+                                        padding: space("sm")
+                                      };
+                                    },
+                                    style: (s2) => ({
+                                      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                                      borderRadius: theme.radius.md
+                                    }),
+                                    get children() {
+                                      return createComponent2(Icon, {
+                                        get src() {
+                                          return dark() ? SUN_SVG : MOON_SVG;
+                                        },
+                                        size: 22
+                                      });
+                                    }
+                                  })];
+                                }
+                              }), createComponent2(Show, {
+                                get when() {
+                                  return apps().length > 0;
+                                },
+                                get fallback() {
+                                  return createComponent2(NoApps, {});
+                                },
+                                get children() {
+                                  return createComponent2(AppList, {
+                                    get apps() {
+                                      return apps();
+                                    },
+                                    get selectedId() {
+                                      return selectedId();
+                                    },
+                                    get twoPane() {
+                                      return twoPane();
+                                    },
+                                    onSelect: (id2) => setSelectedId(id2)
+                                  });
+                                }
+                              }), createComponent2(Show, {
+                                when: dev,
+                                get children() {
+                                  return createComponent2(DevCard, {
+                                    get status() {
+                                      return status();
+                                    },
+                                    get idle() {
+                                      return idle();
+                                    },
+                                    get busy() {
+                                      return busy();
+                                    },
+                                    get connected() {
+                                      return connected();
+                                    },
+                                    onScan: () => {
+                                      setNotice(null);
+                                      setScreen("scan");
+                                    },
+                                    onManual: () => setScreen("manual")
+                                  });
+                                }
+                              })];
+                            }
+                          });
+                        }
+                      });
+                    },
+                    get detail() {
+                      return createComponent2(Show, {
+                        get when() {
+                          return selectedApp();
+                        },
+                        get fallback() {
+                          return createComponent2(View, {
+                            get layout() {
+                              return {
+                                flexGrow: 1,
+                                justifyContent: "center",
+                                alignItems: "center",
+                                gap: space("lg")
+                              };
+                            },
+                            get children() {
+                              return createComponent2(PuzzleMark, {
+                                size: 360
+                              });
+                            }
+                          });
+                        },
+                        children: (app) => createComponent2(AppDetail, {
+                          get app() {
+                            return app();
+                          },
+                          onLaunch: () => doLaunch(app().id),
+                          onRemove: () => doRemove(app().id),
+                          get onBack() {
+                            return twoPane() ? undefined : () => setSelectedId(null);
+                          }
+                        })
+                      });
                     }
-                  }), null);
-                  insert(_el$32, devCard, null);
-                  effect3(() => ({
-                    e: space("xl"),
-                    t: space("xl"),
-                    a: space("xl")
-                  }), ({
-                    e: e3,
-                    t: t3,
-                    a: a3
-                  }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$32, "padding", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$32, "gap", t3, _p$?.t);
-                    a3 !== _p$?.a && setProp(_el$33, "paddingTop", a3, _p$?.a);
                   });
-                  return _el$31;
                 }
               })];
             }

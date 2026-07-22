@@ -17,6 +17,22 @@ export interface StyleProps {
   y?: number
   rotate?: number
   scale?: number
+  // Per-axis scale; overrides `scale` on that axis (e.g. scaleX for a flip).
+  scaleX?: number
+  scaleY?: number
+  // 3D rotation in radians about the horizontal (rotateX) / vertical (rotateY)
+  // axis; reads as real depth only with `perspective` set.
+  rotateX?: number
+  rotateY?: number
+  // Perspective viewing distance in pixels, enabling 3D depth for rotateX/Y.
+  perspective?: number
+  // Transform origin (the pivot for scale/rotate), in pixels from the box's
+  // top-left. Defaults to the box center on each axis.
+  originX?: number
+  originY?: number
+  // Corner radii for the clip applied when overflow is non-visible (hidden,
+  // clip, scroll); a single number or [tl, tr, br, bl].
+  clipRadius?: number | [number, number, number, number]
   opacity?: number
 }
 

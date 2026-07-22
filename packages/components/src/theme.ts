@@ -35,6 +35,11 @@ export type Theme = {
     // Hover tint for primary-colored controls.
     primaryHover: string
     onPrimary: string
+    // Lower-emphasis accent: the puzzle mark's darker blue.
+    secondary: string
+    // Hover tint for secondary-colored controls.
+    secondaryHover: string
+    onSecondary: string
     // Validation / destructive.
     danger: string
     // Hover tint for danger-colored controls.
@@ -75,9 +80,15 @@ export let darkTheme: Theme = {
     // thin on low-DPI and its contrast depends on what sits behind it.
     textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
     border: "rgba(255,255,255,0.14)",
-    primary: "#1f6feb",
-    primaryHover: "#388bfd",
+    // Accent tuned to the puzzle mark's mid blue; hover lifts toward its
+    // lightest segment tone.
+    primary: "#547ebf",
+    primaryHover: "#7ea9ea",
     onPrimary: "#ffffff",
+    // The darker shade of the same puzzle segment; hover lifts toward primary.
+    secondary: "#2b5696",
+    secondaryHover: "#3a68ab",
+    onSecondary: "#ffffff",
     danger: "#f85149",
     dangerHover: "#ff7b72",
     scrim: "rgba(0,0,0,0.6)",
@@ -97,9 +108,15 @@ export let lightTheme: Theme = {
     text: "#1f2328",
     textMuted: mixColors("#1f2328", "#ffffff", 0.4),
     border: "rgba(0,0,0,0.15)",
-    primary: "#1f6feb",
-    primaryHover: "#1a5fd0",
+    // Accent tuned to the puzzle mark's mid blue; hover deepens toward its
+    // darker segment tone.
+    primary: "#547ebf",
+    primaryHover: "#3f5494",
     onPrimary: "#ffffff",
+    // The darker shade of the same puzzle segment; hover deepens it further.
+    secondary: "#2b5696",
+    secondaryHover: "#1f4176",
+    onSecondary: "#ffffff",
     danger: "#cf222e",
     dangerHover: "#a40e26",
     scrim: "rgba(0,0,0,0.4)",

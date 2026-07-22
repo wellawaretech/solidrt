@@ -3445,7 +3445,7 @@ import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/image.ts
 var imageCache = new Map;
-// lattice/default-app/bsod.tsx
+// lattice/launcher/bsod.tsx
 function Bsod() {
   var _el$ = createElement("window", {
     title: "solidrt"
