@@ -196,7 +196,7 @@ fn main() {
       None => (source_path.map(path_app), Vec::new(), None),
     }
   };
-  // The runtime has no built-in screen to fall back to (the connect screen is
+  // The runtime has no built-in screen to fall back to (the launcher is
   // go-only); without an app there is nothing to run.
   #[cfg(not(feature = "go"))]
   if app.is_none() {

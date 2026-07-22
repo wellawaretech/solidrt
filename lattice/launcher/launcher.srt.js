@@ -3765,11 +3765,11 @@ function createCamera(options = {}) {
   };
 }
 
-// lattice/default-app/app.tsx
+// lattice/launcher/launcher.tsx
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, recents as initialRecents, launchAddress } from "srt:dev";
 
-// lattice/default-app/logo.tsx
+// lattice/launcher/logo.tsx
 var EXPLODE_DIST = 3;
 var STAGGER_DELAY = 100;
 var ANIM_DURATION = 600;
@@ -4267,7 +4267,7 @@ function Logo() {
   return _el$4;
 }
 
-// lattice/default-app/app.tsx
+// lattice/launcher/launcher.tsx
 var STATUS_TEXT = {
   idle: "not connected",
   searching: "searching...",

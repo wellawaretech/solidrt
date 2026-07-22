@@ -35,7 +35,7 @@ pub struct DevSession {
   // srt.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
   // Dev-server address delivered at launch (srt client --android), exposed to JS
-  // as srt:dev launchAddress so the default app can auto-connect.
+  // as srt:dev launchAddress so the launcher can auto-connect.
   launch_address: Option<String>,
 }
 
@@ -81,8 +81,8 @@ impl DevSession {
       connection::start(handle, engine_cmd_tx, state_tx, dev_server.clone(), flags.clone(), outbound_rx, queries);
 
     // Session-level connect for a version-store boot: the running app is not
-    // the default connect screen, so nothing JS-side would dial the launch
-    // address. The default-app path keeps its JS-driven connect (launchAddress).
+    // the launcher, so nothing JS-side would dial the launch address. The
+    // launcher path keeps its JS-driven connect (launchAddress).
     if auto_connect {
       if let Some(addr) = &launch_address {
         let _ = dev_cmd_tx.send(DevCmd::Connect(addr.clone()));
@@ -126,7 +126,7 @@ impl DevSession {
   }
 
   /// Replay the latest connection state into a freshly built engine so a reload
-  /// (e.g. a server stop returning to the default app) keeps the right indicator.
+  /// (e.g. a server stop returning to the launcher) keeps the right indicator.
   pub fn replay_state(&self, exec: &ExecHandle) {
     emit_dev_state(exec, self.dev_state.borrow().clone(), self.dev_recents.borrow().clone());
   }
@@ -155,9 +155,9 @@ fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str, recent: Option<&st
 }
 
 // Emit the dev-server connection state to JS as the sticky `dev` event.
-// Sticky so it replays to the default app's subscriber on each engine rebuild,
+// Sticky so it replays to the launcher's subscriber on each engine rebuild,
 // which keeps the "connected" indicator across a server stop (the stop reloads
-// the default app but leaves the websocket up).
+// the launcher but leaves the websocket up).
 fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
   eh.exec(move |ctx| {
     let (state, addr, tunneled) = st.parts();

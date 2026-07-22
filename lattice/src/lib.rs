@@ -15,7 +15,7 @@ mod tests;
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
-  // Return to the connect screen; only the dev session sends this.
+  // Return to the launcher; only the dev session sends this.
   #[cfg(feature = "go")]
   Stop,
   // `app_id` names the app a dev push belongs to (from its installed
@@ -93,14 +93,14 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
 
 // --- End Android entry point ------------------------------
 
-// The connect screen is the go client's home; the production runtime never
+// The launcher is the go client's home; the production runtime never
 // shows it (it always boots a provided app source), so only go builds embed it.
 #[cfg(feature = "go")]
-const DEFAULT_SOURCE: &str = include_str!("../default-app/app.srt.js");
-const BSOD_SOURCE: &str = include_str!("../default-app/bsod.srt.js");
+const LAUNCHER_SOURCE: &str = include_str!("../launcher/launcher.srt.js");
+const BSOD_SOURCE: &str = include_str!("../launcher/bsod.srt.js");
 
 /// The dev client's built-in fonts: the three Noto role defaults, matching what
-/// a default packed app carries in its trailer. The dev loop (default screen,
+/// a default packed app carries in its trailer. The dev loop (launcher,
 /// BSOD, HUD, `srt render` golden frames) needs deterministic text without a
 /// packed payload, so these stay compiled in; the production runtime ships no
 /// font data and registers whatever the trailer carries.
@@ -237,7 +237,7 @@ fn ui_thread(
   // last installed app from the version store immediately; the session
   // auto-connects in the background and the server's latched reload replaces
   // the app when the connection comes up. Launched without an address, the
-  // connect screen stays the entry point (discover / QR pairing).
+  // launcher stays the entry point (discover / QR pairing).
   #[cfg(feature = "go")]
   let mut dev_auto_connect = false;
   #[cfg(feature = "go")]
@@ -269,7 +269,7 @@ fn ui_thread(
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
   #[cfg(feature = "go")]
-  let mut current_app = app.unwrap_or_else(|| AppSource::Text(DEFAULT_SOURCE.to_string()));
+  let mut current_app = app.unwrap_or_else(|| AppSource::Text(LAUNCHER_SOURCE.to_string()));
   #[cfg(not(feature = "go"))]
   let mut current_app = app.expect("runtime builds must provide an app source");
   let mut showing_bsod = false;
@@ -551,7 +551,7 @@ fn ui_thread(
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // Replay the current connection state into this engine so a reload (e.g.
-      // a server stop returning to the default app) keeps the right indicator.
+      // a server stop returning to the launcher) keeps the right indicator.
       #[cfg(feature = "go")]
       if let Some(dev) = &dev_session {
         dev.replay_state(&engine.exec_handle());
@@ -576,7 +576,7 @@ fn ui_thread(
                   next_app_id = app_id;
                 }
                 #[cfg(feature = "go")]
-                EngineCmd::Stop => { next_app = Some(AppSource::Text(DEFAULT_SOURCE.to_string())); }
+                EngineCmd::Stop => { next_app = Some(AppSource::Text(LAUNCHER_SOURCE.to_string())); }
               }
             }
           }
@@ -610,7 +610,7 @@ fn ui_thread(
           }
           #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
-            current_app = AppSource::Text(DEFAULT_SOURCE.to_string());
+            current_app = AppSource::Text(LAUNCHER_SOURCE.to_string());
             showing_bsod = false;
           }
           None => break,

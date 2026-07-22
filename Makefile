@@ -1,4 +1,4 @@
-all client runtime default-app-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android dist-android-armeabi-v7a clean dist-clean download-fonts:
+all client runtime launcher-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android dist-android-armeabi-v7a clean dist-clean download-fonts:
 	$(MAKE) -C lattice $@
 
 test:
@@ -7,4 +7,4 @@ test:
 format:
 	cargo fmt --all
 
-.PHONY: all client runtime default-app-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android dist-android-armeabi-v7a clean dist-clean download-fonts test format
+.PHONY: all client runtime launcher-bundle dist-linux dist-darwin dist-windows client-android run-android dist-android dist-android-armeabi-v7a clean dist-clean download-fonts test format

@@ -43,12 +43,12 @@ GO_FEATURES      = --features go,speech
 RUNTIME_FEATURES = --features speech
 endif
 
-DEFAULT_APP_SRC = $(CURDIR)/default-app/app.tsx
-DEFAULT_APP_JS  = $(CURDIR)/default-app/app.srt.js
+LAUNCHER_SRC = $(CURDIR)/launcher/launcher.tsx
+LAUNCHER_JS  = $(CURDIR)/launcher/launcher.srt.js
 
 # The BSOD screen shown when an app fails to start.
-BSOD_SRC = $(CURDIR)/default-app/bsod.tsx
-BSOD_JS  = $(CURDIR)/default-app/bsod.srt.js
+BSOD_SRC = $(CURDIR)/launcher/bsod.tsx
+BSOD_JS  = $(CURDIR)/launcher/bsod.srt.js
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
@@ -65,14 +65,14 @@ endif
 
 .DEFAULT_GOAL := client
 
-.PHONY: all help default-app-bundle dist-clean clean
+.PHONY: all help launcher-bundle dist-clean clean
 
 # Build both host binaries (client + runtime).
 all: client runtime
 
-$(DEFAULT_APP_JS): $(wildcard $(CURDIR)/default-app/*.tsx)
-	@echo "Bundling default app (app.tsx -> app.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(DEFAULT_APP_SRC)
+$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx)
+	@echo "Bundling launcher (launcher.tsx -> launcher.srt.js)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC)
 
 $(BSOD_JS): $(BSOD_SRC)
 	@echo "Bundling BSOD screen (bsod.tsx -> bsod.srt.js)..."
@@ -97,20 +97,20 @@ help:
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "dist-* targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
-	@echo "Default app:"
-	@echo "  default-app-bundle   Regenerate app.srt.js from app.tsx"
+	@echo "Launcher:"
+	@echo "  launcher-bundle      Regenerate launcher.srt.js from launcher.tsx"
 	@echo ""
 	@echo "Clean:"
 	@echo "  clean                Remove all build artifacts"
 	@echo "  dist-clean           Remove dist/ only"
 
-# -- Default app --------------------------------------
+# -- Launcher -----------------------------------------
 #
-# SolidRT Go embeds default-app/app.srt.js at compile time via include_str!.
-# The file target rebuilds app.srt.js when any .tsx source changes.
-# Run `make default-app-bundle` to force a rebuild.
+# SolidRT Go embeds launcher/launcher.srt.js at compile time via include_str!.
+# The file target rebuilds launcher.srt.js when any .tsx source changes.
+# Run `make launcher-bundle` to force a rebuild.
 
-default-app-bundle: $(DEFAULT_APP_JS) $(BSOD_JS)
+launcher-bundle: $(LAUNCHER_JS) $(BSOD_JS)
 
 # -- Fonts --------------------------------------------
 
