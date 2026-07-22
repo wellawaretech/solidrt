@@ -8027,34 +8027,10 @@ var createDataURL = function(width, height, getPixel) {
   return "data:image/gif;base64," + base64;
 };
 var stringToBytes = qrcode.stringToBytes;
-// packages/components/src/icon.tsx
-var SIZE = 24;
-function Icon(props) {
-  let size = () => props.size ?? SIZE;
-  var _el$ = createElement("view", {
-    repaintBoundary: true
-  }), _el$2 = createElement("svg");
-  insertNode2(_el$, _el$2);
-  spread(_el$2, mergeProps({
-    get width() {
-      return size();
-    },
-    get height() {
-      return size();
-    },
-    get src() {
-      return props.src;
-    },
-    get color() {
-      return props.color ?? theme.color.text;
-    }
-  }, () => props.layout), false);
-  return _el$;
-}
 // lattice/launcher/launcher.tsx
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
-import { available as appsAvailable, list, launch, remove } from "srt:apps";
+import { available as appsAvailable, list, info, launch, remove } from "srt:apps";
 var STATUS_TEXT = {
   idle: "Not connected",
   searching: "Searching...",
@@ -8137,8 +8113,6 @@ function PuzzleMark(props) {
   });
   return _el$;
 }
-var LUCIDE = (body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"` + ` stroke="currentColor" stroke-width="2" stroke-linecap="round"` + ` stroke-linejoin="round">${body}</svg>`;
-var TRASH = LUCIDE(`<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>` + `<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>`);
 function normalizeAddress(raw) {
   return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
 }
@@ -8146,6 +8120,17 @@ function recentLabel(entry) {
   if (!entry.includes("|"))
     return entry;
   return "ticket " + entry.split("|")[0].slice(0, 8);
+}
+function formatSize(bytes) {
+  if (bytes < 1024)
+    return `${bytes} B`;
+  let kb = bytes / 1024;
+  if (kb < 1024)
+    return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  let mb = kb / 1024;
+  if (mb < 1024)
+    return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
 }
 var RETICLE_STROKE = 10;
 var RETICLE_RADIUS = 20;
@@ -8226,7 +8211,7 @@ function ScanScreen(props) {
       return memo2(() => cam.texture() != null)() && crop();
     },
     children: (c3) => (() => {
-      var _el$13 = createElement("texture", {
+      var _el$10 = createElement("texture", {
         position: "absolute"
       });
       effect3(() => ({
@@ -8246,15 +8231,15 @@ function ScanScreen(props) {
         n: n3,
         s: s2
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$13, "src", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$13, "w", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$13, "h", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$13, "srcX", o3, _p$?.o);
-        i3 !== _p$?.i && setProp(_el$13, "srcY", i3, _p$?.i);
-        n3 !== _p$?.n && setProp(_el$13, "srcW", n3, _p$?.n);
-        s2 !== _p$?.s && setProp(_el$13, "srcH", s2, _p$?.s);
+        e3 !== _p$?.e && setProp(_el$10, "src", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$10, "w", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$10, "h", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$10, "srcX", o3, _p$?.o);
+        i3 !== _p$?.i && setProp(_el$10, "srcY", i3, _p$?.i);
+        n3 !== _p$?.n && setProp(_el$10, "srcW", n3, _p$?.n);
+        s2 !== _p$?.s && setProp(_el$10, "srcH", s2, _p$?.s);
       });
-      return _el$13;
+      return _el$10;
     })()
   }), _el$6);
   insertNode2(_el$6, _el$7);
@@ -8262,18 +8247,11 @@ function ScanScreen(props) {
   insert(_el$9, createComponent2(SafeArea, {
     get children() {
       var _el$0 = createElement("view", {
-        flexGrow: 1,
-        flexDirection: "column",
-        justifyContent: "space-between"
+        flexGrow: 1
       }), _el$1 = createElement("view", {
         flexDirection: "row"
-      }), _el$10 = createElement("view", {
-        alignItems: "center"
-      }), _el$11 = createElement("text", {
-        color: "white"
       });
       insertNode2(_el$0, _el$1);
-      insertNode2(_el$0, _el$10);
       insert(_el$1, createComponent2(Button, {
         variant: "secondary",
         get onPress() {
@@ -8281,8 +8259,6 @@ function ScanScreen(props) {
         },
         children: "Cancel"
       }));
-      insertNode2(_el$10, _el$11);
-      insertNode2(_el$11, createTextNode(`Scan the dev server QR code`));
       effect3(() => space("xl"), (_v$, _$p) => {
         setProp(_el$0, "padding", _v$, _$p);
       });
@@ -8304,6 +8280,312 @@ function ScanScreen(props) {
   });
   return _el$4;
 }
+function AppCard(props) {
+  return createComponent2(Pressable, {
+    get onPress() {
+      return props.onPress;
+    },
+    get layout() {
+      return {
+        flexDirection: "column",
+        padding: space("xl"),
+        gap: 2
+      };
+    },
+    style: (s2) => ({
+      backgroundColor: props.active ? theme.color.surfaceAlt : s2.hovered ? theme.color.surfaceHover : theme.color.surface,
+      borderRadius: theme.radius.lg
+    }),
+    get children() {
+      return [createComponent2(Text, {
+        variant: "title",
+        get children() {
+          return props.app.name;
+        }
+      }), createComponent2(Text, {
+        variant: "caption",
+        muted: true,
+        get children() {
+          return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
+        }
+      })];
+    }
+  });
+}
+function DetailRow(props) {
+  var _el$11 = createElement("view", {
+    flexDirection: "row",
+    justifyContent: "space-between"
+  });
+  insert(_el$11, createComponent2(Text, {
+    variant: "caption",
+    muted: true,
+    get children() {
+      return props.label;
+    }
+  }), null);
+  insert(_el$11, createComponent2(Text, {
+    variant: "caption",
+    get muted() {
+      return props.mutedValue;
+    },
+    get children() {
+      return props.value;
+    }
+  }), null);
+  effect3(() => space("md"), (_v$, _$p) => {
+    setProp(_el$11, "gap", _v$, _$p);
+  });
+  return _el$11;
+}
+function DetailCard(props) {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        flexDirection: "column",
+        gap: space("md"),
+        padding: space("lg")
+      };
+    },
+    get style() {
+      return {
+        backgroundColor: theme.color.surface,
+        borderRadius: theme.radius.lg
+      };
+    },
+    get children() {
+      return [createComponent2(Text, {
+        variant: "label",
+        muted: true,
+        get children() {
+          return props.title;
+        }
+      }), memo2(() => props.children)];
+    }
+  });
+}
+function AppDetail(props) {
+  let [confirming, setConfirming] = createSignal(false);
+  createEffect(() => props.app.id, () => {
+    setConfirming(false);
+  });
+  let details = createMemo2(() => {
+    try {
+      return info(props.app.id);
+    } catch {
+      return null;
+    }
+  });
+  return createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      var _el$12 = createElement("view", {
+        flexDirection: "column",
+        width: "100%",
+        maxWidth: 520
+      }), _el$14 = createElement("view", {
+        flexDirection: "column",
+        gap: 2
+      }), _el$15 = createElement("view", {
+        flexDirection: "row"
+      });
+      insertNode2(_el$12, _el$14);
+      insertNode2(_el$12, _el$15);
+      insert(_el$12, createComponent2(Show, {
+        get when() {
+          return props.onBack;
+        },
+        get children() {
+          var _el$13 = createElement("view", {
+            flexDirection: "row"
+          });
+          insert(_el$13, createComponent2(Button, {
+            variant: "ghost",
+            onPress: () => props.onBack?.(),
+            children: "Back"
+          }));
+          return _el$13;
+        }
+      }), _el$14);
+      insert(_el$14, createComponent2(Text, {
+        variant: "title",
+        get children() {
+          return props.app.name;
+        }
+      }), null);
+      insert(_el$14, createComponent2(Text, {
+        variant: "caption",
+        muted: true,
+        get children() {
+          return props.app.id;
+        }
+      }), null);
+      insert(_el$15, createComponent2(Button, {
+        onPress: () => props.onLaunch(),
+        children: "Launch"
+      }), null);
+      insert(_el$15, createComponent2(Show, {
+        get when() {
+          return !confirming();
+        },
+        get fallback() {
+          return [createComponent2(Button, {
+            variant: "danger",
+            onPress: () => props.onRemove(),
+            children: "Remove"
+          }), createComponent2(Button, {
+            variant: "ghost",
+            onPress: () => setConfirming(false),
+            children: "Keep"
+          })];
+        },
+        get children() {
+          return createComponent2(Button, {
+            variant: "secondary",
+            onPress: () => setConfirming(true),
+            children: "Remove"
+          });
+        }
+      }), null);
+      insert(_el$12, createComponent2(Show, {
+        get when() {
+          return details();
+        },
+        children: (d2) => [createComponent2(DetailCard, {
+          title: "Storage",
+          get children() {
+            return [createComponent2(DetailRow, {
+              label: "App",
+              get value() {
+                return formatSize(d2().installSize);
+              }
+            }), createComponent2(DetailRow, {
+              label: "Data",
+              get value() {
+                return formatSize(d2().dataSize);
+              }
+            })];
+          }
+        }), createComponent2(DetailCard, {
+          title: "Versions",
+          get children() {
+            return createComponent2(For, {
+              get each() {
+                return d2().versions;
+              },
+              children: (v2) => createComponent2(DetailRow, {
+                get label() {
+                  return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
+                },
+                get value() {
+                  return formatSize(v2.size);
+                },
+                get mutedValue() {
+                  return !v2.current;
+                }
+              })
+            });
+          }
+        }), createComponent2(DetailCard, {
+          title: "Assets",
+          get children() {
+            return createComponent2(Show, {
+              get when() {
+                return d2().assets.length > 0;
+              },
+              get fallback() {
+                return createComponent2(Text, {
+                  variant: "caption",
+                  muted: true,
+                  children: "None declared"
+                });
+              },
+              get children() {
+                return createComponent2(For, {
+                  get each() {
+                    return d2().assets;
+                  },
+                  children: (f3) => createComponent2(DetailRow, {
+                    get label() {
+                      return f3.path;
+                    },
+                    get value() {
+                      return formatSize(f3.size);
+                    }
+                  })
+                });
+              }
+            });
+          }
+        }), createComponent2(DetailCard, {
+          title: "Files",
+          get children() {
+            return createComponent2(For, {
+              get each() {
+                return d2().files;
+              },
+              children: (f3) => createComponent2(DetailRow, {
+                get label() {
+                  return f3.path;
+                },
+                get value() {
+                  return formatSize(f3.size);
+                }
+              })
+            });
+          }
+        }), createComponent2(DetailCard, {
+          title: "Data",
+          get children() {
+            return createComponent2(Show, {
+              get when() {
+                return d2().data.length > 0;
+              },
+              get fallback() {
+                return createComponent2(Text, {
+                  variant: "caption",
+                  muted: true,
+                  children: "Empty"
+                });
+              },
+              get children() {
+                return createComponent2(For, {
+                  get each() {
+                    return d2().data;
+                  },
+                  children: (f3) => createComponent2(DetailRow, {
+                    get label() {
+                      return f3.path;
+                    },
+                    get value() {
+                      return formatSize(f3.size);
+                    }
+                  })
+                });
+              }
+            });
+          }
+        })]
+      }), null);
+      effect3(() => ({
+        e: space("lg"),
+        t: space("xl"),
+        a: space("md")
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$12, "gap", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$12, "padding", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$15, "gap", a3, _p$?.a);
+      });
+      return _el$12;
+    }
+  });
+}
 function App() {
   let dev = devAvailable;
   createEffect(() => env.systemTheme, (t3) => {
@@ -8312,7 +8594,7 @@ function App() {
   });
   let [screen, setScreen] = createSignal("home");
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
-  let [confirming, setConfirming] = createSignal(null);
+  let [selectedId, setSelectedId] = createSignal(null);
   let [notice, setNotice] = createSignal(null);
   let [state, setState] = createSignal("idle");
   let [address, setAddress] = createSignal(null);
@@ -8334,6 +8616,8 @@ function App() {
   let busy = () => state() === "searching" || state() === "connecting";
   let connected = () => state() === "connected";
   let hasCamera = () => cameraDevices().length > 0;
+  let twoPane = () => policy.layout === "twoPane";
+  let selectedApp = () => apps().find((a3) => a3.id === selectedId()) ?? null;
   let status = () => connected() ? `Connected to ${address()}${tunneled() ? " (tunneled)" : ""}` : notice() ?? STATUS_TEXT[state()];
   let doLaunch = (id2) => {
     try {
@@ -8343,12 +8627,12 @@ function App() {
     }
   };
   let doRemove = (id2) => {
-    setConfirming(null);
     try {
       remove(id2);
     } catch (e3) {
       setNotice(e3 instanceof Error ? e3.message : String(e3));
     }
+    setSelectedId(null);
     setApps(appsAvailable ? list() : []);
   };
   let dial = (addr) => {
@@ -8357,6 +8641,173 @@ function App() {
     connect(normalizeAddress(addr));
   };
   let manualDraft = "";
+  let appList = () => createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      var _el$16 = createElement("view", {
+        flexDirection: "column"
+      });
+      insert(_el$16, createComponent2(For, {
+        get each() {
+          return apps();
+        },
+        children: (app) => createComponent2(AppCard, {
+          app,
+          get active() {
+            return memo2(() => !!twoPane())() ? selectedId() === app.id : twoPane();
+          },
+          onPress: () => setSelectedId(app.id)
+        })
+      }));
+      effect3(() => space("md"), (_v$, _$p) => {
+        setProp(_el$16, "gap", _v$, _$p);
+      });
+      return _el$16;
+    }
+  });
+  let noApps = () => (() => {
+    var _el$17 = createElement("view", {
+      flexGrow: 1,
+      flexDirection: "column",
+      justifyContent: "center",
+      alignItems: "center"
+    });
+    insert(_el$17, createComponent2(Text, {
+      variant: "title",
+      children: "No apps installed"
+    }), null);
+    insert(_el$17, createComponent2(Text, {
+      muted: true,
+      children: "Connect a dev server to install apps"
+    }), null);
+    effect3(() => space("md"), (_v$, _$p) => {
+      setProp(_el$17, "gap", _v$, _$p);
+    });
+    return _el$17;
+  })();
+  let devCard = () => createComponent2(Show, {
+    when: dev,
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("md"),
+            padding: space("lg")
+          };
+        },
+        get style() {
+          return {
+            backgroundColor: theme.color.surface,
+            borderRadius: theme.radius.lg
+          };
+        },
+        get children() {
+          return [(() => {
+            var _el$18 = createElement("view", {
+              flexDirection: "row",
+              alignItems: "center"
+            }), _el$19 = createElement("view", {
+              width: 8,
+              height: 8
+            }), _el$20 = createElement("d-oval");
+            insertNode2(_el$18, _el$19);
+            insertNode2(_el$19, _el$20);
+            insert(_el$18, createComponent2(Text, {
+              variant: "caption",
+              muted: true,
+              layout: {
+                flexGrow: 1
+              },
+              get children() {
+                return status();
+              }
+            }), null);
+            effect3(() => ({
+              e: space("md"),
+              t: connected() || busy() ? theme.color.primary : theme.color.textMuted
+            }), ({
+              e: e3,
+              t: t3
+            }, _p$) => {
+              e3 !== _p$?.e && setProp(_el$18, "gap", e3, _p$?.e);
+              t3 !== _p$?.t && setProp(_el$20, "color", t3, _p$?.t);
+            });
+            return _el$18;
+          })(), (() => {
+            var _el$21 = createElement("view", {
+              flexDirection: "row"
+            });
+            insert(_el$21, createComponent2(Show, {
+              get when() {
+                return idle();
+              },
+              get children() {
+                return [createComponent2(Show, {
+                  when: canDiscover,
+                  get children() {
+                    return createComponent2(Button, {
+                      variant: "secondary",
+                      onPress: () => discover(),
+                      children: "Discover"
+                    });
+                  }
+                }), createComponent2(Show, {
+                  get when() {
+                    return hasCamera();
+                  },
+                  get children() {
+                    return createComponent2(Button, {
+                      variant: "secondary",
+                      onPress: () => {
+                        setNotice(null);
+                        setScreen("scan");
+                      },
+                      children: "Scan QR"
+                    });
+                  }
+                }), createComponent2(Button, {
+                  variant: "secondary",
+                  onPress: () => setScreen("manual"),
+                  children: "Address"
+                })];
+              }
+            }), null);
+            insert(_el$21, createComponent2(Show, {
+              get when() {
+                return busy();
+              },
+              get children() {
+                return createComponent2(Button, {
+                  variant: "secondary",
+                  onPress: () => stop(),
+                  children: "Cancel"
+                });
+              }
+            }), null);
+            insert(_el$21, createComponent2(Show, {
+              get when() {
+                return connected();
+              },
+              get children() {
+                return createComponent2(Button, {
+                  variant: "secondary",
+                  onPress: () => stop(),
+                  children: "Disconnect"
+                });
+              }
+            }), null);
+            effect3(() => space("sm"), (_v$, _$p) => {
+              setProp(_el$21, "gap", _v$, _$p);
+            });
+            return _el$21;
+          })()];
+        }
+      });
+    }
+  });
   return createComponent2(Window, {
     title: "SolidRT",
     layout: {
@@ -8391,17 +8842,17 @@ function App() {
                   return screen() === "manual";
                 },
                 get children() {
-                  var _el$14 = createElement("view", {
+                  var _el$22 = createElement("view", {
                     flexGrow: 1,
                     alignItems: "center"
-                  }), _el$15 = createElement("view", {
+                  }), _el$23 = createElement("view", {
                     flexDirection: "column",
                     width: "100%",
                     maxWidth: 440,
                     paddingTop: 72
                   });
-                  insertNode2(_el$14, _el$15);
-                  insert(_el$15, createComponent2(View, {
+                  insertNode2(_el$22, _el$23);
+                  insert(_el$23, createComponent2(View, {
                     get layout() {
                       return {
                         flexDirection: "column",
@@ -8428,46 +8879,46 @@ function App() {
                             dial(v2);
                         }
                       }), (() => {
-                        var _el$16 = createElement("view", {
+                        var _el$24 = createElement("view", {
                           flexDirection: "row"
                         });
-                        insert(_el$16, createComponent2(Button, {
+                        insert(_el$24, createComponent2(Button, {
                           onPress: () => {
                             if (manualDraft.trim())
                               dial(manualDraft);
                           },
                           children: "Connect"
                         }), null);
-                        insert(_el$16, createComponent2(Button, {
+                        insert(_el$24, createComponent2(Button, {
                           variant: "ghost",
                           onPress: () => setScreen("home"),
                           children: "Cancel"
                         }), null);
                         effect3(() => space("md"), (_v$, _$p) => {
-                          setProp(_el$16, "gap", _v$, _$p);
+                          setProp(_el$24, "gap", _v$, _$p);
                         });
-                        return _el$16;
+                        return _el$24;
                       })()];
                     }
                   }), null);
-                  insert(_el$15, createComponent2(Show, {
+                  insert(_el$23, createComponent2(Show, {
                     get when() {
                       return recents().length > 0;
                     },
                     get children() {
-                      var _el$17 = createElement("view", {
+                      var _el$25 = createElement("view", {
                         flexDirection: "column"
-                      }), _el$18 = createElement("view", {
+                      }), _el$26 = createElement("view", {
                         flexDirection: "row",
                         flexWrap: "wrap"
                       });
-                      insertNode2(_el$17, _el$18);
-                      insert(_el$17, createComponent2(Text, {
+                      insertNode2(_el$25, _el$26);
+                      insert(_el$25, createComponent2(Text, {
                         variant: "label",
                         muted: true,
                         children: "Recent"
-                      }), _el$18);
-                      insert(_el$18, createComponent2(For, {
+                      }), _el$26);
+                      insert(_el$26, createComponent2(For, {
                         get each() {
                           return recents();
                         },
@@ -8502,10 +8953,10 @@ function App() {
                         e: e3,
                         t: t3
                       }, _p$) => {
-                        e3 !== _p$?.e && setProp(_el$17, "gap", e3, _p$?.e);
-                        t3 !== _p$?.t && setProp(_el$18, "gap", t3, _p$?.t);
+                        e3 !== _p$?.e && setProp(_el$25, "gap", e3, _p$?.e);
+                        t3 !== _p$?.t && setProp(_el$26, "gap", t3, _p$?.t);
                       });
-                      return _el$17;
+                      return _el$25;
                     }
                   }), null);
                   effect3(() => ({
@@ -8515,309 +8966,159 @@ function App() {
                     e: e3,
                     t: t3
                   }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$15, "gap", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$15, "padding", t3, _p$?.t);
+                    e3 !== _p$?.e && setProp(_el$23, "gap", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$23, "padding", t3, _p$?.t);
                   });
-                  return _el$14;
+                  return _el$22;
+                }
+              }), createComponent2(Match, {
+                get when() {
+                  return memo2(() => screen() === "home")() && twoPane();
+                },
+                get children() {
+                  var _el$27 = createElement("view", {
+                    flexGrow: 1,
+                    flexDirection: "row"
+                  }), _el$28 = createElement("view", {
+                    flexDirection: "column",
+                    width: 380
+                  }), _el$29 = createElement("view", {
+                    alignItems: "center"
+                  }), _el$30 = createElement("view", {
+                    flexGrow: 1,
+                    flexDirection: "column"
+                  });
+                  insertNode2(_el$27, _el$28);
+                  insertNode2(_el$27, _el$30);
+                  insertNode2(_el$28, _el$29);
+                  insert(_el$29, createComponent2(PuzzleMark, {
+                    size: 96
+                  }));
+                  insert(_el$28, createComponent2(Show, {
+                    get when() {
+                      return apps().length > 0;
+                    },
+                    get fallback() {
+                      return noApps();
+                    },
+                    get children() {
+                      return appList();
+                    }
+                  }), null);
+                  insert(_el$28, devCard, null);
+                  insert(_el$27, createComponent2(View, {
+                    layout: {
+                      width: 1
+                    },
+                    get style() {
+                      return {
+                        backgroundColor: theme.color.surfaceAlt
+                      };
+                    }
+                  }), _el$30);
+                  insert(_el$30, createComponent2(Show, {
+                    get when() {
+                      return selectedApp();
+                    },
+                    get fallback() {
+                      var _el$34 = createElement("view", {
+                        flexGrow: 1,
+                        justifyContent: "center",
+                        alignItems: "center"
+                      });
+                      insert(_el$34, createComponent2(Text, {
+                        muted: true,
+                        children: "Select an app"
+                      }));
+                      effect3(() => space("md"), (_v$, _$p) => {
+                        setProp(_el$34, "gap", _v$, _$p);
+                      });
+                      return _el$34;
+                    },
+                    children: (app) => createComponent2(AppDetail, {
+                      get app() {
+                        return app();
+                      },
+                      onLaunch: () => doLaunch(app().id),
+                      onRemove: () => doRemove(app().id)
+                    })
+                  }));
+                  effect3(() => ({
+                    e: space("xl"),
+                    t: space("xl"),
+                    a: space("lg")
+                  }), ({
+                    e: e3,
+                    t: t3,
+                    a: a3
+                  }, _p$) => {
+                    e3 !== _p$?.e && setProp(_el$28, "padding", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$28, "gap", t3, _p$?.t);
+                    a3 !== _p$?.a && setProp(_el$29, "paddingTop", a3, _p$?.a);
+                  });
+                  return _el$27;
+                }
+              }), createComponent2(Match, {
+                get when() {
+                  return memo2(() => screen() === "home")() && selectedApp() != null;
+                },
+                get children() {
+                  return createComponent2(AppDetail, {
+                    get app() {
+                      return selectedApp();
+                    },
+                    onLaunch: () => doLaunch(selectedApp().id),
+                    onRemove: () => doRemove(selectedApp().id),
+                    onBack: () => setSelectedId(null)
+                  });
                 }
               }), createComponent2(Match, {
                 get when() {
                   return screen() === "home";
                 },
                 get children() {
-                  var _el$19 = createElement("view", {
+                  var _el$31 = createElement("view", {
                     flexGrow: 1,
                     alignItems: "center"
-                  }), _el$20 = createElement("view", {
+                  }), _el$32 = createElement("view", {
                     flexDirection: "column",
                     width: "100%",
                     maxWidth: 440,
                     flexGrow: 1
-                  }), _el$21 = createElement("view", {
+                  }), _el$33 = createElement("view", {
                     alignItems: "center"
                   });
-                  insertNode2(_el$19, _el$20);
-                  insertNode2(_el$20, _el$21);
-                  insert(_el$21, createComponent2(PuzzleMark, {
+                  insertNode2(_el$31, _el$32);
+                  insertNode2(_el$32, _el$33);
+                  insert(_el$33, createComponent2(PuzzleMark, {
                     size: 144
                   }));
-                  insert(_el$20, createComponent2(Show, {
+                  insert(_el$32, createComponent2(Show, {
                     get when() {
                       return apps().length > 0;
                     },
                     get fallback() {
-                      var _el$27 = createElement("view", {
-                        flexGrow: 1,
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        alignItems: "center"
-                      });
-                      insert(_el$27, createComponent2(Text, {
-                        variant: "title",
-                        children: "No apps installed"
-                      }), null);
-                      insert(_el$27, createComponent2(Text, {
-                        muted: true,
-                        children: "Connect a dev server to install apps"
-                      }), null);
-                      effect3(() => space("md"), (_v$, _$p) => {
-                        setProp(_el$27, "gap", _v$, _$p);
-                      });
-                      return _el$27;
+                      return noApps();
                     },
                     get children() {
-                      return createComponent2(ScrollView, {
-                        layout: {
-                          flexGrow: 1
-                        },
-                        get children() {
-                          var _el$22 = createElement("view", {
-                            flexDirection: "column"
-                          });
-                          insert(_el$22, createComponent2(Text, {
-                            variant: "label",
-                            muted: true,
-                            children: "Apps"
-                          }), null);
-                          insert(_el$22, createComponent2(For, {
-                            get each() {
-                              return apps();
-                            },
-                            children: (app) => createComponent2(Pressable, {
-                              onPress: () => {
-                                if (confirming() !== app.id)
-                                  doLaunch(app.id);
-                              },
-                              get layout() {
-                                return {
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  padding: space("xl"),
-                                  gap: space("md")
-                                };
-                              },
-                              style: (s2) => ({
-                                backgroundColor: s2.hovered ? theme.color.surfaceHover : theme.color.surface,
-                                borderRadius: theme.radius.lg
-                              }),
-                              get children() {
-                                return [(() => {
-                                  var _el$28 = createElement("view", {
-                                    flexDirection: "column",
-                                    flexGrow: 1,
-                                    gap: 2
-                                  });
-                                  insert(_el$28, createComponent2(Text, {
-                                    variant: "title",
-                                    get children() {
-                                      return app.name;
-                                    }
-                                  }), null);
-                                  insert(_el$28, createComponent2(Text, {
-                                    variant: "caption",
-                                    muted: true,
-                                    get children() {
-                                      return `${app.id} - ${app.version.slice(0, 8)}`;
-                                    }
-                                  }), null);
-                                  return _el$28;
-                                })(), createComponent2(Show, {
-                                  get when() {
-                                    return confirming() === app.id;
-                                  },
-                                  get fallback() {
-                                    return createComponent2(Pressable, {
-                                      onPress: () => setConfirming(app.id),
-                                      get layout() {
-                                        return {
-                                          padding: space("sm")
-                                        };
-                                      },
-                                      style: (s2) => ({
-                                        backgroundColor: s2.hovered ? theme.color.surfaceAlt : "transparent",
-                                        borderRadius: theme.radius.sm
-                                      }),
-                                      get children() {
-                                        return createComponent2(Icon, {
-                                          src: TRASH,
-                                          size: 18,
-                                          get color() {
-                                            return theme.color.textMuted;
-                                          }
-                                        });
-                                      }
-                                    });
-                                  },
-                                  get children() {
-                                    var _el$29 = createElement("view", {
-                                      flexDirection: "row",
-                                      alignItems: "center"
-                                    });
-                                    insert(_el$29, createComponent2(Button, {
-                                      variant: "danger",
-                                      onPress: () => doRemove(app.id),
-                                      children: "Remove"
-                                    }), null);
-                                    insert(_el$29, createComponent2(Button, {
-                                      variant: "ghost",
-                                      onPress: () => setConfirming(null),
-                                      children: "Keep"
-                                    }), null);
-                                    effect3(() => space("sm"), (_v$, _$p) => {
-                                      setProp(_el$29, "gap", _v$, _$p);
-                                    });
-                                    return _el$29;
-                                  }
-                                })];
-                              }
-                            })
-                          }), null);
-                          effect3(() => space("md"), (_v$, _$p) => {
-                            setProp(_el$22, "gap", _v$, _$p);
-                          });
-                          return _el$22;
-                        }
-                      });
+                      return appList();
                     }
                   }), null);
-                  insert(_el$20, createComponent2(Show, {
-                    when: dev,
-                    get children() {
-                      return createComponent2(View, {
-                        get layout() {
-                          return {
-                            flexDirection: "column",
-                            gap: space("md"),
-                            padding: space("lg")
-                          };
-                        },
-                        get style() {
-                          return {
-                            backgroundColor: theme.color.surface,
-                            borderRadius: theme.radius.lg
-                          };
-                        },
-                        get children() {
-                          return [(() => {
-                            var _el$23 = createElement("view", {
-                              flexDirection: "row",
-                              alignItems: "center"
-                            }), _el$24 = createElement("view", {
-                              width: 8,
-                              height: 8
-                            }), _el$25 = createElement("d-oval");
-                            insertNode2(_el$23, _el$24);
-                            insertNode2(_el$24, _el$25);
-                            insert(_el$23, createComponent2(Text, {
-                              variant: "caption",
-                              muted: true,
-                              layout: {
-                                flexGrow: 1
-                              },
-                              get children() {
-                                return status();
-                              }
-                            }), null);
-                            effect3(() => ({
-                              e: space("md"),
-                              t: connected() || busy() ? theme.color.primary : theme.color.textMuted
-                            }), ({
-                              e: e3,
-                              t: t3
-                            }, _p$) => {
-                              e3 !== _p$?.e && setProp(_el$23, "gap", e3, _p$?.e);
-                              t3 !== _p$?.t && setProp(_el$25, "color", t3, _p$?.t);
-                            });
-                            return _el$23;
-                          })(), (() => {
-                            var _el$26 = createElement("view", {
-                              flexDirection: "row"
-                            });
-                            insert(_el$26, createComponent2(Show, {
-                              get when() {
-                                return idle();
-                              },
-                              get children() {
-                                return [createComponent2(Show, {
-                                  when: canDiscover,
-                                  get children() {
-                                    return createComponent2(Button, {
-                                      variant: "secondary",
-                                      onPress: () => discover(),
-                                      children: "Discover"
-                                    });
-                                  }
-                                }), createComponent2(Show, {
-                                  get when() {
-                                    return hasCamera();
-                                  },
-                                  get children() {
-                                    return createComponent2(Button, {
-                                      variant: "secondary",
-                                      onPress: () => {
-                                        setNotice(null);
-                                        setScreen("scan");
-                                      },
-                                      children: "Scan QR"
-                                    });
-                                  }
-                                }), createComponent2(Button, {
-                                  variant: "secondary",
-                                  onPress: () => setScreen("manual"),
-                                  children: "Address"
-                                })];
-                              }
-                            }), null);
-                            insert(_el$26, createComponent2(Show, {
-                              get when() {
-                                return busy();
-                              },
-                              get children() {
-                                return createComponent2(Button, {
-                                  variant: "secondary",
-                                  onPress: () => stop(),
-                                  children: "Cancel"
-                                });
-                              }
-                            }), null);
-                            insert(_el$26, createComponent2(Show, {
-                              get when() {
-                                return connected();
-                              },
-                              get children() {
-                                return createComponent2(Button, {
-                                  variant: "secondary",
-                                  onPress: () => stop(),
-                                  children: "Disconnect"
-                                });
-                              }
-                            }), null);
-                            effect3(() => space("sm"), (_v$, _$p) => {
-                              setProp(_el$26, "gap", _v$, _$p);
-                            });
-                            return _el$26;
-                          })()];
-                        }
-                      });
-                    }
-                  }), null);
+                  insert(_el$32, devCard, null);
                   effect3(() => ({
                     e: space("xl"),
                     t: space("xl"),
-                    a: space("xl"),
-                    o: space("md")
+                    a: space("xl")
                   }), ({
                     e: e3,
                     t: t3,
-                    a: a3,
-                    o: o3
+                    a: a3
                   }, _p$) => {
-                    e3 !== _p$?.e && setProp(_el$20, "padding", e3, _p$?.e);
-                    t3 !== _p$?.t && setProp(_el$20, "gap", t3, _p$?.t);
-                    a3 !== _p$?.a && setProp(_el$21, "paddingTop", a3, _p$?.a);
-                    o3 !== _p$?.o && setProp(_el$21, "gap", o3, _p$?.o);
+                    e3 !== _p$?.e && setProp(_el$32, "padding", e3, _p$?.e);
+                    t3 !== _p$?.t && setProp(_el$32, "gap", t3, _p$?.t);
+                    a3 !== _p$?.a && setProp(_el$33, "paddingTop", a3, _p$?.a);
                   });
-                  return _el$19;
+                  return _el$31;
                 }
               })];
             }

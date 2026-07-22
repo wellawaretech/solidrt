@@ -19,6 +19,35 @@ pub struct AppEntry {
   pub version: String,
 }
 
+/// A stored version as `info()` lists it.
+pub struct AppVersion {
+  pub id: String,
+  pub size: u64,
+  pub current: bool,
+}
+
+/// One file in a listing: a relative path and its size in bytes.
+pub struct AppFile {
+  pub path: String,
+  pub size: u64,
+}
+
+/// Usage details as `info()` returns them.
+pub struct AppInfo {
+  pub id: String,
+  pub name: String,
+  pub version: String,
+  pub install_size: u64,
+  pub data_size: u64,
+  pub versions: Vec<AppVersion>,
+  /// Manifest-declared assets of the current version.
+  pub assets: Vec<AppFile>,
+  /// The current version dir's actual files on disk.
+  pub files: Vec<AppFile>,
+  /// The data sandbox's actual files on disk.
+  pub data: Vec<AppFile>,
+}
+
 // The apps control installed as context userdata. Holds engine-agnostic
 // closures so this module never references the go-only store directly.
 #[derive(Clone, JsLifetime)]
@@ -26,6 +55,7 @@ pub struct AppsControl(#[qjs(skip_trace)] Rc<AppsControlInner>);
 
 pub struct AppsControlInner {
   pub list: Box<dyn Fn() -> Vec<AppEntry>>,
+  pub info: Box<dyn Fn(String) -> Result<AppInfo, String>>,
   pub launch: Box<dyn Fn(String) -> Result<(), String>>,
   pub remove: Box<dyn Fn(String) -> Result<(), String>>,
 }
@@ -55,6 +85,43 @@ fn list_impl<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Array<'js>> {
   Ok(apps)
 }
 
+// Sizes cross into JS as f64: exact up to 2^53 bytes, far beyond any app.
+fn info_impl<'js>(ctx: Ctx<'js>, id: String) -> flux::rquickjs::Result<Object<'js>> {
+  let Some(control) = ctx.userdata::<AppsControl>().map(|c| c.clone()) else {
+    return Err(Exception::throw_message(&ctx, "srt:apps is not available in this build"));
+  };
+  let info = (control.0.info)(id).map_err(|m| Exception::throw_message(&ctx, &m))?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("id", info.id)?;
+  obj.set("name", info.name)?;
+  obj.set("version", info.version)?;
+  obj.set("installSize", info.install_size as f64)?;
+  obj.set("dataSize", info.data_size as f64)?;
+  let versions = Array::new(ctx.clone())?;
+  for (i, v) in info.versions.into_iter().enumerate() {
+    let entry = Object::new(ctx.clone())?;
+    entry.set("id", v.id)?;
+    entry.set("size", v.size as f64)?;
+    entry.set("current", v.current)?;
+    versions.set(i, entry)?;
+  }
+  obj.set("versions", versions)?;
+  let file_list = |files: Vec<AppFile>| -> flux::rquickjs::Result<Array<'js>> {
+    let arr = Array::new(ctx.clone())?;
+    for (i, f) in files.into_iter().enumerate() {
+      let entry = Object::new(ctx.clone())?;
+      entry.set("path", f.path)?;
+      entry.set("size", f.size as f64)?;
+      arr.set(i, entry)?;
+    }
+    Ok(arr)
+  };
+  obj.set("assets", file_list(info.assets)?)?;
+  obj.set("files", file_list(info.files)?)?;
+  obj.set("data", file_list(info.data)?)?;
+  Ok(obj)
+}
+
 fn launch_impl(ctx: Ctx<'_>, id: String) -> flux::rquickjs::Result<()> {
   let Some(control) = ctx.userdata::<AppsControl>().map(|c| c.clone()) else { return Ok(()) };
   (control.0.launch)(id).map_err(|m| Exception::throw_message(&ctx, &m))
@@ -71,6 +138,7 @@ impl ModuleDef for SrtAppsModule {
   fn declare<'js>(decl: &Declarations<'js>) -> flux::rquickjs::Result<()> {
     decl.declare("available")?;
     decl.declare("list")?;
+    decl.declare("info")?;
     decl.declare("launch")?;
     decl.declare("remove")?;
     Ok(())
@@ -79,6 +147,7 @@ impl ModuleDef for SrtAppsModule {
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> flux::rquickjs::Result<()> {
     exports.export("available", ctx.userdata::<AppsControl>().is_some())?;
     exports.export("list", Function::new(ctx.clone(), list_impl)?)?;
+    exports.export("info", Function::new(ctx.clone(), info_impl)?)?;
     exports.export("launch", Function::new(ctx.clone(), launch_impl)?)?;
     exports.export("remove", Function::new(ctx.clone(), remove_impl)?)?;
     Ok(())

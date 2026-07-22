@@ -57,10 +57,38 @@ declare module "srt:dev" {
 declare module "srt:apps" {
   export const available: boolean
   /**
-   * Installed apps, sorted by name: id, display name (the installed manifest's
-   * displayName, defaulting to the id) and current version id (manifest hash).
+   * An installed app: id, display name (the installed manifest's displayName,
+   * defaulting to the id) and current version id (manifest hash).
    */
-  export function list(): { id: string; name: string; version: string }[]
+  export type InstalledApp = { id: string; name: string; version: string }
+  /** Installed apps, sorted by name. */
+  export function list(): InstalledApp[]
+  /** A stored version: id (manifest hash), bytes on disk, whether it is the current one. */
+  export type AppVersion = { id: string; size: number; current: boolean }
+  /** One file in a listing: a relative path and its size in bytes. */
+  export type AppFile = { path: string; size: number }
+  /**
+   * Usage details for one installed app: total bytes of its stored versions
+   * (assets shared between versions via hardlinks count in each) and of its
+   * data sandbox, plus the stored versions (current first, then newest first)
+   * and three file listings, each sorted by path. `assets` is the current
+   * version's manifest claim (declared sizes); `files` and `data` are disk
+   * walks of the current version dir and the data sandbox - the truth, so a
+   * divergence from the manifest is visible.
+   */
+  export type AppInfo = {
+    id: string
+    name: string
+    version: string
+    installSize: number
+    dataSize: number
+    versions: AppVersion[]
+    assets: AppFile[]
+    files: AppFile[]
+    data: AppFile[]
+  }
+  /** Usage details for an installed app. Throws when the app is not installed. */
+  export function info(id: string): AppInfo
   /**
    * Boot the app's installed current version, replacing the running app (the
    * launcher). Throws when the app is not installed. Custom fonts of the

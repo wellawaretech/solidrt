@@ -180,6 +180,139 @@ pub(crate) fn remove_app_at(apps: &Path, app_id: &str) -> Result<(), String> {
 }
 
 
+/// A stored version as the detail view lists it.
+pub struct VersionInfo {
+  /// The version id (manifest hash).
+  pub id: String,
+  /// Bytes on disk under the version dir. Assets shared between versions via
+  /// hardlinks count in every version holding them.
+  pub size: u64,
+  pub current: bool,
+}
+
+/// One file in a listing: a relative path and its size in bytes.
+pub struct FileEntry {
+  pub path: String,
+  pub size: u64,
+}
+
+/// Usage details for one installed app, as the launcher's detail view shows
+/// them. The manifest-declared assets and the on-disk listings are separate
+/// on purpose: the manifest is a claim, the disk walks are the truth, and a
+/// divergence between them is exactly what the view should make visible.
+pub struct AppInfo {
+  pub id: String,
+  pub name: String,
+  /// The current version id.
+  pub version: String,
+  /// Installed versions, current first, then newest first (by dir mtime).
+  pub versions: Vec<VersionInfo>,
+  /// Total bytes under versions/.
+  pub install_size: u64,
+  /// Total bytes under the data sandbox.
+  pub data_size: u64,
+  /// The current version's manifest-declared assets (declared sizes).
+  pub assets: Vec<FileEntry>,
+  /// The current version dir's actual files on disk (recursive, sorted).
+  pub version_files: Vec<FileEntry>,
+  /// The data sandbox's actual files on disk (recursive, sorted).
+  pub data_files: Vec<FileEntry>,
+}
+
+/// Usage details for an installed app. Errors on invalid or uninstalled ids.
+pub fn app_info(app_id: &str) -> Result<AppInfo, String> {
+  let store = crate::storage::get().ok_or("no writable storage")?;
+  let apps = store.apps_root().ok_or("no apps root in this layout")?;
+  app_info_at(&apps, app_id)
+}
+
+// Validates the id itself and joins it directly, like remove_app_at.
+pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> {
+  if !crate::storage::safe_component(app_id) {
+    return Err(format!("invalid app id {app_id:?}"));
+  }
+  let app_dir = apps.join(app_id);
+  let state = load_state(&app_dir).ok_or_else(|| format!("app {app_id} is not installed"))?;
+  let versions_root = app_dir.join("versions");
+
+  let mut versions: Vec<(std::time::SystemTime, VersionInfo)> = Vec::new();
+  if let Ok(entries) = std::fs::read_dir(&versions_root) {
+    for entry in entries.flatten() {
+      let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+      let path = entry.path();
+      if !path.is_dir() || name.starts_with(".tmp-") {
+        continue;
+      }
+      let modified = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+      versions.push((modified, VersionInfo { current: name == state.current, id: name, size: dir_size(&path) }));
+    }
+  }
+  if !versions.iter().any(|(_, v)| v.current) {
+    return Err(format!("app {app_id} is not installed"));
+  }
+  versions.sort_by(|a, b| b.1.current.cmp(&a.1.current).then_with(|| b.0.cmp(&a.0)));
+  let install_size = versions.iter().map(|(_, v)| v.size).sum();
+  let versions: Vec<VersionInfo> = versions.into_iter().map(|(_, v)| v).collect();
+
+  let current_dir = versions_root.join(&state.current);
+  let manifest = Manifest::load(&current_dir);
+  let name = manifest.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_else(|| app_id.to_string());
+  let mut assets: Vec<FileEntry> = manifest
+    .map(|m| m.assets.into_iter().map(|a| FileEntry { path: a.path, size: a.size }).collect())
+    .unwrap_or_default();
+  assets.sort_by(|a, b| a.path.cmp(&b.path));
+  let version_files = collect_files(&current_dir);
+  let data_files = collect_files(&app_dir.join("data"));
+  let data_size = data_files.iter().map(|e| e.size).sum();
+
+  Ok(AppInfo {
+    id: app_id.to_string(),
+    name,
+    version: state.current,
+    versions,
+    install_size,
+    data_size,
+    assets,
+    version_files,
+    data_files,
+  })
+}
+
+// Every file under `root` as a relative path + size, sorted by path.
+// Unreadable entries are skipped (the listing is informational).
+fn collect_files(root: &Path) -> Vec<FileEntry> {
+  fn walk(dir: &Path, prefix: &str, out: &mut Vec<FileEntry>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+      let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+      let path = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+      match entry.metadata() {
+        Ok(meta) if meta.is_dir() => walk(&entry.path(), &path, out),
+        Ok(meta) => out.push(FileEntry { path, size: meta.len() }),
+        Err(_) => {}
+      }
+    }
+  }
+  let mut out = Vec::new();
+  walk(root, "", &mut out);
+  out.sort_by(|a, b| a.path.cmp(&b.path));
+  out
+}
+
+// Recursive size in bytes; unreadable entries count as zero (the figures are
+// informational, not accounting).
+fn dir_size(path: &Path) -> u64 {
+  let Ok(entries) = std::fs::read_dir(path) else { return 0 };
+  entries
+    .flatten()
+    .map(|entry| match entry.metadata() {
+      Ok(meta) if meta.is_dir() => dir_size(&entry.path()),
+      Ok(meta) => meta.len(),
+      Err(_) => 0,
+    })
+    .sum()
+}
+
 // The assets held by the versions state.json points at (current first, so its
 // copy wins), as path -> (manifest hash, on-disk file). Trusts the stored
 // manifests: version dirs are immutable once committed.

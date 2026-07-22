@@ -1,12 +1,15 @@
 // The go client's launcher: the compiled-in home screen. Lists the apps
-// installed in the version store (tap to launch, delete with inline confirm)
-// and manages the dev-server connection (discover, QR scan on a full-screen
-// camera view, manual address entry, recents). Built from @solidrt/components;
-// follows the OS dark/light preference. Bundled by `make launcher-bundle` and
-// embedded via include_str! (see lattice/src/lib.rs LAUNCHER_SOURCE).
+// installed in the version store (tap to launch, info button for a detail
+// view with remove) and manages the dev-server connection (discover, QR scan
+// on a full-screen camera view, manual address entry, recents). Built from
+// @solidrt/components; follows the OS dark/light preference and the layout
+// policy: wide windows show a WhatsApp-style split (list left, selected app's
+// details right), narrow ones navigate between two screens. Bundled by
+// `make launcher-bundle` and embedded via include_str! (see lattice/src/lib.rs
+// LAUNCHER_SOURCE).
 import { render, env, createSignal, createEffect, untrack, createLinearGradient } from "@solidrt/core"
 import { createCamera, cameraDevices, type BarcodeResult } from "@solidrt/core/camera"
-import { For, Show, Switch, Match } from "solid-js"
+import { For, Show, Switch, Match, createMemo } from "solid-js"
 import {
   Window,
   View,
@@ -15,12 +18,12 @@ import {
   TextInput,
   ScrollView,
   Pressable,
-  Icon,
   SafeArea,
   theme,
   setTheme,
   darkTheme,
   lightTheme,
+  policy,
   space,
 } from "@solidrt/components"
 import { on } from "srt:events"
@@ -32,7 +35,7 @@ import {
   stop,
   launchAddress,
 } from "srt:dev"
-import { available as appsAvailable, list, launch, remove } from "srt:apps"
+import { available as appsAvailable, list, info, launch, remove, type InstalledApp } from "srt:apps"
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
 type Screen = "home" | "scan" | "manual"
@@ -79,15 +82,6 @@ function PuzzleMark(props: { size: number }) {
   )
 }
 
-const LUCIDE = (body: string) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"` +
-  ` stroke="currentColor" stroke-width="2" stroke-linecap="round"` +
-  ` stroke-linejoin="round">${body}</svg>`
-const TRASH = LUCIDE(
-  `<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>` +
-    `<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>`,
-)
-
 // The dev server QR encodes a bare host:port; tolerate a scheme prefix and a
 // trailing slash in case the encoded value ever changes.
 function normalizeAddress(raw: string): string {
@@ -100,6 +94,15 @@ function normalizeAddress(raw: string): string {
 function recentLabel(entry: string): string {
   if (!entry.includes("|")) return entry
   return "ticket " + entry.split("|")[0].slice(0, 8)
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  let kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`
+  let mb = kb / 1024
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`
+  return `${(mb / 1024).toFixed(2)} GB`
 }
 
 // The scan reticle's stroke thickness and corner radius (logical px). The
@@ -178,17 +181,147 @@ function ScanScreen(props: { onScanned: (data: string) => void; onCancel: () => 
       </view>
       <view position="absolute" width="100%" height="100%">
         <SafeArea>
-          <view flexGrow={1} flexDirection="column" justifyContent="space-between" padding={space("xl")}>
+          <view flexGrow={1} padding={space("xl")}>
             <view flexDirection="row">
               <Button variant="secondary" onPress={props.onCancel}>Cancel</Button>
-            </view>
-            <view alignItems="center">
-              <text color="white">Scan the dev server QR code</text>
             </view>
           </view>
         </SafeArea>
       </view>
     </view>
+  )
+}
+
+// One app row: pressing it opens the detail view (which holds launch and
+// remove).
+function AppCard(props: { app: InstalledApp; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={props.onPress}
+      layout={{ flexDirection: "column", padding: space("xl"), gap: 2 }}
+      style={(s) => ({
+        backgroundColor: props.active
+          ? theme.color.surfaceAlt
+          : s.hovered
+            ? theme.color.surfaceHover
+            : theme.color.surface,
+        borderRadius: theme.radius.lg,
+      })}
+    >
+      <Text variant="title">{props.app.name}</Text>
+      <Text variant="caption" muted>{`${props.app.id} - ${props.app.version.slice(0, 8)}`}</Text>
+    </Pressable>
+  )
+}
+
+function DetailRow(props: { label: string; value: string; mutedValue?: boolean }) {
+  return (
+    <view flexDirection="row" justifyContent="space-between" gap={space("md")}>
+      <Text variant="caption" muted>{props.label}</Text>
+      <Text variant="caption" muted={props.mutedValue}>{props.value}</Text>
+    </view>
+  )
+}
+
+function DetailCard(props: { title: string; children?: any }) {
+  return (
+    <View
+      layout={{ flexDirection: "column", gap: space("md"), padding: space("lg") }}
+      style={{ backgroundColor: theme.color.surface, borderRadius: theme.radius.lg }}
+    >
+      <Text variant="label" muted>{props.title}</Text>
+      {props.children}
+    </View>
+  )
+}
+
+// The selected app's detail view: identity, storage usage, stored versions and
+// the data sandbox's files, with launch and remove. Shared between the split
+// view's right pane (no onBack) and the narrow layout's detail screen (with
+// onBack).
+function AppDetail(props: { app: InstalledApp; onLaunch: () => void; onRemove: () => void; onBack?: () => void }) {
+  let [confirming, setConfirming] = createSignal(false)
+  // Selecting another app in the split view reuses this component; reset the
+  // pending confirm so it never carries over to the newly selected app.
+  createEffect(() => props.app.id, () => { setConfirming(false) })
+  // Usage details, re-read per app. Null when the store entry vanished
+  // mid-view (e.g. replaced by a dev push); identity and actions still work.
+  let details = createMemo(() => {
+    try {
+      return info(props.app.id)
+    } catch {
+      return null
+    }
+  })
+
+  return (
+    <ScrollView layout={{ flexGrow: 1 }}>
+      <view flexDirection="column" gap={space("lg")} padding={space("xl")} width="100%" maxWidth={520}>
+        <Show when={props.onBack}>
+          <view flexDirection="row">
+            <Button variant="ghost" onPress={() => props.onBack?.()}>Back</Button>
+          </view>
+        </Show>
+        <view flexDirection="column" gap={2}>
+          <Text variant="title">{props.app.name}</Text>
+          <Text variant="caption" muted>{props.app.id}</Text>
+        </view>
+        <view flexDirection="row" gap={space("md")}>
+          <Button onPress={() => props.onLaunch()}>Launch</Button>
+          <Show
+            when={!confirming()}
+            fallback={
+              <>
+                <Button variant="danger" onPress={() => props.onRemove()}>Remove</Button>
+                <Button variant="ghost" onPress={() => setConfirming(false)}>Keep</Button>
+              </>
+            }
+          >
+            <Button variant="secondary" onPress={() => setConfirming(true)}>Remove</Button>
+          </Show>
+        </view>
+        <Show when={details()}>
+          {(d) => (
+            <>
+              <DetailCard title="Storage">
+                <DetailRow label="App" value={formatSize(d().installSize)} />
+                <DetailRow label="Data" value={formatSize(d().dataSize)} />
+              </DetailCard>
+              <DetailCard title="Versions">
+                <For each={d().versions}>
+                  {(v) => (
+                    <DetailRow
+                      label={v.id.slice(0, 12) + (v.current ? " (current)" : "")}
+                      value={formatSize(v.size)}
+                      mutedValue={!v.current}
+                    />
+                  )}
+                </For>
+              </DetailCard>
+              <DetailCard title="Assets">
+                <Show when={d().assets.length > 0} fallback={<Text variant="caption" muted>None declared</Text>}>
+                  <For each={d().assets}>
+                    {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
+                  </For>
+                </Show>
+              </DetailCard>
+              <DetailCard title="Files">
+                <For each={d().files}>
+                  {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
+                </For>
+              </DetailCard>
+              <DetailCard title="Data">
+                <Show when={d().data.length > 0} fallback={<Text variant="caption" muted>Empty</Text>}>
+                  <For each={d().data}>
+                    {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
+                  </For>
+                </Show>
+              </DetailCard>
+            </>
+          )}
+        </Show>
+      </view>
+    </ScrollView>
   )
 }
 
@@ -203,7 +336,7 @@ function App() {
 
   let [screen, setScreen] = createSignal<Screen>("home")
   let [apps, setApps] = createSignal(appsAvailable ? list() : [])
-  let [confirming, setConfirming] = createSignal<string | null>(null)
+  let [selectedId, setSelectedId] = createSignal<string | null>(null)
   let [notice, setNotice] = createSignal<string | null>(null)
 
   let [state, setState] = createSignal<DevState>("idle")
@@ -229,6 +362,10 @@ function App() {
   let busy = () => state() === "searching" || state() === "connecting"
   let connected = () => state() === "connected"
   let hasCamera = () => cameraDevices().length > 0
+  let twoPane = () => policy.layout === "twoPane"
+  // A stale selection (removed app, replaced store) resolves to null, which
+  // reads as "nothing selected" in both layouts.
+  let selectedApp = () => apps().find((a) => a.id === selectedId()) ?? null
 
   let status = () =>
     connected()
@@ -243,12 +380,12 @@ function App() {
     }
   }
   let doRemove = (id: string) => {
-    setConfirming(null)
     try {
       remove(id)
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
     }
+    setSelectedId(null)
     setApps(appsAvailable ? list() : [])
   }
   let dial = (addr: string) => {
@@ -258,6 +395,58 @@ function App() {
   }
 
   let manualDraft = ""
+
+  let appList = () => (
+    <ScrollView layout={{ flexGrow: 1 }}>
+      <view flexDirection="column" gap={space("md")}>
+        <For each={apps()}>
+          {(app) => (
+            <AppCard app={app} active={twoPane() && selectedId() === app.id} onPress={() => setSelectedId(app.id)} />
+          )}
+        </For>
+      </view>
+    </ScrollView>
+  )
+
+  let noApps = () => (
+    <view flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" gap={space("md")}>
+      <Text variant="title">No apps installed</Text>
+      <Text muted>Connect a dev server to install apps</Text>
+    </view>
+  )
+
+  let devCard = () => (
+    <Show when={dev}>
+      <View
+        layout={{ flexDirection: "column", gap: space("md"), padding: space("lg") }}
+        style={{ backgroundColor: theme.color.surface, borderRadius: theme.radius.lg }}
+      >
+        <view flexDirection="row" alignItems="center" gap={space("md")}>
+          <view width={8} height={8}>
+            <d-oval color={connected() || busy() ? theme.color.primary : theme.color.textMuted} />
+          </view>
+          <Text variant="caption" muted layout={{ flexGrow: 1 }}>{status()}</Text>
+        </view>
+        <view flexDirection="row" gap={space("sm")}>
+          <Show when={idle()}>
+            <Show when={canDiscover}>
+              <Button variant="secondary" onPress={() => discover()}>Discover</Button>
+            </Show>
+            <Show when={hasCamera()}>
+              <Button variant="secondary" onPress={() => { setNotice(null); setScreen("scan") }}>Scan QR</Button>
+            </Show>
+            <Button variant="secondary" onPress={() => setScreen("manual")}>Address</Button>
+          </Show>
+          <Show when={busy()}>
+            <Button variant="secondary" onPress={() => stop()}>Cancel</Button>
+          </Show>
+          <Show when={connected()}>
+            <Button variant="secondary" onPress={() => stop()}>Disconnect</Button>
+          </Show>
+        </view>
+      </View>
+    </Show>
+  )
 
   return (
     <Window title="SolidRT" layout={{ flexDirection: "column" }} style={{ backgroundColor: theme.color.background }}>
@@ -318,103 +507,60 @@ function App() {
             </view>
           </Match>
 
-          <Match when={screen() === "home"}>
-            <view flexGrow={1} alignItems="center">
-              <view flexDirection="column" width="100%" maxWidth={440} flexGrow={1} padding={space("xl")} gap={space("xl")}>
-                {/* Centered mark. */}
-                <view alignItems="center" paddingTop={space("xl")} gap={space("md")}>
-                  <PuzzleMark size={144} />
+          {/* Split view: list pane left, selected app's details right. */}
+          <Match when={screen() === "home" && twoPane()}>
+            <view flexGrow={1} flexDirection="row">
+              <view flexDirection="column" width={380} padding={space("xl")} gap={space("xl")}>
+                <view alignItems="center" paddingTop={space("lg")}>
+                  <PuzzleMark size={96} />
                 </view>
-
+                <Show when={apps().length > 0} fallback={noApps()}>
+                  {appList()}
+                </Show>
+                {devCard()}
+              </view>
+              <View layout={{ width: 1 }} style={{ backgroundColor: theme.color.surfaceAlt }} />
+              <view flexGrow={1} flexDirection="column">
                 <Show
-                  when={apps().length > 0}
+                  when={selectedApp()}
                   fallback={
-                    <view flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" gap={space("md")}>
-                      <Text variant="title">No apps installed</Text>
-                      <Text muted>Connect a dev server to install apps</Text>
+                    <view flexGrow={1} justifyContent="center" alignItems="center" gap={space("md")}>
+                      <Text muted>Select an app</Text>
                     </view>
                   }
                 >
-                  <ScrollView layout={{ flexGrow: 1 }}>
-                    <view flexDirection="column" gap={space("md")}>
-                      <Text variant="label" muted>Apps</Text>
-                      <For each={apps()}>
-                        {(app) => (
-                          <Pressable
-                            onPress={() => { if (confirming() !== app.id) doLaunch(app.id) }}
-                            layout={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              padding: space("xl"),
-                              gap: space("md"),
-                            }}
-                            style={(s) => ({
-                              backgroundColor: s.hovered ? theme.color.surfaceHover : theme.color.surface,
-                              borderRadius: theme.radius.lg,
-                            })}
-                          >
-                            <view flexDirection="column" flexGrow={1} gap={2}>
-                              <Text variant="title">{app.name}</Text>
-                              <Text variant="caption" muted>{`${app.id} - ${app.version.slice(0, 8)}`}</Text>
-                            </view>
-                            <Show
-                              when={confirming() === app.id}
-                              fallback={
-                                <Pressable
-                                  onPress={() => setConfirming(app.id)}
-                                  layout={{ padding: space("sm") }}
-                                  style={(s) => ({
-                                    backgroundColor: s.hovered ? theme.color.surfaceAlt : "transparent",
-                                    borderRadius: theme.radius.sm,
-                                  })}
-                                >
-                                  <Icon src={TRASH} size={18} color={theme.color.textMuted} />
-                                </Pressable>
-                              }
-                            >
-                              <view flexDirection="row" alignItems="center" gap={space("sm")}>
-                                <Button variant="danger" onPress={() => doRemove(app.id)}>Remove</Button>
-                                <Button variant="ghost" onPress={() => setConfirming(null)}>Keep</Button>
-                              </view>
-                            </Show>
-                          </Pressable>
-                        )}
-                      </For>
-                    </view>
-                  </ScrollView>
+                  {(app) => (
+                    <AppDetail
+                      app={app()}
+                      onLaunch={() => doLaunch(app().id)}
+                      onRemove={() => doRemove(app().id)}
+                    />
+                  )}
                 </Show>
+              </view>
+            </view>
+          </Match>
 
-                {/* Dev connection card. */}
-                <Show when={dev}>
-                  <View
-                    layout={{ flexDirection: "column", gap: space("md"), padding: space("lg") }}
-                    style={{ backgroundColor: theme.color.surface, borderRadius: theme.radius.lg }}
-                  >
-                    <view flexDirection="row" alignItems="center" gap={space("md")}>
-                      <view width={8} height={8}>
-                        <d-oval color={connected() || busy() ? theme.color.primary : theme.color.textMuted} />
-                      </view>
-                      <Text variant="caption" muted layout={{ flexGrow: 1 }}>{status()}</Text>
-                    </view>
-                    <view flexDirection="row" gap={space("sm")}>
-                      <Show when={idle()}>
-                        <Show when={canDiscover}>
-                          <Button variant="secondary" onPress={() => discover()}>Discover</Button>
-                        </Show>
-                        <Show when={hasCamera()}>
-                          <Button variant="secondary" onPress={() => { setNotice(null); setScreen("scan") }}>Scan QR</Button>
-                        </Show>
-                        <Button variant="secondary" onPress={() => setScreen("manual")}>Address</Button>
-                      </Show>
-                      <Show when={busy()}>
-                        <Button variant="secondary" onPress={() => stop()}>Cancel</Button>
-                      </Show>
-                      <Show when={connected()}>
-                        <Button variant="secondary" onPress={() => stop()}>Disconnect</Button>
-                      </Show>
-                    </view>
-                  </View>
+          {/* Narrow: the detail is its own screen over the home list. */}
+          <Match when={screen() === "home" && selectedApp() != null}>
+            <AppDetail
+              app={selectedApp()!}
+              onLaunch={() => doLaunch(selectedApp()!.id)}
+              onRemove={() => doRemove(selectedApp()!.id)}
+              onBack={() => setSelectedId(null)}
+            />
+          </Match>
+
+          <Match when={screen() === "home"}>
+            <view flexGrow={1} alignItems="center">
+              <view flexDirection="column" width="100%" maxWidth={440} flexGrow={1} padding={space("xl")} gap={space("xl")}>
+                <view alignItems="center" paddingTop={space("xl")}>
+                  <PuzzleMark size={144} />
+                </view>
+                <Show when={apps().length > 0} fallback={noApps()}>
+                  {appList()}
                 </Show>
+                {devCard()}
               </view>
             </view>
           </Match>
