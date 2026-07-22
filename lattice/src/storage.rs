@@ -71,11 +71,17 @@ impl Storage {
   pub fn identity_dir(&self) -> PathBuf {
     self.client_dir.join("identity")
   }
+
+  /// `<client_dir>/apps` - the per-app dirs (installs + data sandboxes). None
+  /// in the packed flat layout, which has a single app and no apps/ level.
+  pub fn apps_root(&self) -> Option<PathBuf> {
+    (!self.flat).then(|| self.client_dir.join("apps"))
+  }
 }
 
 // A single path component under our control (client name, app id): no
 // separators or traversal, so a flag or manifest value cannot escape the tree.
-fn safe_component(name: &str) -> bool {
+pub(crate) fn safe_component(name: &str) -> bool {
   !name.is_empty()
     && name.len() <= 255
     && name != "."

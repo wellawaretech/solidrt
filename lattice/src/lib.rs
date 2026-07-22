@@ -537,9 +537,17 @@ fn ui_thread(
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
+        .module_override("srt:apps", plugins::apps::SrtAppsModule)
         .userdata(clock.clone());
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
+      // The launcher's app-management surface over the version store; the
+      // launch closure feeds the same reload path a dev push uses.
+      #[cfg(feature = "go")]
+      let builder = {
+        let apps_tx = cmd_tx.clone();
+        builder.plugin(move |ctx| go::control::install_apps_control(ctx, apps_tx))
+      };
       // Install the dev-server control surface and (when enabled) the proxy.
       #[cfg(feature = "go")]
       let builder = match &dev_session {

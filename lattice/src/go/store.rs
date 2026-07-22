@@ -91,23 +91,99 @@ pub struct BootVersion {
   pub fonts: Vec<(String, Vec<u8>)>,
 }
 
-/// The last-installed app's current version, for offline boot.
-pub fn load_last() -> Option<BootVersion> {
-  let app_id = super::config::load().last_app?;
-  let version_dir = current_version_dir(&app_id)?;
+/// An app's current version resolved for boot, or None when the id is unsafe,
+/// the store is missing, or the app has no installed version.
+pub fn load(app_id: &str) -> Option<BootVersion> {
+  let version_dir = current_version_dir(app_id)?;
   let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
   let fonts = Manifest::load(&version_dir).map(|m| m.load_fonts(&version_dir)).unwrap_or_default();
-  Some(BootVersion { app_id, code, version_dir, fonts })
+  Some(BootVersion { app_id: app_id.to_string(), code, version_dir, fonts })
+}
+
+/// The last-installed app's current version, for offline boot.
+pub fn load_last() -> Option<BootVersion> {
+  load(&super::config::load().last_app?)
 }
 
 /// The current installed version dir for an app, if the store has one. This is
-/// what the assets mount points at while the app runs.
+/// what the assets mount points at while the app runs. Unsafe ids resolve to
+/// nothing rather than following app_dir's fallback to "default".
 pub fn current_version_dir(app_id: &str) -> Option<PathBuf> {
+  if !crate::storage::safe_component(app_id) {
+    return None;
+  }
   let store = crate::storage::get()?;
   let app_dir = store.app_dir(app_id);
   let state = load_state(&app_dir)?;
   let dir = app_dir.join("versions").join(&state.current);
   dir.is_dir().then_some(dir)
+}
+
+/// An installed app as the launcher lists it.
+pub struct InstalledApp {
+  pub id: String,
+  /// The installed manifest's displayName, defaulting to the id.
+  pub name: String,
+  /// The current version id (manifest hash).
+  pub version: String,
+}
+
+/// The installed apps under the client's apps root, sorted by name.
+pub fn list_installed() -> Vec<InstalledApp> {
+  match crate::storage::get().and_then(|s| s.apps_root()) {
+    Some(apps) => list_installed_at(&apps),
+    None => Vec::new(),
+  }
+}
+
+// Dirs under an apps root whose state.json points at an existing version dir.
+// Anchor-only dirs (a data sandbox for an app that was never installed) are
+// not installed apps and are not listed.
+pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
+  let Ok(entries) = std::fs::read_dir(apps) else { return Vec::new() };
+  let mut installed: Vec<InstalledApp> = entries
+    .flatten()
+    .filter_map(|entry| {
+      let id = entry.file_name().to_str()?.to_string();
+      let app_dir = entry.path();
+      let state = load_state(&app_dir)?;
+      let version_dir = app_dir.join("versions").join(&state.current);
+      if !version_dir.is_dir() {
+        return None;
+      }
+      let name = Manifest::load(&version_dir).and_then(|m| m.display_name).unwrap_or_else(|| id.clone());
+      Some(InstalledApp { id, name, version: state.current })
+    })
+    .collect();
+  installed.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+  installed
+}
+
+/// Full uninstall: the app's entire folder (versions, state.json and the data
+/// sandbox). Clears the offline-boot pointer when it named this app.
+pub fn remove_app(app_id: &str) -> Result<(), String> {
+  let store = crate::storage::get().ok_or("no writable storage")?;
+  let apps = store.apps_root().ok_or("no apps root in this layout")?;
+  remove_app_at(&apps, app_id)?;
+  let mut config = super::config::load();
+  if config.last_app.as_deref() == Some(app_id) {
+    config.last_app = None;
+    super::config::save(&config);
+  }
+  Ok(())
+}
+
+// Validates the id itself and joins it directly: app_dir's fallback to
+// "default" on an unsafe id must never redirect a delete.
+pub(crate) fn remove_app_at(apps: &Path, app_id: &str) -> Result<(), String> {
+  if !crate::storage::safe_component(app_id) {
+    return Err(format!("invalid app id {app_id:?}"));
+  }
+  let app_dir = apps.join(app_id);
+  if !app_dir.is_dir() {
+    return Err(format!("app {app_id} is not installed"));
+  }
+  std::fs::remove_dir_all(&app_dir).map_err(|e| format!("remove {app_id}: {e}"))
 }
 
 

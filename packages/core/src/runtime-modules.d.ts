@@ -51,6 +51,29 @@ declare module "srt:dev" {
   export function registerDebug(name: string, fn: (args?: any) => unknown): void
 }
 
+// Installed-app management (lattice), the launcher's surface over the client's
+// version store. Present only in go/dev client builds; elsewhere `available`
+// is false, `list` returns [], and launch/remove are no-ops.
+declare module "srt:apps" {
+  export const available: boolean
+  /**
+   * Installed apps, sorted by name: id, display name (the installed manifest's
+   * displayName, defaulting to the id) and current version id (manifest hash).
+   */
+  export function list(): { id: string; name: string; version: string }[]
+  /**
+   * Boot the app's installed current version, replacing the running app (the
+   * launcher). Throws when the app is not installed. Custom fonts of the
+   * launched app register at client startup only, not mid-session.
+   */
+  export function launch(id: string): void
+  /**
+   * Full uninstall: the app's versions, state and data sandbox. Throws when
+   * the app is not installed.
+   */
+  export function remove(id: string): void
+}
+
 // Frame draw (lattice runner). renderFrame() synchronously renders the current
 // frame: layout, the postLayout hook, paint and hover refresh, then builds and
 // submits the display list. To schedule a future frame instead, use
