@@ -3,3 +3,16 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+# Android: force >=16 KB ELF LOAD-segment alignment on libmain (liblattice) so it
+# does not depend on the NDK linker default (16 KB only since NDK r27). Matches
+# CMAKE_SHARED_LINKER_FLAGS_INIT in lattice/android/cmake/android-abi.toolchain.cmake,
+# which covers libSDL3 and other cmake-built shared libs.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.armv7-linux-androideabi]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
