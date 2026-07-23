@@ -1,6 +1,6 @@
 import { createSignal, createContext, useContext, Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { Pressable } from "./pressable"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { densityScale } from "./policy"
 import { typeStyle } from "./typography"
@@ -81,13 +81,26 @@ export function Radio(props: RadioProps) {
   // Inner dot inset as a fraction of the ring, so it scales with the density.
   let inset = () => ring() * 0.3
 
+  let press = createPress({ onPress: () => ctx.select(props.value) })
+
   return (
-    <Pressable
-      onPress={() => ctx.select(props.value)}
-      disabled={disabled()}
-      layout={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.md, ...props.layout }}
-      style={props.style}
+    <view
+      repaintBoundary
+      flexDirection="row"
+      alignItems="center"
+      gap={theme.spacing.md}
+      {...props.layout}
+      x={props.style?.x}
+      y={props.style?.y}
+      scale={props.style?.scale}
+      rotate={props.style?.rotate}
+      opacity={props.style?.opacity}
+      {...press.handlers}
+      pointerEvents={disabled() ? "none" : undefined}
     >
+      <Show when={props.style?.backgroundColor != null || props.style?.borderRadius != null}>
+        <d-rect color={props.style?.backgroundColor ?? "transparent"} radius={props.style?.borderRadius} />
+      </Show>
       <view width={ring()} height={ring()}>
         <d-oval x={1} y={1} w={ring() - 2} h={ring() - 2} drawStyle="stroke" color={ringColor()} strokeWidth={2} />
         <Show when={selected()}>
@@ -99,6 +112,14 @@ export function Radio(props: RadioProps) {
           {resolved()}
         </text>
       </Show>
-    </Pressable>
+      <Show when={(props.style?.borderWidth ?? 0) > 0}>
+        <d-rect
+          drawStyle="stroke"
+          color={props.style?.borderColor ?? "transparent"}
+          strokeWidth={props.style?.borderWidth}
+          radius={props.style?.borderRadius}
+        />
+      </Show>
+    </view>
   )
 }

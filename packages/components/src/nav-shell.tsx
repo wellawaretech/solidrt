@@ -1,6 +1,6 @@
 import { createSignal, Switch, Match, For } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { Pressable, type PressState } from "./pressable"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -45,34 +45,36 @@ export function NavShell(props: NavShellProps) {
   }
 
   let labelColor = (item: NavItem) => (item.value === value() ? theme.color.primary : theme.color.textMuted)
-  let itemBg = (item: NavItem, s: PressState) =>
+  let itemBg = (item: NavItem, hovered: boolean) =>
     item.value === value()
       ? theme.color.surfaceAlt
-      : s.hovered && policy.interaction !== "touch"
+      : hovered && policy.interaction !== "touch"
         ? theme.color.surfaceHover
         : "transparent"
 
   // Icon over a small label, centered; shared by the tab bar and the rail.
-  let StackedItem = (p: { item: NavItem; padY: number; layout?: LayoutProps }) => (
-    <Pressable
-      onPress={() => select(p.item.value)}
-      layout={{
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: theme.spacing.sm,
-        paddingTop: p.padY,
-        paddingBottom: p.padY,
-        ...p.layout,
-      }}
-      style={(s: PressState) => ({ backgroundColor: itemBg(p.item, s), borderRadius: theme.radius.sm })}
-    >
-      {p.item.icon}
-      <text color={labelColor(p.item)} {...typeStyle("caption")}>
-        {p.item.label}
-      </text>
-    </Pressable>
-  )
+  let StackedItem = (p: { item: NavItem; padY: number; layout?: LayoutProps }) => {
+    let press = createPress({ onPress: () => select(p.item.value) })
+    return (
+      <view
+        repaintBoundary
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        gap={theme.spacing.sm}
+        paddingTop={p.padY}
+        paddingBottom={p.padY}
+        {...p.layout}
+        {...press.handlers}
+      >
+        <d-rect color={itemBg(p.item, press.hovered())} radius={theme.radius.sm} />
+        {p.item.icon}
+        <text color={labelColor(p.item)} {...typeStyle("caption")}>
+          {p.item.label}
+        </text>
+      </view>
+    )
+  }
 
   let Hairline = (p: { vertical?: boolean }) => (
     <view width={p.vertical ? 1 : undefined} height={p.vertical ? undefined : 1}>
@@ -107,31 +109,33 @@ export function NavShell(props: NavShellProps) {
       <view flexDirection="column" width={SIDEBAR_WIDTH} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
         <d-rect color={theme.color.surface} />
         <For each={props.items}>
-          {(item: NavItem) => (
-            <Pressable
-              onPress={() => select(item.value)}
-              layout={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: theme.spacing.md,
-                paddingTop: space("sm") + 2,
-                paddingBottom: space("sm") + 2,
-                paddingLeft: theme.spacing.md,
-                paddingRight: theme.spacing.md,
-                marginLeft: theme.spacing.sm,
-                marginRight: theme.spacing.sm,
-              }}
-              style={(s: PressState) => ({ backgroundColor: itemBg(item, s), borderRadius: theme.radius.sm })}
-            >
-              {item.icon}
-              <text
-                color={item.value === value() ? theme.color.primary : theme.color.text}
-                {...typeStyle("body")}
+          {(item: NavItem) => {
+            let press = createPress({ onPress: () => select(item.value) })
+            return (
+              <view
+                repaintBoundary
+                flexDirection="row"
+                alignItems="center"
+                gap={theme.spacing.md}
+                paddingTop={space("sm") + 2}
+                paddingBottom={space("sm") + 2}
+                paddingLeft={theme.spacing.md}
+                paddingRight={theme.spacing.md}
+                marginLeft={theme.spacing.sm}
+                marginRight={theme.spacing.sm}
+                {...press.handlers}
               >
-                {item.label}
-              </text>
-            </Pressable>
-          )}
+                <d-rect color={itemBg(item, press.hovered())} radius={theme.radius.sm} />
+                {item.icon}
+                <text
+                  color={item.value === value() ? theme.color.primary : theme.color.text}
+                  {...typeStyle("body")}
+                >
+                  {item.label}
+                </text>
+              </view>
+            )
+          }}
         </For>
       </view>
       <Hairline vertical />

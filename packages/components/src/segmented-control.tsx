@@ -1,6 +1,6 @@
 import { createSignal, For } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { Pressable, type PressState } from "./pressable"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -70,35 +70,34 @@ export function SegmentedControl(props: SegmentedControlProps) {
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
+          let press = createPress({ onPress: () => select(opt.value) })
+          let fill = () =>
+            active()
+              ? activeFill()
+              : press.hovered() && !props.disabled && policy.interaction !== "touch"
+                ? theme.color.surfaceHover
+                : idleFill()
           return (
-            <Pressable
-              onPress={() => select(opt.value)}
-              disabled={props.disabled}
-              layout={{
-                flexGrow: 1,
-                flexBasis: 0,
-                alignItems: "center",
-                paddingTop: space("md"),
-                paddingBottom: space("md"),
-                paddingLeft: space("md"),
-                paddingRight: space("md"),
-              }}
-              style={(s: PressState) => ({
-                backgroundColor: active()
-                  ? activeFill()
-                  : s.hovered && !props.disabled && policy.interaction !== "touch"
-                    ? theme.color.surfaceHover
-                    : idleFill(),
-                borderRadius: corners(i()),
-              })}
+            <view
+              repaintBoundary
+              flexGrow={1}
+              flexBasis={0}
+              alignItems="center"
+              paddingTop={space("md")}
+              paddingBottom={space("md")}
+              paddingLeft={space("md")}
+              paddingRight={space("md")}
+              {...press.handlers}
+              pointerEvents={props.disabled ? "none" : undefined}
             >
+              <d-rect color={fill()} radius={corners(i())} />
               <text
                 color={label(active())}
                 {...typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)}
               >
                 {opt.label}
               </text>
-            </Pressable>
+            </view>
           )
         }}
       </For>

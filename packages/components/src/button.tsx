@@ -1,5 +1,5 @@
 import { Show, children } from "@solidrt/core"
-import { Pressable, type PressState } from "./pressable"
+import { createPress, type PressState } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -32,12 +32,12 @@ export interface ButtonProps {
 // labels wider than the preset never clip.
 const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 
-// Themed convenience over Pressable: a padded, centered, accent-colored box with
-// a label. Press feedback is a slight scale, hover feedback a tint (non-touch
-// interaction policies only), both driven through Pressable's reactive style so
-// no nodes are recreated. Override the box via style and the padding/sizing via
+// A themed press target: a padded, centered, accent-colored box with a label.
+// Press feedback is a slight scale, hover feedback a tint (non-touch
+// interaction policies only), both reactive reads of the press state so no
+// nodes are recreated. Override the box via style and the padding/sizing via
 // layout. A caller-set backgroundColor disables the hover tint: we cannot know
-// its hover variant.
+// its hover variant. When disabled, it takes no pointer events at all.
 export function Button(props: ButtonProps) {
   // Fill, hover fill, and label color per variant, read reactively from the
   // theme. No variant draws a border.
@@ -79,36 +79,52 @@ export function Button(props: ButtonProps) {
   // compensation there too.
   let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill())
 
+  // props (not a literal) so a swapped-in onPress is read at event time.
+  let press = createPress(props)
+  let style = () => ({
+    ...props.style,
+    backgroundColor: bg(press.state()),
+    borderRadius: radius(),
+    // Always a number: a scale that flips from a number back to undefined
+    // hits the transform decoder, which rejects null. Multiply so a
+    // caller-set scale is preserved under the press feedback.
+    scale: (props.style?.scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1),
+  })
+
   return (
-    <Pressable
-      onPress={props.onPress}
-      disabled={props.disabled}
-      layout={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        paddingTop: space("md"),
-        paddingBottom: space("md"),
-        paddingLeft: space("lg"),
-        paddingRight: space("lg"),
-        ...(props.size ? { minWidth: SIZE_WIDTH[props.size] } : { width: "100%" }),
-        ...props.layout,
-      }}
-      style={(s: PressState) => ({
-        ...props.style,
-        backgroundColor: bg(s),
-        borderRadius: radius(),
-        // Always a number: a scale that flips from a number back to undefined
-        // hits the transform decoder, which rejects null. Multiply so a
-        // caller-set scale is preserved under the press feedback.
-        scale: (props.style?.scale ?? 1) * (s.pressed && policy.motion !== "none" ? 0.97 : 1),
-      })}
+    <view
+      repaintBoundary
+      flexDirection="row"
+      alignItems="center"
+      justifyContent="center"
+      paddingTop={space("md")}
+      paddingBottom={space("md")}
+      paddingLeft={space("lg")}
+      paddingRight={space("lg")}
+      {...(props.size ? { minWidth: SIZE_WIDTH[props.size] } : { width: "100%" })}
+      {...props.layout}
+      x={style().x}
+      y={style().y}
+      scale={style().scale}
+      rotate={style().rotate}
+      opacity={style().opacity}
+      {...press.handlers}
+      pointerEvents={props.disabled ? "none" : undefined}
     >
+      <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
       <Show when={isText()} fallback={resolved()}>
         <text color={label()} {...typeStyle("body", labelOnDark())}>
           {resolved()}
         </text>
       </Show>
-    </Pressable>
+      <Show when={(style().borderWidth ?? 0) > 0}>
+        <d-rect
+          drawStyle="stroke"
+          color={style().borderColor ?? "transparent"}
+          strokeWidth={style().borderWidth}
+          radius={style().borderRadius}
+        />
+      </Show>
+    </view>
   )
 }

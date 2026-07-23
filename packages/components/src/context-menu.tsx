@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
-import { Pressable, type PressState } from "./pressable"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -74,26 +74,31 @@ export function ContextMenu(props: ContextMenuProps) {
 
   let bodyText = (color: string) => ({ ...typeStyle("body"), color, maxLines: 1 })
 
-  let ItemRow = (p: { item: ContextMenuItem; padY: number }) => (
-    <Pressable
-      onPress={() => choose(p.item)}
-      disabled={p.item.disabled}
-      layout={{
-        flexDirection: "row",
-        alignItems: "center",
-        paddingTop: p.padY,
-        paddingBottom: p.padY,
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
-      }}
-      style={(s: PressState) => ({
-        backgroundColor:
-          s.pressed || (s.hovered && policy.interaction !== "touch") ? theme.color.surfaceHover : "transparent",
-      })}
-    >
-      <text {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>
-    </Pressable>
-  )
+  let ItemRow = (p: { item: ContextMenuItem; padY: number }) => {
+    let press = createPress({ onPress: () => choose(p.item) })
+    return (
+      <view
+        repaintBoundary
+        flexDirection="row"
+        alignItems="center"
+        paddingTop={p.padY}
+        paddingBottom={p.padY}
+        paddingLeft={space("md")}
+        paddingRight={space("md")}
+        {...press.handlers}
+        pointerEvents={p.item.disabled ? "none" : undefined}
+      >
+        <d-rect
+          color={
+            press.pressed() || (press.hovered() && policy.interaction !== "touch")
+              ? theme.color.surfaceHover
+              : "transparent"
+          }
+        />
+        <text {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>
+      </view>
+    )
+  }
 
   // Anchored at the opening pointer position, flipping up when it would run
   // off the bottom. Same reflow-free placement as Tooltip/Select: portal at

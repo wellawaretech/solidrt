@@ -1,6 +1,6 @@
 import { createSignal, createPortal, onLayout, getBoundingBox, Show, For, env } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { Pressable, type PressState } from "./pressable"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -48,25 +48,30 @@ export function Select(props: SelectProps) {
 
   // One option row, shared by both presentations; only the vertical padding
   // differs (the sheet gets taller touch targets).
-  let OptionRow = (p: { option: Option; padY: number }) => (
-    <Pressable
-      onPress={() => choose(p.option.value)}
-      layout={{
-        flexDirection: "row",
-        alignItems: "center",
-        paddingTop: p.padY,
-        paddingBottom: p.padY,
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
-      }}
-      style={(s: PressState) => ({
-        backgroundColor:
-          s.pressed || (s.hovered && policy.interaction !== "touch") ? theme.color.surfaceHover : "transparent",
-      })}
-    >
-      <text {...bodyText(p.option.value === value() ? theme.color.primary : theme.color.text)}>{p.option.label}</text>
-    </Pressable>
-  )
+  let OptionRow = (p: { option: Option; padY: number }) => {
+    let press = createPress({ onPress: () => choose(p.option.value) })
+    return (
+      <view
+        repaintBoundary
+        flexDirection="row"
+        alignItems="center"
+        paddingTop={p.padY}
+        paddingBottom={p.padY}
+        paddingLeft={space("md")}
+        paddingRight={space("md")}
+        {...press.handlers}
+      >
+        <d-rect
+          color={
+            press.pressed() || (press.hovered() && policy.interaction !== "touch")
+              ? theme.color.surfaceHover
+              : "transparent"
+          }
+        />
+        <text {...bodyText(p.option.value === value() ? theme.color.primary : theme.color.text)}>{p.option.label}</text>
+      </view>
+    )
+  }
 
   // Anchored under the trigger, sized at least as wide as it. Positioned like
   // Tooltip: portal at the window root, pinned at 0,0 and moved with the x/y
@@ -141,34 +146,41 @@ export function Select(props: SelectProps) {
       </view>,
     )
 
+  let press = createPress({ onPress: () => setOpen(!open()) })
+  let style = () => ({
+    borderColor: theme.color.border,
+    borderWidth: theme.borderWidth.sm,
+    borderRadius: theme.radius.sm,
+    ...props.style,
+    backgroundColor:
+      props.style?.backgroundColor ??
+      (press.hovered() && !props.disabled && policy.interaction !== "touch"
+        ? theme.color.surfaceHover
+        : theme.color.surface),
+  })
+
   return (
-    <Pressable
-      ref={(n) => (trigger = n)}
-      onPress={() => setOpen(!open())}
-      disabled={props.disabled}
-      layout={{
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: theme.spacing.md,
-        paddingTop: space("sm"),
-        paddingBottom: space("sm"),
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
-        ...props.layout,
-      }}
-      style={(s: PressState) => ({
-        borderColor: theme.color.border,
-        borderWidth: theme.borderWidth.sm,
-        borderRadius: theme.radius.sm,
-        ...props.style,
-        backgroundColor:
-          props.style?.backgroundColor ??
-          (s.hovered && !props.disabled && policy.interaction !== "touch"
-            ? theme.color.surfaceHover
-            : theme.color.surface),
-      })}
+    <view
+      ref={(n: { id: number }) => (trigger = n)}
+      repaintBoundary
+      flexDirection="row"
+      alignItems="center"
+      justifyContent="space-between"
+      gap={theme.spacing.md}
+      paddingTop={space("sm")}
+      paddingBottom={space("sm")}
+      paddingLeft={space("md")}
+      paddingRight={space("md")}
+      {...props.layout}
+      x={style().x}
+      y={style().y}
+      scale={style().scale}
+      rotate={style().rotate}
+      opacity={style().opacity}
+      {...press.handlers}
+      pointerEvents={props.disabled ? "none" : undefined}
     >
+      <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
       <Show
         when={selected()}
         fallback={<text {...bodyText(theme.color.textMuted)}>{props.placeholder ?? ""}</text>}
@@ -190,6 +202,14 @@ export function Select(props: SelectProps) {
           <Sheet />
         </Show>
       </Show>
-    </Pressable>
+      <Show when={(style().borderWidth ?? 0) > 0}>
+        <d-rect
+          drawStyle="stroke"
+          color={style().borderColor ?? "transparent"}
+          strokeWidth={style().borderWidth}
+          radius={style().borderRadius}
+        />
+      </Show>
+    </view>
   )
 }

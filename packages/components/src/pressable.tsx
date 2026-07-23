@@ -1,8 +1,9 @@
-import { createSignal, children } from "@solidrt/core"
-import type { LayoutProps, PointerEvent, PointerProps } from "@solidrt/core"
+import { children } from "@solidrt/core"
+import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
+import { createPress, type PressState } from "./press"
 
-export type PressState = { pressed: boolean; hovered: boolean }
+export type { PressState } from "./press"
 
 export interface PressableProps extends PointerProps {
   // children and style may be functions of the press state, so a caller can
@@ -15,17 +16,12 @@ export interface PressableProps extends PointerProps {
   disabled?: boolean
 }
 
-// A pressable box. onPress fires on a primary-button down followed by an up over
-// the same node. Because there is no pointer capture, a drag that leaves the box
-// fires onPointerLeave, which cancels the press (no onPress) and clears hover --
-// this also covers the no-up-outside case. Non-primary buttons (right/middle) do
-// not start a press. When disabled, it takes no pointer events at all.
+// A pressable box: the createPress semantics (see press.ts) on a styled view.
+// When disabled, it takes no pointer events at all.
 export function Pressable(props: PressableProps) {
-  let [pressed, setPressed] = createSignal(false)
-  let [hovered, setHovered] = createSignal(false)
+  let press = createPress(props)
 
-  let state = (): PressState => ({ pressed: pressed(), hovered: hovered() })
-  let style = () => (typeof props.style === "function" ? props.style(state()) : props.style)
+  let style = () => (typeof props.style === "function" ? props.style(press.state()) : props.style)
   // Element-valued props build a fresh native subtree on every read, and a
   // subtree that is never inserted is never destroyed - probing the raw getter
   // with typeof would orphan one full copy per evaluation. children() memoizes
@@ -35,27 +31,7 @@ export function Pressable(props: PressableProps) {
   let resolved = children(() => props.children)
   let kids = () => {
     let c = resolved()
-    return typeof c === "function" ? c(state()) : c
-  }
-
-  let handleDown = (e: PointerEvent) => {
-    if (e.button != null && e.button !== 0) return
-    setPressed(true)
-    props.onPointerDown?.(e)
-  }
-  let handleUp = (e: PointerEvent) => {
-    if (pressed()) props.onPress?.()
-    setPressed(false)
-    props.onPointerUp?.(e)
-  }
-  let handleEnter = (e: PointerEvent) => {
-    setHovered(true)
-    props.onPointerEnter?.(e)
-  }
-  let handleLeave = (e: PointerEvent) => {
-    setHovered(false)
-    setPressed(false)
-    props.onPointerLeave?.(e)
+    return typeof c === "function" ? c(press.state()) : c
   }
 
   let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null
@@ -71,10 +47,10 @@ export function Pressable(props: PressableProps) {
       scale={style()?.scale}
       rotate={style()?.rotate}
       opacity={style()?.opacity}
-      onPointerEnter={handleEnter}
-      onPointerLeave={handleLeave}
-      onPointerDown={handleDown}
-      onPointerUp={handleUp}
+      onPointerEnter={press.handlers.onPointerEnter}
+      onPointerLeave={press.handlers.onPointerLeave}
+      onPointerDown={press.handlers.onPointerDown}
+      onPointerUp={press.handlers.onPointerUp}
       onPointerMove={props.onPointerMove}
       onWheel={props.onWheel}
       onFocus={props.onFocus}
