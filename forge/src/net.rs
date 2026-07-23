@@ -150,6 +150,22 @@ impl Conn {
     r
   }
 
+  /// Half-close: flush and shut down the write side (the peer sees FIN), keeping
+  /// the read side open. After it, `write` errors; reads continue until the peer
+  /// closes. Idempotent, and a no-op once the connection is closed.
+  pub async fn close_write(&self) -> Result<(), String> {
+    let mut guard = self.write.lock().await;
+    let Some(w) = guard.as_mut() else {
+      return Ok(());
+    };
+    let r = tokio::select! {
+      r = w.shutdown() => r.map_err(|e| e.to_string()),
+      _ = self.closed.cancelled() => Err("connection is closed".to_string()),
+    };
+    guard.take();
+    r
+  }
+
   /// Close the connection now: cancel a pending read, drop both halves (dropping
   /// the write half sends FIN) and release the fd. Bytes already handed to the OS
   /// still flush. Idempotent.

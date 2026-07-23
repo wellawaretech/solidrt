@@ -50,8 +50,8 @@ declare module "flux:subprocess" {
     stderr: AsyncIterable<Uint8Array>
     /** Queue bytes to the child's stdin. Writes serialize and respect backpressure. */
     write(data: string | Uint8Array): Promise<void>
-    /** Close the child's stdin (after queued writes drain) so it sees EOF. */
-    endStdin(): Promise<void>
+    /** Half-close: close the child's stdin (after queued writes drain) so it sees EOF. */
+    closeWrite(): Promise<void>
     /** Request termination (portable; SIGKILL / TerminateProcess). */
     kill(): void
     /** Resolves with the exit status when the child exits. */

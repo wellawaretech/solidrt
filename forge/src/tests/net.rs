@@ -67,6 +67,34 @@ async fn listener_close_unblocks_pending_accept() {
 }
 
 #[tokio::test]
+async fn close_write_signals_eof_but_keeps_reading() {
+  let listener = listen("127.0.0.1", 0).await.unwrap();
+  let port = listener.local_addr().rsplit(':').next().unwrap().parse::<u16>().unwrap();
+  let (client, server) = tokio::join!(connect("127.0.0.1", port, 1000), listener.accept());
+  let client = client.unwrap();
+  let server = server.unwrap().expect("accepted conn");
+
+  // The netcat-style exchange: write the request, signal end-of-request with FIN.
+  client.write(b"request".to_vec()).await.unwrap();
+  client.close_write().await.unwrap();
+
+  let chunk =
+    tokio::time::timeout(Duration::from_secs(2), server.read_chunk()).await.unwrap().unwrap().expect("request bytes");
+  assert_eq!(chunk.as_slice(), b"request");
+  let eof = tokio::time::timeout(Duration::from_secs(2), server.read_chunk()).await.unwrap();
+  assert!(matches!(eof, Ok(None)), "server sees EOF after the client's closeWrite");
+
+  // The read side stayed open: the answer still comes through.
+  server.write(b"response".to_vec()).await.unwrap();
+  let resp =
+    tokio::time::timeout(Duration::from_secs(2), client.read_chunk()).await.unwrap().unwrap().expect("response bytes");
+  assert_eq!(resp.as_slice(), b"response");
+
+  assert!(client.write(b"x".to_vec()).await.is_err(), "write after closeWrite errors");
+  assert!(client.close_write().await.is_ok(), "closeWrite is idempotent");
+}
+
+#[tokio::test]
 async fn conn_close_unblocks_pending_read_and_fins_peer() {
   let listener = listen("127.0.0.1", 0).await.unwrap();
   let port = listener.local_addr().rsplit(':').next().unwrap().parse::<u16>().unwrap();

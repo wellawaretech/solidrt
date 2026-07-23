@@ -13,7 +13,7 @@
 //!   and opens one bidirectional stream.
 //! - `endpoint.accept(protocol)` is an async-iterable of incoming streams.
 //! - A `P2pStream` is a byte duplex: read with `for await (chunk of stream)`,
-//!   write with `stream.write(bytes)`, end the send half with `stream.finish()`.
+//!   write with `stream.write(bytes)`, end the send half with `stream.closeWrite()`.
 //!
 //! "protocol" is the JS-facing name for the QUIC/iroh ALPN. Out of scope for
 //! stage 1: unidirectional streams, multiple streams per peer, gossip/blobs, and
@@ -239,14 +239,15 @@ impl P2pStream {
     Ok(())
   }
 
-  /// Finish the send half (QUIC FIN) after any queued writes flush. The recv
-  /// half stays open for replies.
-  pub fn finish(&self) -> rquickjs::Result<()> {
+  /// Half-close: end the send half (QUIC FIN) after any queued writes flush.
+  /// The recv half stays open for replies.
+  #[qjs(rename = "closeWrite")]
+  pub fn close_write(&self) -> rquickjs::Result<()> {
     self.inner.finish();
     Ok(())
   }
 
-  /// Tear the stream down: finish the send half and stop reading.
+  /// Tear the stream down: end the send half and stop reading.
   pub fn close(&self) -> rquickjs::Result<()> {
     self.inner.close();
     Ok(())

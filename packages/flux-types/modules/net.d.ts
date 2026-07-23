@@ -71,6 +71,13 @@ declare module "flux:net" {
     /** Write all of `data`. Resolves once it is handed to the OS. */
     write(data: string | Uint8Array): Promise<void>
     /**
+     * Half-close: flush and end the write side, so the peer sees end-of-stream
+     * while this side keeps reading until the peer closes. The way to signal
+     * "request done" to protocols that answer after EOF. After it, {@link write}
+     * throws. Idempotent, and a no-op once the connection is closed.
+     */
+    closeWrite(): Promise<void>
+    /**
      * Close the connection now: a pending read ends, the peer sees end-of-stream
      * at once. Bytes already handed to the OS still flush.
      */

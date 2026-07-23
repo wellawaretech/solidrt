@@ -55,9 +55,9 @@ declare module "flux:p2p" {
     readonly remoteId: string
     /** Queue bytes on the send half. */
     write(data: string | Uint8Array): void
-    /** Finish the send half (QUIC FIN) after queued writes flush. The recv half stays open. */
-    finish(): void
-    /** Tear the stream down: finish the send half and stop reading. */
+    /** Half-close: end the send half (QUIC FIN) after queued writes flush. The recv half stays open. */
+    closeWrite(): void
+    /** Tear the stream down: end the send half and stop reading. */
     close(): void
     [Symbol.asyncIterator](): AsyncIterator<Uint8Array>
   }

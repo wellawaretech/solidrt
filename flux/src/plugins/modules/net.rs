@@ -9,7 +9,8 @@
 //! - `probe(host, port, opts?)` -> `"open" | "closed" | "filtered"`. The connect-
 //!   scan primitive: `closed` (a refusal) still means the host is up.
 //! - `connect(host, port, opts?)` -> `Conn`, a byte duplex: `for await (chunk of
-//!   conn)` reads, `await conn.write(bytes)` writes, `conn.close()` ends it.
+//!   conn)` reads, `await conn.write(bytes)` writes, `conn.close()` ends it,
+//!   `conn.closeWrite()` half-closes (end-of-writes, reads continue).
 //! - `listen(port, opts?)` -> `Listener`, an async-iterable of incoming `Conn`s;
 //!   `close()` releases the port and ends the iteration.
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
@@ -167,6 +168,14 @@ impl NetConn {
     let bytes = extract_body_value(&data, "Conn.write")?;
     let inner = self.inner.clone();
     Ok(with_pending(&ctx, async move { inner.write(bytes).await }))
+  }
+
+  /// Half-close: end the write side (the peer sees FIN) while reads continue
+  /// until the peer closes. After it, `write` throws.
+  #[qjs(rename = "closeWrite")]
+  pub fn close_write<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
+    let inner = self.inner.clone();
+    Ok(with_pending(&ctx, async move { inner.close_write().await }))
   }
 
   /// Close the connection now: a pending read ends, the peer sees FIN at once.

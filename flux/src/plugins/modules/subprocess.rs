@@ -24,7 +24,7 @@ use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 // The shape mirrors flux:fs: a lowercase `command(cmd, args?, opts?)` factory
 // returns a reusable reference object, and async work hangs off it as methods.
 // `output()` runs the child to completion and buffers stdout/stderr; `spawn()`
-// returns a live child handle (stdout/stderr streams, stdin write/endStdin, kill,
+// returns a live child handle (stdout/stderr streams, stdin write/closeWrite, kill,
 // status).
 //
 // Arguments are always passed as an array and never through a shell, so there is
@@ -186,7 +186,7 @@ where
 }
 
 // Spawn the child (via the forge core) and build its JS handle: live
-// stdout/stderr async-iterables, stdin write()/endStdin(), kill(), and status().
+// stdout/stderr async-iterables, stdin write()/closeWrite(), kill(), and status().
 // spawn() is synchronous (the process is launched here); a failure to launch
 // throws a clean Error. The supervisor and initial-stdin tasks are spawned here
 // because spawning is host-specific.
@@ -239,9 +239,9 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
   .expect("create write function");
   obj.set("write", write_fn)?;
 
-  // endStdin() -> Promise: close stdin so the child sees EOF, after any queued
+  // closeWrite() -> Promise: close stdin so the child sees EOF, after any queued
   // writes have drained (it takes the same lock).
-  let endstdin_fn = Function::new(
+  let close_write_fn = Function::new(
     ctx.clone(),
     MutFn::from({
       let child = child.clone();
@@ -254,8 +254,8 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       }
     }),
   )
-  .expect("create endStdin function");
-  obj.set("endStdin", endstdin_fn)?;
+  .expect("create closeWrite function");
+  obj.set("closeWrite", close_write_fn)?;
 
   // kill(): request termination (portable; SIGKILL / TerminateProcess).
   let kill_fn = Function::new(ctx.clone(), {
