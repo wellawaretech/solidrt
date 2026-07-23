@@ -10,9 +10,11 @@
 //!   scan primitive: `closed` (a refusal) still means the host is up.
 //! - `connect(host, port, opts?)` -> `Conn`, a byte duplex: `for await (chunk of
 //!   conn)` reads, `await conn.write(bytes)` writes, `conn.close()` ends it.
-//! - `listen(port, opts?)` -> `Listener`, an async-iterable of incoming `Conn`s.
+//! - `listen(port, opts?)` -> `Listener`, an async-iterable of incoming `Conn`s;
+//!   `close()` releases the port and ends the iteration.
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
-//!   the peer beacon needs.
+//!   the peer beacon needs; `close()` releases the socket and resolves a pending
+//!   `recv` with `null`.
 //! - `interfaces()` -> the local interfaces (name / mac / flags / addrs), the
 //!   no-subprocess replacement for parsing `ip addr` to find the subnet to scan.
 //!
@@ -167,7 +169,7 @@ impl NetConn {
     Ok(with_pending(&ctx, async move { inner.write(bytes).await }))
   }
 
-  /// Stop reading and close the connection.
+  /// Close the connection now: a pending read ends, the peer sees FIN at once.
   pub fn close(&self) -> rquickjs::Result<()> {
     self.inner.close();
     Ok(())
@@ -202,7 +204,7 @@ impl NetListener {
 #[rquickjs::methods]
 impl NetListener {
   /// Async-iterator step: resolve `{ value: Conn, done: false }` for the next
-  /// accepted connection. Iteration is open-ended; drop the listener to stop.
+  /// accepted connection, `{ done: true }` once the listener is closed.
   pub fn next<'js>(
     &self,
     ctx: Ctx<'js>,
@@ -215,13 +217,20 @@ impl NetListener {
       let r = inner.accept().await;
       pending.release();
       match r {
-        Ok(conn) => {
+        Ok(Some(conn)) => {
           let conn = NetConn::create(&ctx2, conn)?;
           iter_result(&ctx2, Some(conn.into_js(&ctx2)?))
         }
+        Ok(None) => iter_result(&ctx2, None),
         Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
       }
     }))
+  }
+
+  /// Close the listener: release the port and end the iteration.
+  pub fn close(&self) -> rquickjs::Result<()> {
+    self.inner.close();
+    Ok(())
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).
@@ -264,10 +273,18 @@ impl NetUdp {
     Ok(with_pending(&ctx, async move { inner.send(&bytes, &host, port).await.map(|_| ()) }))
   }
 
-  /// Receive one datagram, resolving `{ data: Uint8Array, host, port }`.
+  /// Receive one datagram, resolving `{ data: Uint8Array, host, port }`, or
+  /// `null` once the socket is closed.
   pub fn recv<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<RecvMsg>>>> {
     let inner = self.inner.clone();
     Ok(with_pending(&ctx, async move { inner.recv().await.map(RecvMsg) }))
+  }
+
+  /// Close the socket: release it (and its bound port) and resolve a pending
+  /// `recv` with `null`.
+  pub fn close(&self) -> rquickjs::Result<()> {
+    self.inner.close();
+    Ok(())
   }
 
   /// Allow sending to the broadcast address (`SO_BROADCAST`).
@@ -327,13 +344,16 @@ impl<'js> IntoJs<'js> for ReadStep {
   }
 }
 
-/// A received datagram, encoded to `{ data: Uint8Array, host, port }`. `pub` for
-/// the same `private_interfaces` reason as `ReadStep`.
-pub struct RecvMsg((Vec<u8>, String, u16));
+/// A received datagram, encoded to `{ data: Uint8Array, host, port }`, or `null`
+/// once the socket is closed. `pub` for the same `private_interfaces` reason as
+/// `ReadStep`.
+pub struct RecvMsg(Option<(Vec<u8>, String, u16)>);
 
 impl<'js> IntoJs<'js> for RecvMsg {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let (data, host, port) = self.0;
+    let Some((data, host, port)) = self.0 else {
+      return Ok(Value::new_null(ctx.clone()));
+    };
     let obj = Object::new(ctx.clone())?;
     obj.set("data", TypedArray::<u8>::new(ctx.clone(), data)?)?;
     obj.set("host", host)?;

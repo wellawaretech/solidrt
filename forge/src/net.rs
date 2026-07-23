@@ -18,10 +18,18 @@
 //! drives the transport, the same shape as the p2p `Stream`. No background task
 //! is needed (writes go straight out under a lock), so unlike subprocess / p2p
 //! the caller spawns nothing.
+//!
+//! Every socket type has a `close()` that releases the fd immediately and
+//! unblocks its pending await (`read_chunk` / `accept` / `recv` resolve their
+//! end-of-stream value). Without it a pending op would pin the socket — and in
+//! flux the whole engine, via the pending-ops hold — until GC, if ever. The
+//! mechanism is one level-triggered `CancellationToken` per socket, `select!`ed
+//! against the blocking call.
 
 use std::cell::RefCell;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, Mutex as SyncMutex};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -29,6 +37,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 /// Read granularity: each `read_chunk` pulls at most this many bytes.
 const READ_CHUNK: usize = 64 * 1024;
@@ -81,11 +90,13 @@ pub async fn probe(host: &str, port: u16, timeout_ms: u64) -> Liveness {
 /// A connected TCP stream: a byte duplex. Reads are pull-based; writes go straight
 /// out under a lock so concurrent writes serialize instead of racing. The split
 /// halves are held in `Option`s and taken across awaits (no borrow is held across
-/// `.await`), mirroring the p2p `Stream`. Dropping the `Conn` closes the socket.
+/// `.await`), mirroring the p2p `Stream`. `close()` (or dropping the `Conn`)
+/// closes the socket.
 pub struct Conn {
   read: RefCell<Option<OwnedReadHalf>>,
   write: Mutex<Option<OwnedWriteHalf>>,
   peer: SocketAddr,
+  closed: CancellationToken,
 }
 
 impl Conn {
@@ -93,20 +104,29 @@ impl Conn {
     let peer = stream.peer_addr().map_err(|e| e.to_string())?;
     let _ = stream.set_nodelay(true);
     let (read, write) = stream.into_split();
-    Ok(Conn { read: RefCell::new(Some(read)), write: Mutex::new(Some(write)), peer })
+    Ok(Conn {
+      read: RefCell::new(Some(read)),
+      write: Mutex::new(Some(write)),
+      peer,
+      closed: CancellationToken::new(),
+    })
   }
 
   /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
-  /// or once the read half is gone (closed). The read half is taken out before the
-  /// await and put back after, so no borrow is held across it.
+  /// or once closed. The read half is taken out before the await and put back
+  /// after, so no borrow is held across it; `close()` during the await cancels the
+  /// read and the taken half drops with the future.
   pub async fn read_chunk(&self) -> Result<Option<Vec<u8>>, String> {
     let Some(mut read) = self.read.borrow_mut().take() else {
       return Ok(None);
     };
     let mut buf = vec![0u8; READ_CHUNK];
-    let n = read.read(&mut buf).await.map_err(|e| e.to_string())?;
-    if n == 0 {
-      return Ok(None); // EOF: leave the read half taken, so further reads stay Ok(None)
+    let n = tokio::select! {
+      r = read.read(&mut buf) => r.map_err(|e| e.to_string())?,
+      _ = self.closed.cancelled() => return Ok(None),
+    };
+    if n == 0 || self.closed.is_cancelled() {
+      return Ok(None); // EOF or closed: leave the read half taken, so further reads stay Ok(None)
     }
     buf.truncate(n);
     *self.read.borrow_mut() = Some(read);
@@ -117,16 +137,28 @@ impl Conn {
   /// connection has been closed or the write fails.
   pub async fn write(&self, bytes: Vec<u8>) -> Result<(), String> {
     let mut guard = self.write.lock().await;
-    match guard.as_mut() {
-      Some(w) => w.write_all(&bytes).await.map_err(|e| e.to_string()),
-      None => Err("connection is closed".to_string()),
+    let Some(w) = guard.as_mut() else {
+      return Err("connection is closed".to_string());
+    };
+    let r = tokio::select! {
+      r = w.write_all(&bytes) => r.map_err(|e| e.to_string()),
+      _ = self.closed.cancelled() => Err("connection is closed".to_string()),
+    };
+    if self.closed.is_cancelled() {
+      guard.take(); // close() could not reach the locked write half; drop it here so FIN still goes out
     }
+    r
   }
 
-  /// Stop reading now (drops the read half). The write half closes when the
-  /// `Conn` is dropped; bytes already handed to the OS still flush.
+  /// Close the connection now: cancel a pending read, drop both halves (dropping
+  /// the write half sends FIN) and release the fd. Bytes already handed to the OS
+  /// still flush. Idempotent.
   pub fn close(&self) {
+    self.closed.cancel();
     self.read.borrow_mut().take();
+    if let Ok(mut guard) = self.write.try_lock() {
+      guard.take();
+    } // else a write is in flight; its cancelled branch drops the half
   }
 
   /// The remote peer's address, e.g. `192.168.2.37:445`.
@@ -148,28 +180,50 @@ pub async fn connect(host: &str, port: u16, timeout_ms: u64) -> Result<Conn, Str
 }
 
 /// A bound TCP listener. `accept` yields one `Conn` per incoming connection; the
-/// marshalling layer turns repeated calls into an async-iterable. Dropping the
-/// listener stops accepting.
+/// marshalling layer turns repeated calls into an async-iterable. `close()`
+/// releases the port and resolves a pending `accept` with `Ok(None)`.
 pub struct Listener {
-  inner: TcpListener,
+  inner: SyncMutex<Option<Arc<TcpListener>>>,
+  closed: CancellationToken,
 }
 
 /// Bind a TCP listener to `host:port` (port `0` = OS-assigned).
 pub async fn listen(host: &str, port: u16) -> Result<Listener, String> {
   let inner = TcpListener::bind((host, port)).await.map_err(|e| format!("listen {host}:{port}: {e}"))?;
-  Ok(Listener { inner })
+  Ok(Listener { inner: SyncMutex::new(Some(Arc::new(inner))), closed: CancellationToken::new() })
 }
 
 impl Listener {
-  /// Accept the next incoming connection.
-  pub async fn accept(&self) -> Result<Conn, String> {
-    let (stream, _peer) = self.inner.accept().await.map_err(|e| e.to_string())?;
-    Conn::from_stream(stream)
+  /// Accept the next incoming connection; `Ok(None)` once closed. The pending
+  /// accept holds its own `Arc` of the socket, so `close()` both unblocks it and
+  /// releases the fd as soon as this future settles.
+  pub async fn accept(&self) -> Result<Option<Conn>, String> {
+    let Some(listener) = self.inner.lock().expect("net listener lock").clone() else {
+      return Ok(None);
+    };
+    tokio::select! {
+      r = listener.accept() => match r {
+        Ok((stream, _peer)) => Conn::from_stream(stream).map(Some),
+        Err(e) => Err(e.to_string()),
+      },
+      _ = self.closed.cancelled() => Ok(None),
+    }
+  }
+
+  /// Close the listener: release the port and unblock a pending `accept`.
+  /// Idempotent.
+  pub fn close(&self) {
+    self.closed.cancel();
+    self.inner.lock().expect("net listener lock").take();
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).
+  /// Empty once closed.
   pub fn local_addr(&self) -> String {
-    self.inner.local_addr().map(|a| a.to_string()).unwrap_or_default()
+    match self.inner.lock().expect("net listener lock").as_ref() {
+      Some(l) => l.local_addr().map(|a| a.to_string()).unwrap_or_default(),
+      None => String::new(),
+    }
   }
 }
 
@@ -180,7 +234,8 @@ impl Listener {
 /// bind (tokio's `UdpSocket::bind` can't), letting several listeners share the
 /// beacon port and a restart re-bind immediately.
 pub struct Udp {
-  inner: UdpSocket,
+  inner: SyncMutex<Option<Arc<UdpSocket>>>,
+  closed: CancellationToken,
 }
 
 /// Bind a UDP socket to `0.0.0.0:port` (port `0` = OS-assigned). `reuse` sets
@@ -198,53 +253,78 @@ pub async fn udp_bind(port: u16, reuse: bool) -> Result<Udp, String> {
   socket.set_nonblocking(true).map_err(|e| e.to_string())?; // tokio adopts only nonblocking sockets
   let std_socket: std::net::UdpSocket = socket.into();
   let inner = UdpSocket::from_std(std_socket).map_err(|e| e.to_string())?;
-  Ok(Udp { inner })
+  Ok(Udp { inner: SyncMutex::new(Some(Arc::new(inner))), closed: CancellationToken::new() })
 }
 
 impl Udp {
+  /// The live socket, or an error once closed. For the sync setters and `send`.
+  fn socket(&self) -> Result<Arc<UdpSocket>, String> {
+    self.inner.lock().expect("net udp lock").clone().ok_or_else(|| "socket is closed".to_string())
+  }
+
   /// Send a datagram to `host:port` — a multicast group, a broadcast address, or a
   /// unicast peer. Returns the number of bytes sent.
   pub async fn send(&self, data: &[u8], host: &str, port: u16) -> Result<usize, String> {
-    self.inner.send_to(data, (host, port)).await.map_err(|e| e.to_string())
+    self.socket()?.send_to(data, (host, port)).await.map_err(|e| e.to_string())
   }
 
-  /// Receive one datagram, returning its bytes and the sender's `ip` and `port`.
-  pub async fn recv(&self) -> Result<(Vec<u8>, String, u16), String> {
+  /// Receive one datagram, returning its bytes and the sender's `ip` and `port`;
+  /// `Ok(None)` once closed. The pending recv holds its own `Arc` of the socket,
+  /// so `close()` both unblocks it and releases the fd as soon as this future
+  /// settles.
+  pub async fn recv(&self) -> Result<Option<(Vec<u8>, String, u16)>, String> {
+    let Some(sock) = self.inner.lock().expect("net udp lock").clone() else {
+      return Ok(None);
+    };
     let mut buf = vec![0u8; UDP_RECV_MAX];
-    let (n, from) = self.inner.recv_from(&mut buf).await.map_err(|e| e.to_string())?;
+    let (n, from) = tokio::select! {
+      r = sock.recv_from(&mut buf) => r.map_err(|e| e.to_string())?,
+      _ = self.closed.cancelled() => return Ok(None),
+    };
     buf.truncate(n);
-    Ok((buf, from.ip().to_string(), from.port()))
+    Ok(Some((buf, from.ip().to_string(), from.port())))
+  }
+
+  /// Close the socket: release the fd (and its bound port) and unblock a pending
+  /// `recv`. Idempotent.
+  pub fn close(&self) {
+    self.closed.cancel();
+    self.inner.lock().expect("net udp lock").take();
   }
 
   /// Allow sending to the broadcast address (`SO_BROADCAST`).
   pub fn set_broadcast(&self, on: bool) -> Result<(), String> {
-    self.inner.set_broadcast(on).map_err(|e| e.to_string())
+    self.socket()?.set_broadcast(on).map_err(|e| e.to_string())
   }
 
   /// TTL for outgoing multicast (`1` keeps it on the local link).
   pub fn set_multicast_ttl(&self, ttl: u32) -> Result<(), String> {
-    self.inner.set_multicast_ttl_v4(ttl).map_err(|e| e.to_string())
+    self.socket()?.set_multicast_ttl_v4(ttl).map_err(|e| e.to_string())
   }
 
   /// Whether multicast this socket sends loops back to sockets on this host.
   pub fn set_multicast_loop(&self, on: bool) -> Result<(), String> {
-    self.inner.set_multicast_loop_v4(on).map_err(|e| e.to_string())
+    self.socket()?.set_multicast_loop_v4(on).map_err(|e| e.to_string())
   }
 
   /// Join multicast `group` on the interface with address `iface` (`0.0.0.0` lets
   /// the OS choose). Required to receive that group's datagrams.
   pub fn join_multicast(&self, group: Ipv4Addr, iface: Ipv4Addr) -> Result<(), String> {
-    self.inner.join_multicast_v4(group, iface).map_err(|e| e.to_string())
+    self.socket()?.join_multicast_v4(group, iface).map_err(|e| e.to_string())
   }
 
   /// Leave a multicast group previously joined with `join_multicast`.
   pub fn leave_multicast(&self, group: Ipv4Addr, iface: Ipv4Addr) -> Result<(), String> {
-    self.inner.leave_multicast_v4(group, iface).map_err(|e| e.to_string())
+    self.socket()?.leave_multicast_v4(group, iface).map_err(|e| e.to_string())
   }
 
   /// The bound local address (with the OS-assigned port when `0` was requested).
+  /// Empty once closed.
   pub fn local_addr(&self) -> String {
-    self.inner.local_addr().map(|a| a.to_string()).unwrap_or_default()
+    match self.inner.lock().expect("net udp lock").as_ref() {
+      Some(s) => s.local_addr().map(|a| a.to_string()).unwrap_or_default(),
+      None => String::new(),
+    }
   }
 }
 

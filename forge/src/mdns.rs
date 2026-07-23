@@ -156,13 +156,14 @@ async fn collect_responses(udp: &net::Udp, timeout_ms: u64) -> Vec<Message> {
       break;
     }
     match tokio::time::timeout(remaining, udp.recv()).await {
-      Ok(Ok((buf, _ip, _port))) => {
+      Ok(Ok(Some((buf, _ip, _port)))) => {
         if let Ok(m) = Message::from_vec(&buf) {
           out.push(m); // query packets carry no answers, so they fall out in correlation
         }
       }
-      Ok(Err(_)) => break, // socket closed/errored
-      Err(_) => break,     // window elapsed
+      Ok(Ok(None)) => break, // socket closed
+      Ok(Err(_)) => break,   // socket errored
+      Err(_) => break,       // window elapsed
     }
   }
   out

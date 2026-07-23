@@ -70,29 +70,36 @@ declare module "flux:net" {
     readonly peer: string
     /** Write all of `data`. Resolves once it is handed to the OS. */
     write(data: string | Uint8Array): Promise<void>
-    /** Stop reading and close the connection. */
+    /**
+     * Close the connection now: a pending read ends, the peer sees end-of-stream
+     * at once. Bytes already handed to the OS still flush.
+     */
     close(): void
     [Symbol.asyncIterator](): AsyncIterator<Uint8Array>
   }
 
   /**
    * A bound TCP listener: an async-iterable of incoming connections, so
-   * `for await (let conn of listener)` accepts them. Drop it to stop.
+   * `for await (let conn of listener)` accepts them. `close()` to stop.
    */
   export class Listener implements AsyncIterable<Conn> {
-    /** The bound local address (with the OS-assigned port when 0 was requested). */
+    /** The bound local address (with the OS-assigned port when 0 was requested). Empty once closed. */
     readonly localAddr: string
+    /** Close the listener: release the port and end the iteration. */
+    close(): void
     [Symbol.asyncIterator](): AsyncIterator<Conn>
   }
 
   /** A bound UDP socket with the broadcast/multicast controls a peer beacon needs. */
   export class Udp {
-    /** The bound local address (with the OS-assigned port when 0 was requested). */
+    /** The bound local address (with the OS-assigned port when 0 was requested). Empty once closed. */
     readonly localAddr: string
     /** Send a datagram to `host:port` — a unicast peer, a broadcast address, or a multicast group. */
     send(data: string | Uint8Array, host: string, port: number): Promise<void>
-    /** Receive the next datagram. */
-    recv(): Promise<Datagram>
+    /** Receive the next datagram, or `null` once the socket is closed. */
+    recv(): Promise<Datagram | null>
+    /** Close the socket: release it (and its bound port) and resolve a pending {@link recv} with `null`. */
+    close(): void
     /** Allow sending to the broadcast address (SO_BROADCAST). */
     setBroadcast(on: boolean): void
     /** TTL for outgoing multicast (1 keeps it on the local link). */
