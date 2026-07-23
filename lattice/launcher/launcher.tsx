@@ -32,6 +32,7 @@ import {
   SplitView,
   Modal,
   Icon,
+  SegmentedControl,
   theme,
   setTheme,
   darkTheme,
@@ -48,10 +49,21 @@ import {
   stop,
   launchAddress,
 } from "srt:dev"
-import { available as appsAvailable, list, info, launch, remove, type InstalledApp } from "srt:apps"
+import {
+  available as appsAvailable,
+  list,
+  info,
+  launch,
+  remove,
+  version as buildVersion,
+  profile as buildProfile,
+  platform as buildPlatform,
+  type InstalledApp,
+} from "srt:apps"
 
 type DevState = "idle" | "searching" | "connecting" | "connected"
-type Screen = "home" | "scan" | "manual"
+type Screen = "home" | "scan" | "manual" | "settings"
+type ThemeMode = "system" | "light" | "dark"
 
 const STATUS_TEXT: Record<DevState, string> = {
   idle: "Not connected",
@@ -101,10 +113,9 @@ const PUZZLE_SEGMENTS = [
   },
 ]
 
-// Lucide sun/moon glyphs for the theme toggle; stroked with currentColor so the
-// Icon component recolors them from the theme.
-const SUN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`
-const MOON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`
+// Lucide settings (gear) glyph for the header button that opens the settings
+// screen, stroked with currentColor so the Icon component recolors it.
+const GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`
 
 // Renders the mark at `size`: the segment paths are authored in a 100x100 space
 // and scaled to `size` from the TOP-LEFT origin, so they map exactly onto the
@@ -559,22 +570,94 @@ function DevCard(props: {
   )
 }
 
+// One capability name as a filled chip, for the About block's list.
+function CapabilityChip(props: { name: string }) {
+  return (
+    <View
+      layout={{
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm"),
+      }}
+      style={{ backgroundColor: theme.color.surfaceAlt, borderRadius: theme.radius.sm }}
+    >
+      <Text variant="body" muted>
+        {props.name}
+      </Text>
+    </View>
+  )
+}
+
+// The settings screen: theme mode and the runtime's build identity. Reached
+// from the header gear; a Back button returns home in both layouts.
+function SettingsScreen(props: {
+  mode: ThemeMode
+  onMode: (mode: ThemeMode) => void
+  onBack: () => void
+}) {
+  return (
+    <ScrollView layout={{ flexGrow: 1 }}>
+      <View layout={{ flexGrow: 1, alignItems: "center" }}>
+        <View
+          layout={{
+            flexDirection: "column",
+            gap: space("lg"),
+            width: "100%",
+            maxWidth: 440,
+            padding: space("xl"),
+          }}
+        >
+          <View layout={{ flexDirection: "row" }}>
+            <Button variant="ghost" size="sm" onPress={props.onBack}>
+              Back
+            </Button>
+          </View>
+          <Text variant="heading">Settings</Text>
+          <DetailCard title="Appearance">
+            <SegmentedControl
+              options={[
+                { value: "system", label: "System" },
+                { value: "light", label: "Light" },
+                { value: "dark", label: "Dark" },
+              ]}
+              value={props.mode}
+              onChange={(v) => props.onMode(v as ThemeMode)}
+            />
+          </DetailCard>
+          <DetailCard title="About">
+            <DetailRow label="Build version" value={buildVersion} />
+            <DetailRow label="Profile" value={buildProfile} />
+            <DetailRow label="Flux version" value={Flux.version} />
+            <DetailRow label="Platform" value={buildPlatform} />
+          </DetailCard>
+          <DetailCard title="Capabilities">
+            <View layout={{ flexDirection: "row", flexWrap: "wrap", gap: space("sm") }}>
+              <For each={Flux.capabilities}>{(name) => <CapabilityChip name={name} />}</For>
+            </View>
+          </DetailCard>
+        </View>
+      </View>
+    </ScrollView>
+  )
+}
+
 function App() {
   let dev = devAvailable
 
-  // Follow the OS theme until the toggle overrides it; dark until it resolves.
-  let [dark, setDark] = createSignal(true)
-  createEffect(
-    () => env.systemTheme,
-    (t) => {
-      if (t !== "unknown") setDark(t === "dark")
-    },
-  )
+  // Theme mode: "system" follows the OS preference (settable back to, unlike a
+  // one-way toggle), "light"/"dark" pin it. Effective dark is dark until the OS
+  // preference resolves.
+  let [themeMode, setThemeMode] = createSignal<ThemeMode>("system")
+  let dark = () => {
+    let mode = themeMode()
+    if (mode === "system") return env.systemTheme !== "light"
+    return mode === "dark"
+  }
   createEffect(
     () => dark(),
     (d) => setTheme(d ? darkTheme : lightTheme),
   )
-  let toggleTheme = () => setDark((d) => !d)
 
   let [screen, setScreen] = createSignal<Screen>("home")
   let [apps, setApps] = createSignal(appsAvailable ? list() : [])
@@ -728,6 +811,14 @@ function App() {
             </View>
           </Match>
 
+          <Match when={screen() === "settings"}>
+            <SettingsScreen
+              mode={themeMode()}
+              onMode={setThemeMode}
+              onBack={() => setScreen("home")}
+            />
+          </Match>
+
           {/* List-detail home: SplitView shows the app list beside the
               selected app's details when the layout policy is two-pane, and
               navigates between the list and a detail screen when single-pane.
@@ -762,14 +853,14 @@ function App() {
                         <Text variant="heading">SolidRT</Text>
                       </View>
                       <Pressable
-                        onPress={toggleTheme}
+                        onPress={() => setScreen("settings")}
                         layout={{ padding: space("sm") }}
                         style={(s: PressState) => ({
                           backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
                           borderRadius: theme.radius.md,
                         })}
                       >
-                        <Icon src={dark() ? SUN_SVG : MOON_SVG} size={22} />
+                        <Icon src={GEAR_SVG} size={22} />
                       </Pressable>
                     </View>
                     <Show when={apps().length > 0} fallback={<NoApps />}>

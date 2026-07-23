@@ -100,6 +100,16 @@ declare module "srt:apps" {
    * the app is not installed.
    */
   export function remove(id: string): void
+  /**
+   * Build identity of this runtime, for the launcher's settings screen. Not
+   * app-specific, but surfaced here since the launcher already imports this
+   * module. `version` is the release version (git describe; "0.0.0-dev" in a
+   * plain build), `profile` is "debug" or "release", `platform` is the OS
+   * (std::env::consts::OS, e.g. "linux", "android", "windows", "macos").
+   */
+  export const version: string
+  export const profile: string
+  export const platform: string
 }
 
 // Frame draw (lattice runner). renderFrame() synchronously renders the current

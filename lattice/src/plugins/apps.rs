@@ -141,6 +141,9 @@ impl ModuleDef for SrtAppsModule {
     decl.declare("info")?;
     decl.declare("launch")?;
     decl.declare("remove")?;
+    decl.declare("version")?;
+    decl.declare("profile")?;
+    decl.declare("platform")?;
     Ok(())
   }
 
@@ -150,6 +153,11 @@ impl ModuleDef for SrtAppsModule {
     exports.export("info", Function::new(ctx.clone(), info_impl)?)?;
     exports.export("launch", Function::new(ctx.clone(), launch_impl)?)?;
     exports.export("remove", Function::new(ctx.clone(), remove_impl)?)?;
+    // Build identity of this runtime, for the launcher's settings screen. Not
+    // app-specific, but the launcher already imports this module.
+    exports.export("version", crate::VERSION)?;
+    exports.export("profile", crate::PROFILE)?;
+    exports.export("platform", std::env::consts::OS)?;
     Ok(())
   }
 }

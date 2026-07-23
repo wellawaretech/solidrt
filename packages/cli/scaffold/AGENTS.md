@@ -300,12 +300,15 @@ The tools need a running app: if list_clients is empty, ask the user to start
   Math.min(dt, cap) lets it through, and one bad frame can corrupt anything
   integrated from dt (positions fly off, accumulators go so negative they
   never recover). Math.max(0, Math.min(dt, cap)) costs nothing.
-- Frames are demand-gated: JS frame callbacks only run when the previous
-  frame changed something (input, signal write, GPU upload). An app whose
-  onFrame returns early without side effects on its first frame never gets
-  a second one - self-running animation (game clocks, shader-driven
-  effects) must make one state change at startup to prime the loop; after
-  that its own writes keep it awake.
+- A registered onFrame is a standing request, not demand-gated: it re-requests
+  the next frame every time it runs, so the runtime keeps calling it - and
+  presents - every frame at the refresh rate until you deregister it (fps stays
+  at the refresh rate on an idle screen; that is the 60fps burn called out in
+  the performance notes above). The upside is that a self-running loop - a game
+  clock, a shader driver, a stepped VM doing silent CPU work with no console
+  output - keeps advancing on its own: it does NOT stall when the body changes
+  nothing and needs no startup "prime" write. Deregister onFrame (return its
+  cleanup, or let onCleanup fire) whenever there is nothing left to advance.
 - Layout is incremental: a change re-solves only the dirty path, and clean
   subtrees answer from a per-node cache, so long lists no longer cap layout
   (a thousand-node tree relays out in well under a millisecond). If layoutMs

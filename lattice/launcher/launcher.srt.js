@@ -5135,7 +5135,7 @@ var capabilities = {
 };
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { destroyTexture as destroyTexture2, setShaderParams, uploadTexture } from "flux:gpu";
+import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";
 import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/image.ts
@@ -6681,6 +6681,102 @@ function Modal(props) {
     });
     return _el$;
   })());
+}
+// packages/components/src/segmented-control.tsx
+function SegmentedControl(props) {
+  let [internal, setInternal] = createSignal(props.defaultValue);
+  let value = () => props.value !== undefined ? props.value : internal();
+  let select = (v2) => {
+    if (props.value === undefined)
+      setInternal(() => v2);
+    props.onChange?.(v2);
+  };
+  let radius = () => typeof props.style?.borderRadius === "number" ? props.style.borderRadius : theme.radius.md;
+  let corners = (i3) => {
+    let r3 = radius();
+    let last = props.options.length - 1;
+    if (last === 0)
+      return r3;
+    if (i3 === 0)
+      return [r3, 0, 0, r3];
+    if (i3 === last)
+      return [0, r3, r3, 0];
+    return 0;
+  };
+  let idleFill = () => props.style?.backgroundColor ?? theme.color.surfaceAlt;
+  let activeFill = () => props.disabled ? theme.color.surface : theme.color.primary;
+  let label = (active) => props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text;
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
+  insertNode2(_el$, _el$2);
+  setProp(_el$, "flexDirection", "row");
+  setProp(_el$, "gap", 0);
+  spread(_el$, mergeProps(() => props.layout, {
+    get x() {
+      return props.style?.x;
+    },
+    get y() {
+      return props.style?.y;
+    },
+    get scale() {
+      return props.style?.scale;
+    },
+    get rotate() {
+      return props.style?.rotate;
+    },
+    get opacity() {
+      return props.style?.opacity;
+    }
+  }), true);
+  insert(_el$, createComponent2(For, {
+    get each() {
+      return props.options;
+    },
+    children: (opt, i3) => {
+      let active = () => value() === opt.value;
+      return createComponent2(Pressable, {
+        onPress: () => select(opt.value),
+        get disabled() {
+          return props.disabled;
+        },
+        get layout() {
+          return {
+            flexGrow: 1,
+            flexBasis: 0,
+            alignItems: "center",
+            paddingTop: space("md"),
+            paddingBottom: space("md"),
+            paddingLeft: space("md"),
+            paddingRight: space("md")
+          };
+        },
+        style: (s2) => ({
+          backgroundColor: active() ? activeFill() : s2.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.surfaceHover : idleFill(),
+          borderRadius: corners(i3())
+        }),
+        get children() {
+          var _el$3 = createElement("text");
+          spread(_el$3, mergeProps({
+            get color() {
+              return label(active());
+            }
+          }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
+          insert(_el$3, () => opt.label);
+          return _el$3;
+        }
+      });
+    }
+  }), null);
+  effect3(() => ({
+    e: theme.color.border,
+    t: radius()
+  }), ({
+    e: e3,
+    t: t3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+  });
+  return _el$;
 }
 // packages/components/src/split-view.tsx
 var LIST_WIDTH = 320;
@@ -8359,7 +8455,7 @@ function Icon(props) {
 // lattice/launcher/launcher.tsx
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
-import { available as appsAvailable, list, info, launch, remove } from "srt:apps";
+import { available as appsAvailable, list, info, launch, remove, version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
 var STATUS_TEXT = {
   idle: "Not connected",
   searching: "Searching...",
@@ -8395,8 +8491,7 @@ var PUZZLE_SEGMENTS = [{
   dark: "#5681c1",
   d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z"
 }];
-var SUN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
-var MOON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
 function PuzzleMark(props) {
   return createComponent2(View, {
     get layout() {
@@ -9157,15 +9252,153 @@ function DevCard(props) {
     }
   });
 }
+function CapabilityChip(props) {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm")
+      };
+    },
+    get style() {
+      return {
+        backgroundColor: theme.color.surfaceAlt,
+        borderRadius: theme.radius.sm
+      };
+    },
+    get children() {
+      return createComponent2(Text, {
+        variant: "body",
+        muted: true,
+        get children() {
+          return props.name;
+        }
+      });
+    }
+  });
+}
+function SettingsScreen(props) {
+  return createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      return createComponent2(View, {
+        layout: {
+          flexGrow: 1,
+          alignItems: "center"
+        },
+        get children() {
+          return createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "column",
+                gap: space("lg"),
+                width: "100%",
+                maxWidth: 440,
+                padding: space("xl")
+              };
+            },
+            get children() {
+              return [createComponent2(View, {
+                layout: {
+                  flexDirection: "row"
+                },
+                get children() {
+                  return createComponent2(Button, {
+                    variant: "ghost",
+                    size: "sm",
+                    get onPress() {
+                      return props.onBack;
+                    },
+                    children: "Back"
+                  });
+                }
+              }), createComponent2(Text, {
+                variant: "heading",
+                children: "Settings"
+              }), createComponent2(DetailCard, {
+                title: "Appearance",
+                get children() {
+                  return createComponent2(SegmentedControl, {
+                    options: [{
+                      value: "system",
+                      label: "System"
+                    }, {
+                      value: "light",
+                      label: "Light"
+                    }, {
+                      value: "dark",
+                      label: "Dark"
+                    }],
+                    get value() {
+                      return props.mode;
+                    },
+                    onChange: (v2) => props.onMode(v2)
+                  });
+                }
+              }), createComponent2(DetailCard, {
+                title: "About",
+                get children() {
+                  return [createComponent2(DetailRow, {
+                    label: "Build version",
+                    value: buildVersion
+                  }), createComponent2(DetailRow, {
+                    label: "Profile",
+                    value: buildProfile
+                  }), createComponent2(DetailRow, {
+                    label: "Flux version",
+                    get value() {
+                      return Flux.version;
+                    }
+                  }), createComponent2(DetailRow, {
+                    label: "Platform",
+                    value: buildPlatform
+                  })];
+                }
+              }), createComponent2(DetailCard, {
+                title: "Capabilities",
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: space("sm")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(For, {
+                        get each() {
+                          return Flux.capabilities;
+                        },
+                        children: (name) => createComponent2(CapabilityChip, {
+                          name
+                        })
+                      });
+                    }
+                  });
+                }
+              })];
+            }
+          });
+        }
+      });
+    }
+  });
+}
 function App() {
   let dev = devAvailable;
-  let [dark, setDark] = createSignal(true);
-  createEffect(() => env.systemTheme, (t3) => {
-    if (t3 !== "unknown")
-      setDark(t3 === "dark");
-  });
+  let [themeMode, setThemeMode] = createSignal("system");
+  let dark = () => {
+    let mode = themeMode();
+    if (mode === "system")
+      return env.systemTheme !== "light";
+    return mode === "dark";
+  };
   createEffect(() => dark(), (d2) => setTheme(d2 ? darkTheme : lightTheme));
-  let toggleTheme = () => setDark((d2) => !d2);
   let [screen, setScreen] = createSignal("home");
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
   let [selectedId, setSelectedId] = createSignal(null);
@@ -9368,6 +9601,19 @@ function App() {
                 }
               }), createComponent2(Match, {
                 get when() {
+                  return screen() === "settings";
+                },
+                get children() {
+                  return createComponent2(SettingsScreen, {
+                    get mode() {
+                      return themeMode();
+                    },
+                    onMode: setThemeMode,
+                    onBack: () => setScreen("home")
+                  });
+                }
+              }), createComponent2(Match, {
+                get when() {
                   return screen() === "home";
                 },
                 get children() {
@@ -9423,7 +9669,7 @@ function App() {
                                       })];
                                     }
                                   }), createComponent2(Pressable, {
-                                    onPress: toggleTheme,
+                                    onPress: () => setScreen("settings"),
                                     get layout() {
                                       return {
                                         padding: space("sm")
@@ -9435,9 +9681,7 @@ function App() {
                                     }),
                                     get children() {
                                       return createComponent2(Icon, {
-                                        get src() {
-                                          return dark() ? SUN_SVG : MOON_SVG;
-                                        },
+                                        src: GEAR_SVG,
                                         size: 22
                                       });
                                     }
