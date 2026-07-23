@@ -439,16 +439,16 @@ fn ui_thread(
       }
     };
 
-    // Fetch disk cache: client-level, shared across the client's apps.
-    let fetch_cache_dir = match storage::get() {
-      Some(store) => Some(store.cache_dir.clone()),
-      None => {
-        log::warn!("No fetch cache dir; fetch caching disabled");
-        None
-      }
-    };
+    if storage::get().is_none() {
+      log::warn!("No fetch cache dir; fetch caching disabled");
+    }
 
     loop {
+      // Fetch disk cache: per app, so cached assets are browsable and
+      // clearable per app (and die with it on remove). Resolved per engine:
+      // the anchored app changes across reloads.
+      let fetch_cache_dir = storage::get()
+        .map(|store| store.cache_dir(current_app_id.as_deref().unwrap_or("default")));
       let render_tree = RenderTree::new();
       let platform = platform.clone();
       let atx = atx.clone();
@@ -462,7 +462,7 @@ fn ui_thread(
       let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
-      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE);
+      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE).user_agent(format!("SolidRT/{VERSION}"));
       let builder = match &fetch_cache_dir {
         Some(dir) => builder.cache_dir(dir.clone()),
         None => builder,

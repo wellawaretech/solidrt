@@ -106,6 +106,13 @@ impl FluxEngineBuilder {
     self.userdata(crate::plugins::standards::fetch::FetchCacheDir(dir))
   }
 
+  /// The `User-Agent` product token outgoing `fetch` requests carry. An
+  /// embedder sets its own identity here (e.g. `SolidRT/<version>`); the
+  /// default is the runtime's own, `FluxRT/<version>`.
+  pub fn user_agent(self, agent: String) -> Self {
+    self.userdata(crate::plugins::standards::http::UserAgent(agent))
+  }
+
   /// `cache_dir` at the dev default: `.srt-data/cache` under the working
   /// directory (the project-local dev data root, see
   /// okf/research/update-mechanism.md). Interim policy until the

@@ -228,6 +228,27 @@ struct CacheMeta {
   headers: Vec<(String, String)>,
 }
 
+/// What browsing tooling reads from a fetch-cache entry's meta blob: the
+/// (resolved) url and the response content type (lowercased, parameters like
+/// `; charset=...` stripped).
+pub struct CachedMeta {
+  pub url: String,
+  pub content_type: Option<String>,
+}
+
+/// Decode a scanned fetch-cache entry's meta blob (see `cache::scan`). None
+/// for a blob some other consumer wrote.
+pub fn cached_meta(meta: &[u8]) -> Option<CachedMeta> {
+  let m = serde_json::from_slice::<CacheMeta>(meta).ok()?;
+  let content_type = m
+    .headers
+    .iter()
+    .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+    .map(|(_, value)| value.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+    .filter(|v| !v.is_empty());
+  Some(CachedMeta { url: m.url, content_type })
+}
+
 /// Bounded retries after a 429'd request (4 attempts total).
 const RETRY_LIMIT: u32 = 3;
 
@@ -324,12 +345,8 @@ pub async fn do_fetch_cached(
   if !(200..300).contains(&status) {
     return Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body });
   }
-  let meta = CacheMeta {
-    status,
-    status_text: status_text.clone(),
-    url: resolved_url.clone(),
-    headers: resp_headers.clone(),
-  };
+  let meta =
+    CacheMeta { status, status_text: status_text.clone(), url: resolved_url.clone(), headers: resp_headers.clone() };
   let meta = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
   let body = cache.store(url, meta, resp_body);
   Ok(ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body })

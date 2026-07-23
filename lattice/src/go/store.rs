@@ -179,7 +179,6 @@ pub(crate) fn remove_app_at(apps: &Path, app_id: &str) -> Result<(), String> {
   std::fs::remove_dir_all(&app_dir).map_err(|e| format!("remove {app_id}: {e}"))
 }
 
-
 /// A stored version as the detail view lists it.
 pub struct VersionInfo {
   /// The version id (manifest hash).
@@ -193,6 +192,14 @@ pub struct VersionInfo {
 /// One file in a listing: a relative path and its size in bytes.
 pub struct FileEntry {
   pub path: String,
+  pub size: u64,
+}
+
+/// One cached fetch as the detail view aggregates it: the (resolved) url,
+/// the response content type (when stored) and the entry's size on disk.
+pub struct CacheEntry {
+  pub url: String,
+  pub content_type: Option<String>,
   pub size: u64,
 }
 
@@ -215,6 +222,10 @@ pub struct AppInfo {
   pub version_files: Vec<FileEntry>,
   /// The data sandbox's actual files on disk (recursive, sorted).
   pub data_files: Vec<FileEntry>,
+  /// Total bytes under the app's fetch cache.
+  pub cache_size: u64,
+  /// The fetch cache's committed entries (sorted by url).
+  pub cache: Vec<CacheEntry>,
 }
 
 /// Usage details for an installed app. Errors on invalid or uninstalled ids.
@@ -258,6 +269,8 @@ pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> 
   let version_files = collect_files(&current_dir);
   let data_files = collect_files(&app_dir.join("data"));
   let data_size = data_files.iter().map(|e| e.size).sum();
+  let cache = cache_entries(&app_dir.join("cache"));
+  let cache_size = cache.iter().map(|e| e.size).sum();
 
   Ok(AppInfo {
     id: app_id.to_string(),
@@ -268,11 +281,42 @@ pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> 
     data_size,
     version_files,
     data_files,
+    cache_size,
+    cache,
   })
 }
 
 // Every file under `root` as a relative path + size, sorted by path.
 // Unreadable entries are skipped (the listing is informational).
+/// Delete an app's fetch cache. A missing dir is fine: clearing an empty
+/// cache is a no-op. The id is validated but not required to be installed,
+/// so a leftover cache of a removed app is still clearable.
+pub fn clear_cache(app_id: &str) -> Result<(), String> {
+  if !crate::storage::safe_component(app_id) {
+    return Err(format!("invalid app id {app_id:?}"));
+  }
+  let store = crate::storage::get().ok_or("no writable storage")?;
+  let dir = store.cache_dir(app_id);
+  if !dir.exists() {
+    return Ok(());
+  }
+  std::fs::remove_dir_all(&dir).map_err(|e| format!("clear cache {app_id}: {e}"))
+}
+
+// The app's fetch-cache entries, sorted by url. Meta blobs that are not
+// fetch entries are skipped.
+fn cache_entries(dir: &Path) -> Vec<CacheEntry> {
+  let mut entries: Vec<CacheEntry> = forge::cache::scan(dir)
+    .into_iter()
+    .filter_map(|e| {
+      let meta = forge::fetch::cached_meta(&e.meta)?;
+      Some(CacheEntry { url: meta.url, content_type: meta.content_type, size: e.size })
+    })
+    .collect();
+  entries.sort_by(|a, b| a.url.cmp(&b.url));
+  entries
+}
+
 fn collect_files(root: &Path) -> Vec<FileEntry> {
   fn walk(dir: &Path, prefix: &str, out: &mut Vec<FileEntry>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };

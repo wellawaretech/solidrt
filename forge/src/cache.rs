@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use crate::stream::ByteStream;
@@ -51,14 +51,16 @@ impl Cache {
   /// Look up an entry: the consumer's metadata blob plus the body as a
   /// stream. Bumps the entry's mtime (the LRU clock). A corrupt entry is
   /// removed and treated as a miss.
+  ///
+  /// The open and header read are sync on purpose: they are tiny, and the
+  /// same handle then converts to a tokio file for the streamed body.
   pub async fn lookup(&self, key: &str) -> Option<(Vec<u8>, ByteStream)> {
     let path = self.entry_path(key);
-    let mut file = tokio::fs::File::open(&path).await.ok()?;
-    match read_header(&mut file).await {
+    let mut file = std::fs::File::open(&path).ok()?;
+    match read_header(&mut file) {
       Ok(meta) => {
-        let now = std::time::SystemTime::now();
-        let _ = std::fs::File::open(&path).and_then(|f| f.set_modified(now));
-        let body: ByteStream = Box::pin(tokio_util::io::ReaderStream::new(file));
+        let _ = file.set_modified(std::time::SystemTime::now());
+        let body: ByteStream = Box::pin(tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file)));
         Some((meta, body))
       }
       Err(_) => {
@@ -88,16 +90,53 @@ impl Cache {
   }
 }
 
-async fn read_header(file: &mut tokio::fs::File) -> io::Result<Vec<u8>> {
+fn read_header(file: &mut std::fs::File) -> io::Result<Vec<u8>> {
+  use std::io::Read;
   let mut len_buf = [0u8; 4];
-  file.read_exact(&mut len_buf).await?;
+  file.read_exact(&mut len_buf)?;
   let len = u32::from_le_bytes(len_buf);
   if len > MAX_META_BYTES {
     return Err(io::Error::other("oversized cache metadata"));
   }
   let mut meta = vec![0u8; len as usize];
-  file.read_exact(&mut meta).await?;
+  file.read_exact(&mut meta)?;
   Ok(meta)
+}
+
+/// A committed entry as `scan` lists it: the consumer's metadata blob plus
+/// the size on disk (header and body) and last-use time (the LRU clock).
+pub struct ScannedEntry {
+  pub meta: Vec<u8>,
+  pub size: u64,
+  pub modified: std::time::SystemTime,
+}
+
+/// List a cache directory's committed entries, for inspection tooling (sync:
+/// callers browse a directory, they do not sit on the request path). A
+/// missing directory is an empty cache. In-flight `.tmp` files are skipped,
+/// and unreadable or corrupt files are ignored rather than removed: a scan
+/// must not race an active writer.
+pub fn scan(dir: &Path) -> Vec<ScannedEntry> {
+  let Ok(read_dir) = std::fs::read_dir(dir) else { return Vec::new() };
+  let mut entries = Vec::new();
+  for entry in read_dir.flatten() {
+    let path = entry.path();
+    if path.extension().is_some_and(|e| e == "tmp") {
+      continue;
+    }
+    let Ok(md) = entry.metadata() else { continue };
+    if !md.is_file() {
+      continue;
+    }
+    let Ok(mut file) = std::fs::File::open(&path) else { continue };
+    let Ok(meta) = read_header(&mut file) else { continue };
+    entries.push(ScannedEntry {
+      meta,
+      size: md.len(),
+      modified: md.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+    });
+  }
+  entries
 }
 
 /// Passthrough stream that mirrors each chunk to the writer task. Dropping

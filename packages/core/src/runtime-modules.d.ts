@@ -68,11 +68,18 @@ declare module "srt:apps" {
   /** One file in a listing: a relative path and its size in bytes. */
   export type AppFile = { path: string; size: number }
   /**
+   * One fetch-cache entry: the cached (resolved) url, the response content
+   * type (lowercased, parameters stripped; absent when the response had
+   * none) and the entry's size on disk.
+   */
+  export type AppCacheEntry = { url: string; type?: string; size: number }
+  /**
    * Usage details for one installed app: total bytes of its stored versions
-   * (assets shared between versions via hardlinks count in each) and of its
-   * data sandbox, plus the stored versions (current first, then newest first)
-   * and two file listings, each sorted by path: `files` and `data` are disk
-   * walks of the current version dir and the data sandbox.
+   * (assets shared between versions via hardlinks count in each), of its
+   * data sandbox and of its fetch cache, plus the stored versions (current
+   * first, then newest first) and three listings: `files` and `data` are
+   * disk walks of the current version dir and the data sandbox (sorted by
+   * path), `cache` is the fetch cache's entries (sorted by url).
    */
   export type AppInfo = {
     id: string
@@ -80,9 +87,11 @@ declare module "srt:apps" {
     version: string
     installSize: number
     dataSize: number
+    cacheSize: number
     versions: AppVersion[]
     files: AppFile[]
     data: AppFile[]
+    cache: AppCacheEntry[]
   }
   /** Usage details for an installed app. Throws when the app is not installed. */
   export function info(id: string): AppInfo
@@ -97,6 +106,12 @@ declare module "srt:apps" {
    * the app is not installed.
    */
   export function remove(id: string): void
+  /**
+   * Delete the app's fetch cache. Clearing a missing or empty cache is a
+   * no-op; the id does not need to be installed, so a removed app's
+   * leftover cache is still clearable.
+   */
+  export function clearCache(id: string): void
   /**
    * Build identity of this runtime, for the launcher's settings screen. Not
    * app-specific, but surfaced here since the launcher already imports this

@@ -8673,7 +8673,7 @@ function Icon(props) {
 // lattice/launcher/launcher.tsx
 import { on as on5 } from "srt:events";
 import { available as devAvailable, canDiscover, connect, discover, stop, launchAddress } from "srt:dev";
-import { available as appsAvailable, list, info, launch, remove, version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
+import { available as appsAvailable, list, info, launch, remove, clearCache, version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
 var STATUS_TEXT = {
   idle: "Not connected",
   searching: "Searching...",
@@ -8967,6 +8967,29 @@ function AppCard(props) {
     })
   });
 }
+function groupCache(entries, key) {
+  let groups = new Map;
+  for (let e3 of entries) {
+    let k2 = key(e3);
+    let g2 = groups.get(k2);
+    if (!g2)
+      groups.set(k2, g2 = {
+        key: k2,
+        count: 0,
+        size: 0
+      });
+    g2.count += 1;
+    g2.size += e3.size;
+  }
+  return [...groups.values()].sort((a3, b2) => b2.size - a3.size);
+}
+function cacheDomain(url) {
+  let m2 = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(url);
+  return m2?.[1] ?? "unknown";
+}
+function amount(count, size) {
+  return `${count} file${count === 1 ? "" : "s"}, ${formatSize(size)}`;
+}
 function DetailRow(props) {
   return createComponent2(View, {
     get layout() {
@@ -9019,7 +9042,9 @@ function AppDetail(props) {
   createEffect(() => props.app.id, () => {
     setConfirming(false);
   });
+  let [detailsGen, setDetailsGen] = createSignal(0);
   let details = createMemo2(() => {
+    detailsGen();
     try {
       return info(props.app.id);
     } catch {
@@ -9179,9 +9204,19 @@ function AppDetail(props) {
                     return formatSize(d2().installSize);
                   }
                 }), createComponent2(DetailRow, {
+                  label: "Files",
+                  get value() {
+                    return amount(d2().files.length, d2().files.reduce((sum, f3) => sum + f3.size, 0));
+                  }
+                }), createComponent2(DetailRow, {
                   label: "Data",
                   get value() {
-                    return formatSize(d2().dataSize);
+                    return amount(d2().data.length, d2().dataSize);
+                  }
+                }), createComponent2(DetailRow, {
+                  label: "Cache",
+                  get value() {
+                    return amount(d2().cache.length, d2().cacheSize);
                   }
                 })];
               }
@@ -9251,6 +9286,69 @@ function AppDetail(props) {
                       })
                     });
                   }
+                });
+              }
+            }), createComponent2(DetailCard, {
+              title: "Cache",
+              get children() {
+                return createComponent2(Show, {
+                  get when() {
+                    return d2().cache.length > 0;
+                  },
+                  get fallback() {
+                    return createComponent2(Text, {
+                      variant: "body",
+                      muted: true,
+                      children: "Empty"
+                    });
+                  },
+                  get children() {
+                    return [createComponent2(Text, {
+                      variant: "body",
+                      children: "By type"
+                    }), createComponent2(For, {
+                      get each() {
+                        return groupCache(d2().cache, (e3) => e3.type ?? "unknown");
+                      },
+                      children: (g2) => createComponent2(DetailRow, {
+                        get label() {
+                          return g2.key;
+                        },
+                        get value() {
+                          return amount(g2.count, g2.size);
+                        }
+                      })
+                    }), createComponent2(Text, {
+                      variant: "body",
+                      children: "By domain"
+                    }), createComponent2(For, {
+                      get each() {
+                        return groupCache(d2().cache, (e3) => cacheDomain(e3.url));
+                      },
+                      children: (g2) => createComponent2(DetailRow, {
+                        get label() {
+                          return g2.key;
+                        },
+                        get value() {
+                          return amount(g2.count, g2.size);
+                        }
+                      })
+                    })];
+                  }
+                });
+              }
+            }), createComponent2(Show, {
+              get when() {
+                return d2().cache.length > 0;
+              },
+              get children() {
+                return createComponent2(Button, {
+                  variant: "danger",
+                  onPress: () => {
+                    clearCache(props.app.id);
+                    setDetailsGen((n3) => n3 + 1);
+                  },
+                  children: "Clear cache"
                 });
               }
             })]

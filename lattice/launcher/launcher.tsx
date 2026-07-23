@@ -55,9 +55,11 @@ import {
   info,
   launch,
   remove,
+  clearCache,
   version as buildVersion,
   profile as buildProfile,
   platform as buildPlatform,
+  type AppCacheEntry,
   type InstalledApp,
 } from "srt:apps"
 
@@ -303,6 +305,30 @@ function AppCard(props: { app: InstalledApp; active: boolean; onPress: () => voi
   )
 }
 
+// The detail view's cache aggregation: entries grouped by a key (content
+// type, domain), largest first.
+function groupCache(entries: AppCacheEntry[], key: (e: AppCacheEntry) => string) {
+  let groups = new Map<string, { key: string; count: number; size: number }>()
+  for (let e of entries) {
+    let k = key(e)
+    let g = groups.get(k)
+    if (!g) groups.set(k, (g = { key: k, count: 0, size: 0 }))
+    g.count += 1
+    g.size += e.size
+  }
+  return [...groups.values()].sort((a, b) => b.size - a.size)
+}
+
+function cacheDomain(url: string): string {
+  let m = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(url)
+  return m?.[1] ?? "unknown"
+}
+
+// "3 files, 1.2 MB" - the uniform count + size format the detail rows use.
+function amount(count: number, size: number): string {
+  return `${count} file${count === 1 ? "" : "s"}, ${formatSize(size)}`
+}
+
 function DetailRow(props: { label: string; value: string; mutedValue?: boolean }) {
   return (
     <View layout={{ flexDirection: "row", justifyContent: "space-between", gap: space("md") }}>
@@ -346,9 +372,13 @@ function AppDetail(props: {
       setConfirming(false)
     },
   )
-  // Usage details, re-read per app. Null when the store entry vanished
-  // mid-view (e.g. replaced by a dev push); identity and actions still work.
+  // Usage details, re-read per app and after a cache clear (the bump signal
+  // is the only local mutation that changes what info() reports). Null when
+  // the store entry vanished mid-view (e.g. replaced by a dev push);
+  // identity and actions still work.
+  let [detailsGen, setDetailsGen] = createSignal(0)
   let details = createMemo(() => {
+    detailsGen()
     try {
       return info(props.app.id)
     } catch {
@@ -413,7 +443,15 @@ function AppDetail(props: {
             <>
               <DetailCard title="Storage">
                 <DetailRow label="App" value={formatSize(d().installSize)} />
-                <DetailRow label="Data" value={formatSize(d().dataSize)} />
+                <DetailRow
+                  label="Files"
+                  value={amount(
+                    d().files.length,
+                    d().files.reduce((sum, f) => sum + f.size, 0),
+                  )}
+                />
+                <DetailRow label="Data" value={amount(d().data.length, d().dataSize)} />
+                <DetailRow label="Cache" value={amount(d().cache.length, d().cacheSize)} />
               </DetailCard>
               <DetailCard title="Versions">
                 <For each={d().versions}>
@@ -445,6 +483,36 @@ function AppDetail(props: {
                   </For>
                 </Show>
               </DetailCard>
+              <DetailCard title="Cache">
+                <Show
+                  when={d().cache.length > 0}
+                  fallback={
+                    <Text variant="body" muted>
+                      Empty
+                    </Text>
+                  }
+                >
+                  <Text variant="body">By type</Text>
+                  <For each={groupCache(d().cache, (e) => e.type ?? "unknown")}>
+                    {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
+                  </For>
+                  <Text variant="body">By domain</Text>
+                  <For each={groupCache(d().cache, (e) => cacheDomain(e.url))}>
+                    {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
+                  </For>
+                </Show>
+              </DetailCard>
+                <Show when={d().cache.length > 0}>
+                  <Button
+                    variant="danger"
+                    onPress={() => {
+                      clearCache(props.app.id)
+                      setDetailsGen((n) => n + 1)
+                    }}
+                  >
+                    Clear cache
+                  </Button>
+                </Show>
             </>
           )}
         </Show>

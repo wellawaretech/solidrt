@@ -32,6 +32,14 @@ pub struct AppFile {
   pub size: u64,
 }
 
+/// One fetch-cache entry: the cached url, the response content type (when
+/// stored) and the entry's size on disk.
+pub struct AppCacheEntry {
+  pub url: String,
+  pub content_type: Option<String>,
+  pub size: u64,
+}
+
 /// Usage details as `info()` returns them.
 pub struct AppInfo {
   pub id: String,
@@ -39,11 +47,14 @@ pub struct AppInfo {
   pub version: String,
   pub install_size: u64,
   pub data_size: u64,
+  pub cache_size: u64,
   pub versions: Vec<AppVersion>,
   /// The current version dir's actual files on disk.
   pub files: Vec<AppFile>,
   /// The data sandbox's actual files on disk.
   pub data: Vec<AppFile>,
+  /// The fetch cache's entries.
+  pub cache: Vec<AppCacheEntry>,
 }
 
 // The apps control installed as context userdata. Holds engine-agnostic
@@ -56,6 +67,7 @@ pub struct AppsControlInner {
   pub info: Box<dyn Fn(String) -> Result<AppInfo, String>>,
   pub launch: Box<dyn Fn(String) -> Result<(), String>>,
   pub remove: Box<dyn Fn(String) -> Result<(), String>>,
+  pub clear_cache: Box<dyn Fn(String) -> Result<(), String>>,
 }
 
 impl AppsControl {
@@ -95,6 +107,7 @@ fn info_impl<'js>(ctx: Ctx<'js>, id: String) -> flux::rquickjs::Result<Object<'j
   obj.set("version", info.version)?;
   obj.set("installSize", info.install_size as f64)?;
   obj.set("dataSize", info.data_size as f64)?;
+  obj.set("cacheSize", info.cache_size as f64)?;
   let versions = Array::new(ctx.clone())?;
   for (i, v) in info.versions.into_iter().enumerate() {
     let entry = Object::new(ctx.clone())?;
@@ -116,6 +129,17 @@ fn info_impl<'js>(ctx: Ctx<'js>, id: String) -> flux::rquickjs::Result<Object<'j
   };
   obj.set("files", file_list(info.files)?)?;
   obj.set("data", file_list(info.data)?)?;
+  let cache = Array::new(ctx.clone())?;
+  for (i, e) in info.cache.into_iter().enumerate() {
+    let entry = Object::new(ctx.clone())?;
+    entry.set("url", e.url)?;
+    if let Some(content_type) = e.content_type {
+      entry.set("type", content_type)?;
+    }
+    entry.set("size", e.size as f64)?;
+    cache.set(i, entry)?;
+  }
+  obj.set("cache", cache)?;
   Ok(obj)
 }
 
@@ -129,6 +153,11 @@ fn remove_impl(ctx: Ctx<'_>, id: String) -> flux::rquickjs::Result<()> {
   (control.0.remove)(id).map_err(|m| Exception::throw_message(&ctx, &m))
 }
 
+fn clear_cache_impl(ctx: Ctx<'_>, id: String) -> flux::rquickjs::Result<()> {
+  let Some(control) = ctx.userdata::<AppsControl>().map(|c| c.clone()) else { return Ok(()) };
+  (control.0.clear_cache)(id).map_err(|m| Exception::throw_message(&ctx, &m))
+}
+
 pub struct SrtAppsModule;
 
 impl ModuleDef for SrtAppsModule {
@@ -138,6 +167,7 @@ impl ModuleDef for SrtAppsModule {
     decl.declare("info")?;
     decl.declare("launch")?;
     decl.declare("remove")?;
+    decl.declare("clearCache")?;
     decl.declare("version")?;
     decl.declare("profile")?;
     decl.declare("platform")?;
@@ -150,6 +180,7 @@ impl ModuleDef for SrtAppsModule {
     exports.export("info", Function::new(ctx.clone(), info_impl)?)?;
     exports.export("launch", Function::new(ctx.clone(), launch_impl)?)?;
     exports.export("remove", Function::new(ctx.clone(), remove_impl)?)?;
+    exports.export("clearCache", Function::new(ctx.clone(), clear_cache_impl)?)?;
     // Build identity of this runtime, for the launcher's settings screen. Not
     // app-specific, but the launcher already imports this module.
     exports.export("version", crate::VERSION)?;

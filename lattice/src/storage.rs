@@ -10,7 +10,7 @@
 //     identity/          client identity (persisted iroh key)
 //     apps/<app-id>/
 //       data/            the app's mutable sandbox (sqlite, file() writes)
-//     cache/             client-level caches (fetch disk cache)
+//       cache/           the app's caches (fetch disk cache)
 //     logs/
 //
 // Packed app (app id from the pack manifest): an installed app has exactly
@@ -26,7 +26,7 @@
 // the same vendor level:
 //
 //   <pref SolidRT/go>/
-//     identity/  apps/<app-id>/data/  cache/  logs/
+//     identity/  apps/<app-id>/data/  apps/<app-id>/cache/  logs/
 //
 // --client selects a tree only under an explicit --data-root; elsewhere it is
 // ignored with a warning. Data always lives on the machine the client process
@@ -49,8 +49,6 @@ pub struct Storage {
   pub client_dir: PathBuf,
   // The app sandbox the process is anchored in (.../data).
   pub data_dir: PathBuf,
-  // <client_dir>/cache
-  pub cache_dir: PathBuf,
   // Packed flat layout: the root is the single app's dir, no apps/ level.
   pub(crate) flat: bool,
 }
@@ -65,6 +63,13 @@ impl Storage {
       return self.client_dir.clone();
     }
     self.client_dir.join("apps").join(checked_component(Some(app_id), "app id"))
+  }
+
+  /// The app's cache dir (fetch disk cache): `<app_dir>/cache`, so cached
+  /// assets are browsable and clearable per app, and die with the app on
+  /// remove. Created lazily by the cache on first write.
+  pub fn cache_dir(&self, app_id: &str) -> PathBuf {
+    self.app_dir(app_id).join("cache")
   }
 
   /// `<client_dir>/identity` - persisted client identity (p2p key).
@@ -137,10 +142,8 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
     let app_id = checked_component(spec.app_id.as_deref(), "app id");
     client_dir.join("apps").join(app_id).join("data")
   };
-  let storage = Storage { data_dir, cache_dir: client_dir.join("cache"), client_dir, flat };
-  for dir in
-    [&storage.data_dir, &storage.cache_dir, &storage.client_dir.join("identity"), &storage.client_dir.join("logs")]
-  {
+  let storage = Storage { data_dir, client_dir, flat };
+  for dir in [&storage.data_dir, &storage.client_dir.join("identity"), &storage.client_dir.join("logs")] {
     if let Err(e) = std::fs::create_dir_all(dir) {
       log::warn!("[srt] cannot create storage dir {}: {e}", dir.display());
       return None;

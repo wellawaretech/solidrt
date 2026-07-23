@@ -77,6 +77,12 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
           .collect(),
         files: info.version_files.into_iter().map(|e| apps::AppFile { path: e.path, size: e.size }).collect(),
         data: info.data_files.into_iter().map(|e| apps::AppFile { path: e.path, size: e.size }).collect(),
+        cache_size: info.cache_size,
+        cache: info
+          .cache
+          .into_iter()
+          .map(|e| apps::AppCacheEntry { url: e.url, content_type: e.content_type, size: e.size })
+          .collect(),
       })
     }),
     launch: Box::new(move |id| {
@@ -86,6 +92,7 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
         .map_err(|_| "engine is shutting down".to_string())
     }),
     remove: Box::new(|id| super::store::remove_app(&id)),
+    clear_cache: Box::new(|id| super::store::clear_cache(&id)),
   });
 
   apps::install(&ctx, control);

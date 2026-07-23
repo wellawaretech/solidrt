@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::cache::Cache;
-use crate::fetch::{do_fetch_cached, CacheMode, HostLimits};
+use crate::fetch::{cached_meta, do_fetch_cached, CacheMode, HostLimits};
 
 async fn acquires_within(limits: &HostLimits, host: &str, ms: u64) -> Option<tokio::sync::OwnedSemaphorePermit> {
   tokio::time::timeout(Duration::from_millis(ms), limits.acquire(host)).await.ok()
@@ -49,9 +49,22 @@ async fn cooldown_extends_never_shortens() {
   assert!(acquires_within(&limits, "a:80", 100).await.is_none());
 }
 
+#[test]
+fn cached_meta_reads_fetch_meta() {
+  let meta = br#"{"status":200,"status_text":"OK","url":"https://host/img.jpg","headers":[["content-type","image/JPEG; charset=binary"]]}"#;
+  let decoded = cached_meta(meta).expect("decodes");
+  assert_eq!(decoded.url, "https://host/img.jpg");
+  assert_eq!(decoded.content_type.as_deref(), Some("image/jpeg"));
+
+  let no_type = br#"{"status":200,"status_text":"OK","url":"https://host/x","headers":[]}"#;
+  assert_eq!(cached_meta(no_type).expect("decodes").content_type, None);
+  assert!(cached_meta(b"not a fetch meta blob").is_none());
+}
+
 // --- 429 retry, end to end against a scripted server ---
 
-const TOO_MANY: &str = "HTTP/1.1 429 Too Many Requests\r\nretry-after: 0\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+const TOO_MANY: &str =
+  "HTTP/1.1 429 Too Many Requests\r\nretry-after: 0\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
 const TOO_MANY_LATER: &str =
   "HTTP/1.1 429 Too Many Requests\r\nretry-after: 3600\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
 const OK: &str = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";

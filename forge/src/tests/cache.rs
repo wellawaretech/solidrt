@@ -67,6 +67,27 @@ async fn wait_for_entry(cache: &Cache, key: &str) -> (Vec<u8>, Vec<u8>) {
 }
 
 #[tokio::test]
+async fn scan_lists_committed_entries() {
+  let dir = temp_dir("scan");
+  let cache = Cache::new(dir.clone(), 1024 * 1024);
+  let tee = cache.store("k1", b"meta1".to_vec(), body(&[b"abc"]));
+  drain(tee).await;
+  wait_for_entry(&cache, "k1").await;
+  // A stray tmp file (an in-flight writer) is not an entry.
+  std::fs::write(dir.join("deadbeef.123-4.tmp"), b"partial").expect("tmp file");
+
+  let entries = crate::cache::scan(&dir);
+  assert_eq!(entries.len(), 1);
+  assert_eq!(entries[0].meta, b"meta1");
+  // Length prefix + meta + body.
+  assert_eq!(entries[0].size, 4 + 5 + 3);
+
+  // A missing dir is an empty cache.
+  assert!(crate::cache::scan(&temp_dir("scan-missing")).is_empty());
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn roundtrip() {
   let cache = Cache::new(temp_dir("roundtrip"), 1024 * 1024);
   let tee = cache.store("k", b"meta-blob".to_vec(), body(&[b"hello ", b"world"]));
