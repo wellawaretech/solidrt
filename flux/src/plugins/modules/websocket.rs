@@ -55,7 +55,7 @@ pub(crate) enum ServeUpgrade<'js> {
   Ready(hyper::upgrade::OnUpgrade),
   /// Handshake accepted: the 101 response to send, the future resolving to the
   /// raw socket once hyper releases the connection, the user value destined
-  /// for `ws.data`, and the peer address destined for `ws.remoteAddress`.
+  /// for `ws.data`, and the peer address destined for `ws.remoteAddr`.
   Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut, data: Option<Value<'js>>, remote: Option<Remote> },
 }
 
@@ -212,8 +212,8 @@ impl<'js> ServerWebSocket<'js> {
 
   /// The peer as a string (an IP address, or a p2p peer's endpoint id), or
   /// undefined when unknown.
-  #[qjs(get, rename = "remoteAddress")]
-  pub fn remote_address(&self) -> Option<String> {
+  #[qjs(get, rename = "remoteAddr")]
+  pub fn remote_addr(&self) -> Option<String> {
     self.remote.as_ref().map(|r| match r {
       Remote::Ip(a) => a.ip().to_string(),
       Remote::Peer(id) => id.clone(),

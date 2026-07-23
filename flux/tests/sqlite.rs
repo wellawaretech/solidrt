@@ -13,7 +13,7 @@ async fn insert_and_query_all() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL)");
             await db.run("INSERT INTO users (name, score) VALUES (?, ?)", ["Alice", 9.5]);
             await db.run("INSERT INTO users (name, score) VALUES (?, ?)", ["Bob", 7]);
@@ -32,7 +32,7 @@ async fn run_returns_changes_and_rowid() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
             let r = await db.run("INSERT INTO t (v) VALUES (?)", ["x"]);
             console.log(r.changes, r.lastInsertRowid);
@@ -49,7 +49,7 @@ async fn exec_runs_multi_statement_script() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec(`
                 CREATE TABLE a (x INTEGER);
                 CREATE TABLE b (y INTEGER);
@@ -71,7 +71,7 @@ async fn reusable_statement_rebinds_params() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL)");
             await db.run("INSERT INTO users (name, score) VALUES (?, ?)", ["Alice", 9.5]);
             await db.run("INSERT INTO users (name, score) VALUES (?, ?)", ["Bob", 7]);
@@ -91,7 +91,7 @@ async fn get_returns_first_row_or_undefined() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
             await db.run("INSERT INTO users (name) VALUES (?)", ["Alice"]);
             let found = await db.query("SELECT name FROM users WHERE name = ?").get(["Alice"]);
@@ -111,7 +111,7 @@ async fn blob_roundtrips_as_uint8array() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)");
             await db.run("INSERT INTO blobs (data) VALUES (?)", [new Uint8Array([1, 2, 3, 255])]);
             let row = await db.query("SELECT data FROM blobs").get();
@@ -130,7 +130,7 @@ async fn transaction_commits_batch() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL)");
             await db.run("INSERT INTO users (name, score) VALUES (?, ?)", ["Bob", 7]);
             let res = await db.transaction([
@@ -155,7 +155,7 @@ async fn transaction_rolls_back_on_error() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
             let before = (await db.query("SELECT COUNT(*) AS n FROM users").get()).n;
             let threw = false;
@@ -182,7 +182,7 @@ async fn bad_sql_rejects() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             let msg = "no error";
             try {
                 await db.query("SELECT * FROM nonexistent").all();
@@ -202,7 +202,7 @@ async fn query_after_close_rejects() {
   let out = run_source(
     r#"
             import { Database } from "flux:sqlite";
-            let db = await Database.connect(":memory:", "rw+");
+            let db = await Database.open(":memory:", "rw+");
             await db.close();
             let msg = "no error";
             try {
@@ -224,7 +224,7 @@ async fn unknown_mode_rejects() {
             import { Database } from "flux:sqlite";
             let msg = "no error";
             try {
-                await Database.connect(":memory:", "bogus");
+                await Database.open(":memory:", "bogus");
             } catch (e) {
                 msg = String(e.message || e);
             }
@@ -250,7 +250,7 @@ async fn constructor_throws() {
             "#,
   )
   .await;
-  assert!(out.log().contains("Database.connect()"), "got: {}", out.log());
+  assert!(out.log().contains("Database.open()"), "got: {}", out.log());
 }
 
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn default_mode_is_read_only() {
             import { Database } from "flux:sqlite";
             let msg = "wrote";
             try {
-                let db = await Database.connect(":memory:");
+                let db = await Database.open(":memory:");
                 await db.exec("CREATE TABLE t (x INTEGER)");
             } catch (e) {
                 msg = "readonly";

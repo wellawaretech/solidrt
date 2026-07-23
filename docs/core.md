@@ -171,7 +171,15 @@ let id = createTexture(img.data, img.width, img.height)
 // <texture src={id} imageWidth={img.width} imageHeight={img.height} />
 ```
 
-When called inside a reactive scope the texture is freed automatically once that owner is disposed. When called outside one (for example after an `await`, where the owner is no longer current), nothing is registered and you must free it yourself with `destroyTexture(id)`. The same rule applies to `createMutableTexture` and `createShader`.
+When called inside a reactive scope the texture is freed automatically once that owner is disposed. When called outside one (for example after an `await`, where the owner is no longer current), nothing is registered and you must free it yourself with `destroyTexture(id)`. The same rule applies to `createMutableTexture` and `createShader`. Every create helper also accepts `{ manual: true }` to skip the auto-free when you manage disposal yourself (for example a resource rebuilt on signal changes inside a long-lived component, where each rebuild would otherwise stack another cleanup on the component owner).
+
+To change a texture's size without invalidating its id (for example a data texture backing a window-sized grid), use `resizeTexture(id, data, width, height)`; shader and pipeline targets resize with `setShaderSize(id, width, height)`. Both keep the id stable, so `<texture src>` references, sampler bindings, and the owner-scoped auto-free registered at creation all keep working - nothing needs re-creating.
+
+`destroyTexture` is frame-safe: the runtime reclaims the id only once the render tree no longer references it. Destroying the old id in the same update that repoints `<texture src>` at its replacement is therefore always safe - whichever order the destroy and the swap land in, no frame paints blank. A destroyed id that stays mounted keeps drawing (and stays allocated) until it is unmounted or repointed.
+
+For a shader whose spec is itself reactive, `createShaderMemo(() => ({ fragmentSrc, width, height, params?, textures? }))` returns an accessor for the current texture id and keeps the GPU resource in step: size changes route to `setShaderSize` and params changes to `setShaderParams` (id stays stable), while a new fragment source or new sampler bindings rebuild at a fresh id, update the accessor, and frame-safely destroy the old one.
+
+A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its last-applied params against the new sources, without recompiling. Bindings not named keep their current source.
 
 ---
 

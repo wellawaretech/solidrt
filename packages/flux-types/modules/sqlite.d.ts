@@ -34,7 +34,7 @@ declare module "flux:sqlite" {
      * @param path  Database file path.
      * @param mode  Open mode; defaults to "ro".
      */
-    static connect(path: string, mode?: OpenMode): Promise<Database>
+    static open(path: string, mode?: OpenMode): Promise<Database>
     /** Create a reusable prepared statement (synchronous; compiles on first run). */
     query(sql: string): Statement
     /** One-shot write; uses plain prepare (no caching). */

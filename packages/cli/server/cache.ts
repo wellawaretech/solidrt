@@ -31,7 +31,7 @@ let enabled = false
 
 export async function initCache(opts: { dir: string }) {
   await dir(opts.dir).create()
-  let d = await Database.connect(join(opts.dir, CACHE_FILE), "rw+")
+  let d = await Database.open(join(opts.dir, CACHE_FILE), "rw+")
   await d.exec(`CREATE TABLE IF NOT EXISTS entries (
     key         TEXT PRIMARY KEY,
     method      TEXT NOT NULL,

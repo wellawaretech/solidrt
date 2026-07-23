@@ -88,7 +88,7 @@ impl SqliteConnection {
   /// Open a database. `mode` selects access: `None`/`"ro"` (read-only, file must
   /// exist), `"rw"` (read-write, must exist), `"rw+"` (read-write, create if
   /// missing). Spawns the connection thread and waits for it to open.
-  pub async fn connect(path: String, mode: Option<String>) -> Result<Self, String> {
+  pub async fn open(path: String, mode: Option<String>) -> Result<Self, String> {
     let flags = open_flags(mode)?;
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<Command>();
     let (open_tx, open_rx) = oneshot::channel::<rusqlite::Result<()>>();

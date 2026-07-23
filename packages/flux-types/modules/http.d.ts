@@ -99,7 +99,7 @@ declare module "flux:http" {
      * The peer's IP address (or, for a connection accepted over the `p2p`
      * option, the peer's endpoint id), or undefined when unknown.
      */
-    readonly remoteAddress: string | undefined
+    readonly remoteAddr: string | undefined
   }
 
   /**
@@ -151,8 +151,8 @@ declare module "flux:http" {
   type Server = {
     /** The bound port. */
     readonly port: number
-    /** The bound hostname/interface. */
-    readonly hostname: string
+    /** The bound host/interface. */
+    readonly host: string
     /** The server's base URL, e.g. `"http://0.0.0.0:3000/"`. */
     readonly url: string
     /**
@@ -179,7 +179,7 @@ declare module "flux:http" {
      * Stop accepting new connections and gracefully shut down open ones. Safe to
      * call more than once.
      */
-    stop(): void
+    close(): void
   }
 
   /** Options for accepting `flux:p2p` connections alongside the TCP listener. */
@@ -194,7 +194,7 @@ declare module "flux:http" {
     /** Port to listen on. */
     port: number
     /** Hostname/interface to bind. Defaults to "0.0.0.0" (all interfaces). */
-    hostname?: string
+    host?: string
     /**
      * Route table keyed by path pattern. Patterns may contain `:name` segments,
      * exposed on `req.params`. Each value is a handler function, a static
@@ -219,7 +219,7 @@ declare module "flux:http" {
     /**
      * Accept connections on a `flux:p2p` Endpoint alongside the TCP listener:
      * each incoming connection whose ALPN matches `protocol` has the HTTP/WS
-     * protocol spoken over its first bidirectional stream. `server.stop()`
+     * protocol spoken over its first bidirectional stream. `server.close()`
      * stops accepting; the endpoint itself stays open for its owner.
      */
     p2p?: P2pOptions
@@ -228,7 +228,7 @@ declare module "flux:http" {
   /**
    * Start an HTTP server. Loosely models Bun's `Bun.serve`.
    *
-   * @param options  Port, hostname, routes, fetch fallback, error handler, and
+   * @param options  Port, host, routes, fetch fallback, error handler, and
    *                 websocket callbacks.
    * @returns The running {@link Server}.
    */

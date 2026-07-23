@@ -61,7 +61,7 @@ export function clientList(withAddress = false) {
     version: info.version,
     profile: info.profile,
     capabilities: info.capabilities,
-    ...(withAddress ? { address: ws.remoteAddress ?? null } : {}),
+    ...(withAddress ? { address: ws.remoteAddr ?? null } : {}),
   }))
 }
 

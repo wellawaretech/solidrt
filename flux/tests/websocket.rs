@@ -14,9 +14,9 @@ fn free_port() -> u16 {
 }
 
 /// Run a server script to completion and return its captured log lines. The
-/// script is expected to call `server.stop()` once its work is done: that lets
+/// script is expected to call `server.close()` once its work is done: that lets
 /// the engine go idle and `eval_source` return, so we just wait for the thread
-/// to finish (with a watchdog timeout so a broken stop fails instead of hangs).
+/// to finish (with a watchdog timeout so a broken close fails instead of hangs).
 fn serve_and_capture(code: &str) -> Vec<String> {
   let sink = LogSink::new();
   let engine = FluxEngine::builder().logger(sink.logger()).build();
@@ -28,7 +28,7 @@ fn serve_and_capture(code: &str) -> Vec<String> {
     let _ = done_tx.send(());
   });
 
-  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit; did the script call server.stop()?");
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit; did the script call server.close()?");
 
   let cap = sink.captured();
   // Application log lines only; drop the "[flux] serve ..." access log.
@@ -83,7 +83,7 @@ fn client_echo_round_trip() {
         }};
         ws.onclose = (event) => {{
             console.log("close:", event.code, event.reason, event.wasClean, ws.readyState);
-            server.stop();
+            server.close();
         }};
     "#
   );

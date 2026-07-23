@@ -14,9 +14,9 @@ fn free_port() -> u16 {
 }
 
 /// Run a server script to completion and return its captured log lines. The
-/// script is expected to call `server.stop()` once its work is done: that lets
+/// script is expected to call `server.close()` once its work is done: that lets
 /// the engine go idle and `eval_source` return, so we just wait for the thread
-/// to finish (with a watchdog timeout so a broken stop fails instead of hangs).
+/// to finish (with a watchdog timeout so a broken close fails instead of hangs).
 fn serve_and_capture(code: &str) -> Vec<String> {
   let sink = LogSink::new();
   let engine = FluxEngine::builder().logger(sink.logger()).build();
@@ -28,7 +28,7 @@ fn serve_and_capture(code: &str) -> Vec<String> {
     let _ = done_tx.send(());
   });
 
-  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit; did the script call server.stop()?");
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit; did the script call server.close()?");
 
   let cap = sink.captured();
   // Application log lines only; drop the "[flux] serve ..." access log.
@@ -79,7 +79,7 @@ fn serve_and_fetch_round_trip() {
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
             // Stopping lets the engine go idle so the test thread finishes.
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -111,14 +111,14 @@ fn serve_returns_handle_and_stops() {
             fetch(req) {{ return "up"; }},
         }});
         // The handle exposes Bun-like introspection.
-        console.log("meta", server.port, server.hostname, server.url);
+        console.log("meta", server.port, server.host, server.url);
 
         (async () => {{
             let base = "http://127.0.0.1:{port}";
             let r1 = await fetch(base + "/");
             console.log("before", r1.status, await r1.text());
 
-            server.stop();
+            server.close();
             // Let the accept loop drop the listener and connections drain.
             await new Promise(r => setTimeout(r, 200));
 
@@ -140,7 +140,7 @@ fn serve_returns_handle_and_stops() {
   assert_eq!(
     lines,
     vec![
-      // port echoes the bound port; hostname is what we bind; url is derived
+      // port echoes the bound port; host is what we bind; url is derived
       format!("meta {port} 0.0.0.0 http://0.0.0.0:{port}/"),
       // server is up before stop()
       "before 200 up".to_string(),
@@ -151,25 +151,25 @@ fn serve_returns_handle_and_stops() {
 }
 
 #[test]
-fn serve_honors_hostname() {
+fn serve_honors_host() {
   let port = free_port();
   let code = format!(
     r#"
         import {{ serve }} from "flux:http";
         let server = serve({{
             port: {port},
-            hostname: "127.0.0.1",
+            host: "127.0.0.1",
             fetch(req) {{ return "up"; }},
         }});
-        // The configured hostname is reflected back, not the "0.0.0.0" default.
-        console.log("meta", server.hostname, server.url);
+        // The configured host is reflected back, not the "0.0.0.0" default.
+        console.log("meta", server.host, server.url);
 
         (async () => {{
             let r = await fetch("http://127.0.0.1:{port}/");
             console.log("body", r.status, await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -205,7 +205,7 @@ fn serve_error_handler() {
             console.log("ok", r3.status, await r3.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -240,7 +240,7 @@ fn serve_error_default_500() {
             console.log("fallback", r.status, await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -256,7 +256,7 @@ fn serve_passes_server_arg() {
         import {{ serve }} from "flux:http";
         let server = serve({{
             port: {port},
-            hostname: "127.0.0.1",
+            host: "127.0.0.1",
             // The second arg is the Server handle: same introspection as the
             // value serve() returned.
             fetch(req, srv) {{ return srv.url + " port=" + srv.port; }},
@@ -267,7 +267,7 @@ fn serve_passes_server_arg() {
             console.log("arg", await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -304,7 +304,7 @@ fn serve_routes() {
             console.log("fallback", await (await fetch(base + "/nope")).text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -349,7 +349,7 @@ fn serve_routes_decodes_params() {
             console.log("slash", await (await fetch(base + "/files/a%2Fb")).text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -377,7 +377,7 @@ fn serve_routes_404_without_fetch() {
             console.log("miss", r2.status, await r2.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -411,7 +411,7 @@ fn serve_routes_per_method() {
             console.log("delete", d.status, d.headers.get("allow"), await d.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -455,7 +455,7 @@ fn serve_streams_async_iterable() {
             console.log("body", await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -488,7 +488,7 @@ fn serve_receives_streamed_request_body() {
             console.log("echo", await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -528,7 +528,7 @@ fn fetch_iterates_response_body_stream() {
             console.log("iterated", text);
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -570,7 +570,7 @@ fn serve_iterates_request_body_stream() {
             console.log("resp", await r.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
-            .finally(() => server.stop());
+            .finally(() => server.close());
         "#,
   );
 
@@ -670,7 +670,7 @@ fn serve_websocket_echo_and_close() {
                 }},
                 close(ws, code, reason) {{
                     console.log("close", code, reason, ws.readyState);
-                    server.stop();
+                    server.close();
                 }},
             }},
         }});
@@ -705,7 +705,7 @@ fn serve_websocket_echo_and_close() {
   // Echo the close so the server sees a clean shutdown, then stop().
   ws_client::send(&mut s, 0x8, &payload);
 
-  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.close()");
 
   let cap = sink.captured();
   let lines: Vec<String> =
@@ -744,7 +744,7 @@ fn serve_websocket_data_drain_ping() {
                 }},
                 close(ws, code, reason) {{
                     console.log("close", code, reason);
-                    server.stop();
+                    server.close();
                 }},
             }},
         }});
@@ -785,7 +785,7 @@ fn serve_websocket_data_drain_ping() {
   ws_client::send(&mut s, 0x8, &close_payload);
   assert_eq!(ws_client::read(&mut s), (0x8, close_payload));
 
-  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.close()");
 
   let cap = sink.captured();
   let lines: Vec<String> =
@@ -831,7 +831,7 @@ fn serve_websocket_pubsub() {
                 close(ws, code, reason) {{
                     closed += 1;
                     console.log("closed", server.subscriberCount("room"));
-                    if (closed === 2) server.stop();
+                    if (closed === 2) server.close();
                 }},
             }},
         }});
@@ -873,7 +873,7 @@ fn serve_websocket_pubsub() {
   ws_client::send(&mut b, 0x8, &1000u16.to_be_bytes());
   assert_eq!(ws_client::read(&mut b).0, 0x8);
 
-  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.stop()");
+  done_rx.recv_timeout(Duration::from_secs(10)).expect("engine did not exit after server.close()");
 
   let cap = sink.captured();
   let lines: Vec<String> =

@@ -218,7 +218,7 @@ serve({
     open(ws) {
       let id = state.nextClientId++
       state.clients.set(ws, { platform: "unknown", version: "unknown", profile: "unknown", id, capabilities: [] })
-      console.log(`[cli] Client connected ${ws.remoteAddress ?? "unknown"}`)
+      console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
       // Advertise our real LAN address so clients dialed over a loopback hop
       // can show/remember the directly reachable address (see connection.rs).
       ws.send(
@@ -245,7 +245,7 @@ serve({
             id: existing?.id ?? state.nextClientId++,
             capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
           })
-          console.log(`[cli] Client info ${ws.remoteAddress ?? "unknown"} ${data.platform} (${data.version})`)
+          console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
         } else if (data.type === "log") {
           // Forwarded console output / runtime errors from the client's
           // engine logger, buffered for the control API (see control.ts).

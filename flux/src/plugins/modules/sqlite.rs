@@ -10,7 +10,7 @@
 //! vs sync). Keep this list current as the plugin grows.
 //!
 //! Fundamental difference: Bun's API is fully synchronous (`new Database()`,
-//! `query.all()`); ours is async. So construction is `await Database.connect()`
+//! `query.all()`); ours is async. So construction is `await Database.open()`
 //! and `new Database()` throws. Bun's `db.transaction(fn)` wraps a SYNC callback;
 //! that does not translate to our async model (the callback would yield between
 //! statements). Instead `db.transaction(statements)` takes a DECLARATIVE batch -
@@ -27,7 +27,7 @@
 //! `Statement` borrows the Connection and cannot be stored as a long-lived JS
 //! object, so our Statement holds only the SQL and recompiles via the cache.
 //!
-//! Open mode is a positional second arg to `connect`: `"ro"` (DEFAULT,
+//! Open mode is a positional second arg to `open`: `"ro"` (DEFAULT,
 //! read-only, file must exist), `"rw"` (read-write, must exist), `"rw+"`
 //! (read-write, create if missing). Note this differs from Bun, which defaults
 //! to read-write+create; we default to read-only as a safe default, so writing
@@ -44,7 +44,7 @@
 //!
 //! Differs from Bun (current scope - may change):
 //! - Construction and all executions are async (return promises). An invalid
-//!   open mode rejects the `connect` promise rather than throwing synchronously.
+//!   open mode rejects the `open` promise rather than throwing synchronously.
 //! - No `db.prepare()` (see above), no `stmt.values()`/`iterate()`/`finalize()`/
 //!   `.as(Class)`.
 //! - `db.transaction` is a declarative batch (array of `[sql, params]`), not
@@ -82,19 +82,19 @@ pub struct Database {
 impl Database {
   #[qjs(constructor)]
   pub fn new(ctx: Ctx<'_>) -> rquickjs::Result<Database> {
-    Err(ctx.throw(rquickjs::String::from_str(ctx.clone(), "use Database.connect() to open a database")?.into()))
+    Err(ctx.throw(rquickjs::String::from_str(ctx.clone(), "use Database.open() to open a database")?.into()))
   }
 
   /// Open a database. `mode` selects access: `"ro"` (default, read-only, file
   /// must exist), `"rw"` (read-write, must exist), `"rw+"` (read-write, create
   /// if missing).
   #[qjs(static)]
-  pub fn connect<'js>(
+  pub fn open<'js>(
     ctx: Ctx<'js>,
     path: String,
     mode: Opt<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
-    Ok(with_pending(&ctx, async move { SqliteConnection::connect(path, mode.0).await.map(|conn| Database { conn }) }))
+    Ok(with_pending(&ctx, async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
   }
 
   /// Create a reusable prepared statement. Construction is synchronous and

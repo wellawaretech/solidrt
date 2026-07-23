@@ -280,7 +280,7 @@ struct RequestParts {
   /// call `server.upgrade(req)`.
   upgrade: Option<OnUpgrade>,
   /// The connection's peer, carried into the JS Request for
-  /// `server.requestIP(req)` and `ws.remoteAddress`.
+  /// `server.requestIP(req)` and `ws.remoteAddr`.
   remote: Option<Remote>,
 }
 
@@ -371,8 +371,8 @@ async fn handle_request<'js>(
   }
 }
 
-/// Handle returned by `Flux.serve`. Loosely models Bun's `Server`: `stop()` plus
-/// `port`/`hostname`/`url` introspection. `stop()` is synchronous and graceful:
+/// Handle returned by `Flux.serve`. Loosely models Bun's `Server`: `close()` plus
+/// `port`/`host`/`url` introspection. `close()` is synchronous and graceful:
 /// it stops accepting and asks each open connection to shut down gracefully, so
 /// in-flight requests finish and idle keep-alive connections close promptly.
 #[derive(Trace, JsLifetime)]
@@ -383,7 +383,7 @@ pub struct Server {
   #[qjs(skip_trace)]
   port: u16,
   #[qjs(skip_trace)]
-  hostname: String,
+  host: String,
   /// Whether `serve` got a `websocket` option; without one `upgrade()` refuses.
   #[qjs(skip_trace)]
   has_websocket: bool,
@@ -480,9 +480,10 @@ impl Server {
     }
   }
 
-  /// Stop accepting new connections and gracefully shut down open ones. Safe to
+  /// Close the server: stop accepting new connections and gracefully shut down
+  /// open ones. Safe to
   /// call more than once.
-  pub fn stop(&self) {
+  pub fn close(&self) {
     self.shared.stop();
   }
 
@@ -492,13 +493,13 @@ impl Server {
   }
 
   #[qjs(get)]
-  pub fn hostname(&self) -> String {
-    self.hostname.clone()
+  pub fn host(&self) -> String {
+    self.host.clone()
   }
 
   #[qjs(get)]
   pub fn url(&self) -> String {
-    format!("http://{}:{}/", self.hostname, self.port)
+    format!("http://{}:{}/", self.host, self.port)
   }
 }
 
@@ -544,9 +545,9 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     None => None,
   };
 
-  let hostname: Option<String> = opts.get("hostname")?;
-  let hostname = hostname.unwrap_or_else(|| "0.0.0.0".to_string());
-  let listener = bind_listener(&hostname, port).map_err(|e| Exception::throw_message(&ctx, &e))?;
+  let host: Option<String> = opts.get("host")?;
+  let host = host.unwrap_or_else(|| "0.0.0.0".to_string());
+  let listener = bind_listener(&host, port).map_err(|e| Exception::throw_message(&ctx, &e))?;
 
   let shared = ServerShared::new();
 
@@ -554,7 +555,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   // caller and passed as the second `fetch(req, server)` argument.
   let server = Class::instance(
     ctx.clone(),
-    Server { shared: shared.clone(), port, hostname, has_websocket: websocket.is_some(), topics: Topics::default() },
+    Server { shared: shared.clone(), port, host, has_websocket: websocket.is_some(), topics: Topics::default() },
   )?;
   let handlers = Handlers { fetch_fn, error_fn, routes, websocket, server: server.clone() };
 
@@ -583,7 +584,7 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   });
 
   // The p2p twin of the TCP loop: a connection's io is its first bi-stream, its
-  // peer identity the remote endpoint id. `stop()` stops both loops through the
+  // peer identity the remote endpoint id. `close()` stops both loops through the
   // shared shutdown signal; the endpoint itself stays open for its owner.
   if let Some((endpoint, alpn)) = p2p {
     pending.hold();

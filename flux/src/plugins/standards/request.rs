@@ -38,7 +38,7 @@ pub struct Request<'js> {
   pub(crate) upgrade: RefCell<Option<ServeUpgrade<'js>>>,
   /// The connection's peer (a TCP address or a p2p endpoint id), set only on
   /// requests built by the flux:http server. Read by `server.requestIP(req)`
-  /// and carried onto an upgraded socket's `remoteAddress`.
+  /// and carried onto an upgraded socket's `remoteAddr`.
   #[qjs(skip_trace)]
   pub(crate) remote: Option<forge::http::Remote>,
 }

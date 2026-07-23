@@ -167,7 +167,7 @@ let server = serve({
   },
 })
 
-server.stop()
+server.close()
 ```
 
 ### flux:sqlite
@@ -175,7 +175,7 @@ server.stop()
 ```js
 import { Database } from "flux:sqlite"
 
-let db   = await Database.connect("app.db")
+let db   = await Database.open("app.db")
 let stmt = db.query("SELECT * FROM users WHERE id = ?")
 let rows = await stmt.all(42)
 let row  = await stmt.first(42)
