@@ -17,6 +17,9 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 futures-core = "0.3"
+# Jitter for the fetch 429 backoff. Already in the tree (tokio and others
+# depend on it).
+fastrand = "2"
 # Entry file names for forge::cache (hash of the cache key). Already in the
 # tree (iroh depends on it).
 blake3 = "1"

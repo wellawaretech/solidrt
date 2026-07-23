@@ -71,10 +71,8 @@ declare module "srt:apps" {
    * Usage details for one installed app: total bytes of its stored versions
    * (assets shared between versions via hardlinks count in each) and of its
    * data sandbox, plus the stored versions (current first, then newest first)
-   * and three file listings, each sorted by path. `assets` is the current
-   * version's manifest claim (declared sizes); `files` and `data` are disk
-   * walks of the current version dir and the data sandbox - the truth, so a
-   * divergence from the manifest is visible.
+   * and two file listings, each sorted by path: `files` and `data` are disk
+   * walks of the current version dir and the data sandbox.
    */
   export type AppInfo = {
     id: string
@@ -83,7 +81,6 @@ declare module "srt:apps" {
     installSize: number
     dataSize: number
     versions: AppVersion[]
-    assets: AppFile[]
     files: AppFile[]
     data: AppFile[]
   }

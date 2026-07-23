@@ -426,20 +426,6 @@ function AppDetail(props: {
                   )}
                 </For>
               </DetailCard>
-              <DetailCard title="Assets">
-                <Show
-                  when={d().assets.length > 0}
-                  fallback={
-                    <Text variant="body" muted>
-                      None declared
-                    </Text>
-                  }
-                >
-                  <For each={d().assets}>
-                    {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
-                  </For>
-                </Show>
-              </DetailCard>
               <DetailCard title="Files">
                 <For each={d().files}>
                   {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}

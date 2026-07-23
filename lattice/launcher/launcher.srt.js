@@ -4201,12 +4201,15 @@ function getFocusedNodeId() {
 function getBoundingBox2(node) {
   return tree.getBoundingBox(node.id);
 }
+function getBoundingBoxViewport2(node) {
+  return tree.getBoundingBoxViewport(node.id);
+}
 function measureText2(text, options) {
   return tree.measureText(text, options);
 }
 
 // packages/core/src/window.ts
-var pointerCaptures = new Map;
+var downPaths = new Map;
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -4351,6 +4354,7 @@ function attachWindow(_nodeId) {
       targets,
       ...e
     }) => {
+      downPaths.set(e.pointerId, targets);
       bubble(targets, "onPointerDown", e);
       let focused = getFocusedNodeId();
       if (focused != null && !targets.includes(focused)) {
@@ -4361,26 +4365,15 @@ function attachWindow(_nodeId) {
       targets,
       ...e
     }) => {
-      let captured = pointerCaptures.get(e.pointerId);
-      if (captured != null) {
-        e.stopPropagation = () => {};
-        getEventHandler(captured, "onPointerUp")?.(e);
-        pointerCaptures.delete(e.pointerId);
-        return;
-      }
-      bubble(targets, "onPointerUp", e);
+      let frozen = downPaths.get(e.pointerId);
+      downPaths.delete(e.pointerId);
+      bubble(frozen ?? targets, "onPointerUp", e);
     });
     unsubMove = on("pointerMove", ({
       targets,
       ...e
     }) => {
-      let captured = pointerCaptures.get(e.pointerId);
-      if (captured != null) {
-        e.stopPropagation = () => {};
-        getEventHandler(captured, "onPointerMove")?.(e);
-        return;
-      }
-      bubble(targets, "onPointerMove", e);
+      bubble(downPaths.get(e.pointerId) ?? targets, "onPointerMove", e);
     });
     let dispatchOrdered = (targets, handler, e) => {
       let stopped = false;
@@ -6119,6 +6112,116 @@ function TextInput(props) {
   });
   return _el$;
 }
+// packages/components/src/arena.ts
+var claims = new Map;
+function claim(pointerId, owner) {
+  if (claims.has(pointerId))
+    return false;
+  claims.set(pointerId, {
+    owner,
+    resolved: false
+  });
+  return true;
+}
+function steal(pointerId, owner) {
+  let current = claims.get(pointerId);
+  if (current) {
+    if (current.resolved)
+      return false;
+    current.owner.cancel();
+  }
+  claims.set(pointerId, {
+    owner,
+    resolved: true
+  });
+  return true;
+}
+function release(pointerId, owner) {
+  if (claims.get(pointerId)?.owner === owner)
+    claims.delete(pointerId);
+}
+
+// packages/components/src/pan.ts
+var PAN_SLOP = 8;
+function createPan(options) {
+  let origin = null;
+  let active = null;
+  let armed = null;
+  let past = (e3) => {
+    if (!origin)
+      return false;
+    let dx = Math.abs(e3.clientX - origin.x);
+    let dy = Math.abs(e3.clientY - origin.y);
+    let axis = options.axis ?? "both";
+    if (axis === "vertical")
+      return dy >= PAN_SLOP;
+    if (axis === "horizontal")
+      return dx >= PAN_SLOP;
+    return dx * dx + dy * dy >= PAN_SLOP * PAN_SLOP;
+  };
+  let reset = () => {
+    if (active != null) {
+      release(active, owner);
+      active = null;
+    }
+    armed = null;
+    origin = null;
+  };
+  let cancel = reset;
+  let owner = {
+    cancel
+  };
+  onSettled(() => reset);
+  let handlers2 = {
+    onPointerDown: (e3) => {
+      if (e3.button != null && e3.button !== 0)
+        return;
+      if (armed == null && active == null) {
+        armed = e3.pointerId;
+        origin = {
+          x: e3.clientX,
+          y: e3.clientY
+        };
+      }
+    },
+    onPointerMove: (e3) => {
+      if (armed === e3.pointerId && past(e3)) {
+        if (steal(e3.pointerId, owner)) {
+          active = e3.pointerId;
+          armed = null;
+          origin = {
+            x: e3.clientX,
+            y: e3.clientY
+          };
+          options.onPanStart?.();
+        } else {
+          reset();
+        }
+        return;
+      }
+      if (active === e3.pointerId && origin) {
+        options.onPanMove?.(e3.clientX - origin.x, e3.clientY - origin.y);
+        origin = {
+          x: e3.clientX,
+          y: e3.clientY
+        };
+      }
+    },
+    onPointerUp: (e3) => {
+      if (active === e3.pointerId) {
+        reset();
+        options.onPanEnd?.();
+      } else if (armed === e3.pointerId) {
+        reset();
+      }
+    }
+  };
+  return {
+    handlers: handlers2,
+    cancel
+  };
+}
+
 // packages/components/src/scroll-view.tsx
 function ScrollView(props) {
   let viewport;
@@ -6126,25 +6229,10 @@ function ScrollView(props) {
   let scroll = createScroll(() => viewport, () => content, {
     axis: props.horizontal ? "horizontal" : "vertical"
   });
-  let last = null;
-  let onPointerDown = (e3) => {
-    last = {
-      x: e3.clientX,
-      y: e3.clientY
-    };
-  };
-  let onPointerMove = (e3) => {
-    if (!last)
-      return;
-    scroll.scrollBy(last.x - e3.clientX, last.y - e3.clientY);
-    last = {
-      x: e3.clientX,
-      y: e3.clientY
-    };
-  };
-  let endDrag = () => {
-    last = null;
-  };
+  let pan = createPan({
+    axis: props.horizontal ? "horizontal" : "vertical",
+    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy)
+  });
   let onWheel = (e3) => {
     if (props.horizontal)
       scroll.scrollBy(e3.deltaX || e3.deltaY, 0);
@@ -6154,15 +6242,7 @@ function ScrollView(props) {
   let direction = () => props.horizontal ? "row" : "column";
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
-  var _el$ = createElement("view"), _el$2 = createElement("view", {
-    flex: 1,
-    overflow: "hidden",
-    onPointerDown,
-    onPointerMove,
-    onPointerUp: endDrag,
-    onPointerLeave: endDrag,
-    onWheel
-  }), _el$3 = createElement("view", {
+  var _el$ = createElement("view"), _el$2 = createElement("view"), _el$3 = createElement("view", {
     flexShrink: 0
   });
   insertNode2(_el$, _el$2);
@@ -6225,6 +6305,24 @@ function ScrollView(props) {
   })(), _el$2);
   insertNode2(_el$2, _el$3);
   ref(() => (n3) => viewport = n3, _el$2);
+  setProp(_el$2, "flex", 1);
+  setProp(_el$2, "overflow", "hidden");
+  spread(_el$2, mergeProps({
+    get clipRadius() {
+      return props.style?.borderRadius;
+    },
+    get flexDirection() {
+      return direction();
+    },
+    get scrollX() {
+      return scroll.offset().x;
+    },
+    get scrollY() {
+      return scroll.offset().y;
+    }
+  }, () => pan.handlers, {
+    onWheel
+  }), true);
   ref(() => (n3) => content = n3, _el$3);
   insert(_el$3, () => props.children);
   insert(_el$, (() => {
@@ -6249,67 +6347,107 @@ function ScrollView(props) {
       return _el$5;
     })() : null;
   })(), null);
-  effect3(() => ({
-    e: props.style?.borderRadius,
-    t: direction(),
-    a: scroll.offset().x,
-    o: scroll.offset().y,
-    i: direction()
-  }), ({
-    e: e3,
-    t: t3,
-    a: a3,
-    o: o3,
-    i: i3
-  }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "clipRadius", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "flexDirection", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$2, "scrollX", a3, _p$?.a);
-    o3 !== _p$?.o && setProp(_el$2, "scrollY", o3, _p$?.o);
-    i3 !== _p$?.i && setProp(_el$3, "flexDirection", i3, _p$?.i);
+  effect3(() => direction(), (_v$, _$p) => {
+    setProp(_el$3, "flexDirection", _v$, _$p);
   });
   return _el$;
 }
-// packages/components/src/pressable.tsx
-function Pressable(props) {
+// packages/components/src/press.ts
+function createPress(options) {
   let [pressed, setPressed] = createSignal(false);
   let [hovered, setHovered] = createSignal(false);
+  let node = null;
+  let active = null;
+  let inside = false;
   let state = () => ({
     pressed: pressed(),
     hovered: hovered()
   });
-  let style = () => typeof props.style === "function" ? props.style(state()) : props.style;
+  let ref2 = (n3) => {
+    node = n3;
+  };
+  let within = (e3) => {
+    let b2 = node && getBoundingBoxViewport2(node);
+    if (!b2)
+      return true;
+    return e3.clientX >= b2.x && e3.clientX < b2.x + b2.width && e3.clientY >= b2.y && e3.clientY < b2.y + b2.height;
+  };
+  let disengage = () => {
+    if (active != null) {
+      release(active, owner);
+      active = null;
+    }
+  };
+  let cancel = () => {
+    disengage();
+    setPressed(false);
+  };
+  let owner = {
+    cancel
+  };
+  onSettled(() => disengage);
+  let handlers2 = {
+    onPointerDown: (e3) => {
+      if (e3.button != null && e3.button !== 0)
+        return;
+      if (active == null && claim(e3.pointerId, owner)) {
+        active = e3.pointerId;
+        inside = true;
+        setPressed(true);
+      }
+      options.onPointerDown?.(e3);
+    },
+    onPointerMove: (e3) => {
+      if (active === e3.pointerId) {
+        inside = within(e3);
+        setPressed(inside);
+      }
+      options.onPointerMove?.(e3);
+    },
+    onPointerUp: (e3) => {
+      if (active === e3.pointerId) {
+        let fire = inside;
+        cancel();
+        if (fire)
+          options.onPress?.();
+      }
+      options.onPointerUp?.(e3);
+    },
+    onPointerEnter: (e3) => {
+      setHovered(true);
+      options.onPointerEnter?.(e3);
+    },
+    onPointerLeave: (e3) => {
+      setHovered(false);
+      options.onPointerLeave?.(e3);
+    }
+  };
+  return {
+    pressed,
+    hovered,
+    state,
+    ref: ref2,
+    handlers: handlers2,
+    cancel
+  };
+}
+
+// packages/components/src/pressable.tsx
+function Pressable(props) {
+  let press = createPress(props);
+  let style = () => typeof props.style === "function" ? props.style(press.state()) : props.style;
   let resolved2 = children(() => props.children);
   let kids = () => {
     let c3 = resolved2();
-    return typeof c3 === "function" ? c3(state()) : c3;
-  };
-  let handleDown = (e3) => {
-    if (e3.button != null && e3.button !== 0)
-      return;
-    setPressed(true);
-    props.onPointerDown?.(e3);
-  };
-  let handleUp = (e3) => {
-    if (pressed())
-      props.onPress?.();
-    setPressed(false);
-    props.onPointerUp?.(e3);
-  };
-  let handleEnter = (e3) => {
-    setHovered(true);
-    props.onPointerEnter?.(e3);
-  };
-  let handleLeave = (e3) => {
-    setHovered(false);
-    setPressed(false);
-    props.onPointerLeave?.(e3);
+    return typeof c3 === "function" ? c3(press.state()) : c3;
   };
   let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null;
   let hasBorder = () => (style()?.borderWidth ?? 0) > 0;
   var _el$ = createElement("view");
-  var _ref$ = props.ref;
-  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
+  ref(() => (n3) => {
+    press.ref(n3);
+    props.ref?.(n3);
+  }, _el$);
   setProp(_el$, "repaintBoundary", true);
   spread(_el$, mergeProps(() => props.layout, {
     get x() {
@@ -6327,12 +6465,20 @@ function Pressable(props) {
     get opacity() {
       return style()?.opacity;
     },
-    onPointerEnter: handleEnter,
-    onPointerLeave: handleLeave,
-    onPointerDown: handleDown,
-    onPointerUp: handleUp,
+    get onPointerEnter() {
+      return press.handlers.onPointerEnter;
+    },
+    get onPointerLeave() {
+      return press.handlers.onPointerLeave;
+    },
+    get onPointerDown() {
+      return press.handlers.onPointerDown;
+    },
+    get onPointerUp() {
+      return press.handlers.onPointerUp;
+    },
     get onPointerMove() {
-      return props.onPointerMove;
+      return press.handlers.onPointerMove;
     },
     get onWheel() {
       return props.onWheel;
@@ -6441,57 +6587,112 @@ function Button(props) {
   let resolved2 = children(() => props.children);
   let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
   let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill());
-  return createComponent2(Pressable, {
-    get onPress() {
-      return props.onPress;
-    },
-    get disabled() {
-      return props.disabled;
-    },
-    get layout() {
-      return {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        paddingTop: space("md"),
-        paddingBottom: space("md"),
-        paddingLeft: space("lg"),
-        paddingRight: space("lg"),
-        ...props.size ? {
-          minWidth: SIZE_WIDTH[props.size]
-        } : {
-          width: "100%"
-        },
-        ...props.layout
-      };
-    },
-    style: (s2) => ({
-      ...props.style,
-      backgroundColor: bg(s2),
-      borderRadius: radius(),
-      scale: (props.style?.scale ?? 1) * (s2.pressed && policy.motion !== "none" ? 0.97 : 1)
-    }),
-    get children() {
-      return createComponent2(Show, {
-        get when() {
-          return isText();
-        },
-        get fallback() {
-          return resolved2();
-        },
-        get children() {
-          var _el$ = createElement("text");
-          spread(_el$, mergeProps({
-            get color() {
-              return label();
-            }
-          }, () => typeStyle("body", labelOnDark())), true);
-          insert(_el$, resolved2);
-          return _el$;
-        }
-      });
-    }
+  let press = createPress(props);
+  let style = () => ({
+    ...props.style,
+    backgroundColor: bg(press.state()),
+    borderRadius: radius(),
+    scale: (props.style?.scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
   });
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
+  insertNode2(_el$, _el$2);
+  var _ref$ = press.ref;
+  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : press.ref = _el$;
+  setProp(_el$, "repaintBoundary", true);
+  setProp(_el$, "flexDirection", "row");
+  setProp(_el$, "alignItems", "center");
+  setProp(_el$, "justifyContent", "center");
+  spread(_el$, mergeProps({
+    get paddingTop() {
+      return space("md");
+    },
+    get paddingBottom() {
+      return space("md");
+    },
+    get paddingLeft() {
+      return space("lg");
+    },
+    get paddingRight() {
+      return space("lg");
+    }
+  }, () => props.size ? {
+    minWidth: SIZE_WIDTH[props.size]
+  } : {
+    width: "100%"
+  }, () => props.layout, {
+    get x() {
+      return style().x;
+    },
+    get y() {
+      return style().y;
+    },
+    get scale() {
+      return style().scale;
+    },
+    get rotate() {
+      return style().rotate;
+    },
+    get opacity() {
+      return style().opacity;
+    }
+  }, () => press.handlers, {
+    get pointerEvents() {
+      return props.disabled ? "none" : undefined;
+    }
+  }), true);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return isText();
+    },
+    get fallback() {
+      return resolved2();
+    },
+    get children() {
+      var _el$3 = createElement("text");
+      spread(_el$3, mergeProps({
+        get color() {
+          return label();
+        }
+      }, () => typeStyle("body", labelOnDark())), true);
+      insert(_el$3, resolved2);
+      return _el$3;
+    }
+  }), null);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return (style().borderWidth ?? 0) > 0;
+    },
+    get children() {
+      var _el$4 = createElement("d-rect", {
+        drawStyle: "stroke"
+      });
+      effect3(() => ({
+        e: style().borderColor ?? "transparent",
+        t: style().borderWidth,
+        a: style().borderRadius
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$4, "strokeWidth", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$4, "radius", a3, _p$?.a);
+      });
+      return _el$4;
+    }
+  }), null);
+  effect3(() => ({
+    e: style().backgroundColor ?? "transparent",
+    t: style().borderRadius
+  }), ({
+    e: e3,
+    t: t3
+  }, _p$) => {
+    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
+    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+  });
+  return _el$;
 }
 // packages/components/src/radio.tsx
 var RadioContext = createContext2();
@@ -6733,37 +6934,54 @@ function SegmentedControl(props) {
     },
     children: (opt, i3) => {
       let active = () => value() === opt.value;
-      return createComponent2(Pressable, {
-        onPress: () => select(opt.value),
-        get disabled() {
-          return props.disabled;
-        },
-        get layout() {
-          return {
-            flexGrow: 1,
-            flexBasis: 0,
-            alignItems: "center",
-            paddingTop: space("md"),
-            paddingBottom: space("md"),
-            paddingLeft: space("md"),
-            paddingRight: space("md")
-          };
-        },
-        style: (s2) => ({
-          backgroundColor: active() ? activeFill() : s2.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.surfaceHover : idleFill(),
-          borderRadius: corners(i3())
-        }),
-        get children() {
-          var _el$3 = createElement("text");
-          spread(_el$3, mergeProps({
-            get color() {
-              return label(active());
-            }
-          }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
-          insert(_el$3, () => opt.label);
-          return _el$3;
-        }
+      let press = createPress({
+        onPress: () => select(opt.value)
       });
+      let fill = () => active() ? activeFill() : press.hovered() && !props.disabled && policy.interaction !== "touch" ? theme.color.surfaceHover : idleFill();
+      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("text");
+      insertNode2(_el$3, _el$4);
+      insertNode2(_el$3, _el$5);
+      var _ref$ = press.ref;
+      typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$3) : press.ref = _el$3;
+      setProp(_el$3, "repaintBoundary", true);
+      setProp(_el$3, "flexGrow", 1);
+      setProp(_el$3, "flexBasis", 0);
+      setProp(_el$3, "alignItems", "center");
+      spread(_el$3, mergeProps({
+        get paddingTop() {
+          return space("md");
+        },
+        get paddingBottom() {
+          return space("md");
+        },
+        get paddingLeft() {
+          return space("md");
+        },
+        get paddingRight() {
+          return space("md");
+        }
+      }, () => press.handlers, {
+        get pointerEvents() {
+          return props.disabled ? "none" : undefined;
+        }
+      }), true);
+      spread(_el$5, mergeProps({
+        get color() {
+          return label(active());
+        }
+      }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
+      insert(_el$5, () => opt.label);
+      effect3(() => ({
+        e: fill(),
+        t: corners(i3())
+      }), ({
+        e: e3,
+        t: t3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$4, "radius", t3, _p$?.t);
+      });
+      return _el$3;
     }
   }), null);
   effect3(() => ({
@@ -8985,37 +9203,6 @@ function AppDetail(props) {
                       return !v2.current;
                     }
                   })
-                });
-              }
-            }), createComponent2(DetailCard, {
-              title: "Assets",
-              get children() {
-                return createComponent2(Show, {
-                  get when() {
-                    return d2().assets.length > 0;
-                  },
-                  get fallback() {
-                    return createComponent2(Text, {
-                      variant: "body",
-                      muted: true,
-                      children: "None declared"
-                    });
-                  },
-                  get children() {
-                    return createComponent2(For, {
-                      get each() {
-                        return d2().assets;
-                      },
-                      children: (f3) => createComponent2(DetailRow, {
-                        get label() {
-                          return f3.path;
-                        },
-                        get value() {
-                          return formatSize(f3.size);
-                        }
-                      })
-                    });
-                  }
                 });
               }
             }), createComponent2(DetailCard, {

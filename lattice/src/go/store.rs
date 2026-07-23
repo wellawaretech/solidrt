@@ -197,9 +197,9 @@ pub struct FileEntry {
 }
 
 /// Usage details for one installed app, as the launcher's detail view shows
-/// them. The manifest-declared assets and the on-disk listings are separate
-/// on purpose: the manifest is a claim, the disk walks are the truth, and a
-/// divergence between them is exactly what the view should make visible.
+/// them. The listings are disk walks, not manifest claims: the manifest is
+/// reconciled against disk at install time, and what the view shows is what
+/// is actually there.
 pub struct AppInfo {
   pub id: String,
   pub name: String,
@@ -211,8 +211,6 @@ pub struct AppInfo {
   pub install_size: u64,
   /// Total bytes under the data sandbox.
   pub data_size: u64,
-  /// The current version's manifest-declared assets (declared sizes).
-  pub assets: Vec<FileEntry>,
   /// The current version dir's actual files on disk (recursive, sorted).
   pub version_files: Vec<FileEntry>,
   /// The data sandbox's actual files on disk (recursive, sorted).
@@ -256,11 +254,7 @@ pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> 
 
   let current_dir = versions_root.join(&state.current);
   let manifest = Manifest::load(&current_dir);
-  let name = manifest.as_ref().and_then(|m| m.display_name.clone()).unwrap_or_else(|| app_id.to_string());
-  let mut assets: Vec<FileEntry> = manifest
-    .map(|m| m.assets.into_iter().map(|a| FileEntry { path: a.path, size: a.size }).collect())
-    .unwrap_or_default();
-  assets.sort_by(|a, b| a.path.cmp(&b.path));
+  let name = manifest.and_then(|m| m.display_name).unwrap_or_else(|| app_id.to_string());
   let version_files = collect_files(&current_dir);
   let data_files = collect_files(&app_dir.join("data"));
   let data_size = data_files.iter().map(|e| e.size).sum();
@@ -272,7 +266,6 @@ pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> 
     versions,
     install_size,
     data_size,
-    assets,
     version_files,
     data_files,
   })

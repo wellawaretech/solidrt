@@ -40,8 +40,6 @@ pub struct AppInfo {
   pub install_size: u64,
   pub data_size: u64,
   pub versions: Vec<AppVersion>,
-  /// Manifest-declared assets of the current version.
-  pub assets: Vec<AppFile>,
   /// The current version dir's actual files on disk.
   pub files: Vec<AppFile>,
   /// The data sandbox's actual files on disk.
@@ -116,7 +114,6 @@ fn info_impl<'js>(ctx: Ctx<'js>, id: String) -> flux::rquickjs::Result<Object<'j
     }
     Ok(arr)
   };
-  obj.set("assets", file_list(info.assets)?)?;
   obj.set("files", file_list(info.files)?)?;
   obj.set("data", file_list(info.data)?)?;
   Ok(obj)

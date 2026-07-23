@@ -10,15 +10,17 @@
 use bytes::Bytes;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::Instant;
 
 use crate::cache::Cache;
 use crate::stream::{to_byte_stream, ByteStream};
@@ -121,9 +123,19 @@ pub async fn do_fetch(
 /// A permit is an async RAII value: waiters are pending futures (nothing
 /// blocks), and the permit rides the response body stream so it releases when
 /// the body completes or its consumer drops it.
+///
+/// Concurrency alone does not bound the request *rate* (six fast transfers
+/// recycling is still tens of requests per second), so a host also carries a
+/// cooldown: a 429 pauses the whole host (see `cooldown`), and `acquire`
+/// waits it out before letting a request start.
 pub struct HostLimits {
   max_per_host: usize,
-  hosts: RefCell<HashMap<String, Arc<Semaphore>>>,
+  hosts: RefCell<HashMap<String, Rc<HostState>>>,
+}
+
+struct HostState {
+  semaphore: Arc<Semaphore>,
+  cooldown_until: Cell<Option<Instant>>,
 }
 
 impl HostLimits {
@@ -131,15 +143,41 @@ impl HostLimits {
     Self { max_per_host, hosts: RefCell::new(HashMap::new()) }
   }
 
-  /// Wait for a slot on `host`. The returned permit frees the slot on drop.
-  pub async fn acquire(&self, host: &str) -> OwnedSemaphorePermit {
-    let semaphore = self
+  fn state(&self, host: &str) -> Rc<HostState> {
+    self
       .hosts
       .borrow_mut()
       .entry(host.to_string())
-      .or_insert_with(|| Arc::new(Semaphore::new(self.max_per_host)))
-      .clone();
-    semaphore.acquire_owned().await.expect("host semaphore never closes")
+      .or_insert_with(|| {
+        Rc::new(HostState { semaphore: Arc::new(Semaphore::new(self.max_per_host)), cooldown_until: Cell::new(None) })
+      })
+      .clone()
+  }
+
+  /// Wait for a slot on `host`, then for any active cooldown. The returned
+  /// permit frees the slot on drop. The permit is held through the cooldown
+  /// sleep on purpose: a 429'd host drains to idle and stays paused, instead
+  /// of freed slots re-flooding it the moment their transfers finish.
+  pub async fn acquire(&self, host: &str) -> OwnedSemaphorePermit {
+    let state = self.state(host);
+    let permit = state.semaphore.clone().acquire_owned().await.expect("host semaphore never closes");
+    loop {
+      match state.cooldown_until.get() {
+        Some(until) if until > Instant::now() => tokio::time::sleep_until(until).await,
+        _ => return permit,
+      }
+    }
+  }
+
+  /// Pause new requests to `host` for `delay`. Extends, never shortens, an
+  /// active cooldown: concurrent 429s each report a delay and the furthest
+  /// one wins.
+  pub fn cooldown(&self, host: &str, delay: Duration) {
+    let state = self.state(host);
+    let until = Instant::now() + delay;
+    if state.cooldown_until.get().is_none_or(|current| until > current) {
+      state.cooldown_until.set(Some(until));
+    }
   }
 }
 
@@ -190,11 +228,40 @@ struct CacheMeta {
   headers: Vec<(String, String)>,
 }
 
+/// Bounded retries after a 429'd request (4 attempts total).
+const RETRY_LIMIT: u32 = 3;
+
+/// First-attempt backoff ceiling when the 429 carries no Retry-After; doubles
+/// per attempt (full jitter: the delay is uniform in [0, ceiling]).
+const BACKOFF_BASE: Duration = Duration::from_millis(500);
+
+/// A Retry-After beyond this means "come back much later", not "brief pause":
+/// give up and hand the 429 to the caller instead of sitting on a long sleep.
+const RETRY_AFTER_MAX: Duration = Duration::from_secs(60);
+
+/// The Retry-After header as a delay. Only the delta-seconds form is parsed;
+/// the HTTP-date form degrades to the jittered backoff like an absent header.
+fn retry_after(headers: &[(String, String)]) -> Option<Duration> {
+  let (_, value) = headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))?;
+  value.trim().parse::<u64>().ok().map(Duration::from_secs)
+}
+
+/// Full-jitter exponential backoff: uniform in [0, base * 2^attempt], so
+/// parallel lanes that 429'd together do not retry in lockstep.
+fn jittered_backoff(attempt: u32) -> Duration {
+  Duration::from_millis(fastrand::u64(0..=(BACKOFF_BASE.as_millis() as u64) << attempt))
+}
+
 /// `do_fetch` with an explicit disk-cache policy. Only GET requests with 2xx
 /// responses are cached, keyed by the request url; anything else degrades to
 /// a plain `do_fetch`. Stored bodies write through as the consumer drains the
 /// response and commit only on clean completion (see `Cache::store`). Cache
 /// misses queue on the per-host limit; disk hits bypass it.
+///
+/// A 429 response backs off reactively: the host goes on cooldown (Retry-After
+/// when sent, jittered exponential otherwise) and the request retries up to
+/// `RETRY_LIMIT` times. Plain `do_fetch` traffic deliberately has none of
+/// this; a caller that wants backoff on API calls implements its own policy.
 pub async fn do_fetch_cached(
   client: Rc<reqwest::Client>,
   method: &str,
@@ -223,12 +290,32 @@ pub async fn do_fetch_cached(
       }
     }
   }
-  let permit = match host_key(url) {
-    Some(host) => Some(limits.acquire(&host).await),
+  let host = host_key(url);
+  let permit = match &host {
+    Some(host) => Some(limits.acquire(host).await),
     // An unparsable url: skip the limit and let do_fetch produce the error.
     None => None,
   };
-  let resp = do_fetch(client, method, url, headers, body).await?;
+  // A request body cannot be replayed (it may be a stream), so only body-less
+  // requests retry; a GET with a body is a fringe case.
+  let can_retry = body.is_none();
+  let mut attempt: u32 = 0;
+  let mut resp = do_fetch(client.clone(), method, url, headers.clone(), body).await?;
+  while can_retry && resp.status == 429 && attempt < RETRY_LIMIT {
+    let delay = match retry_after(&resp.headers) {
+      Some(after) if after > RETRY_AFTER_MAX => break,
+      Some(after) => after,
+      None => jittered_backoff(attempt),
+    };
+    if let Some(host) = &host {
+      limits.cooldown(host, delay);
+    }
+    // Sleep it out while holding the permit (see `acquire`): the other lanes
+    // queue behind the cooldown instead of taking over the freed slot.
+    tokio::time::sleep(delay).await;
+    attempt += 1;
+    resp = do_fetch(client.clone(), method, url, headers.clone(), None).await?;
+  }
   let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body } = resp;
   let resp_body = match permit {
     Some(permit) => Box::pin(LimitedStream { inner: resp_body, _permit: permit }) as ByteStream,
