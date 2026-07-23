@@ -36,6 +36,14 @@ export interface StyleProps {
   opacity?: number
 }
 
+// One choice in an options list, shared by the single-choice controls
+// (Select, SegmentedControl). Lives here so those components stay independent
+// of each other: shared shapes go through this module, never a sibling import.
+export interface Option {
+  value: unknown
+  label: string
+}
+
 // Text shaping affects measurement, so font props belong with layout rather
 // than style. These end up on the inner <text> node, while the box layout
 // fields go on the wrapping <view>.

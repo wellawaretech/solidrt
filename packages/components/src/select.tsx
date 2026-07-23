@@ -5,15 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
-import type { StyleProps } from "./types"
-
-export interface SelectOption {
-  value: unknown
-  label: string
-}
+import type { Option, StyleProps } from "./types"
 
 export interface SelectProps {
-  options: SelectOption[]
+  options: Option[]
   // Controlled selected value. If omitted, the select is uncontrolled.
   value?: unknown
   defaultValue?: unknown
@@ -53,7 +48,7 @@ export function Select(props: SelectProps) {
 
   // One option row, shared by both presentations; only the vertical padding
   // differs (the sheet gets taller touch targets).
-  let OptionRow = (p: { option: SelectOption; padY: number }) => (
+  let OptionRow = (p: { option: Option; padY: number }) => (
     <Pressable
       onPress={() => choose(p.option.value)}
       layout={{
@@ -108,7 +103,7 @@ export function Select(props: SelectProps) {
         >
           <d-rect color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.options}>
-            {(o: SelectOption) => <OptionRow option={o} padY={space("sm")} />}
+            {(o: Option) => <OptionRow option={o} padY={space("sm")} />}
           </For>
           <d-rect
             drawStyle="stroke"
@@ -140,7 +135,7 @@ export function Select(props: SelectProps) {
         >
           <d-rect color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.options}>
-            {(o: SelectOption) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
+            {(o: Option) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
           </For>
         </view>
       </view>,

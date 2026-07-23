@@ -5,11 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
-import type { SelectOption } from "./select"
-import type { StyleProps } from "./types"
+import type { Option, StyleProps } from "./types"
 
 export interface SegmentedControlProps {
-  options: SelectOption[]
+  options: Option[]
   // Controlled selected value. If omitted, the control is uncontrolled.
   value?: unknown
   defaultValue?: unknown
