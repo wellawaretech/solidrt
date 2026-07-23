@@ -34,6 +34,21 @@ async fn udp_loopback_roundtrip() {
 }
 
 #[tokio::test]
+async fn icmp_echo_loopback() {
+  // Reply where unprivileged ICMP is permitted; Unsupported (not a hang or a
+  // panic) where ping_group_range excludes us, so CI passes either way.
+  let payload = b"solidrt-icmp-test".to_vec();
+  match icmp_echo("127.0.0.1", payload.clone(), 2000).await {
+    IcmpEcho::Reply { payload: echoed, rtt_ms } => {
+      assert_eq!(echoed, payload, "reply echoes the request payload");
+      assert!(rtt_ms >= 0.0);
+    }
+    IcmpEcho::Unsupported => {}
+    IcmpEcho::Timeout => panic!("loopback ping neither replied nor reported unsupported"),
+  }
+}
+
+#[tokio::test]
 async fn udp_close_unblocks_pending_recv() {
   let udp = udp_bind(0, false).await.unwrap();
   let (recv, _) = tokio::time::timeout(Duration::from_secs(2), async {

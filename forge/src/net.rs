@@ -178,7 +178,7 @@ impl Conn {
   }
 
   /// The remote peer's address, e.g. `192.168.2.37:445`.
-  pub fn peer(&self) -> String {
+  pub fn remote_addr(&self) -> String {
     self.peer.to_string()
   }
 }
@@ -342,6 +342,123 @@ impl Udp {
       None => String::new(),
     }
   }
+}
+
+// ---- ICMP echo ----------------------------------------------------------------
+
+/// The outcome of an `icmp_echo` — infallible by design, like `probe`.
+///
+/// `Timeout` covers every "no evidence" case (no reply, unreachable, resolve
+/// failure); `Unsupported` means this platform/configuration has no unprivileged
+/// ICMP socket (Linux with `net.ipv4.ping_group_range` excluding us, Windows),
+/// so the caller can distinguish "host silent" from "cannot ask".
+pub enum IcmpEcho {
+  Reply { payload: Vec<u8>, rtt_ms: f64 },
+  Timeout,
+  Unsupported,
+}
+
+/// Ping `host` once: send an ICMP echo request carrying `payload` and wait up to
+/// `timeout_ms` for the matching reply. A purpose-built probe over an
+/// unprivileged ICMP socket (`SOCK_DGRAM`, `IPPROTO_ICMP`) — no packet crafting
+/// is exposed, matching `probe`'s "infallible outcome" philosophy. IPv4 only,
+/// like the rest of this module.
+pub async fn icmp_echo(host: &str, payload: Vec<u8>, timeout_ms: u64) -> IcmpEcho {
+  let Ok(addrs) = tokio::net::lookup_host((host, 0)).await else {
+    return IcmpEcho::Timeout;
+  };
+  let Some(addr) = addrs.into_iter().find(|a| a.is_ipv4()) else {
+    return IcmpEcho::Timeout;
+  };
+  // The socket API is blocking (socket2; tokio has no ICMP type), so the
+  // send/recv loop runs on the blocking pool.
+  tokio::task::spawn_blocking(move || blocking_echo(addr, payload, timeout_ms))
+    .await
+    .unwrap_or(IcmpEcho::Timeout)
+}
+
+fn blocking_echo(addr: SocketAddr, payload: Vec<u8>, timeout_ms: u64) -> IcmpEcho {
+  use std::io::Read;
+  use std::time::Instant;
+
+  let Ok(mut socket) = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::ICMPV4)) else {
+    return IcmpEcho::Unsupported;
+  };
+  const SEQ: u16 = 1; // one request per socket; correlation is seq + payload
+  let packet = build_echo_request(SEQ, &payload);
+  let start = Instant::now();
+  let deadline = start + Duration::from_millis(timeout_ms);
+  if socket.send_to(&packet, &SockAddr::from(addr)).is_err() {
+    return IcmpEcho::Timeout; // unreachable etc.: no liveness evidence, like probe
+  }
+  let mut buf = vec![0u8; UDP_RECV_MAX];
+  loop {
+    let now = Instant::now();
+    if now >= deadline {
+      return IcmpEcho::Timeout;
+    }
+    if socket.set_read_timeout(Some(deadline - now)).is_err() {
+      return IcmpEcho::Timeout;
+    }
+    let n = match socket.read(&mut buf) {
+      Ok(n) => n,
+      Err(_) => return IcmpEcho::Timeout, // read timeout, or an ICMP error surfaced
+    };
+    match parse_echo_reply(&buf[..n]) {
+      // Compare payloads too: the kernel rewrites the id on Linux ping sockets,
+      // so seq + payload is the correlation that works on every platform.
+      Some((SEQ, reply)) if reply == payload.as_slice() => {
+        let rtt_ms = start.elapsed().as_secs_f64() * 1000.0;
+        return IcmpEcho::Reply { payload: reply.to_vec(), rtt_ms };
+      }
+      _ => continue, // a stray datagram (someone else's reply); keep waiting
+    }
+  }
+}
+
+/// Build an ICMP echo request (type 8): header + `payload`. The id field is left
+/// 0 — Linux ping sockets overwrite it with the socket's own id anyway.
+fn build_echo_request(seq: u16, payload: &[u8]) -> Vec<u8> {
+  let mut pkt = vec![0u8; 8 + payload.len()];
+  pkt[0] = 8; // echo request, code 0
+  pkt[6..8].copy_from_slice(&seq.to_be_bytes());
+  pkt[8..].copy_from_slice(payload);
+  let sum = inet_checksum(&pkt);
+  pkt[2..4].copy_from_slice(&sum.to_be_bytes());
+  pkt
+}
+
+/// Parse an ICMP echo reply (type 0), returning `(seq, payload)`. Handles the
+/// platform quirk that BSD/macOS delivers the IPv4 header in front of the ICMP
+/// message on DGRAM ICMP sockets while Linux does not (an ICMP type is < 64, so
+/// the 0x4_ version nibble of an IPv4 header is unambiguous).
+fn parse_echo_reply(buf: &[u8]) -> Option<(u16, &[u8])> {
+  let icmp = if buf.first().map(|b| b >> 4) == Some(4) {
+    let ihl = usize::from(buf[0] & 0x0f) * 4;
+    buf.get(ihl..)?
+  } else {
+    buf
+  };
+  if icmp.len() < 8 || icmp[0] != 0 {
+    return None;
+  }
+  Some((u16::from_be_bytes([icmp[6], icmp[7]]), &icmp[8..]))
+}
+
+/// The Internet checksum (RFC 1071): one's-complement sum of 16-bit words.
+fn inet_checksum(data: &[u8]) -> u16 {
+  let mut sum = 0u32;
+  let mut words = data.chunks_exact(2);
+  for w in &mut words {
+    sum += u32::from(u16::from_be_bytes([w[0], w[1]]));
+  }
+  if let [last] = words.remainder() {
+    sum += u32::from(*last) << 8;
+  }
+  while sum >> 16 != 0 {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  !(sum as u16)
 }
 
 // ---- Interface enumeration --------------------------------------------------

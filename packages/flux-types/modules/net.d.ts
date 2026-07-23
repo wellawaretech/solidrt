@@ -67,7 +67,7 @@ declare module "flux:net" {
    */
   export class Conn implements AsyncIterable<Uint8Array> {
     /** The remote peer's address, e.g. "192.168.2.37:445". */
-    readonly peer: string
+    readonly remoteAddr: string
     /** Write all of `data`. Resolves once it is handed to the OS. */
     write(data: string | Uint8Array): Promise<void>
     /**
@@ -123,6 +123,17 @@ declare module "flux:net" {
   }
 
   /**
+   * Outcome of an {@link icmpEcho}. Infallible like {@link probe}: `timeout`
+   * covers every "no evidence" case (no reply, unreachable, resolve failure);
+   * `unsupported` means this platform/configuration has no unprivileged ICMP
+   * socket, so "host silent" and "cannot ask" stay distinguishable.
+   */
+  type IcmpEchoResult =
+    | { status: "reply"; rttMs: number; payload: Uint8Array }
+    | { status: "timeout" }
+    | { status: "unsupported" }
+
+  /**
    * Probe `host:port` with a TCP connect and report what it says about the host.
    * Infallible — every outcome maps to a {@link Liveness}, so a sweep never has to
    * catch. The connect-scan primitive: count `open` or `closed` as a live host.
@@ -144,6 +155,14 @@ declare module "flux:net" {
 
   /** Bind a {@link Udp} socket. */
   export function udp(opts?: UdpOptions): Promise<Udp>
+
+  /**
+   * Ping `host` once: send an ICMP echo request carrying `payload` (default
+   * empty) and wait for the matching reply. IPv4 only.
+   *
+   * @param opts  timeoutMs (default 1000).
+   */
+  export function icmpEcho(host: string, payload?: string | Uint8Array, opts?: ConnectOptions): Promise<IcmpEchoResult>
 
   /**
    * Enumerate local network interfaces and their addresses — the no-subprocess

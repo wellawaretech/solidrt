@@ -16,6 +16,8 @@
 //! - `udp(opts?)` -> `Udp`: `send` / `recv` plus the broadcast / multicast knobs
 //!   the peer beacon needs; `close()` releases the socket and resolves a pending
 //!   `recv` with `null`.
+//! - `icmpEcho(host, payload?, opts?)` -> `{ status, rttMs?, payload? }`, a
+//!   one-shot unprivileged ping.
 //! - `interfaces()` -> the local interfaces (name / mac / flags / addrs), the
 //!   no-subprocess replacement for parsing `ip addr` to find the subnet to scan.
 //!
@@ -121,6 +123,25 @@ fn net_udp<'js>(
   }))
 }
 
+/// `icmpEcho(host, payload?, { timeoutMs? })` -> `{ status, rttMs?, payload? }`.
+/// Ping once over an unprivileged ICMP socket. Infallible like `probe`: every
+/// outcome maps to a status (`"reply"` / `"timeout"` / `"unsupported"`).
+fn net_icmp_echo<'js>(
+  ctx: Ctx<'js>,
+  host: String,
+  payload: Opt<Value<'js>>,
+  opts: Opt<Object<'js>>,
+) -> rquickjs::Result<Promised<impl Future<Output = JsResult<IcmpMsg>>>> {
+  let bytes = match payload.0 {
+    Some(v) if !v.is_undefined() && !v.is_null() => extract_body_value(&v, "icmpEcho")?,
+    _ => Vec::new(),
+  };
+  let timeout_ms = opt_u64(&opts, "timeoutMs", 1000)?;
+  Ok(with_pending(&ctx, async move {
+    Ok::<IcmpMsg, String>(IcmpMsg(forge::net::icmp_echo(&host, bytes, timeout_ms).await))
+  }))
+}
+
 /// `interfaces()` -> array of `{ name, mac, up, loopback, multicast, addrs }`.
 /// Synchronous: `netdev` reads the OS directly and returns quickly.
 fn net_interfaces<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Array<'js>> {
@@ -185,9 +206,9 @@ impl NetConn {
   }
 
   /// The remote peer's address, e.g. `192.168.2.37:445`.
-  #[qjs(get)]
-  pub fn peer(&self) -> String {
-    self.inner.peer()
+  #[qjs(get, rename = "remoteAddr")]
+  pub fn remote_addr(&self) -> String {
+    self.inner.remote_addr()
   }
 }
 
@@ -353,6 +374,27 @@ impl<'js> IntoJs<'js> for ReadStep {
   }
 }
 
+/// An `icmpEcho` outcome, encoded to `{ status: "reply", rttMs, payload }` /
+/// `{ status: "timeout" }` / `{ status: "unsupported" }`. `pub` for the same
+/// `private_interfaces` reason as `ReadStep`.
+pub struct IcmpMsg(forge::net::IcmpEcho);
+
+impl<'js> IntoJs<'js> for IcmpMsg {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    match self.0 {
+      forge::net::IcmpEcho::Reply { payload, rtt_ms } => {
+        obj.set("status", "reply")?;
+        obj.set("rttMs", rtt_ms)?;
+        obj.set("payload", TypedArray::<u8>::new(ctx.clone(), payload)?)?;
+      }
+      forge::net::IcmpEcho::Timeout => obj.set("status", "timeout")?,
+      forge::net::IcmpEcho::Unsupported => obj.set("status", "unsupported")?,
+    }
+    Ok(obj.into_value())
+  }
+}
+
 /// A received datagram, encoded to `{ data: Uint8Array, host, port }`, or `null`
 /// once the socket is closed. `pub` for the same `private_interfaces` reason as
 /// `ReadStep`.
@@ -381,6 +423,7 @@ impl ModuleDef for NetModule {
     decl.declare("connect")?;
     decl.declare("listen")?;
     decl.declare("udp")?;
+    decl.declare("icmpEcho")?;
     decl.declare("interfaces")?;
     Ok(())
   }
@@ -390,6 +433,7 @@ impl ModuleDef for NetModule {
     exports.export("connect", Function::new(ctx.clone(), net_connect)?)?;
     exports.export("listen", Function::new(ctx.clone(), net_listen)?)?;
     exports.export("udp", Function::new(ctx.clone(), net_udp)?)?;
+    exports.export("icmpEcho", Function::new(ctx.clone(), net_icmp_echo)?)?;
     exports.export("interfaces", Function::new(ctx.clone(), net_interfaces)?)?;
     Ok(())
   }
