@@ -283,7 +283,7 @@ Top and bottom insets are applied by default. Pass `false` to opt out of an edge
 
 ### ScrollView
 
-A scrollable region. Scrolls vertically by default; pass `horizontal` to scroll the other axis instead. Both the wheel and dragging scroll the content. There is no momentum/fling yet, and (with no pointer capture) a drag that leaves the box ends the gesture.
+A scrollable region. Scrolls vertically by default; pass `horizontal` to scroll the other axis instead. Both the wheel and dragging scroll the content. The drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. There is no momentum/fling yet.
 
 ```jsx
 import { ScrollView, Text } from "@solidrt/components"
@@ -440,7 +440,7 @@ import { RadioGroup, Radio } from "@solidrt/components"
 
 ### Slider
 
-A horizontal slider. The groove fills up to the thumb; pressing or dragging the track sets the value from the pointer position. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. The drag uses pointer capture, so it keeps tracking when the pointer drifts off the track (anywhere within the window).
+A horizontal slider. The groove fills up to the thumb; pressing or dragging the track sets the value from the pointer position. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. The drag keeps tracking when the pointer drifts off the track, and an enclosing ScrollView never takes it over.
 
 ```jsx
 import { Slider } from "@solidrt/components"

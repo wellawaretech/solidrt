@@ -325,15 +325,6 @@ function App() {
               </View>
             </Card>
 
-            <Card title="Text input" layout={{ width: 360 }}>
-              <TextInput
-                value={name()}
-                onInput={setName}
-                placeholder="Your name"
-                layout={{ width: 320 }}
-              />
-            </Card>
-
             <Card title="Switch and checkbox" layout={{ width: 360 }}>
               <Row label="Notifications">
                 <Switch value={notify()} onChange={setNotify} />
@@ -457,6 +448,15 @@ function App() {
                 <Icon src={HEART} color={theme.color.danger} />
                 <Icon src={STAR} color={theme.color.primary} />
               </View>
+            </Card>
+
+            <Card title="Text input" layout={{ width: 360 }}>
+              <TextInput
+                value={name()}
+                onInput={setName}
+                placeholder="Your name"
+                layout={{ width: 320 }}
+              />
             </Card>
 
             <Card title="QR code" layout={{ width: 360 }}>

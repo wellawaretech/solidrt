@@ -1,5 +1,6 @@
-import { createSignal, getBoundingBox, onLayout, setPointerCapture } from "@solidrt/core"
+import { createSignal, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
+import { release, steal } from "./arena"
 import { theme } from "./theme"
 import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
@@ -25,9 +26,9 @@ const THUMB = 20
 let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x)
 
 // A horizontal slider. The groove fills up to the thumb; dragging or pressing
-// the track sets the value from the pointer x. No pointer capture, so a drag
-// that leaves the track stops updating. Controlled via value/onChange, or
-// uncontrolled via defaultValue.
+// the track sets the value from the pointer x. Moves arrive on the frozen down
+// path, so a drag keeps updating when the pointer drifts off the track.
+// Controlled via value/onChange, or uncontrolled via defaultValue.
 export function Slider(props: SliderProps) {
   let min = () => props.min ?? 0
   let max = () => props.max ?? 100
@@ -35,7 +36,7 @@ export function Slider(props: SliderProps) {
   let value = () => (props.value !== undefined ? props.value : internal())
 
   let track: { id: number } | undefined
-  let dragging = false
+  let active: number | null = null
 
   let height = () => Math.round(HEIGHT * densityScale())
   let thumb = () => Math.round(THUMB * densityScale())
@@ -68,22 +69,31 @@ export function Slider(props: SliderProps) {
     commit(clamp(raw, min(), max()))
   }
 
+  let endDrag = () => {
+    if (active != null) {
+      release(active, owner)
+      active = null
+    }
+  }
+  let owner = { cancel: endDrag }
+
+  // An unmount mid-drag must not leave a resolved claim behind.
+  onSettled(() => endDrag)
+
   let handleDown = (e: PointerEvent) => {
-    if (props.disabled) return
-    // Claim the drag: stopPropagation keeps an ancestor scroller from starting a
-    // scroll, and pointer capture routes moves/up here even when the pointer
-    // drifts off the track.
-    e.stopPropagation()
-    if (track) setPointerCapture(track.id, e.pointerId)
-    dragging = true
+    if (props.disabled || active != null) return
+    // A down on the track is unambiguously a slider drag: resolve the arena
+    // outright so an ancestor scroller's pan cannot take the pointer over.
+    steal(e.pointerId, owner)
+    active = e.pointerId
     setFromClientX(e.clientX)
   }
   let handleMove = (e: PointerEvent) => {
-    if (!dragging) return
+    if (active !== e.pointerId) return
     setFromClientX(e.clientX)
   }
-  let handleUp = () => {
-    dragging = false
+  let handleUp = (e: PointerEvent) => {
+    if (active === e.pointerId) endDrag()
   }
 
   return (

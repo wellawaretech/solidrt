@@ -1,6 +1,6 @@
 import { createScroll } from "@solidrt/core"
-import type { LayoutProps, PointerEvent, PointerProps, WheelEvent } from "@solidrt/core"
-import { isPressClaimed } from "./press"
+import type { LayoutProps, PointerProps, WheelEvent } from "@solidrt/core"
+import { createPan } from "./pan"
 import type { StyleProps } from "./types"
 
 export interface ScrollViewProps extends PointerProps {
@@ -15,11 +15,13 @@ export interface ScrollViewProps extends PointerProps {
 // A scrollable region. The outer box carries layout/style/transform and the
 // optional background and border; inside it a clipping viewport (overflow
 // hidden) holds a content wrapper that takes the children's natural size. The
-// offset from createScroll translates the content via scrollX/scrollY. Wheel and
-// drag map to scroll deltas: positive moves the content up/left, so dragging a
-// finger up reveals content below (natural scrolling). There is no momentum yet;
-// a fling stops when the finger lifts. With no pointer capture, a drag that
-// leaves the box stops scrolling (pointerLeave ends the gesture).
+// offset from createScroll translates the content via scrollX/scrollY. Wheel
+// and drag map to scroll deltas: positive moves the content up/left, so
+// dragging a finger up reveals content below (natural scrolling). The drag is
+// a pan recognizer: it activates on movement slop along the scroll axis,
+// stealing the pointer from a pressable the drag started on (its press
+// feedback retracts), and keeps scrolling when the pointer leaves the box.
+// There is no momentum yet; a fling stops when the finger lifts.
 export function ScrollView(props: ScrollViewProps) {
   let viewport: { id: number } | undefined
   let content: { id: number } | undefined
@@ -30,26 +32,13 @@ export function ScrollView(props: ScrollViewProps) {
     { axis: props.horizontal ? "horizontal" : "vertical" },
   )
 
-  // Last pointer position during an active drag, in window coordinates. null
-  // when no drag is in progress.
-  let last: { x: number; y: number } | null = null
+  // Content follows the finger: it moves opposite to scroll offsets, which
+  // grow toward the bottom/right.
+  let pan = createPan({
+    axis: props.horizontal ? "horizontal" : "vertical",
+    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy),
+  })
 
-  let onPointerDown = (e: PointerEvent) => {
-    // A press-claimed pointer is captured by the pressed node: this viewport
-    // would see the bubbled down but never the up, leaving the drag armed
-    // forever. Until the pan recognizer can steal such a pointer on slop, a
-    // drag that starts on a pressable does not scroll (the wheel still does).
-    if (isPressClaimed(e.pointerId)) return
-    last = { x: e.clientX, y: e.clientY }
-  }
-  let onPointerMove = (e: PointerEvent) => {
-    if (!last) return
-    scroll.scrollBy(last.x - e.clientX, last.y - e.clientY)
-    last = { x: e.clientX, y: e.clientY }
-  }
-  let endDrag = () => {
-    last = null
-  }
   let onWheel = (e: WheelEvent) => {
     // A plain mouse wheel only emits deltaY. On a horizontal scroller, route that
     // vertical delta to the x axis so the wheel still scrolls it (trackpads that
@@ -94,10 +83,7 @@ export function ScrollView(props: ScrollViewProps) {
         flexDirection={direction()}
         scrollX={scroll.offset().x}
         scrollY={scroll.offset().y}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerLeave={endDrag}
+        {...pan.handlers}
         onWheel={onWheel}
       >
         <view ref={(n: { id: number }) => (content = n)} flexShrink={0} flexDirection={direction()}>

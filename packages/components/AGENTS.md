@@ -36,11 +36,15 @@ Most components group props into two objects, plus top-level event handlers:
 - `TextInput` - single-line input; `value`/`onInput`/`onSubmit`, controlled or
   uncontrolled, plus `placeholder`, `maxLength`, `autoFocus`, `disabled`.
 - `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
-  Wheel + drag, no momentum yet. Backed by `createScroll` from
-  `@solidrt/core` (headless offset+clamp geometry).
+  Wheel + drag (a pan recognizer: activates on slop along the scroll axis and
+  steals the pointer from a pressable the drag started on), no momentum yet.
+  Backed by `createScroll` from `@solidrt/core` (headless offset+clamp
+  geometry) and the internal `createPan`/arena (arena.ts, pan.ts, press.ts:
+  per-pointer claims, innermost press wins, pan steals on slop).
 - `Pressable` - pressable box; `onPress` on a primary press released inside,
   `disabled` opts out. `children`/`style` can be functions of `{ pressed,
-  hovered }`. No pointer capture: a drag out cancels via onPointerLeave.
+  hovered }`. Press retention: a drag out retracts the pressed state, a drag
+  back in restores it; releasing outside does not fire.
 - `Button` - themed Pressable: accent box + label (string/number child), scales
   on press (via reactive style); colors from `theme.color.primary`/`onPrimary`.
 - `Switch` - on/off toggle; `value`/`onChange`, controlled or uncontrolled
@@ -52,8 +56,9 @@ Most components group props into two objects, plus top-level event handlers:
   module-local context (not a cross-component dependency). `Radio value=...`;
   string/number child renders as a themed label.
 - `Slider` - horizontal; `value`/`onChange` (or `defaultValue`), `min`/`max`/
-  `step`. Pointer x mapped to value via `getBoundingBox`; uses core
-  `setPointerCapture` so a drag keeps tracking off the track (within the window).
+  `step`. Pointer x mapped to value via `getBoundingBox`; a down resolves the
+  gesture arena outright (no ancestor scroller takeover) and moves follow the
+  frozen down path, so a drag keeps tracking off the track.
 - `Card` - themed surface container: padded column box, `surface` fill, `border`
   stroke, rounded. Optional `title` heading; override paint via `style`.
 - `Divider` - thin rule in `border` color; `orientation` (default horizontal),

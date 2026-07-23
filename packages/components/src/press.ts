@@ -1,5 +1,6 @@
-import { createSignal, onSettled, setPointerCapture, releasePointerCapture, getBoundingBoxViewport } from "@solidrt/core"
+import { createSignal, onSettled, getBoundingBoxViewport } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
+import { claim, release } from "./arena"
 
 export type PressState = { pressed: boolean; hovered: boolean }
 
@@ -12,42 +13,29 @@ export interface PressOptions {
   onPointerLeave?: (e: PointerEvent) => void
 }
 
-// Active press claims by pointer id, shared by every press recognizer. Pointer
-// events dispatch leaf to root, so the innermost recognizer sees a down first
-// and claims the pointer; recognizers further up the same bubble path find it
-// claimed and fail silently (no pressed state, no onPress - ancestors keep
-// hover only). This is the innermost-wins arena in its one-recognizer-kind
-// form; raw pointer events keep bubbling regardless. Plain state on purpose:
-// claims must be visible to outer recognizers within the same synchronous
-// dispatch, before any signal flush.
-let claims = new Map<number, symbol>()
-
-// Whether a press recognizer currently owns this pointer. Lets sibling input
-// skins (ScrollView's drag) avoid arming a gesture they will never get the up
-// for: a captured press routes moves and the up exclusively to the winner.
-// Interim surface until the pan recognizer arbitrates this properly.
-export function isPressClaimed(pointerId: number): boolean {
-  return claims.has(pointerId)
-}
-
 // The press state machine shared by the pressable components. onPress fires on
-// a primary-button down followed by an up over the node. The winning
-// recognizer captures the pointer, so the press survives leaving the node:
-// while outside its window-relative bounds the pressed state clears (visual
-// feedback retracts), wandering back in restores it (press retention), and
-// only an up inside fires onPress. Enter/leave drive hover alone. Non-primary
-// buttons (right/middle) do not start a press and are not forwarded. cancel()
-// is the external-cancel hook (a future pan/scroll recognizer retracting a
-// press); it ends the press without firing. Options are read at event time,
-// so passing a component's reactive props object keeps handler changes live.
-// The host view must attach `ref` for capture and retention bounds; without
-// it the recognizer falls back to leave-cancels. Deliberately framework-
-// agnostic (no theme, no styling): a candidate for promotion into core once
-// the recognizer family grows (okf/plans/component-gestures.md).
+// a primary-button down followed by an up over the node. The down provisionally
+// claims the pointer in the arena; pointer events dispatch leaf to root, so the
+// innermost recognizer claims first and recognizers further up the same bubble
+// path find the pointer taken and fail silently (no pressed state, no onPress -
+// ancestors keep hover only). The claim is stealable: a pan recognizer crossing
+// its slop takes the pointer and this press is cancelled through the arena.
+//
+// Moves and the up arrive on the frozen down path, so the press survives
+// leaving the node: while outside its window-relative bounds the pressed state
+// clears (visual feedback retracts), wandering back in restores it (press
+// retention), and only an up inside fires onPress. Enter/leave drive hover
+// alone. Non-primary buttons (right/middle) do not start a press. cancel() is
+// the external-cancel hook; it ends the press without firing. Options are read
+// at event time, so passing a component's reactive props object keeps handler
+// changes live. The host view must attach `ref` for retention bounds; without
+// it every position counts as inside (the up always fires).
+// Deliberately framework-agnostic (no theme, no styling): a candidate for
+// promotion into core once the recognizer family grows
+// (okf/plans/component-gestures.md).
 export function createPress(options: PressOptions) {
   let [pressed, setPressed] = createSignal(false)
   let [hovered, setHovered] = createSignal(false)
-  let token = Symbol()
   let node: { id: number } | null = null
   // The pointer this recognizer is tracking while a press is in flight, and
   // the retention state at the last move (read on up; the signal itself is
@@ -66,30 +54,28 @@ export function createPress(options: PressOptions) {
     return e.clientX >= b.x && e.clientX < b.x + b.width && e.clientY >= b.y && e.clientY < b.y + b.height
   }
 
-  let release = () => {
+  let disengage = () => {
     if (active != null) {
-      claims.delete(active)
-      releasePointerCapture(active)
+      release(active, owner)
       active = null
     }
   }
   let cancel = () => {
-    release()
+    disengage()
     setPressed(false)
   }
+  let owner = { cancel }
 
   // A press abandoned mid-flight (unmount during a drag) must not leave its
   // claim behind, or that pointer id could never press anything again.
-  onSettled(() => release)
+  onSettled(() => disengage)
 
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
       if (e.button != null && e.button !== 0) return
-      if (active == null && !claims.has(e.pointerId)) {
-        claims.set(e.pointerId, token)
+      if (active == null && claim(e.pointerId, owner)) {
         active = e.pointerId
         inside = true
-        if (node) setPointerCapture(node.id, e.pointerId)
         setPressed(true)
       }
       options.onPointerDown?.(e)
@@ -115,9 +101,6 @@ export function createPress(options: PressOptions) {
     },
     onPointerLeave: (e: PointerEvent) => {
       setHovered(false)
-      // Without a node there is no capture and no retention bounds: an
-      // uncaptured drag that leaves the box would otherwise strand the claim.
-      if (!node && active === e.pointerId) cancel()
       options.onPointerLeave?.(e)
     },
   }

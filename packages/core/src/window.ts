@@ -5,27 +5,17 @@ import { on, once } from "srt:events"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 import { scanForOrphans } from "./renderer"
 
-// ------ Pointer capture -----------------
+// ------ Pointer routing -----------------
 
-// Active pointer captures, pointerId -> nodeId. While a pointer is captured, its
-// move/up events dispatch straight to the captured node (bypassing hit testing),
-// so a drag keeps working when the pointer drifts off the element. Modeled on the
-// web setPointerCapture; capture auto-releases on pointerUp.
-let pointerCaptures = new Map<number, number>()
-
-/**
- * Routes all further move/up events for `pointerId` to `nodeId` until release,
- * regardless of what is under the pointer. Call from a pointerdown handler to own
- * a drag (e.g. a slider). Auto-releases on the matching pointerup.
- */
-export function setPointerCapture(nodeId: number, pointerId: number) {
-  pointerCaptures.set(pointerId, nodeId)
-}
-
-/** Ends a capture early. Not needed for the common case (pointerup releases it). */
-export function releasePointerCapture(pointerId: number) {
-  pointerCaptures.delete(pointerId)
-}
+// Hit path frozen at pointerDown, pointerId -> targets. While a pointer has an
+// active down, its moves and up dispatch along this path (same leaf-to-root
+// bubble) no matter where the pointer currently is, so every node under the
+// original down observes the whole gesture: a drag keeps working off-element,
+// and an ancestor recognizer (a scroller's pan) sees the moves it needs to
+// take over mid-gesture via the arena. There is no exclusive pointer capture;
+// gesture ownership is claim-based, above this layer. Enter/leave stay
+// hover-driven, and moves with no active down follow the live hit path.
+let downPaths = new Map<number, number[]>()
 
 // ------ Animation frames ----------------
 
@@ -244,6 +234,7 @@ export function attachWindow(_nodeId: number) {
     unsubDown = on(
       "pointerDown",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
+        downPaths.set(e.pointerId, targets)
         bubble(targets, "onPointerDown", e)
         // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
         // moves focus to a new node is not immediately blurred again.
@@ -255,28 +246,15 @@ export function attachWindow(_nodeId: number) {
     )
 
     unsubUp = on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-      let captured = pointerCaptures.get(e.pointerId)
-      if (captured != null) {
-        // Deliver to the captured node, then release (web auto-release on up).
-        e.stopPropagation = () => {}
-        getEventHandler(captured, "onPointerUp")?.(e)
-        pointerCaptures.delete(e.pointerId)
-        return
-      }
-      bubble(targets, "onPointerUp", e)
+      let frozen = downPaths.get(e.pointerId)
+      downPaths.delete(e.pointerId)
+      bubble(frozen ?? targets, "onPointerUp", e)
     })
 
     unsubMove = on(
       "pointerMove",
       ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        let captured = pointerCaptures.get(e.pointerId)
-        if (captured != null) {
-          // Captured drags get moves anywhere over the window, bypassing hit test.
-          e.stopPropagation = () => {}
-          getEventHandler(captured, "onPointerMove")?.(e)
-          return
-        }
-        bubble(targets, "onPointerMove", e)
+        bubble(downPaths.get(e.pointerId) ?? targets, "onPointerMove", e)
       },
     )
 
