@@ -172,6 +172,18 @@ impl View {
   pub(crate) fn paint_matrix(&self, size: WH) -> Matrix {
     self.transform(size).matrix
   }
+
+  // True when the paint matrix does more than translate: bounding-box
+  // composition must then walk corners through the matrix instead of taking
+  // the cheap translation-only path.
+  pub(crate) fn needs_matrix(&self) -> bool {
+    self.rotate.is_some()
+      || self.scale_x.is_some()
+      || self.scale_y.is_some()
+      || self.rotate_x.is_some()
+      || self.rotate_y.is_some()
+      || self.perspective.is_some()
+  }
 }
 
 impl Buildable for View {

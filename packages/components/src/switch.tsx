@@ -48,6 +48,7 @@ export function Switch(props: SwitchProps) {
 
   return (
     <view
+      ref={press.ref}
       repaintBoundary
       width={w()}
       height={h()}

@@ -46,8 +46,16 @@ declare module "flux:rendertree" {
    */
   export function measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
   /**
-   * The node's window-relative bounding box from the most recent layout, or
-   * `null` if it has no layout or has not been laid out yet.
+   * The node's bounding box from the most recent layout, relative to its
+   * nearest positioning context (an ancestor with an explicit
+   * `position="relative"`, falling back to the window), or `null` if it has no
+   * layout or has not been laid out yet. Transforms anywhere in the chain
+   * compose fully; the box is the axis-aligned bounds of the transformed quad.
    */
   export function getBoundingBox(id: number): { x: number, y: number, width: number, height: number } | null
+  /**
+   * Like getBoundingBox, but always window-relative (getBoundingClientRect
+   * semantics), for comparing against pointer event coordinates.
+   */
+  export function getBoundingBoxViewport(id: number): { x: number, y: number, width: number, height: number } | null
 }

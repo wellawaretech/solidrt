@@ -79,6 +79,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
                 : idleFill()
           return (
             <view
+              ref={press.ref}
               repaintBoundary
               flexGrow={1}
               flexBasis={0}

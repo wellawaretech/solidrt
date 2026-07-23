@@ -93,6 +93,7 @@ export function Button(props: ButtonProps) {
 
   return (
     <view
+      ref={press.ref}
       repaintBoundary
       flexDirection="row"
       alignItems="center"

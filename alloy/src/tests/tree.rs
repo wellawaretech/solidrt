@@ -292,3 +292,134 @@ fn referenced_texture_ids_covers_attached_and_detached() {
   assert!(!ids.contains(&20));
   assert_eq!(ids.len(), 1);
 }
+
+// --- bounding box -----------------------------------------------------------
+
+// Writes a computed layout directly: unit tests have no GPU/platform context,
+// so taffy never runs and placements are set by hand. The cache is seeded with
+// one entry because content_fallback treats an empty cache as "not laid out".
+fn place(tree: &mut RenderTree, id: u64, x: f32, y: f32, w: f32, h: f32) {
+  let l = tree.node_mut(id).layout_data_mut();
+  l.computed.location = taffy::Point { x, y };
+  l.computed.size = taffy::Size { width: w, height: h };
+  let input = taffy::tree::LayoutInput {
+    run_mode: taffy::RunMode::PerformLayout,
+    sizing_mode: taffy::SizingMode::InherentSize,
+    axis: taffy::RequestedAxis::Both,
+    known_dimensions: taffy::Size::NONE,
+    parent_size: taffy::Size::NONE,
+    available_space: taffy::Size {
+      width: taffy::AvailableSpace::Definite(w),
+      height: taffy::AvailableSpace::Definite(h),
+    },
+    vertical_margins_are_collapsible: taffy::Line::FALSE,
+  };
+  l.cache.store(&input, taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width: w, height: h }));
+}
+
+fn assert_box(b: BoundingBox, x: f32, y: f32, w: f32, h: f32) {
+  let eps = 1e-3;
+  assert!(
+    (b.x - x).abs() < eps && (b.y - y).abs() < eps && (b.width - w).abs() < eps && (b.height - h).abs() < eps,
+    "expected ({x}, {y}, {w}, {h}), got ({}, {}, {}, {})",
+    b.x,
+    b.y,
+    b.width,
+    b.height
+  );
+}
+
+#[test]
+fn bounding_box_composes_translations() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);
+  place(&mut tree, 3, 5.0, 5.0, 20.0, 20.0);
+
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_box(b, 15.0, 25.0, 20.0, 20.0);
+}
+
+#[test]
+fn bounding_box_scaled_ancestor() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_scale_x(0.5);
+  v.set_scale_y(0.5);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 50.0, 50.0, 100.0, 100.0);
+  place(&mut tree, 3, 10.0, 10.0, 20.0, 20.0);
+
+  // Scale 0.5 around the parent's center (50, 50): the child's (10, 10)-(30, 30)
+  // box maps to (30, 30)-(40, 40), then the parent location (50, 50) shifts it.
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_box(b, 80.0, 80.0, 10.0, 10.0);
+}
+
+#[test]
+fn bounding_box_rotated_ancestor() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_rotate(std::f32::consts::FRAC_PI_2);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  place(&mut tree, 3, 0.0, 0.0, 100.0, 20.0);
+
+  // A quarter turn around the parent's center (50, 50) stands the 100x20 bar
+  // upright along the parent's right edge.
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_box(b, 80.0, 0.0, 20.0, 100.0);
+}
+
+#[test]
+fn bounding_box_own_scale() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_scale_x(2.0);
+  v.set_scale_y(2.0);
+  tree.create_node(2, v.with_layout());
+  tree.insert_node(1, 2, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 50.0, 50.0);
+
+  // The node's own transform counts (getBoundingClientRect semantics): scale 2
+  // around its center (25, 25) grows the box symmetrically past the origin.
+  let b = tree.bounding_box_viewport(2).expect("laid out");
+  assert_box(b, -25.0, -25.0, 100.0, 100.0);
+}
+
+#[test]
+fn bounding_box_translate_and_scroll_fast_path() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_x(5.0);
+  v.set_scroll_y(10.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 20.0, 20.0, 100.0, 100.0);
+  place(&mut tree, 3, 0.0, 0.0, 10.0, 10.0);
+
+  // No matrix props: translate adds, scroll subtracts, layout position adds.
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_box(b, 25.0, 10.0, 10.0, 10.0);
+}

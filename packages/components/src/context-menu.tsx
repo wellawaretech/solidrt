@@ -78,6 +78,7 @@ export function ContextMenu(props: ContextMenuProps) {
     let press = createPress({ onPress: () => choose(p.item) })
     return (
       <view
+        ref={press.ref}
         repaintBoundary
         flexDirection="row"
         alignItems="center"

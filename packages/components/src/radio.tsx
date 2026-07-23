@@ -85,6 +85,7 @@ export function Radio(props: RadioProps) {
 
   return (
     <view
+      ref={press.ref}
       repaintBoundary
       flexDirection="row"
       alignItems="center"

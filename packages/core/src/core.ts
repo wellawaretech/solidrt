@@ -64,14 +64,25 @@ export interface BoundingBox {
 }
 
 /**
- * Returns the node's window-relative bounding box from the most recently
- * computed layout, or `null` if the node has no layout or has not been laid out
- * yet. This is a snapshot read, not reactive: call it inside `onLayout` (or an
- * event handler) to get values for the current frame. Phase 1 composes only
- * translations; x/y are wrong when a rotate/scale sits anywhere above the node.
+ * Returns the node's bounding box from the most recently computed layout,
+ * relative to its nearest positioning context (an ancestor with an explicit
+ * `position="relative"`, falling back to the window), or `null` if the node
+ * has no layout or has not been laid out yet. This is a snapshot read, not
+ * reactive: call it inside `onLayout` (or an event handler) to get values for
+ * the current frame. Transforms anywhere in the chain (including the node's
+ * own) compose fully; the box is the axis-aligned bounds of the transformed
+ * quad.
  */
 export function getBoundingBox(node: { id: number }): BoundingBox | null {
   return tree.getBoundingBox(node.id)
+}
+
+/**
+ * Like getBoundingBox, but always window-relative (getBoundingClientRect
+ * semantics), the frame pointer event clientX/clientY are reported in.
+ */
+export function getBoundingBoxViewport(node: { id: number }): BoundingBox | null {
+  return tree.getBoundingBoxViewport(node.id)
 }
 
 /**

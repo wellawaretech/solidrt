@@ -48,6 +48,7 @@ export function Checkbox(props: CheckboxProps) {
 
   return (
     <view
+      ref={press.ref}
       repaintBoundary
       width={size()}
       height={size()}

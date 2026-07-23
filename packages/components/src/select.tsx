@@ -52,6 +52,7 @@ export function Select(props: SelectProps) {
     let press = createPress({ onPress: () => choose(p.option.value) })
     return (
       <view
+        ref={press.ref}
         repaintBoundary
         flexDirection="row"
         alignItems="center"
@@ -161,7 +162,10 @@ export function Select(props: SelectProps) {
 
   return (
     <view
-      ref={(n: { id: number }) => (trigger = n)}
+      ref={(n: { id: number }) => {
+        press.ref(n)
+        trigger = n
+      }}
       repaintBoundary
       flexDirection="row"
       alignItems="center"

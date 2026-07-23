@@ -1,5 +1,6 @@
 import { createScroll } from "@solidrt/core"
 import type { LayoutProps, PointerEvent, PointerProps, WheelEvent } from "@solidrt/core"
+import { isPressClaimed } from "./press"
 import type { StyleProps } from "./types"
 
 export interface ScrollViewProps extends PointerProps {
@@ -34,6 +35,11 @@ export function ScrollView(props: ScrollViewProps) {
   let last: { x: number; y: number } | null = null
 
   let onPointerDown = (e: PointerEvent) => {
+    // A press-claimed pointer is captured by the pressed node: this viewport
+    // would see the bubbled down but never the up, leaving the drag armed
+    // forever. Until the pan recognizer can steal such a pointer on slop, a
+    // drag that starts on a pressable does not scroll (the wheel still does).
+    if (isPressClaimed(e.pointerId)) return
     last = { x: e.clientX, y: e.clientY }
   }
   let onPointerMove = (e: PointerEvent) => {

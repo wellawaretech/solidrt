@@ -138,6 +138,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("setTextInputActive")?;
     decl.declare("measureText")?;
     decl.declare("getBoundingBox")?;
+    decl.declare("getBoundingBoxViewport")?;
     Ok(())
   }
 
@@ -222,6 +223,11 @@ impl ModuleDef for RenderTreeModule {
       tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
     })?;
 
+    let tree_ref = tree.clone();
+    let get_bounding_box_viewport = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
+      tree_ref.borrow().bounding_box_viewport(id).map(JsBoundingBox)
+    })?;
+
     let cmd_tx = alloy_cmd_tx.clone();
     let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
       cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
@@ -284,6 +290,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("setTextInputActive", set_text_input_active)?;
     exports.export("measureText", measure_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;
+    exports.export("getBoundingBoxViewport", get_bounding_box_viewport)?;
     Ok(())
   }
 }

@@ -57,6 +57,7 @@ export function NavShell(props: NavShellProps) {
     let press = createPress({ onPress: () => select(p.item.value) })
     return (
       <view
+        ref={press.ref}
         repaintBoundary
         flexDirection="column"
         alignItems="center"
@@ -113,6 +114,7 @@ export function NavShell(props: NavShellProps) {
             let press = createPress({ onPress: () => select(item.value) })
             return (
               <view
+                ref={press.ref}
                 repaintBoundary
                 flexDirection="row"
                 alignItems="center"

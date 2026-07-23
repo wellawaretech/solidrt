@@ -39,7 +39,10 @@ export function Pressable(props: PressableProps) {
 
   return (
     <view
-      ref={props.ref}
+      ref={(n: { id: number }) => {
+        press.ref(n)
+        props.ref?.(n)
+      }}
       repaintBoundary
       {...props.layout}
       x={style()?.x}
@@ -51,7 +54,7 @@ export function Pressable(props: PressableProps) {
       onPointerLeave={press.handlers.onPointerLeave}
       onPointerDown={press.handlers.onPointerDown}
       onPointerUp={press.handlers.onPointerUp}
-      onPointerMove={props.onPointerMove}
+      onPointerMove={press.handlers.onPointerMove}
       onWheel={props.onWheel}
       onFocus={props.onFocus}
       onBlur={props.onBlur}

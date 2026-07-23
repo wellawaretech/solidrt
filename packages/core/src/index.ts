@@ -1,5 +1,5 @@
 export * from "./renderer"
-export { setFocus, getFocusedNodeId, measureText, getBoundingBox } from "./core"
+export { setFocus, getFocusedNodeId, measureText, getBoundingBox, getBoundingBoxViewport } from "./core"
 export type { BoundingBox } from "./core"
 export { parseColor, mixColors, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"

@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use taffy::{NodeId, Size};
 
-use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind};
+use crate::impellers::Matrix;
+use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind, WH, XY};
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -253,33 +254,46 @@ impl RenderTree {
   /// context ancestor, yielding coordinates in that ancestor's frame; otherwise
   /// it continues to the root.
   ///
-  /// Phase 1: only translations compose into the result - each ancestor's
-  /// layout position, plus View `pos` (forward) and `scroll` (inverse). A View
-  /// `rotate` or `scale` anywhere in the chain is ignored, so the reported x/y
-  /// is wrong under rotation/scaling. Size and local offset come from the kind's
-  /// `local_bounds`. TODO: compose full transforms by walking the four corners
-  /// up through each ancestor, mirroring hit testing.
+  /// The four corners of the node's box are carried up through every ancestor:
+  /// layout position, scroll (inverse), and the full View paint matrix
+  /// (translate, rotate, scale, 3D) all compose, the forward companion of the
+  /// hit-test descent. The result is the axis-aligned bounds of the transformed
+  /// quad (CSS getBoundingClientRect semantics). Corners transform on the
+  /// z = 0 plane with the homogeneous divide, the same approximation hit
+  /// testing uses under perspective. Views without matrix props keep the cheap
+  /// translation-only path.
   fn compute_bounding_box(&self, id: u64, stop_at_context: bool) -> Option<BoundingBox> {
     let node = self.try_node(id)?;
     let local = node.kind.local_bounds(self.content_fallback(id)?);
-    let width = local.width;
-    let height = local.height;
-    let mut x = local.x;
-    let mut y = local.y;
+
+    // A View's own paint matrix already contains its translate (which is what
+    // local_bounds reports as x/y), so the matrix path starts from the plain
+    // layout box and applies the matrix instead; every other case keeps the
+    // kind's local offset.
+    let mut corners = match &node.kind {
+      ElementKind::View(v) if v.needs_matrix() => {
+        let m = v.paint_matrix(WH::new(local.width, local.height));
+        rect_corners(0.0, 0.0, local.width, local.height).map(|p| transform_point(&m, p))
+      }
+      _ => rect_corners(local.x, local.y, local.width, local.height),
+    };
 
     // Detached nodes have no layout placement; they inherit position from the
     // ancestor walk below.
     if let Some(layout) = node.layout.as_ref() {
-      x += layout.computed.location.x;
-      y += layout.computed.location.y;
+      for p in corners.iter_mut() {
+        p.x += layout.computed.location.x;
+        p.y += layout.computed.location.y;
+      }
     }
 
-    // Ascend, adding each ancestor's layout position and View translate, and
-    // removing any scroll the ancestor applies to its children. For the
-    // container-relative box, stop before folding in the first positioning
-    // context: the result is then expressed in that ancestor's frame. Absolute
-    // ancestors are deliberately transparent here - their offset is still
-    // accumulated, they just never act as the stop.
+    // Ascend. Per ancestor, in application order: remove any scroll it applies
+    // to its children, apply its paint matrix (or just its translate when no
+    // matrix props are set), then add its layout position to enter the next
+    // frame up. For the container-relative box, stop before folding in the
+    // first positioning context: the result is then expressed in that
+    // ancestor's frame. Absolute ancestors are deliberately transparent here -
+    // their offset is still accumulated, they just never act as the stop.
     let mut cur_id = id;
     loop {
       let Some(parent_id) = self.try_node(cur_id).and_then(|n| n.parent) else {
@@ -291,24 +305,49 @@ impl RenderTree {
       if stop_at_context && parent.layout.as_ref().is_some_and(|l| l.positioning_context) {
         break;
       }
-      if let Some(parent_layout) = parent.layout.as_ref() {
-        x += parent_layout.computed.location.x;
-        y += parent_layout.computed.location.y;
-      }
       if let ElementKind::View(v) = &parent.kind {
-        if let Some(p) = v.translate {
-          x += p.x;
-          y += p.y;
-        }
         if let Some(s) = v.scroll {
-          x -= s.x;
-          y -= s.y;
+          for p in corners.iter_mut() {
+            p.x -= s.x;
+            p.y -= s.y;
+          }
+        }
+        if v.needs_matrix() {
+          let size = parent
+            .layout
+            .as_ref()
+            .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
+            .or_else(|| self.content_fallback(parent_id).map(|s| WH::new(s.width, s.height)))
+            .unwrap_or_default();
+          let m = v.paint_matrix(size);
+          for p in corners.iter_mut() {
+            *p = transform_point(&m, *p);
+          }
+        } else if let Some(t) = v.translate {
+          for p in corners.iter_mut() {
+            p.x += t.x;
+            p.y += t.y;
+          }
+        }
+      }
+      if let Some(parent_layout) = parent.layout.as_ref() {
+        for p in corners.iter_mut() {
+          p.x += parent_layout.computed.location.x;
+          p.y += parent_layout.computed.location.y;
         }
       }
       cur_id = parent_id;
     }
 
-    Some(BoundingBox { x, y, width, height })
+    let mut min = corners[0];
+    let mut max = corners[0];
+    for p in &corners[1..] {
+      min.x = min.x.min(p.x);
+      min.y = min.y.min(p.y);
+      max.x = max.x.max(p.x);
+      max.y = max.y.max(p.y);
+    }
+    Some(BoundingBox { x: min.x, y: min.y, width: max.x - min.x, height: max.y - min.y })
   }
 
   /// Fallback size for shapes without explicit w/h: the nearest laid-out node's
@@ -517,6 +556,25 @@ impl RenderTree {
       children,
     })
   }
+}
+
+// The four corners of a rectangle, clockwise from top-left.
+fn rect_corners(x: f32, y: f32, w: f32, h: f32) -> [XY; 4] {
+  [XY::new(x, y), XY::new(x + w, y), XY::new(x + w, y + h), XY::new(x, y + h)]
+}
+
+// Forward companion of View::transform_to_local: applies a paint matrix to a
+// point on the z = 0 plane with the homogeneous divide. A degenerate w (only
+// reachable under perspective) leaves the point untransformed rather than
+// poisoning the box with infinities.
+fn transform_point(m: &Matrix, p: XY) -> XY {
+  let x = p.x * m.m11 + p.y * m.m21 + m.m41;
+  let y = p.x * m.m12 + p.y * m.m22 + m.m42;
+  let w = p.x * m.m14 + p.y * m.m24 + m.m44;
+  if w == 0.0 {
+    return p;
+  }
+  XY::new(x / w, y / w)
 }
 
 /// One node of a RenderTree::snapshot: kind, window-relative box, text content
