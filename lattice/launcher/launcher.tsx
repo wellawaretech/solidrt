@@ -14,6 +14,7 @@ import {
   createEffect,
   untrack,
   createLinearGradient,
+  onBack,
 } from "@solidrt/core"
 import { createCamera, cameraDevices, type BarcodeResult } from "@solidrt/core/camera"
 import { For, Show, Switch, Match, createMemo } from "solid-js"
@@ -774,6 +775,20 @@ function App() {
     setScreen("home")
     connect(normalizeAddress(addr))
   }
+
+  // Back pops toward home before it exits: sub-screens first, then the
+  // narrow layout's detail screen. At home nothing prevents, so the default
+  // action runs - exit() at the launcher root quits the client (backgrounds
+  // it on Android, the stock back-at-root feel).
+  onBack((e) => {
+    if (screen() !== "home") {
+      e.preventDefault()
+      setScreen("home")
+    } else if (!twoPane() && selectedApp() != null) {
+      e.preventDefault()
+      setSelectedId(null)
+    }
+  })
 
   let manualDraft = ""
 

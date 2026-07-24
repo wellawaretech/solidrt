@@ -290,6 +290,11 @@ impl App {
               }
             }
           }
+          AlloyCommand::Background => {
+            if !window.minimize() {
+              log::warn!("background (minimize) failed: {}", crate::sdl_utils::sdl_error());
+            }
+          }
         }
       }
 

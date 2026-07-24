@@ -1,5 +1,6 @@
 use impellers::{ISize, Rect};
 use sdl3::event::Event as SdlEvent;
+use sdl3::keyboard::Scancode;
 
 use crate::sdl_utils;
 
@@ -10,6 +11,10 @@ pub enum AlloyCommand {
   SetCursor(sdl3::mouse::SystemCursor),
   SetCursorVisible(bool),
   SetTextInputActive(bool),
+  // Leave the app at the OS level without dying: on Android SDL's minimize
+  // routes to Activity.moveTaskToBack, the platform's back-at-root
+  // convention. Desktop quits by process exit instead and never sends this.
+  Background,
 }
 
 // Pointer kind. Combined with a u64 pointer_id, uniquely identifies an
@@ -74,6 +79,12 @@ pub struct GamepadState {
 #[derive(Clone)]
 pub enum AlloyEvent {
   Quit,
+  // The user's back intent: Android's back button/gesture (AC_BACK), or the
+  // desktop chord (see `is_back_trigger`). Unlike Quit this is a request, not
+  // a command: it surfaces to the app as the preventable `back` event (in-app
+  // navigation handles it there), and only an unprevented dispatch (or an
+  // unresponsive engine) falls through to the default action: exit.
+  Back,
   WindowFocus,
   WindowBlur,
   // One key transition, already translated to the W3C UI Events vocabulary
@@ -188,23 +199,55 @@ fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
   }
 }
 
+// The user's back triggers, normalized to AlloyEvent::Back before the generic
+// key path so apps never additionally see them as keydown/keyup: on Android
+// the system back button and back swipe arrive as AC_BACK (the only signal
+// with SDL_ANDROID_TRAP_BACK_BUTTON=1); on every platform the client-owned
+// chord is Ctrl+Shift+Backspace (Cmd+Shift+Backspace on macOS). Desktop
+// keyboards have a real BrowserBack media key that also arrives as AC_BACK,
+// so that mapping is Android-only - on desktop it stays a normal
+// "BrowserBack" key event.
+fn is_back_trigger(scancode: Option<Scancode>, keymod: sdl3::keyboard::Mod) -> bool {
+  #[cfg(target_os = "android")]
+  if scancode == Some(Scancode::AcBack) {
+    return true;
+  }
+  let m: Modifiers = keymod.into();
+  let chord_mod = if cfg!(target_os = "macos") { m.meta } else { m.ctrl };
+  chord_mod && m.shift && scancode == Some(Scancode::Backspace)
+}
+
 pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
-    SdlEvent::KeyDown { keycode, scancode, keymod, repeat, .. } => Some(AlloyEvent::Key {
-      down: true,
-      key: crate::keymap::w3c_key(keycode, scancode, keymod),
-      code: crate::keymap::w3c_code(scancode),
-      modifiers: keymod.into(),
-      repeat,
-    }),
-    SdlEvent::KeyUp { keycode, scancode, keymod, repeat, .. } => Some(AlloyEvent::Key {
-      down: false,
-      key: crate::keymap::w3c_key(keycode, scancode, keymod),
-      code: crate::keymap::w3c_code(scancode),
-      modifiers: keymod.into(),
-      repeat,
-    }),
+    SdlEvent::KeyDown { keycode, scancode, keymod, repeat, .. } => {
+      if is_back_trigger(scancode, keymod) {
+        // Repeats collapse: holding the trigger is one request.
+        return if repeat { None } else { Some(AlloyEvent::Back) };
+      }
+      Some(AlloyEvent::Key {
+        down: true,
+        key: crate::keymap::w3c_key(keycode, scancode, keymod),
+        code: crate::keymap::w3c_code(scancode),
+        modifiers: keymod.into(),
+        repeat,
+      })
+    }
+    SdlEvent::KeyUp { keycode, scancode, keymod, repeat, .. } => {
+      // Swallow the trigger's release too. Best-effort for the chord: with the
+      // modifiers already released, a stray keyup "Backspace" reaches apps,
+      // which is harmless (nothing acts on an unmatched keyup).
+      if is_back_trigger(scancode, keymod) {
+        return None;
+      }
+      Some(AlloyEvent::Key {
+        down: false,
+        key: crate::keymap::w3c_key(keycode, scancode, keymod),
+        code: crate::keymap::w3c_code(scancode),
+        modifiers: keymod.into(),
+        repeat,
+      })
+    }
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => Some(AlloyEvent::WindowFocus),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => Some(AlloyEvent::WindowBlur),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {

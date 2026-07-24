@@ -31,6 +31,17 @@ declare module "srt:events" {
   export function once(event: string, callback: (data: any) => void): () => void
 }
 
+// The running application's own surface (lattice), present in every build.
+declare module "srt:app" {
+  /**
+   * Leave the current app, unconditionally: back to the launcher in a dev
+   * client, quit when standalone or at the launcher root (on Android the
+   * client backgrounds instead of dying). The default action of an
+   * unprevented `back` event; prefer the @solidrt/core re-export.
+   */
+  export function exit(): void
+}
+
 // Dev-server control surface (lattice). Present only in dev/go builds; in other
 // builds `available` is false and the functions are no-ops.
 declare module "srt:dev" {

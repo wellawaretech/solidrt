@@ -25,6 +25,39 @@ enum EngineCmd {
   Reload { code: String, app_id: Option<String> },
 }
 
+// What "exit the current app" means, decided by host context (see
+// okf/plans/exit-to-launcher.md): with the launcher hosting an app (or the
+// BSOD), Stop returns to the launcher; at the launcher root, and always in
+// launcher-less runtime builds, the client quits - process exit on desktop,
+// backgrounding the activity on Android (the platform's back-at-root
+// convention). Backs the srt:app exit() verb, which is core's default action
+// for an unprevented `back` event.
+#[derive(Clone)]
+struct ExitPolicy {
+  #[cfg(feature = "go")]
+  launcher_active: Arc<std::sync::atomic::AtomicBool>,
+  #[cfg(feature = "go")]
+  engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
+  alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
+}
+
+impl ExitPolicy {
+  fn exit(&self) {
+    #[cfg(feature = "go")]
+    if !self.launcher_active.load(Ordering::Relaxed) {
+      // A failed send means the engine loop is already shutting down; there
+      // is nothing left to stop.
+      let _ = self.engine_tx.send(EngineCmd::Stop);
+      return;
+    }
+    if cfg!(target_os = "android") {
+      let _ = self.alloy_cmd_tx.send(alloy::AlloyCommand::Background);
+    } else {
+      std::process::exit(0);
+    }
+  }
+}
+
 use alloy::impellers::ISize;
 use alloy::rendertree::{FontPayload, PlatformContext, RenderTree};
 use alloy::AlloyEvent;
@@ -299,6 +332,12 @@ fn ui_thread(
     let local = tokio::task::LocalSet::new();
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
+    // The back watchdog's probe handle and its engine-change guard: bumped on
+    // every engine build so a watchdog armed against a dead app never fires
+    // into its successor.
+    let current_exec_probe = current_exec.clone();
+    let engine_generation = Arc::new(AtomicU64::new(0));
+    let engine_generation_events = engine_generation.clone();
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
@@ -440,6 +479,33 @@ fn ui_thread(
             // Tick's frame is already the next present index (one past the
             // last FrameRendered), so no +1 here.
             AlloyEvent::Tick { frame, .. } => ui_runtime.frame(frame),
+            // The back intent dispatches to JS like any window event, backed
+            // by a liveness watchdog: the emit just queued runs synchronously
+            // on the JS executor, so a probe queued behind it proves the
+            // engine processed the dispatch (a handler prevented it, or
+            // exit() already ran). No probe by the deadline means the engine
+            // is wedged - and a blocked JS thread also blocks EngineCmd
+            // handling here, so returning to the launcher is impossible; quit
+            // the process so the user is never trapped. Skipped when the
+            // engine changed meanwhile: that request belonged to an app that
+            // is already gone.
+            AlloyEvent::Back => {
+              ui_runtime.event(&AlloyEvent::Back);
+              let alive = Arc::new(std::sync::atomic::AtomicBool::new(false));
+              if let Some(exec) = current_exec_probe.borrow().as_ref() {
+                let probe = alive.clone();
+                exec.exec(move |_| probe.store(true, Ordering::Relaxed));
+              }
+              let generation = engine_generation_events.load(Ordering::Relaxed);
+              let generations = engine_generation_events.clone();
+              tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if !alive.load(Ordering::Relaxed) && generations.load(Ordering::Relaxed) == generation {
+                  log::warn!("[srt] app did not respond to back; exiting");
+                  std::process::exit(1);
+                }
+              });
+            }
             event => ui_runtime.event(&event),
           }
         }
@@ -448,6 +514,17 @@ fn ui_thread(
 
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
+    // True while the current engine runs the launcher itself (set at each
+    // engine build); exit() at the launcher root quits instead of Stop-ing.
+    #[cfg(feature = "go")]
+    let launcher_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exit_policy = ExitPolicy {
+      #[cfg(feature = "go")]
+      launcher_active: launcher_active.clone(),
+      #[cfg(feature = "go")]
+      engine_tx: cmd_tx.clone(),
+      alloy_cmd_tx: alloy_cmd_tx.clone(),
+    };
     // The dev-server client: connection supervisor, recents, proxy state and the
     // srt.dev surface. None in playback mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
@@ -552,7 +629,19 @@ fn ui_thread(
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .module_override("srt:apps", plugins::apps::SrtAppsModule)
+        .module_override("srt:app", plugins::app::SrtAppModule)
         .userdata(clock.clone());
+      // The running app's own surface (exit()), in every build: the
+      // production runtime exits too, it just always quits.
+      let builder = {
+        let policy = exit_policy.clone();
+        builder.plugin(move |ctx| {
+          plugins::app::install(
+            &ctx,
+            plugins::app::AppControl::new(plugins::app::AppControlInner { exit: Box::new(move || policy.exit()) }),
+          )
+        })
+      };
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
       // The launcher's app-management surface over the version store; the
@@ -570,6 +659,12 @@ fn ui_thread(
       };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
+      engine_generation.fetch_add(1, Ordering::Relaxed);
+      #[cfg(feature = "go")]
+      launcher_active.store(
+        matches!(&current_app, AppSource::Text(src) if src.as_str() == LAUNCHER_SOURCE),
+        Ordering::Relaxed,
+      );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // Replay the current connection state into this engine so a reload (e.g.

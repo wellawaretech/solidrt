@@ -4154,6 +4154,7 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on, once } from "srt:events";
+import { exit } from "srt:app";
 
 // packages/core/src/core.ts
 import * as tree from "flux:rendertree";
@@ -4301,6 +4302,13 @@ function onLayout(fn) {
   onCleanup(unsubscribe);
   return unsubscribe;
 }
+var backHandlers = new Set;
+function onBack(fn) {
+  backHandlers.add(fn);
+  let cleanup2 = () => backHandlers.delete(fn);
+  onCleanup(cleanup2);
+  return cleanup2;
+}
 function attachWindow(_nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
@@ -4311,6 +4319,7 @@ function attachWindow(_nodeId) {
   let unsubWheel = null;
   let unsubKeyDown = null;
   let unsubKeyUp = null;
+  let unsubBack = null;
   let unsubTextInput = null;
   let unsubKeyboardVisibility = null;
   let unsubRefreshRate = null;
@@ -4416,6 +4425,18 @@ function attachWindow(_nodeId) {
         getEventHandler(id, "onKeyUp")?.(e);
       }
     });
+    unsubBack = on("back", () => {
+      let prevented = false;
+      let e = {
+        preventDefault: () => {
+          prevented = true;
+        }
+      };
+      for (let fn of [...backHandlers])
+        fn(e);
+      if (!prevented)
+        exit();
+    });
     unsubTextInput = on("textInput", (e) => {
       let id = getFocusedNodeId();
       if (id != null) {
@@ -4451,6 +4472,8 @@ function attachWindow(_nodeId) {
       unsubKeyDown();
     if (unsubKeyUp)
       unsubKeyUp();
+    if (unsubBack)
+      unsubBack();
     if (unsubTextInput)
       unsubTextInput();
     if (unsubKeyboardVisibility)
@@ -9731,6 +9754,15 @@ function App() {
     setScreen("home");
     connect(normalizeAddress(addr));
   };
+  onBack((e3) => {
+    if (screen() !== "home") {
+      e3.preventDefault();
+      setScreen("home");
+    } else if (!twoPane() && selectedApp() != null) {
+      e3.preventDefault();
+      setSelectedId(null);
+    }
+  });
   let manualDraft = "";
   return createComponent2(Window, {
     title: "SolidRT",

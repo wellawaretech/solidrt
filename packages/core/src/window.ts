@@ -2,8 +2,18 @@ import { createSignal, onCleanup, onSettled, flush } from "@solidjs/signals"
 import { requestFrame } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
+import { exit } from "srt:app"
 import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
 import { scanForOrphans } from "./renderer"
+
+/**
+ * Leaves the current app, unconditionally: back to the launcher in a dev
+ * client, quitting when standalone or at the launcher itself (on Android the
+ * client backgrounds instead of dying). The default action of an unprevented
+ * `back` event; call it directly to exit programmatically, e.g. after
+ * intercepting back for an unsaved-changes dialog.
+ */
+export { exit }
 
 // ------ Pointer routing -----------------
 
@@ -179,6 +189,30 @@ export function onWindowBlur(fn: () => void) {
   return unsubscribe
 }
 
+// ------ Back ----------------
+
+export type BackEvent = { preventDefault: () => void }
+
+// App handlers for the window-level back event, run in registration order.
+// Kept in a local registry (not per-handler bus subscriptions) so the default
+// action runs exactly once, after every handler has had its say.
+let backHandlers = new Set<(e: BackEvent) => void>()
+
+/**
+ * Calls `fn` on the user's back intent (Android back button/gesture, the
+ * desktop dev chord). Call `e.preventDefault()` when back means in-app
+ * navigation right now (close a modal, previous screen); unprevented, the
+ * default action runs: exit(). Apps without a handler exit on back
+ * everywhere, which is the correct zero-effort default.
+ * Returns a cleanup function; also auto-cleans within a reactive scope.
+ */
+export function onBack(fn: (e: BackEvent) => void) {
+  backHandlers.add(fn)
+  let cleanup = () => backHandlers.delete(fn)
+  onCleanup(cleanup)
+  return cleanup
+}
+
 // ------ Window ----------------
 
 export function attachWindow(_nodeId: number) {
@@ -191,6 +225,7 @@ export function attachWindow(_nodeId: number) {
   let unsubWheel: () => void = null!
   let unsubKeyDown: () => void = null!
   let unsubKeyUp: () => void = null!
+  let unsubBack: () => void = null!
   let unsubTextInput: () => void = null!
   let unsubKeyboardVisibility: () => void = null!
   let unsubRefreshRate: () => void = null!
@@ -304,6 +339,18 @@ export function attachWindow(_nodeId: number) {
       }
     })
 
+    unsubBack = on("back", () => {
+      let prevented = false
+      let e: BackEvent = {
+        preventDefault: () => {
+          prevented = true
+        },
+      }
+      // Copy first: a handler may unregister (itself or others) mid-dispatch.
+      for (let fn of [...backHandlers]) fn(e)
+      if (!prevented) exit()
+    })
+
     unsubTextInput = on("textInput", (e: any) => {
       let id = getFocusedNodeId()
       if (id != null) {
@@ -339,6 +386,7 @@ export function attachWindow(_nodeId: number) {
     if (unsubWheel) unsubWheel()
     if (unsubKeyDown) unsubKeyDown()
     if (unsubKeyUp) unsubKeyUp()
+    if (unsubBack) unsubBack()
     if (unsubTextInput) unsubTextInput()
     if (unsubKeyboardVisibility) unsubKeyboardVisibility()
     if (unsubRefreshRate) unsubRefreshRate()

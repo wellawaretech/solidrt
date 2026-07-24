@@ -80,6 +80,11 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         emit_sticky(&ctx, "displayOrientation", obj);
       });
     }
+    // The user's back intent (Android back button/gesture, the desktop
+    // chord), window-level: it has no hit position or target node. Core owns
+    // the default action (exit() when no handler prevented it); the runner
+    // arms the unresponsive-engine watchdog on its side.
+    AlloyEvent::Back => emit_named(exec, "back"),
     AlloyEvent::Key { down, key, code, modifiers, repeat } => {
       emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat)
     }
