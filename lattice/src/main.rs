@@ -144,7 +144,7 @@ fn main() {
   let mut stats = false;
   let mut dev_server: Option<String> = None;
   let mut data_root: Option<String> = None;
-  let mut client: Option<String> = None;
+  let mut client: Option<u32> = None;
   let mut source_path: Option<String> = None;
   while let Some(arg) = args.next() {
     if arg == "--playback" {
@@ -152,7 +152,13 @@ fn main() {
     } else if arg == "--data-root" {
       data_root = Some(args.next().expect("--data-root requires a directory path"));
     } else if arg == "--client" {
-      client = Some(args.next().expect("--client requires a name"));
+      client = Some(
+        args
+          .next()
+          .expect("--client requires a number")
+          .parse()
+          .expect("--client value must be a non-negative integer"),
+      );
     } else if arg == "--script" {
       script_path = Some(args.next().expect("--script requires a file path"));
     } else if arg == "--stats" {

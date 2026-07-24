@@ -4,9 +4,9 @@
 // Three layouts, picked by how the process was launched:
 //
 // Explicit --data-root (opt-in; the CLI forwards it only when the user passes
-// one). Multiple named clients, multiple apps:
+// one). Multiple numbered clients, multiple apps:
 //
-//   <data-root>/clients/<name>/
+//   <data-root>/client<N>/
 //     identity/          client identity (persisted iroh key)
 //     apps/<app-id>/
 //       data/            the app's mutable sandbox (sqlite, file() writes)
@@ -22,16 +22,18 @@
 //   <pref SolidRT/app-id>/    e.g. ~/.local/share/SolidRT/com.example.app/
 //     identity/  data/  cache/  logs/
 //
-// Generic go client (neither): one client per device, many apps, sharing
-// the same vendor level:
+// Generic go client (neither): many numbered clients, many apps, sharing the
+// same vendor level:
 //
-//   <pref SolidRT/go>/
+//   <pref SolidRT/go>/client<N>/
 //     identity/  apps/<app-id>/data/  apps/<app-id>/cache/  logs/
 //
-// --client selects a tree only under an explicit --data-root; elsewhere it is
-// ignored with a warning. Data always lives on the machine the client process
-// runs on; remote dev clients resolve their own local root, never the dev
-// server's project dir.
+// --client <N> selects a tree under an explicit --data-root or the generic go
+// client (default 0; the number is chosen by the user, never auto-allocated,
+// so a client's data and identity stay put across runs). A packed app has
+// exactly one client, so there it is ignored with a warning. Data always
+// lives on the machine the client process runs on; remote dev clients
+// resolve their own local root, never the dev server's project dir.
 
 use std::path::PathBuf;
 
@@ -39,13 +41,14 @@ use std::path::PathBuf;
 /// (from the pack manifest). The CLI guarantees a non-empty, path-safe id.
 pub struct StorageSpec {
   pub data_root: Option<PathBuf>,
-  pub client: Option<String>,
+  pub client: Option<u32>,
   pub app_id: Option<String>,
 }
 
 /// The resolved per-client directories every storage consumer reads from.
 pub struct Storage {
-  // The client's root: <data-root>/clients/<name>, or the pref path itself.
+  // The client's root: <data-root or go pref>/client<N>, or the pref path
+  // itself for a packed app.
   pub client_dir: PathBuf,
   // The app sandbox the process is anchored in (.../data).
   pub data_dir: PathBuf,
@@ -84,8 +87,8 @@ impl Storage {
   }
 }
 
-// A single path component under our control (client name, app id): no
-// separators or traversal, so a flag or manifest value cannot escape the tree.
+// A single path component under our control (app id): no separators or
+// traversal, so a flag or manifest value cannot escape the tree.
 pub(crate) fn safe_component(name: &str) -> bool {
   !name.is_empty()
     && name.len() <= 255
@@ -108,32 +111,33 @@ fn checked_component(name: Option<&str>, what: &str) -> String {
 /// Resolve the tree for a spec and create its directories. Pure with respect
 /// to globals; `init` stores the result for process-wide consumers.
 pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
-  if spec.client.is_some() && spec.data_root.is_none() {
-    log::warn!("[srt] --client only applies with --data-root, ignoring");
-  }
+  let client = || format!("client{}", spec.client.unwrap_or(0));
+  let pref = |app: &str| match alloy::sdl3::filesystem::get_pref_path("SolidRT", app) {
+    Ok(dir) => Some(dir),
+    Err(e) => {
+      log::warn!("[srt] no writable pref path: {e}");
+      None
+    }
+  };
   let (client_dir, flat) = match &spec.data_root {
     // Absolutize against the launch cwd: the runtime chdirs into the app
     // sandbox right after resolution, which must not move the root.
     Some(path) => match std::path::absolute(path) {
-      Ok(root) => (root.join("clients").join(checked_component(spec.client.as_deref(), "client name")), false),
+      Ok(root) => (root.join(client()), false),
       Err(e) => {
         log::warn!("[srt] cannot resolve data root {}: {e}", path.display());
         return None;
       }
     },
-    None => {
-      let (app, flat) = match &spec.app_id {
-        Some(app_id) => (checked_component(Some(app_id), "app id"), true),
-        None => ("go".to_string(), false),
-      };
-      match alloy::sdl3::filesystem::get_pref_path("SolidRT", &app) {
-        Ok(dir) => (dir, flat),
-        Err(e) => {
-          log::warn!("[srt] no writable pref path: {e}");
-          return None;
+    None => match &spec.app_id {
+      Some(app_id) => {
+        if spec.client.is_some() {
+          log::warn!("[srt] --client does not apply to a packed app, ignoring");
         }
+        (pref(&checked_component(Some(app_id), "app id"))?, true)
       }
-    }
+      None => (pref("go")?.join(client()), false),
+    },
   };
 
   let data_dir = if flat {

@@ -70,7 +70,7 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
         versions: info
           .versions
           .into_iter()
-          .map(|v| apps::AppVersion { id: v.id, size: v.size, current: v.current })
+          .map(|v| apps::AppVersion { id: v.id, size: v.size, current: v.current, solidrt_version: v.solidrt_version })
           .collect(),
         files: info.version_files.into_iter().map(|e| apps::AppFile { path: e.path, size: e.size }).collect(),
         data: info.data_files.into_iter().map(|e| apps::AppFile { path: e.path, size: e.size }).collect(),

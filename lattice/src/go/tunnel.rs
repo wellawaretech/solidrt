@@ -32,7 +32,7 @@ impl Drop for Tunnel {
 }
 
 /// The client's persisted p2p identity: 64 hex chars in
-/// clients/<name>/identity/p2p.key. Loaded for every tunnel bind so the dev
+/// <client_dir>/identity/p2p.key. Loaded for every tunnel bind so the dev
 /// server sees one stable node id for this client across restarts; absent or
 /// unreadable falls back to a fresh key (persisted after the bind).
 fn load_secret() -> Option<[u8; 32]> {

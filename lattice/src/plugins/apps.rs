@@ -24,6 +24,8 @@ pub struct AppVersion {
   pub id: String,
   pub size: u64,
   pub current: bool,
+  /// The version manifest's solidrtVersion ("unknown" when not stamped).
+  pub solidrt_version: String,
 }
 
 /// One file in a listing: a relative path and its size in bytes.
@@ -118,6 +120,7 @@ fn info_impl<'js>(ctx: Ctx<'js>, id: String) -> flux::rquickjs::Result<Object<'j
     entry.set("id", v.id)?;
     entry.set("size", v.size as f64)?;
     entry.set("current", v.current)?;
+    entry.set("solidrtVersion", v.solidrt_version)?;
     versions.set(i, entry)?;
   }
   obj.set("versions", versions)?;

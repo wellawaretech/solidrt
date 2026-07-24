@@ -9232,7 +9232,7 @@ function AppDetail(props) {
                       return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
                     },
                     get value() {
-                      return formatSize(v2.size);
+                      return `${v2.solidrtVersion}, ${formatSize(v2.size)}`;
                     },
                     get mutedValue() {
                       return !v2.current;

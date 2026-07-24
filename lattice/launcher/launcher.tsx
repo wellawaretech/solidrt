@@ -458,7 +458,7 @@ function AppDetail(props: {
                   {(v) => (
                     <DetailRow
                       label={v.id.slice(0, 12) + (v.current ? " (current)" : "")}
-                      value={formatSize(v.size)}
+                      value={`${v.solidrtVersion}, ${formatSize(v.size)}`}
                       mutedValue={!v.current}
                     />
                   )}

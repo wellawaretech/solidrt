@@ -61,6 +61,13 @@ function checkField(value: string, what: string) {
 // derivation question is settled (see plan).
 export const RUNTIME_VERSION = 1
 
+// The manifest's solidrtVersion: provenance, not a compat gate like
+// runtimeVersion - the CLI release that built the version. Published CLIs
+// carry the real version in their package.json; the in-repo 0.0.0
+// placeholder stamps "unknown".
+let pkgVersion = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version
+export const SOLIDRT_VERSION: string = pkgVersion === "0.0.0" ? "unknown" : pkgVersion
+
 export function buildManifest(code: string, entry: string): string {
   let identity = loadAppIdentity(entry)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
@@ -68,6 +75,7 @@ export function buildManifest(code: string, entry: string): string {
   return JSON.stringify({
     appId: identity.appId,
     runtimeVersion: RUNTIME_VERSION,
+    solidrtVersion: SOLIDRT_VERSION,
     bundle: { path: "bundle.js", sha256, size: Buffer.byteLength(code, "utf8") },
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),

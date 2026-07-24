@@ -6,6 +6,7 @@ import {
   loadAppIdentity,
   projectDirFor,
   RUNTIME_VERSION,
+  SOLIDRT_VERSION,
   type ManifestFont,
 } from "./project"
 import { resolvePackFonts } from "./fonts"
@@ -70,6 +71,7 @@ export function buildPackFolder(entry: string, bytecode: Buffer): PackFolder {
     org: identity.org,
     displayName: identity.displayName,
     runtimeVersion: RUNTIME_VERSION,
+    solidrtVersion: SOLIDRT_VERSION,
     bundle: { path: "bundle.bin", sha256: hashHex(bytecode), size: bytecode.length },
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),

@@ -20,7 +20,7 @@
 // manifest types live in crate::manifest, shared with the packed runner's
 // folder boot (serde_json is in every build since stage 3b).
 
-use crate::manifest::{safe_asset_path, AssetEntry, Manifest};
+use crate::manifest::{safe_asset_path, unknown_version, AssetEntry, Manifest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -195,6 +195,9 @@ pub struct VersionInfo {
   /// hardlinks count in every version holding them.
   pub size: u64,
   pub current: bool,
+  /// The version manifest's solidrtVersion (the CLI release that built it;
+  /// "unknown" when the manifest predates the field or is unreadable).
+  pub solidrt_version: String,
 }
 
 /// One file in a listing: a relative path and its size in bytes.
@@ -261,7 +264,11 @@ pub(crate) fn app_info_at(apps: &Path, app_id: &str) -> Result<AppInfo, String> 
         continue;
       }
       let modified = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-      versions.push((modified, VersionInfo { current: name == state.current, id: name, size: dir_size(&path) }));
+      let solidrt_version = Manifest::load(&path).map(|m| m.solidrt_version).unwrap_or_else(unknown_version);
+      versions.push((
+        modified,
+        VersionInfo { current: name == state.current, id: name, size: dir_size(&path), solidrt_version },
+      ));
     }
   }
   if !versions.iter().any(|(_, v)| v.current) {

@@ -63,8 +63,13 @@ declare module "srt:apps" {
   export type InstalledApp = { id: string; name: string; version: string }
   /** Installed apps, sorted by name. */
   export function list(): InstalledApp[]
-  /** A stored version: id (manifest hash), bytes on disk, whether it is the current one. */
-  export type AppVersion = { id: string; size: number; current: boolean }
+  /**
+   * A stored version: id (manifest hash), bytes on disk, whether it is the
+   * current one, and the SolidRT (CLI) release that built it per its
+   * manifest ("unknown" from an in-repo CLI or when the manifest predates
+   * the field).
+   */
+  export type AppVersion = { id: string; size: number; current: boolean; solidrtVersion: string }
   /** One file in a listing: a relative path and its size in bytes. */
   export type AppFile = { path: string; size: number }
   /**

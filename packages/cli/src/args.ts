@@ -30,16 +30,21 @@ export let { values, positionals } = parseArgs({
 
 // Storage flags for a locally spawned client, forwarded only when given: with
 // no --data-root the client resolves its platform pref path (see
-// lattice/src/storage.rs). An explicit root is passed absolute because the
-// client chdirs into its app sandbox at startup.
+// lattice/src/storage.rs); --client <N> selects the client<N>/ tree under
+// either root. An explicit root is passed absolute because the client chdirs
+// into its app sandbox at startup.
 export function clientStorageArgs(): string[] {
+  let args: string[] = []
   let root = values["data-root"]
-  if (!root) {
-    if (values.client) console.warn("Ignoring --client: it only applies with --data-root")
-    return []
+  if (root) args.push("--data-root", resolve(root))
+  let client = values.client
+  if (client !== undefined) {
+    if (!/^\d+$/.test(client)) {
+      console.error(`Invalid --client value "${client}": expected a non-negative integer`)
+      process.exit(1)
+    }
+    args.push("--client", client)
   }
-  let args = ["--data-root", resolve(root)]
-  if (values.client) args.push("--client", values.client)
   return args
 }
 
@@ -118,7 +123,7 @@ run/client options:
       --size <WxH>       Window size (default: 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
       --data-root <dir>  Client data root (default: the platform pref path)
-      --client <name>    Client name: its own data dir under an explicit --data-root (default: "default")
+      --client <N>       Client number: its own data tree under the data root (default: 0)
 
 client options:
       --server <host[:port]>  Connect to a dev server at this address (default port: 34884)
