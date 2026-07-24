@@ -31,6 +31,9 @@ pub struct DevControlInner {
   pub launch_address: Option<String>,
 }
 
+// Constructed and installed by go::control only (see the module doc above);
+// other builds run the module with no userdata.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 impl DevControl {
   pub fn new(inner: DevControlInner) -> Self {
     Self(Rc::new(inner))
@@ -39,6 +42,7 @@ impl DevControl {
 
 // Installs the dev control as userdata. Call from a go engine plugin before the
 // default app imports `srt:dev`.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 pub fn install(ctx: &Ctx<'_>, control: DevControl) {
   ctx.store_userdata(control).expect("store dev control");
 }
@@ -51,6 +55,9 @@ pub fn install(ctx: &Ctx<'_>, control: DevControl) {
 #[derive(Clone, Default, JsLifetime)]
 pub struct DebugRegistry(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Persistent<Function<'static>>>>>);
 
+// The readers live in go::connection; see the struct doc - elsewhere the
+// registry is a write nothing reads.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 impl DebugRegistry {
   /// Registered command names, sorted.
   pub fn names(&self) -> Vec<String> {

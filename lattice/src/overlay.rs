@@ -34,7 +34,9 @@ struct PhaseEma {
 /// Plain-data copy of the current stats, published every frame for readers
 /// outside the draw loop (the dev server's stats query). Times are smoothed
 /// milliseconds, same values the overlay renders; reused/skipped are the last
-/// full second's demand-gate counts.
+/// full second's demand-gate counts. Only go builds have a reader; elsewhere
+/// the snapshot is written and never consumed.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 #[derive(Clone, Copy, Default)]
 pub struct StatsSnapshot {
   pub fps: u32,

@@ -70,6 +70,9 @@ pub struct AppsControlInner {
   pub clear_cache: Box<dyn Fn(String) -> Result<(), String>>,
 }
 
+// Constructed and installed by go::control only (see the module doc above);
+// other builds run the module with no userdata.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 impl AppsControl {
   pub fn new(inner: AppsControlInner) -> Self {
     Self(Rc::new(inner))
@@ -78,6 +81,7 @@ impl AppsControl {
 
 // Installs the apps control as userdata. Call from a go engine plugin before
 // the launcher imports `srt:apps`.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
 pub fn install(ctx: &Ctx<'_>, control: AppsControl) {
   ctx.store_userdata(control).expect("store apps control");
 }

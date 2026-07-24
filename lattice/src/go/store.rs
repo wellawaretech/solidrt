@@ -82,16 +82,17 @@ pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -
   Ok(parsed.app_id)
 }
 
-/// A stored version resolved for boot: the code to run, the version dir (the
-/// assets mount base), and the annotated fonts.
+/// A stored version resolved for boot: the code to run and the annotated
+/// fonts. (The assets mount base is resolved separately via
+/// `current_version_dir` when the reload applies.)
 pub struct BootVersion {
   pub app_id: String,
   pub code: String,
-  pub version_dir: PathBuf,
   /// (alias, font bytes) pairs from the manifest's font annotations. Unused
   /// by the launch path today: fonts register once at client startup, so a
   /// launched app's custom fonts wait on mid-session registration (see the
   /// launcher plan's known gap).
+  #[allow(dead_code)]
   pub fonts: Vec<(String, Vec<u8>)>,
 }
 
@@ -101,7 +102,7 @@ pub fn load(app_id: &str) -> Option<BootVersion> {
   let version_dir = current_version_dir(app_id)?;
   let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
   let fonts = Manifest::load(&version_dir).map(|m| m.load_fonts(&version_dir)).unwrap_or_default();
-  Some(BootVersion { app_id: app_id.to_string(), code, version_dir, fonts })
+  Some(BootVersion { app_id: app_id.to_string(), code, fonts })
 }
 
 /// The current installed version dir for an app, if the store has one. This is

@@ -9,7 +9,9 @@ crate-type = ["cdylib", "lib"]
 
 [[bin]]
 name = "solidrt-go"
-path = "src/main.rs"
+# Same program as `solidrt` below; the shim exists only because cargo warns
+# when two targets share one source file. The real difference is the feature.
+path = "src/main_go.rs"
 required-features = ["go"]
 
 [[bin]]
