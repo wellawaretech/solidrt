@@ -1,34 +1,35 @@
 // Scripted input: a timeline of synthetic events replayed by playback mode
 // (see `crate::playback`) or captured by a runner's live input recorder (see
-// lattice). Stage 1 covers only KeyDown/KeyUp; more variants are expected to
+// lattice). Stage 1 covers only key transitions; more variants are expected to
 // join `ScriptEvent` as scripting grows beyond the keyboard.
 
 use crate::event::{AlloyEvent, Modifiers};
-use sdl3::keyboard::Keycode;
 
-#[derive(Clone, Copy, Debug)]
-pub enum ScriptEvent {
-  KeyDown(Keycode),
-  KeyUp(Keycode),
+#[derive(Clone, Debug)]
+pub struct ScriptEvent {
+  pub down: bool,
+  // The W3C `key` value apps observe in their handlers ("Enter", "ArrowLeft",
+  // "a"), so scripts round-trip through recordings verbatim.
+  pub key: String,
 }
 
 impl ScriptEvent {
-  pub fn to_alloy_event(self) -> AlloyEvent {
-    match self {
-      ScriptEvent::KeyDown(keycode) => {
-        AlloyEvent::KeyDown { keycode: Some(keycode), scancode: None, modifiers: Modifiers::default() }
-      }
-      ScriptEvent::KeyUp(keycode) => {
-        AlloyEvent::KeyUp { keycode: Some(keycode), scancode: None, modifiers: Modifiers::default() }
-      }
+  pub fn to_alloy_event(&self) -> AlloyEvent {
+    AlloyEvent::Key {
+      down: self.down,
+      key: self.key.clone(),
+      // Scripts record logical keys only; there is no physical position to
+      // reconstruct.
+      code: "Unidentified",
+      modifiers: Modifiers::default(),
+      repeat: false,
     }
   }
 
   // None for events that have no scripted representation yet.
   pub fn from_alloy_event(event: &AlloyEvent) -> Option<ScriptEvent> {
     match event {
-      AlloyEvent::KeyDown { keycode: Some(k), .. } => Some(ScriptEvent::KeyDown(*k)),
-      AlloyEvent::KeyUp { keycode: Some(k), .. } => Some(ScriptEvent::KeyUp(*k)),
+      AlloyEvent::Key { down, key, .. } => Some(ScriptEvent { down: *down, key: key.clone() }),
       _ => None,
     }
   }

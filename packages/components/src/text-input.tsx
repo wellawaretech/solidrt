@@ -96,10 +96,10 @@ export function TextInput(props: TextInputProps) {
     } else if (e.key === "Delete") {
       buffer.deleteForward()
       setCaretOn(true)
-    } else if (e.key === "Left") {
+    } else if (e.key === "ArrowLeft") {
       buffer.move("left")
       setCaretOn(true)
-    } else if (e.key === "Right") {
+    } else if (e.key === "ArrowRight") {
       buffer.move("right")
       setCaretOn(true)
     } else if (e.key === "Home") {
@@ -108,7 +108,7 @@ export function TextInput(props: TextInputProps) {
     } else if (e.key === "End") {
       buffer.move("end")
       setCaretOn(true)
-    } else if (e.key === "Return" || e.key === "Enter") {
+    } else if (e.key === "Enter") {
       props.onSubmit?.(value())
       setFocus(null)
     } else if (e.key === "Escape") {

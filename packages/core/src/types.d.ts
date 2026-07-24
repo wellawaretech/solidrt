@@ -198,8 +198,18 @@ export interface WheelEvent extends PointerEvent {
   deltaY: number
 }
 
+// Key events use the W3C UI Events vocabulary: `key` is the logical,
+// layout-dependent value ("a", "!", "Enter", "ArrowLeft"); `code` is the
+// physical, layout-independent key position ("KeyA", "Digit1", "NumpadEnter").
+// Printable characters for text entry arrive via onTextInput, not here.
 export interface KeyEvent {
   key: string
+  code: string
+  repeat: boolean
+  shiftKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  metaKey: boolean
 }
 
 export interface TextEvent {

@@ -55,10 +55,17 @@ The store is a size-capped LRU disk cache under the runtime's data
 directory (`.srt-data/cache` for flux scripts, the app's pref path under a
 GUI runtime); an evicted entry is simply refetched next time.
 
+Requests identify themselves with a `User-Agent` of `FluxRT/<version>`
+(an embedding runtime replaces this with its own product token).
+
 Cached fetches are also polite: a small per-host concurrency limit keeps
 asset floods from swamping a server (misses queue; disk hits are not
-throttled). Plain fetches are never throttled - API calls, long-polls, and
-streams do not queue behind asset traffic.
+throttled), and a 429 response backs off and retries - the whole host pauses
+(honoring `Retry-After` when sent, jittered exponential backoff otherwise)
+and the request is retried a few times before the 429 is returned. Plain
+fetches have none of this - API calls, long-polls, and streams do not queue
+behind asset traffic, and a caller that wants backoff on API calls implements
+its own policy.
 
 ### Timers
 

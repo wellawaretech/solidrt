@@ -9,6 +9,7 @@ pub mod camera;
 mod context;
 mod event;
 mod gamepad;
+mod keymap;
 mod logging;
 pub mod microphone;
 mod mode;
@@ -32,7 +33,7 @@ pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;
-pub use script::{ScriptEvent, ScriptedAction, ScriptPlayer};
+pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use texture::{GpuTexture, TextureEntry, TextureRegistry};
 
 use std::sync::atomic::{AtomicI32, Ordering};

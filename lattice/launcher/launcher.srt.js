@@ -5947,10 +5947,10 @@ function TextInput(props) {
     } else if (e3.key === "Delete") {
       buffer.deleteForward();
       setCaretOn(true);
-    } else if (e3.key === "Left") {
+    } else if (e3.key === "ArrowLeft") {
       buffer.move("left");
       setCaretOn(true);
-    } else if (e3.key === "Right") {
+    } else if (e3.key === "ArrowRight") {
       buffer.move("right");
       setCaretOn(true);
     } else if (e3.key === "Home") {
@@ -5959,7 +5959,7 @@ function TextInput(props) {
     } else if (e3.key === "End") {
       buffer.move("end");
       setCaretOn(true);
-    } else if (e3.key === "Return" || e3.key === "Enter") {
+    } else if (e3.key === "Enter") {
       props.onSubmit?.(value());
       setFocus(null);
     } else if (e3.key === "Escape") {

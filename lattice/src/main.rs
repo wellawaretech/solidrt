@@ -243,14 +243,14 @@ fn load_script(path: String) -> alloy::ScriptPlayer {
     .map(|line| {
       let step: ScriptStep = serde_json::from_str(line).unwrap_or_else(|e| panic!("Failed to parse '{path}': {e}"));
       at += step.after as f64 / 1000.0;
-      let keycode = alloy::sdl3::keyboard::Keycode::from_name(&step.key)
-        .unwrap_or_else(|| panic!("Unknown key name '{}' in '{path}'", step.key));
-      let event = match step.kind.as_str() {
-        "keydown" => alloy::ScriptEvent::KeyDown(keycode),
-        "keyup" => alloy::ScriptEvent::KeyUp(keycode),
+      // `key` is a W3C KeyboardEvent.key value ("Enter", "ArrowLeft", "a") and
+      // replays verbatim; there is no key-name registry to validate against.
+      let down = match step.kind.as_str() {
+        "keydown" => true,
+        "keyup" => false,
         other => panic!("Unknown script step type '{other}' in '{path}'"),
       };
-      alloy::ScriptedAction { at, event }
+      alloy::ScriptedAction { at, event: alloy::ScriptEvent { down, key: step.key } }
     })
     .collect();
   alloy::ScriptPlayer::new(actions)

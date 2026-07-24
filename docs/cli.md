@@ -61,7 +61,9 @@ client into one script file, for replaying later with `render --script`.
 Events are streamed to disk as they happen (one JSON object per line, [JSON
 Lines](https://jsonlines.org/) format) rather than buffered in memory. Each
 line is `{"after": <ms since previous event, integer>, "type": "keydown" |
-"keyup", "key": "...", "device": <client id>}`.
+"keyup", "key": "...", "device": <client id>}`. `key` is a W3C
+`KeyboardEvent.key` value ("Enter", "ArrowLeft", "a") — the same string apps
+observe in their `onKeyDown` handlers.
 
 ### Command `client`
 

@@ -76,8 +76,11 @@ pub enum AlloyEvent {
   Quit,
   WindowFocus,
   WindowBlur,
-  KeyDown { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
-  KeyUp { keycode: Option<sdl3::keyboard::Keycode>, scancode: Option<sdl3::keyboard::Scancode>, modifiers: Modifiers },
+  // One key transition, already translated to the W3C UI Events vocabulary
+  // (see `crate::keymap`): `key` is the logical value ("a", "!", "Enter"),
+  // `code` the physical key ("KeyA", "NumpadEnter"). SDL's keycodes and
+  // scancodes never leave this crate.
+  Key { down: bool, key: String, code: &'static str, modifiers: Modifiers, repeat: bool },
   Resize { size: ISize, safe_area: Rect, display_scale: f32 },
   // `time` is raw wall-clock seconds since render-thread start, sampled right
   // after present. Intentionally unsmoothed: pacing is userspace policy.
@@ -188,12 +191,20 @@ fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
 pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
-    SdlEvent::KeyDown { keycode, scancode, keymod, .. } => {
-      Some(AlloyEvent::KeyDown { keycode, scancode, modifiers: keymod.into() })
-    }
-    SdlEvent::KeyUp { keycode, scancode, keymod, .. } => {
-      Some(AlloyEvent::KeyUp { keycode, scancode, modifiers: keymod.into() })
-    }
+    SdlEvent::KeyDown { keycode, scancode, keymod, repeat, .. } => Some(AlloyEvent::Key {
+      down: true,
+      key: crate::keymap::w3c_key(keycode, scancode, keymod),
+      code: crate::keymap::w3c_code(scancode),
+      modifiers: keymod.into(),
+      repeat,
+    }),
+    SdlEvent::KeyUp { keycode, scancode, keymod, repeat, .. } => Some(AlloyEvent::Key {
+      down: false,
+      key: crate::keymap::w3c_key(keycode, scancode, keymod),
+      code: crate::keymap::w3c_code(scancode),
+      modifiers: keymod.into(),
+      repeat,
+    }),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => Some(AlloyEvent::WindowFocus),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => Some(AlloyEvent::WindowBlur),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {

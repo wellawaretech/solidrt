@@ -347,10 +347,10 @@ fn ui_thread(
         for event in batch {
           if capture_enabled_events.load(Ordering::Relaxed) {
             if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
-              let (kind, key) = match script_event {
-                alloy::ScriptEvent::KeyDown(k) => ("keydown", k.name()),
-                alloy::ScriptEvent::KeyUp(k) => ("keyup", k.name()),
-              };
+              let kind = if script_event.down { "keydown" } else { "keyup" };
+              // W3C key values include printables like `"` and `\`; escape them
+              // so the hand-built JSON line stays valid.
+              let key = script_event.key.replace('\\', "\\\\").replace('"', "\\\"");
               let _ = capture_tx.send(format!(r#"{{"type":"capture","kind":"{kind}","key":"{key}"}}"#));
             }
           }
@@ -360,7 +360,7 @@ fn ui_thread(
           // UiRuntime verbs below.
           match &event {
             AlloyEvent::Quit => std::process::exit(0),
-            AlloyEvent::KeyDown { modifiers, .. } | AlloyEvent::KeyUp { modifiers, .. } => {
+            AlloyEvent::Key { modifiers, .. } => {
               input_state_events.set_modifiers(*modifiers);
             }
             AlloyEvent::Resize { size, safe_area, display_scale } => {

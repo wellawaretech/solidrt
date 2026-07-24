@@ -1,4 +1,3 @@
-use alloy::sdl3::keyboard::{Keycode, Scancode};
 use alloy::sdl3::video::Orientation;
 use alloy::sdl_utils::{PowerState, SystemTheme};
 use alloy::{AlloyEvent, Modifiers};
@@ -81,8 +80,9 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         emit_sticky(&ctx, "displayOrientation", obj);
       });
     }
-    AlloyEvent::KeyDown { keycode, scancode, modifiers } => emit_key(exec, "keydown", *keycode, *scancode, *modifiers),
-    AlloyEvent::KeyUp { keycode, scancode, modifiers } => emit_key(exec, "keyup", *keycode, *scancode, *modifiers),
+    AlloyEvent::Key { down, key, code, modifiers, repeat } => {
+      emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat)
+    }
     AlloyEvent::TextInput { text } => {
       let text = text.clone();
       exec.exec(move |ctx| {
@@ -176,16 +176,16 @@ fn emit_named(exec: &ExecHandle, name: &'static str) {
 fn emit_key(
   exec: &ExecHandle,
   name: &'static str,
-  keycode: Option<Keycode>,
-  scancode: Option<Scancode>,
+  key: String,
+  code: &'static str,
   modifiers: Modifiers,
+  repeat: bool,
 ) {
-  let key = keycode.map(|k| k.name()).unwrap_or_default();
-  let code = scancode.map(|s| s.name().to_string()).unwrap_or_default();
   exec.exec(move |ctx| {
     let obj = Object::new(ctx.clone()).expect("create object");
     obj.set("key", key).expect("set key");
     obj.set("code", code).expect("set code");
+    obj.set("repeat", repeat).expect("set repeat");
     obj.set("shiftKey", modifiers.shift).expect("set shiftKey");
     obj.set("ctrlKey", modifiers.ctrl).expect("set ctrlKey");
     obj.set("altKey", modifiers.alt).expect("set altKey");
