@@ -1,21 +1,37 @@
 use crate::impellers::{Point, Rect, Size, TypographyContext};
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, Ref, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// A font to register at startup: raw TTF/OTF bytes plus an optional alias the
+/// A font to register: raw TTF/OTF bytes plus an optional alias the
 /// font registers under instead of its intrinsic family name ("sans", "serif"
 /// and "mono" by convention). Alloy ships no font data itself; callers supply
 /// fonts (embedded, unpacked from a trailer, read from disk). With none
 /// registered, text falls back to the platform font manager.
+#[derive(Clone)]
 pub struct FontPayload {
   pub alias: Option<String>,
   pub bytes: Cow<'static, [u8]>,
 }
 
+// Build a context with `fonts` registered in order; `on_error` decides what a
+// font that fails to register costs (panic at startup, a warning mid-session).
+fn build_typography(fonts: Vec<FontPayload>, on_error: impl Fn(&str, &str)) -> TypographyContext {
+  let mut typography = TypographyContext::default();
+  for FontPayload { alias, bytes } in fonts {
+    if let Err(e) = typography.register_font(bytes, alias.as_deref()) {
+      on_error(alias.as_deref().unwrap_or("<unaliased>"), e);
+    }
+  }
+  typography
+}
+
 pub struct PlatformContext {
-  pub typography: TypographyContext,
+  // Interior mutability so the registered font set can be swapped per app
+  // switch (see reset_fonts). Borrowed only on the UI thread (text shaping,
+  // the HUD overlay), never across a reset.
+  typography: RefCell<TypographyContext>,
   window_size: Cell<(f32, f32)>,
   window_size_dirty: Cell<bool>,
   display_scale: Cell<f32>,
@@ -39,15 +55,11 @@ unsafe impl Sync for PlatformContext {}
 
 impl PlatformContext {
   pub fn new(fonts: Vec<FontPayload>) -> Self {
-    let mut typography = TypographyContext::default();
-    for font in fonts {
-      let FontPayload { alias, bytes } = font;
-      typography
-        .register_font(bytes, alias.as_deref())
-        .unwrap_or_else(|e| panic!("Failed to register font '{}': {e}", alias.as_deref().unwrap_or("<unaliased>")));
-    }
+    // Startup fonts are the client's own (embedded Notos, a packed trailer);
+    // one failing to parse is a build defect, so this keeps panicking.
+    let typography = build_typography(fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
     Self {
-      typography,
+      typography: RefCell::new(typography),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
       display_scale: Cell::new(1.0),
@@ -57,6 +69,23 @@ impl PlatformContext {
       always_render: Cell::new(false),
       stats_enabled: Arc::new(AtomicBool::new(false)),
     }
+  }
+
+  /// The live typography context, for text shaping. UI thread only; the
+  /// borrow must not be held across a `reset_fonts`.
+  pub fn typography(&self) -> Ref<'_, TypographyContext> {
+    self.typography.borrow()
+  }
+
+  /// Replace the registered font set (an app switch): a fresh context built
+  /// from `fonts` alone, dropping everything previously registered. A font
+  /// that fails to register is skipped with a warning - its role falls back,
+  /// same as a missing font file; mid-session this must never panic. Requests
+  /// a frame so text reshapes against the new set.
+  pub fn reset_fonts(&self, fonts: Vec<FontPayload>) {
+    let typography = build_typography(fonts, |alias, e| log::warn!("Could not register font '{alias}': {e}"));
+    self.typography.replace(typography);
+    self.request_frame();
   }
 
   pub fn set_always_render(&self, always: bool) {

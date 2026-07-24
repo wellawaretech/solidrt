@@ -123,7 +123,7 @@ impl std::fmt::Debug for ParaCache {
 
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let Some(paragraph) = self.shaped(&ctx.platform.typography, self.w.unwrap_or(ctx.size.w)) else {
+    let Some(paragraph) = self.shaped(&ctx.platform.typography(), self.w.unwrap_or(ctx.size.w)) else {
       return;
     };
     builder.draw_paragraph(&paragraph, Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)));
@@ -137,7 +137,7 @@ impl Measurable for Text {
       return Size { width: w, height: h };
     }
 
-    let Some(intrinsic) = self.shaped(&ctx.platform.typography, f32::MAX) else {
+    let Some(intrinsic) = self.shaped(&ctx.platform.typography(), f32::MAX) else {
       return Size::ZERO;
     };
 
@@ -150,7 +150,7 @@ impl Measurable for Text {
       AvailableSpace::MinContent => min_intrinsic_width,
     });
 
-    let Some(paragraph) = self.shaped(&ctx.platform.typography, width) else {
+    let Some(paragraph) = self.shaped(&ctx.platform.typography(), width) else {
       return Size::ZERO;
     };
 

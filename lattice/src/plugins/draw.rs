@@ -190,7 +190,7 @@ impl ModuleDef for SrtRenderModule {
       if stats_on {
         stats.borrow_mut().draw(
           &mut builder,
-          &platform.typography,
+          &platform.typography(),
           platform.safe_area(),
           platform.fps(),
           paint_stats,

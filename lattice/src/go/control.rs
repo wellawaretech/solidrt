@@ -50,10 +50,7 @@ pub fn install_dev_control(
 /// Install the apps control as context userdata, backing the `srt:apps` module
 /// with the version store's list/launch/remove. Launch boots the stored
 /// version through the same reload path as a dev push: the engine loop
-/// re-anchors the data sandbox and assets mount from the app id. Fonts are the
-/// known gap: registration happens once at startup, so a launched app's custom
-/// fonts apply from the next client start only (the dev-push install path has
-/// the same limitation).
+/// re-anchors the data sandbox, assets mount, and font set from the app id.
 pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::EngineCmd>) {
   let control = AppsControl::new(AppsControlInner {
     list: Box::new(|| {

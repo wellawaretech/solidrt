@@ -82,18 +82,12 @@ pub fn install(manifest: &str, code: &str, fetched: &HashMap<String, Vec<u8>>) -
   Ok(parsed.app_id)
 }
 
-/// A stored version resolved for boot: the code to run and the annotated
-/// fonts. (The assets mount base is resolved separately via
-/// `current_version_dir` when the reload applies.)
+/// A stored version resolved for boot: the code to run. (The assets mount
+/// base and fonts are resolved separately - `current_version_dir` and
+/// `app_fonts` - when the reload applies.)
 pub struct BootVersion {
   pub app_id: String,
   pub code: String,
-  /// (alias, font bytes) pairs from the manifest's font annotations. Unused
-  /// by the launch path today: fonts register once at client startup, so a
-  /// launched app's custom fonts wait on mid-session registration (see the
-  /// launcher plan's known gap).
-  #[allow(dead_code)]
-  pub fonts: Vec<(String, Vec<u8>)>,
 }
 
 /// An app's current version resolved for boot, or None when the id is unsafe,
@@ -101,8 +95,21 @@ pub struct BootVersion {
 pub fn load(app_id: &str) -> Option<BootVersion> {
   let version_dir = current_version_dir(app_id)?;
   let code = std::fs::read_to_string(version_dir.join("bundle.js")).ok()?;
-  let fonts = Manifest::load(&version_dir).map(|m| m.load_fonts(&version_dir)).unwrap_or_default();
-  Some(BootVersion { app_id: app_id.to_string(), code, fonts })
+  Some(BootVersion { app_id: app_id.to_string(), code })
+}
+
+/// The current installed version's manifest-annotated fonts, ready to
+/// register. Empty when nothing is installed or the manifest names none; a
+/// font file that fails to read is skipped (load_fonts warns), so its role
+/// falls back rather than blocking the app.
+pub fn app_fonts(app_id: &str) -> Vec<alloy::rendertree::FontPayload> {
+  let Some(version_dir) = current_version_dir(app_id) else { return Vec::new() };
+  let Some(manifest) = Manifest::load(&version_dir) else { return Vec::new() };
+  manifest
+    .load_fonts(&version_dir)
+    .into_iter()
+    .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
+    .collect()
 }
 
 /// The current installed version dir for an app, if the store has one. This is

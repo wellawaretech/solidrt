@@ -169,6 +169,18 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
+// Register the font set for `app_id`: the client's base fonts plus the
+// current installed version's manifest fonts, replacing whatever the previous
+// app registered. Rebuilt from scratch on every app switch so fonts are
+// per-app like the assets mount and the data sandbox - nothing accumulates
+// across apps, and no alias is ever registered twice into one context.
+#[cfg(feature = "go")]
+fn apply_app_fonts(app_id: &str, platform: &PlatformContext, base_fonts: &[FontPayload]) {
+  let mut fonts = base_fonts.to_vec();
+  fonts.extend(go::store::app_fonts(app_id));
+  platform.reset_fonts(fonts);
+}
+
 // The mechanics of anchoring, separated from storage resolution so tests can
 // exercise deleted-cwd recovery without the process-wide storage global.
 // Ok(true) means the cwd moved; Ok(false) that it already pointed at a live
@@ -249,6 +261,11 @@ fn ui_thread(
   // naming a different app re-anchors (see anchor_app).
   let mut current_app_id: Option<String> = Some(default_app_id.clone());
 
+  // The client's own fonts (embedded Notos or a packed trailer), kept so app
+  // switches can rebuild the font set from scratch (see apply_app_fonts).
+  // Embedded font bytes are borrowed Cows, so this clone copies no font data.
+  #[cfg(feature = "go")]
+  let base_fonts = fonts.clone();
   let platform = Arc::new(PlatformContext::new(fonts));
   // Playback mode renders every frame unconditionally: the lockstep capture
   // loop blocks waiting for each frame's display list, so a frame skipped by
@@ -586,8 +603,10 @@ fn ui_thread(
                   // Back to the launcher: release the stopped app's sandbox
                   // by re-anchoring to the startup default, so the launcher
                   // can remove the app without the cwd (or the loop-top
-                  // guard) holding its data dir alive.
+                  // guard) holding its data dir alive. Its fonts go with it -
+                  // the launcher runs on the base set alone.
                   current_app_id = Some(default_app_id.clone());
+                  platform.reset_fonts(base_fonts.clone());
                 }
               }
             }
@@ -599,6 +618,8 @@ fn ui_thread(
           anchor_app(app_id, &mut current_app_id);
           #[cfg(feature = "go")]
           mount_assets(app_id);
+          #[cfg(feature = "go")]
+          apply_app_fonts(app_id, &platform, &base_fonts);
         }
         current_app = app;
         showing_bsod = false;
@@ -616,6 +637,8 @@ fn ui_thread(
               anchor_app(app_id, &mut current_app_id);
               #[cfg(feature = "go")]
               mount_assets(app_id);
+              #[cfg(feature = "go")]
+              apply_app_fonts(app_id, &platform, &base_fonts);
             }
             current_app = AppSource::Text(code);
             showing_bsod = false;
@@ -624,8 +647,9 @@ fn ui_thread(
           Some(EngineCmd::Stop) => {
             current_app = AppSource::Text(LAUNCHER_SOURCE.to_string());
             showing_bsod = false;
-            // Same sandbox release as the in-loop Stop arm above.
+            // Same sandbox and font release as the in-loop Stop arm above.
             current_app_id = Some(default_app_id.clone());
+            platform.reset_fonts(base_fonts.clone());
           }
           None => break,
         }
