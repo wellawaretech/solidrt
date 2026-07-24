@@ -169,26 +169,47 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
-// Re-anchor the process into `app_id`'s data sandbox (see storage: the cwd is
-// the app's persistent data dir). No-op when already anchored there; on
-// failure the previous anchor stays, matching the startup fallback.
-fn anchor_app(app_id: &str, current: &mut Option<String>) {
-  if current.as_deref() == Some(app_id) {
-    return;
+// The mechanics of anchoring, separated from storage resolution so tests can
+// exercise deleted-cwd recovery without the process-wide storage global.
+// Ok(true) means the cwd moved; Ok(false) that it already pointed at a live
+// `data_dir`. A cwd whose inode was unlinked makes current_dir() itself fail,
+// so that path re-anchors rather than erroring; canonicalize keeps the
+// comparison honest when the storage tree sits behind a symlink.
+fn anchor_dir(data_dir: &std::path::Path) -> Result<bool, String> {
+  if let Ok(cwd) = std::env::current_dir() {
+    if data_dir.canonicalize().is_ok_and(|dir| dir == cwd) {
+      return Ok(false);
+    }
   }
+  std::fs::create_dir_all(data_dir).map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
+  std::env::set_current_dir(data_dir).map_err(|e| format!("cannot enter {}: {e}", data_dir.display()))?;
+  Ok(true)
+}
+
+// Anchor the process into `app_id`'s data sandbox (see storage: the cwd is
+// the app's persistent data dir). The sandbox can vanish while the client
+// runs - the launcher removes an app or wipes its cache once it stopped -
+// stranding the cwd on an unlinked inode where every relative open fails, so
+// anchoring is re-checked before every engine spin instead of done once.
+// Quiet when the cwd is already right; without writable storage the cwd is
+// left alone (startup warned once).
+fn ensure_anchored(app_id: &str) {
   let Some(store) = storage::get() else { return };
   let data_dir = store.app_dir(app_id).join("data");
-  if let Err(e) = std::fs::create_dir_all(&data_dir) {
-    log::warn!("[srt] cannot create app data dir {}: {e}", data_dir.display());
-    return;
+  match anchor_dir(&data_dir) {
+    Ok(true) => log::info!("[srt] working directory set to {}", data_dir.display()),
+    Ok(false) => {}
+    Err(e) => log::warn!("[srt] could not anchor working directory: {e}"),
   }
-  match std::env::set_current_dir(&data_dir) {
-    Ok(()) => {
-      log::info!("[srt] working directory set to {}", data_dir.display());
-      *current = Some(app_id.to_string());
-    }
-    Err(e) => log::warn!("[srt] could not set working directory to {}: {e}", data_dir.display()),
-  }
+}
+
+// Re-anchor into `app_id`'s data sandbox and record it as the app the process
+// should be anchored to. `current` is intent, not observed state: if the
+// anchor fails here, the loop-top ensure_anchored retries every engine spin
+// until it holds.
+fn anchor_app(app_id: &str, current: &mut Option<String>) {
+  ensure_anchored(app_id);
+  *current = Some(app_id.to_string());
 }
 
 fn ui_thread(
@@ -216,10 +237,17 @@ fn ui_thread(
     },
     None => log::warn!("[srt] no writable storage, leaving working directory unchanged"),
   }
-  // The app the process is currently anchored to (whose data/ is the cwd);
-  // a dev push naming a different app re-anchors (see anchor_app).
-  let mut current_app_id: Option<String> =
-    Some(storage_spec.app_id.clone().unwrap_or_else(|| "default".to_string()));
+  // The startup app id: the anchor before any named reload, and what Stop
+  // re-anchors to so the launcher never squats in a stopped app's sandbox
+  // (removing that app must not fight the cwd, and the loop-top guard must
+  // not resurrect its data dir).
+  let default_app_id = storage_spec.app_id.clone().unwrap_or_else(|| "default".to_string());
+  // The app the process should be anchored to (whose data/ is the cwd). This
+  // is intent, not observed state: the loop-top ensure_anchored re-checks it
+  // every engine spin, so a sandbox deleted while the client runs (launcher
+  // app remove / cache wipe) is rebuilt before the next app run. A dev push
+  // naming a different app re-anchors (see anchor_app).
+  let mut current_app_id: Option<String> = Some(default_app_id.clone());
 
   let platform = Arc::new(PlatformContext::new(fonts));
   // Playback mode renders every frame unconditionally: the lockstep capture
@@ -444,6 +472,12 @@ fn ui_thread(
     }
 
     loop {
+      // Re-anchor before anything in this spin touches the sandbox: the data
+      // dir may have been deleted since the last spin, and a reload naming
+      // the SAME app would otherwise keep the stranded cwd forever.
+      if let Some(app_id) = &current_app_id {
+        ensure_anchored(app_id);
+      }
       // Fetch disk cache: per app, so cached assets are browsable and
       // clearable per app (and die with it on remove). Resolved per engine:
       // the anchored app changes across reloads.
@@ -547,7 +581,14 @@ fn ui_thread(
                   next_app_id = app_id;
                 }
                 #[cfg(feature = "go")]
-                EngineCmd::Stop => { next_app = Some(AppSource::Text(LAUNCHER_SOURCE.to_string())); }
+                EngineCmd::Stop => {
+                  next_app = Some(AppSource::Text(LAUNCHER_SOURCE.to_string()));
+                  // Back to the launcher: release the stopped app's sandbox
+                  // by re-anchoring to the startup default, so the launcher
+                  // can remove the app without the cwd (or the loop-top
+                  // guard) holding its data dir alive.
+                  current_app_id = Some(default_app_id.clone());
+                }
               }
             }
           }
@@ -583,6 +624,8 @@ fn ui_thread(
           Some(EngineCmd::Stop) => {
             current_app = AppSource::Text(LAUNCHER_SOURCE.to_string());
             showing_bsod = false;
+            // Same sandbox release as the in-loop Stop arm above.
+            current_app_id = Some(default_app_id.clone());
           }
           None => break,
         }
