@@ -70,7 +70,7 @@ endif
 # Build both host binaries (client + runtime).
 all: client runtime
 
-$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx)
+$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx) $(wildcard $(CURDIR)/launcher/parts/*.tsx)
 	@echo "Bundling launcher (launcher.tsx -> launcher.srt.js)..."
 	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC)
 
