@@ -113,18 +113,6 @@ impl FluxEngineBuilder {
     self.userdata(crate::plugins::standards::http::UserAgent(agent))
   }
 
-  /// `cache_dir` at the dev default: `.srt-data/cache` under the working
-  /// directory (the project-local dev data root, see
-  /// okf/research/update-mechanism.md). Interim policy until the
-  /// update-mechanism data-root resolution replaces it; a no-op when the
-  /// working directory is unavailable.
-  pub fn dev_cache_dir(self) -> Self {
-    match std::env::current_dir() {
-      Ok(cwd) => self.cache_dir(cwd.join(".srt-data").join("cache")),
-      Err(_) => self,
-    }
-  }
-
   pub fn build(self) -> FluxEngine {
     let logger = match self.logger {
       Some(f) => Logger::new(f),

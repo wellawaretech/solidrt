@@ -3,8 +3,8 @@
 //
 // Three layouts, picked by how the process was launched:
 //
-// Explicit --data-root (dev; the CLI passes the project-local .srt-data so
-// dev state stays with the project). Multiple named clients, multiple apps:
+// Explicit --data-root (opt-in; the CLI forwards it only when the user passes
+// one). Multiple named clients, multiple apps:
 //
 //   <data-root>/clients/<name>/
 //     identity/          client identity (persisted iroh key)

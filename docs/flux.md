@@ -51,9 +51,11 @@ What this is not:
 - `"default"`, `"no-store"`, and `"no-cache"` are accepted and all mean a
   plain network request; unknown values throw.
 
-The store is a size-capped LRU disk cache under the runtime's data
-directory (`.srt-data/cache` for flux scripts, the app's pref path under a
-GUI runtime); an evicted entry is simply refetched next time.
+The store is a size-capped LRU disk cache in a directory the embedding
+runtime configures (a GUI runtime uses the app's pref path); an evicted
+entry is simply refetched next time. The bare flux runtime configures no
+directory, so scripts run without a disk store: the `cache` option is
+accepted and every request goes to the network.
 
 Requests identify themselves with a `User-Agent` of `FluxRT/<version>`
 (an embedding runtime replaces this with its own product token).

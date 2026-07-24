@@ -28,12 +28,17 @@ export let { values, positionals } = parseArgs({
   allowPositionals: true,
 })
 
-// Storage flags for a locally spawned client. The data root defaults to the
-// project-local .srt-data so dev state stays with the project; it is passed
-// absolute because the client chdirs into its app sandbox at startup. Remote
-// clients resolve their own local root instead (see lattice/src/storage.rs).
+// Storage flags for a locally spawned client, forwarded only when given: with
+// no --data-root the client resolves its platform pref path (see
+// lattice/src/storage.rs). An explicit root is passed absolute because the
+// client chdirs into its app sandbox at startup.
 export function clientStorageArgs(): string[] {
-  let args = ["--data-root", resolve(values["data-root"] ?? ".srt-data")]
+  let root = values["data-root"]
+  if (!root) {
+    if (values.client) console.warn("Ignoring --client: it only applies with --data-root")
+    return []
+  }
+  let args = ["--data-root", resolve(root)]
   if (values.client) args.push("--client", values.client)
   return args
 }
@@ -112,8 +117,8 @@ run/server options:
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
-      --data-root <dir>  Client data root (default: ./.srt-data)
-      --client <name>    Client name: its own data dir under the data root (default: "default")
+      --data-root <dir>  Client data root (default: the platform pref path)
+      --client <name>    Client name: its own data dir under an explicit --data-root (default: "default")
 
 client options:
       --server <host[:port]>  Connect to a dev server at this address (default port: 34884)

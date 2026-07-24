@@ -36,6 +36,6 @@ async fn main() {
 
   let argv: Vec<String> = std::env::args().collect();
 
-  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).dev_cache_dir().build();
+  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
   engine.eval(bytecode).await;
 }
