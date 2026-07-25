@@ -127,6 +127,11 @@ pub(crate) enum RasterCmd {
 // transient glitch.
 const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
 
+// Upper bound on the present-fence wait (see the `present_fence` field); a
+// fence this late means the GPU is stalled and the frame is lost to the
+// slow-frame path anyway, so give up and draw.
+const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
+
 pub(crate) struct RasterState {
   backend: Backend,
   gl: glow::Context,
@@ -150,6 +155,16 @@ pub(crate) struct RasterState {
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
   slow_frame_log: Option<std::time::Instant>,
+  // Once-per-second frame phase trace (see FrameTiming).
+  timing: FrameTiming,
+  // Fence signaled when the previous present's GPU work completed, awaited
+  // before the next draw. Vsync alone lets the CPU swap several frames ahead
+  // of what is on glass (Android's BufferQueue runs 2-3 deep, desktop driver
+  // queues similarly), and that queue depth is direct input-to-photon
+  // latency; the fence keeps at most one undisplayed frame in flight (the
+  // Flutter/Chrome pacing approach). None in capture mode, which never
+  // presents.
+  present_fence: Option<glow::Fence>,
   // GL-side view of every registered texture (id -> name + dims), for sampler
   // resolution, re-uploads, and readbacks. Mirrors the UI side's registry
   // through the command stream.
@@ -168,6 +183,46 @@ pub(crate) struct RasterState {
 /// Reply to an RPC; a dead requester (UI thread shutting down) is not an error.
 fn reply<T>(tx: mpsc::Sender<T>, value: T) {
   tx.send(value).ok();
+}
+
+/// Rolling once-per-second trace of the interactive frame's native phases
+/// (drag latency diagnostics): average fence wait, draw, and present (swap
+/// block) times, plus the worst present. Logs only in seconds where frames
+/// were drawn, so an idle app stays silent. A present averaging near a full
+/// refresh period means swaps block on a saturated present queue.
+struct FrameTiming {
+  since: std::time::Instant,
+  wait: f32,
+  draw: f32,
+  present: f32,
+  present_max: f32,
+  frames: u32,
+}
+
+impl FrameTiming {
+  fn new() -> Self {
+    FrameTiming { since: std::time::Instant::now(), wait: 0.0, draw: 0.0, present: 0.0, present_max: 0.0, frames: 0 }
+  }
+
+  fn record(&mut self, wait_ms: f32, draw_ms: f32, present_ms: f32) {
+    self.wait += wait_ms;
+    self.draw += draw_ms;
+    self.present += present_ms;
+    self.present_max = self.present_max.max(present_ms);
+    self.frames += 1;
+    if self.since.elapsed().as_secs_f32() >= 1.0 {
+      let n = self.frames as f32;
+      log::info!(
+        "[alloy] raster: {} frames/s, wait {:.1}ms, draw {:.1}ms, present {:.1}ms (max {:.1}ms)",
+        self.frames,
+        self.wait / n,
+        self.draw / n,
+        self.present / n,
+        self.present_max
+      );
+      *self = FrameTiming::new();
+    }
+  }
 }
 
 impl RasterState {
@@ -192,6 +247,8 @@ impl RasterState {
       capture_frames,
       present_failures: 0,
       slow_frame_log: None,
+      timing: FrameTiming::new(),
+      present_fence: None,
       textures: HashMap::new(),
       shaders: HashMap::new(),
       buffers: HashMap::new(),
@@ -352,6 +409,9 @@ impl RasterState {
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
     self.ensure_window_surface(size);
+    let wait_start = std::time::Instant::now();
+    self.await_present_fence();
+    let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
     let drawn = match &mut self.window_surface {
       Some((surface, _)) => {
@@ -380,12 +440,13 @@ impl RasterState {
         }
       }
       let present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
+      self.timing.record(wait_ms, draw_ms, present_ms);
       // A frame's native cost beyond ~2 vsync periods means this thread is
       // being stalled in the driver; log which step, rate-limited to one line
       // per second so a sustained stall stays readable.
-      if draw_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+      if wait_ms + draw_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
         self.slow_frame_log = Some(std::time::Instant::now());
-        log::warn!("[alloy] slow frame: draw {draw_ms:.1}ms, present {present_ms:.1}ms");
+        log::warn!("[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, present {present_ms:.1}ms");
       }
       self.tx.send(FrameOutput::Presented).map_err(|_| ())?;
     }
@@ -394,6 +455,16 @@ impl RasterState {
       wake();
     }
     Ok(())
+  }
+
+  /// Block until the previous present's GPU work completed (or the timeout
+  /// passes), consuming the fence. See the `present_fence` field.
+  fn await_present_fence(&mut self) {
+    let Some(fence) = self.present_fence.take() else { return };
+    unsafe {
+      glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
+      glow::HasContext::delete_sync(&self.gl, fence);
+    }
   }
 
   /// Ensure the wrapped-FBO-0 window surface exists at `size`; reused across
@@ -421,6 +492,15 @@ impl RasterState {
   fn present(&mut self) -> bool {
     if crate::sdl_utils::gl_swap_window_checked(self.window) {
       self.present_failures = 0;
+      // The retry path can present twice for one frame; only the newest
+      // swap's fence matters.
+      if let Some(old) = self.present_fence.take() {
+        unsafe { glow::HasContext::delete_sync(&self.gl, old) };
+      }
+      // A failed fence_sync just means no pacing this frame: same behavior
+      // as before this mechanism existed.
+      self.present_fence =
+        unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) }.ok();
       return true;
     }
     self.present_failures += 1;

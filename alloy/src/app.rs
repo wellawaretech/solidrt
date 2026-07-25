@@ -169,6 +169,10 @@ impl App {
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
     let mut fps: u32 = 0;
+    // Pointer moves received from SDL in the current second, logged 1/s while
+    // input flows: the arrival rate shows whether the platform delivers moves
+    // at input-device rate or batched to vsync (drag latency diagnostics).
+    let mut pointer_moves: u32 = 0;
     let mut last_power_check = Instant::now();
 
     // Polled each loop iteration; transitions emit KeyboardVisibility so the
@@ -233,6 +237,10 @@ impl App {
         fps = fps_frame_count;
         fps_frame_count = 0;
         fps_last_second = Instant::now();
+        if pointer_moves > 0 {
+          log::info!("[alloy] input: {pointer_moves} pointer moves/s");
+          pointer_moves = 0;
+        }
         // Safety net: report a refresh-rate change the display event might miss.
         let hz = display_refresh_rate(&window);
         if hz != refresh_rate {
@@ -260,6 +268,9 @@ impl App {
           g.handle_event(&sdl_event);
         }
         if let Some(e) = translate_event(sdl_event, &window) {
+          if matches!(e, AlloyEvent::PointerMove { .. }) {
+            pointer_moves += 1;
+          }
           apply_main_thread_effects(&e, &surface_size, &mode);
           event_tx.send(e).ok();
         }

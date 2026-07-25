@@ -49,6 +49,14 @@ impl ExecHandle {
   {
     let _ = self.tx.send(Box::new(f));
   }
+
+  /// Whether two handles drive the same engine instance. Closures queued via
+  /// `exec` die with their engine, so state that tracks an in-flight closure
+  /// (e.g. the runner's per-pointer move gate) must reset when the engine it
+  /// was queued on is replaced.
+  pub fn same_engine(&self, other: &ExecHandle) -> bool {
+    self.tx.same_channel(&other.tx)
+  }
 }
 
 pub struct FluxEngineBuilder {

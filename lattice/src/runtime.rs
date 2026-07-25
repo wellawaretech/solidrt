@@ -1,10 +1,11 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use alloy::rendertree::PlatformContext;
-use alloy::AlloyEvent;
+use alloy::{AlloyEvent, Modifiers, PointerType};
 use flux::gui::input::InputEvent;
 use flux::{emit_event, ExecHandle};
 
@@ -40,6 +41,27 @@ pub struct FluxRuntime {
   // playback mode, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
   platform: Arc<PlatformContext>,
+  // At most one move dispatch in flight per pointer. A map entry means a
+  // dispatch closure for that pointer is queued on the engine; arrivals
+  // overwrite the entry's position and the closure consumes the entry when it
+  // runs, dispatching the freshest position. Without this gate, a device
+  // delivering moves faster than the engine drains them (two 120Hz touch
+  // streams, a 1000Hz gaming mouse) grows the exec queue without bound:
+  // frame signals and queries starve behind it, and stale positions keep
+  // replaying long after the input stopped. Down/up/wheel stay ungated:
+  // they are rare, ordering-sensitive, and (for wheel) carry deltas that
+  // must not be dropped.
+  pending_moves: Arc<Mutex<HashMap<(PointerType, u64), PendingMove>>>,
+  // Engine the pending closures were queued on. Queued closures die with
+  // their engine on reload, so a handle change orphans every map entry;
+  // detect it and clear (see event()).
+  gate_engine: Option<ExecHandle>,
+}
+
+struct PendingMove {
+  x: f32,
+  y: f32,
+  modifiers: Modifiers,
 }
 
 impl FluxRuntime {
@@ -49,7 +71,14 @@ impl FluxRuntime {
     paced: Option<PacedClock>,
     platform: Arc<PlatformContext>,
   ) -> Self {
-    Self { exec, playback_frame, paced, platform }
+    Self {
+      exec,
+      playback_frame,
+      paced,
+      platform,
+      pending_moves: Arc::new(Mutex::new(HashMap::new())),
+      gate_engine: None,
+    }
   }
 }
 
@@ -66,6 +95,12 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
+    // A replaced engine took its queued closures with it; every pending-move
+    // entry is now an orphan that would gate its pointer forever.
+    if !self.gate_engine.as_ref().is_some_and(|g| g.same_engine(eh)) {
+      self.pending_moves.lock().expect("pending moves lock poisoned").clear();
+      self.gate_engine = Some(eh.clone());
+    }
     // flux marshals the engine-agnostic window / keyboard / device events
     // (including the sticky window facts) directly; pointer events remain
     // because their dispatch is hit-testing, not pure marshalling.
@@ -76,17 +111,31 @@ impl UiRuntime for FluxRuntime {
       // Pointer events dispatch on arrival (hit test against the last
       // computed layout, like Flutter): no frame is needed to deliver them.
       // Handlers that mutate state request the next frame through their ffi
-      // calls.
-      AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => dispatch(
-        eh,
-        InputEvent::PointerMove {
-          pointer_id: *pointer_id,
-          pointer_type: *pointer_type,
-          x: *x,
-          y: *y,
-          modifiers: *modifiers,
-        },
-      ),
+      // calls. Moves go through the per-pointer gate (see `pending_moves`).
+      AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+        let key = (*pointer_type, *pointer_id);
+        let pending = PendingMove { x: *x, y: *y, modifiers: *modifiers };
+        let already_queued =
+          self.pending_moves.lock().expect("pending moves lock poisoned").insert(key, pending).is_some();
+        if !already_queued {
+          let moves = self.pending_moves.clone();
+          eh.exec(move |ctx| {
+            let Some(m) = moves.lock().expect("pending moves lock poisoned").remove(&key) else {
+              return;
+            };
+            flux::gui::input::dispatch(
+              &ctx,
+              InputEvent::PointerMove {
+                pointer_id: key.1,
+                pointer_type: key.0,
+                x: m.x,
+                y: m.y,
+                modifiers: m.modifiers,
+              },
+            );
+          });
+        }
+      }
       AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => dispatch(
         eh,
         InputEvent::PointerDown {
@@ -98,17 +147,22 @@ impl UiRuntime for FluxRuntime {
           modifiers: *modifiers,
         },
       ),
-      AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => dispatch(
-        eh,
-        InputEvent::PointerUp {
-          pointer_id: *pointer_id,
-          pointer_type: *pointer_type,
-          button: *button,
-          x: *x,
-          y: *y,
-          modifiers: *modifiers,
-        },
-      ),
+      AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
+        // A gated move dispatching after this up would be stale; the up
+        // carries the final position, so drop it.
+        self.pending_moves.lock().expect("pending moves lock poisoned").remove(&(*pointer_type, *pointer_id));
+        dispatch(
+          eh,
+          InputEvent::PointerUp {
+            pointer_id: *pointer_id,
+            pointer_type: *pointer_type,
+            button: *button,
+            x: *x,
+            y: *y,
+            modifiers: *modifiers,
+          },
+        )
+      }
       AlloyEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => dispatch(
         eh,
         InputEvent::Wheel {
