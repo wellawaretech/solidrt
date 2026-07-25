@@ -1,0 +1,11 @@
+{
+  "name": "hello-world",
+  "version": "0.0.0",
+  "private": true,
+  "solidrt": {
+    "displayName": "Hello World"
+  },
+  "dependencies": {
+    "@solidrt/core": "workspace:*"
+  }
+}
