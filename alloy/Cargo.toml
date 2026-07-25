@@ -17,6 +17,12 @@ sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
 ndk-context = "0.1"
 jni = "0.22"
+# AChoreographer vsync callbacks for frame pacing (src/vsync.rs, the sole
+# consumer): ndk provides the safe looper wrapper, ndk-sys the raw
+# choreographer calls the safe crate does not cover. Both drop if SDL ships
+# its own choreographer API (libsdl-org/SDL#15013, milestone 3.8.0).
+ndk = { version = "0.9", default-features = false }
+ndk-sys = "0.6"
 
 # impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
 # armv7 the pointer-sized struct fields don't line up, so re-run bindgen

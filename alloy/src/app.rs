@@ -154,6 +154,31 @@ impl App {
         }
       });
 
+    // Where a platform vsync backend exists (Android today), FrameRendered is
+    // deferred to the display's vsync (see vsync.rs) so frame production
+    // phase-locks to the clock the platform batches input on, and a built
+    // frame's buffer sits in the queue as briefly as possible. The vsync
+    // thread wakes the blocked event wait exactly like the raster thread does
+    // after a present. None = present-return pacing, unchanged.
+    let vsync = {
+      let sender = sdl_context.event().expect("Failed to get SDL event subsystem").event_sender();
+      crate::vsync::VsyncSource::start(move || {
+        sender.push_custom_event(FrameReady).ok();
+      })
+    };
+    // Presents whose FrameRendered awaits the vsync signal. pending_since
+    // drives the fallback: if the vsync source stays silent, emit after two
+    // refresh periods instead of stalling frame production.
+    let mut pending_presents: u32 = 0;
+    let mut pending_since = Instant::now();
+    // Whether a vsync request is outstanding (at most one ever is). Armed at
+    // signal emission for the NEXT vsync - not at present-return, which lands
+    // near the vsync boundary after the full build+draw pipeline and loses
+    // the re-arm race often enough to halve the frame rate (measured
+    // 41-51/60). Disarmed by taking the signal; a signal taken with nothing
+    // pending ends the chain (demand stopped), costing one spare callback.
+    let mut vsync_armed = false;
+
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
     // plugged in surface through the Added events SDL emits on subsystem init.
@@ -193,7 +218,14 @@ impl App {
       // event (see Context::submit), so nothing needs polling. The woken-for
       // event is handled below alongside the rest of the queue; a FrameReady
       // falls through translate_event as a no-op, its work is the rx drain.
-      let remaining = tick_period.saturating_sub(last_frame_signal.elapsed());
+      let remaining = if pending_presents > 0 {
+        // A present awaits its vsync signal: Ticks are suppressed and the
+        // wake comes from the vsync thread, so wait until the fallback
+        // deadline instead (neither spinning nor sleeping through it).
+        (pending_since + tick_period * 2).saturating_duration_since(Instant::now())
+      } else {
+        tick_period.saturating_sub(last_frame_signal.elapsed())
+      };
       let first_event = if remaining.is_zero() {
         None
       } else {
@@ -212,10 +244,28 @@ impl App {
         match rx.try_recv() {
           Ok(FrameOutput::Presented) => {
             fps_frame_count += 1;
-            let time = start_time.elapsed().as_secs_f64();
-            event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
-            frame += 1;
-            last_frame_signal = Instant::now();
+            match &vsync {
+              Some(v) => {
+                if pending_presents == 0 {
+                  pending_since = Instant::now();
+                }
+                pending_presents += 1;
+                // Normally the signal releasing this present is already
+                // armed (pre-armed when the previous one was emitted); this
+                // request only starts the chain on the first present out of
+                // idle.
+                if !vsync_armed {
+                  v.request(tick_period / 2);
+                  vsync_armed = true;
+                }
+              }
+              None => {
+                let time = start_time.elapsed().as_secs_f64();
+                event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+                frame += 1;
+                last_frame_signal = Instant::now();
+              }
+            }
           }
           // Captured frames only exist in playback mode, which never reaches
           // this loop.
@@ -249,7 +299,9 @@ impl App {
         }
       }
 
-      if last_frame_signal.elapsed() >= tick_period {
+      // No idle Tick while a present awaits its vsync signal: the real frame
+      // signal is at most a refresh period away (fallback included).
+      if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
         event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
         last_frame_signal = Instant::now();
       }
@@ -275,6 +327,47 @@ impl App {
           event_tx.send(e).ok();
         }
       }
+      // Flush presents deferred to vsync - after the SDL event drain, so the
+      // input delivered at the same vsync is already in the event channel and
+      // the UI batch runs it before this frame signal (a signal processed
+      // ahead of its vsync's input finds nothing dirty and wastes the frame).
+      // One signal releases all pending (at most one in practice: the UI
+      // thread builds the next frame only after this emission). Signals are
+      // drained even with nothing pending so a late one, arriving after its
+      // present was released by the fallback, cannot release a future present
+      // early.
+      if let Some(v) = &vsync {
+        let mut due = false;
+        while v.try_take() {
+          due = true;
+          vsync_armed = false;
+        }
+        if pending_presents > 0 {
+          if !due && pending_since.elapsed() >= tick_period * 2 {
+            log::warn!("[alloy] vsync signal missed; emitting frame signal after timeout");
+            due = true;
+          }
+          if due {
+            while pending_presents > 0 {
+              pending_presents -= 1;
+              let time = start_time.elapsed().as_secs_f64();
+              event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+              frame += 1;
+            }
+            last_frame_signal = Instant::now();
+            // Pre-arm the signal for the next vsync while this frame is
+            // being built: the signal timing must not depend on when the
+            // build's present returns (see vsync_armed). The frame this
+            // emission triggers has until that signal - a full period plus
+            // the delay - to present, or it slips a frame.
+            if !vsync_armed {
+              v.request(tick_period / 2);
+              vsync_armed = true;
+            }
+          }
+        }
+      }
+
       // At most one gamepad snapshot per iteration, however many pad events
       // were drained above.
       if let Some(e) = gamepads.as_mut().and_then(|g| g.take_snapshot_if_dirty()) {

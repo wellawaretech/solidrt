@@ -19,6 +19,7 @@ pub mod rendertree;
 mod script;
 mod shader;
 mod texture;
+mod vsync;
 
 #[cfg(test)]
 mod tests;
