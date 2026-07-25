@@ -56,12 +56,65 @@ pub struct FluxRuntime {
   // their engine on reload, so a handle change orphans every map entry;
   // detect it and clear (see event()).
   gate_engine: Option<ExecHandle>,
+  // JS-thread cost of the two per-frame closures (move dispatch, frame
+  // work), logged 1/s while input flows. The max column separates a steady
+  // dispatch cost from spikes (GC pauses): either can blow the one-period
+  // pipeline deadline and slip a frame (see alloy vsync pacing).
+  timing: Arc<Mutex<JsTiming>>,
 }
 
 struct PendingMove {
   x: f32,
   y: f32,
   modifiers: Modifiers,
+}
+
+#[derive(Default)]
+struct JsTiming {
+  since: Option<std::time::Instant>,
+  moves: u32,
+  move_ms: f32,
+  move_max: f32,
+  frames: u32,
+  frame_ms: f32,
+  frame_max: f32,
+}
+
+impl JsTiming {
+  fn record_move(&mut self, ms: f32) {
+    self.moves += 1;
+    self.move_ms += ms;
+    self.move_max = self.move_max.max(ms);
+    self.maybe_log();
+  }
+
+  fn record_frame(&mut self, ms: f32) {
+    self.frames += 1;
+    self.frame_ms += ms;
+    self.frame_max = self.frame_max.max(ms);
+    self.maybe_log();
+  }
+
+  fn maybe_log(&mut self) {
+    let since = self.since.get_or_insert_with(std::time::Instant::now);
+    if since.elapsed().as_secs_f32() < 1.0 {
+      return;
+    }
+    // Idle Ticks keep frame closures running at the refresh cadence, so only
+    // input activity makes a second worth reporting.
+    if self.moves > 0 {
+      log::info!(
+        "[lattice] js: {} moves avg {:.1}ms max {:.1}ms, {} frames avg {:.1}ms max {:.1}ms",
+        self.moves,
+        self.move_ms / self.moves as f32,
+        self.move_max,
+        self.frames,
+        self.frame_ms / self.frames.max(1) as f32,
+        self.frame_max
+      );
+    }
+    *self = JsTiming::default();
+  }
 }
 
 impl FluxRuntime {
@@ -78,6 +131,7 @@ impl FluxRuntime {
       platform,
       pending_moves: Arc::new(Mutex::new(HashMap::new())),
       gate_engine: None,
+      timing: Arc::new(Mutex::new(JsTiming::default())),
     }
   }
 }
@@ -119,10 +173,12 @@ impl UiRuntime for FluxRuntime {
           self.pending_moves.lock().expect("pending moves lock poisoned").insert(key, pending).is_some();
         if !already_queued {
           let moves = self.pending_moves.clone();
+          let timing = self.timing.clone();
           eh.exec(move |ctx| {
             let Some(m) = moves.lock().expect("pending moves lock poisoned").remove(&key) else {
               return;
             };
+            let start = std::time::Instant::now();
             flux::gui::input::dispatch(
               &ctx,
               InputEvent::PointerMove {
@@ -133,6 +189,10 @@ impl UiRuntime for FluxRuntime {
                 modifiers: m.modifiers,
               },
             );
+            timing
+              .lock()
+              .expect("js timing lock poisoned")
+              .record_move(start.elapsed().as_secs_f32() * 1000.0);
           });
         }
       }
@@ -191,7 +251,9 @@ impl UiRuntime for FluxRuntime {
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
     let platform = self.platform.clone();
+    let timing = self.timing.clone();
     eh.exec(move |ctx| {
+      let start = std::time::Instant::now();
       // Publish the present being computed before reading the clock, so in
       // playback mode the clock reports this frame's virtual time.
       playback_frame.store(next_frame, Ordering::Relaxed);
@@ -227,6 +289,7 @@ impl UiRuntime for FluxRuntime {
       // flush without any timing call crossing into JS (see frame::RENDER_START).
       crate::frame::RENDER_START.with(|c| c.set(Some(std::time::Instant::now())));
       emit_event(&ctx, "render", obj);
+      timing.lock().expect("js timing lock poisoned").record_frame(start.elapsed().as_secs_f32() * 1000.0);
     });
   }
 }

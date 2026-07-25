@@ -178,6 +178,12 @@ impl App {
     // 41-51/60). Disarmed by taking the signal; a signal taken with nothing
     // pending ends the chain (demand stopped), costing one spare callback.
     let mut vsync_armed = false;
+    // Pipeline cost estimator for the signal delay: signal_emitted marks each
+    // vsync-released FrameRendered, and its matching Presented closes the
+    // sample. Tick-triggered presents (first frame out of idle) have no open
+    // mark and are not sampled.
+    let mut pacing = crate::vsync::PacingBudget::new();
+    let mut signal_emitted: Option<Instant> = None;
 
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
@@ -246,6 +252,9 @@ impl App {
             fps_frame_count += 1;
             match &vsync {
               Some(v) => {
+                if let Some(emitted) = signal_emitted.take() {
+                  pacing.record(emitted.elapsed().as_secs_f32() * 1000.0, tick_period);
+                }
                 if pending_presents == 0 {
                   pending_since = Instant::now();
                 }
@@ -255,7 +264,7 @@ impl App {
                 // request only starts the chain on the first present out of
                 // idle.
                 if !vsync_armed {
-                  v.request(tick_period / 2);
+                  v.request(pacing.delay(tick_period));
                   vsync_armed = true;
                 }
               }
@@ -290,6 +299,10 @@ impl App {
         if pointer_moves > 0 {
           log::info!("[alloy] input: {pointer_moves} pointer moves/s");
           pointer_moves = 0;
+        }
+        if vsync.is_some() && fps > 0 {
+          let delay_ms = pacing.delay(tick_period).as_secs_f32() * 1000.0;
+          log::info!("[alloy] pacing: signal delay {delay_ms:.1}ms");
         }
         // Safety net: report a refresh-rate change the display event might miss.
         let hz = display_refresh_rate(&window);
@@ -355,13 +368,14 @@ impl App {
               frame += 1;
             }
             last_frame_signal = Instant::now();
+            signal_emitted = Some(Instant::now());
             // Pre-arm the signal for the next vsync while this frame is
             // being built: the signal timing must not depend on when the
             // build's present returns (see vsync_armed). The frame this
             // emission triggers has until that signal - a full period plus
             // the delay - to present, or it slips a frame.
             if !vsync_armed {
-              v.request(tick_period / 2);
+              v.request(pacing.delay(tick_period));
               vsync_armed = true;
             }
           }

@@ -58,6 +58,64 @@ impl VsyncSource {
   }
 }
 
+/// Rolling estimate of the frame pipeline cost - frame-signal emission to
+/// present-return, the full JS build + raster + present chain - driving how
+/// late after vsync the frame signal can fire. Later is better (the frame
+/// consumes fresher input and the buffer waits less for the compositor
+/// latch), bounded by the pipeline still having to finish before the next
+/// latch.
+pub struct PacingBudget {
+  samples: [f32; Self::WINDOW],
+  idx: usize,
+  filled: usize,
+}
+
+impl PacingBudget {
+  const WINDOW: usize = 32;
+  // Headroom added on top of the observed worst pipeline cost.
+  const MARGIN_MS: f32 = 2.0;
+
+  pub fn new() -> PacingBudget {
+    PacingBudget { samples: [0.0; Self::WINDOW], idx: 0, filled: 0 }
+  }
+
+  /// Record one emission-to-present duration. Samples beyond 1.5 periods are
+  /// slipped frames (the chain waited out an extra vsync), not steady-state
+  /// cost; folding them in would drag the start earlier for a whole window.
+  pub fn record(&mut self, ms: f32, period: std::time::Duration) {
+    if ms > period.as_secs_f32() * 1500.0 {
+      return;
+    }
+    self.samples[self.idx] = ms;
+    self.idx = (self.idx + 1) % Self::WINDOW;
+    self.filled = (self.filled + 1).min(Self::WINDOW);
+  }
+
+  /// Signal delay after vsync: as late as the estimated budget allows, but
+  /// never before the input-arrival floor and never past a margin before the
+  /// next vsync. The floor exists because the platform needs several ms to
+  /// route the vsync's input batch into the SDL queue, and a signal ahead of
+  /// its input wastes the frame. 8ms, scaled down to 60% of the period for
+  /// high-refresh displays. Measured on-device: 10ms bought nothing over 8 -
+  /// the ~5 skipped frames/s that remain are the platform pairing deliveries
+  /// across vsync boundaries (input-resampling territory, not a delay
+  /// problem) - while eating build margin. An empty window (chain start)
+  /// uses the floor.
+  pub fn delay(&self, period: std::time::Duration) -> std::time::Duration {
+    let period_ms = period.as_secs_f32() * 1000.0;
+    let floor = (period_ms * 0.6).min(8.0);
+    let budget = match self.filled {
+      0 => period_ms / 2.0,
+      n => {
+        let worst = self.samples[..n].iter().fold(0.0_f32, |a, &b| a.max(b));
+        worst + Self::MARGIN_MS
+      }
+    };
+    let delay_ms = (period_ms - budget).clamp(floor, period_ms - Self::MARGIN_MS);
+    std::time::Duration::from_secs_f32(delay_ms / 1000.0)
+  }
+}
+
 #[cfg(target_os = "android")]
 mod android {
   use std::cell::Cell;
