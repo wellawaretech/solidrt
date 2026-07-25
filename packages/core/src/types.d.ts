@@ -190,6 +190,29 @@ export interface TransformProps {
 export interface PointerEvent {
   clientX: number
   clientY: number
+  /**
+   * Pointer position in the coordinate frame of the node whose handler is
+   * running (its transform chain undone), so it differs per node as the event
+   * bubbles. Exact even when the pointer is not over the node: a drag routed
+   * along the frozen down-path keeps reporting true local coordinates after
+   * leaving it.
+   */
+  localX: number
+  localY: number
+  /**
+   * Pointer position in the frame the running node's own x/y coordinates live
+   * in: its parent on the hit path (the window for the root). The drag idiom
+   * is `x = parentX - grab offset`, with the grab offset taken from
+   * localX/localY at pointer down. The path parent skips
+   * pointerEvents="none" ancestors, so it is the layout parent in ordinary
+   * trees.
+   */
+  parentX: number
+  parentY: number
+  /** Node id whose handler is currently running (bubbling changes it per call). */
+  currentTarget: number
+  /** Deepest node id of the event's path (the hit leaf). */
+  target: number
   pointerId: number
   pointerType: "mouse" | "touch" | "pen" | (string & {})
   button?: number

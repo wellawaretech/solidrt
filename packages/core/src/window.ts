@@ -17,15 +17,12 @@ export { exit }
 
 // ------ Pointer routing -----------------
 
-// Hit path frozen at pointerDown, pointerId -> targets. While a pointer has an
-// active down, its moves and up dispatch along this path (same leaf-to-root
-// bubble) no matter where the pointer currently is, so every node under the
-// original down observes the whole gesture: a drag keeps working off-element,
-// and an ancestor recognizer (a scroller's pan) sees the moves it needs to
-// take over mid-gesture via the arena. There is no exclusive pointer capture;
-// gesture ownership is claim-based, above this layer. Enter/leave stay
-// hover-driven, and moves with no active down follow the live hit path.
-let downPaths = new Map<number, number[]>()
+// Routing lives in the engine: the runtime freezes each pointer's hit path at
+// pointerDown and delivers every event with its exact targets plus per-node
+// local/parent-frame coordinate arrays (see PointerEvent in types.d.ts). This
+// side only walks the delivered path, resolving the per-node scalars before
+// each handler. There is no exclusive pointer capture; gesture ownership is
+// claim-based, above this layer.
 
 // ------ Animation frames ----------------
 
@@ -252,77 +249,71 @@ export function attachWindow(_nodeId: number) {
       runFrame(time * 1000, frame)
     })
 
-    // Dispatch an event to every node on the hit path, leaf->root (bubbling), so
-    // a child handler can call e.stopPropagation() to keep the event from
-    // reaching its ancestors. `targets` arrives root->leaf, hence the reverse.
-    let bubble = (targets: number[], handler: string, e: any) => {
+    // Dispatch an event to every node on the delivered path, resolving the
+    // per-node fields from the parallel wire arrays before each handler:
+    // localX/localY is the pointer in that node's own frame, parentX/parentY
+    // in its path-parent's frame (the frame the node's x/y live in), and
+    // currentTarget the node whose handler is running. `reverse` walks the
+    // root->leaf array leaf-first (bubbling), so a child handler can call
+    // e.stopPropagation() to keep the event from reaching its ancestors;
+    // enter/leave arrive pre-ordered and walk forward.
+    interface RawPointer {
+      targets: number[]
+      localX: number[]
+      localY: number[]
+      parentX: number[]
+      parentY: number[]
+      [k: string]: any
+    }
+    let dispatchPath = (raw: RawPointer, handler: string, reverse: boolean) => {
+      let { targets, localX, localY, parentX, parentY, ...e } = raw
       let stopped = false
       e.stopPropagation = () => {
         stopped = true
       }
-      for (let i = targets.length - 1; i >= 0; i--) {
+      let n = targets.length
+      for (let k = 0; k < n; k++) {
+        let i = reverse ? n - 1 - k : k
+        e.currentTarget = targets[i]!
+        e.localX = localX[i]!
+        e.localY = localY[i]!
+        e.parentX = parentX[i]!
+        e.parentY = parentY[i]!
         getEventHandler(targets[i]!, handler)?.(e)
         if (stopped) break
       }
     }
+    let bubble = (raw: RawPointer, handler: string) => dispatchPath(raw, handler, true)
+    let dispatchOrdered = (raw: RawPointer, handler: string) => dispatchPath(raw, handler, false)
 
-    unsubDown = on(
-      "pointerDown",
-      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        downPaths.set(e.pointerId, targets)
-        bubble(targets, "onPointerDown", e)
-        // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
-        // moves focus to a new node is not immediately blurred again.
-        let focused = getFocusedNodeId()
-        if (focused != null && !targets.includes(focused)) {
-          setFocus(null)
-        }
-      },
-    )
-
-    unsubUp = on("pointerUp", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-      let frozen = downPaths.get(e.pointerId)
-      downPaths.delete(e.pointerId)
-      bubble(frozen ?? targets, "onPointerUp", e)
+    unsubDown = on("pointerDown", (raw: RawPointer) => {
+      bubble(raw, "onPointerDown")
+      // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
+      // moves focus to a new node is not immediately blurred again.
+      let focused = getFocusedNodeId()
+      if (focused != null && !raw.targets.includes(focused)) {
+        setFocus(null)
+      }
     })
 
-    unsubMove = on(
-      "pointerMove",
-      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        bubble(downPaths.get(e.pointerId) ?? targets, "onPointerMove", e)
-      },
-    )
+    unsubUp = on("pointerUp", (raw: RawPointer) => {
+      bubble(raw, "onPointerUp")
+    })
 
-    // Enter/leave keep their hover-diff order (already leaf->root for leave,
-    // root->leaf for enter), but still honor stopPropagation for a consistent
-    // event shape.
-    let dispatchOrdered = (targets: number[], handler: string, e: any) => {
-      let stopped = false
-      e.stopPropagation = () => {
-        stopped = true
-      }
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, handler)?.(e)
-        if (stopped) break
-      }
-    }
+    unsubMove = on("pointerMove", (raw: RawPointer) => {
+      bubble(raw, "onPointerMove")
+    })
 
-    unsubEnter = on(
-      "pointerEnter",
-      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        dispatchOrdered(targets, "onPointerEnter", e)
-      },
-    )
+    unsubEnter = on("pointerEnter", (raw: RawPointer) => {
+      dispatchOrdered(raw, "onPointerEnter")
+    })
 
-    unsubLeave = on(
-      "pointerLeave",
-      ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-        dispatchOrdered(targets, "onPointerLeave", e)
-      },
-    )
+    unsubLeave = on("pointerLeave", (raw: RawPointer) => {
+      dispatchOrdered(raw, "onPointerLeave")
+    })
 
-    unsubWheel = on("wheel", ({ targets, ...e }: { targets: number[]; [k: string]: any }) => {
-      bubble(targets, "onWheel", e)
+    unsubWheel = on("wheel", (raw: RawPointer) => {
+      bubble(raw, "onWheel")
     })
 
     unsubKeyDown = on("keydown", (e: any) => {

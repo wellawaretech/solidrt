@@ -4210,7 +4210,6 @@ function measureText2(text, options) {
 }
 
 // packages/core/src/window.ts
-var downPaths = new Map;
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -4348,70 +4347,55 @@ function attachWindow(_nodeId) {
     }) => {
       runFrame(time * 1000, frame);
     });
-    let bubble = (targets, handler, e) => {
+    let dispatchPath = (raw, handler, reverse) => {
+      let {
+        targets,
+        localX,
+        localY,
+        parentX,
+        parentY,
+        ...e
+      } = raw;
       let stopped = false;
       e.stopPropagation = () => {
         stopped = true;
       };
-      for (let i = targets.length - 1;i >= 0; i--) {
+      let n = targets.length;
+      for (let k = 0;k < n; k++) {
+        let i = reverse ? n - 1 - k : k;
+        e.currentTarget = targets[i];
+        e.localX = localX[i];
+        e.localY = localY[i];
+        e.parentX = parentX[i];
+        e.parentY = parentY[i];
         getEventHandler(targets[i], handler)?.(e);
         if (stopped)
           break;
       }
     };
-    unsubDown = on("pointerDown", ({
-      targets,
-      ...e
-    }) => {
-      downPaths.set(e.pointerId, targets);
-      bubble(targets, "onPointerDown", e);
+    let bubble = (raw, handler) => dispatchPath(raw, handler, true);
+    let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
+    unsubDown = on("pointerDown", (raw) => {
+      bubble(raw, "onPointerDown");
       let focused = getFocusedNodeId();
-      if (focused != null && !targets.includes(focused)) {
+      if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
       }
     });
-    unsubUp = on("pointerUp", ({
-      targets,
-      ...e
-    }) => {
-      let frozen = downPaths.get(e.pointerId);
-      downPaths.delete(e.pointerId);
-      bubble(frozen ?? targets, "onPointerUp", e);
+    unsubUp = on("pointerUp", (raw) => {
+      bubble(raw, "onPointerUp");
     });
-    unsubMove = on("pointerMove", ({
-      targets,
-      ...e
-    }) => {
-      bubble(downPaths.get(e.pointerId) ?? targets, "onPointerMove", e);
+    unsubMove = on("pointerMove", (raw) => {
+      bubble(raw, "onPointerMove");
     });
-    let dispatchOrdered = (targets, handler, e) => {
-      let stopped = false;
-      e.stopPropagation = () => {
-        stopped = true;
-      };
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, handler)?.(e);
-        if (stopped)
-          break;
-      }
-    };
-    unsubEnter = on("pointerEnter", ({
-      targets,
-      ...e
-    }) => {
-      dispatchOrdered(targets, "onPointerEnter", e);
+    unsubEnter = on("pointerEnter", (raw) => {
+      dispatchOrdered(raw, "onPointerEnter");
     });
-    unsubLeave = on("pointerLeave", ({
-      targets,
-      ...e
-    }) => {
-      dispatchOrdered(targets, "onPointerLeave", e);
+    unsubLeave = on("pointerLeave", (raw) => {
+      dispatchOrdered(raw, "onPointerLeave");
     });
-    unsubWheel = on("wheel", ({
-      targets,
-      ...e
-    }) => {
-      bubble(targets, "onWheel", e);
+    unsubWheel = on("wheel", (raw) => {
+      bubble(raw, "onWheel");
     });
     unsubKeyDown = on("keydown", (e) => {
       let id = getFocusedNodeId();
@@ -5020,6 +5004,16 @@ function ensureSystemThemeState() {
   on2("systemTheme", (e3) => setTheme(e3.theme ?? "unknown"));
   systemThemeAccessor = theme;
 }
+var visibilityAccessor;
+function ensureVisibilityState() {
+  if (visibilityAccessor)
+    return;
+  let [visibility, setVisibility] = createSignal("visible", {
+    ownedWrite: true
+  });
+  on2("visibility", (e3) => setVisibility(e3.state === "hidden" ? "hidden" : "visible"));
+  visibilityAccessor = visibility;
+}
 var orientationAccessor;
 function ensureOrientationState() {
   if (orientationAccessor)
@@ -5108,6 +5102,10 @@ var env = {
   get textScale() {
     ensureTextScaleState();
     return textScaleAccessor();
+  },
+  get visibility() {
+    ensureVisibilityState();
+    return visibilityAccessor();
   },
   get orientation() {
     ensureOrientationState();

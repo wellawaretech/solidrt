@@ -81,6 +81,44 @@ pub fn path_diff(old_ids: &[u64], new_ids: &[u64]) -> (Vec<u64>, Vec<u64>) {
   (left, entered)
 }
 
+/// Project a window-space point into the local frame of every node along a
+/// root->leaf id chain, replaying `hit_recursive`'s descent math without the
+/// bounds checks: the chain does not need to be under the pointer, so a stored
+/// path (frozen-drag routing, hover diffs) still yields exact locals. A node
+/// missing from the tree truncates the result - the frames below a dead node
+/// are meaningless.
+pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: XY) -> Vec<XY> {
+  let mut locals = Vec::with_capacity(chain.len());
+  let mut point = point;
+  let mut parent_size = WH::default();
+  let mut parent_scroll = XY::default();
+  for (i, &id) in chain.iter().enumerate() {
+    let Some(element) = tree.try_node(id) else { break };
+    let size = element
+      .layout
+      .as_ref()
+      .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
+      .unwrap_or(parent_size);
+    if i > 0 {
+      let pos = element
+        .layout
+        .as_ref()
+        .map(|l| XY::new(l.computed.location.x, l.computed.location.y))
+        .unwrap_or_default();
+      point = XY::new(point.x - pos.x + parent_scroll.x, point.y - pos.y + parent_scroll.y);
+    }
+    let local = element.kind.transform_to_local(point, &HitContext { size });
+    locals.push(local);
+    point = local;
+    parent_size = size;
+    parent_scroll = match &element.kind {
+      ElementKind::View(v) => v.scroll.unwrap_or_default(),
+      _ => XY::default(),
+    };
+  }
+  locals
+}
+
 pub trait HitTester {
   fn hit_test(&self, tree: &RenderTree, point: XY) -> Vec<HitEntry>;
 }
