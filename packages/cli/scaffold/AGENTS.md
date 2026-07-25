@@ -117,6 +117,12 @@ Authoritative references ship inside the installed packages - read them:
     mounted. To inspect children (a typeof probe, counting), resolve them
     first with the children() helper (re-exported from @solidrt/core) and
     probe the resolved memo - never `typeof props.children` on the raw prop.
+18. Cover/contain images: give `Image` a `fit` prop ("fill" | "cover" |
+    "contain" | "none" | "scale-down", CSS object-fit semantics, centered)
+    plus a box via `layout` in any form - numbers, pct(), flex. Without
+    `fit`, only NUMERIC layout sizes reach the image; `width: pct(100)`
+    alone draws at intrinsic size. `fit="cover"` is the answer for the
+    ported-web hero-image/thumbnail pattern.
 
 ## Performance model (JS is the slow lane)
 

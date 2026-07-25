@@ -18,6 +18,6 @@ pub use path::Path;
 pub use rect::Rectangle;
 pub use svg::Svg;
 pub use text::{Span, Text};
-pub use texture::Texture;
+pub use texture::{fit_rects, Texture, TextureFit};
 pub use view::{OriginCoord, View};
 pub use window::Window;

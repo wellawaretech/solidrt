@@ -8,8 +8,8 @@ mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
-  Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span, Svg, Text,
-  Texture, View, Window,
+  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span, Svg,
+  Text, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};

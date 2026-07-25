@@ -342,6 +342,14 @@ export interface TextProps extends Position, PaintProps, PointerProps {
 
 export interface TextureProps extends Position, PointerProps {
   src?: number
+  /**
+   * How the texture's pixels map to the element box (CSS object-fit).
+   * "fill" (default) stretches; "cover" and "none" crop; "contain" and
+   * "scale-down" letterbox. Everything centers - there is no object-position.
+   * Paint-only: the element box itself is unaffected, so "contain" letterbox
+   * bars and "cover" cropped edges still hit-test as part of the element.
+   */
+  fit?: "fill" | "cover" | "contain" | "none" | "scale-down"
   w?: number
   h?: number
   srcX?: number

@@ -194,9 +194,19 @@ Accepts `layout`, `style`, and all pointer event props, plus:
 | Prop       | Type                     | Description                                                                          |
 | ---------- | ------------------------ | ------------------------------------------------------------------------------------ |
 | `src`      | `string \| Uint8Array`   | URL to fetch, or raw image bytes to decode                                            |
+| `fit`      | `"fill" \| "cover" \| "contain" \| "none" \| "scale-down"` | How the image maps into the box (CSS object-fit, centered)  |
 | `fallback` | `string \| Uint8Array`   | Source shown when `src` fails; if it also fails, the `backgroundColor` placeholder stays |
 | `onLoad`   | `() => void`             | Called each time a source finishes loading                                            |
 | `onError`  | `(err: unknown) => void` | Called when `src` fails to load or decode                                             |
+
+With `fit` the image fills whatever box `layout` gives the component - numbers,
+`pct()`, or flex - and the fit decides how the pixels map into it (`"cover"` is
+the ported-web-hero-image answer). Without `fit`, only *numeric* layout sizes
+reach the image; anything else draws at intrinsic size.
+
+```jsx
+<Image src={hero} fit="cover" layout={{ width: pct(100), height: 240 }} />
+```
 
 A failing `src` is contained by the component (the fallback or placeholder
 shows); it does not propagate to an outer `<Errored>` boundary.

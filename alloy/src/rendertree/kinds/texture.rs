@@ -8,9 +8,58 @@ use crate::rendertree::{
 };
 use taffy::{AlignSelf, Display, Size as TaffySize, Style};
 
+// CSS object-fit semantics: how the source pixels map to the element box.
+// Fill stretches (the default, like CSS); Cover/None crop; Contain/ScaleDown
+// letterbox. Everything centers - there is no object-position.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextureFit {
+  #[default]
+  Fill,
+  Cover,
+  Contain,
+  None,
+  ScaleDown,
+}
+
+// Maps a source rect into a destination box per `fit`. Cropping is expressed
+// by shrinking the source rect (a sub-rect of the texture is drawn to the full
+// box), letterboxing by shrinking the destination rect; both center. Returns
+// the rects unchanged when either rect is degenerate.
+pub fn fit_rects(fit: TextureFit, src: Rect, dst: Rect) -> (Rect, Rect) {
+  let (sw, sh) = (src.size.width, src.size.height);
+  let (dw, dh) = (dst.size.width, dst.size.height);
+  if sw <= 0.0 || sh <= 0.0 || dw <= 0.0 || dh <= 0.0 {
+    return (src, dst);
+  }
+  let scale = match fit {
+    TextureFit::Fill => return (src, dst),
+    TextureFit::Cover => (dw / sw).max(dh / sh),
+    TextureFit::Contain => (dw / sw).min(dh / sh),
+    TextureFit::None => 1.0,
+    TextureFit::ScaleDown => (dw / sw).min(dh / sh).min(1.0),
+  };
+  // Visible portion of the source at this scale, centered; never larger than
+  // the source itself (the axis that fits entirely keeps its full extent).
+  let vw = (dw / scale).min(sw);
+  let vh = (dh / scale).min(sh);
+  let src_out = Rect::new(
+    Point::new(src.origin.x + (sw - vw) / 2.0, src.origin.y + (sh - vh) / 2.0),
+    ISize::new(vw, vh),
+  );
+  // Destination extent of that portion, centered; never larger than the box.
+  let ow = (vw * scale).min(dw);
+  let oh = (vh * scale).min(dh);
+  let dst_out = Rect::new(
+    Point::new(dst.origin.x + (dw - ow) / 2.0, dst.origin.y + (dh - oh) / 2.0),
+    ISize::new(ow, oh),
+  );
+  (src_out, dst_out)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Texture {
   pub texture_id: Option<u64>,
+  pub fit: TextureFit,
   pub src_x: Option<f32>,
   pub src_y: Option<f32>,
   pub src_w: Option<f32>,
@@ -58,6 +107,7 @@ impl Buildable for Texture {
     let w = self.w.unwrap_or(ctx.size.w);
     let h = self.h.unwrap_or(ctx.size.h);
     let dst_rect = Rect::new(Point::new(x, y), ISize::new(w, h));
+    let (src_rect, dst_rect) = fit_rects(self.fit, src_rect, dst_rect);
     let paint = Paint::default();
     builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&paint));
   }
@@ -89,7 +139,7 @@ impl Bounded for Texture {
 //   one known      -> derive other from intrinsic aspect ratio
 //   both known     -> honor both (explicit override)
 // Intrinsic size honors src_* crop when set, else falls back to texture dims.
-//TODO object-fit (cover/contain). Currently always stretches to the layout box.
+// `fit` is paint-only (see fit_rects) and never enters measurement.
 impl Measurable for Texture {
   fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
     let (tex_w, tex_h) = self
@@ -114,6 +164,12 @@ impl Measurable for Texture {
 }
 
 impl Texture {
+  // Fit never changes the element box, only how pixels map into it.
+  pub fn set_fit(&mut self, fit: TextureFit) -> Damage {
+    self.fit = fit;
+    Damage::Paint
+  }
+
   // Source id and crop rect feed measurement, so all affect layout. None clears
   // the texture; the null-vs-number decoding happens in the binding layer.
   pub fn set_src(&mut self, id: Option<u64>) -> Damage {

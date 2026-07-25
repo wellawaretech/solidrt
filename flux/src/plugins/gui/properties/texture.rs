@@ -1,7 +1,7 @@
-use super::f32_of;
+use super::{f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
-use alloy::rendertree::Texture;
+use alloy::rendertree::{Texture, TextureFit};
 
 pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
@@ -10,6 +10,17 @@ pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<Damage>
       let id =
         if value.is_null() { None } else { Some(value.as_f64().expect("src must be a texture id (number)") as u64) };
       tex.set_src(id)
+    }
+    "fit" => {
+      let fit = match str_of(value, "fit") {
+        "fill" => TextureFit::Fill,
+        "cover" => TextureFit::Cover,
+        "contain" => TextureFit::Contain,
+        "none" => TextureFit::None,
+        "scale-down" => TextureFit::ScaleDown,
+        v => panic!("unknown fit value '{v}'"),
+      };
+      tex.set_fit(fit)
     }
     "srcX" => tex.set_src_x(f32_of(value, "srcX")),
     "srcY" => tex.set_src_y(f32_of(value, "srcY")),
