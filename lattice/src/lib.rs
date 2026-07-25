@@ -5,6 +5,7 @@ pub mod manifest;
 mod overlay;
 mod paced_clock;
 mod plugins;
+mod resample;
 mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
@@ -385,7 +386,11 @@ fn ui_thread(
         // else is queued, with two coalescing rules.
         // - PointerMove collapses to the latest position per pointer. Each
         //   move costs a hit-test plus a JS dispatch, and a fast mouse
-        //   produces motion faster than that pipeline drains it.
+        //   produces motion faster than that pipeline drains it. Touch is
+        //   exempt: its moves feed the resampler's history instead of
+        //   dispatching on arrival (see resample.rs), and a paired delivery's
+        //   older sample carries the velocity, so dropping it would corrupt
+        //   the gap-bridging step.
         // - Frame signals (FrameRendered / Tick) collapse to the newest one,
         //   dispatched after the batch's input. A frame signal triggers a
         //   full paint + present on this thread; when presents stall (driver
@@ -420,6 +425,9 @@ fn ui_thread(
         let mut keep = vec![true; events.len()];
         for (i, event) in events.iter().enumerate().rev() {
           if let AlloyEvent::PointerMove { pointer_id, pointer_type, .. } = event {
+            if *pointer_type == alloy::PointerType::Touch {
+              continue;
+            }
             let key = (*pointer_type, *pointer_id);
             if seen_moves.contains(&key) {
               keep[i] = false;

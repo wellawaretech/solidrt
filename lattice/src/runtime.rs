@@ -10,6 +10,7 @@ use flux::gui::input::InputEvent;
 use flux::{emit_event, ExecHandle};
 
 use crate::paced_clock::PacedClock;
+use crate::resample::Resampler;
 
 /// The engine seam: the verbs the runner's event loop drives a UI runtime
 /// with. Runner-owned bookkeeping (pointer positions, window facts, fps) has
@@ -41,17 +42,26 @@ pub struct FluxRuntime {
   // playback mode, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
   platform: Arc<PlatformContext>,
-  // At most one move dispatch in flight per pointer. A map entry means a
-  // dispatch closure for that pointer is queued on the engine; arrivals
-  // overwrite the entry's position and the closure consumes the entry when it
-  // runs, dispatching the freshest position. Without this gate, a device
-  // delivering moves faster than the engine drains them (two 120Hz touch
-  // streams, a 1000Hz gaming mouse) grows the exec queue without bound:
-  // frame signals and queries starve behind it, and stale positions keep
-  // replaying long after the input stopped. Down/up/wheel stay ungated:
-  // they are rare, ordering-sensitive, and (for wheel) carry deltas that
-  // must not be dropped.
+  // At most one move dispatch in flight per pointer (mouse and pen; touch
+  // goes through the resampler below and never dispatches on arrival). A map
+  // entry means a dispatch closure for that pointer is queued on the engine;
+  // arrivals overwrite the entry's position and the closure consumes the
+  // entry when it runs, dispatching the freshest position. Without this
+  // gate, a device delivering moves faster than the engine drains them (a
+  // 1000Hz gaming mouse) grows the exec queue without bound: frame signals
+  // and queries starve behind it, and stale positions keep replaying long
+  // after the input stopped. Down/up/wheel stay ungated: they are rare,
+  // ordering-sensitive, and (for wheel) carry deltas that must not be
+  // dropped.
   pending_moves: Arc<Mutex<HashMap<(PointerType, u64), PendingMove>>>,
+  // Touch moves are consumed by the frame clock instead of dispatching on
+  // arrival: frame() drains one resampled move per pointer per frame signal
+  // (see resample.rs for the slot model and why). Idle Ticks keep frame
+  // signals coming at refresh cadence, so a buffered move is never more than
+  // one period from dispatch even when nothing is painting. Mouse and pen
+  // keep the arrival path: hover must dispatch without any frame in flight,
+  // and desktop delivery has no batching to smooth.
+  resampler: Resampler,
   // Engine the pending closures were queued on. Queued closures die with
   // their engine on reload, so a handle change orphans every map entry;
   // detect it and clear (see event()).
@@ -130,6 +140,7 @@ impl FluxRuntime {
       paced,
       platform,
       pending_moves: Arc::new(Mutex::new(HashMap::new())),
+      resampler: Resampler::new(),
       gate_engine: None,
       timing: Arc::new(Mutex::new(JsTiming::default())),
     }
@@ -150,9 +161,11 @@ impl UiRuntime for FluxRuntime {
       return;
     };
     // A replaced engine took its queued closures with it; every pending-move
-    // entry is now an orphan that would gate its pointer forever.
+    // entry is now an orphan that would gate its pointer forever. Touch
+    // histories restart too: the new engine never saw the down.
     if !self.gate_engine.as_ref().is_some_and(|g| g.same_engine(eh)) {
       self.pending_moves.lock().expect("pending moves lock poisoned").clear();
+      self.resampler.clear();
       self.gate_engine = Some(eh.clone());
     }
     // flux marshals the engine-agnostic window / keyboard / device events
@@ -165,9 +178,15 @@ impl UiRuntime for FluxRuntime {
       // Pointer events dispatch on arrival (hit test against the last
       // computed layout, like Flutter): no frame is needed to deliver them.
       // Handlers that mutate state request the next frame through their ffi
-      // calls. Moves go through the per-pointer gate (see `pending_moves`).
+      // calls. Mouse/pen moves go through the per-pointer gate (see
+      // `pending_moves`); touch moves feed the resampler and dispatch from
+      // frame().
       AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
         let key = (*pointer_type, *pointer_id);
+        if *pointer_type == PointerType::Touch {
+          self.resampler.push(key, *x, *y, *modifiers);
+          return;
+        }
         let pending = PendingMove { x: *x, y: *y, modifiers: *modifiers };
         let already_queued =
           self.pending_moves.lock().expect("pending moves lock poisoned").insert(key, pending).is_some();
@@ -196,21 +215,29 @@ impl UiRuntime for FluxRuntime {
           });
         }
       }
-      AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => dispatch(
-        eh,
-        InputEvent::PointerDown {
-          pointer_id: *pointer_id,
-          pointer_type: *pointer_type,
-          button: *button,
-          x: *x,
-          y: *y,
-          modifiers: *modifiers,
-        },
-      ),
+      AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
+        // Seed the touch history at the contact so the first move already
+        // has a velocity; the down itself dispatches on arrival as always.
+        if *pointer_type == PointerType::Touch {
+          self.resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
+        }
+        dispatch(
+          eh,
+          InputEvent::PointerDown {
+            pointer_id: *pointer_id,
+            pointer_type: *pointer_type,
+            button: *button,
+            x: *x,
+            y: *y,
+            modifiers: *modifiers,
+          },
+        )
+      }
       AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // A gated move dispatching after this up would be stale; the up
-        // carries the final position, so drop it.
+        // A gated or buffered move dispatching after this up would be stale;
+        // the up carries the final position, so drop them.
         self.pending_moves.lock().expect("pending moves lock poisoned").remove(&(*pointer_type, *pointer_id));
+        self.resampler.remove((*pointer_type, *pointer_id));
         dispatch(
           eh,
           InputEvent::PointerUp {
@@ -248,11 +275,32 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
+    // Sampled at frame-signal time: the alloy loop drains the vsync's input
+    // into the event channel before emitting the signal, and the batch loop
+    // runs events before the signal, so this frame's touch samples are
+    // already in the history.
+    let moves = self.resampler.sample();
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
     let platform = self.platform.clone();
     let timing = self.timing.clone();
     eh.exec(move |ctx| {
+      // Resampled touch moves run ahead of the frame work so the frame
+      // consumes the state they dirty; timed as moves, not frame cost.
+      for m in moves {
+        let start = std::time::Instant::now();
+        flux::gui::input::dispatch(
+          &ctx,
+          InputEvent::PointerMove {
+            pointer_id: m.pointer_id,
+            pointer_type: m.pointer_type,
+            x: m.x,
+            y: m.y,
+            modifiers: m.modifiers,
+          },
+        );
+        timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
+      }
       let start = std::time::Instant::now();
       // Publish the present being computed before reading the clock, so in
       // playback mode the clock reports this frame's virtual time.
