@@ -154,7 +154,9 @@ export function collectAssets(entry: string): { assets: ManifestAsset[]; fonts: 
 export function loadAppIdentity(sourcePath: string): AppIdentity {
   let project = findProjectPackage(sourcePath)
   let config = project?.pkg.solidrt ?? {}
-  let fallbackName = project?.pkg.name ?? basename(sourcePath).replace(/\.[jt]sx?$/, "")
+  // A scoped package name (@org/name) defaults to its last segment: identity
+  // fields reject path separators, and derived defaults must never fail that.
+  let fallbackName = (project?.pkg.name ?? basename(sourcePath).replace(/\.[jt]sx?$/, "")).split("/").pop()!
 
   for (let key of ["appId", "org", "displayName"]) {
     if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
@@ -170,7 +172,7 @@ export function loadAppIdentity(sourcePath: string): AppIdentity {
       fail(`"solidrt": "appId" must match ${APP_ID_PATTERN} (reverse-DNS recommended, e.g. "com.example.app")`)
     }
   }
-  let displayName = config.displayName ?? (project?.pkg.name || fallbackName)
+  let displayName = config.displayName ?? fallbackName
   let org = config.org ?? displayName
   checkField(appId, '"appId"')
   checkField(displayName, '"displayName"')

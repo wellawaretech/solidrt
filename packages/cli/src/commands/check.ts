@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { source } from "../args"
 import { bundleWith } from "../bundler"
@@ -12,7 +12,7 @@ import { bundleWith } from "../bundler"
 
 // Walk up from the entry to the enclosing project (tsconfig.json or, failing
 // that, package.json).
-function findProjectRoot(entry: string): string | null {
+export function findProjectRoot(entry: string): string | null {
   let dir = dirname(resolve(entry))
   let byConfig: string | null = null
   let byPackage: string | null = null
@@ -45,18 +45,77 @@ function parseDiagnostics(output: string): Diagnostic[] {
   return diagnostics
 }
 
-async function typecheck(root: string): Promise<{ app: Diagnostic[]; hidden: number } | null> {
-  let tsc = join(root, "node_modules", ".bin", process.platform === "win32" ? "tsc.exe" : "tsc")
-  if (!existsSync(tsc)) {
+// The project's tsc, found by walking up from the project root: an example
+// app can carry a tsconfig without its own node_modules (monorepo case).
+function findTsc(fromDir: string): string | null {
+  let dir = fromDir
+  while (true) {
+    let tsc = join(dir, "node_modules", ".bin", process.platform === "win32" ? "tsc.exe" : "tsc")
+    if (existsSync(tsc)) return tsc
+    let parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+// Typecheck the entry's program, not the enclosing project: a transient
+// config extends the project's tsconfig and roots the program at the entry
+// alone, so tsc checks exactly the entry's import closure - unrelated files
+// are excluded by construction. The config lives in the project-local
+// .srt-data (the dev-artifact dir; absolute paths inside, so its location
+// only matters for type-package resolution, which walks up to the project's
+// node_modules from there).
+export async function typecheck(root: string, entry: string): Promise<{ app: Diagnostic[]; hidden: number } | null> {
+  let tsconfig = join(root, "tsconfig.json")
+  if (!existsSync(tsconfig)) {
+    console.warn("Typecheck skipped: no tsconfig.json above the entry")
+    return null
+  }
+  let tsc = findTsc(root)
+  if (!tsc) {
     console.warn("Typecheck skipped: no tsc in the project (add the typescript devDependency)")
     return null
   }
-  let proc = Bun.spawn([tsc, "--noEmit", "--pretty", "false"], { cwd: root, stdout: "pipe", stderr: "pipe" })
-  let [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
-  await proc.exited
-  let diagnostics = parseDiagnostics(out + err)
-  let app = diagnostics.filter((d) => !d.inDependencies)
-  return { app, hidden: diagnostics.length - app.length }
+  let dataDir = join(root, ".srt-data")
+  mkdirSync(dataDir, { recursive: true })
+  let config = join(dataDir, `typecheck-${process.pid}.tsconfig.json`)
+  // include: [] overrides any include inherited from the extended config -
+  // files and include are unioned, so without this a base config's include
+  // would drag the whole project back into the program.
+  await Bun.write(config, JSON.stringify({ extends: tsconfig, include: [], files: [resolve(entry)] }))
+  try {
+    let proc = Bun.spawn([tsc, "-p", config, "--noEmit", "--pretty", "false"], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    let [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+    await proc.exited
+    let diagnostics = parseDiagnostics(out + err)
+    let app = diagnostics.filter((d) => !d.inDependencies)
+    return { app, hidden: diagnostics.length - app.length }
+  } finally {
+    rmSync(config, { force: true })
+  }
+}
+
+// Print a typecheck result (diagnostics, then the one-line verdict) and return
+// whether app-code errors were found. Callers pass repl-aware printers when
+// the output lands over a live prompt (the dev-server startup check).
+export function reportTypes(
+  types: { app: Diagnostic[]; hidden: number },
+  log: (...args: any[]) => void = console.log,
+  error: (...args: any[]) => void = console.error,
+): boolean {
+  for (let d of types.app) error(d.lines.join("\n"))
+  if (types.app.length > 0) {
+    let hidden = types.hidden > 0 ? ` (${types.hidden} in dependencies hidden)` : ""
+    error(`${types.app.length} type error${types.app.length === 1 ? "" : "s"} in app code${hidden}`)
+    return true
+  }
+  if (types.hidden > 0) log(`Types OK (${types.hidden} dependency-internal errors hidden)`)
+  else log("Types OK")
+  return false
 }
 
 export async function runCheckCommand() {
@@ -73,19 +132,8 @@ export async function runCheckCommand() {
   if (!root) {
     console.warn("Typecheck skipped: no tsconfig.json or package.json above the entry")
   } else {
-    let types = await typecheck(root)
-    if (types) {
-      for (let d of types.app) console.error(d.lines.join("\n"))
-      if (types.app.length > 0) {
-        failed = true
-        let hidden = types.hidden > 0 ? ` (${types.hidden} in dependencies hidden)` : ""
-        console.error(`${types.app.length} type error${types.app.length === 1 ? "" : "s"} in app code${hidden}`)
-      } else if (types.hidden > 0) {
-        console.log(`Types OK (${types.hidden} dependency-internal errors hidden)`)
-      } else {
-        console.log("Types OK")
-      }
-    }
+    let types = await typecheck(root, entry)
+    if (types && reportTypes(types)) failed = true
   }
 
   if (failed) process.exit(1)

@@ -97,14 +97,14 @@ function removeNode(parent: ProxyNode, node: ProxyNode): void {
 // bookkeeping on the hot create/insert paths, orphans are derived from the
 // proxy map itself: parentless, not the window root, and not awaiting the
 // destroy sweep. window.ts runs the scan on a rendered frame every few
-// seconds; dev bundles only (srt always defines process.env.NODE_ENV, so a
+// seconds; dev bundles only (srt always defines import.meta.env.DEV, so a
 // production bundle folds the check into a constant early return).
 const SENTINEL_INTERVAL_MS = 5000
 let sentinelDue = 0
 let warnedLeakTypes = new Set<string>()
 
 export function scanForOrphans(now: number): void {
-  if (process.env.NODE_ENV === "production") return
+  if (!import.meta.env.DEV) return
   if (now < sentinelDue) return
   sentinelDue = now + SENTINEL_INTERVAL_MS
   let counts = new Map<string, number>()

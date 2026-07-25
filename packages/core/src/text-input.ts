@@ -82,7 +82,7 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
   }
 
   // Ordered selection bounds [start, end).
-  let range = () => {
+  let range = (): [number, number] => {
     let { anchor, focus } = selection()
     return anchor <= focus ? [anchor, focus] : [focus, anchor]
   }

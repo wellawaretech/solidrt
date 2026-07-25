@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@solidrt/flux-types": "workspace:*",
+    "@types/babel__core": "^7.20.5",
     "@types/bun": "latest"
   }
 }

@@ -1,6 +1,7 @@
 import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
-import { state, shutdown } from "../util"
+import { state, shutdown, print, printErr } from "../util"
+import { findProjectRoot, typecheck, reportTypes } from "./check"
 import { bundle } from "../bundler"
 import { buildManifest, projectDirFor } from "../project"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
@@ -53,4 +54,17 @@ export async function runServerCommand() {
   console.log(`[cli] Welcome to SolidRT${version}!`)
   startRepl()
   startWatcher()
+
+  // Startup typecheck, deliberately not awaited: diagnostics print over the
+  // repl when tsc finishes, and a type error never gates the boot (srt check
+  // is the hard gate). Once per server lifetime; hot reloads never typecheck.
+  // Source builds only: a prebuilt .srt.js has no checkable project here.
+  if (source && isSource) startupTypecheck(source)
+}
+
+async function startupTypecheck(entry: string) {
+  let root = findProjectRoot(entry)
+  if (!root) return
+  let types = await typecheck(root, entry)
+  if (types) reportTypes(types, print, printErr)
 }

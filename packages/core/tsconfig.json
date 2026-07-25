@@ -1,0 +1,26 @@
+{
+  // Flux-targeted: core runs on the flux runtime, never under Bun or a
+  // browser. No DOM lib, never @types/bun; flux-types is the global surface.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  "include": ["."],
+  // Underscore-prefixed files are scratch/probes, not part of the package.
+  // Setting exclude replaces the node_modules default, so list it too.
+  "exclude": ["**/node_modules", "**/_*"]
+}

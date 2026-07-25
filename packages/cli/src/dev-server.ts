@@ -82,7 +82,8 @@ export async function watchAllowed(): Promise<boolean> {
   try {
     let resp = await fetch(`${INTERNAL_BASE}/watch`)
     if (!resp.ok) return true
-    return (await resp.json()).enabled !== false
+    let data = (await resp.json()) as { enabled?: boolean }
+    return data.enabled !== false
   } catch {
     return true
   }
@@ -100,7 +101,7 @@ export type ClientEntry = {
 export async function getClients(): Promise<ClientEntry[]> {
   let resp = await fetch(`${INTERNAL_BASE}/clients`)
   if (!resp.ok) throw new Error(`Dev server /clients failed: ${resp.status}`)
-  return resp.json()
+  return resp.json() as Promise<ClientEntry[]>
 }
 
 // Reload code that fails to start the engine on purpose. The runtime treats a

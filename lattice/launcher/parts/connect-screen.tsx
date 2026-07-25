@@ -13,7 +13,7 @@ const DEFAULT_PORT = "34884"
 // while still dialing the full string.
 function recentLabel(entry: string): string {
   if (!entry.includes("|")) return entry
-  return "ticket " + entry.split("|")[0].slice(0, 8)
+  return "ticket " + entry.split("|")[0]!.slice(0, 8)
 }
 
 export function ConnectScreen(props: {

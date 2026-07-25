@@ -30,7 +30,8 @@ export function Pressable(props: PressableProps) {
   // zero-arg functions.
   let resolved = children(() => props.children)
   let kids = () => {
-    let c = resolved()
+    // children()'s return type erases the render-prop variant, hence the any.
+    let c = resolved() as any
     return typeof c === "function" ? c(press.state()) : c
   }
 

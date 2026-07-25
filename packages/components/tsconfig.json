@@ -1,0 +1,23 @@
+{
+  // Flux-targeted, like core (see packages/core/tsconfig.json): components
+  // is a framework layer on core and runs on the flux runtime only.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  "include": ["."]
+}

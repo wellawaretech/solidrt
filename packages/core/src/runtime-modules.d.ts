@@ -23,6 +23,14 @@ declare module "*.jpeg" {
   const bytes: Uint8Array
   export default bytes
 }
+declare module "*.wav" {
+  const bytes: Uint8Array
+  export default bytes
+}
+declare module "*.ogg" {
+  const bytes: Uint8Array
+  export default bytes
+}
 
 // UI event bus (lattice), provided by the runtime as a builtin module.
 // on/once return an unsubscribe function.

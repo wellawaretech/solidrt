@@ -22,5 +22,13 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  // Setting exclude replaces the node_modules default, so list it too. The
+  // target dirs matter because CMake emits fake-.ts dependency files
+  // (compiler_depend.ts) under lattice/target build trees. packages/,
+  // lattice/ (launcher), and sandbox/ are excluded because they carry their
+  // own target-specific tsconfigs (flux-targeted core/components/launcher
+  // vs bun-targeted cli); this root config only covers strays with no
+  // nearer config.
+  "exclude": ["**/node_modules", "**/target", "packages", "lattice", "sandbox"]
 }

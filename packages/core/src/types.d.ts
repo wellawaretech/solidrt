@@ -9,6 +9,16 @@ import type { Element } from "solid-js"
 // non-module declaration file, and this file is a module.
 
 declare global {
+  interface ImportMeta {
+    /**
+     * Build-mode constants, substituted textually by the srt bundler (Vite
+     * vocabulary). `DEV` is true in dev bundles and false in production
+     * bundles, where the substituted constant lets the minifier fold
+     * dev-only code away entirely.
+     */
+    readonly env: { readonly DEV: boolean }
+  }
+
   let image: {
     decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
   }

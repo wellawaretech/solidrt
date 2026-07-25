@@ -108,7 +108,12 @@ export type BundleResult = {
 export async function bundleWith(opts: BundleOptions): Promise<BundleResult | null> {
   // Define values are parsed as expressions, so string values need embedded
   // quotes - a bare word substitutes as an identifier and crashes at runtime.
+  // import.meta.env.DEV is the solidrt build-mode constant (used by core's
+  // leak sentinel; typed in core's types.d.ts). NODE_ENV stays defined as
+  // ecosystem compat only: third-party libraries bundled into apps commonly
+  // read it, and an unresolved `process` crashes at import time.
   let define: Record<string, string> = {
+    "import.meta.env.DEV": opts.dev ? "true" : "false",
     "process.env.NODE_ENV": opts.dev ? '"development"' : '"production"',
   }
   if (opts.devBase) define.__SRT_DEV_BASE__ = opts.devBase

@@ -1,0 +1,16 @@
+{
+  // Dev sandbox: probes, scratch apps, media - gitignored except this
+  // config (okf/plans/examples-rescope.md). Scaffold-shaped so serving
+  // from here typechecks like a real app.
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "jsx": "preserve",
+    "jsxImportSource": "@solidrt/core",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["@solidrt/flux-types"]
+  },
+  "include": ["."]
+}
