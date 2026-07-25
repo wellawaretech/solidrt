@@ -28,6 +28,8 @@ export interface InputDevices {
 
 export type SystemTheme = "dark" | "light" | "unknown"
 
+export type Visibility = "visible" | "hidden"
+
 export type Orientation = "portrait" | "portraitFlipped" | "landscape" | "landscapeFlipped" | "unknown"
 
 let devicesAccessor: (() => InputDevices | undefined) | undefined
@@ -50,6 +52,18 @@ function ensureSystemThemeState() {
   let [theme, setTheme] = createSignal<SystemTheme>("unknown", { ownedWrite: true })
   on("systemTheme", (e: { theme?: SystemTheme }) => setTheme(e.theme ?? "unknown"))
   systemThemeAccessor = theme
+}
+
+let visibilityAccessor: (() => Visibility) | undefined
+
+function ensureVisibilityState() {
+  if (visibilityAccessor) return
+  let [visibility, setVisibility] = createSignal<Visibility>("visible", { ownedWrite: true })
+  // Sticky. The runtime may report the same state through several platform
+  // paths; the signal's equality check turns repeats into no-ops for
+  // reactive consumers.
+  on("visibility", (e: { state?: Visibility }) => setVisibility(e.state === "hidden" ? "hidden" : "visible"))
+  visibilityAccessor = visibility
 }
 
 let orientationAccessor: (() => Orientation) | undefined
@@ -166,6 +180,21 @@ export let env = {
   get textScale(): number {
     ensureTextScaleState()
     return textScaleAccessor!()
+  },
+  /**
+   * Whether the app is on screen: "hidden" while backgrounded (Android) or
+   * minimized (desktop), "visible" again on return. The web's
+   * `visibilityState` vocabulary without the `document` machinery - react
+   * to it in a tracked scope (JSX, memo, effect).
+   *
+   * This is the persistence moment: there is no close event on any
+   * platform (Android gives no time, desktop window close never enters
+   * JS), so save state when this goes "hidden". While hidden, timers keep
+   * running but no frames are produced.
+   */
+  get visibility(): Visibility {
+    ensureVisibilityState()
+    return visibilityAccessor!()
   },
   /** Orientation of the display the window is on. */
   get orientation(): Orientation {

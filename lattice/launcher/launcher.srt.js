@@ -9974,7 +9974,6 @@ function ConnectScreen(props) {
                       flexGrow: 1
                     },
                     placeholder: "IP address",
-                    autoFocus: true,
                     onInput: (v2) => hostDraft = v2,
                     onSubmit: submit
                   }), createComponent2(TextInput, {

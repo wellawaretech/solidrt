@@ -7,7 +7,7 @@ export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, exit 
 export type { BackEvent } from "./window"
 export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 export { env } from "./environment"
-export type { InputDevices, SystemTheme, Orientation } from "./environment"
+export type { InputDevices, SystemTheme, Orientation, Visibility } from "./environment"
 export { gamepads } from "./gamepad"
 export type { GamepadState } from "./gamepad"
 export { capabilities } from "./capabilities"

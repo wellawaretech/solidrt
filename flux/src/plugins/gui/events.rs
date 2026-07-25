@@ -85,6 +85,17 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
     // the default action (exit() when no handler prevented it); the runner
     // arms the unresponsive-engine watchdog on its side.
     AlloyEvent::Back => emit_named(exec, "back"),
+    // App/window visibility, sticky like the other window facts. Same-state
+    // repeats are legitimate (the platform reports one transition through
+    // several paths); core's env signal dedupes for reactive consumers.
+    AlloyEvent::Visibility { visible } => {
+      let state = if *visible { "visible" } else { "hidden" };
+      exec.exec(move |ctx| {
+        let obj = Object::new(ctx.clone()).expect("create object");
+        obj.set("state", state).expect("set state");
+        emit_sticky(&ctx, "visibility", obj);
+      });
+    }
     AlloyEvent::Key { down, key, code, modifiers, repeat } => {
       emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat)
     }

@@ -87,6 +87,16 @@ pub enum AlloyEvent {
   Back,
   WindowFocus,
   WindowBlur,
+  // App/window visibility state: false when backgrounded (Android
+  // DID_ENTER_BACKGROUND) or minimized/hidden on desktop, true on the way
+  // back. State transitions only, never damage (that is Exposed); platforms
+  // may report the same transition through both the app and window paths, so
+  // consumers must tolerate repeats of the same value.
+  Visibility { visible: bool },
+  // The window surface needs a repaint without any visibility change: SDL
+  // WINDOW_EXPOSED (damage, or a recreated swapchain surface whose contents
+  // are undefined). Repaint trigger only; never surfaces to JS.
+  Exposed,
   // One key transition, already translated to the W3C UI Events vocabulary
   // (see `crate::keymap`): `key` is the logical value ("a", "!", "Enter"),
   // `code` the physical key ("KeyA", "NumpadEnter"). SDL's keycodes and
@@ -250,6 +260,22 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     }
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusGained, .. } => Some(AlloyEvent::WindowFocus),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::FocusLost, .. } => Some(AlloyEvent::WindowBlur),
+    // Lifecycle: Android pause/resume arrives on the app path, desktop
+    // minimize/restore on the window path. DID (not WILL) on both Android
+    // sides: the transition is only fact once it completed, and on resume the
+    // recreated EGL surface exists by then. Occluded is deliberately not
+    // mapped (noisy on macOS, and partial occlusion is not "hidden").
+    SdlEvent::AppDidEnterBackground { .. } => Some(AlloyEvent::Visibility { visible: false }),
+    SdlEvent::AppDidEnterForeground { .. } => Some(AlloyEvent::Visibility { visible: true }),
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Minimized, .. }
+    | SdlEvent::Window { win_event: sdl3::event::WindowEvent::Hidden, .. } => {
+      Some(AlloyEvent::Visibility { visible: false })
+    }
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Restored, .. }
+    | SdlEvent::Window { win_event: sdl3::event::WindowEvent::Shown, .. } => {
+      Some(AlloyEvent::Visibility { visible: true })
+    }
+    SdlEvent::Window { win_event: sdl3::event::WindowEvent::Exposed, .. } => Some(AlloyEvent::Exposed),
     SdlEvent::Window { win_event: sdl3::event::WindowEvent::PixelSizeChanged(w, h), .. } => {
       let display_scale = sdl_utils::window_display_scale(window);
       let size = ISize::new((w as f32 / display_scale) as i64, (h as f32 / display_scale) as i64);

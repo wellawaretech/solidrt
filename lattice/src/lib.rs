@@ -341,6 +341,7 @@ fn ui_thread(
 
     let platform_events = platform.clone();
     let input_state_events = input_state.clone();
+    let atx_events = atx.clone();
     // Virtual present counter the playback-mode clock derives time from (frame/fps),
     // published by the frame verb. Unused in run mode.
     let playback_frame = Arc::new(AtomicU64::new(0));
@@ -505,6 +506,32 @@ fn ui_thread(
                   std::process::exit(1);
                 }
               });
+            }
+            // Repaint on damage and on return to visibility: the demand gate
+            // otherwise leaves the recreated/undefined surface unpresented
+            // forever (Android destroys the EGL surface on background; an
+            // idle app never repaints on its own). The latch is cheap and
+            // the cached display list makes the frame present-only, so
+            // over-triggering is harmless. Visibility does not reach JS yet
+            // (that is the lifecycle plan's stage 3).
+            AlloyEvent::Exposed => platform_events.request_frame(),
+            AlloyEvent::Visibility { visible } => {
+              // Rare lifecycle transitions; logged so device traces show
+              // whether and when the platform reported them (the resume
+              // repaint pipeline depends on it).
+              log::info!("[srt] visibility: {}", if visible { "visible" } else { "hidden" });
+              if visible {
+                // Rebind first: the command channel is ordered, so the raster
+                // thread picks up the recreated EGL surface before the
+                // repaint's frame arrives (device-verified failure mode:
+                // EGL_BAD_SURFACE on the first post-resume present).
+                atx_events.rebind_window_surface();
+                platform_events.request_frame();
+              }
+              // Forward to the engine as the sticky `visibility` event.
+              // Same-state repeats are normal here (app + window paths, plus
+              // the Android background watch); core's env signal dedupes.
+              ui_runtime.event(&AlloyEvent::Visibility { visible });
             }
             event => ui_runtime.event(&event),
           }

@@ -48,6 +48,12 @@ declare module "srt:dev" {
   export const available: boolean
   export const canDiscover: boolean
   export const recents: string[]
+  /**
+   * The dev-server address the client was launched with (so the launcher can
+   * auto-connect without on-device interaction), or null when launched without
+   * one.
+   */
+  export const launchAddress: string | null
   export function connect(address: string): void
   export function discover(): void
   export function stop(): void

@@ -52,6 +52,13 @@ pub(crate) enum RasterCmd {
   /// drawn (load shedding); in capture mode every frame draws, because
   /// playback's contract is exactly one Captured per submit.
   Frame(DisplayList),
+  /// Re-run make-current so the context binds the window's current EGL
+  /// surface. Android destroys the surface on background and SDL creates a
+  /// fresh one on resume, but this thread's binding still points at the dead
+  /// one, so every swap would fail with EGL_BAD_SURFACE. Sent on
+  /// return-to-visible, ahead of the resume repaint's Frame on this ordered
+  /// channel.
+  RebindWindowSurface,
   /// Create (or replace, same id) a sampleable RGBA8 texture and adopt it
   /// into Impeller. Replies with the adopted handle for UI-side registration.
   CreateTexture {
@@ -217,6 +224,15 @@ impl RasterState {
               break 'outer; // main loop is gone
             }
           }
+          RasterCmd::RebindWindowSurface => {
+            // Event-driven (return-to-visible): a failure recorded against
+            // the surface that died with the background (a frame in flight
+            // at pause) is stale evidence; reset so the exit threshold
+            // cannot misfire across a background/resume.
+            if self.rebind_window_surface() {
+              self.present_failures = 0;
+            }
+          }
           RasterCmd::CreateTexture { id, width, height, pixels, reply: tx } => {
             reply(tx, self.create_texture(id, width, height, &pixels));
           }
@@ -335,18 +351,7 @@ impl RasterState {
   fn frame(&mut self, dl: DisplayList) -> Result<(), ()> {
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
-    // Reuse the wrapped window surface across frames; re-wrap on resize (the
-    // wrap binds the framebuffer's dimensions). See the field's comment for
-    // why not per-frame.
-    if !matches!(&self.window_surface, Some((_, s)) if s.width == size.width && s.height == size.height) {
-      self.window_surface =
-        unsafe { self.impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.map(|s| (s, size));
-      if self.window_surface.is_none() {
-        // Transient (e.g. a zero-sized minimized window): skip the draw but
-        // still notify below, so lockstep consumers (playback) never stall.
-        log::warn!("[alloy] wrap_fbo(0) failed at {width}x{height}; skipping frame");
-      }
-    }
+    self.ensure_window_surface(size);
     let draw_start = std::time::Instant::now();
     let drawn = match &mut self.window_surface {
       Some((surface, _)) => {
@@ -361,8 +366,18 @@ impl RasterState {
       self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
     } else {
       let present_start = std::time::Instant::now();
-      if drawn {
-        self.present();
+      if drawn && !self.present() && self.rebind_window_surface() {
+        // The failed swap's frame is lost with the dead binding (Android
+        // replaces the EGL surface across background/resume, and a frame
+        // latched by resize or expose can reach this thread before the
+        // event-driven rebind). Redraw against the rebound surface and
+        // present again; the retry's outcome feeds the failure threshold
+        // honestly (fail, rebind, fail again = confirmed loss).
+        self.ensure_window_surface(size);
+        if let Some((surface, _)) = &mut self.window_surface {
+          surface.draw_display_list(&dl).expect("Failed to draw display list");
+          self.present();
+        }
       }
       let present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
       // A frame's native cost beyond ~2 vsync periods means this thread is
@@ -381,14 +396,32 @@ impl RasterState {
     Ok(())
   }
 
-  /// Swap the window's backbuffer. Without the failure check a lost context /
-  /// removed device leaves the app running normally while nothing reaches the
-  /// screen (a frozen window with no message). There is no recovery path yet,
-  /// so a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
-  fn present(&mut self) {
+  /// Ensure the wrapped-FBO-0 window surface exists at `size`; reused across
+  /// frames, re-wrapped on resize or after a rebind dropped it (the wrap
+  /// binds the framebuffer's dimensions). Wrapping fresh per frame would
+  /// churn a surface object per frame through the driver (see the field's
+  /// comment).
+  fn ensure_window_surface(&mut self, size: ISize) {
+    if !matches!(&self.window_surface, Some((_, s)) if s.width == size.width && s.height == size.height) {
+      self.window_surface =
+        unsafe { self.impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.map(|s| (s, size));
+      if self.window_surface.is_none() {
+        // Transient (e.g. a zero-sized minimized window): skip the draw but
+        // still notify, so lockstep consumers (playback) never stall.
+        log::warn!("[alloy] wrap_fbo(0) failed at {}x{}; skipping frame", size.width, size.height);
+      }
+    }
+  }
+
+  /// Swap the window's backbuffer; true on success. Without the failure
+  /// check a lost context / removed device leaves the app running normally
+  /// while nothing reaches the screen (a frozen window with no message). A
+  /// failed swap gets one rebind-and-redraw recovery attempt (see `frame`);
+  /// a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
+  fn present(&mut self) -> bool {
     if crate::sdl_utils::gl_swap_window_checked(self.window) {
       self.present_failures = 0;
-      return;
+      return true;
     }
     self.present_failures += 1;
     if self.present_failures == 1 {
@@ -398,6 +431,30 @@ impl RasterState {
       log::error!("[alloy] GPU context lost ({} consecutive failed presents), exiting", self.present_failures);
       std::process::exit(1);
     }
+    false
+  }
+
+  /// Rebind the context to the window's current EGL surface (see the
+  /// RasterCmd doc); true on success. Must run on this thread: the context is
+  /// current here and SDL_GL_MakeCurrent operates on the calling thread's
+  /// binding. The swap interval is per-surface EGL state, so re-assert vsync;
+  /// the wrapped FBO-0 surface is tied to the old binding, so drop it for
+  /// re-wrap. The failure counter is deliberately NOT touched here: the
+  /// recovery path in `frame` judges the retry present on its own, and only
+  /// the event-driven command resets stale evidence.
+  fn rebind_window_surface(&mut self) -> bool {
+    if !crate::sdl_utils::gl_remake_current(self.window) {
+      log::warn!("[alloy] rebind window surface failed: {}", crate::sdl_utils::sdl_error());
+      return false;
+    }
+    // Rare (background/resume, recovery), so an info line is cheap and makes
+    // device logs tell the whole story.
+    log::info!("[alloy] window surface rebound");
+    if !self.capture_frames && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
+      log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+    }
+    self.window_surface = None;
+    true
   }
 
   fn create_texture(&mut self, id: u64, width: u32, height: u32, pixels: &[u8]) -> Result<Texture, String> {

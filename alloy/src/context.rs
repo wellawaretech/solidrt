@@ -211,6 +211,15 @@ impl Context {
     self.raster_tx.send(RasterCmd::Frame(dl)).map_err(|_| ())
   }
 
+  /// Rebind the raster thread's context to the window's current EGL surface.
+  /// Call on return-to-visible, before the resume repaint's frame: Android
+  /// destroys the surface on background and the stale binding would fail the
+  /// next present with EGL_BAD_SURFACE. Ordered ahead of that frame on the
+  /// command channel; harmless when the surface never changed.
+  pub fn rebind_window_surface(&self) {
+    self.send(RasterCmd::RebindWindowSurface);
+  }
+
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();

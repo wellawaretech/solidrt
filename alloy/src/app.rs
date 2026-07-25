@@ -134,6 +134,26 @@ impl App {
       return;
     }
 
+    // Timely "hidden" on Android: with BLOCK_ON_PAUSE the pump blocks before
+    // the queued background events are drained, so through the normal path
+    // the app would learn about backgrounding only at resume
+    // (device-observed). An event watch runs synchronously on the thread
+    // pushing the event - for DID_ENTER_BACKGROUND that is this thread,
+    // inside the blocking wait - so the transition is forwarded the moment
+    // it is queued and the JS side (which keeps running while the pump is
+    // blocked) can persist state. The queue's own copy still arrives at
+    // resume; consumers tolerate the repeat (see AlloyEvent::Visibility).
+    // The binding must outlive the loop: dropping an EventWatch removes it.
+    let watch_event_tx = event_tx.clone();
+    let _event_watch = sdl_context
+      .event()
+      .expect("Failed to get SDL event subsystem")
+      .add_event_watch(move |event: sdl3::event::Event| {
+        if matches!(event, sdl3::event::Event::AppDidEnterBackground { .. }) {
+          watch_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
+        }
+      });
+
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
     // plugged in surface through the Added events SDL emits on subsystem init.
