@@ -749,6 +749,11 @@ fn ui_thread(
       );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
+      // The window icon follows the app like the sandbox and fonts do: its
+      // installed manifest icon, or the client's own mark (the launcher's
+      // default_app_id has no store entry, so it lands on the mark too).
+      #[cfg(feature = "go")]
+      go::icon::apply_app_icon(current_app_id.as_deref().unwrap_or(&default_app_id), &alloy_cmd_tx);
       // Replay the current connection state into this engine so a reload (e.g.
       // a server stop returning to the launcher) keeps the right indicator.
       #[cfg(feature = "go")]

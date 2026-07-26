@@ -1,6 +1,7 @@
 mod config;
 mod connection;
 pub(crate) mod control;
+pub(crate) mod icon;
 mod proxy;
 mod session;
 pub(crate) mod store;

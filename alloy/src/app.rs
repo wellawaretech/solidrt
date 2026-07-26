@@ -406,6 +406,13 @@ impl App {
               log::warn!("set_title failed: {e}");
             }
           }
+          AlloyCommand::SetIcon { width, height, rgba } => {
+            // Debug, not warn: macOS reports failure on every app switch
+            // because the platform has no window icons at all.
+            if let Err(e) = crate::sdl_utils::set_window_icon(&window, width, height, &rgba) {
+              log::debug!("set_window_icon failed: {e}");
+            }
+          }
           AlloyCommand::SetFullscreen(fs) => {
             if let Err(e) = window.set_fullscreen(fs) {
               log::warn!("set_fullscreen failed: {e}");

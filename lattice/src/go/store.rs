@@ -112,6 +112,14 @@ pub fn app_fonts(app_id: &str) -> Vec<alloy::rendertree::FontPayload> {
     .collect()
 }
 
+/// The current installed version's manifest-declared icon (SVG source), if
+/// any. Same degradation as the listing: any failure means None.
+pub fn app_icon(app_id: &str) -> Option<String> {
+  let version_dir = current_version_dir(app_id)?;
+  let manifest = Manifest::load(&version_dir)?;
+  load_icon(&version_dir, &manifest)
+}
+
 /// The current installed version dir for an app, if the store has one. This is
 /// what the assets mount points at while the app runs. Unsafe ids resolve to
 /// nothing rather than following app_dir's fallback to "default".

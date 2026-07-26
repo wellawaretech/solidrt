@@ -2,7 +2,11 @@ use sdl3::sys::keyboard::{SDL_GetModState, SDL_HasKeyboard};
 use sdl3::sys::mouse::SDL_HasMouse;
 use sdl3::sys::power::{SDL_GetPowerInfo, SDL_PowerState};
 use sdl3::sys::rect::SDL_Rect;
-use sdl3::sys::video::{SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SystemTheme};
+use sdl3::sys::pixels::SDL_PixelFormat;
+use sdl3::sys::surface::{SDL_CreateSurfaceFrom, SDL_DestroySurface};
+use sdl3::sys::video::{
+  SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SetWindowIcon, SDL_SystemTheme,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerState {
@@ -61,6 +65,41 @@ pub fn has_keyboard() -> bool {
 
 pub fn has_mouse() -> bool {
   unsafe { SDL_HasMouse() }
+}
+
+// Window icon from straight-alpha RGBA8 pixels. The sdl3 crate does not wrap
+// SDL_SetWindowIcon, so this goes through sdl3-sys directly. SDL copies the
+// pixels into the surface's own representation on SetWindowIcon platforms and
+// the surface only borrows `rgba`, so it is created, applied and destroyed
+// within the call. Platforms without window icons (macOS) return Err.
+pub fn set_window_icon(
+  window: &sdl3::video::Window,
+  width: u32,
+  height: u32,
+  rgba: &[u8],
+) -> Result<(), String> {
+  if rgba.len() != (width * height * 4) as usize {
+    return Err(format!("icon pixel buffer is {} bytes, expected {}x{}x4", rgba.len(), width, height));
+  }
+  let surface = unsafe {
+    SDL_CreateSurfaceFrom(
+      width as i32,
+      height as i32,
+      SDL_PixelFormat::RGBA32,
+      rgba.as_ptr() as *mut std::ffi::c_void,
+      (width * 4) as i32,
+    )
+  };
+  if surface.is_null() {
+    return Err(sdl_error());
+  }
+  let ok = unsafe { SDL_SetWindowIcon(window.raw(), surface) };
+  unsafe { SDL_DestroySurface(surface) };
+  if ok {
+    Ok(())
+  } else {
+    Err(sdl_error())
+  }
 }
 
 pub fn window_safe_area(window: &sdl3::video::Window) -> SDL_Rect {

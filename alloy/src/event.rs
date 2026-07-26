@@ -7,6 +7,9 @@ use crate::sdl_utils;
 pub enum AlloyCommand {
   EmitInitEvents,
   SetTitle(String),
+  // Window icon from straight-alpha RGBA8 pixels (width * height * 4 bytes).
+  // Platforms without window icons (macOS) ignore it.
+  SetIcon { width: u32, height: u32, rgba: Vec<u8> },
   SetFullscreen(bool),
   SetCursor(sdl3::mouse::SystemCursor),
   SetCursorVisible(bool),
