@@ -149,6 +149,10 @@ pub(crate) struct RasterState {
   // driver, which is exactly the kind of sustained allocate/release cycle
   // ANGLE/D3D11 handles poorly.
   window_surface: Option<(Surface, ISize)>,
+  // Size of the last FBO-0 wrap, surviving rebinds (which drop
+  // window_surface), so geometry transitions are logged exactly once even
+  // when they arrive through a rebind. Diagnostic only.
+  last_wrap: ISize,
   // Playback mode: a frame is read back and shipped instead of presented.
   capture_frames: bool,
   // Consecutive failed presents; a short streak confirms context loss.
@@ -244,6 +248,7 @@ impl RasterState {
       window,
       surface_size,
       window_surface: None,
+      last_wrap: ISize::new(0, 0),
       capture_frames,
       present_failures: 0,
       slow_frame_log: None,
@@ -448,6 +453,13 @@ impl RasterState {
         self.slow_frame_log = Some(std::time::Instant::now());
         log::warn!("[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, present {present_ms:.1}ms");
       }
+      // Resize-race diagnostics: the published surface size moved while this
+      // frame was drawing, so what just reached the screen already has stale
+      // geometry. The resize settle window (lattice) repaints behind it.
+      let (now_w, now_h) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
+      if (now_w as i64, now_h as i64) != (width as i64, height as i64) {
+        log::warn!("[alloy] surface size changed during frame: drew {width}x{height}, now {now_w}x{now_h}");
+      }
       self.tx.send(FrameOutput::Presented).map_err(|_| ())?;
     }
     // Wake only after the frame is in the channel, so the woken loop finds it.
@@ -474,6 +486,18 @@ impl RasterState {
   /// comment).
   fn ensure_window_surface(&mut self, size: ISize) {
     if !matches!(&self.window_surface, Some((_, s)) if s.width == size.width && s.height == size.height) {
+      // Resize-race diagnostics: geometry transitions as this thread sees
+      // them, once per size (rebinds re-wrap at an unchanged size silently).
+      if self.last_wrap.width != size.width || self.last_wrap.height != size.height {
+        log::info!(
+          "[alloy] window surface wrap {}x{} -> {}x{}",
+          self.last_wrap.width,
+          self.last_wrap.height,
+          size.width,
+          size.height
+        );
+        self.last_wrap = size;
+      }
       self.window_surface =
         unsafe { self.impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.map(|s| (s, size));
       if self.window_surface.is_none() {

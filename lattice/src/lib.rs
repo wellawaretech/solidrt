@@ -380,6 +380,18 @@ fn ui_thread(
     #[cfg(not(feature = "go"))]
     let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx);
 
+    // The resize settle window: after a resize, re-latch a frame request on
+    // every frame signal until the deadline. A single repaint can race the
+    // platform's surface reconfiguration (device-observed on Android
+    // rotation: the frame draws for or into geometry that changes again by
+    // present time, reaching the screen wrong or not at all) and the demand
+    // gate would never retry on its own. Retries are present-only while
+    // nothing else changes (cached display list), and each one re-checks the
+    // surface geometry, so the last one after the platform settles is
+    // correct. Rapid resize streams just keep pushing the deadline out.
+    const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+    let mut resize_settle: Option<std::time::Instant> = None;
+
     local.spawn_local(async move {
       loop {
         // One batch per cycle: block for the first event, then drain whatever
@@ -437,6 +449,9 @@ fn ui_thread(
           }
         }
         let batch = events.into_iter().zip(keep).filter_map(|(event, keep)| keep.then_some(event)).chain(frame_signal);
+        // A rapid resize stream (live drag-resize, rotation transitions) can
+        // put several Resize events in one batch; one rebind covers them all.
+        let mut resize_rebound = false;
         for event in batch {
           if capture_enabled_events.load(Ordering::Relaxed) {
             if let Some(script_event) = alloy::ScriptEvent::from_alloy_event(&event) {
@@ -460,6 +475,7 @@ fn ui_thread(
               platform_events.set_window_size(size.width as f32, size.height as f32);
               platform_events.set_display_scale(*display_scale);
               platform_events.set_safe_area(*safe_area);
+              resize_settle = Some(std::time::Instant::now());
             }
             AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers }
             | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
@@ -475,7 +491,18 @@ fn ui_thread(
               }
             }
             AlloyEvent::Wheel { modifiers, .. } => input_state_events.set_modifiers(*modifiers),
-            AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => platform_events.set_fps(*fps),
+            AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => {
+              platform_events.set_fps(*fps);
+              // See RESIZE_SETTLE: keep repainting until the window is out of
+              // its post-resize settle window.
+              if let Some(since) = resize_settle {
+                if since.elapsed() < RESIZE_SETTLE {
+                  platform_events.request_frame();
+                } else {
+                  resize_settle = None;
+                }
+              }
+            }
             _ => {}
           }
           match event {
@@ -515,14 +542,34 @@ fn ui_thread(
                 }
               });
             }
-            // Repaint on damage and on return to visibility: the demand gate
-            // otherwise leaves the recreated/undefined surface unpresented
-            // forever (Android destroys the EGL surface on background; an
-            // idle app never repaints on its own). The latch is cheap and
-            // the cached display list makes the frame present-only, so
-            // over-triggering is harmless. Visibility does not reach JS yet
-            // (that is the lifecycle plan's stage 3).
-            AlloyEvent::Exposed => platform_events.request_frame(),
+            // Repaint on damage, resize, and return to visibility: the demand
+            // gate otherwise leaves the recreated/undefined surface
+            // unpresented forever (Android destroys the EGL surface on
+            // background; an idle app never repaints on its own). The latch
+            // is cheap and the cached display list makes the frame
+            // present-only, so over-triggering is harmless.
+            //
+            // All three rebind before the repaint: the platform may have
+            // replaced the native surface behind the event (Android recreates
+            // the EGL surface on rotation as well as on resume), and a
+            // present into the stale binding can succeed silently without
+            // reaching the screen, so waiting for a present failure is not
+            // enough. The command channel is ordered, so the raster thread
+            // picks up the current surface before the repaint's frame
+            // arrives.
+            AlloyEvent::Exposed => {
+              atx_events.rebind_window_surface();
+              platform_events.request_frame();
+            }
+            AlloyEvent::Resize { .. } => {
+              // set_window_size above already latched the repaint; forward so
+              // the sticky JS resize event still fires.
+              if !resize_rebound {
+                resize_rebound = true;
+                atx_events.rebind_window_surface();
+              }
+              ui_runtime.event(&event);
+            }
             AlloyEvent::Visibility { visible } => {
               // Rare lifecycle transitions; logged so device traces show
               // whether and when the platform reported them (the resume
