@@ -1,14 +1,16 @@
 // The settings screen: theme mode and the runtime's build identity. Reached
-// from the home header gear; a Back button returns home in both layouts.
+// from the home header gear; the heading row's back arrow returns home, in both
+// layouts (settings is a whole screen, never a pane).
 import { For } from "solid-js"
-import { View, Text, Button, ScrollView, SegmentedControl, theme, space } from "@solidrt/components"
+import { View, Text, ScrollView, SegmentedControl, theme, space } from "@solidrt/components"
 import {
   version as buildVersion,
   profile as buildProfile,
   platform as buildPlatform,
 } from "srt:apps"
 import { DetailCard, DetailRow } from "./detail-card"
-import type { ThemeMode } from "./types"
+import { BackButton } from "./back-button"
+import { COLUMN_MAX_WIDTH, type ThemeMode } from "./types"
 
 // One capability name as a filled chip, for the About block's list.
 function CapabilityChip(props: { name: string }) {
@@ -42,16 +44,14 @@ export function SettingsScreen(props: {
             flexDirection: "column",
             gap: space("lg"),
             width: "100%",
-            maxWidth: 440,
+            maxWidth: COLUMN_MAX_WIDTH,
             padding: space("xl"),
           }}
         >
-          <View layout={{ flexDirection: "row" }}>
-            <Button variant="ghost" size="sm" onPress={props.onBack}>
-              Back
-            </Button>
+          <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+            <BackButton onPress={props.onBack} />
+            <Text variant="heading">Settings</Text>
           </View>
-          <Text variant="heading">Settings</Text>
           <DetailCard title="Appearance">
             <SegmentedControl
               options={[

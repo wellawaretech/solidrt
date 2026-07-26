@@ -2,6 +2,10 @@ import { createSignal, onSettled, getBoundingBoxViewport } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
 import { claim, release } from "./arena"
 
+// A live view of a recognizer's state, not a snapshot: both fields are getters,
+// so a consumer that reads one inside a JSX prop or child expression tracks that
+// signal there and nothing else re-runs. Read them in those positions, not
+// eagerly into a local, or the read lands in whatever scope destructured it.
 export type PressState = { pressed: boolean; hovered: boolean }
 
 export interface PressOptions {
@@ -43,7 +47,23 @@ export function createPress(options: PressOptions) {
   let active: number | null = null
   let inside = false
 
-  let state = (): PressState => ({ pressed: pressed(), hovered: hovered() })
+  // One stable object of getters, handed out as-is. Returning a fresh snapshot
+  // instead would read both signals at call time, making them dependencies of
+  // the caller's scope - and for render-prop children that scope is the one
+  // that builds the subtree, so a hover or press would rebuild it. A rebuild
+  // mid-gesture replaces a nested recognizer with a fresh one that never saw
+  // the down, so its up fires nothing: invisible with a mouse (hover settles
+  // long before the click) and fatal on touch, where the finger's arrival flips
+  // the ancestor's hover during the very gesture it is meant to recognize.
+  let live: PressState = {
+    get pressed() {
+      return pressed()
+    },
+    get hovered() {
+      return hovered()
+    },
+  }
+  let state = (): PressState => live
   let ref = (n: { id: number }) => {
     node = n
   }

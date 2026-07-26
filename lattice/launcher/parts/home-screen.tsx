@@ -35,7 +35,8 @@ import {
 import { cameraDevices } from "@solidrt/core/camera"
 import { PuzzleMark } from "./puzzle"
 import { DetailCard, DetailRow } from "./detail-card"
-import { STATUS_TEXT } from "./types"
+import { BackButton } from "./back-button"
+import { COLUMN_MAX_WIDTH, DETAIL_MAX_WIDTH, STATUS_TEXT, TAP_TARGET } from "./types"
 import {
   available,
   connectionState,
@@ -50,6 +51,10 @@ import {
 // screen, stroked with currentColor so the Icon component recolors it.
 const GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`
 
+// Lucide play glyph for the app rows' quick-launch button, filled (not the
+// stock outline) so it still reads as a launch affordance at 20px.
+const PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   let kb = bytes / 1024
@@ -60,13 +65,20 @@ function formatSize(bytes: number): string {
 }
 
 // One app row: pressing it opens the detail view (which holds launch and
-// remove).
-function AppCard(props: { app: InstalledApp; active: boolean; onPress: () => void }) {
+// remove), and the play button launches straight from the list. That button is
+// a pressable nested inside the row's: the innermost one wins the gesture
+// arena, so a press on it never also opens the detail.
+function AppCard(props: {
+  app: InstalledApp
+  active: boolean
+  onPress: () => void
+  onLaunch: () => void
+}) {
   return (
     <Pressable onPress={props.onPress}>
       {(s: PressState) => (
         <Card
-          layout={{ gap: 2 }}
+          layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}
           style={{
             backgroundColor: props.active
               ? theme.color.surfaceAlt
@@ -75,8 +87,27 @@ function AppCard(props: { app: InstalledApp; active: boolean; onPress: () => voi
                 : theme.color.surface,
           }}
         >
-          <Text variant="title">{props.app.name}</Text>
-          <Text variant="body" muted>{`${props.app.id} - ${props.app.version.slice(0, 8)}`}</Text>
+          <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
+            <Text variant="title">{props.app.name}</Text>
+            <Text variant="body" muted>{`${props.app.id} - ${props.app.version.slice(0, 8)}`}</Text>
+          </View>
+          <Pressable
+            onPress={props.onLaunch}
+            layout={{
+              width: TAP_TARGET,
+              height: TAP_TARGET,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {(ps: PressState) => (
+              <Icon
+                src={PLAY_SVG}
+                size={20}
+                color={ps.pressed || ps.hovered ? theme.color.primaryHover : theme.color.primary}
+              />
+            )}
+          </Pressable>
         </Card>
       )}
     </Pressable>
@@ -110,7 +141,9 @@ function amount(count: number, size: number): string {
 // The selected app's detail view: identity, storage usage, stored versions and
 // the data sandbox's files, with launch and remove. Shared between the split
 // view's right pane (no onBack) and the narrow layout's detail screen (with
-// onBack).
+// onBack). Single-pane centers the max-width column the way the list and the
+// settings screen do, so crossing the breakpoint does not shift the content
+// sideways; two-pane leaves it against the split's hairline.
 function AppDetail(props: {
   app: InstalledApp
   onLaunch: () => void
@@ -143,133 +176,135 @@ function AppDetail(props: {
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
       <View
-        layout={{
-          flexDirection: "column",
-          gap: space("lg"),
-          padding: space("xl"),
-          width: "100%",
-          maxWidth: 520,
-        }}
+        layout={{ flexGrow: 1, alignItems: policy.layout === "twoPane" ? "flex-start" : "center" }}
       >
-        <Show when={props.onBack}>
-          <View layout={{ flexDirection: "row" }}>
-            <Button variant="ghost" size="sm" onPress={() => props.onBack?.()}>
-              Back
+        <View
+          layout={{
+            flexDirection: "column",
+            gap: space("lg"),
+            padding: space("xl"),
+            width: "100%",
+            maxWidth: DETAIL_MAX_WIDTH,
+          }}
+        >
+          <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+            <Show when={props.onBack}>
+              <BackButton onPress={() => props.onBack?.()} />
+            </Show>
+            <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
+              <Text variant="heading">{props.app.name}</Text>
+              <Text variant="body" muted>
+                {props.app.id}
+              </Text>
+            </View>
+          </View>
+          <View layout={{ flexDirection: "row", gap: space("md") }}>
+            <Button onPress={() => props.onLaunch()}>Launch</Button>
+            <Button variant="secondary" onPress={() => setConfirming(true)}>
+              Remove
             </Button>
           </View>
-        </Show>
-        <View layout={{ flexDirection: "column", gap: 2 }}>
-          <Text variant="heading">{props.app.name}</Text>
-          <Text variant="body" muted>
-            {props.app.id}
-          </Text>
-        </View>
-        <View layout={{ flexDirection: "row", gap: space("md") }}>
-          <Button onPress={() => props.onLaunch()}>Launch</Button>
-          <Button variant="secondary" onPress={() => setConfirming(true)}>
-            Remove
-          </Button>
-        </View>
-        <Show when={confirming()}>
-          <Modal onClose={() => setConfirming(false)}>
-            <View layout={{ width: "100%", maxWidth: 380, padding: space("xl") }}>
-              <Card layout={{ gap: space("lg") }}>
-                <View layout={{ flexDirection: "column", gap: space("sm") }}>
-                  <Text variant="title">Remove {props.app.name}?</Text>
-                  <Text variant="body" muted>
-                    This deletes the app and its stored data. This cannot be undone.
-                  </Text>
-                </View>
-                <View layout={{ flexDirection: "row", gap: space("md") }}>
-                  <Button variant="ghost" onPress={() => setConfirming(false)}>
-                    Cancel
-                  </Button>
-                  <Button variant="danger" onPress={() => props.onRemove()}>
-                    Remove
-                  </Button>
-                </View>
-              </Card>
-            </View>
-          </Modal>
-        </Show>
-        <Show when={details()}>
-          {(d) => (
-            <>
-              <DetailCard title="Storage">
-                <DetailRow label="App" value={formatSize(d().installSize)} />
-                <DetailRow
-                  label="Files"
-                  value={amount(
-                    d().files.length,
-                    d().files.reduce((sum, f) => sum + f.size, 0),
-                  )}
-                />
-                <DetailRow label="Data" value={amount(d().data.length, d().dataSize)} />
-                <DetailRow label="Cache" value={amount(d().cache.length, d().cacheSize)} />
-              </DetailCard>
-              <DetailCard title="Versions">
-                <For each={d().versions}>
-                  {(v) => (
-                    <DetailRow
-                      label={v.id.slice(0, 12) + (v.current ? " (current)" : "")}
-                      value={`${v.solidrtVersion}, ${formatSize(v.size)}`}
-                      mutedValue={!v.current}
-                    />
-                  )}
-                </For>
-              </DetailCard>
-              <DetailCard title="Files">
-                <For each={d().files}>
-                  {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
-                </For>
-              </DetailCard>
-              <DetailCard title="Data">
-                <Show
-                  when={d().data.length > 0}
-                  fallback={
+          <Show when={confirming()}>
+            <Modal onClose={() => setConfirming(false)}>
+              <View layout={{ width: "100%", maxWidth: 380, padding: space("xl") }}>
+                <Card layout={{ gap: space("lg") }}>
+                  <View layout={{ flexDirection: "column", gap: space("sm") }}>
+                    <Text variant="title">Remove {props.app.name}?</Text>
                     <Text variant="body" muted>
-                      Empty
+                      This deletes the app and its stored data. This cannot be undone.
                     </Text>
-                  }
-                >
-                  <For each={d().data}>
+                  </View>
+                  <View layout={{ flexDirection: "row", gap: space("md") }}>
+                    <Button variant="ghost" onPress={() => setConfirming(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="danger" onPress={() => props.onRemove()}>
+                      Remove
+                    </Button>
+                  </View>
+                </Card>
+              </View>
+            </Modal>
+          </Show>
+          <Show when={details()}>
+            {(d) => (
+              <>
+                <DetailCard title="Storage">
+                  <DetailRow label="App" value={formatSize(d().installSize)} />
+                  <DetailRow
+                    label="Files"
+                    value={amount(
+                      d().files.length,
+                      d().files.reduce((sum, f) => sum + f.size, 0),
+                    )}
+                  />
+                  <DetailRow label="Data" value={amount(d().data.length, d().dataSize)} />
+                  <DetailRow label="Cache" value={amount(d().cache.length, d().cacheSize)} />
+                </DetailCard>
+                <DetailCard title="Versions">
+                  <For each={d().versions}>
+                    {(v) => (
+                      <DetailRow
+                        label={v.id.slice(0, 12) + (v.current ? " (current)" : "")}
+                        value={`${v.solidrtVersion}, ${formatSize(v.size)}`}
+                        mutedValue={!v.current}
+                      />
+                    )}
+                  </For>
+                </DetailCard>
+                <DetailCard title="Files">
+                  <For each={d().files}>
                     {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
                   </For>
+                </DetailCard>
+                <DetailCard title="Data">
+                  <Show
+                    when={d().data.length > 0}
+                    fallback={
+                      <Text variant="body" muted>
+                        Empty
+                      </Text>
+                    }
+                  >
+                    <For each={d().data}>
+                      {(f) => <DetailRow label={f.path} value={formatSize(f.size)} />}
+                    </For>
+                  </Show>
+                </DetailCard>
+                <DetailCard title="Cache">
+                  <Show
+                    when={d().cache.length > 0}
+                    fallback={
+                      <Text variant="body" muted>
+                        Empty
+                      </Text>
+                    }
+                  >
+                    <Text variant="body">By type</Text>
+                    <For each={groupCache(d().cache, (e) => e.type ?? "unknown")}>
+                      {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
+                    </For>
+                    <Text variant="body">By domain</Text>
+                    <For each={groupCache(d().cache, (e) => cacheDomain(e.url))}>
+                      {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
+                    </For>
+                  </Show>
+                </DetailCard>
+                <Show when={d().cache.length > 0}>
+                  <Button
+                    variant="danger"
+                    onPress={() => {
+                      clearCache(props.app.id)
+                      setDetailsGen((n) => n + 1)
+                    }}
+                  >
+                    Clear cache
+                  </Button>
                 </Show>
-              </DetailCard>
-              <DetailCard title="Cache">
-                <Show
-                  when={d().cache.length > 0}
-                  fallback={
-                    <Text variant="body" muted>
-                      Empty
-                    </Text>
-                  }
-                >
-                  <Text variant="body">By type</Text>
-                  <For each={groupCache(d().cache, (e) => e.type ?? "unknown")}>
-                    {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
-                  </For>
-                  <Text variant="body">By domain</Text>
-                  <For each={groupCache(d().cache, (e) => cacheDomain(e.url))}>
-                    {(g) => <DetailRow label={g.key} value={amount(g.count, g.size)} />}
-                  </For>
-                </Show>
-              </DetailCard>
-              <Show when={d().cache.length > 0}>
-                <Button
-                  variant="danger"
-                  onPress={() => {
-                    clearCache(props.app.id)
-                    setDetailsGen((n) => n + 1)
-                  }}
-                >
-                  Clear cache
-                </Button>
-              </Show>
-            </>
-          )}
-        </Show>
+              </>
+            )}
+          </Show>
+        </View>
       </View>
     </ScrollView>
   )
@@ -282,6 +317,7 @@ function AppList(props: {
   selectedId: string | null
   twoPane: boolean
   onSelect: (id: string) => void
+  onLaunch: (id: string) => void
 }) {
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
@@ -292,6 +328,7 @@ function AppList(props: {
               app={app}
               active={props.twoPane && props.selectedId === app.id}
               onPress={() => props.onSelect(app.id)}
+              onLaunch={() => props.onLaunch(app.id)}
             />
           )}
         </For>
@@ -447,7 +484,7 @@ export function HomeScreen(props: {
               flexDirection: "column",
               flexGrow: 1,
               width: "100%",
-              maxWidth: twoPane() ? undefined : 440,
+              maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
               padding: space("xl"),
               gap: space("xl"),
             }}
@@ -465,7 +502,12 @@ export function HomeScreen(props: {
               </View>
               <Pressable
                 onPress={props.onSettings}
-                layout={{ padding: space("sm") }}
+                layout={{
+                  width: TAP_TARGET,
+                  height: TAP_TARGET,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
                 style={(s: PressState) => ({
                   backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
                   borderRadius: theme.radius.md,
@@ -480,6 +522,7 @@ export function HomeScreen(props: {
                 selectedId={props.selectedId}
                 twoPane={twoPane()}
                 onSelect={(id) => props.setSelectedId(id)}
+                onLaunch={(id) => doLaunch(id)}
               />
             </Show>
             <Show when={available}>

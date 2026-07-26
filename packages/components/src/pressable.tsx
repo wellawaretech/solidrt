@@ -7,7 +7,9 @@ export type { PressState } from "./press"
 
 export interface PressableProps extends PointerProps {
   // children and style may be functions of the press state, so a caller can
-  // restyle on press/hover without wiring their own signals.
+  // restyle on press/hover without wiring their own signals. The state is live
+  // (getters, not a snapshot): read it inside a prop or child expression, never
+  // eagerly into a local, or the value is captured once where it was read.
   children?: any | ((state: PressState) => any)
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
@@ -29,6 +31,10 @@ export function Pressable(props: PressableProps) {
   // ((state) => ...) passes through it intact because flatten only unwraps
   // zero-arg functions.
   let resolved = children(() => props.children)
+  // The render prop runs once: the state it receives is a live object of getters
+  // (see press.ts), so a press or hover updates only the props that read it
+  // rather than rebuilding this subtree - which is what keeps a nested
+  // recognizer's in-flight gesture alive.
   let kids = () => {
     // children()'s return type erases the render-prop variant, hence the any.
     let c = resolved() as any

@@ -1,9 +1,13 @@
 // The QR scan screen: a full-window camera with center cover-crop and a
-// corner-bracket reticle, feeding scanned data back out to dial.
+// corner-bracket reticle, feeding scanned data back out to dial. Dismissal is a
+// close (X) on a scrim disc, not the heading-row back arrow the other screens
+// use: there is no heading to hang it off, and leaving a live camera reads as
+// closing a viewfinder rather than stepping back up a hierarchy.
 import { env, createEffect, untrack } from "@solidrt/core"
 import { createCamera, type BarcodeResult } from "@solidrt/core/camera"
 import { Show } from "solid-js"
-import { View, Button, SafeArea, space } from "@solidrt/components"
+import { View, Pressable, Icon, SafeArea, space, type PressState } from "@solidrt/components"
+import { TAP_TARGET } from "./types"
 
 // The scan reticle's stroke thickness and corner radius (logical px). The
 // bracket paths are inset by half the stroke so the round caps stay inside
@@ -11,6 +15,14 @@ import { View, Button, SafeArea, space } from "@solidrt/components"
 // rounded, not just the stroke join.
 const RETICLE_STROKE = 10
 const RETICLE_RADIUS = 20
+
+// Lucide x, stroked with currentColor so Icon recolors it.
+const CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`
+
+// The close button's scrim. Fixed, not themed: it sits on the camera feed, not
+// on a themed surface, and has to stay legible over whatever is in frame.
+const SCRIM = "rgba(0, 0, 0, 0.45)"
+const SCRIM_HOVER = "rgba(0, 0, 0, 0.65)"
 
 // Full-window camera with center cover-crop and a corner-bracket scan reticle.
 // Mounted only while scanning (under <Match>), so the camera opens with the
@@ -104,9 +116,21 @@ export function ScanScreen(props: {
         <SafeArea>
           <View layout={{ flexGrow: 1, padding: space("xl") }}>
             <View layout={{ flexDirection: "row" }}>
-              <Button variant="secondary" size="md" onPress={props.onCancel}>
-                Cancel
-              </Button>
+              <Pressable
+                onPress={props.onCancel}
+                layout={{
+                  width: TAP_TARGET,
+                  height: TAP_TARGET,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                style={(s: PressState) => ({
+                  backgroundColor: s.hovered ? SCRIM_HOVER : SCRIM,
+                  borderRadius: TAP_TARGET / 2,
+                })}
+              >
+                <Icon src={CLOSE_SVG} size={22} color="white" />
+              </Pressable>
             </View>
           </View>
         </SafeArea>

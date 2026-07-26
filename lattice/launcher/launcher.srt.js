@@ -6332,10 +6332,15 @@ function createPress(options) {
   let node = null;
   let active = null;
   let inside = false;
-  let state = () => ({
-    pressed: pressed(),
-    hovered: hovered()
-  });
+  let live = {
+    get pressed() {
+      return pressed();
+    },
+    get hovered() {
+      return hovered();
+    }
+  };
+  let state = () => live;
   let ref2 = (n3) => {
     node = n3;
   };
@@ -6977,10 +6982,10 @@ function SplitView(props) {
       return policy.layout === "twoPane";
     },
     get fallback() {
-      var _el$6 = createElement("view");
-      setProp(_el$6, "flexDirection", "column");
-      spread(_el$6, mergeProps(() => props.layout), true);
-      insert(_el$6, createComponent2(Show, {
+      var _el$4 = createElement("view");
+      setProp(_el$4, "flexDirection", "column");
+      spread(_el$4, mergeProps(() => props.layout), true);
+      insert(_el$4, createComponent2(Show, {
         get when() {
           return props.showDetail;
         },
@@ -6991,34 +6996,23 @@ function SplitView(props) {
           return props.detail;
         }
       }));
-      return _el$6;
+      return _el$4;
     },
     get children() {
       var _el$ = createElement("view"), _el$2 = createElement("view", {
         flexDirection: "column"
       }), _el$3 = createElement("view", {
-        width: 1
-      }), _el$4 = createElement("d-rect"), _el$5 = createElement("view", {
         flex: 1,
         flexDirection: "column"
       });
       insertNode2(_el$, _el$2);
       insertNode2(_el$, _el$3);
-      insertNode2(_el$, _el$5);
       setProp(_el$, "flexDirection", "row");
       spread(_el$, mergeProps(() => props.layout), true);
       insert(_el$2, () => props.list);
-      insertNode2(_el$3, _el$4);
-      insert(_el$5, () => props.detail);
-      effect3(() => ({
-        e: props.listWidth ?? LIST_WIDTH,
-        t: theme.color.border
-      }), ({
-        e: e3,
-        t: t3
-      }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$2, "width", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$4, "color", t3, _p$?.t);
+      insert(_el$3, () => props.detail);
+      effect3(() => props.listWidth ?? LIST_WIDTH, (_v$, _$p) => {
+        setProp(_el$2, "width", _v$, _$p);
       });
       return _el$;
     }
@@ -8818,6 +8812,9 @@ function DetailCard(props) {
 }
 
 // lattice/launcher/parts/types.ts
+var COLUMN_MAX_WIDTH = 440;
+var DETAIL_MAX_WIDTH = 640;
+var TAP_TARGET = 44;
 var STATUS_TEXT = {
   idle: "Not connected",
   searching: "Searching...",
@@ -8826,6 +8823,32 @@ var STATUS_TEXT = {
 };
 function normalizeAddress(raw) {
   return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
+}
+
+// lattice/launcher/parts/back-button.tsx
+var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
+function BackButton(props) {
+  return createComponent2(Pressable, {
+    get onPress() {
+      return props.onPress;
+    },
+    layout: {
+      width: TAP_TARGET,
+      height: TAP_TARGET,
+      alignItems: "center",
+      justifyContent: "center"
+    },
+    style: (s2) => ({
+      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+      borderRadius: theme.radius.md
+    }),
+    get children() {
+      return createComponent2(Icon, {
+        src: ARROW_LEFT_SVG,
+        size: 22
+      });
+    }
+  });
 }
 
 // lattice/launcher/parts/dev-connection.ts
@@ -8860,6 +8883,7 @@ function connect(addr) {
 
 // lattice/launcher/parts/home-screen.tsx
 var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+var PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
 function formatSize(bytes) {
   if (bytes < 1024)
     return `${bytes} B`;
@@ -8877,8 +8901,12 @@ function AppCard(props) {
       return props.onPress;
     },
     children: (s2) => createComponent2(Card, {
-      layout: {
-        gap: 2
+      get layout() {
+        return {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: space("md")
+        };
       },
       get style() {
         return {
@@ -8886,17 +8914,43 @@ function AppCard(props) {
         };
       },
       get children() {
-        return [createComponent2(Text, {
-          variant: "title",
+        return [createComponent2(View, {
+          layout: {
+            flexDirection: "column",
+            flexGrow: 1,
+            gap: 2
+          },
           get children() {
-            return props.app.name;
+            return [createComponent2(Text, {
+              variant: "title",
+              get children() {
+                return props.app.name;
+              }
+            }), createComponent2(Text, {
+              variant: "body",
+              muted: true,
+              get children() {
+                return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
+              }
+            })];
           }
-        }), createComponent2(Text, {
-          variant: "body",
-          muted: true,
-          get children() {
-            return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
-          }
+        }), createComponent2(Pressable, {
+          get onPress() {
+            return props.onLaunch;
+          },
+          layout: {
+            width: TAP_TARGET,
+            height: TAP_TARGET,
+            alignItems: "center",
+            justifyContent: "center"
+          },
+          children: (ps) => createComponent2(Icon, {
+            src: PLAY_SVG,
+            size: 20,
+            get color() {
+              return memo2(() => !!(ps.pressed || ps.hovered))() ? theme.color.primaryHover : theme.color.primary;
+            }
+          })
         })];
       }
     })
@@ -8947,222 +9001,203 @@ function AppDetail(props) {
       return createComponent2(View, {
         get layout() {
           return {
-            flexDirection: "column",
-            gap: space("lg"),
-            padding: space("xl"),
-            width: "100%",
-            maxWidth: 520
+            flexGrow: 1,
+            alignItems: policy.layout === "twoPane" ? "flex-start" : "center"
           };
         },
         get children() {
-          return [createComponent2(Show, {
-            get when() {
-              return props.onBack;
-            },
-            get children() {
-              return createComponent2(View, {
-                layout: {
-                  flexDirection: "row"
-                },
-                get children() {
-                  return createComponent2(Button, {
-                    variant: "ghost",
-                    size: "sm",
-                    onPress: () => props.onBack?.(),
-                    children: "Back"
-                  });
-                }
-              });
-            }
-          }), createComponent2(View, {
-            layout: {
-              flexDirection: "column",
-              gap: 2
-            },
-            get children() {
-              return [createComponent2(Text, {
-                variant: "heading",
-                get children() {
-                  return props.app.name;
-                }
-              }), createComponent2(Text, {
-                variant: "body",
-                muted: true,
-                get children() {
-                  return props.app.id;
-                }
-              })];
-            }
-          }), createComponent2(View, {
+          return createComponent2(View, {
             get layout() {
               return {
-                flexDirection: "row",
-                gap: space("md")
+                flexDirection: "column",
+                gap: space("lg"),
+                padding: space("xl"),
+                width: "100%",
+                maxWidth: DETAIL_MAX_WIDTH
               };
             },
             get children() {
-              return [createComponent2(Button, {
-                onPress: () => props.onLaunch(),
-                children: "Launch"
-              }), createComponent2(Button, {
-                variant: "secondary",
-                onPress: () => setConfirming(true),
-                children: "Remove"
-              })];
-            }
-          }), createComponent2(Show, {
-            get when() {
-              return confirming();
-            },
-            get children() {
-              return createComponent2(Modal, {
-                onClose: () => setConfirming(false),
+              return [createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: space("md")
+                  };
+                },
                 get children() {
-                  return createComponent2(View, {
-                    get layout() {
-                      return {
-                        width: "100%",
-                        maxWidth: 380,
-                        padding: space("xl")
-                      };
+                  return [createComponent2(Show, {
+                    get when() {
+                      return props.onBack;
                     },
                     get children() {
-                      return createComponent2(Card, {
+                      return createComponent2(BackButton, {
+                        onPress: () => props.onBack?.()
+                      });
+                    }
+                  }), createComponent2(View, {
+                    layout: {
+                      flexDirection: "column",
+                      flexGrow: 1,
+                      gap: 2
+                    },
+                    get children() {
+                      return [createComponent2(Text, {
+                        variant: "heading",
+                        get children() {
+                          return props.app.name;
+                        }
+                      }), createComponent2(Text, {
+                        variant: "body",
+                        muted: true,
+                        get children() {
+                          return props.app.id;
+                        }
+                      })];
+                    }
+                  })];
+                }
+              }), createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    gap: space("md")
+                  };
+                },
+                get children() {
+                  return [createComponent2(Button, {
+                    onPress: () => props.onLaunch(),
+                    children: "Launch"
+                  }), createComponent2(Button, {
+                    variant: "secondary",
+                    onPress: () => setConfirming(true),
+                    children: "Remove"
+                  })];
+                }
+              }), createComponent2(Show, {
+                get when() {
+                  return confirming();
+                },
+                get children() {
+                  return createComponent2(Modal, {
+                    onClose: () => setConfirming(false),
+                    get children() {
+                      return createComponent2(View, {
                         get layout() {
                           return {
-                            gap: space("lg")
+                            width: "100%",
+                            maxWidth: 380,
+                            padding: space("xl")
                           };
                         },
                         get children() {
-                          return [createComponent2(View, {
+                          return createComponent2(Card, {
                             get layout() {
                               return {
-                                flexDirection: "column",
-                                gap: space("sm")
+                                gap: space("lg")
                               };
                             },
                             get children() {
-                              return [createComponent2(Text, {
-                                variant: "title",
+                              return [createComponent2(View, {
+                                get layout() {
+                                  return {
+                                    flexDirection: "column",
+                                    gap: space("sm")
+                                  };
+                                },
                                 get children() {
-                                  return ["Remove ", memo2(() => props.app.name), "?"];
+                                  return [createComponent2(Text, {
+                                    variant: "title",
+                                    get children() {
+                                      return ["Remove ", memo2(() => props.app.name), "?"];
+                                    }
+                                  }), createComponent2(Text, {
+                                    variant: "body",
+                                    muted: true,
+                                    children: "This deletes the app and its stored data. This cannot be undone."
+                                  })];
                                 }
-                              }), createComponent2(Text, {
-                                variant: "body",
-                                muted: true,
-                                children: "This deletes the app and its stored data. This cannot be undone."
+                              }), createComponent2(View, {
+                                get layout() {
+                                  return {
+                                    flexDirection: "row",
+                                    gap: space("md")
+                                  };
+                                },
+                                get children() {
+                                  return [createComponent2(Button, {
+                                    variant: "ghost",
+                                    onPress: () => setConfirming(false),
+                                    children: "Cancel"
+                                  }), createComponent2(Button, {
+                                    variant: "danger",
+                                    onPress: () => props.onRemove(),
+                                    children: "Remove"
+                                  })];
+                                }
                               })];
                             }
-                          }), createComponent2(View, {
-                            get layout() {
-                              return {
-                                flexDirection: "row",
-                                gap: space("md")
-                              };
-                            },
-                            get children() {
-                              return [createComponent2(Button, {
-                                variant: "ghost",
-                                onPress: () => setConfirming(false),
-                                children: "Cancel"
-                              }), createComponent2(Button, {
-                                variant: "danger",
-                                onPress: () => props.onRemove(),
-                                children: "Remove"
-                              })];
-                            }
-                          })];
+                          });
                         }
                       });
                     }
                   });
                 }
-              });
-            }
-          }), createComponent2(Show, {
-            get when() {
-              return details();
-            },
-            children: (d2) => [createComponent2(DetailCard, {
-              title: "Storage",
-              get children() {
-                return [createComponent2(DetailRow, {
-                  label: "App",
-                  get value() {
-                    return formatSize(d2().installSize);
+              }), createComponent2(Show, {
+                get when() {
+                  return details();
+                },
+                children: (d2) => [createComponent2(DetailCard, {
+                  title: "Storage",
+                  get children() {
+                    return [createComponent2(DetailRow, {
+                      label: "App",
+                      get value() {
+                        return formatSize(d2().installSize);
+                      }
+                    }), createComponent2(DetailRow, {
+                      label: "Files",
+                      get value() {
+                        return amount(d2().files.length, d2().files.reduce((sum, f3) => sum + f3.size, 0));
+                      }
+                    }), createComponent2(DetailRow, {
+                      label: "Data",
+                      get value() {
+                        return amount(d2().data.length, d2().dataSize);
+                      }
+                    }), createComponent2(DetailRow, {
+                      label: "Cache",
+                      get value() {
+                        return amount(d2().cache.length, d2().cacheSize);
+                      }
+                    })];
                   }
-                }), createComponent2(DetailRow, {
-                  label: "Files",
-                  get value() {
-                    return amount(d2().files.length, d2().files.reduce((sum, f3) => sum + f3.size, 0));
-                  }
-                }), createComponent2(DetailRow, {
-                  label: "Data",
-                  get value() {
-                    return amount(d2().data.length, d2().dataSize);
-                  }
-                }), createComponent2(DetailRow, {
-                  label: "Cache",
-                  get value() {
-                    return amount(d2().cache.length, d2().cacheSize);
-                  }
-                })];
-              }
-            }), createComponent2(DetailCard, {
-              title: "Versions",
-              get children() {
-                return createComponent2(For, {
-                  get each() {
-                    return d2().versions;
-                  },
-                  children: (v2) => createComponent2(DetailRow, {
-                    get label() {
-                      return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
-                    },
-                    get value() {
-                      return `${v2.solidrtVersion}, ${formatSize(v2.size)}`;
-                    },
-                    get mutedValue() {
-                      return !v2.current;
-                    }
-                  })
-                });
-              }
-            }), createComponent2(DetailCard, {
-              title: "Files",
-              get children() {
-                return createComponent2(For, {
-                  get each() {
-                    return d2().files;
-                  },
-                  children: (f3) => createComponent2(DetailRow, {
-                    get label() {
-                      return f3.path;
-                    },
-                    get value() {
-                      return formatSize(f3.size);
-                    }
-                  })
-                });
-              }
-            }), createComponent2(DetailCard, {
-              title: "Data",
-              get children() {
-                return createComponent2(Show, {
-                  get when() {
-                    return d2().data.length > 0;
-                  },
-                  get fallback() {
-                    return createComponent2(Text, {
-                      variant: "body",
-                      muted: true,
-                      children: "Empty"
-                    });
-                  },
+                }), createComponent2(DetailCard, {
+                  title: "Versions",
                   get children() {
                     return createComponent2(For, {
                       get each() {
-                        return d2().data;
+                        return d2().versions;
+                      },
+                      children: (v2) => createComponent2(DetailRow, {
+                        get label() {
+                          return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
+                        },
+                        get value() {
+                          return `${v2.solidrtVersion}, ${formatSize(v2.size)}`;
+                        },
+                        get mutedValue() {
+                          return !v2.current;
+                        }
+                      })
+                    });
+                  }
+                }), createComponent2(DetailCard, {
+                  title: "Files",
+                  get children() {
+                    return createComponent2(For, {
+                      get each() {
+                        return d2().files;
                       },
                       children: (f3) => createComponent2(DetailRow, {
                         get label() {
@@ -9174,73 +9209,104 @@ function AppDetail(props) {
                       })
                     });
                   }
-                });
-              }
-            }), createComponent2(DetailCard, {
-              title: "Cache",
-              get children() {
-                return createComponent2(Show, {
+                }), createComponent2(DetailCard, {
+                  title: "Data",
+                  get children() {
+                    return createComponent2(Show, {
+                      get when() {
+                        return d2().data.length > 0;
+                      },
+                      get fallback() {
+                        return createComponent2(Text, {
+                          variant: "body",
+                          muted: true,
+                          children: "Empty"
+                        });
+                      },
+                      get children() {
+                        return createComponent2(For, {
+                          get each() {
+                            return d2().data;
+                          },
+                          children: (f3) => createComponent2(DetailRow, {
+                            get label() {
+                              return f3.path;
+                            },
+                            get value() {
+                              return formatSize(f3.size);
+                            }
+                          })
+                        });
+                      }
+                    });
+                  }
+                }), createComponent2(DetailCard, {
+                  title: "Cache",
+                  get children() {
+                    return createComponent2(Show, {
+                      get when() {
+                        return d2().cache.length > 0;
+                      },
+                      get fallback() {
+                        return createComponent2(Text, {
+                          variant: "body",
+                          muted: true,
+                          children: "Empty"
+                        });
+                      },
+                      get children() {
+                        return [createComponent2(Text, {
+                          variant: "body",
+                          children: "By type"
+                        }), createComponent2(For, {
+                          get each() {
+                            return groupCache(d2().cache, (e3) => e3.type ?? "unknown");
+                          },
+                          children: (g2) => createComponent2(DetailRow, {
+                            get label() {
+                              return g2.key;
+                            },
+                            get value() {
+                              return amount(g2.count, g2.size);
+                            }
+                          })
+                        }), createComponent2(Text, {
+                          variant: "body",
+                          children: "By domain"
+                        }), createComponent2(For, {
+                          get each() {
+                            return groupCache(d2().cache, (e3) => cacheDomain(e3.url));
+                          },
+                          children: (g2) => createComponent2(DetailRow, {
+                            get label() {
+                              return g2.key;
+                            },
+                            get value() {
+                              return amount(g2.count, g2.size);
+                            }
+                          })
+                        })];
+                      }
+                    });
+                  }
+                }), createComponent2(Show, {
                   get when() {
                     return d2().cache.length > 0;
                   },
-                  get fallback() {
-                    return createComponent2(Text, {
-                      variant: "body",
-                      muted: true,
-                      children: "Empty"
-                    });
-                  },
                   get children() {
-                    return [createComponent2(Text, {
-                      variant: "body",
-                      children: "By type"
-                    }), createComponent2(For, {
-                      get each() {
-                        return groupCache(d2().cache, (e3) => e3.type ?? "unknown");
+                    return createComponent2(Button, {
+                      variant: "danger",
+                      onPress: () => {
+                        clearCache(props.app.id);
+                        setDetailsGen((n3) => n3 + 1);
                       },
-                      children: (g2) => createComponent2(DetailRow, {
-                        get label() {
-                          return g2.key;
-                        },
-                        get value() {
-                          return amount(g2.count, g2.size);
-                        }
-                      })
-                    }), createComponent2(Text, {
-                      variant: "body",
-                      children: "By domain"
-                    }), createComponent2(For, {
-                      get each() {
-                        return groupCache(d2().cache, (e3) => cacheDomain(e3.url));
-                      },
-                      children: (g2) => createComponent2(DetailRow, {
-                        get label() {
-                          return g2.key;
-                        },
-                        get value() {
-                          return amount(g2.count, g2.size);
-                        }
-                      })
-                    })];
+                      children: "Clear cache"
+                    });
                   }
-                });
-              }
-            }), createComponent2(Show, {
-              get when() {
-                return d2().cache.length > 0;
-              },
-              get children() {
-                return createComponent2(Button, {
-                  variant: "danger",
-                  onPress: () => {
-                    clearCache(props.app.id);
-                    setDetailsGen((n3) => n3 + 1);
-                  },
-                  children: "Clear cache"
-                });
-              }
-            })]
-          })];
+                })]
+              })];
+            }
+          });
         }
       });
     }
@@ -9269,7 +9335,8 @@ function AppList(props) {
               get active() {
                 return memo2(() => !!props.twoPane)() ? props.selectedId === app.id : props.twoPane;
               },
-              onPress: () => props.onSelect(app.id)
+              onPress: () => props.onSelect(app.id),
+              onLaunch: () => props.onLaunch(app.id)
             })
           });
         }
@@ -9474,7 +9541,7 @@ function HomeScreen(props) {
                 flexDirection: "column",
                 flexGrow: 1,
                 width: "100%",
-                maxWidth: twoPane() ? undefined : 440,
+                maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
                 padding: space("xl"),
                 gap: space("xl")
               };
@@ -9507,10 +9574,11 @@ function HomeScreen(props) {
                     get onPress() {
                       return props.onSettings;
                     },
-                    get layout() {
-                      return {
-                        padding: space("sm")
-                      };
+                    layout: {
+                      width: TAP_TARGET,
+                      height: TAP_TARGET,
+                      alignItems: "center",
+                      justifyContent: "center"
                     },
                     style: (s2) => ({
                       backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
@@ -9542,7 +9610,8 @@ function HomeScreen(props) {
                     get twoPane() {
                       return twoPane();
                     },
-                    onSelect: (id2) => props.setSelectedId(id2)
+                    onSelect: (id2) => props.setSelectedId(id2),
+                    onLaunch: (id2) => doLaunch(id2)
                   });
                 }
               }), createComponent2(Show, {
@@ -9659,28 +9728,29 @@ function SettingsScreen(props) {
                 flexDirection: "column",
                 gap: space("lg"),
                 width: "100%",
-                maxWidth: 440,
+                maxWidth: COLUMN_MAX_WIDTH,
                 padding: space("xl")
               };
             },
             get children() {
               return [createComponent2(View, {
-                layout: {
-                  flexDirection: "row"
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: space("md")
+                  };
                 },
                 get children() {
-                  return createComponent2(Button, {
-                    variant: "ghost",
-                    size: "sm",
+                  return [createComponent2(BackButton, {
                     get onPress() {
                       return props.onBack;
-                    },
-                    children: "Back"
-                  });
+                    }
+                  }), createComponent2(Text, {
+                    variant: "heading",
+                    children: "Settings"
+                  })];
                 }
-              }), createComponent2(Text, {
-                variant: "heading",
-                children: "Settings"
               }), createComponent2(DetailCard, {
                 title: "Appearance",
                 get children() {
@@ -9755,6 +9825,9 @@ function SettingsScreen(props) {
 // lattice/launcher/parts/scan-screen.tsx
 var RETICLE_STROKE = 10;
 var RETICLE_RADIUS = 20;
+var CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+var SCRIM = "rgba(0, 0, 0, 0.45)";
+var SCRIM_HOVER = "rgba(0, 0, 0, 0.65)";
 function ScanScreen(props) {
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
@@ -9899,13 +9972,27 @@ function ScanScreen(props) {
                       flexDirection: "row"
                     },
                     get children() {
-                      return createComponent2(Button, {
-                        variant: "secondary",
-                        size: "md",
+                      return createComponent2(Pressable, {
                         get onPress() {
                           return props.onCancel;
                         },
-                        children: "Cancel"
+                        layout: {
+                          width: TAP_TARGET,
+                          height: TAP_TARGET,
+                          alignItems: "center",
+                          justifyContent: "center"
+                        },
+                        style: (s2) => ({
+                          backgroundColor: s2.hovered ? SCRIM_HOVER : SCRIM,
+                          borderRadius: TAP_TARGET / 2
+                        }),
+                        get children() {
+                          return createComponent2(Icon, {
+                            src: CLOSE_SVG,
+                            size: 22,
+                            color: "white"
+                          });
+                        }
                       });
                     }
                   });
@@ -9948,7 +10035,7 @@ function ConnectScreen(props) {
             flexDirection: "column",
             gap: space("lg"),
             width: "100%",
-            maxWidth: 440,
+            maxWidth: COLUMN_MAX_WIDTH,
             padding: space("xl"),
             paddingTop: 72
           };

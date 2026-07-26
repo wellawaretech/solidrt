@@ -3,6 +3,7 @@
 import { Show, For } from "solid-js"
 import { View, Card, Text, Button, TextInput, space } from "@solidrt/components"
 import { recentAddresses } from "./dev-connection"
+import { COLUMN_MAX_WIDTH } from "./types"
 
 // The dev server's default port (the CLI's DEV_PORT, 0x8844), pre-filled so the
 // common case is host-only entry.
@@ -39,7 +40,7 @@ export function ConnectScreen(props: {
           flexDirection: "column",
           gap: space("lg"),
           width: "100%",
-          maxWidth: 440,
+          maxWidth: COLUMN_MAX_WIDTH,
           padding: space("xl"),
           paddingTop: 72,
         }}

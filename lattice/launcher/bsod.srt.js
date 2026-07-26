@@ -2741,6 +2741,7 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on, once } from "srt:events";
+import { exit } from "srt:app";
 
 // packages/core/src/core.ts
 import * as tree from "flux:rendertree";
@@ -2787,9 +2788,9 @@ function getFocusedNodeId() {
 }
 
 // packages/core/src/window.ts
-var pointerCaptures = new Map;
 var animationFrames = new Map;
 var refreshRate = 60;
+var backHandlers = new Set;
 function attachWindow(_nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
@@ -2800,6 +2801,7 @@ function attachWindow(_nodeId) {
   let unsubWheel = null;
   let unsubKeyDown = null;
   let unsubKeyUp = null;
+  let unsubBack = null;
   let unsubTextInput = null;
   let unsubKeyboardVisibility = null;
   let unsubRefreshRate = null;
@@ -2828,80 +2830,55 @@ function attachWindow(_nodeId) {
     }) => {
       runFrame(time * 1000, frame);
     });
-    let bubble = (targets, handler, e) => {
+    let dispatchPath = (raw, handler, reverse) => {
+      let {
+        targets,
+        localX,
+        localY,
+        parentX,
+        parentY,
+        ...e
+      } = raw;
       let stopped = false;
       e.stopPropagation = () => {
         stopped = true;
       };
-      for (let i = targets.length - 1;i >= 0; i--) {
+      let n = targets.length;
+      for (let k = 0;k < n; k++) {
+        let i = reverse ? n - 1 - k : k;
+        e.currentTarget = targets[i];
+        e.localX = localX[i];
+        e.localY = localY[i];
+        e.parentX = parentX[i];
+        e.parentY = parentY[i];
         getEventHandler(targets[i], handler)?.(e);
         if (stopped)
           break;
       }
     };
-    unsubDown = on("pointerDown", ({
-      targets,
-      ...e
-    }) => {
-      bubble(targets, "onPointerDown", e);
+    let bubble = (raw, handler) => dispatchPath(raw, handler, true);
+    let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
+    unsubDown = on("pointerDown", (raw) => {
+      bubble(raw, "onPointerDown");
       let focused = getFocusedNodeId();
-      if (focused != null && !targets.includes(focused)) {
+      if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
       }
     });
-    unsubUp = on("pointerUp", ({
-      targets,
-      ...e
-    }) => {
-      let captured = pointerCaptures.get(e.pointerId);
-      if (captured != null) {
-        e.stopPropagation = () => {};
-        getEventHandler(captured, "onPointerUp")?.(e);
-        pointerCaptures.delete(e.pointerId);
-        return;
-      }
-      bubble(targets, "onPointerUp", e);
+    unsubUp = on("pointerUp", (raw) => {
+      bubble(raw, "onPointerUp");
     });
-    unsubMove = on("pointerMove", ({
-      targets,
-      ...e
-    }) => {
-      let captured = pointerCaptures.get(e.pointerId);
-      if (captured != null) {
-        e.stopPropagation = () => {};
-        getEventHandler(captured, "onPointerMove")?.(e);
-        return;
-      }
-      bubble(targets, "onPointerMove", e);
+    unsubMove = on("pointerMove", (raw) => {
+      bubble(raw, "onPointerMove");
     });
-    let dispatchOrdered = (targets, handler, e) => {
-      let stopped = false;
-      e.stopPropagation = () => {
-        stopped = true;
-      };
-      for (let nodeId of targets) {
-        getEventHandler(nodeId, handler)?.(e);
-        if (stopped)
-          break;
-      }
-    };
-    unsubEnter = on("pointerEnter", ({
-      targets,
-      ...e
-    }) => {
-      dispatchOrdered(targets, "onPointerEnter", e);
+    unsubEnter = on("pointerEnter", (raw) => {
+      dispatchOrdered(raw, "onPointerEnter");
     });
-    unsubLeave = on("pointerLeave", ({
-      targets,
-      ...e
-    }) => {
-      dispatchOrdered(targets, "onPointerLeave", e);
+    unsubLeave = on("pointerLeave", (raw) => {
+      dispatchOrdered(raw, "onPointerLeave");
     });
-    unsubWheel = on("wheel", ({
-      targets,
-      ...e
-    }) => {
-      bubble(targets, "onWheel", e);
+    unsubWheel = on("wheel", (raw) => {
+      bubble(raw, "onWheel");
     });
     unsubKeyDown = on("keydown", (e) => {
       let id = getFocusedNodeId();
@@ -2914,6 +2891,18 @@ function attachWindow(_nodeId) {
       if (id != null) {
         getEventHandler(id, "onKeyUp")?.(e);
       }
+    });
+    unsubBack = on("back", () => {
+      let prevented = false;
+      let e = {
+        preventDefault: () => {
+          prevented = true;
+        }
+      };
+      for (let fn of [...backHandlers])
+        fn(e);
+      if (!prevented)
+        exit();
     });
     unsubTextInput = on("textInput", (e) => {
       let id = getFocusedNodeId();
@@ -2950,6 +2939,8 @@ function attachWindow(_nodeId) {
       unsubKeyDown();
     if (unsubKeyUp)
       unsubKeyUp();
+    if (unsubBack)
+      unsubBack();
     if (unsubTextInput)
       unsubTextInput();
     if (unsubKeyboardVisibility)
@@ -3440,7 +3431,7 @@ import { on as on2 } from "srt:events";
 import { on as on3 } from "srt:events";
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { destroyTexture as destroyTexture2, setShaderParams, uploadTexture } from "flux:gpu";
+import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";
 import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/image.ts
