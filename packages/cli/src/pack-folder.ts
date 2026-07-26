@@ -37,7 +37,7 @@ export type PackFolder = {
 export function buildPackFolder(entry: string, bytecode: Buffer): PackFolder {
   let identity = loadAppIdentity(entry)
   let projectDir = projectDirFor(resolve(entry))
-  let { assets } = collectAssets(entry)
+  let { assets, icon } = collectAssets(entry)
   let copies = assets.map((a) => ({ from: join(projectDir, a.path), to: a.path }))
 
   // The full resolved font set: custom fonts are already collected assets;
@@ -70,6 +70,7 @@ export function buildPackFolder(entry: string, bytecode: Buffer): PackFolder {
     appId: identity.appId,
     org: identity.org,
     displayName: identity.displayName,
+    ...(icon ? { icon } : {}),
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
     bundle: { path: "bundle.bin", sha256: hashHex(bytecode), size: bytecode.length },

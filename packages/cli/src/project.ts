@@ -8,7 +8,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 //     "appId": "com.example.app",   // stable identity: storage dir, Android package id
 //     "org": "Example",             // optional display metadata (publisher)
 //     "displayName": "Example App", // optional display metadata (launcher/window)
-//     "fonts": { ... }              // see fonts.ts
+//     "fonts": { ... },             // see fonts.ts
+//     "icon": "./assets/icon.svg"   // optional app icon (SVG, under assets/);
+//                                   // an undeclared assets/icon.svg is picked
+//                                   // up by convention
 //   }
 //
 // Everything defaults from the package name (or the entry filename when there
@@ -71,11 +74,12 @@ export const SOLIDRT_VERSION: string = pkgVersion === "0.0.0" ? "unknown" : pkgV
 export function buildManifest(code: string, entry: string): string {
   let identity = loadAppIdentity(entry)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
-  let { assets, fonts } = collectAssets(entry)
+  let { assets, fonts, icon } = collectAssets(entry)
   return JSON.stringify({
     appId: identity.appId,
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
+    ...(icon ? { icon } : {}),
     bundle: { path: "bundle.js", sha256, size: Buffer.byteLength(code, "utf8") },
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),
@@ -116,11 +120,19 @@ function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
 
 // The convention-first asset set: everything under the project's assets/
 // folder (next to package.json), collected wholesale in sorted order so the
-// manifest bytes are deterministic. Fonts are annotations pointing into that
-// set: `solidrt.fonts` path entries must live under assets/ so they reach dev
-// clients and the version store (`false` entries only drop pack defaults and
-// have no manifest presence).
-export function collectAssets(entry: string): { assets: ManifestAsset[]; fonts: ManifestFont[] } {
+// manifest bytes are deterministic. Fonts and the icon are annotations
+// pointing into that set: `solidrt.fonts` path entries and `solidrt.icon`
+// must live under assets/ so they reach dev clients and the version store
+// (`false` font entries only drop pack defaults and have no manifest
+// presence). The icon is SVG-only for now: the launcher renders SVG natively,
+// and the raster surfaces (window icon, OS embedding) come with later stages
+// (okf/backlog/app-icons.md). An undeclared assets/icon.svg is picked up by
+// convention.
+export function collectAssets(entry: string): {
+  assets: ManifestAsset[]
+  fonts: ManifestFont[]
+  icon: string | null
+} {
   let project = findProjectPackage(entry)
   let projectDir = projectDirFor(entry)
   let assetsDir = resolve(projectDir, "assets")
@@ -146,7 +158,27 @@ export function collectAssets(entry: string): { assets: ManifestAsset[]; fonts: 
       fonts.push({ path, alias })
     }
   }
-  return { assets, fonts }
+
+  let icon: string | null = null
+  let declared = project?.pkg.solidrt?.icon
+  if (declared !== undefined) {
+    if (typeof declared !== "string") fail('"solidrt": "icon" must be a string path')
+    let path = assetPathFor(projectDir, resolve(projectDir, declared))
+    if (!path) {
+      fail(`"solidrt.icon": ${declared} must live under assets/ (the icon ships as a version asset)`)
+    }
+    if (!path.toLowerCase().endsWith(".svg")) {
+      fail(`"solidrt.icon": ${declared} must be an .svg file`)
+    }
+    if (!assets.some((a) => a.path === path)) {
+      fail(`"solidrt.icon": no such file: ${resolve(projectDir, declared)}`)
+    }
+    icon = path
+  } else if (assets.some((a) => a.path === "assets/icon.svg")) {
+    icon = "assets/icon.svg"
+  }
+
+  return { assets, fonts, icon }
 }
 
 // Resolve the app identity for a pack. All three fields are guaranteed

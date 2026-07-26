@@ -59,6 +59,7 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
         .map(|app| AppEntry {
           id: app.id,
           name: app.name,
+          icon: app.icon,
           version: app.version,
           updated: app.updated,
           size: app.size,

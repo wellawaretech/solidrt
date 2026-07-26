@@ -141,9 +141,11 @@ export async function runInitCommand() {
 
   // The assets/ convention folder, created up front: everything in it ships
   // with the app, and the dev watcher only picks up an assets/ folder that
-  // exists when it starts.
+  // exists when it starts. It starts with a placeholder app icon (picked up
+  // through the assets/icon.svg convention) for the author to replace.
   await mkdir(join(dir, "assets"), { recursive: true })
-  console.log("   Write assets/")
+  await writeFile(join(dir, "assets", "icon.svg"), await readFile(join(SCAFFOLD_DIR, "icon.svg")))
+  console.log("   Write assets/icon.svg")
 
   // The scaffold package.json carries a placeholder name; set it from the
   // target folder. A core-level app gets no component framework dependency.

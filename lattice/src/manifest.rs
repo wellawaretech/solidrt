@@ -17,6 +17,11 @@ pub struct Manifest {
   pub org: Option<String>,
   #[serde(default, rename = "displayName")]
   pub display_name: Option<String>,
+  // The app icon: an assets/ path into this manifest's asset set, SVG by
+  // contract (the CLI validates the extension). Absent when the app declares
+  // none.
+  #[serde(default)]
+  pub icon: Option<String>,
   // Provenance: the CLI release that built this version ("unknown" from an
   // in-repo CLI, and defaulted for manifests from CLIs that predate the
   // field). Informational, unlike runtimeVersion's compat gate.

@@ -131,6 +131,9 @@ pub struct InstalledApp {
   pub id: String,
   /// The installed manifest's displayName, defaulting to the id.
   pub name: String,
+  /// The manifest-declared icon's SVG source, read at list time. None when
+  /// the app declares no icon or the file is missing, oversized or unreadable.
+  pub icon: Option<String>,
   /// The current version id (manifest hash).
   pub version: String,
   /// When the current version became current, in milliseconds since the epoch
@@ -174,14 +177,34 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
         .as_ref()
         .map(|m| m.bundle.size + m.assets.iter().map(|a| a.size).sum::<u64>())
         .unwrap_or(0);
+      let icon = manifest.as_ref().and_then(|m| load_icon(&version_dir, m));
       let name = manifest.and_then(|m| m.display_name).unwrap_or_else(|| id.clone());
-      Some(InstalledApp { id, name, version: state.current, updated, size })
+      Some(InstalledApp { id, name, icon, version: state.current, updated, size })
     })
     .collect();
   // Newest first, the way a launcher list reads; equal timestamps (two
   // installs inside the filesystem's mtime granularity) fall back to name.
   installed.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
   installed
+}
+
+// Icons ride along in every list() row, so an absurdly large file must not
+// balloon the listing; anything real is a few KB.
+const ICON_MAX_BYTES: u64 = 128 * 1024;
+
+// The manifest-declared icon's SVG source from a version dir. Cosmetic, so
+// every failure degrades to None (the launcher falls back) rather than
+// failing the listing; only the oversize case warns, since it means a
+// manifest that passed validation with an unreasonable icon.
+fn load_icon(version_dir: &Path, manifest: &Manifest) -> Option<String> {
+  let path = manifest.icon.as_deref().filter(|p| safe_asset_path(p))?;
+  let file = version_dir.join(path);
+  let len = std::fs::metadata(&file).ok()?.len();
+  if len > ICON_MAX_BYTES {
+    log::warn!("[srt] Ignoring icon {path}: {len} bytes exceeds the {ICON_MAX_BYTES} byte cap");
+    return None;
+  }
+  std::fs::read_to_string(&file).ok()
 }
 
 // A file's mtime in milliseconds since the epoch, 0 when it cannot be read or

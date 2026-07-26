@@ -8767,6 +8767,80 @@ function PuzzleMark(props) {
   });
 }
 
+// lattice/launcher/parts/app-icon.tsx
+function AppIcon(props) {
+  return createComponent2(Show, {
+    get when() {
+      return props.app.icon;
+    },
+    get fallback() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            width: props.size,
+            height: props.size,
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0
+          };
+        },
+        get style() {
+          return {
+            backgroundColor: theme.color.surfaceAlt,
+            borderRadius: props.size / 4
+          };
+        },
+        get children() {
+          var _el$ = createElement("text", {
+            fontWeight: 500
+          });
+          insert(_el$, () => props.app.name.slice(0, 1).toUpperCase());
+          effect3(() => ({
+            e: theme.color.textMuted,
+            t: theme.text.fontFamily,
+            a: props.size * 0.45
+          }), ({
+            e: e3,
+            t: t3,
+            a: a3
+          }, _p$) => {
+            e3 !== _p$?.e && setProp(_el$, "color", e3, _p$?.e);
+            t3 !== _p$?.t && setProp(_el$, "fontFamily", t3, _p$?.t);
+            a3 !== _p$?.a && setProp(_el$, "fontSize", a3, _p$?.a);
+          });
+          return _el$;
+        }
+      });
+    },
+    children: (src) => (() => {
+      var _el$2 = createElement("view", {
+        flexShrink: 0
+      }), _el$3 = createElement("svg");
+      insertNode2(_el$2, _el$3);
+      effect3(() => ({
+        e: props.size,
+        t: props.size,
+        a: props.size,
+        o: props.size,
+        i: src()
+      }), ({
+        e: e3,
+        t: t3,
+        a: a3,
+        o: o3,
+        i: i3
+      }, _p$) => {
+        e3 !== _p$?.e && setProp(_el$2, "width", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$2, "height", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$3, "width", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$3, "height", o3, _p$?.o);
+        i3 !== _p$?.i && setProp(_el$3, "src", i3, _p$?.i);
+      });
+      return _el$2;
+    })()
+  });
+}
+
 // lattice/launcher/parts/detail-card.tsx
 function DetailRow(props) {
   return createComponent2(View, {
@@ -8926,7 +9000,7 @@ function AppCard(props) {
         return {
           flexDirection: "row",
           alignItems: "center",
-          gap: space("md")
+          gap: space("lg")
         };
       },
       get style() {
@@ -8935,7 +9009,12 @@ function AppCard(props) {
         };
       },
       get children() {
-        return [createComponent2(View, {
+        return [createComponent2(AppIcon, {
+          get app() {
+            return props.app;
+          },
+          size: 40
+        }), createComponent2(View, {
           layout: {
             flexDirection: "column",
             flexGrow: 1,
@@ -9049,7 +9128,7 @@ function AppDetail(props) {
                   return {
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: space("md")
+                    gap: space("lg")
                   };
                 },
                 get children() {
@@ -9062,6 +9141,11 @@ function AppDetail(props) {
                         onPress: () => props.onBack?.()
                       });
                     }
+                  }), createComponent2(AppIcon, {
+                    get app() {
+                      return props.app;
+                    },
+                    size: 56
                   }), createComponent2(View, {
                     layout: {
                       flexDirection: "column",

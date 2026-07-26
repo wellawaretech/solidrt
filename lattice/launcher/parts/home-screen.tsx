@@ -34,6 +34,7 @@ import {
 } from "srt:apps"
 import { cameraDevices } from "@solidrt/core/camera"
 import { PuzzleMark } from "./puzzle"
+import { AppIcon } from "./app-icon"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
 import { COLUMN_MAX_WIDTH, DETAIL_MAX_WIDTH, STATUS_TEXT, TAP_TARGET } from "./types"
@@ -103,7 +104,7 @@ function AppCard(props: {
     <Pressable onPress={props.onPress}>
       {(s: PressState) => (
         <Card
-          layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}
+          layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}
           style={{
             backgroundColor: props.active
               ? theme.color.surfaceAlt
@@ -112,6 +113,7 @@ function AppCard(props: {
                 : theme.color.surface,
           }}
         >
+          <AppIcon app={props.app} size={40} />
           <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
             <Text variant="title">{props.app.name}</Text>
             <Text variant="body" muted>
@@ -223,10 +225,11 @@ function AppDetail(props: {
             maxWidth: DETAIL_MAX_WIDTH,
           }}
         >
-          <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+          <View layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}>
             <Show when={props.onBack}>
               <BackButton onPress={() => props.onBack?.()} />
             </Show>
+            <AppIcon app={props.app} size={56} />
             <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
               <Text variant="heading">{props.app.name}</Text>
               <Text variant="body" muted>
