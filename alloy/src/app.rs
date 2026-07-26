@@ -297,12 +297,12 @@ impl App {
         fps_frame_count = 0;
         fps_last_second = Instant::now();
         if pointer_moves > 0 {
-          log::info!("[alloy] input: {pointer_moves} pointer moves/s");
+          log::debug!("[alloy] input: {pointer_moves} pointer moves/s");
           pointer_moves = 0;
         }
         if vsync.is_some() && fps > 0 {
           let delay_ms = pacing.delay(tick_period).as_secs_f32() * 1000.0;
-          log::info!("[alloy] pacing: signal delay {delay_ms:.1}ms");
+          log::debug!("[alloy] pacing: signal delay {delay_ms:.1}ms");
         }
         // Safety net: report a refresh-rate change the display event might miss.
         let hz = display_refresh_rate(&window);

@@ -216,7 +216,7 @@ impl FrameTiming {
     self.frames += 1;
     if self.since.elapsed().as_secs_f32() >= 1.0 {
       let n = self.frames as f32;
-      log::info!(
+      log::debug!(
         "[alloy] raster: {} frames/s, wait {:.1}ms, draw {:.1}ms, present {:.1}ms (max {:.1}ms)",
         self.frames,
         self.wait / n,
@@ -551,9 +551,6 @@ impl RasterState {
       log::warn!("[alloy] rebind window surface failed: {}", crate::sdl_utils::sdl_error());
       return false;
     }
-    // Rare (background/resume, recovery), so an info line is cheap and makes
-    // device logs tell the whole story.
-    log::info!("[alloy] window surface rebound");
     if !self.capture_frames && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
       log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
     }

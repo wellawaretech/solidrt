@@ -113,7 +113,7 @@ impl JsTiming {
     // Idle Ticks keep frame closures running at the refresh cadence, so only
     // input activity makes a second worth reporting.
     if self.moves > 0 {
-      log::info!(
+      log::debug!(
         "[lattice] js: {} moves avg {:.1}ms max {:.1}ms, {} frames avg {:.1}ms max {:.1}ms",
         self.moves,
         self.move_ms / self.moves as f32,
