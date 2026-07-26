@@ -749,11 +749,23 @@ fn ui_thread(
       );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
-      // The window icon follows the app like the sandbox and fonts do: its
-      // installed manifest icon, or the client's own mark (the launcher's
-      // default_app_id has no store entry, so it lands on the mark too).
+      // The window icon and title follow the app like the sandbox and fonts
+      // do: the installed manifest's icon and displayName, or the client's
+      // own mark and name for the launcher (its default_app_id has no store
+      // entry). An app's explicit `title` window prop still wins: it applies
+      // later, during render. Old manifests without displayName title as
+      // their id.
       #[cfg(feature = "go")]
-      go::icon::apply_app_icon(current_app_id.as_deref().unwrap_or(&default_app_id), &alloy_cmd_tx);
+      {
+        let app_id = current_app_id.as_deref().unwrap_or(&default_app_id);
+        go::icon::apply_app_icon(app_id, &alloy_cmd_tx);
+        let title = if app_id == default_app_id {
+          "SolidRT".to_string()
+        } else {
+          go::store::app_display_name(app_id).unwrap_or_else(|| app_id.to_string())
+        };
+        alloy_cmd_tx.send(alloy::AlloyCommand::SetTitle(title)).ok();
+      }
       // Replay the current connection state into this engine so a reload (e.g.
       // a server stop returning to the launcher) keeps the right indicator.
       #[cfg(feature = "go")]

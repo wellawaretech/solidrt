@@ -11,8 +11,10 @@ use std::path::Path;
 pub struct Manifest {
   #[serde(rename = "appId")]
   pub app_id: String,
-  // Present in pack manifests (the folder has no trailer to carry identity);
-  // dev manifests omit them and default from the app id.
+  // org is pack-only (the folder has no trailer to carry identity; dev
+  // manifests have no use for it yet). displayName is in both: the launcher
+  // listing and the default window title read it (absent only in manifests
+  // from CLIs that predate the field).
   #[serde(default)]
   pub org: Option<String>,
   #[serde(default, rename = "displayName")]

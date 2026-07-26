@@ -112,6 +112,12 @@ pub fn app_fonts(app_id: &str) -> Vec<alloy::rendertree::FontPayload> {
     .collect()
 }
 
+/// The current installed version's manifest displayName, if declared.
+pub fn app_display_name(app_id: &str) -> Option<String> {
+  let version_dir = current_version_dir(app_id)?;
+  Manifest::load(&version_dir)?.display_name
+}
+
 /// The current installed version's manifest-declared icon (SVG source), if
 /// any. Same degradation as the listing: any failure means None.
 pub fn app_icon(app_id: &str) -> Option<String> {
