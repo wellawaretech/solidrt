@@ -55,6 +55,22 @@ const GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fi
 // stock outline) so it still reads as a launch affordance at 20px.
 const PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`
 
+// An app row's "last updated" stamp: the local time, and how long ago that was
+// unless it was today. Distance is counted in calendar days (local midnights),
+// so "yesterday" means yesterday's date rather than 24 hours back. An unknown
+// timestamp (0, an unreadable store) formats to nothing rather than the epoch.
+function formatStamp(ms: number): string {
+  if (!ms) return ""
+  let then = new Date(ms)
+  let pad = (n: number) => String(n).padStart(2, "0")
+  let time = `${pad(then.getHours())}:${pad(then.getMinutes())}`
+  let midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  let days = Math.round((midnight(new Date()) - midnight(then)) / 86400000)
+  // Negative days means a clock that moved backwards; read it as today.
+  if (days <= 0) return time
+  return days === 1 ? `${time}, yesterday` : `${time}, ${days} days ago`
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   let kb = bytes / 1024
@@ -74,6 +90,15 @@ function AppCard(props: {
   onPress: () => void
   onLaunch: () => void
 }) {
+  // Size and last-updated stamp on one line. The id earns a place in front of
+  // them only when it says something the title does not: an app whose manifest
+  // names no displayName is listed under its id, and the line would just
+  // repeat the title. An unknown stamp drops out rather than trailing a comma.
+  let subtitle = () => {
+    let details = [formatSize(props.app.size), formatStamp(props.app.updated)].filter(Boolean).join(", ")
+    return props.app.name === props.app.id ? details : `${props.app.id} - ${details}`
+  }
+
   return (
     <Pressable onPress={props.onPress}>
       {(s: PressState) => (
@@ -89,7 +114,9 @@ function AppCard(props: {
         >
           <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
             <Text variant="title">{props.app.name}</Text>
-            <Text variant="body" muted>{`${props.app.id} - ${props.app.version.slice(0, 8)}`}</Text>
+            <Text variant="body" muted>
+              {subtitle()}
+            </Text>
           </View>
           <Pressable
             onPress={props.onLaunch}

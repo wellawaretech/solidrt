@@ -8889,6 +8889,18 @@ function connect(addr) {
 // lattice/launcher/parts/home-screen.tsx
 var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
 var PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
+function formatStamp(ms) {
+  if (!ms)
+    return "";
+  let then = new Date(ms);
+  let pad = (n3) => String(n3).padStart(2, "0");
+  let time = `${pad(then.getHours())}:${pad(then.getMinutes())}`;
+  let midnight = (d2) => new Date(d2.getFullYear(), d2.getMonth(), d2.getDate()).getTime();
+  let days = Math.round((midnight(new Date) - midnight(then)) / 86400000);
+  if (days <= 0)
+    return time;
+  return days === 1 ? `${time}, yesterday` : `${time}, ${days} days ago`;
+}
 function formatSize(bytes) {
   if (bytes < 1024)
     return `${bytes} B`;
@@ -8901,6 +8913,10 @@ function formatSize(bytes) {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 function AppCard(props) {
+  let subtitle = () => {
+    let details = [formatSize(props.app.size), formatStamp(props.app.updated)].filter(Boolean).join(", ");
+    return props.app.name === props.app.id ? details : `${props.app.id} - ${details}`;
+  };
   return createComponent2(Pressable, {
     get onPress() {
       return props.onPress;
@@ -8935,7 +8951,7 @@ function AppCard(props) {
               variant: "body",
               muted: true,
               get children() {
-                return `${props.app.id} - ${props.app.version.slice(0, 8)}`;
+                return subtitle();
               }
             })];
           }

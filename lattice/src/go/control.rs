@@ -56,7 +56,13 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
     list: Box::new(|| {
       super::store::list_installed()
         .into_iter()
-        .map(|app| AppEntry { id: app.id, name: app.name, version: app.version })
+        .map(|app| AppEntry {
+          id: app.id,
+          name: app.name,
+          version: app.version,
+          updated: app.updated,
+          size: app.size,
+        })
         .collect()
     }),
     info: Box::new(|id| {

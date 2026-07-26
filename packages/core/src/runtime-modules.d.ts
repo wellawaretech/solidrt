@@ -83,10 +83,21 @@ declare module "srt:apps" {
   export const available: boolean
   /**
    * An installed app: id, display name (the installed manifest's displayName,
-   * defaulting to the id) and current version id (manifest hash).
+   * defaulting to the id) and current version id (manifest hash). `updated` is
+   * when that version became current, in milliseconds since the epoch (0 when
+   * the store's timestamp is unreadable); a repush of an identical manifest
+   * installs nothing and leaves it alone. `size` is the version's
+   * manifest-declared size (bundle plus assets) - claimed rather than walked,
+   * so that listing stays cheap; `info()` reports what is actually on disk.
    */
-  export type InstalledApp = { id: string; name: string; version: string }
-  /** Installed apps, sorted by name. */
+  export type InstalledApp = {
+    id: string
+    name: string
+    version: string
+    updated: number
+    size: number
+  }
+  /** Installed apps, most recently updated first. */
   export function list(): InstalledApp[]
   /**
    * A stored version: id (manifest hash), bytes on disk, whether it is the

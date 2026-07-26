@@ -133,9 +133,19 @@ pub struct InstalledApp {
   pub name: String,
   /// The current version id (manifest hash).
   pub version: String,
+  /// When the current version became current, in milliseconds since the epoch
+  /// (0 when the store's timestamp is unreadable). This is state.json's mtime:
+  /// it is rewritten exactly once per install that changes the current
+  /// version, so a repush of an identical manifest leaves it alone.
+  pub updated: u64,
+  /// The current version's manifest-declared size: the bundle plus its
+  /// assets. Claimed, not walked - the listing must stay cheap enough to run
+  /// per row, and install verifies the claims against disk anyway.
+  pub size: u64,
 }
 
-/// The installed apps under the client's apps root, sorted by name.
+/// The installed apps under the client's apps root, most recently updated
+/// first.
 pub fn list_installed() -> Vec<InstalledApp> {
   match crate::storage::get().and_then(|s| s.apps_root()) {
     Some(apps) => list_installed_at(&apps),
@@ -158,12 +168,32 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
       if !version_dir.is_dir() {
         return None;
       }
-      let name = Manifest::load(&version_dir).and_then(|m| m.display_name).unwrap_or_else(|| id.clone());
-      Some(InstalledApp { id, name, version: state.current })
+      let updated = modified_millis(&app_dir.join("state.json"));
+      let manifest = Manifest::load(&version_dir);
+      let size = manifest
+        .as_ref()
+        .map(|m| m.bundle.size + m.assets.iter().map(|a| a.size).sum::<u64>())
+        .unwrap_or(0);
+      let name = manifest.and_then(|m| m.display_name).unwrap_or_else(|| id.clone());
+      Some(InstalledApp { id, name, version: state.current, updated, size })
     })
     .collect();
-  installed.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+  // Newest first, the way a launcher list reads; equal timestamps (two
+  // installs inside the filesystem's mtime granularity) fall back to name.
+  installed.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
   installed
+}
+
+// A file's mtime in milliseconds since the epoch, 0 when it cannot be read or
+// predates the epoch. Informational, so an unreadable stat degrades to "unknown"
+// rather than failing the listing.
+fn modified_millis(path: &Path) -> u64 {
+  std::fs::metadata(path)
+    .and_then(|m| m.modified())
+    .ok()
+    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
 }
 
 /// Full uninstall: the app's entire folder (versions, state.json and the data

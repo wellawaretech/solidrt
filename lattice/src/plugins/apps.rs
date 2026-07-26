@@ -17,6 +17,11 @@ pub struct AppEntry {
   pub id: String,
   pub name: String,
   pub version: String,
+  /// When the current version became current, in milliseconds since the epoch
+  /// (0 when unknown).
+  pub updated: u64,
+  /// The current version's manifest-declared size (bundle plus assets).
+  pub size: u64,
 }
 
 /// A stored version as `info()` lists it.
@@ -96,6 +101,8 @@ fn list_impl<'js>(ctx: Ctx<'js>) -> flux::rquickjs::Result<Array<'js>> {
     entry.set("id", app.id)?;
     entry.set("name", app.name)?;
     entry.set("version", app.version)?;
+    entry.set("updated", app.updated as f64)?;
+    entry.set("size", app.size as f64)?;
     apps.set(i, entry)?;
   }
   Ok(apps)
