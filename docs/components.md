@@ -157,6 +157,11 @@ Accepts `layout`, `style`, and all pointer event props, plus:
 | Prop  | Type                   | Description                                |
 | ----- | ---------------------- | ------------------------------------------ |
 | `src` | `string \| Uint8Array` | URL to fetch, or raw image bytes to decode |
+| `fit` | `"fill" \| "cover" \| "contain" \| "none" \| "scale-down"` | How the image maps into the box (CSS object-fit, centered) |
+
+With `fit` the image fills whatever box `layout` gives the component (numbers,
+`pct()`, or flex). Without it, only numeric layout sizes reach the image;
+anything else draws at intrinsic size.
 
 ---
 

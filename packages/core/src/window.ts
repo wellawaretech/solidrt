@@ -190,22 +190,38 @@ export function onWindowBlur(fn: () => void) {
 
 export type BackEvent = { preventDefault: () => void }
 
-// App handlers for the window-level back event, run in registration order.
-// Kept in a local registry (not per-handler bus subscriptions) so the default
-// action runs exactly once, after every handler has had its say.
-let backHandlers = new Set<(e: BackEvent) => void>()
+// App handlers for the window-level back event, as a stack: the last one
+// registered is offered the event first, and the first to prevent ends the
+// dispatch. Back is a pop, so the thing most recently put on screen has to
+// answer for it - a dialog that opens over a screen registers after it and must
+// win, and registration order tracks mount order (a parent sets up before its
+// children), so reverse order also reads as innermost-first. Kept in a local
+// registry rather than per-handler bus subscriptions so the default action runs
+// exactly once, after the handlers have had their say.
+let backHandlers: ((e: BackEvent) => void)[] = []
 
 /**
  * Calls `fn` on the user's back intent (Android back button/gesture, the
  * desktop dev chord). Call `e.preventDefault()` when back means in-app
  * navigation right now (close a modal, previous screen); unprevented, the
- * default action runs: exit(). Apps without a handler exit on back
- * everywhere, which is the correct zero-effort default.
+ * event passes to the handler registered before this one, and if none of them
+ * prevents it either, to the default action: exit(). Apps without a handler
+ * exit on back everywhere, which is the correct zero-effort default.
+ *
+ * Handlers form a stack: the most recently registered runs first and the first
+ * to prevent ends the dispatch, so each screen or overlay owns one step of the
+ * back stack and none of them needs to know what the others are doing. A
+ * handler that does not prevent must not act either - the event is still on its
+ * way to whoever will handle it.
+ *
  * Returns a cleanup function; also auto-cleans within a reactive scope.
  */
 export function onBack(fn: (e: BackEvent) => void) {
-  backHandlers.add(fn)
-  let cleanup = () => backHandlers.delete(fn)
+  backHandlers.push(fn)
+  let cleanup = () => {
+    let i = backHandlers.lastIndexOf(fn)
+    if (i >= 0) backHandlers.splice(i, 1)
+  }
   onCleanup(cleanup)
   return cleanup
 }
@@ -338,7 +354,9 @@ export function attachWindow(_nodeId: number) {
         },
       }
       // Copy first: a handler may unregister (itself or others) mid-dispatch.
-      for (let fn of [...backHandlers]) fn(e)
+      // Top of the stack down, stopping as soon as one takes the event.
+      let stack = [...backHandlers]
+      for (let i = stack.length - 1; i >= 0 && !prevented; i--) stack[i]!(e)
       if (!prevented) exit()
     })
 

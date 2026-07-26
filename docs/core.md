@@ -72,6 +72,76 @@ onWindowBlur(fn: () => void): () => void
 
 Registers a callback that fires when the OS window loses focus.
 
+## onBack
+
+```ts
+onBack(fn: (e: { preventDefault: () => void }) => void): () => void
+```
+
+Registers a callback for the user's back intent: the Android back button or gesture, or the desktop dev chord (Ctrl/Cmd+Shift+Backspace). Call `e.preventDefault()` when back means in-app navigation right now (close a modal, go to the previous screen). When no handler prevents it, the default action runs: `exit()`.
+
+Apps without a handler exit on back everywhere - the correct zero-effort default.
+
+Handlers form a stack: the most recently registered one runs first, and the first to prevent ends the dispatch - handlers registered before it do not run, and neither does the default. Back is a pop, so the thing most recently put on screen answers for it: a dialog that opens over a screen registers after that screen and takes the next back press, then unregisters when it closes and hands the step back. Registration order tracks mount order, so this reads as innermost-first for handlers registered while mounting.
+
+Each screen or overlay therefore owns exactly one step of the back stack and needs to know nothing about the others. The rule that makes that work: a handler that does not prevent must not act either, because the event is still travelling to whoever will handle it.
+
+Returns a cleanup function. When called inside a reactive scope, cleanup is automatic.
+
+```jsx
+onBack((e) => {
+  if (modalOpen()) {
+    e.preventDefault()
+    setModalOpen(false)
+  }
+})
+```
+
+There is no way to trap the user: a hung app is force-exited by the client, and the desktop window close button never enters JS.
+
+## exit
+
+```ts
+exit(): void
+```
+
+Leaves the current app, unconditionally. What that means is the host's decision: back to the launcher in a dev client, quitting when standalone or at the launcher itself (on Android the client moves to the background instead of dying, matching the platform's back-at-root behavior).
+
+This is the default action of an unprevented `back` event. Call it directly to exit programmatically - for example after intercepting back with `preventDefault()` to show an unsaved-changes dialog, then exiting on "discard". Without it, intercepting back would be a one-way trap.
+
+## env
+
+```ts
+env: {
+  windowSize, safeArea, displayScale, windowFocused, keyboardHeight,
+  inputDevices, systemTheme, textScale, orientation, visibility,
+  mouseSeen, touchSeen, keyboardSeen
+}
+```
+
+Reactive facts about the environment the app is running in. Read properties inside a tracked scope (JSX, a memo, an effect) to re-run when they change; a top-level untracked read freezes at the initial value. Behavior decisions should normally go through `capabilities` and the policy layer - read `env` directly when the raw fact itself is needed.
+
+### env.visibility
+
+```ts
+env.visibility: "visible" | "hidden"
+```
+
+Whether the app is on screen: `"hidden"` while backgrounded (Android) or minimized (desktop), `"visible"` again on return. The web's `visibilityState` vocabulary without the `document` machinery.
+
+**This is the persistence moment.** There is no close event on any platform - Android gives apps no time when killing them, and the desktop window close never enters JS - so save state when `visibility` goes `"hidden"`:
+
+```jsx
+createEffect(
+  () => env.visibility,
+  (v) => {
+    if (v === "hidden") saveState()
+  },
+)
+```
+
+The transition is delivered at background time (not on return), so the handler really runs before the OS may kill the process. While hidden, timers keep running but no frames are produced.
+
 ---
 
 ## Elements
@@ -135,7 +205,9 @@ Draws an SVG path. `d` is the SVG path data string. `x` and `y` offset the entir
 
 ### `<texture>`
 
-Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `imageWidth`, `imageHeight`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters.
+Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `w`, `h`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters.
+
+`fit` maps the pixels into the element box with CSS object-fit semantics: `"fill"` (default) stretches, `"cover"`/`"none"` crop, `"contain"`/`"scale-down"` letterbox, everything centered. Paint-only: the box (and hit testing) is unchanged.
 
 For loading images from URLs or bytes without working directly with textures, use the [`<Image>`](components.md#image) component instead.
 

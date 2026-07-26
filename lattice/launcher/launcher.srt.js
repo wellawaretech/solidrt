@@ -4301,10 +4301,14 @@ function onLayout(fn) {
   onCleanup(unsubscribe);
   return unsubscribe;
 }
-var backHandlers = new Set;
+var backHandlers = [];
 function onBack(fn) {
-  backHandlers.add(fn);
-  let cleanup2 = () => backHandlers.delete(fn);
+  backHandlers.push(fn);
+  let cleanup2 = () => {
+    let i = backHandlers.lastIndexOf(fn);
+    if (i >= 0)
+      backHandlers.splice(i, 1);
+  };
   onCleanup(cleanup2);
   return cleanup2;
 }
@@ -4416,8 +4420,9 @@ function attachWindow(_nodeId) {
           prevented = true;
         }
       };
-      for (let fn of [...backHandlers])
-        fn(e);
+      let stack = [...backHandlers];
+      for (let i = stack.length - 1;i >= 0 && !prevented; i--)
+        stack[i](e);
       if (!prevented)
         exit();
     });
@@ -8984,6 +8989,12 @@ function AppDetail(props) {
   createEffect(() => props.app.id, () => {
     setConfirming(false);
   });
+  onBack((e3) => {
+    if (confirming()) {
+      e3.preventDefault();
+      setConfirming(false);
+    }
+  });
   let [detailsGen, setDetailsGen] = createSignal(0);
   let details = createMemo2(() => {
     detailsGen();
@@ -10154,15 +10165,20 @@ function App() {
   let [screen, setScreen] = createSignal("home");
   let [selectedId, setSelectedId] = createSignal(null);
   let [notice, setNotice] = createSignal(null);
+  let [confirmExit, setConfirmExit] = createSignal(false);
   let dial = (addr) => {
     setNotice(null);
     setScreen("home");
     connect(addr);
   };
   onBack((e3) => {
-    if (screen() !== "home") {
-      e3.preventDefault();
+    e3.preventDefault();
+    if (confirmExit()) {
+      setConfirmExit(false);
+    } else if (screen() !== "home") {
       setScreen("home");
+    } else {
+      setConfirmExit(true);
     }
   });
   return createComponent2(Window, {
@@ -10178,7 +10194,7 @@ function App() {
     get children() {
       return createComponent2(SafeArea, {
         get children() {
-          return createComponent2(Switch, {
+          return [createComponent2(Switch, {
             get children() {
               return [createComponent2(Match, {
                 get when() {
@@ -10241,7 +10257,59 @@ function App() {
                 }
               })];
             }
-          });
+          }), createComponent2(Show, {
+            get when() {
+              return confirmExit();
+            },
+            get children() {
+              return createComponent2(Modal, {
+                onClose: () => setConfirmExit(false),
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        width: "100%",
+                        maxWidth: 380,
+                        padding: space("xl")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(Card, {
+                        get layout() {
+                          return {
+                            gap: space("lg")
+                          };
+                        },
+                        get children() {
+                          return [createComponent2(Text, {
+                            variant: "title",
+                            children: "Exit SolidRT?"
+                          }), createComponent2(View, {
+                            get layout() {
+                              return {
+                                flexDirection: "row",
+                                gap: space("md")
+                              };
+                            },
+                            get children() {
+                              return [createComponent2(Button, {
+                                variant: "ghost",
+                                onPress: () => setConfirmExit(false),
+                                children: "Cancel"
+                              }), createComponent2(Button, {
+                                onPress: () => exit(),
+                                children: "Exit"
+                              })];
+                            }
+                          })];
+                        }
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          })];
         }
       });
     }

@@ -1,26 +1,34 @@
 // The go client's launcher: the compiled-in home screen. Lists the apps
-// installed in the version store (tap to launch, info button for a detail
-// view with remove) and manages the dev-server connection (discover, QR scan
-// on a full-screen camera view, manual address entry, recents). Built from
+// installed in the version store (tap a row for its details and remove, or the
+// row's play button to launch straight away) and manages the dev-server
+// connection (discover, QR scan on a full-screen camera view, manual address
+// entry, recents). Built from
 // @solidrt/components; follows the OS dark/light preference and the layout
 // policy: wide windows show a WhatsApp-style split (list left, selected app's
 // details right), narrow ones navigate between two screens. Bundled by
 // `make launcher-bundle` and embedded via include_str! (see lattice/src/lib.rs
 // LAUNCHER_SOURCE).
 //
-// This module owns the theme, the screen routing, and the app selection and
+// This module owns the theme, the screen routing, the back stack (every level of
+// it, including the leave-the-launcher confirmation), and the app selection and
 // status notice (lifted so they survive sub-screen visits). The dev-server
 // connection is app-wide module state in parts/dev-connection; the screens
 // themselves live in parts/.
-import { render, env, createSignal, createEffect, onBack } from "@solidrt/core"
-import { Switch, Match } from "solid-js"
+import { render, env, exit, createSignal, createEffect, onBack } from "@solidrt/core"
+import { Switch, Match, Show } from "solid-js"
 import {
   Window,
   SafeArea,
+  View,
+  Card,
+  Text,
+  Button,
+  Modal,
   theme,
   setTheme,
   darkTheme,
   lightTheme,
+  space,
 } from "@solidrt/components"
 import { HomeScreen } from "./parts/home-screen"
 import { SettingsScreen } from "./parts/settings-screen"
@@ -51,6 +59,9 @@ function App() {
   // scan error on the scan screen surfaces in the home status line).
   let [selectedId, setSelectedId] = createSignal<string | null>(null)
   let [notice, setNotice] = createSignal<string | null>(null)
+  // Whether the leave-the-launcher confirmation is up. Starts false, as every
+  // Modal's gating signal must (portals cannot mount during the initial render).
+  let [confirmExit, setConfirmExit] = createSignal(false)
 
   let dial = (addr: string) => {
     setNotice(null)
@@ -58,14 +69,22 @@ function App() {
     connect(addr)
   }
 
-  // Back pops sub-screens toward home before it exits; the home screen's own
-  // handler clears a narrow-layout detail selection. At home with nothing to
-  // pop, the default action runs - exit() at the launcher root quits the client
-  // (backgrounds it on Android, the stock back-at-root feel).
+  // The root of the back stack, so this handler registers first and runs last:
+  // everything mounted above it (the home screen's detail selection, a dialog
+  // inside it) gets the event first and takes it if it is theirs. What is left
+  // over is App's own: dismiss the exit dialog, pop a sub-screen, or ask about
+  // leaving. The one thing never left to core is its default action - it exits
+  // on the spot, and the last back press should ask first, so exit() runs only
+  // from the dialog (it quits the client, backgrounding it on Android, the stock
+  // back-at-root feel).
   onBack((e) => {
-    if (screen() !== "home") {
-      e.preventDefault()
+    e.preventDefault()
+    if (confirmExit()) {
+      setConfirmExit(false)
+    } else if (screen() !== "home") {
       setScreen("home")
+    } else {
+      setConfirmExit(true)
     }
   })
 
@@ -115,6 +134,22 @@ function App() {
             />
           </Match>
         </Switch>
+
+        <Show when={confirmExit()}>
+          <Modal onClose={() => setConfirmExit(false)}>
+            <View layout={{ width: "100%", maxWidth: 380, padding: space("xl") }}>
+              <Card layout={{ gap: space("lg") }}>
+                <Text variant="title">Exit SolidRT?</Text>
+                <View layout={{ flexDirection: "row", gap: space("md") }}>
+                  <Button variant="ghost" onPress={() => setConfirmExit(false)}>
+                    Cancel
+                  </Button>
+                  <Button onPress={() => exit()}>Exit</Button>
+                </View>
+              </Card>
+            </View>
+          </Modal>
+        </Show>
       </SafeArea>
     </Window>
   )

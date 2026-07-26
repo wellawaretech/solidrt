@@ -2790,7 +2790,7 @@ function getFocusedNodeId() {
 // packages/core/src/window.ts
 var animationFrames = new Map;
 var refreshRate = 60;
-var backHandlers = new Set;
+var backHandlers = [];
 function attachWindow(_nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
@@ -2899,8 +2899,9 @@ function attachWindow(_nodeId) {
           prevented = true;
         }
       };
-      for (let fn of [...backHandlers])
-        fn(e);
+      let stack = [...backHandlers];
+      for (let i = stack.length - 1;i >= 0 && !prevented; i--)
+        stack[i](e);
       if (!prevented)
         exit();
     });
