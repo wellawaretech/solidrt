@@ -475,9 +475,33 @@ impl Context {
 
   /// Rasterize a display list into a new GPU texture of the given pixel size,
   /// ready for sampling. The texture is owned by Impeller (and the caller's
-  /// handle), not by the registry.
-  pub fn render_display_list_to_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
-    self.rpc(|reply| RasterCmd::RasterizeDl { dl: dl.clone(), width, height, reply })?
+  /// handle), not by the registry. `aa: false` renders single-sample (no
+  /// coverage AA), for boundaries that opted out.
+  pub fn render_display_list_to_texture(
+    &self,
+    dl: &DisplayList,
+    width: u32,
+    height: u32,
+    aa: bool,
+  ) -> Result<Texture, String> {
+    self.rpc(|reply| RasterCmd::RasterizeDl { dl: dl.clone(), width, height, aa, reply })?
+  }
+
+  /// Re-rasterize a display list into an existing texture from
+  /// `render_display_list_to_texture`, reusing its storage (invalidated
+  /// snapshot boundaries re-render this way instead of reallocating). The
+  /// caller must ensure the texture's 64px-aligned backing allocation fits
+  /// `width` x `height`.
+  pub fn render_display_list_into_texture(
+    &self,
+    dl: &DisplayList,
+    texture: &Texture,
+    width: u32,
+    height: u32,
+    aa: bool,
+  ) -> Result<(), String> {
+    self
+      .rpc(|reply| RasterCmd::RasterizeDlInto { dl: dl.clone(), texture: texture.clone(), width, height, aa, reply })?
   }
 
   /// Rasterize a display list into a new *registered* texture cropped to

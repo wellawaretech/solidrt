@@ -49,6 +49,16 @@ export type { Topology, VertexAttribute } from "flux:gpu"
 // captureSnapshot resolves asynchronously, by which point the reactive owner is
 // no longer current, so the caller owns the returned id and frees it with
 // destroyTexture (as with any texture created after an await).
+//
+// Together they are the one-shot bake path: draw something only the engine can
+// produce (shaped text, an SVG, a themed view), capture it, read the pixels and
+// process them on the CPU - baking a glyph atlas is the worked example. Not a
+// rendering path: a capture rasterizes the subtree offscreen, reads it back to
+// the CPU and re-uploads it, costing a full GPU -> CPU -> GPU round trip and a
+// paint pass of latency every call. Batch captures (one paint pass services
+// many), never run them per frame, and do not use them to feed live screen
+// content into a shader - for that the source has to update in place (another
+// pipeline's target, a camera texture).
 export { captureSnapshot, readTexture } from "flux:gpu"
 
 /**

@@ -73,6 +73,125 @@ fn prev_renderbuffer(name: i32) -> Option<glow::NativeRenderbuffer> {
 /// multisampled, exactly as the onscreen surface does.
 const MSAA_SAMPLES: i32 = 4;
 
+/// Retained GL objects for offscreen rasterization, owned by the raster
+/// thread and shared by every offscreen draw (snapshot boundaries and node
+/// captures). Only the per-boundary resolve texture persists elsewhere;
+/// everything transient lives here: both FBOs, the multisampled color and
+/// depth-stencil storage, and the single-sample depth-stencil. Storage grows
+/// monotonically to the largest allocation requested and smaller rasters
+/// render into a subrect, so the sustained allocate/release cycle the
+/// per-call rig imposed on the driver (which ANGLE/D3D11 handles poorly, see
+/// the window_surface rationale in raster.rs) is gone.
+pub struct OffscreenRig {
+  draw_fbo: Option<glow::NativeFramebuffer>,
+  resolve_fbo: Option<glow::NativeFramebuffer>,
+  msaa: Option<MsaaStorage>,
+  // Depth-stencil for the single-sample path, where the resolve texture
+  // attaches directly as color.
+  ss_depth: Option<SizedRenderbuffer>,
+  // Latched on the first incomplete multisampled framebuffer: a driver may
+  // advertise MAX_SAMPLES yet reject this config, and one rejection means
+  // every later attempt fails too, so stay single-sample for the process.
+  msaa_unavailable: bool,
+}
+
+struct SizedRenderbuffer {
+  rbo: glow::NativeRenderbuffer,
+  size: (i32, i32),
+}
+
+struct MsaaStorage {
+  color: glow::NativeRenderbuffer,
+  depth_stencil: glow::NativeRenderbuffer,
+  size: (i32, i32),
+  samples: i32,
+}
+
+impl OffscreenRig {
+  pub fn new() -> Self {
+    Self { draw_fbo: None, resolve_fbo: None, msaa: None, ss_depth: None, msaa_unavailable: false }
+  }
+
+  /// Grow the multisampled color + depth-stencil pair to cover `alloc`
+  /// (component-wise, never shrinking). Contents are transient per raster, so
+  /// regrowth discards them. Leaves the renderbuffer binding dirty; the
+  /// caller restores it.
+  fn ensure_msaa(&mut self, gl: &glow::Context, alloc: (i32, i32), samples: i32) -> Result<(), String> {
+    let (cur_w, cur_h, cur_samples) =
+      self.msaa.as_ref().map(|m| (m.size.0, m.size.1, m.samples)).unwrap_or((0, 0, samples));
+    let size = (cur_w.max(alloc.0), cur_h.max(alloc.1));
+    if self.msaa.is_some() && size == (cur_w, cur_h) && cur_samples == samples {
+      return Ok(());
+    }
+    if let Some(old) = self.msaa.take() {
+      unsafe {
+        gl.delete_renderbuffer(old.color);
+        gl.delete_renderbuffer(old.depth_stencil);
+      }
+    }
+    unsafe {
+      let color = gl.create_renderbuffer().map_err(|e| format!("glGenRenderbuffers failed: {e}"))?;
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(color));
+      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples, glow::RGBA8, size.0, size.1);
+      let depth_stencil = match gl.create_renderbuffer() {
+        Ok(rb) => rb,
+        Err(e) => {
+          gl.delete_renderbuffer(color);
+          return Err(format!("glGenRenderbuffers failed: {e}"));
+        }
+      };
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(depth_stencil));
+      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples, glow::DEPTH24_STENCIL8, size.0, size.1);
+      self.msaa = Some(MsaaStorage { color, depth_stencil, size, samples });
+    }
+    Ok(())
+  }
+
+  /// Grow the single-sample depth-stencil to cover `alloc` (component-wise,
+  /// never shrinking). Leaves the renderbuffer binding dirty; the caller
+  /// restores it.
+  fn ensure_ss_depth(&mut self, gl: &glow::Context, alloc: (i32, i32)) -> Result<(), String> {
+    let (cur_w, cur_h) = self.ss_depth.as_ref().map(|d| d.size).unwrap_or((0, 0));
+    let size = (cur_w.max(alloc.0), cur_h.max(alloc.1));
+    if self.ss_depth.is_some() && size == (cur_w, cur_h) {
+      return Ok(());
+    }
+    if let Some(old) = self.ss_depth.take() {
+      unsafe { gl.delete_renderbuffer(old.rbo) };
+    }
+    unsafe {
+      let rbo = gl.create_renderbuffer().map_err(|e| format!("glGenRenderbuffers failed: {e}"))?;
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+      gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH24_STENCIL8, size.0, size.1);
+      self.ss_depth = Some(SizedRenderbuffer { rbo, size });
+    }
+    Ok(())
+  }
+
+  /// Latch single-sample mode and free the multisampled storage.
+  fn latch_msaa_unavailable(&mut self, gl: &glow::Context) {
+    self.msaa_unavailable = true;
+    if let Some(old) = self.msaa.take() {
+      unsafe {
+        gl.delete_renderbuffer(old.color);
+        gl.delete_renderbuffer(old.depth_stencil);
+      }
+    }
+  }
+}
+
+/// glInvalidateFramebuffer is core in ES 3.0 (the platform minimum) but only
+/// reached desktop GL at 4.3, so a desktop context below that must skip the
+/// hint rather than call an unloaded function.
+fn supports_invalidate(gl: &glow::Context) -> bool {
+  let v = gl.version();
+  if v.is_embedded {
+    v.major >= 3
+  } else {
+    v.major > 4 || (v.major == 4 && v.minor >= 3)
+  }
+}
+
 /// Rasterize a display list into a new GL texture and adopt it into Impeller,
 /// which becomes the single owner of the GL name (adoption transfers handle
 /// ownership per the Impeller API; we never glDeleteTextures it ourselves).
@@ -83,8 +202,10 @@ const MSAA_SAMPLES: i32 = 4;
 pub fn render_display_list_to_texture(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
+  aa: bool,
 ) -> Result<Texture, String> {
   let (width, height) = (size.width as i32, size.height as i32);
 
@@ -124,32 +245,69 @@ pub fn render_display_list_to_texture(
     tex
   };
 
-  // Match the window's 4x request, clamped to the driver ceiling.
-  let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
-  let mut outcome = draw_offscreen(gl, impeller_ctx, dl, tex, size, alloc, MSAA_SAMPLES.min(max_samples));
-  if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
-    // A driver may advertise MAX_SAMPLES yet reject this multisampled config;
-    // retry once single-sample rather than failing the frame (mirrors the
-    // window-creation fallback in app::setup / gl::disable_msaa).
-    log::warn!("[alloy] offscreen MSAA unavailable; rendering snapshot without anti-aliasing");
-    outcome = draw_offscreen(gl, impeller_ctx, dl, tex, size, alloc, 1);
-  }
-
-  match outcome {
-    OffscreenDraw::Done => {
+  match draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa) {
+    Ok(()) => {
       unsafe { impeller_ctx.adopt_opengl_texture(alloc_width as u32, alloc_height as u32, 1, tex.0.get() as u64) }
         .ok_or_else(|| "failed to adopt offscreen texture".to_string())
     }
-    OffscreenDraw::Failed(e) => {
+    Err(e) => {
       unsafe { gl.delete_texture(tex) };
       Err(e)
     }
-    OffscreenDraw::MsaaUnavailable => {
-      // The single-sample retry above resolves to Done or Failed, so this arm
-      // is unreachable; treat it as a failure defensively.
-      unsafe { gl.delete_texture(tex) };
-      Err("offscreen framebuffer incomplete".to_string())
-    }
+  }
+}
+
+/// Re-rasterize a display list into an already-adopted offscreen texture,
+/// reusing its storage. `size` must fit the texture's aligned backing
+/// allocation (the caller checks this; both sides compute it with the same
+/// 64px round-up). The texture's owner is unchanged - Impeller adopted the GL
+/// name when the texture was first created and keeps it.
+pub fn render_display_list_into_texture(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  texture: &Texture,
+  size: ISize,
+  aa: bool,
+) -> Result<(), String> {
+  let gl_handle = texture.get_opengl_handle();
+  let tex =
+    glow::NativeTexture(NonZeroU32::new(gl_handle as u32).ok_or_else(|| "texture has no GL handle".to_string())?);
+  let align_up = |v: i32| (v + 63) & !63;
+  let alloc = (align_up(size.width as i32), align_up(size.height as i32));
+  draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa)
+}
+
+/// Draw `dl` into `tex` at the window-matching 4x MSAA (or single-sample when
+/// the caller opted out of AA), dropping to single-sample for the rest of the
+/// process if the driver rejects the multisampled config once (mirrors the
+/// window-creation fallback in app::setup / gl::disable_msaa).
+fn draw_offscreen_with_fallback(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  tex: glow::NativeTexture,
+  size: ISize,
+  alloc: (i32, i32),
+  aa: bool,
+) -> Result<(), String> {
+  // Match the window's 4x request, clamped to the driver ceiling.
+  let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
+  let samples = if !aa || rig.msaa_unavailable { 1 } else { MSAA_SAMPLES.min(max_samples) };
+  let mut outcome = draw_offscreen(gl, impeller_ctx, rig, dl, tex, size, alloc, samples);
+  if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
+    log::warn!("[alloy] offscreen MSAA unavailable; rendering snapshots without anti-aliasing");
+    rig.latch_msaa_unavailable(gl);
+    outcome = draw_offscreen(gl, impeller_ctx, rig, dl, tex, size, alloc, 1);
+  }
+  match outcome {
+    OffscreenDraw::Done => Ok(()),
+    OffscreenDraw::Failed(e) => Err(e),
+    // The single-sample retry above resolves to Done or Failed, so this arm
+    // is unreachable; treat it as a failure defensively.
+    OffscreenDraw::MsaaUnavailable => Err("offscreen framebuffer incomplete".to_string()),
   }
 }
 
@@ -162,15 +320,19 @@ enum OffscreenDraw {
   Failed(String),
 }
 
-/// Render `dl` into `tex` via an FBO with `samples`x multisampling: a count
-/// below 2 draws straight into `tex`; >= 2 draws into a multisampled
-/// renderbuffer and resolves it into `tex` with glBlitFramebuffer. `alloc` is
-/// the aligned backing size; `size` is the logical viewport handed to Impeller.
-/// A GL context must be current. Restores the framebuffer and renderbuffer
-/// bindings it touches so Impeller's cached GL state stays valid.
+/// Render `dl` into `tex` via the retained rig with `samples`x multisampling:
+/// a count below 2 draws straight into `tex`; >= 2 draws into the rig's
+/// multisampled storage and resolves the `alloc` subrect into `tex` with
+/// glBlitFramebuffer. `alloc` is the aligned backing size of `tex`; `size` is
+/// the logical viewport handed to Impeller. A GL context must be current.
+/// Restores the framebuffer and renderbuffer bindings it touches so
+/// Impeller's cached GL state stays valid. `tex` is detached from the rig's
+/// FBOs before returning: the rig outlives every resolve texture, and a
+/// deleted texture left attached to an unbound FBO is a dangling reference.
 fn draw_offscreen(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
   dl: &DisplayList,
   tex: glow::NativeTexture,
   size: ISize,
@@ -184,72 +346,52 @@ fn draw_offscreen(
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_rbo = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
 
-    // Impeller fills non-convex paths with stencil-then-cover and culls clips
-    // via depth; without this attachment the cover pass floods the path bounds.
-    // Multisampled to match the color target when use_msaa.
-    let ds_rbo = match gl.create_renderbuffer() {
-      Ok(rb) => rb,
-      Err(e) => return OffscreenDraw::Failed(format!("glGenRenderbuffers failed: {e}")),
+    // The depth-stencil attachment is load-bearing either way: Impeller fills
+    // non-convex paths with stencil-then-cover and culls clips via depth;
+    // without it the cover pass floods the path bounds.
+    let ensured = if use_msaa { rig.ensure_msaa(gl, alloc, samples) } else { rig.ensure_ss_depth(gl, alloc) };
+    gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
+    if let Err(e) = ensured {
+      return OffscreenDraw::Failed(e);
+    }
+
+    let draw_fbo = match rig.draw_fbo {
+      Some(fbo) => fbo,
+      None => match gl.create_framebuffer() {
+        Ok(fbo) => {
+          rig.draw_fbo = Some(fbo);
+          fbo
+        }
+        Err(e) => return OffscreenDraw::Failed(format!("glGenFramebuffers failed: {e}")),
+      },
     };
-    gl.bind_renderbuffer(glow::RENDERBUFFER, Some(ds_rbo));
+
+    // Re-attaching an unchanged object to a reused FBO is cheap; attaching
+    // unconditionally keeps the msaa/single-sample switch stateless.
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
     if use_msaa {
-      gl.renderbuffer_storage_multisample(
+      let msaa = rig.msaa.as_ref().expect("ensure_msaa populated the rig");
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(msaa.color));
+      gl.framebuffer_renderbuffer(
+        glow::FRAMEBUFFER,
+        glow::DEPTH_STENCIL_ATTACHMENT,
         glow::RENDERBUFFER,
-        samples,
-        glow::DEPTH24_STENCIL8,
-        alloc_width,
-        alloc_height,
+        Some(msaa.depth_stencil),
       );
     } else {
-      gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH24_STENCIL8, alloc_width, alloc_height);
+      let ds = rig.ss_depth.as_ref().expect("ensure_ss_depth populated the rig");
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_STENCIL_ATTACHMENT, glow::RENDERBUFFER, Some(ds.rbo));
     }
-
-    // Color target: a multisampled renderbuffer to resolve from (MSAA), or the
-    // adopt-target texture attached directly (single-sample).
-    let color_rbo = if use_msaa {
-      let rb = match gl.create_renderbuffer() {
-        Ok(rb) => rb,
-        Err(e) => {
-          gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
-          gl.delete_renderbuffer(ds_rbo);
-          return OffscreenDraw::Failed(format!("glGenRenderbuffers failed: {e}"));
-        }
-      };
-      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples, glow::RGBA8, alloc_width, alloc_height);
-      Some(rb)
-    } else {
-      None
-    };
-    gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
-
-    let draw_fbo = match gl.create_framebuffer() {
-      Ok(fbo) => fbo,
-      Err(e) => {
-        if let Some(rb) = color_rbo {
-          gl.delete_renderbuffer(rb);
-        }
-        gl.delete_renderbuffer(ds_rbo);
-        return OffscreenDraw::Failed(format!("glGenFramebuffers failed: {e}"));
-      }
-    };
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
-    match color_rbo {
-      Some(rb) => gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rb)),
-      None => gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0),
-    }
-    gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_STENCIL_ATTACHMENT, glow::RENDERBUFFER, Some(ds_rbo));
 
     let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
     if status != glow::FRAMEBUFFER_COMPLETE {
-      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-      gl.delete_framebuffer(draw_fbo);
-      if let Some(rb) = color_rbo {
-        gl.delete_renderbuffer(rb);
+      if !use_msaa {
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, None, 0);
       }
-      gl.delete_renderbuffer(ds_rbo);
-      // Under MSAA an incomplete config is recoverable by dropping MSAA; a
-      // single-sample incomplete FBO is fatal.
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+      // Under MSAA an incomplete config is recoverable by dropping MSAA (the
+      // caller latches it); a single-sample incomplete FBO is fatal.
       return if use_msaa {
         OffscreenDraw::MsaaUnavailable
       } else {
@@ -257,11 +399,12 @@ fn draw_offscreen(
       };
     }
 
-    // glTexImage2D(..., null) / renderbuffer storage leave contents
-    // driver-defined. Desktop GL tends to hand back zeroed memory, but on
-    // Android's tile-based GPUs it can be leftover tile data from unrelated
-    // content. Force a defined transparent base regardless of whether
-    // Impeller's own surface clear covers an externally-built FBO.
+    // A prior Impeller pass may leave the scissor test enabled; the clear and
+    // the resolve blit below both honour it.
+    gl.disable(glow::SCISSOR_TEST);
+    // Fresh storage is driver-defined (on Android's tile-based GPUs, leftover
+    // tile data from unrelated content) and reused rig storage carries the
+    // previous raster; force a defined transparent base either way.
     gl.clear_color(0.0, 0.0, 0.0, 0.0);
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
@@ -275,42 +418,61 @@ fn draw_offscreen(
     // full aligned rect is blitted so content lands identically to the direct
     // single-sample path regardless of where Impeller's viewport placed it.
     if result.is_ok() && use_msaa {
-      match gl.create_framebuffer() {
-        Ok(resolve_fbo) => {
-          gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(resolve_fbo));
-          gl.framebuffer_texture_2d(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
-          if gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE {
-            // A prior Impeller pass may leave the scissor test enabled; blit
-            // honours it, so disable it to copy the full rect.
-            gl.disable(glow::SCISSOR_TEST);
-            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
-            gl.blit_framebuffer(
-              0,
-              0,
-              alloc_width,
-              alloc_height,
-              0,
-              0,
-              alloc_width,
-              alloc_height,
-              glow::COLOR_BUFFER_BIT,
-              glow::NEAREST,
-            );
-          } else {
-            result = Err("offscreen resolve framebuffer incomplete".to_string());
+      let resolve_fbo = match rig.resolve_fbo {
+        Some(fbo) => Some(fbo),
+        None => match gl.create_framebuffer() {
+          Ok(fbo) => {
+            rig.resolve_fbo = Some(fbo);
+            Some(fbo)
           }
-          gl.delete_framebuffer(resolve_fbo);
+          Err(e) => {
+            result = Err(format!("glGenFramebuffers failed (resolve): {e}"));
+            None
+          }
+        },
+      };
+      if let Some(resolve_fbo) = resolve_fbo {
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(resolve_fbo));
+        gl.framebuffer_texture_2d(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
+        if gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE {
+          gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
+          gl.blit_framebuffer(
+            0,
+            0,
+            alloc_width,
+            alloc_height,
+            0,
+            0,
+            alloc_width,
+            alloc_height,
+            glow::COLOR_BUFFER_BIT,
+            glow::NEAREST,
+          );
+          // The multisampled contents are dead after the resolve; the
+          // invalidate keeps tilers from writing them back to main memory.
+          if supports_invalidate(gl) {
+            gl.invalidate_framebuffer(
+              glow::READ_FRAMEBUFFER,
+              &[glow::COLOR_ATTACHMENT0, glow::DEPTH_STENCIL_ATTACHMENT],
+            );
+          }
+        } else {
+          result = Err("offscreen resolve framebuffer incomplete".to_string());
         }
-        Err(e) => result = Err(format!("glGenFramebuffers failed (resolve): {e}")),
+        gl.framebuffer_texture_2d(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, None, 0);
       }
+    }
+    if !use_msaa {
+      // Impeller's draw may have rebound framebuffers; reclaim the draw FBO
+      // to invalidate its transient depth-stencil and detach the target.
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
+      if supports_invalidate(gl) {
+        gl.invalidate_framebuffer(glow::FRAMEBUFFER, &[glow::DEPTH_STENCIL_ATTACHMENT]);
+      }
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, None, 0);
     }
 
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-    gl.delete_framebuffer(draw_fbo);
-    if let Some(rb) = color_rbo {
-      gl.delete_renderbuffer(rb);
-    }
-    gl.delete_renderbuffer(ds_rbo);
     // No glFinish: the adopted texture is sampled later on this same context,
     // so GL program order already sequences the draw before the sampling.
 

@@ -65,6 +65,7 @@ pub struct BuildContext<'a> {
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
   pub snapshots_reused: u32,
+  pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
 }
 
@@ -77,6 +78,7 @@ impl<'a> BuildContext<'a> {
       boundaries_reused: 0,
       boundaries_recorded: 0,
       snapshots_reused: 0,
+      snapshots_rerendered: 0,
       snapshots_rasterized: 0,
     }
   }
@@ -242,22 +244,30 @@ pub enum Damage {
 
 /// What a repaint boundary retains across frames: nothing, the recorded
 /// display list (skips rebuilding), or rasterized pixels (skips rasterizing
-/// too, at the cost of GPU memory and resolution-dependence).
+/// too, at the cost of GPU memory and resolution-dependence). SnapshotNoAa
+/// is Snapshot rasterized single-sample: no multisampled scratch, no resolve
+/// pass, but vector content (svg paths, rotated edges) comes out hard-edged;
+/// the app author opts in per boundary.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoundaryMode {
   #[default]
   None,
   Recording,
   Snapshot,
+  SnapshotNoAa,
 }
 
 /// A boundary's retained paint result, in node-local coordinates. A snapshot
 /// remembers the logical size and display scale it was rasterized at: pixels
 /// are resolution-dependent, so a mismatch forces re-rasterization even when
-/// nothing inside the subtree changed.
+/// nothing inside the subtree changed. Invalidation marks a snapshot stale
+/// (`valid: false`) instead of dropping it: the pixels are worthless but the
+/// texture allocation is still exactly the right size, so the next raster
+/// re-renders into it instead of rebuilding the whole offscreen rig (see
+/// composite::snapshot_node).
 pub enum PaintCache {
   Recording(DisplayList),
-  Snapshot { texture: ImpellerTexture, width: f32, height: f32, scale: f32 },
+  Snapshot { texture: ImpellerTexture, width: f32, height: f32, scale: f32, valid: bool },
 }
 
 pub struct Element {

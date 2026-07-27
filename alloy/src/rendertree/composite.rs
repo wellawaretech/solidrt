@@ -32,12 +32,14 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 
 /// Repaint-boundary counts for one painted frame: subtrees drawn from their
 /// retained recording vs freshly recorded, and snapshot boundaries drawn from
-/// their retained texture vs freshly rasterized.
+/// their retained texture, re-rendered into retained storage, or freshly
+/// rasterized into a new allocation.
 #[derive(Clone, Copy, Default)]
 pub struct PaintStats {
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
   pub snapshots_reused: u32,
+  pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
 }
 
@@ -74,6 +76,7 @@ pub fn paint_phase(
     boundaries_reused: ctx.boundaries_reused,
     boundaries_recorded: ctx.boundaries_recorded,
     snapshots_reused: ctx.snapshots_reused,
+    snapshots_rerendered: ctx.snapshots_rerendered,
     snapshots_rasterized: ctx.snapshots_rasterized,
   }
 }
@@ -282,7 +285,8 @@ fn build_recursive<'a>(
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(dl));
       }
     }
-    BoundaryMode::Snapshot => snapshot_node(scene, node_id, ctx, builder),
+    BoundaryMode::Snapshot => snapshot_node(scene, node_id, ctx, builder, true),
+    BoundaryMode::SnapshotNoAa => snapshot_node(scene, node_id, ctx, builder, false),
   }
 }
 
@@ -297,6 +301,7 @@ fn snapshot_node<'a>(
   node_id: u64,
   ctx: &mut BuildContext<'a>,
   builder: &mut DisplayListBuilder,
+  aa: bool,
 ) {
   let element = scene.node(node_id);
   let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
@@ -332,8 +337,8 @@ fn snapshot_node<'a>(
 
   {
     let cache = element.paint_cache.borrow();
-    if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s }) = &*cache {
-      if *w == width && *h == height && *s == scale {
+    if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s, valid }) = &*cache {
+      if *valid && *w == width && *h == height && *s == scale {
         ctx.snapshots_reused += 1;
         draw_with_transform(builder, own.as_ref(), |b| {
           b.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
@@ -348,13 +353,48 @@ fn snapshot_node<'a>(
   record_node(scene, node_id, ctx, &mut sub, hoist);
   let Some(dl) = sub.build() else { return };
 
-  match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h) {
+  // Stale (or resized) storage whose 64px-aligned backing allocation matches
+  // the new content exactly is re-rendered in place: the offscreen draw
+  // clears and rewrites the full allocation, so no stale pixels survive.
+  // Only an exact allocation match qualifies - rendering smaller content
+  // into larger backing would leave stale pixels past the content edge for
+  // linear sampling to bleed in.
+  let align_up = |px: u32| (px + 63) & !63;
+  let retained = {
+    let cache = element.paint_cache.borrow();
+    if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s, .. }) = &*cache {
+      let (old_w, old_h) = ((*w * *s).ceil() as u32, (*h * *s).ceil() as u32);
+      let fits = align_up(old_w) == align_up(tex_w) && align_up(old_h) == align_up(tex_h);
+      fits.then(|| texture.clone())
+    } else {
+      None
+    }
+  };
+  if let Some(texture) = retained {
+    match ctx.alloy.render_display_list_into_texture(&dl, &texture, tex_w, tex_h, aa) {
+      Ok(()) => {
+        ctx.snapshots_rerendered += 1;
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+        });
+        *element.paint_cache.borrow_mut() =
+          Some(PaintCache::Snapshot { texture, width, height, scale, valid: true });
+        return;
+      }
+      Err(e) => {
+        log::warn!("snapshot re-render failed for node {node_id}: {e}; reallocating");
+        element.paint_cache.borrow_mut().take();
+      }
+    }
+  }
+
+  match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h, aa) {
     Ok(texture) => {
       ctx.snapshots_rasterized += 1;
       draw_with_transform(builder, own.as_ref(), |b| {
         b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
       });
-      *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot { texture, width, height, scale });
+      *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot { texture, width, height, scale, valid: true });
     }
     Err(e) => {
       // Paint inline this frame; the recording carries its own device-scale
@@ -392,7 +432,8 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   let saved_size = ctx.size;
-  let saved_stats = (ctx.boundaries_reused, ctx.boundaries_recorded, ctx.snapshots_reused, ctx.snapshots_rasterized);
+  let saved_stats =
+    (ctx.boundaries_reused, ctx.boundaries_recorded, ctx.snapshots_reused, ctx.snapshots_rerendered, ctx.snapshots_rasterized);
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   record_node(scene, node_id, ctx, &mut sub, hoist);
@@ -400,7 +441,8 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   ctx.boundaries_reused = saved_stats.0;
   ctx.boundaries_recorded = saved_stats.1;
   ctx.snapshots_reused = saved_stats.2;
-  ctx.snapshots_rasterized = saved_stats.3;
+  ctx.snapshots_rerendered = saved_stats.3;
+  ctx.snapshots_rasterized = saved_stats.4;
 
   let Some(dl) = sub.build() else {
     for done in requests {

@@ -129,7 +129,7 @@ fn frame(tree: &mut RenderTree, platform: &PlatformContext, ctx: &alloy::Context
   let mut builder = DisplayListBuilder::new(None);
   let stats = paint_phase(&mut builder, tree, platform, ctx);
   let dl = builder.build().expect("frame display list");
-  let texture = ctx.render_display_list_to_texture(&dl, W, H).expect("frame rasterization");
+  let texture = ctx.render_display_list_to_texture(&dl, W, H, true).expect("frame rasterization");
   let pixels = ctx.read_texture(&texture, W, H).expect("texture readback");
   (pixels, stats)
 }

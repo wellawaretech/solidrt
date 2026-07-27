@@ -137,6 +137,23 @@ declare module "flux:gpu" {
    * points. Each call returns an independent id you must {@link destroyTexture}
    * when done. Use the returned id anywhere a texture id is accepted
    * (`<texture src>`, a shader sampler input, {@link readTexture}).
+   *
+   * Intended for one-shot bakes and inspection: turning something the engine
+   * can draw but the app cannot compute - shaped text, an SVG, a themed view -
+   * into pixels, usually to hand to {@link readTexture} and process on the CPU.
+   * Baking a glyph atlas by laying out cells, capturing them and keeping the
+   * coverage channel is the worked example. Tests and freeze-frames are the
+   * same shape.
+   *
+   * Not a rendering primitive. Every call rasterizes the subtree into a fresh
+   * offscreen MSAA target, reads the pixels back to the CPU and uploads them
+   * again as a new texture: a full GPU -> CPU -> GPU round trip plus a paint
+   * pass of latency, per call, with nothing incremental about it. Batch what
+   * you capture (many nodes captured together are serviced by one paint pass),
+   * and do not drive it per frame or reach for it to feed live content into a
+   * shader - an effect over what is beneath it, a backdrop filter. Content that
+   * must stay current has to come from a source that updates in place: another
+   * pipeline's render target, a camera texture, a mutable texture.
    */
   export function captureSnapshot(nodeId: number): Promise<{ id: number; width: number; height: number }>
   /**

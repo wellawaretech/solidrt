@@ -110,7 +110,19 @@ pub(crate) enum RasterCmd {
   DestroyBuffer { id: u64 },
   /// Rasterize a display list into a new adopted texture (snapshot repaint
   /// boundaries). The handle goes back to the UI thread, which draws it.
-  RasterizeDl { dl: DisplayList, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
+  /// `aa: false` skips the multisampled rig (a "snapshot-no-aa" boundary).
+  RasterizeDl { dl: DisplayList, width: u32, height: u32, aa: bool, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Re-rasterize into an existing adopted texture, reusing its storage
+  /// (snapshot boundary whose retained allocation still fits). The texture's
+  /// aligned backing must fit `width` x `height`; the UI thread checks this.
+  RasterizeDlInto {
+    dl: DisplayList,
+    texture: Texture,
+    width: u32,
+    height: u32,
+    aa: bool,
+    reply: mpsc::Sender<Result<(), String>>,
+  },
   /// Rasterize + read back `width` x `height` pixels in one trip (node
   /// captures). The intermediate padded texture never crosses threads.
   RasterizeReadback { dl: DisplayList, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
@@ -149,6 +161,10 @@ pub(crate) struct RasterState {
   // driver, which is exactly the kind of sustained allocate/release cycle
   // ANGLE/D3D11 handles poorly.
   window_surface: Option<(Surface, ISize)>,
+  // Retained FBOs and scratch storage for offscreen rasters (snapshot
+  // boundaries, node captures), grown to the largest allocation requested;
+  // same churn rationale as window_surface above.
+  offscreen_rig: gl::OffscreenRig,
   // Size of the last FBO-0 wrap, surviving rebinds (which drop
   // window_surface), so geometry transitions are logged exactly once even
   // when they arrive through a rebind. Diagnostic only.
@@ -248,6 +264,7 @@ impl RasterState {
       window,
       surface_size,
       window_surface: None,
+      offscreen_rig: gl::OffscreenRig::new(),
       last_wrap: ISize::new(0, 0),
       capture_frames,
       present_failures: 0,
@@ -381,11 +398,15 @@ impl RasterState {
               buffer.destroy(&self.gl);
             }
           }
-          RasterCmd::RasterizeDl { dl, width, height, reply: tx } => {
-            reply(tx, self.rasterize(&dl, width, height));
+          RasterCmd::RasterizeDl { dl, width, height, aa, reply: tx } => {
+            reply(tx, self.rasterize(&dl, width, height, aa));
+          }
+          RasterCmd::RasterizeDlInto { dl, texture, width, height, aa, reply: tx } => {
+            reply(tx, self.rasterize_into(&dl, &texture, width, height, aa));
           }
           RasterCmd::RasterizeReadback { dl, width, height, reply: tx } => {
-            let result = self.rasterize(&dl, width, height).and_then(|texture| {
+            // Node captures carry no boundary prop, so they stay at full AA.
+            let result = self.rasterize(&dl, width, height, true).and_then(|texture| {
               let size = ISize::new(width as i64, height as i64);
               gl::read_texture_pixels(&self.gl, &texture, size)
               // The intermediate padded texture drops here, on the context
@@ -735,18 +756,48 @@ impl RasterState {
 
   /// Rasterize a display list into a new adopted texture of the given pixel
   /// size, ready for sampling.
-  fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32) -> Result<Texture, String> {
+  fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32, aa: bool) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
     match self.backend {
       Backend::Gl => {
-        // A wrapped FBO is treated like a window backbuffer, which GL stores
-        // bottom-up; pre-flip the content so the texture ends up upright.
-        let mut flipped = impellers::DisplayListBuilder::new(None);
-        flipped.translate(0.0, height as f32);
-        flipped.scale(1.0, -1.0);
-        flipped.draw_display_list(dl, 1.0);
-        let flipped = flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())?;
-        gl::render_display_list_to_texture(&self.gl, &mut self.impeller_ctx, &flipped, size)
+        let flipped = flip_for_fbo(dl, height)?;
+        gl::render_display_list_to_texture(
+          &self.gl,
+          &mut self.impeller_ctx,
+          &mut self.offscreen_rig,
+          &flipped,
+          size,
+          aa,
+        )
+      }
+      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
+      Backend::Metal => panic!("Metal backend not yet implemented"),
+    }
+  }
+
+  /// Re-rasterize a display list into an existing adopted texture whose
+  /// aligned backing fits `width` x `height` (the UI thread checks the fit).
+  fn rasterize_into(
+    &mut self,
+    dl: &DisplayList,
+    texture: &Texture,
+    width: u32,
+    height: u32,
+    aa: bool,
+  ) -> Result<(), String> {
+    let size = ISize::new(width as i64, height as i64);
+    match self.backend {
+      Backend::Gl => {
+        let flipped = flip_for_fbo(dl, height)?;
+        gl::render_display_list_into_texture(
+          &self.gl,
+          &mut self.impeller_ctx,
+          &mut self.offscreen_rig,
+          &flipped,
+          texture,
+          size,
+          aa,
+        )
       }
       Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
       Backend::Metal => panic!("Metal backend not yet implemented"),
@@ -796,6 +847,16 @@ impl RasterState {
 
 /// Map a shader's (name -> source texture id) bindings to live GL textures,
 /// dropping any id no longer registered (it samples as unbound/black).
+/// A wrapped FBO is treated like a window backbuffer, which GL stores
+/// bottom-up; pre-flip the content so the texture ends up upright.
+fn flip_for_fbo(dl: &DisplayList, height: u32) -> Result<DisplayList, String> {
+  let mut flipped = impellers::DisplayListBuilder::new(None);
+  flipped.translate(0.0, height as f32);
+  flipped.scale(1.0, -1.0);
+  flipped.draw_display_list(dl, 1.0);
+  flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())
+}
+
 fn resolve_sampler_bindings(
   textures: &HashMap<u64, GpuTexture>,
   shader: &ShaderTexture,

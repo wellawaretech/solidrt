@@ -326,9 +326,14 @@ impl Stats {
     if paint_stats.boundaries_reused + paint_stats.boundaries_recorded > 0 {
       text.push_str(&format!("\n{}+{} BND", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
     }
-    // Snapshot boundaries this frame: reused+rasterized.
-    if paint_stats.snapshots_reused + paint_stats.snapshots_rasterized > 0 {
-      text.push_str(&format!("\n{}+{} SNP", paint_stats.snapshots_reused, paint_stats.snapshots_rasterized));
+    // Snapshot boundaries this frame: reused+rerendered+rasterized (drawn from
+    // the retained texture, re-rendered into retained storage, freshly
+    // allocated).
+    if paint_stats.snapshots_reused + paint_stats.snapshots_rerendered + paint_stats.snapshots_rasterized > 0 {
+      text.push_str(&format!(
+        "\n{}+{}+{} SNP",
+        paint_stats.snapshots_reused, paint_stats.snapshots_rerendered, paint_stats.snapshots_rasterized
+      ));
     }
     // Textures currently held in the registry (GL/Impeller texture pairs in use).
     if textures > 0 {

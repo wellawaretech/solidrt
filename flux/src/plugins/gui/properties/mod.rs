@@ -62,7 +62,8 @@ pub fn apply_jsx(
       PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
       PropValue::Bool(true) => BoundaryMode::Recording,
       PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
-      _ => panic!("repaintBoundary must be a boolean or \"snapshot\""),
+      PropValue::Text(s) if s == "snapshot-no-aa" => BoundaryMode::SnapshotNoAa,
+      _ => panic!("repaintBoundary must be a boolean, \"snapshot\", or \"snapshot-no-aa\""),
     };
     return Ok(Damage::Paint);
   }

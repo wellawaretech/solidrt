@@ -297,8 +297,13 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
    * on layout-size or display-scale changes. Content painted outside the
    * element's layout box is cropped, and ancestor scale animations smear the
    * bitmap; best for screen-aligned, static, raster-expensive content.
+   *
+   * "snapshot-no-aa" is "snapshot" rasterized without anti-aliasing: cheaper
+   * (no multisampled scratch, one render pass), but vector content - svg
+   * paths, rounded corners, rotated edges - comes out hard-edged. Text and
+   * axis-aligned rects look identical, so prefer it for plain UI panels.
    */
-  repaintBoundary?: boolean | "snapshot"
+  repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
 }
 
 // draw primitives

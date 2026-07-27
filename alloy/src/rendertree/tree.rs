@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use taffy::{NodeId, Size};
 
 use crate::impellers::Matrix;
-use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind, WH, XY};
+use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind, PaintCache, WH, XY};
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -211,14 +211,23 @@ impl RenderTree {
   /// Clear cached boundary recordings from `node_id` up to the root. A content
   /// or layout change invalidates the enclosing boundary and - because
   /// draw_display_list copies commands into the enclosing recording - every
-  /// boundary above it as well.
+  /// boundary above it as well. A stale recording is dropped (it is worthless
+  /// and costs nothing to rebuild); a stale snapshot keeps its texture and is
+  /// only marked invalid, so the next raster reuses the allocation instead of
+  /// rebuilding the offscreen rig.
   pub fn invalidate_paint(&self, node_id: u64) {
     let mut current = Some(node_id);
     while let Some(id) = current {
       let Some(element) = self.try_node(id) else {
         break;
       };
-      element.paint_cache.borrow_mut().take();
+      let mut cache = element.paint_cache.borrow_mut();
+      match &mut *cache {
+        Some(PaintCache::Snapshot { valid, .. }) => *valid = false,
+        _ => {
+          cache.take();
+        }
+      }
       current = element.parent;
     }
   }

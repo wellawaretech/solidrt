@@ -2,7 +2,7 @@
 type: backlog-item
 title: Snapshot boundaries reallocate their whole offscreen rig per raster
 description: A content change drops the retained texture outright, so every re-raster rebuilds texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB at 1440p); retain the storage and pool the rig instead.
-status: open
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
@@ -162,3 +162,25 @@ hiccup - the guidance is really a workaround for the churn. It is also the
 prerequisite for anything layer-shaped (a retained root layer an effect
 shader can read), where the current behaviour would mean reallocating a
 full-window rig on every frame that anything in the app changes.
+
+## Resolution
+
+Implemented 2026-07-27 via okf/plans/snapshot-offscreen-rig-churn.md, all
+three stages (retain-and-re-render, shared rig, "snapshot-no-aa" opt-out);
+runtime verification pending. Deviations from the sketch above:
+
+- Part 2's rig pool keyed by `(alloc_width, alloc_height, samples)` became a
+  single `gl::OffscreenRig` grown monotonically, with smaller rasters using
+  a subrect viewport + blit - one rig per size class is strictly worse than
+  one max-sized rig, and the subrect mechanics are the same work.
+- The wrapped Impeller surface is still per-call: `wrap_fbo` takes a size
+  that varies per boundary, so retention only helps consecutive same-size
+  rasters. Revisit only if surface churn still shows in profiles.
+- `EXT_multisampled_render_to_texture` was left out; worth its own backlog
+  item once the shipped shape is measured.
+- The `glInvalidateFramebuffer` line landed (version-guarded: ES 3.0 core,
+  desktop GL 4.3+), and msaa-unavailable now latches once per process.
+
+The AGENTS.md first-frame hiccup warning stays: creating many boundaries at
+once still allocates one resolve texture per boundary; what this removed is
+the per-re-raster rebuild.

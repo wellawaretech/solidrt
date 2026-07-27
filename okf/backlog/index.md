@@ -138,10 +138,11 @@ timestamp: 2026-07-13T00:00:00Z
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
   whole-app effects (warp, glass, transitions) for about the cost of one quad.
-- [Snapshot boundaries reallocate their whole offscreen rig per raster](snapshot-offscreen-rig-churn.md) [open] -
+- [Snapshot boundaries reallocate their whole offscreen rig per raster](snapshot-offscreen-rig-churn.md) [done 2026-07-27] -
   A content change drops the retained texture outright, so every re-raster
-  rebuilds texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB
-  at 1440p); retain the storage and pool the rig instead.
+  rebuilt texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB
+  at 1440p); fixed via okf/plans/snapshot-offscreen-rig-churn.md (retain and
+  re-render in place, shared grown rig, "snapshot-no-aa" opt-out).
 - [Node captures round-trip through a texture nobody wants](capture-pixels-round-trip.md) [open] -
   Every capture rasterizes, reads back, uploads a texture and is then read back
   again, because both consumers only ever wanted the pixels; a pixels-returning

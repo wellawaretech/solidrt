@@ -760,9 +760,8 @@ impl ShaderTexture {
 
       // Fixed-function state that could clip or blend the output away is off
       // for both paths; the mesh path opts depth testing back in below. This
-      // set must be exhaustive: after a node capture, Impeller has run a full
-      // render pass on this same UI-thread context (its usual painting happens
-      // on the render thread's separate context) and may have left any of the
+      // set must be exhaustive: Impeller runs full render passes on this same
+      // context (the process's only one) and may have left any of the
       // states below active - e.g. rasterizer discard or a zero sample
       // coverage silently kills every draw while clears still land.
       gl.disable(glow::BLEND);
