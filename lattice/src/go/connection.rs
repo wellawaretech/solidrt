@@ -901,7 +901,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   if let Some(ws) = &res.window_shader {
     data["windowShader"] = serde_json::json!({
       "programId": ws.program_id, "layerWidth": ws.width, "layerHeight": ws.height,
-      "previous": ws.previous,
+      "previous": ws.previous, "passOnlyFrames": ws.pass_only_frames,
     });
   }
 

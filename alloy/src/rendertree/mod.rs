@@ -230,6 +230,11 @@ impl Measurable for ElementKind {
 pub enum Damage {
   /// No visual change (window chrome, hit-testing config).
   None,
+  /// Pixels may change without any tree content changing: a new present is
+  /// needed but every cache - including the built display list - stays
+  /// valid. The window shader's prop writes report this; the present-only
+  /// reuse path (lattice renderFrame) resubmits the cached list for it.
+  Present,
   /// The node's own transform changed; its content caches survive.
   Transform,
   /// The node's scroll offset changed. A Recording cache survives (clip and

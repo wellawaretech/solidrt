@@ -8,10 +8,11 @@ use crate::rendertree::{BoundaryMode, BoundingBox, Damage, Element, ElementKind,
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,
-  // Content revision: bumped on structural changes and on element_write (the
-  // property-mutation surface). Internal layout writes (node_mut) do not
-  // count. Lets a painter detect "tree unchanged since last build" and reuse
-  // its display list.
+  // Content revision: bumped on structural changes and on property writes
+  // whose damage says content changed (apply_damage, Transform and up).
+  // None/Present writes and internal layout writes (node_mut) do not count.
+  // Lets a painter detect "tree unchanged since last build" and reuse its
+  // display list.
   revision: u64,
 }
 
@@ -165,11 +166,11 @@ impl RenderTree {
     self.destroy_node(node_id);
   }
 
-  /// Mutable element access for a property write. Bumps the revision but
-  /// invalidates nothing: the caller must follow up with `apply_damage`,
-  /// passing what the setter reported.
+  /// Mutable element access for a property write. Invalidates nothing and
+  /// does not touch the revision: the caller must follow up with
+  /// `apply_damage`, passing what the setter reported - that is where the
+  /// revision bumps for content-bearing damage.
   pub fn element_write(&mut self, id: u64) -> &mut Element {
-    self.bump_revision();
     self.node_mut(id)
   }
 
@@ -179,7 +180,11 @@ impl RenderTree {
   /// ancestor recordings hold the node at its old placement.
   pub fn apply_damage(&mut self, node_id: u64, damage: Damage) {
     match damage {
-      Damage::None => {}
+      Damage::None | Damage::Present => return,
+      _ => self.bump_revision(),
+    }
+    match damage {
+      Damage::None | Damage::Present => {}
       Damage::Transform => {
         if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
           self.invalidate_paint(parent);
@@ -205,6 +210,19 @@ impl RenderTree {
         self.invalidate_cache(node_id);
         self.invalidate_paint(node_id);
       }
+    }
+  }
+
+  /// Take the window root's pending shader change without a paint walk. The
+  /// rebuild path flushes the same pending in `Window::build`; the
+  /// present-only reuse path (which skips the walk) calls this before
+  /// resubmitting the cached display list, keeping the raster channel's
+  /// declaration-before-frame ordering.
+  pub fn take_pending_window_shader(&mut self) -> Option<Option<crate::context::WindowShader>> {
+    let root = self.root?;
+    match &mut self.nodes.get_mut(&root)?.kind {
+      ElementKind::Window(w) => w.take_pending_shader(),
+      _ => None,
     }
   }
 

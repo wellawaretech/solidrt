@@ -302,6 +302,8 @@ One opt-in layer behavior:
 
 - `previous` (default false): retains the last frame as a second layer the program samples as `uniform sampler2D uPrevious` - one-frame history (motion echo, frame differencing). Costs one extra window-sized texture while declared. Until a second frame exists `uPrevious` is opaque black. Declare the `uPrevious` uniform only together with this flag - without it the uniform defaults to unit 0 and aliases `uSource`.
 
+Animating only the shader is cheap by design: frames where nothing changed but the shader's `params` skip the whole app pipeline - no layout, no repaint, no re-rasterization - and just re-run the pass over the retained layer. This happens automatically; any real change (tree content, a texture upload, a resize, a program swap) takes the full path again on that frame. Frames with `previous` declared always re-rasterize (the history must track the last frame). `get_gpu_resources` reports the skipped frames as `windowShader.passOnlyFrames`.
+
 ---
 
 ## Utilities

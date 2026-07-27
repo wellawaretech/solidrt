@@ -70,8 +70,10 @@ pub(crate) enum RasterCmd {
   /// Draw and present (interactive) or read back (playback) a frame. In
   /// interactive mode, when several frames are queued only the newest is
   /// drawn (load shedding); in capture mode every frame draws, because
-  /// playback's contract is exactly one Captured per submit.
-  Frame(DisplayList),
+  /// playback's contract is exactly one Captured per submit. `tree_clean`
+  /// marks a present-only resubmit of the previous frame's unchanged display
+  /// list (see `Context::submit_clean`).
+  Frame { dl: DisplayList, tree_clean: bool },
   /// Re-run make-current so the context binds the window's current EGL
   /// surface. Android destroys the surface on background and SDL creates a
   /// fresh one on resume, but this thread's binding still points at the dead
@@ -240,6 +242,15 @@ pub(crate) struct RasterState {
   // The declared window shader, with its retained layer texture. None = the
   // frame resolves straight to FBO 0 (the free path).
   window_shader: Option<WindowShaderState>,
+  // Sampled content may have changed since the last layer resolve: set by
+  // every command except Frame/SetWindowShader (and by any non-clean Frame),
+  // cleared by a resolve. While set, a clean-tree frame may not skip its
+  // resolve. Starts true (nothing resolved yet).
+  content_dirty: bool,
+  // Shaded frames that skipped the tree raster and ran only the pass over
+  // the retained layer (the clean-tree fast path). Reported in
+  // GpuWindowShaderInfo for verification.
+  pass_only_frames: u64,
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
@@ -345,6 +356,8 @@ impl RasterState {
       stages: HashMap::new(),
       buffers: HashMap::new(),
       window_shader: None,
+      content_dirty: true,
+      pass_only_frames: 0,
       tx,
       wake,
     }
@@ -365,11 +378,25 @@ impl RasterState {
       let last_frame = if self.capture_frames {
         None
       } else {
-        batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame(_)))
+        batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. }))
       };
       for (i, cmd) in batch.into_iter().enumerate() {
+        // Any command that can change what a frame samples (texture uploads,
+        // target renders, program changes, ...) invalidates the clean-tree
+        // fast path until the next real resolve. Frame itself and window
+        // shader redeclarations (the very writes the fast path exists for)
+        // are the only exempt commands; a shader *program* change still
+        // invalidates through its cleared layer.
+        if !matches!(cmd, RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. }) {
+          self.content_dirty = true;
+        }
         match cmd {
-          RasterCmd::Frame(dl) => {
+          RasterCmd::Frame { dl, tree_clean } => {
+            // A load-shed frame that was not clean still changed the tree:
+            // the frame that draws in its place must not skip the resolve.
+            if !tree_clean {
+              self.content_dirty = true;
+            }
             if (self.capture_frames || Some(i) == last_frame) && self.frame(dl).is_err() {
               break 'outer; // main loop is gone
             }
@@ -634,41 +661,56 @@ impl RasterState {
     let (width, height) = (size.width as u32, size.height as u32);
     let state = self.window_shader.as_mut().expect("shaded draw requires a declared window shader");
 
-    if state.spec.previous {
-      // Rotate the history before resolving: the current layer becomes
-      // uPrevious and last frame's history buffer is resolved over. On the
-      // first shaded frame the fresh history layer samples opaque black (its
-      // creation clear).
-      std::mem::swap(&mut state.layer, &mut state.prev_layer);
-      if state.prev_layer.is_none() {
-        let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
-        state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
-      }
-    } else if let Some(old) = state.prev_layer.take() {
-      unsafe {
-        glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
-        glow::HasContext::delete_texture(&self.gl, old.tex);
-      }
-    }
-
-    let flipped = flip_for_fbo(dl, height)?;
-
-    // (Re)allocate the layer at the window's pixel size. A resize drops and
-    // recreates it: that is resize-frequency churn, not the per-frame kind
-    // the rig exists to avoid.
-    if state.layer.as_ref().is_none_or(|l| l.width != width || l.height != height) {
-      if let Some(old) = state.layer.take() {
+    // The clean-tree fast path: the submit declared the display list
+    // unchanged (see Context::submit_clean), nothing content-bearing arrived
+    // since the last resolve, and the retained layer matches the window - so
+    // the layer already holds this frame's pixels and only the pass needs to
+    // run. History frames never skip: uPrevious must track the last frame,
+    // and a skipped resolve would freeze it on stale content.
+    let skip_resolve = !self.content_dirty
+      && !state.spec.previous
+      && state.layer.as_ref().is_some_and(|l| l.width == width && l.height == height);
+    if skip_resolve {
+      self.pass_only_frames += 1;
+    } else {
+      if state.spec.previous {
+        // Rotate the history before resolving: the current layer becomes
+        // uPrevious and last frame's history buffer is resolved over. On the
+        // first shaded frame the fresh history layer samples opaque black (its
+        // creation clear).
+        std::mem::swap(&mut state.layer, &mut state.prev_layer);
+        if state.prev_layer.is_none() {
+          let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+          state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
+        }
+      } else if let Some(old) = state.prev_layer.take() {
         unsafe {
           glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
           glow::HasContext::delete_texture(&self.gl, old.tex);
         }
       }
-      let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
-      state.layer = Some(LayerTarget { tex, fbo, width, height });
-    }
-    let layer = state.layer.as_ref().expect("layer allocated above");
 
-    gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, layer.fbo)?;
+      let flipped = flip_for_fbo(dl, height)?;
+
+      // (Re)allocate the layer at the window's pixel size. A resize drops and
+      // recreates it: that is resize-frequency churn, not the per-frame kind
+      // the rig exists to avoid.
+      if state.layer.as_ref().is_none_or(|l| l.width != width || l.height != height) {
+        if let Some(old) = state.layer.take() {
+          unsafe {
+            glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+            glow::HasContext::delete_texture(&self.gl, old.tex);
+          }
+        }
+        let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+        state.layer = Some(LayerTarget { tex, fbo, width, height });
+      }
+      let layer = state.layer.as_ref().expect("layer allocated above");
+
+      gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, layer.fbo)?;
+      self.content_dirty = false;
+    }
+    let layer = state.layer.as_ref().expect("resolved or retained above");
 
     // The layer binds as uSource, the history layer (when declared and live)
     // as uPrevious; extra declared inputs resolve through the registry by id,
@@ -1092,6 +1134,7 @@ impl RasterState {
       width: state.layer.as_ref().map_or(0, |l| l.width),
       height: state.layer.as_ref().map_or(0, |l| l.height),
       previous: state.spec.previous && state.prev_layer.is_some(),
+      pass_only_frames: self.pass_only_frames,
     });
 
     GpuResources { textures, buffers, pipelines, programs, window_shader }

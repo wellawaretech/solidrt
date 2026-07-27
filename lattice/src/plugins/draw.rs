@@ -128,8 +128,18 @@ impl ModuleDef for SrtRenderModule {
             && c.scale == platform.display_scale()
             && c.stats_enabled == stats_on
           {
+            // A window-shader prop write lands here (Damage::Present bumps no
+            // revision): flush it ahead of the frame, the ordering the build
+            // path gets from the paint walk.
+            if let Some(change) = tree.0.borrow_mut().take_pending_window_shader() {
+              if let Err(e) = atx.set_window_shader(change) {
+                log::warn!("[render] window shader: {e}");
+              }
+            }
             stats.borrow_mut().note_reused();
-            atx.submit(c.dl.clone()).expect("Failed to submit display list");
+            // Clean resubmit: the raster side may run only the shader pass
+            // over its retained layer (see Context::submit_clean).
+            atx.submit_clean(c.dl.clone()).expect("Failed to submit display list");
             // The reuse path skips paint_phase, whose end-of-frame sweep
             // reclaims deferred destroys - run it here too so a destroy with
             // no other tree change (its requested frame lands in this path)

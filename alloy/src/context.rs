@@ -134,6 +134,10 @@ pub struct GpuWindowShaderInfo {
   pub height: u32,
   /// The `uPrevious` history layer is declared AND allocated.
   pub previous: bool,
+  /// Shaded frames that skipped the tree raster and ran only the pass over
+  /// the retained layer (the clean-tree fast path), cumulative for this
+  /// raster thread.
+  pub pass_only_frames: u64,
 }
 
 pub struct GpuTextureInfo {
@@ -282,7 +286,18 @@ impl Context {
   /// frame while this one is on the GPU. Err means the raster thread is gone
   /// and the engine should shut down.
   pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame(dl)).map_err(|_| ())
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false }).map_err(|_| ())
+  }
+
+  /// Submit a frame whose display list is the same list as the previous
+  /// submit, unchanged (the present-only reuse path). While a window shader
+  /// is active the raster side may then skip re-rasterizing the tree and run
+  /// only the shader pass over the retained layer - unless content-bearing
+  /// commands (texture uploads, target renders) arrived since the last
+  /// resolve; it tracks that itself. Never send this for a rebuilt list:
+  /// a wrong clean claim presents a stale frame.
+  pub fn submit_clean(&self, dl: DisplayList) -> Result<(), ()> {
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true }).map_err(|_| ())
   }
 
   /// Rebind the raster thread's context to the window's current EGL surface.

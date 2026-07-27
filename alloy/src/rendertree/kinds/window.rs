@@ -54,13 +54,22 @@ impl Window {
   }
 
   /// Declare or clear the window shader. Like texture params, the write only
-  /// records the change; it is pushed to the raster thread at the next build,
-  /// so reactive updates stay paced to real frames and the command is ordered
-  /// ahead of the frame that should show it.
+  /// records the change; it is pushed to the raster thread at the next frame
+  /// (`build` on the rebuild path, `take_pending_shader` on the present-only
+  /// reuse path), so reactive updates stay paced to real frames and the
+  /// command is ordered ahead of the frame that should show it. Present, not
+  /// Paint: the tree's content and its built display list stay valid - the
+  /// shader draws over the finished frame.
   pub fn set_shader(&mut self, shader: Option<WindowShader>) -> Damage {
     self.shader = shader.clone();
     *self.pending_shader.get_mut() = Some(shader);
-    Damage::Paint
+    Damage::Present
+  }
+
+  /// Take the recorded shader change without a build (the present-only reuse
+  /// path flushes it before resubmitting the cached display list).
+  pub fn take_pending_shader(&mut self) -> Option<Option<WindowShader>> {
+    self.pending_shader.get_mut().take()
   }
 
   pub fn with_layout(self) -> Element {
