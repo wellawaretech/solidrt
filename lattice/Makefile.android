@@ -53,7 +53,23 @@ APK_GO_DEBUG  = android/app/build/outputs/apk/go/debug/app-go-debug.apk
 
 GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
-.PHONY: client-android run-android dist-android dist-android-armeabi-v7a
+# Dev-server address handed to the launched client as the srt_dev_server intent
+# extra; MainActivity forwards it to native argv (--dev-server) and the client
+# auto-connects instead of waiting in the launcher's connect UI. A device shares
+# a LAN with this host, so the default is this host's own IPv4 on the route to
+# the outside world. Override with DEV_SERVER=host:port (an emulator reaches the
+# host through its NAT alias, DEV_SERVER=10.0.2.2:34884), or DEV_SERVER= to
+# launch without auto-connect. The dev server itself is not started here: run
+# `srt server` in the project directory.
+DEV_PORT ?= 34884
+ifeq ($(findstring apple-darwin,$(HOST_TARGET)),apple-darwin)
+HOST_LAN_IP = $(shell ipconfig getifaddr $$(route -n get 1.1.1.1 2>/dev/null | sed -n 's/.*interface: //p') 2>/dev/null)
+else
+HOST_LAN_IP = $(shell ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p')
+endif
+DEV_SERVER ?= $(if $(HOST_LAN_IP),$(HOST_LAN_IP):$(DEV_PORT))
+
+.PHONY: client-android run-android run-android-armeabi-v7a dist-android dist-android-armeabi-v7a
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -92,15 +108,22 @@ $(GRADLE_WRAPPER_JAR):
 # $(1) = profile (release|debug) matching the staged .so
 define android-run
 	$(call ndk-stage,$(1))
-	cd android && ./gradlew assembleGoDebug
+	# -PsrtAbi keeps a leftover ABI staged under dist/android out of this APK,
+	# so the dev loop stays single-ABI (same reason as dist-android).
+	cd android && ./gradlew assembleGoDebug -PsrtAbi=$(ANDROID_ABI)
 	adb install -r $(APK_GO_DEBUG)
 	adb logcat -c
-	adb shell am start -n com.solidrt.go/com.solidrt.app.MainActivity
+	@echo "Launching with dev server: $(if $(DEV_SERVER),$(DEV_SERVER),none (manual/QR connect))"
+	adb shell am start -n com.solidrt.go/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
 run-android: client-android $(GRADLE_WRAPPER_JAR)
 	$(call android-run,$(PROFILE))
+
+# The same dev loop against the 32-bit ABI (see dist-android-armeabi-v7a).
+run-android-armeabi-v7a:
+	$(MAKE) run-android ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
 
 dist-android: $(GRADLE_WRAPPER_JAR)
 	# Build + stage the engine .so for every bundled ABI into dist/android/<abi>/.
