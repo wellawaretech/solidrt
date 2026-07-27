@@ -16,7 +16,7 @@
     "AGENTS.md"
   ],
   "dependencies": {
-    "@babel/core": "^7.0.0",
+    "@babel/core": "^8.0.1",
     "@babel/plugin-syntax-jsx": "^7.0.0",
     "@babel/preset-typescript": "^7.0.0",
     "@jridgewell/remapping": "^2.3.0",
