@@ -19,9 +19,9 @@
 //! (verified by examples/xthread_release.rs).
 
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crate::backend::{Backend, FrameOutput};
@@ -64,6 +64,40 @@ pub(crate) struct TargetSpecOwned {
   pub draw_count: i32,
   pub depth: bool,
   pub clear_color: [f32; 4],
+}
+
+/// The UI thread's half of the raster command channel, paired with the shared
+/// queue-depth counter: every send increments it, and the raster loop
+/// decrements it as each command finishes executing, so depth 0 means the
+/// raster thread has nothing queued and nothing in hand. The frame loop reads
+/// it to gate the idle Tick: a backlogged raster thread produces no presents,
+/// which is otherwise indistinguishable from a genuinely idle GPU there (see
+/// okf/backlog/idle-tick-gpu-backlog-runaway.md).
+pub(crate) struct RasterSender {
+  tx: mpsc::Sender<RasterCmd>,
+  depth: Arc<AtomicUsize>,
+}
+
+impl RasterSender {
+  pub(crate) fn new(tx: mpsc::Sender<RasterCmd>, depth: Arc<AtomicUsize>) -> Self {
+    RasterSender { tx, depth }
+  }
+
+  /// Increment-before-send so the counter never under-reports: the raster
+  /// thread may consume and decrement the instant the command is in the
+  /// channel.
+  pub(crate) fn send(&self, cmd: RasterCmd) -> Result<(), mpsc::SendError<RasterCmd>> {
+    self.depth.fetch_add(1, Ordering::Release);
+    let result = self.tx.send(cmd);
+    if result.is_err() {
+      self.depth.fetch_sub(1, Ordering::Release);
+    }
+    result
+  }
+
+  pub(crate) fn depth(&self) -> usize {
+    self.depth.load(Ordering::Acquire)
+  }
 }
 
 pub(crate) enum RasterCmd {
@@ -251,6 +285,9 @@ pub(crate) struct RasterState {
   // the retained layer (the clean-tree fast path). Reported in
   // GpuWindowShaderInfo for verification.
   pass_only_frames: u64,
+  // Commands sent but not yet executed (see RasterSender); decremented here
+  // as each command completes.
+  queue_depth: Arc<AtomicUsize>,
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
@@ -334,6 +371,7 @@ impl RasterState {
     window: *mut sdl3::sys::video::SDL_Window,
     surface_size: Arc<AtomicU64>,
     capture_frames: bool,
+    queue_depth: Arc<AtomicUsize>,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
@@ -358,6 +396,7 @@ impl RasterState {
       window_shader: None,
       content_dirty: true,
       pass_only_frames: 0,
+      queue_depth,
       tx,
       wake,
     }
@@ -380,6 +419,27 @@ impl RasterState {
       } else {
         batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. }))
       };
+      // Mirror the Frame load-shed for params updates: N params writes to one
+      // shader queued in a batch render N times with only the last result ever
+      // sampled, which is what lets a backlogged raster thread fall further
+      // behind instead of catching up. A shed write folds its params into the
+      // surviving render (uniforms are program state and params lists may be
+      // partial, so dropping one outright could lose a uniform); by-name
+      // application in order makes the one concatenated render equivalent to
+      // N. Never shed across a frame that draws: that frame samples the
+      // target, so every params write before it must have rendered.
+      let mut shed = vec![false; batch.len()];
+      {
+        let mut later: HashSet<u64> = HashSet::new();
+        for (i, cmd) in batch.iter().enumerate().rev() {
+          match cmd {
+            RasterCmd::Frame { .. } if self.capture_frames || Some(i) == last_frame => later.clear(),
+            RasterCmd::UpdateShaderParams { id, .. } => shed[i] = !later.insert(*id),
+            _ => {}
+          }
+        }
+      }
+      let mut shed_params: HashMap<u64, Vec<(String, f32)>> = HashMap::new();
       for (i, cmd) in batch.into_iter().enumerate() {
         // Any command that can change what a frame samples (texture uploads,
         // target renders, program changes, ...) invalidates the clean-tree
@@ -449,13 +509,21 @@ impl RasterState {
           RasterCmd::SetWindowShader { shader } => {
             self.set_window_shader(shader);
           }
-          RasterCmd::UpdateShaderParams { id, params } => match self.shaders.get(&id) {
-            Some(shader) => {
-              let resolved = resolve_sampler_bindings(&self.textures, shader);
-              shader.render(&self.gl, &params, &resolved);
+          RasterCmd::UpdateShaderParams { id, params } => {
+            if shed[i] {
+              shed_params.entry(id).or_default().extend(params);
+            } else {
+              match self.shaders.get(&id) {
+                Some(shader) => {
+                  let mut all = shed_params.remove(&id).unwrap_or_default();
+                  all.extend(params);
+                  let resolved = resolve_sampler_bindings(&self.textures, shader);
+                  shader.render(&self.gl, &all, &resolved);
+                }
+                None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
+              }
             }
-            None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
-          },
+          }
           RasterCmd::UpdateShaderTextures { id, textures } => {
             // Mutate first (needs &mut), then re-borrow shared for the render:
             // resolve_sampler_bindings reads the whole texture map alongside
@@ -545,6 +613,10 @@ impl RasterState {
             reply(tx, self.resources());
           }
         }
+        // The command is done (a load-shed one counts: it was consumed); the
+        // frame-error exit above skips this, but the thread is gone then
+        // anyway.
+        self.queue_depth.fetch_sub(1, Ordering::Release);
       }
     }
   }

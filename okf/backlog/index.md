@@ -108,6 +108,15 @@ timestamp: 2026-07-13T00:00:00Z
   with `None`, so Impeller's built-in blur/dilate/erode/matrix filters give
   frosted panels with correct see-through semantics, needing neither GLSL,
   impellerc, nor the root layer.
+- [Idle tick runs away when the raster thread falls behind](idle-tick-gpu-backlog-runaway.md) [partial] -
+  The idle-tick gate read `pending_presents == 0` as "GPU idle", but it is
+  equally true when the raster thread is too far behind to have returned a
+  frame; on a slow GPU that closed a positive feedback loop and frame time
+  diverged without bound (measured 900 JS ticks per presented frame). Fixed
+  via a raster queue-depth gate plus per-shader params load-shedding, and
+  `get_stats` now reports `rasterQueue`/`idleTicks`; verified on the TV
+  (unbounded doubling -> 120 ms flat, ticks now 1:1 with presents), the
+  adjacent findings (fence honesty, reload queue drain, pass timing) open.
 - [GPU context loss](gpu-context-loss.md) [partial] - A lost GL context used
   to leave the app running against a dead swapchain; swap-result checking and
   exit after two failed presents shipped, real recreation still open.
@@ -147,10 +156,16 @@ timestamp: 2026-07-13T00:00:00Z
 - [Root layer - render the app into a texture effects can read](root-layer-effects.md) [partial] -
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
-  whole-app effects for about the cost of one quad; stages 1+2 implemented
-  2026-07-27 (the inversion, the raw shading layer, and the `shader` prop on
-  `<window>` drawing the frame through a program before present), device
-  verification and stages 3-4 pending, plan okf/plans/root-layer-effects.md.
+  whole-app effects for about the cost of one quad; stages 1-3 implemented
+  and verified 2026-07-27 (the inversion, the raw shading layer, the `shader`
+  prop on `<window>`, and `previous`/uPrevious frame history; the hold flag
+  was built, verified and dropped as premature), stage 4 (clean-tree raster
+  skip) pending, plan okf/plans/root-layer-effects.md.
+- [Stats overlay should draw after the window shader pass](stats-overlay-post-shader.md) [open] -
+  The debug overlay is recorded into the app's display list, so a window
+  shader warps the HUD too, and its once-per-second refresh forces full
+  rebuilds that defeat clean-tree fast paths; draw it post-pass into FBO 0
+  instead (mind the stage-1 orientation rules).
 - [Snapshot boundaries reallocate their whole offscreen rig per raster](snapshot-offscreen-rig-churn.md) [done 2026-07-27] -
   A content change drops the retained texture outright, so every re-raster
   rebuilt texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB

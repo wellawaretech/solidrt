@@ -2,12 +2,13 @@ use impellers::{DisplayList, ISize, Texture};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
-use crate::raster::{PipelineSpecOwned, RasterCmd, TargetSpecOwned};
+use crate::raster::{PipelineSpecOwned, RasterCmd, RasterSender, TargetSpecOwned};
 use crate::texture::{TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -19,7 +20,11 @@ use crate::texture::{TextureEntry, TextureRegistry};
 // answer size queries without a round trip.
 
 pub struct Context {
-  raster_tx: mpsc::Sender<RasterCmd>,
+  raster_tx: RasterSender,
+  // Cumulative idle Ticks emitted by the frame loop (app.rs increments).
+  // Exposed with the raster queue depth for diagnostics: ticks racing while
+  // the queue sits nonzero is the idle-tick-runaway signature.
+  idle_ticks: Arc<AtomicU64>,
   pub textures: TextureRegistry,
   // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
   // Enough to validate params/draw-count updates without an RPC.
@@ -201,9 +206,10 @@ unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 impl Context {
-  pub(crate) fn new(raster_tx: mpsc::Sender<RasterCmd>) -> Self {
+  pub(crate) fn new(raster_tx: RasterSender, idle_ticks: Arc<AtomicU64>) -> Self {
     Context {
       raster_tx,
+      idle_ticks,
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
       program_kinds: RefCell::new(HashMap::new()),
@@ -233,6 +239,17 @@ impl Context {
     let (reply_tx, reply_rx) = mpsc::channel();
     self.raster_tx.send(make(reply_tx)).map_err(|_| "raster thread exited".to_string())?;
     reply_rx.recv().map_err(|_| "raster thread exited".to_string())
+  }
+
+  /// Raster commands sent but not yet executed (queued plus the one in hand).
+  /// 0 means the raster thread is genuinely idle.
+  pub fn raster_queue_depth(&self) -> usize {
+    self.raster_tx.depth()
+  }
+
+  /// Cumulative idle Ticks the frame loop has emitted.
+  pub fn idle_ticks(&self) -> u64 {
+    self.idle_ticks.load(Ordering::Relaxed)
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass

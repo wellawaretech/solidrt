@@ -96,6 +96,13 @@ impl App {
     let (tx, rx) = mpsc::channel::<FrameOutput>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
+    // Raster commands sent but not yet executed (see raster::RasterSender).
+    // The loop below reads it to gate the idle Tick; the Context exposes it
+    // for diagnostics.
+    let raster_queue = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // Cumulative idle Ticks emitted below, exposed through the Context
+    // alongside the queue depth (see the Tick gate for why they pair).
+    let idle_ticks = Arc::new(AtomicU64::new(0));
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. Playback mode blocks on the frame channel directly.
@@ -109,7 +116,14 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
-    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback());
+    platform.run_context(
+      move |ctx| dl_producer(ctx, cmd_tx, event_rx),
+      tx,
+      wake,
+      mode.is_playback(),
+      raster_queue.clone(),
+      idle_ticks.clone(),
+    );
 
     let initial = current_resize_event(&window);
     apply_main_thread_effects(&initial, &surface_size, &mode);
@@ -299,9 +313,21 @@ impl App {
       }
 
       // No idle Tick while a present awaits its vsync signal: the real frame
-      // signal is at most a refresh period away (fallback included).
+      // signal is at most a refresh period away (fallback included). And no
+      // idle Tick while raster commands are queued or executing: a backlogged
+      // raster thread also shows pending_presents == 0 (nothing has come back
+      // to present), and ticking through that backlog feeds it more per-frame
+      // work than it retires - frame time diverges without bound (see
+      // okf/backlog/idle-tick-gpu-backlog-runaway.md). Idle means idle: no
+      // presents in flight AND an empty raster queue. The deadline resets on
+      // suppression too, or `remaining` above stays zero and the loop spins
+      // through the backlog instead of sleeping; ticks resume within one
+      // refresh period of the queue draining.
       if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
-        event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
+        if raster_queue.load(Ordering::Acquire) == 0 {
+          event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
+          idle_ticks.fetch_add(1, Ordering::Relaxed);
+        }
         last_frame_signal = Instant::now();
       }
       for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {

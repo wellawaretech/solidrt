@@ -75,17 +75,28 @@ impl DisplayContext {
     }
   }
 
+  #[allow(clippy::too_many_arguments)]
   pub fn run_context(
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
     capture_frames: bool,
+    raster_queue: Arc<std::sync::atomic::AtomicUsize>,
+    idle_ticks: Arc<std::sync::atomic::AtomicU64>,
   ) {
     match self {
-      DisplayContext::Gl { window_raw, gl_context, surface_size } => {
-        gl::run_context(*window_raw, gl_context, surface_size.clone(), closure, tx, wake, capture_frames)
-      }
+      DisplayContext::Gl { window_raw, gl_context, surface_size } => gl::run_context(
+        *window_raw,
+        gl_context,
+        surface_size.clone(),
+        closure,
+        tx,
+        wake,
+        capture_frames,
+        raster_queue,
+        idle_ticks,
+      ),
       DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
       DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
     }

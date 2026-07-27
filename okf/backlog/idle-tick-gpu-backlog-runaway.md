@@ -1,0 +1,211 @@
+---
+type: backlog-item
+title: Idle tick runs away when the raster thread falls behind
+description: The idle-tick gate reads pending_presents == 0 as "GPU idle", but it is equally true when the raster thread is too far behind to have returned a frame; on a slow GPU that closes a positive feedback loop and frame time diverges without bound.
+status: partial
+timestamp: 2026-07-27T00:00:00Z
+---
+
+# Idle tick runs away when the raster thread falls behind
+
+## Status 2026-07-27: candidates 1, 2, 4 implemented and verified on the TV
+
+- Candidate 1: `RasterSender` (raster.rs) pairs the command channel with a
+  shared queue-depth counter (increment on send, decrement as each command
+  finishes executing); the idle-tick gate in app.rs now also requires depth 0,
+  and resets its deadline on suppression so the main loop sleeps instead of
+  spinning through a backlog.
+- Candidate 2: `UpdateShaderParams` load-sheds per shader id within a batch,
+  folding shed params lists into the surviving render (params can be partial);
+  never sheds across a frame that draws.
+- Candidate 4: `get_stats` reports `rasterQueue` and `idleTicks`, read live
+  from the alloy Context at query time (not the frame-latched snapshot, which
+  goes stale exactly when the raster thread wedges).
+
+Verified on the same TV, runtime 0.0.38-20-g8348ad6-dirty, against the
+original 233,600-vertex per-vsync-params app that produced everything below:
+
+| | before | after |
+|---|---|---|
+| 233,600 vertices, params per vsync | unbounded doubling to 50 s/frame | **120 ms flat, 8.3 fps, 125 frames, max 140 ms** |
+| JS ticks vs presents | 49.7 Hz vs 0.054 Hz (~900:1) | **7.7 Hz vs 8.3 Hz (~1:1)** |
+| 60,000 vertices (the reduced config the bug forced) | 160 ms / 6.3 fps | **100 ms / 10.0 fps** |
+| `get_stats` during the collapse | `fps: 0`, `frameMs: 22.6` | `fps: 8`, `frameMs: 125` (matches wall clock) |
+
+`rasterQueue` reads 4 under load and `idleTicks` is identical across two
+samples 52 s apart - the gate is suppressing exactly as designed. The
+frame-time win is larger than the runaway fix alone: the params load-shed
+also removed ~8 redundant renders per presented frame at the sustainable
+counts, which is where the 160 -> 100 ms on the reduced config comes from,
+and it is what lets full density run at 120 ms where a third of it used to
+cost 160 ms.
+
+Note the new floor: 100 ms is present pacing (five 50 Hz vsyncs), measured
+identical for a 20k-vertex trivial scene, so workloads now sit against
+candidate 3 / the present-fence finding rather than against this bug.
+Candidate 3 (fence honesty) and the adjacent findings below remain open.
+
+Source: Android TV debugging session 2026-07-27. Philips TPM171E (MediaTek
+MT5891, ARM Mali-T860, GLES 3.2 driver r20p0, Android 8.0, armeabi-v7a,
+1920x1080 at **50 Hz**), runtime 0.0.38-18-g4a72e81-dirty release. App was
+`examples`-style: two `createPipeline` point-cloud passes (233,600 + 6,532
+vertices) with one `params` write per pipeline per `onFrame`.
+
+Symptom: the app starts at a steady ~290 ms/frame, holds for about five
+seconds, then frame time **doubles every frame without bound** - measured
+1320 -> 2380 -> 4200 -> 7480 -> 13120 ms on a freshly launched process, and
+observed out to 50 s/frame if left alone. It never reaches a steady state and
+it never recovers. `load`/`reload` does not clear it; only restarting the
+client process does.
+
+## What actually happens
+
+The idle tick in `alloy/src/app.rs` fires on this condition:
+
+```rust
+if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
+  event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
+```
+
+with the comment "an idle Tick keeps its per-frame logic running while the
+GPU stays idle". `AlloyEvent::Tick` drives JS's per-frame work identically to
+`FrameRendered` (`lattice/src/lib.rs`, both arms of the frame-signal match).
+
+`pending_presents == 0` is true when the GPU is idle. It is *also* true when
+the raster thread is so far behind that it has not handed back a frame yet -
+the opposite condition, and indistinguishable at this gate. So while the
+raster thread grinds through a queue of pipeline renders it sends no
+`Presented`, `pending_presents` stays 0, and the main loop emits an idle Tick
+every refresh period. Each Tick runs the app's `onFrame`, which writes
+`params`, which becomes an `UpdateShaderParams` on the raster channel, which
+is another full point-cloud render.
+
+Backlog -> no presents -> uninterrupted 50 Hz ticks -> more backlog. The loop
+gain is `(tick rate) x (per-pass GPU cost)`; above 1 it diverges, and the
+measured ~1.9x per frame matches a ~38 ms pass against a 20 ms tick period.
+
+Measured directly on the collapsed app, reading the app's own `onFrame`
+counter through `call_debug` while sampling SurfaceFlinger present times:
+
+| | |
+|---|---|
+| JS `onFrame` ticks | 497 -> 3036 over 51.0 s = **49.7 Hz** |
+| screen presents, same window | one per **18.5 s** |
+
+**~900 JS frame callbacks per presented frame.** There is no effective
+backpressure from present to frame production.
+
+Second, independent amplifier: `RasterCmd::UpdateShaderParams` in
+`alloy/src/raster.rs` calls `shader.render()` for *every* command in a batch.
+Thirty lines earlier the same loop load-sheds `RasterCmd::Frame` to the last
+one in the batch via `rposition`. Params updates get no such treatment, so a
+batch that accumulated N of them for one shader id runs the pass N times and
+discards N-1 results. That is not the root cause - the loop above opens with
+or without it - but it is what converts the open gate into ~900 wasted
+233k-vertex renders per presented frame.
+
+## Reproduction
+
+Any `createPipeline` whose single pass costs more than one refresh period,
+driven by a per-`onFrame` params write. On the Mali-T860 at 1080p the
+threshold sits between 100k and 233k point-topology vertices:
+
+| total vertices | frame time | |
+|---|---|---|
+| 34,800 | 100 ms | stable |
+| 60,000 | 160 ms | stable |
+| 100,000 | 380 ms | stable |
+| 233,600 | - | **runaway, ~1.9x/frame, unbounded** |
+
+Confirming the mechanism rather than the workload - same 233,600 vertices,
+changing only the params write rate to every other vsync (halving the loop
+gain to ~0.95):
+
+| 233,600 vertices | result |
+|---|---|
+| params per vsync | runaway |
+| params every 2nd vsync | **480 ms flat, 104 frames, no drift** |
+
+Two controls worth recording, because they rule out the obvious suspects:
+rendering the same 233,600 vertices into a **quarter-size target** (960x540)
+collapses on an identical curve, and `gl_PointSize = 3.0` (9x the fill) costs
+nothing measurable. The cost is per primitive; neither fill nor target size
+is involved.
+
+## Fix candidates, in preference order
+
+1. **Gate the idle tick on real in-flight work.** Note that a frames-only
+   counter is not enough: the backlog here is `UpdateShaderParams`, not
+   `Frame`, so incrementing at `Context::submit` and decrementing on
+   `Presented` would still read "idle" while the raster thread is saturated
+   with pipeline work. The gate wants raster *queue depth* - an
+   `AtomicUsize` bumped on every `Context::send` and decremented as each
+   command is consumed - so the condition becomes "nothing queued and nothing
+   in flight". Idle should mean idle.
+2. **Coalesce `UpdateShaderParams` per shader id within a batch**, mirroring
+   the `Frame` load-shed already sitting in that loop. Damage control rather
+   than root fix, but it removes the redundant renders and would have kept
+   this failure inside one order of magnitude instead of unbounded.
+3. **Make `await_present_fence` honest.** It is the only backpressure in the
+   pipeline and it ignores the `client_wait_sync` result, so a
+   `PRESENT_FENCE_TIMEOUT_NS` (100 ms) timeout - which is exactly the "GPU is
+   over budget" signal - is indistinguishable from a clean wait. At minimum
+   it should be observable; treating a timeout as a reason to skip production
+   would give a second line of defence.
+4. **Expose queue depth / in-flight commands in `get_stats`.** See the
+   diagnostics note below; this is the counter whose absence turned a
+   one-look diagnosis into a day.
+
+## Not established
+
+Which link is broken is inferred, not proven. What is measured is 49.7 Hz of
+JS frame callbacks against 0.054 Hz of presents; the idle-tick gate is the
+only place in `app.rs` that can produce that, since both `FrameRendered`
+arms are strictly one-per-`Presented`. Confirming it is a one-line log at
+that branch, or a ticks-vs-FrameRendered counter in `get_stats`. Do that
+before building the fix.
+
+## Adjacent findings from the same session
+
+Each of these stands alone and could be split out; recording them here so
+they are not lost with the session.
+
+- **The instrumentation is blind to this entire class of failure.** During a
+  50 s/frame collapse the engine logged `[alloy] slow frame: fence wait
+  0.0ms, draw 40.3ms, present 34.1ms` and `get_stats` reported `fps: 0,
+  frameMs: 22.6`. Both are truthful about `frame()` and see nothing else:
+  pipeline passes execute in the command loop, where nothing is timed. The
+  only way to see reality was reading present timestamps out of
+  `dumpsys SurfaceFlinger --latency`. Time the shader-pass work.
+- **Diagnostics queue behind the thing they diagnose.** `get_gpu_resources`
+  is a `RasterCmd::Resources` at the back of the same backlog, so it times
+  out precisely when the app is wedged; `get_stats` survived because it is
+  served elsewhere. Anything diagnostic wants a path that is not behind the
+  raster queue. Related: mcp-gpu-resource-inspection.md,
+  production-diagnostics-surface.md.
+- **The collapsed state survives `load`/`reload`.** The backlog lives in the
+  raster command channel, which replacing the app does not drain - a freshly
+  loaded app inherits a 50 s frame period, so a dev hitting this in the
+  normal edit-reload loop has no way out and no reason to suspect the
+  runtime. Reload should drain the queue. Related:
+  dev-state-across-reloads.md.
+- **Present-fence pacing caps throughput, not just latency.**
+  `await_present_fence` blocks on the previous present's GPU fence before
+  starting the next frame, so throughput is bounded by the compositor's
+  present latency. On this TV that is 4-5 vsyncs at 50 Hz even for a
+  20k-vertex trivial scene - a hard ~10 fps ceiling regardless of content.
+  Allowing one frame in flight (wait on the fence from two frames back) would
+  overlap draw with that latency. Measure the desktop cost before assuming it
+  is TV-specific.
+- **The documented perf model is desktop-shaped.** The scaffold AGENTS.md
+  says GPU work is nearly free and JS is the slow lane. That is right on a
+  discrete GPU and actively misleading on a tiled mobile/TV one, where every
+  point is a primitive the tiler charges for regardless of pixels covered -
+  see the vertex-count curve above, against fill and target size measuring as
+  free. Worth a paragraph, since the docs currently steer people toward
+  exactly the shape of app that trips this item.
+- **The Android client forgets its dev-server address.** It only arrives as
+  the `srt_dev_server` launch-intent extra, so relaunching from the TV
+  launcher starts into `apps/default` and never reconnects; recovery needs
+  `am start --es` by hand. Persisting the last address would make the client
+  recoverable from the couch. Related: client-build-info.md.

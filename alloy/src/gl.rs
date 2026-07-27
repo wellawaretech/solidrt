@@ -714,6 +714,7 @@ const UI_THREAD_STACK_SIZE: usize = 1024 * 1024 * 1024;
 #[cfg(target_pointer_width = "32")]
 const UI_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_context(
   window: *mut sdl3::sys::video::SDL_Window,
   gl_context: &sdl3::video::GLContext,
@@ -722,10 +723,13 @@ pub fn run_context(
   tx: mpsc::Sender<FrameOutput>,
   wake: Option<Box<dyn Fn() + Send + Sync>>,
   capture_frames: bool,
+  raster_queue: Arc<std::sync::atomic::AtomicUsize>,
+  idle_ticks: Arc<AtomicU64>,
 ) {
   let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
   let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
+  let raster_tx = crate::raster::RasterSender::new(raster_tx, raster_queue.clone());
 
   // The raster thread: sole owner of the process's single GL context and
   // Impeller context for the engine's lifetime. Impeller's GLES contract
@@ -756,7 +760,8 @@ pub fn run_context(
       );
     }
 
-    let state = RasterState::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, tx, wake);
+    let state =
+      RasterState::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, raster_queue, tx, wake);
     state.run(raster_rx);
   });
   spawn_raster.expect("failed to spawn raster thread");
@@ -764,7 +769,7 @@ pub fn run_context(
   // The UI thread: QuickJS, layout, hit-testing, DisplayList building. No GL
   // at all; the Context it gets marshals GPU work over the command channel.
   let spawn_ui = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
-    closure(Arc::new(Context::new(raster_tx)));
+    closure(Arc::new(Context::new(raster_tx, idle_ticks)));
   });
   spawn_ui.expect("failed to spawn UI thread");
 }
