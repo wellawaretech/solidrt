@@ -1,4 +1,4 @@
-use super::{f32_of, str_of};
+use super::{decode_params, f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Texture, TextureFit};
@@ -33,12 +33,4 @@ pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Option<Damage>
     "params" => tex.set_params(decode_params(value)),
     _ => return None,
   })
-}
-
-// { name: number } shader uniform values; non-numeric entries are skipped.
-fn decode_params(value: &PropValue) -> Vec<(String, f32)> {
-  value
-    .as_map()
-    .map(|entries| entries.iter().filter_map(|(k, v)| v.as_f64().map(|n| (k.clone(), n as f32))).collect())
-    .unwrap_or_default()
 }

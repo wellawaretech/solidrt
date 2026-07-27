@@ -147,10 +147,10 @@ timestamp: 2026-07-13T00:00:00Z
 - [Root layer - render the app into a texture effects can read](root-layer-effects.md) [partial] -
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
-  whole-app effects for about the cost of one quad; stage 1 (the inversion,
-  single-sample window + rig resolve to FBO 0) implemented 2026-07-27,
-  verification and the effect stages pending, plan
-  okf/plans/root-layer-effects.md.
+  whole-app effects for about the cost of one quad; stages 1+2 implemented
+  2026-07-27 (the inversion, the raw shading layer, and the `shader` prop on
+  `<window>` drawing the frame through a program before present), device
+  verification and stages 3-4 pending, plan okf/plans/root-layer-effects.md.
 - [Snapshot boundaries reallocate their whole offscreen rig per raster](snapshot-offscreen-rig-churn.md) [done 2026-07-27] -
   A content change drops the retained texture outright, so every re-raster
   rebuilt texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB
@@ -160,6 +160,11 @@ timestamp: 2026-07-13T00:00:00Z
   Every capture rasterizes, reads back, uploads a texture and is then read back
   again, because both consumers only ever wanted the pixels; a pixels-returning
   variant halves the sync points.
+- [Refactor createShader/createPipeline over the raw shading layer](gpu-fused-create-refactor.md) [open] -
+  The fused conveniences predate compileShader/linkProgram/createShaderTarget
+  and still compile+link internally with conditional preamble sniffing; decide
+  whether they become thin compositions of the raw layer, and whether a
+  mid-level program shorthand (wanted by the window effect) is added.
 - [Anti-aliasing for GPU pipeline targets](gpu-target-antialiasing.md) [open] -
   createPipeline targets are single-sample, so any filled geometry has hard
   jaggies; wanted a sample count (MSAA + resolve) or a documented supersample

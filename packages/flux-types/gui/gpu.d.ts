@@ -1,7 +1,12 @@
-// Low-level GPU textures and fragment shaders (gui-enabled runtime only). The
-// imperative primitive; @solidrt/core's gpu helpers add reactive auto-cleanup on
-// top. Texture ids are the public token (used as `<texture src>` and shader
-// sampler inputs), so there is no handle to hide here.
+// Low-level GPU textures and shaders (gui-enabled runtime only). The
+// imperative primitive; @solidrt/core's gpu helpers add reactive auto-cleanup
+// on top. Three id spaces, each destroyed by its own destroyer: texture ids
+// (the public token used as `<texture src>` and sampler inputs ->
+// destroyTexture), buffer ids (-> destroyBuffer), and the raw shading layer's
+// shader-stage ids (-> destroyShader) and program ids (-> destroyProgram).
+// Layering: compileShader/linkProgram are the raw GL primitives (complete
+// sources, explicit header opt-in); createShader/createPipeline are fused
+// conveniences (compile + link + target in one call, curated preamble).
 
 declare module "flux:gpu" {
   /**
@@ -41,7 +46,11 @@ declare module "flux:gpu" {
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
    * size. `params` sets float uniforms by name; `textures` binds sampler2D
-   * uniforms to texture ids. Returns the resulting texture id.
+   * uniforms to texture ids. Returns the resulting texture id. The fused
+   * convenience: one call compiles a program and creates a target over it,
+   * and the program lives and dies with the target. To share one compile
+   * across targets (or hold a program with no target yet), use the raw layer:
+   * {@link compileShader} + {@link linkProgram} + {@link createShaderTarget}.
    */
   export function createShader(
     fragmentSrc: string,
@@ -50,6 +59,72 @@ declare module "flux:gpu" {
     params?: Record<string, number>,
     textures?: Record<string, number>,
   ): number
+  /**
+   * Compile a single shader stage from raw GLSL ES: the primitive under
+   * {@link linkProgram}, GL's own model (a "shader" is one stage; linking
+   * stages yields a program). The source is complete - it declares its own
+   * `#version 300 es`, precision, varyings and uniforms; nothing is injected.
+   * With `header: true` the standard header is prepended explicitly: `#version
+   * 300 es`, `precision highp float;`, `uniform vec2 iResolution;`, `uniform
+   * float iTime;`, plus `out vec4 fragColor;` for a fragment stage (the same
+   * text {@link createPipeline} injects). Do not combine `header` with your
+   * own `#version` line. Returns a shader (stage) id in its own id space;
+   * compile errors throw here, synchronously, at a call site the app chose.
+   * Free with {@link destroyShader}.
+   */
+  export function compileShader(
+    stage: "vertex" | "fragment",
+    source: string,
+    opts?: { header?: boolean },
+  ): number
+  /**
+   * Link a compiled vertex and fragment stage into a program, returning a
+   * program id (its own id space, like buffers - not a texture id). Link
+   * errors throw here. The stages remain usable for further links (mix one
+   * vertex stage with many fragment stages and vice versa), and may be
+   * destroyed right after: a linked program keeps its own compiled copies.
+   * Creating targets from the returned handle compiles nothing. Free with
+   * {@link destroyProgram}.
+   */
+  export function linkProgram(vertexShader: number, fragmentShader: number): number
+  /**
+   * Destroy a compiled stage by id. Programs linked from it are unaffected.
+   */
+  export function destroyShader(id: number): void
+  /**
+   * Create a render target over a linked program and render it once: the
+   * target half of {@link createPipeline}. Returns a texture id exactly like
+   * createShader/createPipeline do (drive uniforms via the `params` prop or
+   * {@link setShaderParams}, resize with {@link setShaderSize}, destroy with
+   * {@link destroyTexture}). Many targets may share one program. A raw-linked
+   * program carries its own vertex stage, so the mesh options apply:
+   * `attributes`/`buffer` for vertex input (omit for attributeless rendering
+   * via gl_VertexID - a fullscreen pass is `vertexCount: 3` with a
+   * covering-triangle vertex stage), `topology`, `vertexCount`, `depth`,
+   * `clearColor`, all as in {@link createPipeline}.
+   */
+  export function createShaderTarget(
+    program: number,
+    width: number,
+    height: number,
+    opts?: {
+      params?: Record<string, number>
+      textures?: Record<string, number>
+      attributes?: VertexAttribute[]
+      buffer?: number
+      topology?: Topology
+      vertexCount?: number
+      depth?: boolean
+      clearColor?: [number, number, number, number]
+    },
+  ): number
+  /**
+   * Destroy a linked program by id. Targets created from it are unaffected:
+   * each holds the program until it is itself destroyed, so either
+   * destruction order is safe. The id stops being usable for new targets
+   * immediately.
+   */
+  export function destroyProgram(id: number): void
   /** Update a shader texture's float uniforms by name and re-render it. */
   export function setShaderParams(id: number, params: Record<string, number>): void
   /**

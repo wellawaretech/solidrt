@@ -27,6 +27,7 @@ export type {
   TextEvent,
   PaintProps,
   WindowProps,
+  WindowShaderProps,
   ViewProps,
   RectProps,
   OvalProps,

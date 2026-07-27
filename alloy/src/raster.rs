@@ -20,13 +20,16 @@
 
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 
 use crate::backend::{Backend, FrameOutput};
-use crate::context::{GpuBufferInfo, GpuPipelineInfo, GpuResources, GpuTextureInfo};
+use crate::context::{
+  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, WindowShader,
+};
 use crate::gl;
-use crate::shader::{GpuBuffer, ShaderTexture};
+use crate::shader::{release_program, AttrFormat, GpuBuffer, ShaderProgram, ShaderStage, ShaderTexture};
 use crate::texture::GpuTexture;
 
 /// Owned form of `context::PipelineSpec` (whose fields borrow from JS values),
@@ -36,6 +39,23 @@ pub(crate) struct PipelineSpecOwned {
   pub height: u32,
   pub vertex_src: String,
   pub fragment_src: String,
+  pub params: Vec<(String, f32)>,
+  pub textures: Vec<(String, u64)>,
+  pub attributes: Vec<(String, String)>,
+  pub buffer_id: u64,
+  pub topology: String,
+  pub draw_count: i32,
+  pub depth: bool,
+  pub clear_color: [f32; 4],
+}
+
+/// Owned form of `context::TargetSpec`: a shader/pipeline target over an
+/// already-compiled program, so everything of PipelineSpecOwned except the
+/// sources. The mesh fields are meaningful only for pipeline programs; the UI
+/// side rejects them for fragment programs before sending.
+pub(crate) struct TargetSpecOwned {
+  pub width: u32,
+  pub height: u32,
   pub params: Vec<(String, f32)>,
   pub textures: Vec<(String, u64)>,
   pub attributes: Vec<(String, String)>,
@@ -84,6 +104,28 @@ pub(crate) enum RasterCmd {
   },
   /// Compile a vertex+fragment pipeline, render once, adopt the target.
   CreatePipelineTexture { id: u64, spec: PipelineSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Compile a single raw stage into the stage registry: a complete GLSL ES
+  /// source, or one that explicitly asked for the standard header. Compile
+  /// errors must reach JS, hence the reply.
+  CompileStage { id: u64, stage: ShaderStage, source: String, header: bool, reply: mpsc::Sender<Result<(), String>> },
+  /// Link two compiled stages into a program in the program registry. The
+  /// stages remain usable for further links. Link errors reach JS via the
+  /// reply.
+  LinkProgram { id: u64, vertex: u64, fragment: u64, reply: mpsc::Sender<Result<(), String>> },
+  /// Delete a compiled stage. Programs linked from it are unaffected (a
+  /// linked program keeps its own compiled copies).
+  DestroyStage { id: u64 },
+  /// Create a target over an already-compiled program, render it once, adopt
+  /// it. The target shares the program; many targets may share one.
+  CreateShaderTarget { id: u64, program: u64, spec: TargetSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Drop a program from the registry. Targets created from it keep it alive
+  /// (and keep rendering); the GL program is deleted when the last user goes.
+  DestroyProgram { id: u64 },
+  /// Declare (Some) or clear (None) the window shader. Fire-and-forget on
+  /// this ordered channel, so it applies exactly between two frames. The
+  /// declared program is held by Rc while active; the layer texture is
+  /// allocated lazily by the first shaded frame and freed on clear.
+  SetWindowShader { shader: Option<WindowShader> },
   /// Re-render an existing shader/pipeline target with new params.
   UpdateShaderParams { id: u64, params: Vec<(String, f32)> },
   /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
@@ -186,12 +228,41 @@ pub(crate) struct RasterState {
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
+  // Shared shader/pipeline programs in their own id space. Targets hold their
+  // program by Rc, so removal here only deletes the GL program once no target
+  // uses it (see shader::release_program).
+  programs: HashMap<u64, Rc<ShaderProgram>>,
+  // Raw compiled stages in their own id space, inputs to LinkProgram. The GL
+  // shader object is deleted on DestroyStage; linked programs are unaffected.
+  stages: HashMap<u64, glow::Shader>,
   // Vertex buffers pipelines draw from, in their own id space.
   buffers: HashMap<u64, GpuBuffer>,
+  // The declared window shader, with its retained layer texture. None = the
+  // frame resolves straight to FBO 0 (the free path).
+  window_shader: Option<WindowShaderState>,
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
   wake: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+/// The active window shader: the declared spec, the program it resolved to
+/// (held by Rc so DestroyProgram cannot pull it out from under the pass), and
+/// the retained layer target the frame resolves into. The layer is allocated
+/// by the first shaded frame, reallocated on window resize, and freed when
+/// the shader is cleared; it is never adopted into Impeller and has no
+/// registry id - it exists only as the source of the shader pass.
+struct WindowShaderState {
+  spec: WindowShader,
+  program: Rc<ShaderProgram>,
+  layer: Option<LayerTarget>,
+}
+
+struct LayerTarget {
+  tex: glow::Texture,
+  fbo: glow::Framebuffer,
+  width: u32,
+  height: u32,
 }
 
 /// Reply to an RPC; a dead requester (UI thread shutting down) is not an error.
@@ -266,7 +337,10 @@ impl RasterState {
       present_fence: None,
       textures: HashMap::new(),
       shaders: HashMap::new(),
+      programs: HashMap::new(),
+      stages: HashMap::new(),
       buffers: HashMap::new(),
+      window_shader: None,
       tx,
       wake,
     }
@@ -318,6 +392,31 @@ impl RasterState {
           }
           RasterCmd::CreatePipelineTexture { id, spec, reply: tx } => {
             reply(tx, self.create_pipeline_texture(id, &spec));
+          }
+          RasterCmd::CompileStage { id, stage, source, header, reply: tx } => {
+            let result = crate::shader::compile_stage(&self.gl, stage, &source, header).map(|shader| {
+              self.stages.insert(id, shader);
+            });
+            reply(tx, result);
+          }
+          RasterCmd::LinkProgram { id, vertex, fragment, reply: tx } => {
+            reply(tx, self.link_program(id, vertex, fragment));
+          }
+          RasterCmd::DestroyStage { id } => {
+            if let Some(shader) = self.stages.remove(&id) {
+              crate::shader::delete_stage(&self.gl, shader);
+            }
+          }
+          RasterCmd::CreateShaderTarget { id, program, spec, reply: tx } => {
+            reply(tx, self.create_shader_target(id, program, &spec));
+          }
+          RasterCmd::DestroyProgram { id } => {
+            if let Some(program) = self.programs.remove(&id) {
+              release_program(&self.gl, program);
+            }
+          }
+          RasterCmd::SetWindowShader { shader } => {
+            self.set_window_shader(shader);
           }
           RasterCmd::UpdateShaderParams { id, params } => match self.shaders.get(&id) {
             Some(shader) => {
@@ -504,12 +603,110 @@ impl RasterState {
     if size.width <= 0 || size.height <= 0 {
       return false;
     }
+    if self.window_shader.is_some() {
+      match self.draw_to_window_shaded(dl, size) {
+        Ok(()) => return true,
+        // Fall back to the plain path so the app stays visible; the layer or
+        // pass failure is a diagnostic, not a black window.
+        Err(e) => log::warn!("[alloy] window shader pass failed: {e}; drawing without it"),
+      }
+    }
     match gl::render_display_list_to_window(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, dl, size) {
       Ok(()) => true,
       Err(e) => {
         log::warn!("[alloy] frame draw failed at {}x{}: {e}; skipping frame", size.width, size.height);
         false
       }
+    }
+  }
+
+  /// Shader-active frame: rasterize the display list - flipped, so the layer
+  /// reads top-left origin like every sampled texture - through the rig into
+  /// the retained layer, then draw the window shader program over it straight
+  /// into FBO 0 (no intermediate target, no closing blit). The program's
+  /// vertex stage is what flips back to window orientation.
+  fn draw_to_window_shaded(&mut self, dl: &DisplayList, size: ISize) -> Result<(), String> {
+    let (width, height) = (size.width as u32, size.height as u32);
+    let flipped = flip_for_fbo(dl, height)?;
+    let state = self.window_shader.as_mut().expect("shaded draw requires a declared window shader");
+
+    // (Re)allocate the layer at the window's pixel size. A resize drops and
+    // recreates it: that is resize-frequency churn, not the per-frame kind
+    // the rig exists to avoid.
+    if state.layer.as_ref().is_none_or(|l| l.width != width || l.height != height) {
+      if let Some(old) = state.layer.take() {
+        unsafe {
+          glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+          glow::HasContext::delete_texture(&self.gl, old.tex);
+        }
+      }
+      let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+      state.layer = Some(LayerTarget { tex, fbo, width, height });
+    }
+    let layer = state.layer.as_ref().expect("layer allocated above");
+
+    gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, layer.fbo)?;
+
+    // The layer binds as uSource; extra declared inputs resolve through the
+    // registry by id, a missing id dropping to unbound (samples black), the
+    // same contract as shader targets.
+    let mut textures: Vec<(String, glow::Texture)> = vec![("uSource".to_string(), layer.tex)];
+    for (name, id) in &state.spec.textures {
+      match self.textures.get(id) {
+        Some(gpu) => textures.push((name.clone(), gpu.gl_texture)),
+        None => log::warn!("[alloy] window shader input '{name}': texture {id} not found"),
+      }
+    }
+    crate::shader::render_program_to_window(
+      &self.gl,
+      &state.program,
+      width,
+      height,
+      &state.spec.params,
+      &textures,
+      state.spec.vertex_count,
+    );
+    Ok(())
+  }
+
+  /// Apply a SetWindowShader command. A redeclaration with the same program
+  /// keeps the retained layer and just adopts the new params/textures/vertex
+  /// count (the per-frame params path); a different program releases the old
+  /// state and starts fresh. None clears everything.
+  fn set_window_shader(&mut self, shader: Option<WindowShader>) {
+    let Some(spec) = shader else {
+      self.clear_window_shader();
+      return;
+    };
+    if let Some(state) = &mut self.window_shader {
+      if state.spec.program == spec.program {
+        state.spec = spec;
+        return;
+      }
+    }
+    let Some(program) = self.programs.get(&spec.program) else {
+      // The UI side validated against its mirror; a miss here means the
+      // mirrors diverged. Keep whatever was active rather than flashing the
+      // unshaded frame.
+      log::warn!("[alloy] window shader: program {} not found", spec.program);
+      return;
+    };
+    let program = program.clone();
+    self.clear_window_shader();
+    self.window_shader = Some(WindowShaderState { spec, program, layer: None });
+  }
+
+  /// Free the window shader state: the layer's GL objects die here (they were
+  /// never adopted or registered), the program only if nothing else holds it.
+  fn clear_window_shader(&mut self) {
+    if let Some(state) = self.window_shader.take() {
+      if let Some(layer) = state.layer {
+        unsafe {
+          glow::HasContext::delete_framebuffer(&self.gl, layer.fbo);
+          glow::HasContext::delete_texture(&self.gl, layer.tex);
+        }
+      }
+      release_program(&self.gl, state.program);
     }
   }
 
@@ -653,28 +850,8 @@ impl RasterState {
   }
 
   fn create_pipeline_texture(&mut self, id: u64, spec: &PipelineSpecOwned) -> Result<Texture, String> {
-    let mut attrs = Vec::with_capacity(spec.attributes.len());
-    for (name, fmt) in &spec.attributes {
-      attrs.push((name.clone(), crate::shader::AttrFormat::parse(fmt)?));
-    }
-    let topology = crate::shader::parse_topology(&spec.topology)?;
-
-    let vbo = if spec.buffer_id != 0 {
-      Some(self.buffers.get(&spec.buffer_id).ok_or_else(|| format!("buffer {} not found", spec.buffer_id))?)
-    } else {
-      None
-    };
-    // A negative draw count means "the whole buffer": derived from the
-    // buffer size and the interleaved stride.
-    let draw_count = if spec.draw_count >= 0 {
-      spec.draw_count
-    } else {
-      let stride = crate::shader::vertex_stride(&attrs);
-      match vbo {
-        Some(b) if stride > 0 => (b.size / stride as usize) as i32,
-        _ => 0,
-      }
-    };
+    let (attrs, topology, vbo, draw_count) =
+      resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.width,
@@ -683,7 +860,7 @@ impl RasterState {
       &spec.fragment_src,
       spec.textures.clone(),
       &attrs,
-      vbo.map(|b| b.vbo),
+      vbo,
       spec.buffer_id,
       topology,
       draw_count,
@@ -693,6 +870,56 @@ impl RasterState {
     let resolved = resolve_sampler_bindings(&self.textures, &shader);
     shader.render(&self.gl, &spec.params, &resolved);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt pipeline texture failed")
+  }
+
+  /// Link two compiled stages from the stage registry into a registered
+  /// program. The UI side validated the ids and stage kinds against its
+  /// mirror; a miss here means the mirrors diverged.
+  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64) -> Result<(), String> {
+    let vs = *self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
+    let fs = *self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
+    let program = ShaderProgram::from_stages(&self.gl, vs, fs)?;
+    self.programs.insert(id, Rc::new(program));
+    Ok(())
+  }
+
+  /// Create a target over a registered program (the target half of the fused
+  /// create paths), render it once, and adopt it under texture id `id`.
+  fn create_shader_target(&mut self, id: u64, program_id: u64, spec: &TargetSpecOwned) -> Result<Texture, String> {
+    let program = self.programs.get(&program_id).ok_or_else(|| format!("program {program_id} not found"))?.clone();
+    let shader = if program.is_pipeline() {
+      let (attrs, topology, vbo, draw_count) =
+        resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
+      ShaderTexture::from_pipeline_program(
+        &self.gl,
+        program,
+        Some(program_id),
+        spec.width,
+        spec.height,
+        spec.textures.clone(),
+        &attrs,
+        vbo,
+        spec.buffer_id,
+        topology,
+        draw_count,
+        spec.depth,
+        spec.clear_color,
+      )
+      .map_err(|(_, e)| e)?
+    } else {
+      ShaderTexture::from_fragment_program(
+        &self.gl,
+        program,
+        Some(program_id),
+        spec.width,
+        spec.height,
+        spec.textures.clone(),
+      )
+      .map_err(|(_, e)| e)?
+    };
+    let resolved = resolve_sampler_bindings(&self.textures, &shader);
+    shader.render(&self.gl, &spec.params, &resolved);
+    self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
   }
 
   /// Adopt a freshly rendered shader/pipeline target into Impeller and record
@@ -812,6 +1039,7 @@ impl RasterState {
       .map(|(texture_id, shader)| GpuPipelineInfo {
         texture_id: *texture_id,
         kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
+        program_id: shader.program_id(),
         buffer_id: shader.buffer_id(),
         topology: shader.topology_name(),
         draw_count: shader.draw_count(),
@@ -823,8 +1051,54 @@ impl RasterState {
       .collect();
     pipelines.sort_by_key(|p| p.texture_id);
 
-    GpuResources { textures, buffers, pipelines }
+    let mut programs: Vec<GpuProgramInfo> = self
+      .programs
+      .iter()
+      .map(|(id, program)| GpuProgramInfo { id: *id, kind: if program.is_pipeline() { "pipeline" } else { "fragment" } })
+      .collect();
+    programs.sort_by_key(|p| p.id);
+
+    let window_shader = self.window_shader.as_ref().map(|state| GpuWindowShaderInfo {
+      program_id: state.spec.program,
+      width: state.layer.as_ref().map_or(0, |l| l.width),
+      height: state.layer.as_ref().map_or(0, |l| l.height),
+    });
+
+    GpuResources { textures, buffers, pipelines, programs, window_shader }
   }
+}
+
+/// Resolve the mesh half of a pipeline (target) spec against the buffer
+/// registry: parsed attribute formats, GL topology, the source buffer's GL
+/// name, and the effective draw count (a negative request means "the whole
+/// buffer", derived from buffer size / vertex stride).
+fn resolve_mesh_spec(
+  buffers: &HashMap<u64, GpuBuffer>,
+  attributes: &[(String, String)],
+  topology: &str,
+  buffer_id: u64,
+  draw_count: i32,
+) -> Result<(Vec<(String, AttrFormat)>, u32, Option<glow::Buffer>, i32), String> {
+  let mut attrs = Vec::with_capacity(attributes.len());
+  for (name, fmt) in attributes {
+    attrs.push((name.clone(), AttrFormat::parse(fmt)?));
+  }
+  let topology = crate::shader::parse_topology(topology)?;
+  let buffer = if buffer_id != 0 {
+    Some(buffers.get(&buffer_id).ok_or_else(|| format!("buffer {buffer_id} not found"))?)
+  } else {
+    None
+  };
+  let count = if draw_count >= 0 {
+    draw_count
+  } else {
+    let stride = crate::shader::vertex_stride(&attrs);
+    match buffer {
+      Some(b) if stride > 0 => (b.size / stride as usize) as i32,
+      _ => 0,
+    }
+  };
+  Ok((attrs, topology, buffer.map(|b| b.vbo), count))
 }
 
 /// Map a shader's (name -> source texture id) bindings to live GL textures,

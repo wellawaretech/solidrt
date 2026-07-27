@@ -140,6 +140,14 @@ pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> &'a str {
   value.as_str().unwrap_or_else(|| panic!("{what} must be a string"))
 }
 
+// { name: number } shader uniform values; non-numeric entries are skipped.
+pub(super) fn decode_params(value: &PropValue) -> Vec<(String, f32)> {
+  value
+    .as_map()
+    .map(|entries| entries.iter().filter_map(|(k, v)| v.as_f64().map(|n| (k.clone(), n as f32))).collect())
+    .unwrap_or_default()
+}
+
 // JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
 pub(super) fn decode_color(value: &PropValue) -> Color {
   let rgba = value.as_f64().expect("color must be a number") as u32;

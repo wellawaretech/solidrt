@@ -275,6 +275,36 @@ export interface WindowProps extends LayoutProps, PointerProps {
   children?: Children
   title?: string
   fullscreen?: boolean
+  /**
+   * Run the window's finished frame through a GPU program as the last step
+   * before it reaches the screen. While declared, the frame renders into a
+   * runtime-owned layer texture the program samples; removing the prop
+   * restores the direct path and frees the layer. Everything else about the
+   * program (compiling, linking, lifetime) is the raw shading layer's:
+   * see compileShader/linkProgram.
+   */
+  shader?: WindowShaderProps | null
+}
+
+/**
+ * A window shader declaration. The program reads the frame through
+ * `uniform sampler2D uSource` (top-left origin, like every sampled texture -
+ * so a vertex stage mapping it onto the window flips the v coordinate) and
+ * is drawn attributeless as triangles, `vertexCount` vertices fetched via
+ * gl_VertexID. `iResolution`, filled by name, is the window size in physical
+ * pixels (the pass covers exactly that). The window is cleared to opaque
+ * black first, so geometry that does not cover it still presents a defined
+ * frame.
+ */
+export interface WindowShaderProps {
+  /** Linked program handle from linkProgram. */
+  program: number
+  /** Float uniforms filled by name, paced to the next real repaint. */
+  params?: Record<string, number>
+  /** Extra sampler2D inputs: uniform name to texture id. */
+  textures?: Record<string, number>
+  /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
+  vertexCount?: number
 }
 
 export interface ViewProps extends LayoutProps, TransformProps, PointerProps {

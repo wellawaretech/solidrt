@@ -26,24 +26,43 @@ consequences); subtree effects are a separate item
 filters (okf/backlog/impeller-backdrop-filters.md); holding the layer and a
 `uPrevious` previous-frame layer are in-plan stages, not deferred.
 
-## Status: stage 1 (frame inversion) implemented 2026-07-27
+## Status: stages 1 and 2 implemented 2026-07-27
 
-Verification pending (needs a desktop screenshot comparison, resize and
-background/resume walks, playback byte-identity, and an Android run; MCP
-get_snapshot renders offscreen and cannot see the present path). What
-landed: the window is created single-sample, every frame rasterizes into
-the shared `gl::OffscreenRig` and resolves into FBO 0 via
-`gl::render_display_list_to_window`; `window_surface` /
-`ensure_window_surface` and the `disable_msaa` window-creation retry are
-deleted. One deviation from the draft, chosen deliberately: the frame path
-draws the display list unflipped and the resolve blit is a straight 1:1
-copy - Impeller treats every wrapped FBO as a bottom-up window target, and
-a Y-reversed blit from a multisampled source is a driver-inconsistent
-operation some GLES implementations reject, so it is never issued. Only
-*sampled* offscreen content is top-left origin; effect-active frames (stage
-2) will flip the display list, with the single flip to FBO 0 in the effect
-pass's vertex stage. Stages 2-4 (effect prop + compileShader split, hold +
-uPrevious, clean-tree raster skip) are not started.
+Stage 1 (frame inversion) verified on desktop Linux the same day
+(orientation, 60fps, launcher AA through the rig resolve, resize to
+full-screen); still open are Android and Windows/ANGLE runs, playback
+byte-identity, and minimize/restore plus background/resume walks. MCP
+get_snapshot renders offscreen and cannot see the present path, so those
+runs need real screenshots. What landed: the window is created
+single-sample, every frame rasterizes into the shared `gl::OffscreenRig`
+and resolves into FBO 0 via `gl::render_display_list_to_window`;
+`window_surface` / `ensure_window_surface` and the `disable_msaa`
+window-creation retry are deleted. One deviation from the draft, chosen
+deliberately: the frame path draws the display list unflipped and the
+resolve blit is a straight 1:1 copy - Impeller treats every wrapped FBO as
+a bottom-up window target, and a Y-reversed blit from a multisampled source
+is a driver-inconsistent operation some GLES implementations reject, so it
+is never issued. Only *sampled* offscreen content is top-left origin;
+shader-active frames flip the display list, with the single flip back in
+the pass's vertex stage.
+
+Stage 2 landed in two halves the same day: the raw shading layer
+(`compileShader(stage, source, { header? })` / `linkProgram` /
+`createShaderTarget` / `destroyShader` / `destroyProgram`, with
+createShader/createPipeline untouched as fused conveniences - their
+refactor is okf/backlog/gpu-fused-create-refactor.md), then the window
+pass: a `shader` prop on `<window>` (named shader, not effect - "effect" is
+overloaded; `filter` stays reserved for Impeller backdrop filters) taking
+`{ program, params?, textures?, vertexCount? }`. The frame resolves into a
+runtime-owned, exactly-window-sized layer texture and the program draws
+attributeless straight into FBO 0 with `uSource`/`iResolution` filled by
+name. Verified 2026-07-27 on desktop Linux AND Android via
+packages/core/examples/window-shader.tsx: warp upright and correct,
+identity pass indistinguishable from no shader, resize-while-active clean.
+The Android run also covers stage 1's inverted frame path on a tiler; still
+open are Windows/ANGLE, playback byte-identity, and minimize/restore plus
+background/resume walks. Stages 3-4 (hold + uPrevious, clean-tree raster
+skip) are not started.
 
 There is no way to run a shader over what is already on screen. An app can
 warp, refract or dissolve GPU content it produced itself (bind another

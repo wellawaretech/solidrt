@@ -36,6 +36,8 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `image.tsx` - `createImage` (async value: fetch + decode + upload) read inside a `<Loading>` boundary and shown with `<texture>`.
 - `inline-image.tsx` - bytes already in memory: `decodeImage` + `createTexture` (both synchronous) show an image with no `<Loading>` boundary. The sync counterpart to `image.tsx`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop.
+- `gpu-raw-program.tsx` - the raw shading layer: compileShader/linkProgram/createShaderTarget, one vertex stage shared by two programs, with and without the standard header.
+- `window-shader.tsx` - the `shader` prop on `<window>`: the finished frame drawn through a raw-linked warp program before present, click to toggle between warp and identity.
 
 ## Sound
 - `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. Points to `createSoundStream` for long tracks streamed from a path.

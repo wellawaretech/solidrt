@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
-use crate::raster::{PipelineSpecOwned, RasterCmd};
+use crate::raster::{PipelineSpecOwned, RasterCmd, TargetSpecOwned};
 use crate::texture::{TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -24,6 +24,14 @@ pub struct Context {
   // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
   // Enough to validate params/draw-count updates without an RPC.
   shader_kinds: RefCell<HashMap<u64, bool>>,
+  // UI-side mirror of the raster thread's program registry: id -> is_pipeline.
+  // Programs are their own id space (like buffers), separate from texture ids.
+  program_kinds: RefCell<HashMap<u64, bool>>,
+  next_program_id: Cell<u64>,
+  // UI-side mirror of the raster thread's raw stage registry: id -> stage,
+  // for validating link_program's arguments without an RPC.
+  stage_kinds: RefCell<HashMap<u64, crate::shader::ShaderStage>>,
+  next_stage_id: Cell<u64>,
   // UI-side mirror of the raster thread's buffer sizes, for bounds validation
   // and gpu_buffer_len.
   buffer_sizes: RefCell<HashMap<u64, usize>>,
@@ -66,6 +74,41 @@ pub struct PipelineSpec<'a> {
   pub clear_color: [f32; 4],
 }
 
+/// Everything `create_shader_target` needs to build a target over an
+/// already-compiled program: `PipelineSpec` minus the sources. The mesh
+/// fields apply to pipeline programs only and must be at their defaults
+/// (empty attributes, buffer 0, "triangles", -1, false, zeros) for a
+/// fragment program.
+pub struct TargetSpec<'a> {
+  pub width: u32,
+  pub height: u32,
+  pub params: &'a [(String, f32)],
+  pub textures: &'a [(String, u64)],
+  pub attributes: &'a [(String, String)],
+  pub buffer_id: u64,
+  pub topology: &'a str,
+  pub draw_count: i32,
+  pub depth: bool,
+  pub clear_color: [f32; 4],
+}
+
+/// The window shader declaration: a linked program drawn over the window's
+/// finished frame as the last step before present. The frame resolves into a
+/// runtime-owned layer texture the program samples as `uniform sampler2D
+/// uSource` (top-left origin, like every sampled texture); `iResolution` is
+/// the window in physical pixels. Drawn attributeless as triangles at
+/// `vertex_count` vertices (3 = the covering triangle).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowShader {
+  /// Registered program handle (see `link_shader_program`).
+  pub program: u64,
+  /// Float uniforms filled by name.
+  pub params: Vec<(String, f32)>,
+  /// Extra sampler2D inputs: uniform name -> texture registry id.
+  pub textures: Vec<(String, u64)>,
+  pub vertex_count: i32,
+}
+
 /// A point-in-time inventory of the GPU bookkeeping, for resource
 /// introspection (the dev server's gpu query). Plain data only, so consumers
 /// stay free of GL types.
@@ -73,6 +116,16 @@ pub struct GpuResources {
   pub textures: Vec<GpuTextureInfo>,
   pub buffers: Vec<GpuBufferInfo>,
   pub pipelines: Vec<GpuPipelineInfo>,
+  pub programs: Vec<GpuProgramInfo>,
+  pub window_shader: Option<GpuWindowShaderInfo>,
+}
+
+/// The active window shader: its program and the retained layer's pixel size
+/// (0x0 until the first shaded frame allocates it).
+pub struct GpuWindowShaderInfo {
+  pub program_id: u64,
+  pub width: u32,
+  pub height: u32,
 }
 
 pub struct GpuTextureInfo {
@@ -88,11 +141,20 @@ pub struct GpuBufferInfo {
   pub byte_length: usize,
 }
 
+pub struct GpuProgramInfo {
+  pub id: u64,
+  /// "pipeline" (vertex+fragment) or "fragment" (fullscreen pass).
+  pub kind: &'static str,
+}
+
 pub struct GpuPipelineInfo {
   /// The registry id its output texture is sampleable under.
   pub texture_id: u64,
   /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
   pub kind: &'static str,
+  /// The shared program backing this target; None when it was created through
+  /// the fused path and owns its program alone.
+  pub program_id: Option<u64>,
   pub buffer_id: Option<u64>,
   pub topology: Option<&'static str>,
   pub draw_count: Option<i32>,
@@ -132,6 +194,10 @@ impl Context {
       raster_tx,
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
+      program_kinds: RefCell::new(HashMap::new()),
+      next_program_id: Cell::new(1),
+      stage_kinds: RefCell::new(HashMap::new()),
+      next_stage_id: Cell::new(1),
       buffer_sizes: RefCell::new(HashMap::new()),
       next_buffer_id: Cell::new(1),
       cameras: CameraRegistry::default(),
@@ -436,6 +502,122 @@ impl Context {
     Ok(id)
   }
 
+  /// Compile a single raw shader stage, returning its stage id (its own id
+  /// space). The source is complete GLSL ES unless `header` explicitly asks
+  /// for the standard header (see `shader::compile_stage`). Compile errors
+  /// surface here, synchronously, at a call site the app chose. Free with
+  /// `destroy_shader_stage` - safe right after linking.
+  pub fn compile_shader_stage(
+    &self,
+    stage: crate::shader::ShaderStage,
+    source: &str,
+    header: bool,
+  ) -> Result<u64, String> {
+    let id = self.next_stage_id.get();
+    self.rpc(|reply| RasterCmd::CompileStage { id, stage, source: source.to_string(), header, reply })??;
+    self.next_stage_id.set(id + 1);
+    self.stage_kinds.borrow_mut().insert(id, stage);
+    Ok(id)
+  }
+
+  /// Link a compiled vertex and fragment stage into a shared program,
+  /// returning its program id (a separate id space from textures, like
+  /// buffers). The program backs any number of targets via
+  /// `create_shader_target`, is freed with `destroy_shader_program`, and link
+  /// errors surface here, synchronously. The stages remain usable for further
+  /// links.
+  pub fn link_shader_program(&self, vertex: u64, fragment: u64) -> Result<u64, String> {
+    let kinds = self.stage_kinds.borrow();
+    match kinds.get(&vertex) {
+      None => return Err(format!("shader {vertex} not found")),
+      Some(crate::shader::ShaderStage::Vertex) => {}
+      Some(s) => return Err(format!("shader {vertex} is a {} stage, expected vertex", s.name())),
+    }
+    match kinds.get(&fragment) {
+      None => return Err(format!("shader {fragment} not found")),
+      Some(crate::shader::ShaderStage::Fragment) => {}
+      Some(s) => return Err(format!("shader {fragment} is a {} stage, expected fragment", s.name())),
+    }
+    drop(kinds);
+    let id = self.next_program_id.get();
+    self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, reply })??;
+    self.next_program_id.set(id + 1);
+    // Raw-linked programs carry their own vertex stage: pipeline-kind.
+    self.program_kinds.borrow_mut().insert(id, true);
+    Ok(id)
+  }
+
+  /// Delete a compiled stage and retire its id. Programs linked from it are
+  /// unaffected: a linked program keeps its own compiled copies.
+  pub fn destroy_shader_stage(&self, id: u64) {
+    self.stage_kinds.borrow_mut().remove(&id);
+    self.send(RasterCmd::DestroyStage { id });
+  }
+
+  /// Create a render target over an already-compiled program and register the
+  /// output exactly like `create_shader_texture` (same texture id space:
+  /// params updates, `setShaderSize`, `<texture src>` and `destroy_texture`
+  /// all apply). Many targets may share one program. The mesh fields of
+  /// `spec` apply only to pipeline programs; a fragment program with any of
+  /// them off their defaults is an error.
+  pub fn create_shader_target(&self, program: u64, spec: &TargetSpec) -> Result<u64, String> {
+    let is_pipeline =
+      *self.program_kinds.borrow().get(&program).ok_or_else(|| format!("program {program} not found"))?;
+    if !is_pipeline
+      && (!spec.attributes.is_empty()
+        || spec.buffer_id != 0
+        || spec.depth
+        || spec.draw_count >= 0
+        || spec.topology != "triangles")
+    {
+      return Err("pipeline options given, but the program is a fragment shader".to_string());
+    }
+    let id = self.textures.allocate_id();
+    let owned = TargetSpecOwned {
+      width: spec.width,
+      height: spec.height,
+      params: spec.params.to_vec(),
+      textures: spec.textures.to_vec(),
+      attributes: spec.attributes.to_vec(),
+      buffer_id: spec.buffer_id,
+      topology: spec.topology.to_string(),
+      draw_count: spec.draw_count,
+      depth: spec.depth,
+      clear_color: spec.clear_color,
+    };
+    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, program, spec: owned, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
+    self.shader_kinds.borrow_mut().insert(id, is_pipeline);
+    Ok(id)
+  }
+
+  /// Drop a shared program's registry entry and retire its id. Targets
+  /// created from it keep rendering - they hold the program until they are
+  /// destroyed - and the GL program is deleted once the last user is gone, so
+  /// either destruction order is safe.
+  pub fn destroy_shader_program(&self, id: u64) {
+    self.program_kinds.borrow_mut().remove(&id);
+    self.send(RasterCmd::DestroyProgram { id });
+  }
+
+  /// Declare (or clear, with None) the window shader: the frame then resolves
+  /// into the runtime-owned layer and `shader.program` draws over it into the
+  /// window as the last step before present (see `WindowShader`). Fire-and-
+  /// forget on the ordered frame channel, so a change lands cleanly between
+  /// two frames; the raster thread holds the program while declared, so
+  /// destroying its handle keeps the effect running until it is re-declared
+  /// or cleared. The caller must request a frame. Errs on an unknown program
+  /// handle.
+  pub fn set_window_shader(&self, shader: Option<WindowShader>) -> Result<(), String> {
+    if let Some(ws) = &shader {
+      if !self.program_kinds.borrow().contains_key(&ws.program) {
+        return Err(format!("program {} not found", ws.program));
+      }
+    }
+    self.send(RasterCmd::SetWindowShader { shader });
+    Ok(())
+  }
+
   /// Set a pipeline texture's vertex draw count and re-render it with its
   /// last-applied params. The caller must request a frame.
   pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
@@ -455,9 +637,13 @@ impl Context {
   /// bookkeeping (draw state, layout, bindings, last-applied params). Sorted
   /// by id for stable output.
   pub fn gpu_resources(&self) -> GpuResources {
-    self
-      .rpc(|reply| RasterCmd::Resources { reply })
-      .unwrap_or_else(|_| GpuResources { textures: Vec::new(), buffers: Vec::new(), pipelines: Vec::new() })
+    self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
+      textures: Vec::new(),
+      buffers: Vec::new(),
+      pipelines: Vec::new(),
+      programs: Vec::new(),
+      window_shader: None,
+    })
   }
 
   /// Read back part of a vertex buffer's contents by registry id.

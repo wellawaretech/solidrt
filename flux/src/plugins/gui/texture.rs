@@ -31,6 +31,10 @@ struct TextureInner {
   created: RefCell<HashSet<u64>>,
   // Same bookkeeping for vertex buffers (their own id space in alloy).
   created_buffers: RefCell<HashSet<u64>>,
+  // Same bookkeeping for linked programs and compiled raw stages (each their
+  // own id space in alloy).
+  created_programs: RefCell<HashSet<u64>>,
+  created_stages: RefCell<HashSet<u64>>,
   // captureSnapshot is async: alloy services the request on a later paint pass
   // and invokes our completion callback (during `deliver_captures`), which moves
   // the outcome plus the promise sides here. `tick` then drains this and settles
@@ -48,12 +52,20 @@ struct CaptureSettle {
 impl Drop for TextureInner {
   fn drop(&mut self) {
     // Textures first: destroying a pipeline before its buffer is the
-    // documented order for destroy_gpu_buffer.
+    // documented order for destroy_gpu_buffer. Programs and stages are
+    // order-safe (targets keep their program alive, programs keep their own
+    // compiled stage copies), released last for symmetry.
     for id in self.created.borrow_mut().drain() {
       self.atx.destroy_texture(id);
     }
     for id in self.created_buffers.borrow_mut().drain() {
       self.atx.destroy_gpu_buffer(id);
+    }
+    for id in self.created_programs.borrow_mut().drain() {
+      self.atx.destroy_shader_program(id);
+    }
+    for id in self.created_stages.borrow_mut().drain() {
+      self.atx.destroy_shader_stage(id);
     }
   }
 }
@@ -74,6 +86,71 @@ fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
   obj.props::<String, u64>().filter_map(|r| r.ok()).collect()
 }
 
+// The target-shaped options shared by createPipeline and createShaderTarget:
+// params/textures plus the mesh fields (meaningful for pipelines only, left
+// at their defaults otherwise).
+struct TargetOpts {
+  params: Vec<(String, f32)>,
+  textures: Vec<(String, u64)>,
+  attributes: Vec<(String, String)>,
+  buffer_id: u64,
+  topology: String,
+  draw_count: i32,
+  depth: bool,
+  clear_color: [f32; 4],
+}
+
+// Decode the shared opts object: { params, textures, attributes: [{name,
+// format}], buffer, topology, vertexCount, depth, clearColor }, everything
+// optional. Marshalling only; alloy validates.
+fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts> {
+  let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
+    match opts {
+      Some(o) => o.get::<_, Option<Object>>(name),
+      None => Ok(None),
+    }
+  };
+  let params = get_obj("params")?.as_ref().map(collect_params).unwrap_or_default();
+  let textures = get_obj("textures")?.as_ref().map(collect_textures).unwrap_or_default();
+
+  let mut attributes: Vec<(String, String)> = Vec::new();
+  if let Some(opts) = opts {
+    if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
+      for item in arr.iter::<Object>() {
+        let entry = item?;
+        attributes.push((entry.get("name")?, entry.get("format")?));
+      }
+    }
+  }
+
+  let buffer_id = match opts {
+    Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
+    None => 0,
+  };
+  let topology = match opts {
+    Some(o) => o.get::<_, Option<String>>("topology")?.unwrap_or_else(|| "triangles".to_string()),
+    None => "triangles".to_string(),
+  };
+  let draw_count = match opts {
+    Some(o) => o.get::<_, Option<i32>>("vertexCount")?.unwrap_or(-1),
+    None => -1,
+  };
+  let depth = match opts {
+    Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
+    None => false,
+  };
+  let mut clear_color = [0f32; 4];
+  if let Some(opts) = opts {
+    if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
+      for (slot, v) in clear_color.iter_mut().zip(arr) {
+        *slot = v as f32;
+      }
+    }
+  }
+
+  Ok(TargetOpts { params, textures, attributes, buffer_id, topology, draw_count, depth, clear_color })
+}
+
 /// Store the texture plugin state (alloy context, platform, and the created-id
 /// set for reload cleanup) in userdata, before any module import. The
 /// `flux:gpu` surface is registered separately via `module_override`.
@@ -84,6 +161,8 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformConte
       platform,
       created: RefCell::new(HashSet::new()),
       created_buffers: RefCell::new(HashSet::new()),
+      created_programs: RefCell::new(HashSet::new()),
+      created_stages: RefCell::new(HashSet::new()),
       capture_settle: RefCell::new(Vec::new()),
     })))
     .expect("store texture state");
@@ -102,6 +181,11 @@ impl ModuleDef for GpuModule {
     decl.declare("resizeTexture")?;
     decl.declare("destroyTexture")?;
     decl.declare("createShader")?;
+    decl.declare("compileShader")?;
+    decl.declare("linkProgram")?;
+    decl.declare("destroyShader")?;
+    decl.declare("createShaderTarget")?;
+    decl.declare("destroyProgram")?;
     decl.declare("setShaderParams")?;
     decl.declare("setShaderTextures")?;
     decl.declare("setShaderSize")?;
@@ -287,65 +371,21 @@ impl ModuleDef for GpuModule {
             height: u32,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let opts = opts.0;
-        let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
-          match &opts {
-            Some(o) => o.get::<_, Option<Object>>(name),
-            None => Ok(None),
-          }
-        };
-        let params = get_obj("params")?.as_ref().map(collect_params).unwrap_or_default();
-        let textures = get_obj("textures")?.as_ref().map(collect_textures).unwrap_or_default();
-
-        let mut attributes: Vec<(String, String)> = Vec::new();
-        if let Some(opts) = &opts {
-          if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
-            for item in arr.iter::<Object>() {
-              let entry = item?;
-              attributes.push((entry.get("name")?, entry.get("format")?));
-            }
-          }
-        }
-
-        let buffer_id = match &opts {
-          Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
-          None => 0,
-        };
-        let topology = match &opts {
-          Some(o) => o.get::<_, Option<String>>("topology")?.unwrap_or_else(|| "triangles".to_string()),
-          None => "triangles".to_string(),
-        };
-        let draw_count = match &opts {
-          Some(o) => o.get::<_, Option<i32>>("vertexCount")?.unwrap_or(-1),
-          None => -1,
-        };
-        let depth = match &opts {
-          Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
-          None => false,
-        };
-        let mut clear_color = [0f32; 4];
-        if let Some(opts) = &opts {
-          if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
-            for (slot, v) in clear_color.iter_mut().zip(arr) {
-              *slot = v as f32;
-            }
-          }
-        }
-
+        let o = collect_target_opts(&opts.0)?;
         let id = create_pipeline_atx
           .create_pipeline_texture(&alloy::PipelineSpec {
             width,
             height,
             vertex_src: &vertex_src,
             fragment_src: &fragment_src,
-            params: &params,
-            textures: &textures,
-            attributes: &attributes,
-            buffer_id,
-            topology: &topology,
-            draw_count,
-            depth,
-            clear_color,
+            params: &o.params,
+            textures: &o.textures,
+            attributes: &o.attributes,
+            buffer_id: o.buffer_id,
+            topology: &o.topology,
+            draw_count: o.draw_count,
+            depth: o.depth,
+            clear_color: o.clear_color,
           })
           .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
@@ -354,6 +394,90 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create createPipeline");
+
+    // Raw stage compile: complete GLSL ES by default, the standard header on
+    // explicit request. Compile errors throw here, at a call site the app
+    // chose.
+    let compile_shader_atx = atx.clone();
+    let compile_shader = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, stage: String, source: String, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        let stage = alloy::ShaderStage::parse(&stage).map_err(|e| throw_str(&ctx, &format!("compileShader: {e}")))?;
+        let header = match &opts.0 {
+          Some(o) => o.get::<_, Option<bool>>("header")?.unwrap_or(false),
+          None => false,
+        };
+        let id = compile_shader_atx
+          .compile_shader_stage(stage, &source, header)
+          .map_err(|e| throw_str(&ctx, &format!("compileShader: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created_stages.borrow_mut().insert(id);
+        Ok(id)
+      },
+    )
+    .expect("create compileShader");
+
+    // Link two compiled stages into a program: the handle targets (and later
+    // the window effect) are created from. Link errors throw here.
+    let link_program_atx = atx.clone();
+    let link_program =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, vertex: u64, fragment: u64| -> rquickjs::Result<u64> {
+        let id = link_program_atx
+          .link_shader_program(vertex, fragment)
+          .map_err(|e| throw_str(&ctx, &format!("linkProgram: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created_programs.borrow_mut().insert(id);
+        Ok(id)
+      })
+      .expect("create linkProgram");
+
+    let destroy_shader_atx = atx.clone();
+    let destroy_shader = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
+      let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      state.0.created_stages.borrow_mut().remove(&id);
+      destroy_shader_atx.destroy_shader_stage(id);
+    })
+    .expect("create destroyShader");
+
+    // createShaderTarget(program, width, height, opts?) -> texture id: the
+    // target half, over an already-compiled program. Same opts shape as
+    // createPipeline (the mesh fields apply to pipeline programs only).
+    let create_target_atx = atx.clone();
+    let create_shader_target = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, program: u64, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        let o = collect_target_opts(&opts.0)?;
+        let id = create_target_atx
+          .create_shader_target(
+            program,
+            &alloy::TargetSpec {
+              width,
+              height,
+              params: &o.params,
+              textures: &o.textures,
+              attributes: &o.attributes,
+              buffer_id: o.buffer_id,
+              topology: &o.topology,
+              draw_count: o.draw_count,
+              depth: o.depth,
+              clear_color: o.clear_color,
+            },
+          )
+          .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created.borrow_mut().insert(id);
+        Ok(id)
+      },
+    )
+    .expect("create createShaderTarget");
+
+    let destroy_program_atx = atx.clone();
+    let destroy_program = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
+      let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      state.0.created_programs.borrow_mut().remove(&id);
+      destroy_program_atx.destroy_shader_program(id);
+    })
+    .expect("create destroyProgram");
 
     let create_buffer_atx = atx.clone();
     let create_buffer =
@@ -422,6 +546,11 @@ impl ModuleDef for GpuModule {
     exports.export("resizeTexture", resize_texture)?;
     exports.export("destroyTexture", destroy_texture)?;
     exports.export("createShader", create_shader)?;
+    exports.export("compileShader", compile_shader)?;
+    exports.export("linkProgram", link_program)?;
+    exports.export("destroyShader", destroy_shader)?;
+    exports.export("createShaderTarget", create_shader_target)?;
+    exports.export("destroyProgram", destroy_program)?;
     exports.export("setShaderParams", set_shader_params)?;
     exports.export("setShaderTextures", set_shader_textures)?;
     exports.export("setShaderSize", set_shader_size)?;

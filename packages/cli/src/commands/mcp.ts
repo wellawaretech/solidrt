@@ -137,9 +137,12 @@ let TOOLS: {
     name: "get_snapshot",
     readOnly: true,
     description:
-      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. The node must be currently mounted and have a non-zero layout box. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle.",
+      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. Capture the smallest node that contains what you are checking (e.g. the <texture> leaf itself) - that is exactly the content at its own pixel size; the window root is mostly empty layout around it and orders of magnitude more pixels. Reserve root captures for when layout/positioning itself is the question. The node must be currently mounted and have a non-zero layout box. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle.",
     inputSchema: {
-      nodeId: z.number().int().describe("Id of the node to capture, from get_render_tree"),
+      nodeId: z
+        .number()
+        .int()
+        .describe("Id of the node to capture, from get_render_tree; prefer the smallest relevant node over the root"),
       save_to: SAVE_TO_ARG,
       client: CLIENT_ARG,
     },

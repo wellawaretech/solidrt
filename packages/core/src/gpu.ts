@@ -44,6 +44,15 @@ export {
 export { destroyBuffer, setDrawCount } from "flux:gpu"
 export type { Topology, VertexAttribute } from "flux:gpu"
 
+// The raw shading layer, re-exported as-is - no reactive wrapper, the app
+// owns these lifetimes. compileShader compiles one stage from complete GLSL
+// ES (or with the standard header via { header: true }); linkProgram links a
+// vertex and a fragment stage into a program handle that backs any number of
+// createShaderTarget calls (and compiles nothing per target); destroyShader /
+// destroyProgram free by id space, either order safe against live targets.
+// createShader/createPipeline remain the fused conveniences on top.
+export { compileShader, destroyProgram, destroyShader, linkProgram } from "flux:gpu"
+
 // captureSnapshot renders a node to a texture and readTexture reads any
 // texture's bytes back. Re-exported raw (no reactive auto-cleanup wrapper):
 // captureSnapshot resolves asynchronously, by which point the reactive owner is
@@ -117,6 +126,37 @@ export function createShader(
   opts?: CreateOptions,
 ): number {
   let id = gpu.createShader(fragmentSrc, width, height, params, textures)
+  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
+ * Creates a render target over a program from `linkProgram` and renders it
+ * once, returning the texture id (usable anywhere a normal texture id is,
+ * e.g. `<texture src>`; resize with `setShaderSize`, drive uniforms with
+ * `<texture params>` or `setShaderParams`). Many targets may share one
+ * program, and creating a target compiles nothing. The mesh options mirror
+ * `createPipeline`: a raw-linked program carries its own vertex stage, so a
+ * fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex
+ * stage. Frees the target when the reactive owner is disposed (opt out with
+ * `opts.manual`); the program is yours and outlives it.
+ */
+export function createShaderTarget(
+  program: number,
+  width: number,
+  height: number,
+  opts?: {
+    params?: Record<string, number>
+    textures?: Record<string, number>
+    attributes?: gpu.VertexAttribute[]
+    buffer?: number
+    topology?: gpu.Topology
+    vertexCount?: number
+    depth?: boolean
+    clearColor?: [number, number, number, number]
+  } & CreateOptions,
+): number {
+  let id = gpu.createShaderTarget(program, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

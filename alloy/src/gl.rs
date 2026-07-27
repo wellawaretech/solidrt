@@ -504,13 +504,43 @@ pub fn render_display_list_to_window(
   dl: &DisplayList,
   size: ISize,
 ) -> Result<(), String> {
+  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None)
+}
+
+/// Rasterize a display list into the retained rig at the window's physical
+/// size and resolve it 1:1 into `layer` (a window-sized single-sample FBO,
+/// see `shader::create_layer_target`): the effect-active variant of
+/// `render_display_list_to_window`. The caller hands a display list already
+/// flipped for sampling - the layer is read as a texture, so it must be
+/// top-left origin (see `flip_for_fbo`) - and the window shader pass's
+/// vertex stage flips back to window orientation. MSAA and the no-MSAA latch
+/// behave exactly like the window path.
+pub fn render_display_list_to_layer(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  size: ISize,
+  layer: glow::NativeFramebuffer,
+) -> Result<(), String> {
+  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, Some(layer))
+}
+
+fn render_display_list_via_rig(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  size: ISize,
+  dst: Option<glow::NativeFramebuffer>,
+) -> Result<(), String> {
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if rig.msaa_unavailable { 0 } else { MSAA_SAMPLES.min(max_samples) };
-  let mut outcome = draw_to_default_framebuffer(gl, impeller_ctx, rig, dl, size, samples);
+  let mut outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, samples);
   if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
     log::warn!("[alloy] window MSAA unavailable; rendering without anti-aliasing");
     rig.latch_msaa_unavailable(gl);
-    outcome = draw_to_default_framebuffer(gl, impeller_ctx, rig, dl, size, 0);
+    outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, 0);
   }
   match outcome {
     OffscreenDraw::Done => Ok(()),
@@ -520,17 +550,19 @@ pub fn render_display_list_to_window(
 }
 
 /// Render `dl` into the rig's renderbuffer storage and blit the window-sized
-/// rect into the default framebuffer. `samples >= 2` draws multisampled and
-/// the blit is the MSAA resolve; `samples == 0` draws single-sample and the
-/// blit is a plain copy. Both cases attach the rig's renderbuffer pair, so
-/// one code path covers them. Restores the framebuffer and renderbuffer
-/// bindings it touches so Impeller's cached GL state stays valid.
-fn draw_to_default_framebuffer(
+/// rect into `dst` (None = the default framebuffer; Some = the retained
+/// window layer). `samples >= 2` draws multisampled and the blit is the MSAA
+/// resolve; `samples == 0` draws single-sample and the blit is a plain copy.
+/// Both cases attach the rig's renderbuffer pair, so one code path covers
+/// them. Restores the framebuffer and renderbuffer bindings it touches so
+/// Impeller's cached GL state stays valid.
+fn draw_and_resolve(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
+  dst: Option<glow::NativeFramebuffer>,
   samples: i32,
 ) -> OffscreenDraw {
   let (width, height) = (size.width as i32, size.height as i32);
@@ -593,7 +625,7 @@ fn draw_to_default_framebuffer(
     };
 
     if result.is_ok() {
-      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, dst);
       gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
       gl.blit_framebuffer(0, 0, width, height, 0, 0, width, height, glow::COLOR_BUFFER_BIT, glow::NEAREST);
       // The rig contents are dead after the resolve; the invalidate keeps

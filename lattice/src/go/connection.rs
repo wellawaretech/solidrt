@@ -842,8 +842,8 @@ fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
   .to_string()
 }
 
-/// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines) and encode
-/// it. Runs on the JS thread (see the query handling above).
+/// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs)
+/// and encode it. Runs on the JS thread (see the query handling above).
 fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
     return error_reply(id, "no alloy context");
@@ -868,6 +868,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
         "params": p.params.iter().map(|(name, v)| (name.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
       });
       let map = obj.as_object_mut().expect("pipeline json is an object");
+      if let Some(program_id) = p.program_id {
+        map.insert("programId".into(), program_id.into());
+      }
       if let Some(buffer_id) = p.buffer_id {
         map.insert("bufferId".into(), buffer_id.into());
       }
@@ -889,10 +892,21 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     })
     .collect();
 
+  let programs: Vec<serde_json::Value> =
+    res.programs.iter().map(|p| serde_json::json!({"id": p.id, "kind": p.kind})).collect();
+
+  let mut data = serde_json::json!({
+    "textures": textures, "buffers": buffers, "pipelines": pipelines, "programs": programs,
+  });
+  if let Some(ws) = &res.window_shader {
+    data["windowShader"] =
+      serde_json::json!({"programId": ws.program_id, "layerWidth": ws.width, "layerHeight": ws.height});
+  }
+
   serde_json::json!({
     "type": "result",
     "id": id,
-    "data": { "textures": textures, "buffers": buffers, "pipelines": pipelines },
+    "data": data,
   })
   .to_string()
 }
