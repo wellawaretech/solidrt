@@ -217,10 +217,24 @@ pub(crate) enum RasterCmd {
 // transient glitch.
 const PRESENT_FAILURE_EXIT_THRESHOLD: u32 = 2;
 
-// Upper bound on the present-fence wait (see the `present_fence` field); a
+// Upper bound on the present-fence wait (see the `present_fences` field); a
 // fence this late means the GPU is stalled and the frame is lost to the
 // slow-frame path anyway, so give up and draw.
 const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
+
+// Undisplayed frames allowed in flight before the draw blocks on the oldest
+// fence. Two, not one: the fence covers not just GPU execution but the
+// compositor returning the swapped buffer, and on slow-GPU/TV targets that
+// present latency runs 4-5 vsyncs - with depth 1 the wait expired at the
+// timeout on EVERY frame of a saturated 50 Hz TV (measured ~8-9 timeouts/s
+// at 7-8 fps, ~100 of the ~140 ms frame period pure capped wait buying no
+// pacing at all). Depth 2 overlaps the next draw with that latency while
+// still capping ahead-of-glass depth below the driver queue's 2-3. Cost: on
+// fast-GPU desktops (fences signal in ms, fenceTimeouts reads 0) the CPU may
+// run one frame further ahead of glass; if that ever shows up in drag
+// latency, the fallback is adaptive depth - see
+// okf/backlog/adaptive-present-fence-depth.md.
+const PRESENT_FENCE_DEPTH: usize = 2;
 
 pub(crate) struct RasterState {
   backend: Backend,
@@ -247,16 +261,21 @@ pub(crate) struct RasterState {
   present_failures: u32,
   // Instant of the last slow-frame warning, for the 1/s rate limit.
   slow_frame_log: Option<std::time::Instant>,
+  // Instant of the last fence-timeout/-failure warning, same rate limit.
+  fence_wait_log: Option<std::time::Instant>,
+  // Cumulative present-fence timeouts (GPU over budget), read live by
+  // get_stats through the Context.
+  fence_timeouts: Arc<AtomicU64>,
   // Once-per-second frame phase trace (see FrameTiming).
   timing: FrameTiming,
-  // Fence signaled when the previous present's GPU work completed, awaited
-  // before the next draw. Vsync alone lets the CPU swap several frames ahead
-  // of what is on glass (Android's BufferQueue runs 2-3 deep, desktop driver
-  // queues similarly), and that queue depth is direct input-to-photon
-  // latency; the fence keeps at most one undisplayed frame in flight (the
-  // Flutter/Chrome pacing approach). None in capture mode, which never
+  // Fences signaled as each present's GPU work completes, awaited before a
+  // draw once PRESENT_FENCE_DEPTH are outstanding. Vsync alone lets the CPU
+  // swap several frames ahead of what is on glass (Android's BufferQueue
+  // runs 2-3 deep, desktop driver queues similarly), and that queue depth is
+  // direct input-to-photon latency; the fences cap undisplayed frames in
+  // flight below the driver's own depth. Empty in capture mode, which never
   // presents.
-  present_fence: Option<glow::Fence>,
+  present_fences: std::collections::VecDeque<glow::Fence>,
   // GL-side view of every registered texture (id -> name + dims), for sampler
   // resolution, re-uploads, and readbacks. Mirrors the UI side's registry
   // through the command stream.
@@ -372,6 +391,7 @@ impl RasterState {
     surface_size: Arc<AtomicU64>,
     capture_frames: bool,
     queue_depth: Arc<AtomicUsize>,
+    fence_timeouts: Arc<AtomicU64>,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
@@ -386,8 +406,10 @@ impl RasterState {
       capture_frames,
       present_failures: 0,
       slow_frame_log: None,
+      fence_wait_log: None,
+      fence_timeouts,
       timing: FrameTiming::new(),
-      present_fence: None,
+      present_fences: std::collections::VecDeque::new(),
       textures: HashMap::new(),
       shaders: HashMap::new(),
       programs: HashMap::new(),
@@ -676,13 +698,42 @@ impl RasterState {
     Ok(())
   }
 
-  /// Block until the previous present's GPU work completed (or the timeout
-  /// passes), consuming the fence. See the `present_fence` field.
+  /// Block until outstanding presents are back under PRESENT_FENCE_DEPTH (or
+  /// the timeout passes per fence), consuming the awaited fences. See the
+  /// `present_fences` field. A timeout is the "GPU is over budget for a full
+  /// refresh period and then some" signal - pacing is lost for this frame
+  /// (we draw anyway; hanging the raster thread would be worse). Counted for
+  /// get_stats (fenceTimeouts) and warned at 1/s, because a healthy discrete
+  /// GPU never hits this while a saturated tiled one lives near it (see
+  /// okf/backlog/idle-tick-gpu-backlog-runaway.md, present-fence finding).
   fn await_present_fence(&mut self) {
-    let Some(fence) = self.present_fence.take() else { return };
-    unsafe {
-      glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
-      glow::HasContext::delete_sync(&self.gl, fence);
+    while self.present_fences.len() >= PRESENT_FENCE_DEPTH {
+      let fence = self.present_fences.pop_front().expect("len checked above");
+      let status = unsafe {
+        let status =
+          glow::HasContext::client_wait_sync(&self.gl, fence, glow::SYNC_FLUSH_COMMANDS_BIT, PRESENT_FENCE_TIMEOUT_NS);
+        glow::HasContext::delete_sync(&self.gl, fence);
+        status
+      };
+      match status {
+        glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {}
+        status => {
+          if status == glow::TIMEOUT_EXPIRED {
+            self.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+          }
+          if self.fence_wait_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+            self.fence_wait_log = Some(std::time::Instant::now());
+            if status == glow::TIMEOUT_EXPIRED {
+              log::warn!(
+                "[alloy] present fence timed out after {}ms: GPU over budget, pacing lost this frame",
+                PRESENT_FENCE_TIMEOUT_NS / 1_000_000
+              );
+            } else {
+              log::warn!("[alloy] present fence wait failed (status {status:#x})");
+            }
+          }
+        }
+      }
     }
   }
 
@@ -861,15 +912,14 @@ impl RasterState {
   fn present(&mut self) -> bool {
     if crate::sdl_utils::gl_swap_window_checked(self.window) {
       self.present_failures = 0;
-      // The retry path can present twice for one frame; only the newest
-      // swap's fence matters.
-      if let Some(old) = self.present_fence.take() {
-        unsafe { glow::HasContext::delete_sync(&self.gl, old) };
+      // At most one fence joins per frame (a retried present only follows a
+      // failed one, which queued nothing), and `await_present_fence` trimmed
+      // to depth-1 before the draw, so the queue never exceeds
+      // PRESENT_FENCE_DEPTH. A failed fence_sync just means no pacing this
+      // frame: same behavior as before this mechanism existed.
+      if let Ok(fence) = unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
+        self.present_fences.push_back(fence);
       }
-      // A failed fence_sync just means no pacing this frame: same behavior
-      // as before this mechanism existed.
-      self.present_fence =
-        unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) }.ok();
       return true;
     }
     self.present_failures += 1;

@@ -43,7 +43,109 @@ cost 160 ms.
 Note the new floor: 100 ms is present pacing (five 50 Hz vsyncs), measured
 identical for a 20k-vertex trivial scene, so workloads now sit against
 candidate 3 / the present-fence finding rather than against this bug.
-Candidate 3 (fence honesty) and the adjacent findings below remain open.
+
+Candidate 3, observability half, landed 2026-07-27 (unverified):
+`await_present_fence` now checks the `client_wait_sync` status; a
+`TIMEOUT_EXPIRED` increments a counter surfaced live as `fenceTimeouts` in
+`get_stats` and warns at 1/s ("GPU over budget, pacing lost this frame");
+a wait failure warns with the raw status. The behavior half - allowing one
+frame in flight by keeping a two-deep fence queue, to overlap draw with the
+compositor's present latency - stays open pending measurement: desktop fence
+waits measured 8-10 ms during the frame-pacing work, but the added
+input-to-photon frame must be costed there before the depth change (or made
+adaptive on observed wait times).
+
+Measured 2026-07-27, same TV, flower app at full density (live `get_stats`
+sampling over a timed 60 s window):
+
+| | fenceTimeouts | interpretation |
+|---|---|---|
+| desktop (linux), idle + light use | 0, exactly | healthy GPU never hits the cap |
+| TV, idle app | flat (1045 -> 1045 over 35 s) | no false positives from present pacing at idle |
+| TV, 233k steady state (7-8 fps, frameMs ~140) | +549 over the window, ~8-9/s | **every presented frame times out** |
+
+So at the TV's steady state the depth-1 fence provided no pacing at all - it
+expired at the 100 ms cap on every single frame and we drew anyway - while
+costing a 100 ms stall per frame: the ~140 ms frame period was ~100 ms
+capped wait plus ~40 ms of everything else. `idleTicks` also stayed exactly
+flat under full load - the idle-tick gate is completely quiet during
+saturation.
+
+Candidate 3, behavior half, landed and TV-verified 2026-07-27:
+`PRESENT_FENCE_DEPTH = 2`, unconditional - `present_fences` is a two-deep
+queue and the draw blocks only on the fence from two presents back, so the
+next draw overlaps the compositor's present latency while ahead-of-glass
+depth stays capped below the driver queue's 2-3. Decision: ship
+unconditional; the desktop input-to-photon cost (one more frame ahead where
+fences signal early) is accepted until actually observed - the adaptive
+fallback is specced in adaptive-present-fence-depth.md.
+
+Measured, same flower app, timed 60 s windows:
+
+| | depth 1 | depth 2 |
+|---|---|---|
+| TV fenceTimeouts | ~8-9/s (every frame) | **0, exactly, under full load** |
+| TV frameMs | ~140 | ~121-130, fps 8 |
+| desktop (same app) | - | 60 fps locked, fenceTimeouts 0, rasterQueue 1 |
+
+One expectation corrected by the measurement: the depth-1 "100 ms capped
+wait + 40 ms rest" decomposition did NOT mean 40 ms was reachable - the
+capped wait overlapped real GPU execution, and the Mali's actual throughput
+at 233k density is ~120-130 ms/frame, which is where depth 2 now sits. What
+depth 2 bought is the ~10-15% serialization bubble, timeouts eliminated
+(pacing is honest again: every fence now retires within its window), and
+the structural fix: the previous "hard ~10 fps ceiling regardless of
+content" from present latency should be gone for lighter scenes - worth a
+one-off check with a small-vertex config on the TV, which would also close
+the "present-fence pacing caps throughput" adjacent finding below. This
+closes the candidates; the remaining adjacent findings stay open.
+
+### Light-scene check 2026-07-27: the ceiling is NOT gone, and it was never the fence
+
+Ran the flagged one-off on runtime 0.0.38-22-g4c7e487-dirty. Light configs on
+the TV are unchanged from their pre-fence-work numbers:
+
+| TV scene | before any fence work | depth 2 |
+|---|---|---|
+| 20k vertices, trivial vertex shader, 1 pass | 80-100 ms | **80 ms median, 12.4 fps** |
+| 34,800-vertex flower | 100 ms / 10.0 fps | **100 ms / 10.0 fps** |
+| 233,600-vertex flower | - | 120 ms / 8.3 fps |
+
+`fenceTimeouts` is 0 in every one of these, so the fence work is doing
+exactly what it claims - it just was not what capped light scenes. The stall
+**moved rather than disappeared**, which the phase log shows outright for the
+20k scene:
+
+| | fence wait | draw | present |
+|---|---|---|---|
+| before fence work | 78 ms | 2 ms | 1 ms |
+| depth 2 | **0.0 ms** | 6 ms | **80-85 ms** |
+
+Same total, different owner: `eglSwapBuffers` itself blocks for 4-5 vsyncs
+(80/100 ms alternating on a 20 ms panel). The depth-1 fence was absorbing the
+compositor's back-pressure *ahead* of the swap; with depth 2 the swap absorbs
+it directly. So there was no throughput to recover on light scenes - the fence
+was downstream of the real constraint.
+
+It is TV-specific, not general: identical binary and identical 20k scene, via
+live `get_stats`.
+
+| | fps | frameMs | rasterQueue | fenceTimeouts |
+|---|---|---|---|---|
+| desktop linux | 61 | 19.94 | 1 | 0 |
+| Android TV | 12 | 89.97 | 3 | 0 |
+
+The persistent `rasterQueue` 3 vs 1 is the same story from the other side: the
+TV's raster thread sits ~3 commands deep on a trivial scene purely because
+each swap takes four refresh periods to return.
+
+So the "present-fence pacing caps throughput" adjacent finding below **stays
+open and needs re-aiming**: it is not fence pacing, it is that the Android
+SurfaceView's swap blocks ~4 vsyncs on this compositor. Next levers to look
+at are EGL swap interval and the surface's buffer count / queue depth, none of
+which alloy currently sets explicitly. Worth confirming on a second, newer
+Android device before treating it as an engine problem rather than a
+MediaTek-TV compositor one.
 
 Source: Android TV debugging session 2026-07-27. Philips TPM171E (MediaTek
 MT5891, ARM Mali-T860, GLES 3.2 driver r20p0, Android 8.0, armeabi-v7a,

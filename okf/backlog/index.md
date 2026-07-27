@@ -117,6 +117,12 @@ timestamp: 2026-07-13T00:00:00Z
   `get_stats` now reports `rasterQueue`/`idleTicks`; verified on the TV
   (unbounded doubling -> 120 ms flat, ticks now 1:1 with presents), the
   adjacent findings (fence honesty, reload queue drain, pass timing) open.
+- [Adaptive present-fence depth](adaptive-present-fence-depth.md) [deferred] -
+  Fallback if unconditional two-deep present fencing (shipped 2026-07-27)
+  ever shows up as desktop drag latency: grant the second in-flight frame
+  only while observed fence waits show the GPU is over budget, with
+  hysteresis; the gating signals (fenceTimeouts, per-fence wait) already
+  exist.
 - [GPU context loss](gpu-context-loss.md) [partial] - A lost GL context used
   to leave the app running against a dead swapchain; swap-result checking and
   exit after two failed presents shipped, real recreation still open.

@@ -730,6 +730,10 @@ pub fn run_context(
   let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
   let raster_tx = crate::raster::RasterSender::new(raster_tx, raster_queue.clone());
+  // Written by the raster thread (present-fence timeouts), read live through
+  // the Context for get_stats; the frame loop never needs it.
+  let fence_timeouts = Arc::new(AtomicU64::new(0));
+  let raster_fence_timeouts = fence_timeouts.clone();
 
   // The raster thread: sole owner of the process's single GL context and
   // Impeller context for the engine's lifetime. Impeller's GLES contract
@@ -760,8 +764,18 @@ pub fn run_context(
       );
     }
 
-    let state =
-      RasterState::new(Backend::Gl, gl, impeller_ctx, window, surface_size, capture_frames, raster_queue, tx, wake);
+    let state = RasterState::new(
+      Backend::Gl,
+      gl,
+      impeller_ctx,
+      window,
+      surface_size,
+      capture_frames,
+      raster_queue,
+      raster_fence_timeouts,
+      tx,
+      wake,
+    );
     state.run(raster_rx);
   });
   spawn_raster.expect("failed to spawn raster thread");
@@ -769,7 +783,7 @@ pub fn run_context(
   // The UI thread: QuickJS, layout, hit-testing, DisplayList building. No GL
   // at all; the Context it gets marshals GPU work over the command channel.
   let spawn_ui = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
-    closure(Arc::new(Context::new(raster_tx, idle_ticks)));
+    closure(Arc::new(Context::new(raster_tx, idle_ticks, fence_timeouts)));
   });
   spawn_ui.expect("failed to spawn UI thread");
 }

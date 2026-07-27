@@ -529,10 +529,10 @@ async fn try_serve(
                       });
                       // Read live, not from the frame-latched snapshot: a
                       // backlogged raster thread produces no frames, so the
-                      // latch goes stale exactly when these two matter.
+                      // latch goes stale exactly when these matter.
                       let raster = ctx
                         .userdata::<flux::gui::AlloyContext>()
-                        .map(|atx| (atx.raster_queue_depth(), atx.idle_ticks()));
+                        .map(|atx| (atx.raster_queue_depth(), atx.idle_ticks(), atx.fence_timeouts()));
                       let _ = reply_tx.send(stats_reply(id, snap, counts, raster));
                     });
                   }
@@ -704,15 +704,17 @@ fn error_reply(id: u64, message: &str) -> String {
 /// `counts` is (mounted, total) from the live tree when the query could run on
 /// the JS thread; the reply then carries mountedNodes and orphanNodes (total -
 /// mounted: nodes unreachable from the root, i.e. leaked or intentionally kept
-/// detached). `raster` is (queue depth, cumulative idle ticks) read live from
-/// the alloy context: a nonzero rasterQueue with idleTicks racing is the
-/// idle-tick-runaway signature (see okf/backlog/idle-tick-gpu-backlog-runaway.md).
-/// Without an engine these fields are simply absent.
+/// detached). `raster` is (queue depth, cumulative idle ticks, cumulative
+/// present-fence timeouts) read live from the alloy context: a nonzero
+/// rasterQueue with idleTicks racing is the idle-tick-runaway signature, and
+/// climbing fenceTimeouts means the GPU is over budget (see
+/// okf/backlog/idle-tick-gpu-backlog-runaway.md). Without an engine these
+/// fields are simply absent.
 fn stats_reply(
   id: u64,
   s: crate::overlay::StatsSnapshot,
   counts: Option<(usize, usize)>,
-  raster: Option<(usize, u64)>,
+  raster: Option<(usize, u64, u64)>,
 ) -> String {
   let mut data = serde_json::json!({
       "fps": s.fps,
@@ -740,9 +742,10 @@ fn stats_reply(
     map.insert("mountedNodes".into(), mounted.into());
     map.insert("orphanNodes".into(), total.saturating_sub(mounted).into());
   }
-  if let Some((queue, ticks)) = raster {
+  if let Some((queue, ticks, fence_timeouts)) = raster {
     map.insert("rasterQueue".into(), queue.into());
     map.insert("idleTicks".into(), ticks.into());
+    map.insert("fenceTimeouts".into(), fence_timeouts.into());
   }
   serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
 }

@@ -25,6 +25,10 @@ pub struct Context {
   // Exposed with the raster queue depth for diagnostics: ticks racing while
   // the queue sits nonzero is the idle-tick-runaway signature.
   idle_ticks: Arc<AtomicU64>,
+  // Cumulative present-fence timeouts (raster thread increments): frames
+  // whose previous present had not retired within the fence timeout, i.e.
+  // the GPU is over budget and pacing was lost.
+  fence_timeouts: Arc<AtomicU64>,
   pub textures: TextureRegistry,
   // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
   // Enough to validate params/draw-count updates without an RPC.
@@ -206,10 +210,11 @@ unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 impl Context {
-  pub(crate) fn new(raster_tx: RasterSender, idle_ticks: Arc<AtomicU64>) -> Self {
+  pub(crate) fn new(raster_tx: RasterSender, idle_ticks: Arc<AtomicU64>, fence_timeouts: Arc<AtomicU64>) -> Self {
     Context {
       raster_tx,
       idle_ticks,
+      fence_timeouts,
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
       program_kinds: RefCell::new(HashMap::new()),
@@ -250,6 +255,12 @@ impl Context {
   /// Cumulative idle Ticks the frame loop has emitted.
   pub fn idle_ticks(&self) -> u64 {
     self.idle_ticks.load(Ordering::Relaxed)
+  }
+
+  /// Cumulative present-fence timeouts on the raster thread. Nonzero means
+  /// the GPU has been over budget; climbing means it still is.
+  pub fn fence_timeouts(&self) -> u64 {
+    self.fence_timeouts.load(Ordering::Relaxed)
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass
