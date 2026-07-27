@@ -2,11 +2,48 @@
 type: backlog-item
 title: Root layer - render the app into a texture effects can read
 description: Invert the frame so the app draws into the offscreen MSAA rig and resolves into a sampleable layer texture composited to a single-sample window, giving whole-app effects (warp, glass, transitions) for about the cost of one quad.
-status: open
+status: partial
 timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Root layer - render the app into a texture effects can read
+
+Promoted to okf/plans/root-layer-effects.md (2026-07-27). The analysis below
+stands. The plan settles the open questions it raises: always-inverted, with
+the rig's resolve target as the only branch, so the layer is free until
+something asks for it; and the effect is a property of the window owning
+neither an id nor a texture, rather than an in-tree element or an app-managed
+shader. It also records that the blocking-rpc gap does not apply to a
+submit-path design.
+
+Decisions settled in the plan, recorded here while the plan file is not yet
+committed: the effect takes a compiled handle (`compileShader` splits out of
+`createShader`, `createShaderTarget` is the other half, `createShader` stays
+as the fused convenience), never a source string primed through a hidden
+cache; compiling through impellerc is out of scope (whole-dev-chain
+consequences); subtree effects are a separate item
+(okf/backlog/subtree-effects.md), as are Impeller's built-in backdrop
+filters (okf/backlog/impeller-backdrop-filters.md); holding the layer and a
+`uPrevious` previous-frame layer are in-plan stages, not deferred.
+
+## Status: stage 1 (frame inversion) implemented 2026-07-27
+
+Verification pending (needs a desktop screenshot comparison, resize and
+background/resume walks, playback byte-identity, and an Android run; MCP
+get_snapshot renders offscreen and cannot see the present path). What
+landed: the window is created single-sample, every frame rasterizes into
+the shared `gl::OffscreenRig` and resolves into FBO 0 via
+`gl::render_display_list_to_window`; `window_surface` /
+`ensure_window_surface` and the `disable_msaa` window-creation retry are
+deleted. One deviation from the draft, chosen deliberately: the frame path
+draws the display list unflipped and the resolve blit is a straight 1:1
+copy - Impeller treats every wrapped FBO as a bottom-up window target, and
+a Y-reversed blit from a multisampled source is a driver-inconsistent
+operation some GLES implementations reject, so it is never issued. Only
+*sampled* offscreen content is top-left origin; effect-active frames (stage
+2) will flip the display list, with the single flip to FBO 0 in the effect
+pass's vertex stage. Stages 2-4 (effect prop + compileShader split, hold +
+uPrevious, clean-tree raster skip) are not started.
 
 There is no way to run a shader over what is already on screen. An app can
 warp, refract or dissolve GPU content it produced itself (bind another

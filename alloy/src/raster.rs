@@ -18,7 +18,7 @@
 //! deletion to this context's reactor, which flushes on the next frame here
 //! (verified by examples/xthread_release.rs).
 
-use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Surface, Texture};
+use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
@@ -154,21 +154,15 @@ pub(crate) struct RasterState {
   // Physical framebuffer size (see backend::pack_size), published by the main
   // thread on resize and read when wrapping FBO 0.
   surface_size: Arc<AtomicU64>,
-  // The window's wrapped-FBO-0 Impeller surface, created lazily and reused
-  // across frames (a draw clears previous contents, so reuse is safe);
-  // re-wrapped only when the framebuffer size changes. Wrapping fresh per
-  // frame would be simpler but churns a surface object per frame through the
-  // driver, which is exactly the kind of sustained allocate/release cycle
-  // ANGLE/D3D11 handles poorly.
-  window_surface: Option<(Surface, ISize)>,
-  // Retained FBOs and scratch storage for offscreen rasters (snapshot
-  // boundaries, node captures), grown to the largest allocation requested;
-  // same churn rationale as window_surface above.
+  // Retained FBOs and scratch storage for every rig rasterization: the
+  // window frame itself plus offscreen rasters (snapshot boundaries, node
+  // captures), grown to the largest allocation requested. Retained because
+  // a per-call allocate/release cycle is exactly what ANGLE/D3D11 handles
+  // poorly (see the OffscreenRig doc in gl.rs).
   offscreen_rig: gl::OffscreenRig,
-  // Size of the last FBO-0 wrap, surviving rebinds (which drop
-  // window_surface), so geometry transitions are logged exactly once even
-  // when they arrive through a rebind. Diagnostic only.
-  last_wrap: ISize,
+  // Size of the last drawn frame, so geometry transitions are logged exactly
+  // once. Diagnostic only (resize-race visibility).
+  last_size: ISize,
   // Playback mode: a frame is read back and shipped instead of presented.
   capture_frames: bool,
   // Consecutive failed presents; a short streak confirms context loss.
@@ -263,9 +257,8 @@ impl RasterState {
       impeller_ctx,
       window,
       surface_size,
-      window_surface: None,
       offscreen_rig: gl::OffscreenRig::new(),
-      last_wrap: ISize::new(0, 0),
+      last_size: ISize::new(0, 0),
       capture_frames,
       present_failures: 0,
       slow_frame_log: None,
@@ -434,18 +427,11 @@ impl RasterState {
   fn frame(&mut self, dl: DisplayList) -> Result<(), ()> {
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
-    self.ensure_window_surface(size);
     let wait_start = std::time::Instant::now();
     self.await_present_fence();
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
-    let drawn = match &mut self.window_surface {
-      Some((surface, _)) => {
-        surface.draw_display_list(&dl).expect("Failed to draw display list");
-        true
-      }
-      None => false,
-    };
+    let drawn = self.draw_to_window(&dl, size);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     if self.capture_frames {
       let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
@@ -459,9 +445,7 @@ impl RasterState {
         // event-driven rebind). Redraw against the rebound surface and
         // present again; the retry's outcome feeds the failure threshold
         // honestly (fail, rebind, fail again = confirmed loss).
-        self.ensure_window_surface(size);
-        if let Some((surface, _)) = &mut self.window_surface {
-          surface.draw_display_list(&dl).expect("Failed to draw display list");
+        if self.draw_to_window(&dl, size) {
           self.present();
         }
       }
@@ -500,31 +484,31 @@ impl RasterState {
     }
   }
 
-  /// Ensure the wrapped-FBO-0 window surface exists at `size`; reused across
-  /// frames, re-wrapped on resize or after a rebind dropped it (the wrap
-  /// binds the framebuffer's dimensions). Wrapping fresh per frame would
-  /// churn a surface object per frame through the driver (see the field's
-  /// comment).
-  fn ensure_window_surface(&mut self, size: ISize) {
-    if !matches!(&self.window_surface, Some((_, s)) if s.width == size.width && s.height == size.height) {
-      // Resize-race diagnostics: geometry transitions as this thread sees
-      // them, once per size (rebinds re-wrap at an unchanged size silently).
-      if self.last_wrap.width != size.width || self.last_wrap.height != size.height {
-        log::info!(
-          "[alloy] window surface wrap {}x{} -> {}x{}",
-          self.last_wrap.width,
-          self.last_wrap.height,
-          size.width,
-          size.height
-        );
-        self.last_wrap = size;
-      }
-      self.window_surface =
-        unsafe { self.impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) }.map(|s| (s, size));
-      if self.window_surface.is_none() {
-        // Transient (e.g. a zero-sized minimized window): skip the draw but
-        // still notify, so lockstep consumers (playback) never stall.
-        log::warn!("[alloy] wrap_fbo(0) failed at {}x{}; skipping frame", size.width, size.height);
+  /// Rasterize the display list through the retained rig and resolve it into
+  /// FBO 0; true when a frame reached the backbuffer. False skips the frame
+  /// (a zero-sized minimized window, or a failed draw) - the caller still
+  /// notifies, so lockstep consumers (playback) never stall.
+  fn draw_to_window(&mut self, dl: &DisplayList, size: ISize) -> bool {
+    // Resize-race diagnostics: geometry transitions as this thread sees them,
+    // once per size.
+    if self.last_size.width != size.width || self.last_size.height != size.height {
+      log::info!(
+        "[alloy] frame size {}x{} -> {}x{}",
+        self.last_size.width,
+        self.last_size.height,
+        size.width,
+        size.height
+      );
+      self.last_size = size;
+    }
+    if size.width <= 0 || size.height <= 0 {
+      return false;
+    }
+    match gl::render_display_list_to_window(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, dl, size) {
+      Ok(()) => true,
+      Err(e) => {
+        log::warn!("[alloy] frame draw failed at {}x{}: {e}; skipping frame", size.width, size.height);
+        false
       }
     }
   }
@@ -562,11 +546,10 @@ impl RasterState {
   /// Rebind the context to the window's current EGL surface (see the
   /// RasterCmd doc); true on success. Must run on this thread: the context is
   /// current here and SDL_GL_MakeCurrent operates on the calling thread's
-  /// binding. The swap interval is per-surface EGL state, so re-assert vsync;
-  /// the wrapped FBO-0 surface is tied to the old binding, so drop it for
-  /// re-wrap. The failure counter is deliberately NOT touched here: the
-  /// recovery path in `frame` judges the retry present on its own, and only
-  /// the event-driven command resets stale evidence.
+  /// binding. The swap interval is per-surface EGL state, so re-assert vsync.
+  /// The failure counter is deliberately NOT touched here: the recovery path
+  /// in `frame` judges the retry present on its own, and only the
+  /// event-driven command resets stale evidence.
   fn rebind_window_surface(&mut self) -> bool {
     if !crate::sdl_utils::gl_remake_current(self.window) {
       log::warn!("[alloy] rebind window surface failed: {}", crate::sdl_utils::sdl_error());
@@ -575,7 +558,6 @@ impl RasterState {
     if !self.capture_frames && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
       log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
     }
-    self.window_surface = None;
     true
   }
 

@@ -67,21 +67,23 @@ fn prev_renderbuffer(name: i32) -> Option<glow::NativeRenderbuffer> {
   NonZeroU32::new(name as u32).map(glow::NativeRenderbuffer)
 }
 
-/// 4x multisampling for offscreen (repaint-boundary snapshot) rendering, to
-/// match the onscreen surface's request in `configure_opengl`. Impeller's GL
-/// backend has no analytic path AA; it relies on the target framebuffer being
-/// multisampled, exactly as the onscreen surface does.
+/// 4x multisampling for every rig rasterization: window frames and
+/// repaint-boundary snapshots alike. Impeller's GL backend has no analytic
+/// path AA; it relies on the target framebuffer being multisampled. The
+/// window itself is created single-sample and gets its anti-aliasing from
+/// the rig's resolve (see `render_display_list_to_window`).
 const MSAA_SAMPLES: i32 = 4;
 
-/// Retained GL objects for offscreen rasterization, owned by the raster
-/// thread and shared by every offscreen draw (snapshot boundaries and node
-/// captures). Only the per-boundary resolve texture persists elsewhere;
-/// everything transient lives here: both FBOs, the multisampled color and
-/// depth-stencil storage, and the single-sample depth-stencil. Storage grows
-/// monotonically to the largest allocation requested and smaller rasters
-/// render into a subrect, so the sustained allocate/release cycle the
-/// per-call rig imposed on the driver (which ANGLE/D3D11 handles poorly, see
-/// the window_surface rationale in raster.rs) is gone.
+/// Retained GL objects for rig rasterization, owned by the raster thread and
+/// shared by every rig draw: the window frame itself, snapshot boundaries,
+/// and node captures. Only the per-boundary resolve texture persists
+/// elsewhere; everything transient lives here: both FBOs, the multisampled
+/// color and depth-stencil storage, and the single-sample depth-stencil.
+/// Storage grows monotonically to the largest allocation requested and
+/// smaller rasters render into a subrect, so the sustained allocate/release
+/// cycle a per-call rig would impose on the driver (which ANGLE/D3D11
+/// handles poorly, see okf/backlog/angle-cross-context-impeller-textures.md)
+/// never happens.
 pub struct OffscreenRig {
   draw_fbo: Option<glow::NativeFramebuffer>,
   resolve_fbo: Option<glow::NativeFramebuffer>,
@@ -115,7 +117,9 @@ impl OffscreenRig {
   /// Grow the multisampled color + depth-stencil pair to cover `alloc`
   /// (component-wise, never shrinking). Contents are transient per raster, so
   /// regrowth discards them. Leaves the renderbuffer binding dirty; the
-  /// caller restores it.
+  /// caller restores it. `samples == 0` allocates single-sample storage
+  /// (renderbuffer_storage_multisample with zero samples is plain storage per
+  /// the ES 3.0 spec), used by the window path's no-MSAA fallback.
   fn ensure_msaa(&mut self, gl: &glow::Context, alloc: (i32, i32), samples: i32) -> Result<(), String> {
     let (cur_w, cur_h, cur_samples) =
       self.msaa.as_ref().map(|m| (m.size.0, m.size.1, m.samples)).unwrap_or((0, 0, samples));
@@ -279,10 +283,10 @@ pub fn render_display_list_into_texture(
   draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa)
 }
 
-/// Draw `dl` into `tex` at the window-matching 4x MSAA (or single-sample when
-/// the caller opted out of AA), dropping to single-sample for the rest of the
-/// process if the driver rejects the multisampled config once (mirrors the
-/// window-creation fallback in app::setup / gl::disable_msaa).
+/// Draw `dl` into `tex` at 4x MSAA (or single-sample when the caller opted
+/// out of AA), dropping to single-sample for the rest of the process if the
+/// driver rejects the multisampled config once (the same latch the window
+/// path honours).
 fn draw_offscreen_with_fallback(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -483,6 +487,131 @@ fn draw_offscreen(
   }
 }
 
+/// Rasterize a display list into the retained rig at the window's physical
+/// size and resolve it 1:1 into the default framebuffer (FBO 0). The display
+/// list is drawn unflipped: Impeller treats every wrapped FBO as a bottom-up
+/// window target, so the rig content is already in window orientation and
+/// the straight blit preserves it (only offscreen textures that get sampled
+/// pre-flip; see `flip_for_fbo`). A reversed-Y resolve blit would be the
+/// alternative, and that is a driver-inconsistent path under multisampling,
+/// so it is deliberately never issued. MSAA matches the snapshot path and
+/// falls back to single-sample via the same process-wide latch when the
+/// driver rejects the multisampled config.
+pub fn render_display_list_to_window(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  size: ISize,
+) -> Result<(), String> {
+  let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
+  let samples = if rig.msaa_unavailable { 0 } else { MSAA_SAMPLES.min(max_samples) };
+  let mut outcome = draw_to_default_framebuffer(gl, impeller_ctx, rig, dl, size, samples);
+  if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
+    log::warn!("[alloy] window MSAA unavailable; rendering without anti-aliasing");
+    rig.latch_msaa_unavailable(gl);
+    outcome = draw_to_default_framebuffer(gl, impeller_ctx, rig, dl, size, 0);
+  }
+  match outcome {
+    OffscreenDraw::Done => Ok(()),
+    OffscreenDraw::Failed(e) => Err(e),
+    OffscreenDraw::MsaaUnavailable => Err("window framebuffer incomplete".to_string()),
+  }
+}
+
+/// Render `dl` into the rig's renderbuffer storage and blit the window-sized
+/// rect into the default framebuffer. `samples >= 2` draws multisampled and
+/// the blit is the MSAA resolve; `samples == 0` draws single-sample and the
+/// blit is a plain copy. Both cases attach the rig's renderbuffer pair, so
+/// one code path covers them. Restores the framebuffer and renderbuffer
+/// bindings it touches so Impeller's cached GL state stays valid.
+fn draw_to_default_framebuffer(
+  gl: &glow::Context,
+  impeller_ctx: &mut ImpellerContext,
+  rig: &mut OffscreenRig,
+  dl: &DisplayList,
+  size: ISize,
+  samples: i32,
+) -> OffscreenDraw {
+  let (width, height) = (size.width as i32, size.height as i32);
+  // Same aligned backing as the offscreen path (Android tilers corrupt
+  // unaligned render targets); content renders into the corner and the blit
+  // reads only the window-sized rect.
+  let align_up = |v: i32| (v + 63) & !63;
+  let alloc = (align_up(width), align_up(height));
+
+  unsafe {
+    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+    let prev_rbo = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+
+    let ensured = rig.ensure_msaa(gl, alloc, samples);
+    gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
+    if let Err(e) = ensured {
+      return OffscreenDraw::Failed(e);
+    }
+
+    let draw_fbo = match rig.draw_fbo {
+      Some(fbo) => fbo,
+      None => match gl.create_framebuffer() {
+        Ok(fbo) => {
+          rig.draw_fbo = Some(fbo);
+          fbo
+        }
+        Err(e) => return OffscreenDraw::Failed(format!("glGenFramebuffers failed: {e}")),
+      },
+    };
+
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
+    let msaa = rig.msaa.as_ref().expect("ensure_msaa populated the rig");
+    gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(msaa.color));
+    gl.framebuffer_renderbuffer(
+      glow::FRAMEBUFFER,
+      glow::DEPTH_STENCIL_ATTACHMENT,
+      glow::RENDERBUFFER,
+      Some(msaa.depth_stencil),
+    );
+
+    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+    if status != glow::FRAMEBUFFER_COMPLETE {
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+      return if samples >= 2 {
+        OffscreenDraw::MsaaUnavailable
+      } else {
+        OffscreenDraw::Failed(format!("window framebuffer incomplete: {status:#x}"))
+      };
+    }
+
+    // Same defined-base rationale as draw_offscreen: rig storage carries the
+    // previous raster (or driver-defined garbage when fresh).
+    gl.disable(glow::SCISSOR_TEST);
+    gl.clear_color(0.0, 0.0, 0.0, 0.0);
+    gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+
+    let result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
+      Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("frame draw failed: {e}")),
+      None => Err("wrap_fbo failed for frame framebuffer".to_string()),
+    };
+
+    if result.is_ok() {
+      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
+      gl.blit_framebuffer(0, 0, width, height, 0, 0, width, height, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+      // The rig contents are dead after the resolve; the invalidate keeps
+      // tilers from writing them back to main memory.
+      if supports_invalidate(gl) {
+        gl.invalidate_framebuffer(glow::READ_FRAMEBUFFER, &[glow::COLOR_ATTACHMENT0, glow::DEPTH_STENCIL_ATTACHMENT]);
+      }
+    }
+
+    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+
+    match result {
+      Ok(()) => OffscreenDraw::Done,
+      Err(e) => OffscreenDraw::Failed(e),
+    }
+  }
+}
+
 /// Read back an Impeller GL texture's RGBA8 pixels by attaching its handle to
 /// a temporary framebuffer and calling glReadPixels. Returns memory-order rows
 /// (row 0 first), which is image top-to-bottom for every texture alloy
@@ -616,20 +745,12 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   gl_attr.set_context_version(3, 0);
   gl_attr.set_stencil_size(8);
 
-  // Request 4x MSAA for path anti-aliasing. Not all drivers expose a
-  // multisampled config; on those, window creation retries without MSAA
-  // (see disable_msaa and app::setup).
-  gl_attr.set_multisample_buffers(1);
-  gl_attr.set_multisample_samples(4);
-}
-
-/// Drop the MSAA request so window and GL-context creation can succeed on
-/// drivers that expose no multisampled EGL config (notably the Android
-/// emulator's GLES translator). Path anti-aliasing is lost; rendering proceeds.
-pub(crate) fn disable_msaa(video: &sdl3::VideoSubsystem) {
-  let gl_attr = video.gl_attr();
-  gl_attr.set_multisample_buffers(0);
-  gl_attr.set_multisample_samples(0);
+  // The window is deliberately single-sample: every frame rasterizes into
+  // the multisampled offscreen rig and resolves into FBO 0 (see
+  // render_display_list_to_window), so a multisampled backbuffer would only
+  // duplicate that storage. This also removes the old dependency on the
+  // driver exposing a multisampled EGL config at all (the Android emulator
+  // does not, which used to force a retry-without-MSAA window path).
 }
 
 pub(crate) fn setup_opengl_platform(window: &sdl3::video::Window) -> Result<DisplayContext, Box<dyn std::error::Error>> {

@@ -98,6 +98,16 @@ timestamp: 2026-07-13T00:00:00Z
   Ship an app's ffi libraries in an asset folder, packaged into the APK's
   native-lib dir and opened by path automatically, since byte-loading is
   blocked by Android W^X policy.
+- [Shader effects on a subtree](subtree-effects.md) [open] - A snapshot
+  boundary already rasterizes a subtree into a texture, so running a shader
+  over it and compositing the result is one extra pass, region-sized rather
+  than window-sized; it can only ever see the subtree's own pixels, which is
+  what separates it from a backdrop effect.
+- [Backdrop filters through Impeller (blur, glass)](impeller-backdrop-filters.md) [open] -
+  `save_layer` already takes a backdrop `ImageFilter` and we already call it
+  with `None`, so Impeller's built-in blur/dilate/erode/matrix filters give
+  frosted panels with correct see-through semantics, needing neither GLSL,
+  impellerc, nor the root layer.
 - [GPU context loss](gpu-context-loss.md) [partial] - A lost GL context used
   to leave the app running against a dead swapchain; swap-result checking and
   exit after two failed presents shipped, real recreation still open.
@@ -134,10 +144,13 @@ timestamp: 2026-07-13T00:00:00Z
   package.json/convention through the manifest to the launcher, monogram
   fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon);
   stage 3 packed executables remain and own packed-app icons on all platforms.
-- [Root layer - render the app into a texture effects can read](root-layer-effects.md) [open] -
+- [Root layer - render the app into a texture effects can read](root-layer-effects.md) [partial] -
   Invert the frame so the app draws into the offscreen MSAA rig and resolves
   into a sampleable layer texture composited to a single-sample window, giving
-  whole-app effects (warp, glass, transitions) for about the cost of one quad.
+  whole-app effects for about the cost of one quad; stage 1 (the inversion,
+  single-sample window + rig resolve to FBO 0) implemented 2026-07-27,
+  verification and the effect stages pending, plan
+  okf/plans/root-layer-effects.md.
 - [Snapshot boundaries reallocate their whole offscreen rig per raster](snapshot-offscreen-rig-churn.md) [done 2026-07-27] -
   A content change drops the retained texture outright, so every re-raster
   rebuilt texture, MSAA renderbuffers, two FBOs and a wrapped surface (~133 MB
