@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: Cross-platform GPU usage attribution (is the client burning GPU, and on what)
+title: Cross-platform GPU usage attribution
+description: "Answer \"is the client burning GPU while idle, and on what\" portably: engine self-measurement in get_stats plus a per-OS story for whole-system attribution."
 status: deferred
 timestamp: 2026-07-19T00:00:00Z
 ---

@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: Production diagnostics surface for bug reports
+title: Production diagnostics surface
+description: Layout counters are latched into Stats but only dev-client queries read them; wanted a production consumer so field bug reports carry the numbers.
 status: deferred
 timestamp: 2026-07-17T00:00:00Z
 ---
 
-# Production diagnostics surface for bug reports
+# Production diagnostics surface
 
 The engine's layout-activity counters (measure calls, paragraph shapes,
 dirtied nodes, cache gets/hits - alloy rendertree/counters.rs) are always on

@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: GPU pipeline extensions (typed uniforms, index buffers, float textures, blending)
+title: GPU pipeline extensions
+description: Typed (vec, mat4) uniforms, index buffers, float data textures, blending and multi-pass targets on top of the minimal createPipeline.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -27,7 +28,19 @@ draw count. Deliberately deferred, in rough order of expected demand:
   fixed-point encode into RGBA8 channels and decode in the shader.
 - **Blending toggle** for translucent geometry. Alpha-tested cutouts already
   work via `discard` (depth writes stay correct); true translucency needs
-  sorted geometry plus GL blend state on the pipeline.
+  sorted geometry plus GL blend state on the pipeline. Additive is the case
+  that keeps coming up and is the easy half: order-independent, no sorting,
+  and it is what soft point splats and glow passes want. Without it,
+  `gl_PointSize > 1` draws opaque discs, so a point cloud can only be
+  thickened into a scaly overlap, never a smooth field (projects/organism).
+- **Raster state**: cull mode and depth func/write are fixed. Two-sided
+  shading (`abs(dot(n, l))`) hides the missing cull for now, but a closed
+  mesh pays double the fragment work, and depth-write-off is the other half
+  of any blended pass.
 - **Multiple draw passes into one target** (shared depth buffer, different
   programs). One pipeline + a dynamic buffer region covers the known use
   cases so far.
+
+Adjacent, filed separately because they are not createPipeline options:
+[anti-aliasing for pipeline targets](gpu-target-antialiasing.md) and
+[paint properties on the texture element](texture-element-compositing.md).

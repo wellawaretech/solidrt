@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: Portals cannot mount during the initial render
+title: Portals cannot mount at initial render
+description: A portal visible at first mount throws "no mount target" because windowRoot is set only after the initial build; decided as by design, documented with a clearer error.
 status: done
 timestamp: 2026-07-17T00:00:00Z
 ---
 
-# Portals cannot mount during the initial render
+# Portals cannot mount at initial render
 
 Found 2026-07-17 while smoke-testing createPortal: a portal-backed component
 that is visible at first mount (for example `<Modal>` not gated behind a

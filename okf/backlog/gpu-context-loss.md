@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: GPU context loss - loud failure and recovery
-status: open
+title: GPU context loss
+description: A lost GL context used to leave the app running against a dead swapchain; swap-result checking and exit after two failed presents shipped, real recreation still open.
+status: partial
 timestamp: 2026-07-19T00:00:00Z
 ---
 
-# GPU context loss - loud failure and recovery
+# GPU context loss
 
 Source: Windows client debugging session 2026-07-19. When the GPU device
 backing the GL context dies (D3D11 device removed under ANGLE, EGL context

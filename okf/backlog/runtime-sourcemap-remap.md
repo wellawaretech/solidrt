@@ -1,13 +1,13 @@
 ---
 type: feature-proposal
-title: Runtime-side sourcemap remapping of stack traces
-description: Teach the runtime (Rust) to remap main:LINE:COL frames to .tsx positions before printing/forwarding, covering the local terminal and Android logcat. Only worth doing if the current server-only remapping proves insufficient in practice.
+title: Runtime-side sourcemap remapping
+description: Remap stack frames in the runtime itself so the local terminal and logcat show tsx positions too; explicitly not to be done unless server-only remapping proves insufficient.
 status: deferred
 tags: [flux, lattice, sourcemaps, dev-tooling, logging]
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Do not implement preemptively
+# Runtime-side sourcemap remapping
 
 This item exists so the design is not lost, NOT as a green light. The
 explicit decision (2026-07-15) was: keep sourcemap remapping server-only and

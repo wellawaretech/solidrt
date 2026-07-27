@@ -1,6 +1,7 @@
 ---
 type: backlog-item
 title: Client build info in list_clients
+description: Git hash, version and profile per connected client in list_clients, so "does this binary have my engine fix" is checkable; build timestamp and HEAD staleness still deferred.
 status: done
 timestamp: 2026-07-15T00:00:00Z
 ---

@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: MCP improvements and expansion (agent dev-loop, round-2 feedback)
+title: MCP improvements and expansion
+description: "Round-2 agent dev-loop feedback: readOnlyHint annotations, call_debug broadcast, form-factor fields in list_clients, interaction-performance visibility, leak diagnostics."
 status: deferred
 timestamp: 2026-07-18T00:00:00Z
 ---

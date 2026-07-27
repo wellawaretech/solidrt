@@ -1,19 +1,19 @@
 ---
 type: backlog-item
-title: Generic home for cross-crate constants and configuration
+title: Home for cross-crate constants
+description: One defined home for cross-crate constants that today live as per-site literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps); collects sites until designed.
 status: deferred
 timestamp: 2026-07-17T00:00:00Z
 ---
 
-# Generic home for cross-crate constants and configuration
+# Home for cross-crate constants
 
 SolidRT-wide names and knobs are currently per-site literals with no shared
 definition, and some exist twice across the Rust/TypeScript boundary. A few
 that exist today:
 
-- `.srt-data` - the project-local dev data root (flux
-  `FluxEngineBuilder::dev_cache_dir`, future data-root resolution, CLI).
-- `.srt-cache.db` - the dev server proxy cache file (`packages/cli`).
+- `.srt-data/http-cache.db` - the dev server proxy cache file
+  (`packages/cli`).
 - `SolidRT` / `go` - the generic client's pref-path identity (lattice).
 - The fetch cache size cap (flux, placeholder 256 MB).
 - The per-host concurrency limit for cached fetches (flux,

@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: GPU resource inspection via MCP (textures, buffers, pipeline state)
+title: GPU resource inspection via MCP
+description: MCP readback of textures as PNG, buffer ranges and pipeline state, because a one-pipeline app hides everything from the render tree; depth attachments still deferred.
 status: done
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -15,7 +16,7 @@ against the doom app (atlas + heights texture + 9288-vertex pipeline).
 Still deferred from the original proposal: reading a render target's depth
 attachment.
 
-# GPU resource inspection (MCP `get_gpu_resources` / `get_texture` / `get_buffer`)
+# GPU resource inspection via MCP
 
 Motivation (doom, 2026-07-15): once an app is one big GL pipeline, the render
 tree is ~3 nodes (window, rect, texture) and `get_render_tree` tells an agent

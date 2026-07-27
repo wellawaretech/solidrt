@@ -1,13 +1,13 @@
 ---
 type: known-limitation
-title: Node snapshots depend on a frame happening; a truly idle client times out
-description: get_snapshot / captureSnapshot latch a frame request but do not wake the render loop. Today the idle Tick services it anyway; if the client is idle with no ticking (true JS idle, paused/occluded window, backgrounded app), the capture is never serviced and the MCP query times out with a confusing error.
+title: Node snapshots need a frame to happen
+description: captureSnapshot and get_snapshot latch a frame request but do not wake the render loop, so a truly idle client never services the capture and the query times out.
 status: deferred
 tags: [snapshot, capture, mcp, rendering, demand-driven]
 timestamp: 2026-07-13T00:00:00Z
 ---
 
-# The limitation
+# Node snapshots need a frame to happen
 
 Both capture entry points are serviced only during a paint pass:
 

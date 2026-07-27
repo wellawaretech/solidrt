@@ -1,13 +1,13 @@
 ---
 type: feature-proposal
-title: Interactive stdin/tty support in flux
-description: A flux:stdin (or flux:tty) module for raw-mode keystroke reading, cross-platform - the missing piece for running any interactive terminal UI under flux, not just the CLI REPL.
+title: stdin/tty support in flux
+description: A flux:stdin (or flux:tty) module for cross-platform raw-mode keystroke reading, the missing piece for any interactive terminal UI under flux, not just the CLI repl.
 status: deferred
 tags: [flux, tty, stdin, terminal]
 timestamp: 2026-07-13T00:00:00Z
 ---
 
-# What's missing
+# stdin/tty support in flux
 
 Checked directly - there is nothing to reuse anywhere in flux or alloy today:
 

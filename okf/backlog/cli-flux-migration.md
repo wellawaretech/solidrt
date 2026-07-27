@@ -1,13 +1,13 @@
 ---
 type: feature-proposal
-title: Move the srt CLI (REPL + dev server) fully into flux, keep Bun only as an external bundler
-description: Collapse the REPL/dev-server split into one flux process so there is exactly one path for "rebuild and push"; Bun's only remaining job is bundling, invoked as a subprocess.
+title: Move the srt CLI fully into flux
+description: Collapse the repl/dev-server split into one flux process so there is exactly one rebuild-and-push path, leaving Bun only as a bundler subprocess.
 status: deferred
 tags: [cli, flux, dev-server, mcp, bundler, repl]
 timestamp: 2026-07-13T00:00:00Z
 ---
 
-# Interim step landed (2026-07-13)
+# Move the srt CLI fully into flux
 
 The MCP `reload` need was addressed without the full migration, by making the
 **dev server** (already a flux process) the rebuild authority for the on-demand
@@ -27,9 +27,10 @@ What shipped:
   so a later MCP reload bundles the loaded file.
 - `POST /__control__/reload` -> `rebuildAndBroadcast()`; new `reload` MCP tool.
 
-Correction to earlier scope notes: `proxyFiles`/`proxyHttp` are reload-*message*
-flags (server already holds them in `state.config`), not build inputs, so the
-bundler subprocess only needs entry/devBase/dev/minify.
+Correction to earlier scope notes: `proxyHttp` is a reload-*message* flag
+(server already holds it in `state.config`; `proxyFiles` was sunset
+2026-07-21), not a build input, so the bundler subprocess only needs
+entry/devBase/dev/minify.
 
 **Still open (the reason this stays deferred):** the repl's keystroke reload and
 watcher still bundle in-process (same `bundle()` function, so no logic drift,
@@ -60,8 +61,7 @@ An MCP `reload` tool is not a simple addition. `srt mcp`
 separate OS process from the interactive `srt` REPL that only does read-only
 HTTP GETs against `/__control__/`. It has no access to the live REPL's
 `bundle()` config (`state.serverUrl`/devBase, `values.dev`,
-`values["proxy-files"]`, `values["proxy-http"]`, `values.minify` - all
-process-local). And there is no reverse channel: the dev server's
+`values["proxy-http"]`, `values.minify` - all process-local). And there is no reverse channel: the dev server's
 `/__internal__/` IPC is one-directional (REPL -> server only).
 
 Options considered, in order, and why each was rejected:
@@ -105,7 +105,7 @@ Mostly grunt work, low technical risk.
 **Stays external, exactly once:** bundling. `Bun.build` has no QuickJS
 equivalent and reimplementing a bundler is out of scope. `bundler.ts`'s
 `bundle()` needs to stop reading ambient `state`/`values` singletons and take
-explicit params (entry file, devBase, proxyFiles, proxyHttp, minify) so it
+explicit params (entry file, devBase, proxyHttp, minify) so it
 can run as a standalone script spawned via `flux:subprocess`.
 
 **Side effect worth noting:** `dev-server.ts` currently `Bun.build`s the

@@ -1,6 +1,7 @@
 ---
 type: backlog-item
 title: Engine-side HTTP disk cache
+description: Explicit opt-in disk cache in the forge fetch layer, needed by a production app doing many image fetches; designed and shipped as okf/plans/fetch-cache.md.
 status: done
 timestamp: 2026-07-17T00:00:00Z
 ---

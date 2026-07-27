@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: Node/memory leak on unmount (element-prop double reads; fixed, with orphan stats + dev sentinel)
+title: Node/memory leak on unmount
+description: Element-valued props built a native subtree on every read, so typeof probes orphaned unmounted builds forever; fixed by resolving once through children(), with orphan stats.
 status: done
 timestamp: 2026-07-18T00:00:00Z
 ---

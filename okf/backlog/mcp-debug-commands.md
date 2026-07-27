@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: App-registered debug commands callable via MCP
+title: App-registered debug commands via MCP
+description: The srt:dev registerDebug plus MCP list_debug/call_debug, replacing the debug-keys and get_logs pattern for poking a running app; async commands still unsupported.
 status: done
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -17,7 +18,7 @@ called synchronously on the JS thread. Return values JSON-stringified
 remapped to .tsx. Async (promise-returning) commands not supported yet.
 Verified end-to-end against doom (args in/out, throw path).
 
-# App-registered debug commands (MCP `call_debug`)
+# App-registered debug commands via MCP
 
 Motivation (doom, 2026-07-15): agents debugging a running app keep needing
 answers only the app has - "where is the player, which sector, which door is

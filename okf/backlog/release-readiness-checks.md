@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: Release readiness checklist and pre-publish artifact checks
+title: Release readiness and pre-publish checks
+description: A pre-build readiness gate (types and runtime in lockstep, srt check, tests, version placeholders) plus post-build artifact checks before the irreversible npm publish.
 status: deferred
 timestamp: 2026-07-17T00:00:00Z
 ---
 
-# Release readiness checklist and pre-publish artifact checks
+# Release readiness and pre-publish checks
 
 There is no defined procedure between "the tree looks good" and "packages are
 on npm". Two gates are missing, and both need to exist before the first real

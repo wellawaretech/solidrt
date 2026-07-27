@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: ANGLE - cross-context Impeller textures black the frame; engine-restart GL teardown crashes
+title: ANGLE textures and teardown crash
+description: "The two Windows client killers: a snapshot boundary's cross-context retained texture blacks the whole window under ANGLE, and engine-restart GL teardown outside lock_gl crashes."
 status: open
 timestamp: 2026-07-19T00:00:00Z
 ---
 
-# ANGLE: cross-context Impeller textures black the frame; engine-restart GL teardown crashes
+# ANGLE textures and teardown crash
 
 Source: Windows client debugging session 2026-07-19 (crushy, win32-x64-msvc
 0.0.30 with the GL serialization fix 8dff06d included; NVIDIA RTX 3070,

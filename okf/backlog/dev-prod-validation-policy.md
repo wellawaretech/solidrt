@@ -1,11 +1,12 @@
 ---
 type: backlog-item
-title: Runtime dev/prod signal for the validation policy (throw in dev, warn in prod)
+title: Dev/prod signal for validation
+description: The missing runtime signal and shared helper behind the agreed convention of throwing in dev and warning in prod; today everything is dev, so validation sites throw.
 status: deferred
 timestamp: 2026-07-17T00:00:00Z
 ---
 
-# Runtime dev/prod signal for the validation policy
+# Dev/prod signal for validation
 
 Decided convention (2026-07-17): API input validation in solidrt follows
 **throw in dev, ignore-with-warning in prod**. A developer should hit a hard
@@ -27,3 +28,14 @@ pinned apps), this item is about:
 
 First known site: the fetch `cache` option (unknown string values), see
 `../plans/fetch-cache.md`.
+
+Update 2026-07-25: core's `process.env.NODE_ENV` read (renderer leak
+sentinel) migrated to `import.meta.env.DEV`, a bundle-time constant the
+srt bundler defines - deliberately NOT this runtime signal, because that
+site wants dead-code elimination and a runtime value can never fold. The
+two stay separate concerns: `import.meta.env.DEV` = bundle flavor
+(compile-time, foldable), this item = deployment context (runtime,
+behavioral). A candidate shape noted for when this lands: flux can derive
+the bit natively from boot mode (source eval = dev, compiled bytecode =
+prod), builder override for embedders; exposure via `flux:process` `env`.
+See okf/plans/examples-rescope.md ("Small fix folded in").

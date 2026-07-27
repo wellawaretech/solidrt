@@ -1,13 +1,13 @@
 ---
 type: feature-proposal
-title: Android APK packaging for flux:ffi libraries
-description: When APK packaging lands, native libraries an app uses via flux:ffi get placed in an asset folder, packaged into the APK's native-lib dir, and opened by path automatically.
+title: APK packaging for flux:ffi libraries
+description: Ship an app's ffi libraries in an asset folder, packaged into the APK's native-lib dir and opened by path automatically, since byte-loading is blocked by Android W^X policy.
 status: deferred
 tags: [flux, ffi, android, packaging]
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Why
+# APK packaging for flux:ffi libraries
 
 flux:ffi's byte-loading route (`FfiLibrary::open_bytes`: write bytes to a temp
 file, dlopen it) is impossible on Android by OS policy: SELinux forbids

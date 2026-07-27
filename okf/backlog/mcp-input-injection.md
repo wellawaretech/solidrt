@@ -1,6 +1,7 @@
 ---
 type: backlog-item
-title: MCP input injection (synthetic key/pointer events to clients)
+title: MCP input injection
+description: Synthetic key and pointer events to clients, plus a snapshot-diff helper, so an agent can navigate and verify visuals without a human ferrying the app around.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
