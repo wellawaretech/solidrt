@@ -88,3 +88,23 @@ fn degenerate_sizes_pass_through() {
     (parts(s), parts(o))
   });
 }
+
+// The texture element is the one raster kind in the tree, and it reaches its
+// paint through the same accessor the vector kinds do. Without this arm the
+// property adapter never offers a paint prop to a texture and `blendMode`
+// comes back as an unknown property.
+#[test]
+fn texture_exposes_its_paint() {
+  use crate::impellers::BlendMode;
+  use crate::rendertree::{Damage, ElementKind, Texture};
+
+  let mut kind = ElementKind::Texture(Texture::default());
+  let paint = kind.paint_mut().expect("texture kind exposes a paint");
+  assert_eq!(paint.blend_mode, BlendMode::SourceOver);
+  assert_eq!(paint.set_blend_mode(BlendMode::Plus), Damage::Paint);
+
+  match &kind {
+    ElementKind::Texture(tex) => assert_eq!(tex.paint.blend_mode, BlendMode::Plus),
+    _ => panic!("kind changed"),
+  }
+}

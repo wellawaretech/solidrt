@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 
-use crate::impellers::{DisplayListBuilder, Paint, Point, Rect, Size as ISize, TextureSampling};
+use super::PaintState;
+use crate::impellers::{DisplayListBuilder, Point, Rect, Size as ISize, TextureSampling};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{
@@ -75,6 +76,13 @@ pub struct Texture {
   // built, so a prop write only ever costs a field write - the GPU work stays
   // paced to real frames instead of firing once per reactive update.
   pending_params: RefCell<Option<Vec<(String, f32)>>>,
+  // The same paint every other kind carries, so a texture composites like one:
+  // `blend_mode` is the reason it is here (stacking GPU layers additively in
+  // the tree instead of hand-writing a compositing shader pass). A raster draw
+  // uses only part of a paint - alpha multiplies opacity, blend mode composites
+  // - and ignores the color's RGB, any color source, and the stroke fields.
+  // See examples/texture_paint.rs, which asserts each of those.
+  pub paint: PaintState,
 }
 
 impl Texture {
@@ -108,7 +116,9 @@ impl Buildable for Texture {
     let h = self.h.unwrap_or(ctx.size.h);
     let dst_rect = Rect::new(Point::new(x, y), ISize::new(w, h));
     let (src_rect, dst_rect) = fit_rects(self.fit, src_rect, dst_rect);
-    let paint = Paint::default();
+    // `to_paint`, not `to_paint_in`: the draw ignores color sources, so
+    // resolving a box-relative gradient would build one per frame for nothing.
+    let paint = self.paint.to_paint();
     builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&paint));
   }
 }

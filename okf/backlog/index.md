@@ -151,10 +151,11 @@ timestamp: 2026-07-13T00:00:00Z
   createPipeline targets are single-sample, so any filled geometry has hard
   jaggies; wanted a sample count (MSAA + resolve) or a documented supersample
   path with known-good minification.
-- [Paint properties on the texture element](texture-element-compositing.md) [open] -
-  texture/d-texture carry no PaintProps, so two GPU layers cannot be
-  composited additively in the tree; every layered effect turns into an extra
-  full-screen shader pass.
+- [Paint properties on the texture element](texture-element-compositing.md) [done] -
+  texture/d-texture carried no PaintProps, so two GPU layers could not be
+  composited additively in the tree; fixed by giving the texture kind the same
+  PaintState every other kind has, after verifying what a paint actually does
+  to a raster draw.
 - [Scoped style defaults and variant selection](scoped-style-defaults.md) [deferred] -
   The two real gaps behind "something like stylesheets": no scoped text
   defaults and no state/variant selection, both constrained to stay

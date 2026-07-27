@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: Paint properties on the texture element
-description: texture/d-texture carry no PaintProps, so two GPU layers cannot be composited additively in the tree; every layered effect turns into an extra full-screen shader pass.
-status: open
+description: texture/d-texture carried no PaintProps, so two GPU layers could not be composited additively in the tree; fixed by giving the texture kind the same PaintState every other kind has, after verifying what a paint actually does to a raster draw.
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
@@ -37,6 +37,48 @@ along at nearly no cost? Or does the texture node take a different draw path
 where the paint is not threaded through? If it is the former, the narrow
 version (blendMode only, on both texture and d-texture) is worth doing on
 its own.
+
+# Resolution
+
+The scope question resolved to the first branch: plumbing, nothing more.
+`Texture::build` already constructed a `Paint` and handed it to
+`draw_texture_rect`, it just threw away the chance to configure it. The one
+thing actually missing was an arm in `ElementKind::paint_mut` (rendertree
+mod.rs), without which the property adapter never offered a paint prop to a
+texture and `blendMode` came back as an unknown property.
+
+Done as the full `PaintState`, not a narrow blend-mode field, so the texture
+kind reads like every other kind. That choice depended on what a paint does to
+a raster draw, which was unknown and is now verified on the real GL path by
+`alloy/examples/texture_paint.rs` (nine asserting cases plus a source-texture
+readback):
+
+- the paint's RGB does not tint, and a gradient color source does not replace
+  the texture. Only alpha reaches the draw, as an opacity multiplier. This is
+  what made adoption safe at all: `PaintState::default()` carries grey 0.5,
+  and it leaves pixels untouched.
+- `drawStyle` and the stroke fields are ignored.
+- `blend_mode` applies, which is the whole point.
+- texture alpha is stored premultiplied. Additive composites therefore need no
+  manual premultiplication, but a layer's own fragment output must itself be
+  premultiplied or it over-adds.
+
+Sites: `paint: PaintState` on Texture and `to_paint()` in its build (alloy
+rendertree kinds/texture.rs, using `to_paint` rather than `to_paint_in` since
+color sources are ignored and resolving a box-relative gradient would allocate
+one per frame for nothing); the `paint_mut` arm; `TextureProps extends
+PaintProps` with the applicable subset documented (packages/core types.d.ts);
+one unit test for the accessor arm. Both `texture` and `d-texture` get it, as
+they share the Buildable and the props type.
+
+Two limits worth knowing before designing on top of this. Separate pipelines
+have separate depth buffers, so an additive overlay is never occluded by the
+base layer's geometry - fine for haze and bloom, wrong for anything that
+should hide behind near geometry. And a blend mode inside a
+`repaintBoundary="snapshot"` composites against the boundary's own offscreen
+surface rather than the backdrop; that is pre-existing behaviour for every
+kind, not new here, but it bites when the additive layer and its intended
+backdrop end up on opposite sides of a boundary.
 
 Related: [gpu-pipeline-extensions](gpu-pipeline-extensions.md) covers
 blending *inside* one pipeline, which is a different problem - that one is

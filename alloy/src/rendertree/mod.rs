@@ -150,6 +150,7 @@ impl ElementKind {
       ElementKind::Line(l) => Some(&mut l.paint),
       ElementKind::Path(p) => Some(&mut p.paint),
       ElementKind::Text(t) => Some(&mut t.paint),
+      ElementKind::Texture(t) => Some(&mut t.paint),
       _ => None,
     }
   }

@@ -368,7 +368,16 @@ export interface TextProps extends Position, PaintProps, PointerProps {
   maxLines?: number
 }
 
-export interface TextureProps extends Position, PointerProps {
+/**
+ * A raster draw uses only part of a paint. `blendMode` applies, which is how
+ * two GPU layers composite in the tree (a solid pass plus an additive pass)
+ * without a hand-written compositing shader. `color` contributes its alpha
+ * only, as an opacity multiplier; its RGB does not tint, and a gradient does
+ * not replace the texture. `drawStyle` and the stroke props have no effect.
+ * Texture alpha is premultiplied, so additive modes need no manual
+ * premultiplication.
+ */
+export interface TextureProps extends Position, PaintProps, PointerProps {
   src?: number
   /**
    * How the texture's pixels map to the element box (CSS object-fit).
