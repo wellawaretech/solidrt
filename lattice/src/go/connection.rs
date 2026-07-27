@@ -899,8 +899,10 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     "textures": textures, "buffers": buffers, "pipelines": pipelines, "programs": programs,
   });
   if let Some(ws) = &res.window_shader {
-    data["windowShader"] =
-      serde_json::json!({"programId": ws.program_id, "layerWidth": ws.width, "layerHeight": ws.height});
+    data["windowShader"] = serde_json::json!({
+      "programId": ws.program_id, "layerWidth": ws.width, "layerHeight": ws.height,
+      "previous": ws.previous,
+    });
   }
 
   serde_json::json!({

@@ -107,6 +107,12 @@ pub struct WindowShader {
   /// Extra sampler2D inputs: uniform name -> texture registry id.
   pub textures: Vec<(String, u64)>,
   pub vertex_count: i32,
+  /// Retain a second layer holding the last resolved frame, exposed to the
+  /// program as `uniform sampler2D uPrevious` (one-frame history: motion
+  /// echo, frame differencing). Costs one extra window-sized texture while
+  /// declared. A fresh history layer samples opaque black until the second
+  /// shaded frame.
+  pub previous: bool,
 }
 
 /// A point-in-time inventory of the GPU bookkeeping, for resource
@@ -126,6 +132,8 @@ pub struct GpuWindowShaderInfo {
   pub program_id: u64,
   pub width: u32,
   pub height: u32,
+  /// The `uPrevious` history layer is declared AND allocated.
+  pub previous: bool,
 }
 
 pub struct GpuTextureInfo {

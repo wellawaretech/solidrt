@@ -305,6 +305,15 @@ export interface WindowShaderProps {
   textures?: Record<string, number>
   /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
   vertexCount?: number
+  /**
+   * Retain the last frame as a second layer the program samples as
+   * `uniform sampler2D uPrevious` (one-frame history: motion echo, frame
+   * differencing). Costs one extra window-sized texture while declared.
+   * Until a second frame exists uPrevious samples opaque black. Only declare
+   * the uPrevious uniform together with this flag - without it the uniform
+   * stays at unit 0 and aliases uSource. Default false.
+   */
+  previous?: boolean
 }
 
 export interface ViewProps extends LayoutProps, TransformProps, PointerProps {

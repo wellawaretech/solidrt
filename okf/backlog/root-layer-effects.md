@@ -57,12 +57,22 @@ overloaded; `filter` stays reserved for Impeller backdrop filters) taking
 runtime-owned, exactly-window-sized layer texture and the program draws
 attributeless straight into FBO 0 with `uSource`/`iResolution` filled by
 name. Verified 2026-07-27 on desktop Linux AND Android via
-packages/core/examples/window-shader.tsx: warp upright and correct,
-identity pass indistinguishable from no shader, resize-while-active clean.
-The Android run also covers stage 1's inverted frame path on a tiler; still
-open are Windows/ANGLE, playback byte-identity, and minimize/restore plus
-background/resume walks. Stages 3-4 (hold + uPrevious, clean-tree raster
-skip) are not started.
+packages/core/examples/window-shader.tsx (warp upright and correct,
+identity pass indistinguishable from no shader, resize-while-active clean),
+plus Windows/ANGLE the same day (layer + pass active, clean logs). A
+stale-declaration leak (app switch left the launcher warping) was fixed the
+same day: the per-app GPU cleanup now clears the window shader
+unconditionally. The Android run also covers stage 1's inverted frame path
+on a tiler; still open are playback byte-identity and minimize/restore plus
+background/resume walks. Stage 3 shipped the same day as the
+history half only: an explicit `previous` field on the shader prop binds last
+frame's resolve as `uPrevious` (verified on desktop Linux: echo upright,
+in-run withdrawal frees the layer). The hold flag (`frozen`) was built,
+verified - including the finding that a workable cross-fade must pin only
+the history layer while uSource stays live - and then dropped as premature:
+modal semantics with no consumer; it returns with a designed transition
+helper (findings recorded in the plan). Stage 4 (clean-tree raster skip) is
+not started.
 
 There is no way to run a shader over what is already on screen. An app can
 warp, refract or dissolve GPU content it produced itself (bind another

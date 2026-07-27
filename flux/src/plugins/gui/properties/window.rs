@@ -17,10 +17,11 @@ pub fn apply(win: &mut Window, name: &str, value: &PropValue, cmd_tx: &Sender<Al
   })
 }
 
-// { program, params?, textures?, vertexCount? }; null clears. params and
-// textures are name -> number maps (params like the texture element's,
-// textures mapping sampler uniform names to texture ids); vertexCount
-// defaults to 3, the covering triangle.
+// { program, params?, textures?, vertexCount?, previous? }; null clears.
+// params and textures are name -> number maps (params like the texture
+// element's, textures mapping sampler uniform names to texture ids);
+// vertexCount defaults to 3, the covering triangle; previous defaults to
+// false.
 fn decode_shader(value: &PropValue) -> Option<WindowShader> {
   if value.is_null() {
     return None;
@@ -38,5 +39,6 @@ fn decode_shader(value: &PropValue) -> Option<WindowShader> {
     })
     .unwrap_or_default();
   let vertex_count = value.get("vertexCount").and_then(|v| v.as_f64()).map(|n| n as i32).unwrap_or(3);
-  Some(WindowShader { program, params, textures, vertex_count })
+  let previous = value.get("previous").and_then(|v| v.as_bool()).unwrap_or(false);
+  Some(WindowShader { program, params, textures, vertex_count, previous })
 }

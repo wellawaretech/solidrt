@@ -150,7 +150,9 @@ Elements are the building blocks of a SolidRT UI. They map directly to native re
 
 ### `<window>`
 
-The root element. Maps to a native OS window. Every application must have exactly one `<window>` as the root, passed to `render()`. Supports layout props.
+The root element. Maps to a native OS window. Every application must have exactly one `<window>` as the root, passed to `render()`. Supports layout props, plus `title`, `fullscreen`, and `shader`.
+
+`shader` runs the window's finished frame through a GPU program as the last step before it reaches the screen (see [Window shader](#window-shader) below).
 
 ### `<view>`
 
@@ -252,6 +254,53 @@ To change a texture's size without invalidating its id (for example a data textu
 For a shader whose spec is itself reactive, `createShaderMemo(() => ({ fragmentSrc, width, height, params?, textures? }))` returns an accessor for the current texture id and keeps the GPU resource in step: size changes route to `setShaderSize` and params changes to `setShaderParams` (id stays stable), while a new fragment source or new sampler bindings rebuild at a fresh id, update the accessor, and frame-safely destroy the old one.
 
 A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its last-applied params against the new sources, without recompiling. Bindings not named keep their current source.
+
+### Raw shading layer
+
+`createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources. Underneath sits the raw GL model, exposed directly:
+
+```ts
+compileShader(stage: "vertex" | "fragment", source: string, opts?: { header?: boolean }): number
+linkProgram(vertexShader: number, fragmentShader: number): number
+createShaderTarget(program: number, width: number, height: number, opts?): number
+destroyShader(id: number): void    // stages; safe right after linking
+destroyProgram(id: number): void   // programs; live targets keep theirs alive
+```
+
+`compileShader` compiles one stage from complete GLSL ES - the source declares its own `#version 300 es`, precision, varyings, and uniforms; nothing is injected. `{ header: true }` explicitly prepends the standard header (`#version 300 es`, highp precision, `iResolution`/`iTime`, and `out vec4 fragColor` for fragment stages - the same text `createPipeline` injects); do not combine it with your own `#version`. Compile and link errors throw at the call, so a bad shader fails where it was written, not later at a prop write.
+
+`linkProgram` yields a program handle in its own id space. One compiled stage can back many programs, one program many targets, and creating a target compiles nothing - which is what makes precompiling all programs at startup and swapping between them free of compilation. `createShaderTarget` takes `createPipeline`'s options: a raw-linked program carries its own vertex stage, so a fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex stage, and a uniform named `iResolution`, if declared, is filled with the target size at render.
+
+`compileShader`, `linkProgram`, `destroyShader`, and `destroyProgram` are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
+
+### Window shader
+
+The `shader` prop on `<window>` draws the finished frame through a linked program before present - a whole-app effect (warp, dissolve, color grade) for the cost of one extra fullscreen pass:
+
+```tsx
+let vs = compileShader("vertex", FULLSCREEN_VERTEX)
+let fs = compileShader("fragment", WARP_FRAG, { header: true })
+let warp = linkProgram(vs, fs)
+
+<window shader={{ program: warp, params: { uAmount: amount() } }}>
+  ...
+</window>
+```
+
+The declaration is `{ program, params?, textures?, vertexCount?, previous? }`; setting it to `null` (or omitting it) restores the direct path. While declared, the frame renders into a runtime-owned, window-sized layer texture the program samples - the layer has no id, no lifetime to manage, and is freed when the prop clears.
+
+The program's contract:
+
+- `uniform sampler2D uSource`, filled by name, is the frame. Top-left origin like every sampled texture, so a vertex stage mapping it onto the window flips the v coordinate (`vUV = vec2(uv.x, 1.0 - uv.y)` for the standard covering triangle).
+- `uniform vec2 iResolution`, filled by name, is the window size in physical pixels - what the pass actually covers, unlike the logical points the rest of the API speaks.
+- `params` are float uniforms filled by name, paced to the next real repaint like every params prop. `textures` adds extra sampler2D inputs (a noise texture, a mask) by uniform name.
+- The draw is attributeless: `vertexCount` vertices (default 3, the covering triangle) as triangles, positions fetched via `gl_VertexID`. The window is cleared to opaque black first, so geometry that does not cover it still presents a defined frame.
+
+An identity program (`fragColor = texture(uSource, vUV)`) is pixel-identical to no shader at all. Swapping between two precompiled program handles compiles nothing; compile and link cost sits at the `compileShader`/`linkProgram` call sites. MCP `get_snapshot` renders the tree offscreen and shows the pre-shader image; the screen (and playback capture) shows the post-shader result.
+
+One opt-in layer behavior:
+
+- `previous` (default false): retains the last frame as a second layer the program samples as `uniform sampler2D uPrevious` - one-frame history (motion echo, frame differencing). Costs one extra window-sized texture while declared. Until a second frame exists `uPrevious` is opaque black. Declare the `uPrevious` uniform only together with this flag - without it the uniform defaults to unit 0 and aliases `uSource`.
 
 ---
 

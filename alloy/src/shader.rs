@@ -491,7 +491,10 @@ fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::T
 /// Exactly window-sized on purpose - the shader samples it with 0..1
 /// coordinates, so aligned padding would leak into the sampling contract.
 /// Completeness-checked here (unlike shader targets, nothing later would
-/// catch it); restores the FBO binding it touches.
+/// catch it); restores the FBO binding it touches. The new layer starts
+/// opaque black (the pass's clear color): a history layer (`uPrevious`) is
+/// sampled one frame before anything resolves into it, and undefined storage
+/// must not reach a program.
 pub fn create_layer_target(
   gl: &glow::Context,
   width: u32,
@@ -501,13 +504,29 @@ pub fn create_layer_target(
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let result = create_target(gl, width, height).and_then(|(target, fbo)| {
       let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      if status == glow::FRAMEBUFFER_COMPLETE {
-        Ok((target, fbo))
-      } else {
+      if status != glow::FRAMEBUFFER_COMPLETE {
         gl.delete_framebuffer(fbo);
         gl.delete_texture(target);
-        Err(format!("window layer framebuffer incomplete: {status:#x}"))
+        return Err(format!("window layer framebuffer incomplete: {status:#x}"));
       }
+      // The FBO is still bound from create_target. Scissor, color mask, and
+      // clear color are Impeller-cached state on this shared context: force
+      // a full clear and put all three back.
+      let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+      let mut prev_mask = [0i32; 4];
+      gl.get_parameter_i32_slice(glow::COLOR_WRITEMASK, &mut prev_mask);
+      let mut prev_clear = [0f32; 4];
+      gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
+      gl.disable(glow::SCISSOR_TEST);
+      gl.color_mask(true, true, true, true);
+      gl.clear_color(0.0, 0.0, 0.0, 1.0);
+      gl.clear(glow::COLOR_BUFFER_BIT);
+      gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
+      gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
+      if scissor {
+        gl.enable(glow::SCISSOR_TEST);
+      }
+      Ok((target, fbo))
     });
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
     result

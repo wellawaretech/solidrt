@@ -256,6 +256,10 @@ struct WindowShaderState {
   spec: WindowShader,
   program: Rc<ShaderProgram>,
   layer: Option<LayerTarget>,
+  /// The `uPrevious` history layer (spec.previous): holds the last resolved
+  /// frame, rotated with `layer` before each resolve. Same ownership rules as
+  /// `layer`; freed when `previous` is withdrawn or the shader clears.
+  prev_layer: Option<LayerTarget>,
 }
 
 struct LayerTarget {
@@ -624,11 +628,30 @@ impl RasterState {
   /// reads top-left origin like every sampled texture - through the rig into
   /// the retained layer, then draw the window shader program over it straight
   /// into FBO 0 (no intermediate target, no closing blit). The program's
-  /// vertex stage is what flips back to window orientation.
+  /// vertex stage is what flips back to window orientation. `spec.previous`
+  /// retains last frame's resolve as a second layer bound as `uPrevious`.
   fn draw_to_window_shaded(&mut self, dl: &DisplayList, size: ISize) -> Result<(), String> {
     let (width, height) = (size.width as u32, size.height as u32);
-    let flipped = flip_for_fbo(dl, height)?;
     let state = self.window_shader.as_mut().expect("shaded draw requires a declared window shader");
+
+    if state.spec.previous {
+      // Rotate the history before resolving: the current layer becomes
+      // uPrevious and last frame's history buffer is resolved over. On the
+      // first shaded frame the fresh history layer samples opaque black (its
+      // creation clear).
+      std::mem::swap(&mut state.layer, &mut state.prev_layer);
+      if state.prev_layer.is_none() {
+        let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+        state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
+      }
+    } else if let Some(old) = state.prev_layer.take() {
+      unsafe {
+        glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+        glow::HasContext::delete_texture(&self.gl, old.tex);
+      }
+    }
+
+    let flipped = flip_for_fbo(dl, height)?;
 
     // (Re)allocate the layer at the window's pixel size. A resize drops and
     // recreates it: that is resize-frequency churn, not the per-frame kind
@@ -647,10 +670,16 @@ impl RasterState {
 
     gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, layer.fbo)?;
 
-    // The layer binds as uSource; extra declared inputs resolve through the
-    // registry by id, a missing id dropping to unbound (samples black), the
-    // same contract as shader targets.
+    // The layer binds as uSource, the history layer (when declared and live)
+    // as uPrevious; extra declared inputs resolve through the registry by id,
+    // a missing id dropping to unbound (samples black), the same contract as
+    // shader targets.
     let mut textures: Vec<(String, glow::Texture)> = vec![("uSource".to_string(), layer.tex)];
+    if state.spec.previous {
+      if let Some(prev) = &state.prev_layer {
+        textures.push(("uPrevious".to_string(), prev.tex));
+      }
+    }
     for (name, id) in &state.spec.textures {
       match self.textures.get(id) {
         Some(gpu) => textures.push((name.clone(), gpu.gl_texture)),
@@ -693,14 +722,14 @@ impl RasterState {
     };
     let program = program.clone();
     self.clear_window_shader();
-    self.window_shader = Some(WindowShaderState { spec, program, layer: None });
+    self.window_shader = Some(WindowShaderState { spec, program, layer: None, prev_layer: None });
   }
 
   /// Free the window shader state: the layer's GL objects die here (they were
   /// never adopted or registered), the program only if nothing else holds it.
   fn clear_window_shader(&mut self) {
     if let Some(state) = self.window_shader.take() {
-      if let Some(layer) = state.layer {
+      for layer in [state.layer, state.prev_layer].into_iter().flatten() {
         unsafe {
           glow::HasContext::delete_framebuffer(&self.gl, layer.fbo);
           glow::HasContext::delete_texture(&self.gl, layer.tex);
@@ -1062,6 +1091,7 @@ impl RasterState {
       program_id: state.spec.program,
       width: state.layer.as_ref().map_or(0, |l| l.width),
       height: state.layer.as_ref().map_or(0, |l| l.height),
+      previous: state.spec.previous && state.prev_layer.is_some(),
     });
 
     GpuResources { textures, buffers, pipelines, programs, window_shader }

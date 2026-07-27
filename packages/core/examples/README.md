@@ -38,6 +38,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop.
 - `gpu-raw-program.tsx` - the raw shading layer: compileShader/linkProgram/createShaderTarget, one vertex stage shared by two programs, with and without the standard header.
 - `window-shader.tsx` - the `shader` prop on `<window>`: the finished frame drawn through a raw-linked warp program before present, click to toggle between warp and identity.
+- `window-shader-history.tsx` - the window shader's frame history: `previous` binds last frame as uPrevious, drawn as a one-frame motion echo behind an orbiting square; click toggles the echo term.
 
 ## Sound
 - `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. Points to `createSoundStream` for long tracks streamed from a path.
