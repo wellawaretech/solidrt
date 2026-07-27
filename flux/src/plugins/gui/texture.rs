@@ -51,8 +51,15 @@ struct CaptureSettle {
 
 impl Drop for TextureInner {
   fn drop(&mut self) {
-    // Textures first: destroying a pipeline before its buffer is the
-    // documented order for destroy_gpu_buffer. Programs and stages are
+    // The window shader first, unconditionally: it is raster-thread state
+    // cleared only by an explicit command, and a dying app's declaration is
+    // stale by definition. Without this, an app that declared one leaves the
+    // next app (or the launcher) rendering through it - the raster thread
+    // holds the program by Rc, so even the program destroys below would not
+    // stop the pass.
+    self.atx.set_window_shader(None).ok();
+    // Then textures before buffers: destroying a pipeline before its buffer
+    // is the documented order for destroy_gpu_buffer. Programs and stages are
     // order-safe (targets keep their program alive, programs keep their own
     // compiled stage copies), released last for symmetry.
     for id in self.created.borrow_mut().drain() {
