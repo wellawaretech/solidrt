@@ -60,7 +60,7 @@ whichever project happens to need it first.
 
 [CLI/flux migration](cli-flux-migration.md) needs this to port
 `packages/cli/src/repl.ts`'s `node:readline`-based prompt
-(`repl.ts:161-202`) off Bun. That file's actual requirements are narrower
+(`startRepl` in `repl.ts`, the `createInterface` block) off Bun. That file's actual requirements are narrower
 than "full readline": canonical line editing, history, the existing
 `completer()` callback (already pure JS, ports unchanged), and a close
 event - nothing beyond what's scoped above.

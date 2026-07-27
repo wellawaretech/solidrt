@@ -21,8 +21,9 @@ offscreen path builds its entire GL rig from nothing and tears it down again:
 At 2560x1440 with the standard 4x samples that is roughly 59 MB of MSAA
 color, 59 MB of MSAA depth-stencil and 15 MB of resolve target - about
 133 MB allocated and released per rasterization. On a 1080x2400 phone,
-about 93 MB. Plus six GL object create/destroy pairs and a surface object
-churned through the driver.
+about 93 MB. Plus four GL object create/destroy pairs (two renderbuffers,
+two FBOs; the resolve texture is adopted, not deleted by us) and a surface
+object churned through the driver.
 
 This is precisely the pattern the onscreen path already learned to avoid:
 `window_surface` in alloy/src/raster.rs is retained across frames because

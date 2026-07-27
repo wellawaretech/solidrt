@@ -36,10 +36,12 @@ rather than treating as a rewrite.
   automatically". A shader bound to id N follows whatever is at id N with
   no rebinding.
 - **The GL name is available where the layer is produced.** `RasterizeDl`
-  runs on the raster thread and holds the raw `glow::NativeTexture` before
-  adopting it into Impeller, and the raster thread keeps its own
+  runs on the raster thread, and the name exists inside
+  `render_display_list_to_texture` before adoption into Impeller (the
+  function currently returns only the adopted `Texture`, so surfacing the
+  name means a signature change there). The raster thread keeps its own
   `textures: HashMap<u64, GpuTexture>` (which is what
-  `resolve_sampler_bindings` actually reads). Registering a layer for
+  `resolve_sampler_bindings` actually reads), so registering a layer for
   sampling is an insert on that side, not a cross-thread handoff.
 - **Ordering is already same-frame, not lagged.** Texture params are
   dirty-marked, not rendered on write: `set_params` stores into
@@ -90,7 +92,8 @@ driver having one.
 - **Input-dirty propagation.** A shader is marked dirty by its own param
   writes; nothing marks it dirty because a texture it samples changed
   contents. Camera textures paper over the same hole imperatively
-  (`camera::tick` calls `platform.request_frame()`). Today an effect only
+  (the runtime calls `platform.request_frame()` after `camera::tick`,
+lattice/src/runtime.rs). Today an effect only
   re-renders because it happens to write `iTime` every frame. "Texture id N
   changed" should dirty every shader bound to N.
 - **Declared ordering.** Correct sequencing currently falls out of tree

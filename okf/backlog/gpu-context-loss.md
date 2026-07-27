@@ -3,7 +3,7 @@ type: backlog-item
 title: GPU context loss
 description: A lost GL context used to leave the app running against a dead swapchain; swap-result checking and exit after two failed presents shipped, real recreation still open.
 status: partial
-timestamp: 2026-07-19T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # GPU context loss
@@ -24,15 +24,22 @@ because the whole process is torn down.
 ## Done (2026-07-19)
 
 Detection + logging: `sdl_utils::gl_swap_window_checked` surfaces the
-`SDL_GL_SwapWindow` result the sdl3 crate discards; `GlSurface::present`
-logs one error per failure streak (SDL's error text includes the EGL error,
-e.g. `EGL_CONTEXT_LOST`).
+`SDL_GL_SwapWindow` result the sdl3 crate discards; `RasterState::present`
+(alloy/src/raster.rs) logs one error per failure streak (SDL's error text
+includes the EGL error, e.g. `EGL_CONTEXT_LOST`).
 
 Fail loudly: two consecutive failed presents confirm the loss and exit(1)
 with a message. Two because a demand-driven app may attempt very few
 presents after the loss (observed frozen-window traces stopped at two); one
 tolerated failure covers a transient glitch
-(`PRESENT_FAILURE_EXIT_THRESHOLD` in gl.rs).
+(`PRESENT_FAILURE_EXIT_THRESHOLD` in raster.rs).
+
+Rebind-and-redraw between the two (landed with the resize work): after the
+first failed present the raster thread recreates the wrapped window surface
+(`rebind_window_surface`) and redraws before counting the second failure,
+which recovers EGL-surface-level losses (the Android background/resume
+case) without process exit. Full context/Impeller/resource recreation is
+still Remaining #2.
 
 ## Remaining
 
@@ -48,5 +55,7 @@ tolerated failure covers a transient glitch
    Android lifecycle, not as a Windows special case.
 
 Related: the cross-thread GL race that *caused* device removals on Windows
-is fixed separately by the process-wide GL lock (`context::lock_gl`); this
-item is about losses that arrive anyway.
+is fixed separately by the single-context + raster-thread architecture (all
+GL on one thread; see angle-cross-context-impeller-textures.md - the
+earlier `lock_gl` mentioned here was deleted with it); this item is about
+losses that arrive anyway.

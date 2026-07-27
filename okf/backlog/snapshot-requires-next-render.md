@@ -4,7 +4,7 @@ title: Node snapshots need a frame to happen
 description: captureSnapshot and get_snapshot latch a frame request but do not wake the render loop, so a truly idle client never services the capture and the query times out.
 status: deferred
 tags: [snapshot, capture, mcp, rendering, demand-driven]
-timestamp: 2026-07-13T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Node snapshots need a frame to happen
@@ -21,13 +21,13 @@ walk next visits the node (`alloy/src/rendertree/composite.rs`
 `build_recursive` -> `service_captures`), and delivers the result at the end
 of `paint_phase` (`deliver_captures`). No paint, no snapshot.
 
-The problem is that `request_frame` (`alloy/src/rendertree/platform.rs:82`)
+The problem is that `request_frame` (`alloy/src/rendertree/platform.rs:120`)
 **only latches an atomic**. It does not wake the render loop. The loop
 (`alloy/src/app.rs`) sleeps on the SDL event queue and only re-checks the
 latch when it naturally wakes - on input, on a submitted frame's `FrameReady`
 push, or on its own idle-Tick timeout.
 
-Right now this works purely because the idle Tick always fires: `app.rs:231`
+Right now this works purely because the idle Tick always fires: `app.rs:318`
 emits an `AlloyEvent::Tick` every refresh period whenever no frame was
 produced, which drives a `frame()` -> "render" event -> the demand gate
 (`lattice/src/plugins/draw.rs:108`) sees `take_frame_requested() == true` and
@@ -51,10 +51,15 @@ directions this codebase is heading or already hits:
   thread. A pure atomic write is invisible to a sleeping event loop.
 
 When it does fail, it fails badly: the capture sits pending, no reply is ever
-sent, and `handleQuery` (`packages/cli/server/control.ts:15,86`) times out
-after 5s and returns a generic `{"error":"Query timed out"}`. The caller has
-no way to tell "node does not exist" (which does report cleanly, via
-`fail_unserviced_captures`) from "the client just is not painting."
+sent, and `handleQuery` (`packages/cli/server/control.ts:18,107`) times out
+after 5s with "Query timed out: the client is connected but did not answer
+(JS thread busy or app wedged?)" - a better message than the old generic
+one, but still not the real reason. The caller has no way to tell "node
+does not exist" (which does report cleanly, via `fail_unserviced_captures`)
+from "the client just is not painting." Note the get_snapshot MCP tool
+description meanwhile asserts "works on an idle client (the capture
+requests its own frame)" - exactly the assumption this item flags as
+fragile.
 
 # Fix direction
 

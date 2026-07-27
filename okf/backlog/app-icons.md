@@ -1,17 +1,18 @@
 ---
 type: backlog-item
 title: App icons
-description: Stage 1 done (SVG icon from package.json/convention through the manifest to the launcher); the SDL window icon and packed executables remain.
+description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the launcher, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms.
 status: partial
-timestamp: 2026-07-26T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # App icons
 
-Apps have no icon concept at all today: nothing in `srt pack`, the pack
-folder writer, the manifest, or the launcher knows what an app looks like.
-The launcher's app list is text rows, and a packed executable takes whatever
-the OS gives an unadorned binary.
+Originally: apps had no icon concept at all - nothing in `srt pack`, the
+pack folder writer, the manifest, or the launcher knew what an app looked
+like, and a packed executable took whatever the OS gives an unadorned
+binary. Stages 1 and 2 below have since shipped (see Status); only the
+packed-executable half is still true.
 
 Raised 2026-07-26 while designing the website's Core concepts. The
 "how an app is put together" page needs an asset that is structurally part
@@ -42,10 +43,10 @@ the tooling knows.
    detail view. Self-contained, no native work, and it is the stage the
    docs need.
 2. **Desktop window icon.** The running app's window and taskbar entry.
-   Needs `SDL_SetWindowIcon`, which the sdl3 crate does not appear to
-   expose, so it wants a wrapper in `alloy/src/sdl_utils.rs` per the
-   project's SDL rule. Also needs a rasterized surface, so an SVG source
-   has to be rendered at a fixed size first.
+   Needed `SDL_SetWindowIcon`, which the sdl3 crate does not expose, so it
+   got a wrapper in `alloy/src/sdl_utils.rs` per the project's SDL rule,
+   plus a rasterization step (resvg) since the source is SVG. Shipped, see
+   Status.
 3. **Packed executables.** Embedding into the binary itself: a Windows
    resource, a macOS bundle icon. Platform-specific and heavier; the
    payoff is the OS file browser showing the icon before the app runs.
@@ -78,12 +79,10 @@ decides on .desktop emission.
 
 Stage 3 remains.
 
-## Open question: SVG or PNG
+## Decided: SVG
 
-SVG is one file, scales to every surface, and we already render it
-(usvg -> d-path), which makes the launcher stage trivial. But the window
-icon and any OS-level embedding need rasters at specific sizes, so an SVG
-source implies a rasterization step at pack time. A PNG (or a small set)
-avoids that and loses the scaling. The launcher's own mark exists in both
-forms already (`lattice/assets/icon-puzzle.svg`,
-`icon-puzzle-gradient.png`), so either is testable immediately.
+SVG won for both shipped stages: one file, scales to every surface, already
+rendered by the engine (usvg -> d-path) for the launcher, and rasterized at
+a fixed size by resvg for the window icon. The default/fallback mark is the
+embedded `lattice/assets/icon-puzzle-gradient.svg`. Stage 3's OS-level
+embedding will still need fixed-size rasters produced at pack time.

@@ -3,7 +3,7 @@ type: backlog-item
 title: App-wide zoom
 description: Browser-style whole-UI zoom (pinch, ctrl+wheel) as a root-level runtime affordance that re-lays out at scale instead of magnifying raster output, needing no app cooperation.
 status: deferred
-timestamp: 2026-07-23T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # App-wide zoom
@@ -30,5 +30,6 @@ needed.
   the recognizer core out of the components package into core
   (runtime-owned, framework-independent).
 
-Prerequisites: component-gestures arena (stage 3) plus its platform
-items (multi-touch device verification, pinch input per platform).
+Prerequisites: the component-gestures arena (stage 3) has since shipped
+(stages 1-4 done); what remains blocking is its platform items
+(multi-touch device verification, pinch input per platform).

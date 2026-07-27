@@ -14,7 +14,7 @@ timestamp: 2026-07-13T00:00:00Z
 - [App-wide zoom](app-wide-zoom.md) [deferred] - Browser-style whole-UI zoom
   (pinch, ctrl+wheel) as a root-level runtime affordance that re-lays out at
   scale instead of magnifying raster output, needing no app cooperation.
-- [fontStretch / width axis](font-stretch-axis.md) [open] - The bundled Noto
+- [fontStretch / width axis](font-stretch-axis.md) [deferred] - The bundled Noto
   variables carry a wdth axis the text API cannot reach; whether to expose a
   CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
 - [AVIF decoding in decodeImage](avif-decode.md) [open] - The one practical
@@ -101,10 +101,10 @@ timestamp: 2026-07-13T00:00:00Z
 - [GPU context loss](gpu-context-loss.md) [partial] - A lost GL context used
   to leave the app running against a dead swapchain; swap-result checking and
   exit after two failed presents shipped, real recreation still open.
-- [ANGLE textures and teardown crash](angle-cross-context-impeller-textures.md) [open] -
-  The two Windows client killers: a snapshot boundary's cross-context retained
-  texture blacks the whole window under ANGLE, and engine-restart GL teardown
-  outside lock_gl crashes.
+- [ANGLE textures and teardown crash](angle-cross-context-impeller-textures.md) [partial] -
+  The two Windows client killers, both fixed by the single-context +
+  raster-thread architecture; stage 2 non-blocking creates/readbacks and an
+  unexplained two-client dev-query timeout remain.
 - [In-place GPU resize](gpu-in-place-resize.md) [done] - Resize data textures
   and shader targets at a stable id so texture references, sampler bindings
   and owner-scoped auto-free survive; shipped, no GL-level test coverage.

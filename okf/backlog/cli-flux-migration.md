@@ -110,7 +110,7 @@ can run as a standalone script spawned via `flux:subprocess`.
 
 **Side effect worth noting:** `dev-server.ts` currently `Bun.build`s the
 dev-server script itself before handing it to `flux` to run
-(`bundleServer()`, `dev-server.ts:97-106`) - a runtime bootstrap step. Once
+(`bundleServer()` in `dev-server.ts`) - a runtime bootstrap step. Once
 the CLI *is* the flux process, there's no separate Bun process left to do
 that from. The CLI's own script would need to be pre-built at release time
 instead (same treatment `flux`/`fluxc` binaries already get - see the

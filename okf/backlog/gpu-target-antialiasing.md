@@ -11,9 +11,11 @@ timestamp: 2026-07-27T00:00:00Z
 createPipeline renders into a plain single-sample texture. Nothing in the
 option bag (params, textures, attributes, buffer, topology, vertexCount,
 depth, clearColor) asks for multisampling, and there is no post-resolve
-step. Impeller anti-aliases its own vector geometry, but a pipeline target
-is opaque to it - whatever the app's fragment shader wrote is what gets
-composited.
+step. The render tree's own geometry gets its AA from the multisampled
+target it draws into (Impeller's GL backend has no analytic path AA - see
+the comment in alloy/src/gl.rs), but a pipeline target is single-sample
+and opaque to all that - whatever the app's fragment shader wrote is what
+gets composited.
 
 This is invisible for the shader-toy workload createPipeline shipped for
 (full-screen fragment effects have no silhouettes) and invisible for point
@@ -35,12 +37,13 @@ Candidate answers, cheapest first:
 
 - **Document and support supersampling.** The app already picks its target
   size; rendering at 2x and letting `<texture width="100%">` minify is
-  supersampling for free, no API change. What is unverified is the
-  minification path: whether the texture node samples with a linear min
-  filter, whether mipmaps exist, and what a 2x or 4x downscale actually
-  costs in quality. If it is nearest-sampled, the whole technique silently
-  does nothing and apps have no way to tell. Worth checking before anything
-  else is built.
+  supersampling for free, no API change. The minification path is settled
+  in code: pipeline targets are created with TEXTURE_MIN_FILTER = LINEAR
+  and no mipmaps (alloy/src/shader.rs), and the texture node draws with
+  TextureSampling::Linear. So 2x supersample downsamples cleanly via
+  bilinear; 4x undersamples (skips texels) for lack of mips. The technique
+  works, but only document 2x as the known-good factor unless mip
+  generation is added.
 - **A `samples` option on createPipeline** (2/4/8): allocate a multisampled
   renderbuffer for color and depth, draw into it, and resolve with
   `glBlitFramebuffer` into the texture the id already names. GLES 3.0 has

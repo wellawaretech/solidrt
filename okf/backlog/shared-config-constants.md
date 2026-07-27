@@ -3,7 +3,7 @@ type: backlog-item
 title: Home for cross-crate constants
 description: One defined home for cross-crate constants that today live as per-site literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps); collects sites until designed.
 status: deferred
-timestamp: 2026-07-17T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Home for cross-crate constants
@@ -18,6 +18,9 @@ that exist today:
 - The fetch cache size cap (flux, placeholder 256 MB).
 - The per-host concurrency limit for cached fetches (flux,
   `FETCHES_PER_HOST`).
+- The numbered client dir shape `client<N>` under the pref root
+  (lattice, `storage.rs`).
+- The app icon size cap (`ICON_MAX_BYTES`, lattice `go/store.rs`).
 
 Convention until then: the value lives in exactly ONE code constant; docs
 and JSDoc describe the behavior without repeating the number, so making a

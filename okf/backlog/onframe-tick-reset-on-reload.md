@@ -3,7 +3,7 @@ type: backlog-item
 title: onFrame tick reset on reload
 description: The tick timebase resets across hot reload after the new instance's first frame, handing apps one enormous negative delta; apps clamp dt as a workaround.
 status: deferred
-timestamp: 2026-07-15T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # onFrame tick reset on reload
@@ -31,7 +31,16 @@ Fix candidates, in preference order:
 App-side workaround (now in the scaffold AGENTS.md): clamp deltas to
 [0, cap] with Math.max(0, Math.min(dt, cap)).
 
-Related: the frame demand gate means a freshly reloaded app whose onFrame
-early-returns without side effects never gets a second JS frame (its clocks
-stay frozen until the first input). Also noted in the scaffold AGENTS.md;
-doom primes the loop with one redundant uploadTexture on its dt === 0 frame.
+Status 2026-07-27: the described reset is no longer traceable in current
+code - both clocks (PacedClock, flux Clock) are constructed outside the
+engine reload loop in lattice/src/lib.rs and PacedClock is Arc-shared with
+no reset path; lib.rs even documents "persists across reloads for
+continuous time". Before picking this up, re-verify empirically that the
+reset still reproduces; it may have been fixed as a side effect of the
+frame-pacing work.
+
+Superseded note: an earlier version of this file claimed the frame demand
+gate freezes a reloaded app whose onFrame early-returns. That is no longer
+true - a pending onFrame callback is a standing request for the next frame
+(packages/core/src/window.ts), and the scaffold AGENTS.md now documents
+that no startup "prime" write is needed.

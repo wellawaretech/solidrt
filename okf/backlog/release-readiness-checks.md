@@ -3,7 +3,7 @@ type: backlog-item
 title: Release readiness and pre-publish checks
 description: A pre-build readiness gate (types and runtime in lockstep, srt check, tests, version placeholders) plus post-build artifact checks before the irreversible npm publish.
 status: deferred
-timestamp: 2026-07-17T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Release readiness and pre-publish checks
@@ -21,10 +21,13 @@ release is attempted:
 ## Candidate pre-build checks
 
 - Types/runtime lockstep (postmortem 5.2): every flux surface change mirrored
-  in flux-types and docs/flux.md; today this is a manual convention with no
-  check.
+  in flux-types and docs/flux.md; the flux-types/docs mirroring is still a
+  manual convention with no check. Partly covered since 2026-07-25: CI
+  (.github/workflows/ci.yml) typechecks core/components/cli/cli-server/
+  launcher and runs `srt check` on every examples/* app per PR/push.
 - `srt check` clean on the scaffold app; components strict-clean (postmortem
   4.3 second half) so dependency errors are not hiding app-relevant ones.
+  CI covers the examples apps but not the scaffold itself.
 - Rust test suites and JS tests green across the workspace.
 - No product names or private notes in anything that ships (okf/product is
   gitignored, but artifacts should be scanned too).
@@ -34,7 +37,10 @@ release is attempted:
 ## Candidate pre-publish checks
 
 - `npm pack` (or registry dry-run) each package and inspect contents: files
-  present, no strays, exports resolve.
+  present, no strays, exports resolve. Partly covered: release.yml now
+  packs every publish dir (`bun pm pack`), extracts, and fails the release
+  if any `@solidrt/*` specifier is off the release version, before publish.
+  Contents/exports inspection is still missing.
 - Scaffold a project against the packed tarballs (not the monorepo links) and
   run `bun install` + `srt check` + a smoke run; this exercises the pinned
   intra-monorepo deps that release.yml rewrites, which by design cannot work

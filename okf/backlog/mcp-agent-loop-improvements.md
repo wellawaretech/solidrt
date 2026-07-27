@@ -3,7 +3,7 @@ type: backlog-item
 title: MCP improvements and expansion
 description: "Round-2 agent dev-loop feedback: readOnlyHint annotations, call_debug broadcast, form-factor fields in list_clients, interaction-performance visibility, leak diagnostics."
 status: deferred
-timestamp: 2026-07-18T00:00:00Z
+timestamp: 2026-07-27T00:00:00Z
 ---
 
 # MCP improvements and expansion
@@ -20,7 +20,18 @@ AGENTS.md multi-client paragraph. All tools also carry openWorldHint: false
 (local dev server only), and watch adds destructiveHint: false +
 idempotentHint: true - mutating but benign, NOT readOnlyHint, so a
 hint-honoring harness never auto-approves a behavior change. Theme 2's code bullets (call_debug
-`client: "all"`, list_clients form-factor fields) and themes 3/4 remain.
+`client: "all"`, list_clients form-factor fields) remain.
+
+Status 2026-07-27: parts of themes 3/4 have since shipped elsewhere. Theme
+4's stats breakdown exists (get_stats reports mountedNodes/orphanNodes,
+lattice/src/go/connection.rs), and a dev-build leak sentinel exists in JS
+form (core's scanForOrphans warns per orphan element type every 5s in DEV;
+not the monotonic-growth-across-rebuilds shape described below). Theme 3
+gained a native slow-frame warning (raster thread logs frames over 35 ms
+with a fence/draw/present breakdown, throttled) - not the JS/layout phase
+breakdown asked for below. Still open: call_debug broadcast, form-factor
+fields, interval tracing/record_stats, high-water-mark stats, force-GC
+debug command.
 Same session also added an MCP `load` tool (POST /__control__/load): set the
 entry + file-serving root and rebuild-push, so an agent can start or switch
 the app instead of only reloading one. Caveat: the srt process is not told,
