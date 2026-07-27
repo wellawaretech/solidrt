@@ -77,6 +77,7 @@ export function buildManifest(code: string, entry: string): string {
   let { assets, fonts, icon } = collectAssets(entry)
   return JSON.stringify({
     appId: identity.appId,
+    displayName: identity.displayName,
     runtimeVersion: RUNTIME_VERSION,
     solidrtVersion: SOLIDRT_VERSION,
     ...(icon ? { icon } : {}),
