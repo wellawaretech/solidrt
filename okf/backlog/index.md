@@ -139,13 +139,15 @@ timestamp: 2026-07-13T00:00:00Z
   The address only arrives as a launch-intent extra, so any relaunch outside
   the CLI (the device's own launcher, a crash, a reboot) starts into
   `apps/default` with no way back without adb - the common case on a TV.
-- [Android surface swap blocks four vsyncs](android-surface-swap-latency.md) [deferred] -
-  On a 2017 MediaTek Android TV `eglSwapBuffers` blocks 4-5 refresh periods
-  even for a near-empty animated scene, capping the client at ~12 fps
-  regardless of content; a second Android device (Adreno 610) runs the same
-  binary and scene vsync-locked at 60 fps, so this is a device limitation to
-  document rather than an engine bug. Kept for the app-facing consequence:
-  on such hardware the compositor sets the frame budget, not the GPU.
+- [Android surface swap blocks four vsyncs](android-surface-swap-latency.md) [done] -
+  SOLVED: the ~80 ms "swap block" on the 2017 MediaTek TV was our own
+  unconditional 4x MSAA draining off-tile resolve traffic every frame. Fixed
+  via a multisampled Android window backbuffer (in-tile resolve at swap) plus
+  the rig's EXT_multisampled_render_to_texture path, whose resolve-out must
+  be a sampling draw, never a blit (Adreno rejects the blit
+  content-dependently). TV at 50 fps / 4x MSAA / 0.1 percent drops; the file
+  keeps the full investigation record, traps, and per-device measurement
+  rules (SF --latency only; screenrecord and the engine fps stat lie).
 - [Adaptive present-fence depth](adaptive-present-fence-depth.md) [deferred] -
   Fallback if unconditional two-deep present fencing (shipped 2026-07-27)
   ever shows up as desktop drag latency: grant the second in-flight frame

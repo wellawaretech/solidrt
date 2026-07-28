@@ -1,9 +1,9 @@
 ---
 type: backlog-item
 title: Android surface swap blocks four vsyncs
-description: On a 2017 MediaTek Android TV, eglSwapBuffers blocks 4-5 refresh periods even for a near-empty animated scene, capping the client at ~12 fps regardless of content; a second Android device runs the same binary and scene vsync-locked at 60 fps, so this is a device limitation to document, not an engine bug.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+description: SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU draining full off-tile multisample resolve traffic every frame. Fixed via a multisampled Android window backbuffer (in-tile resolve at swap) plus the rig's EXT_multisampled_render_to_texture path, whose resolve-out must be a sampling draw, never a blit (Adreno). TV at 50 fps / 4x MSAA / 0.1 percent drops; full investigation record and measurement rules inside.
+status: done
+timestamp: 2026-07-28T00:00:00Z
 ---
 
 # Android surface swap blocks four vsyncs
@@ -571,3 +571,46 @@ Windows SetThreadPriority; best-effort, debug-logged when denied).
 
 Final acceptance on the TV, plain launch, no flags: 1 dropped frame in
 1001 (0.1%) at a 20.0 ms latch cadence with full 4x MSAA.
+
+### Adreno follow-up 2026-07-28: the rig's in-tile resolve must sample, not blit
+
+The shipped rig EXT path broke the Samsung SM-T500 (Adreno 610, Android
+12): a continuous `GL error 0x502 after shader pass` stream, the screen
+flashing between the last two stale swapchain frames, and persistent
+black screens on static content (the failed frame is never re-requested
+under demand-driven rendering). Two facts made it device-wide there: the
+SM-T500 is DENIED a multisampled EGL backbuffer config (startup now
+always logs `window backbuffer is ...` either way), so unlike the TV,
+every plain frame runs the rig EXT path - and Adreno rejects blitting
+out of that rig. Two escalating failure modes:
+
+1. As shipped, the resolve blit read from the MSRTT-attached draw FBO.
+   Such an FBO answers GL sample queries as multisampled, which makes it
+   an illegal blit source: GL_INVALID_OPERATION on every ext frame.
+2. Blitting from a second, plain FBO wrapping ext.color (the resolved
+   texture) fixed steady frames but still threw 0x502 content-dependently
+   - first repro was frames introducing new glyphs (Impeller glyph-atlas
+   maintenance mid-draw), so it survives light testing: the launcher
+   home ran clean for 13 s before the first menu killed it.
+
+The fix is the extension's canonical consumption path: no blit at all.
+The resolve-out is a fullscreen sampling draw of ext.color into the
+destination (`EXT_RESOLVE_COPY_SRC` + `shader::render_program_to_fbo`,
+program cached on `OffscreenRig.copy`, freed on the ext-unavailable
+latch; the fragment maps the window rect out of the 64-px-aligned
+allocation via textureSize, exact at pixel centers). Bandwidth-identical
+to the blit: one full-frame read plus one write. Verified on the SM-T500
+same day: launcher, detail cards, organism, recurse all clean, zero GL
+errors.
+
+TRAP: never "simplify" this back to glBlitFramebuffer - failure mode 2
+is content-dependent and passes a quick look. And when a latched-error
+stream appears, attribute it by draining glGetError per stage
+(temporarily); the reporting site of a latched check is not the source.
+
+TV check, same day: the sampling-resolve build ran on the TV looking
+unchanged (visual check, not an SF --latency census) - as expected, since
+the TV's plain frames use the multisampled backbuffer and skip the rig
+entirely; only window-layer/shader frames touch the changed code. The
+SM-T500, always on the rig EXT path, is the standing regression canary
+for it.

@@ -383,7 +383,7 @@ impl ShaderProgram {
     self.pipeline
   }
 
-  fn delete(self, gl: &glow::Context) {
+  pub(crate) fn delete(self, gl: &glow::Context) {
     unsafe { gl.delete_program(self.program) };
   }
 }
@@ -1010,6 +1010,22 @@ pub fn render_program_to_window(
 ) {
   let draw = PassDraw::Fullscreen { vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]) };
   run_pass(gl, program, None, width, height, params, textures, draw);
+}
+
+/// Run one fullscreen draw of `program` into `fbo` (None = the default
+/// framebuffer), no clear: the covering triangle writes every pixel. The
+/// in-tile MSAA resolve consumes its resolved texture through this instead of
+/// a blit (see `gl::draw_and_resolve` for why a blit is not an option there).
+pub fn render_program_to_fbo(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  fbo: Option<glow::Framebuffer>,
+  width: u32,
+  height: u32,
+  textures: &[(String, glow::Texture)],
+) {
+  let draw = PassDraw::Fullscreen { vertex_count: 3, clear: None };
+  run_pass(gl, program, fbo, width, height, &[], textures, draw);
 }
 
 /// Run one draw of `program` into `fbo` (None = the default framebuffer) at

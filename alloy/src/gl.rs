@@ -91,6 +91,9 @@ pub struct OffscreenRig {
   // In-tile MSAA storage for the window path (EXT_multisampled_render_to_
   // texture); see draw_and_resolve.
   ext: Option<ExtStorage>,
+  // Fullscreen 1:1 copy program consuming ext.color into the destination;
+  // lazily compiled on the first in-tile resolve.
+  copy: Option<crate::shader::ShaderProgram>,
   // Depth-stencil for the single-sample path, where the resolve texture
   // attaches directly as color.
   ss_depth: Option<SizedRenderbuffer>,
@@ -127,6 +130,16 @@ struct ExtStorage {
   samples: i32,
 }
 
+// The in-tile resolve copy pass (see draw_and_resolve): a 1:1 sample of the
+// window rect out of the aligned ext.color allocation. iResolution is the
+// window size, textureSize the allocation, so the ratio rescales vUV to the
+// content corner; at pixel centers the mapping is exact.
+const EXT_RESOLVE_COPY_SRC: &str = r"uniform sampler2D uSource;
+void main() {
+  fragColor = texture(uSource, vUV * iResolution / vec2(textureSize(uSource, 0)));
+}
+";
+
 /// GL_EXT_multisampled_render_to_texture entry points, loaded once from the
 /// current context. On tiled GPUs this extension multisamples entirely inside
 /// tile memory and writes out only the resolved image, so MSAA stops costing
@@ -162,7 +175,16 @@ fn msrtt() -> Option<&'static MsrttFns> {
 
 impl OffscreenRig {
   pub fn new() -> Self {
-    Self { draw_fbo: None, resolve_fbo: None, msaa: None, ext: None, ss_depth: None, msaa_unavailable: false, ext_unavailable: false }
+    Self {
+      draw_fbo: None,
+      resolve_fbo: None,
+      msaa: None,
+      ext: None,
+      copy: None,
+      ss_depth: None,
+      msaa_unavailable: false,
+      ext_unavailable: false,
+    }
   }
 
   /// Grow the multisampled color + depth-stencil pair to cover `alloc`
@@ -253,7 +275,7 @@ impl OffscreenRig {
         glow::UNSIGNED_BYTE,
         glow::PixelUnpackData::Slice(None),
       );
-      // Never sampled (only blitted from), but keep it sampling-complete.
+      // Sampled 1:1 by the resolve copy pass; NEAREST is exact there.
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
       let depth_stencil = match gl.create_renderbuffer() {
@@ -279,6 +301,9 @@ impl OffscreenRig {
         gl.delete_texture(old.color);
         gl.delete_renderbuffer(old.depth_stencil);
       }
+    }
+    if let Some(copy) = self.copy.take() {
+      copy.delete(gl);
     }
   }
 
@@ -653,6 +678,8 @@ fn window_samples(gl: &glow::Context) -> i32 {
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
     if samples >= 2 {
       log::info!("[alloy] window backbuffer is {samples}x multisampled (in-tile resolve at swap)");
+    } else {
+      log::info!("[alloy] window backbuffer is single-sample");
     }
     samples
   })
@@ -820,12 +847,47 @@ fn draw_and_resolve(
     gl.clear_color(0.0, 0.0, 0.0, 0.0);
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
-    let result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
+    let mut result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
       Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("frame draw failed: {e}")),
       None => Err("wrap_fbo failed for frame framebuffer".to_string()),
     };
 
-    if result.is_ok() {
+    if result.is_ok() && ext_attached {
+      // Consume the resolved image the way the extension intends: sample
+      // ext.color in a fullscreen draw into `dst`. Blitting it out instead
+      // (through a wrapper FBO) is rejected by Adreno with GL_INVALID_OPERATION
+      // on frames where Impeller's draw did internal texture maintenance, so
+      // the copy is a draw, not a blit; the bandwidth is identical (one
+      // full-frame read plus one write). The fragment maps the window rect
+      // out of the aligned allocation via textureSize.
+      if rig.copy.is_none() {
+        match crate::shader::ShaderProgram::new_fragment(gl, EXT_RESOLVE_COPY_SRC) {
+          Ok(program) => rig.copy = Some(program),
+          Err(e) => {
+            log::warn!("[alloy] in-tile resolve copy program failed ({e}); using explicit resolve");
+            rig.latch_ext_unavailable(gl);
+            result = Err("in-tile resolve copy program failed".to_string());
+          }
+        }
+      }
+      if let Some(program) = &rig.copy {
+        let ext_color = rig.ext.as_ref().expect("ext_attached implies ext storage").color;
+        crate::shader::render_program_to_fbo(
+          gl,
+          program,
+          dst,
+          width as u32,
+          height as u32,
+          &[("uSource".to_string(), ext_color)],
+        );
+      }
+      // Only the depth-stencil samples are dead here; ext.color must survive
+      // (it is the resolve target the driver reloads from on rebind).
+      if supports_invalidate(gl) {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
+        gl.invalidate_framebuffer(glow::READ_FRAMEBUFFER, &[glow::DEPTH_STENCIL_ATTACHMENT]);
+      }
+    } else if result.is_ok() {
       gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, dst);
       gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
       gl.blit_framebuffer(0, 0, width, height, 0, 0, width, height, glow::COLOR_BUFFER_BIT, glow::NEAREST);
