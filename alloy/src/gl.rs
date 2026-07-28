@@ -748,9 +748,15 @@ pub fn run_context(
     // set on this thread, not where the context was created. Blocking this
     // thread in the vsync wait is the point: the UI thread stays free to
     // build the next frame and dispatch input. Playback never swaps, so the
-    // setting is inert there.
-    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(1) } {
+    // setting is inert there. SRT_SWAP_INTERVAL overrides the interval per
+    // launch for the Android present-path A/B (window_swap_interval).
+    let swap_interval = crate::sdl_utils::window_swap_interval();
+    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(swap_interval) } {
       log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+    }
+    #[cfg(target_os = "android")]
+    if swap_interval == 0 {
+      crate::sdl_utils::android_window_async_mode(window);
     }
 
     let gl = create_gl_context();
@@ -795,6 +801,15 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   gl_attr.set_context_profile(sdl3::video::GLProfile::GLES);
   gl_attr.set_context_version(3, 0);
   gl_attr.set_stencil_size(8);
+
+  // 8-bit color, explicitly: SDL's defaults request only 3/3/2 and its EGL
+  // config scorer picks the closest match, which on Android Mali drivers
+  // lands on RGB565 window buffers (observed as format=4 on the 2017
+  // MediaTek TV's SurfaceFlinger layer dump). HWUI never presents 565;
+  // 565 also banded visibly. Desktop GL configs are 8-bit anyway.
+  gl_attr.set_red_size(8);
+  gl_attr.set_green_size(8);
+  gl_attr.set_blue_size(8);
 
   // The window is deliberately single-sample: every frame rasterizes into
   // the multisampled offscreen rig and resolves into FBO 0 (see

@@ -326,6 +326,196 @@ pub fn audio_stream_destroy(stream: *mut SDL_AudioStream) {
   unsafe { SDL_DestroyAudioStream(stream) };
 }
 
+/// The swap interval for window presents: 1 everywhere. On desktop the
+/// blocking swap is the frame pacer; on Android it is the stock EGL sync
+/// path. An Android-only 0 was tried during the 2017 MediaTek TV
+/// investigation on the theory that async mode would dodge the
+/// compositor's late buffer releases; with trustworthy measurement
+/// (SurfaceFlinger --latency, not screenrecord) it is no better than 1
+/// there - the TV punishes slow present cadence regardless of queue mode
+/// (see okf/backlog/android-surface-swap-latency.md). SRT_SWAP_INTERVAL
+/// still overrides per launch for A/B runs (window_swap_interval).
+pub const WINDOW_SWAP_INTERVAL: i32 = 1;
+
+/// The effective swap interval: WINDOW_SWAP_INTERVAL unless the
+/// SRT_SWAP_INTERVAL env overrides it (on Android, MainActivity forwards the
+/// `srt_swap_interval` intent extra into that env), so present-path variants
+/// can be A/B tested per launch without a rebuild (see
+/// okf/backlog/android-surface-swap-latency.md).
+pub fn window_swap_interval() -> i32 {
+  std::env::var("SRT_SWAP_INTERVAL")
+    .ok()
+    .and_then(|v| v.parse::<i32>().ok())
+    .unwrap_or(WINDOW_SWAP_INTERVAL)
+}
+
+/// TEMPORARY (swap-latency diagnosis): SRT_GL_FINISH=1 (forwarded from the
+/// srt_gl_finish intent extra on Android) makes the raster thread time a
+/// glFinish between draw and present, separating GPU execution time from
+/// present-path blocking. See okf/backlog/android-surface-swap-latency.md.
+pub fn gl_finish_probe() -> bool {
+  static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+  *ON.get_or_init(|| std::env::var("SRT_GL_FINISH").is_ok_and(|v| v == "1"))
+}
+
+/// EXPERIMENT (okf/backlog/android-surface-swap-latency.md): put the EGL
+/// window's BufferQueue into asynchronous mode by calling
+/// `ANativeWindow::setSwapInterval(0)` directly, bypassing EGL (which
+/// silently clamps eglSwapInterval(0) to the config's
+/// EGL_MIN_SWAP_INTERVAL). Async mode grants an extra buffer and drops
+/// (rather than queues behind) frames the consumer is late for. Verdict on
+/// the 2017 MediaTek TV: not a fix - the display punishes slow present
+/// cadence regardless of queue mode (~7-9 fps async vs ~11.5 sync on a
+/// trivial scene, by SurfaceFlinger --latency). Kept, env-gated behind
+/// SRT_SWAP_INTERVAL=0, because the render-ahead work will likely need
+/// this module again for deeper buffering. Unlike
+/// perform(NATIVE_WINDOW_SET_BUFFER_COUNT) - which frees the slot table and
+/// crashes the next queueBuffer if the driver holds a dequeued buffer
+/// (measured: SIGSEGV in Surface::getSlotFromBufferLocked, and this driver
+/// dequeues at surface creation so there is no safe moment) - this call is
+/// slot-preserving and safe at any time. The struct layout is the
+/// NDK-stable legacy ABI from AOSP system/window.h; the magic-number gate
+/// bails out if the pointer is not actually an ANativeWindow. Also logs the
+/// window's advertised swap-interval range and min-undequeued count.
+#[cfg(target_os = "android")]
+pub(crate) mod android_window {
+  use core::ffi::{c_char, c_int, c_void};
+
+  #[repr(C)]
+  pub struct AndroidNativeBase {
+    pub magic: u32,
+    pub version: u32,
+    pub reserved: [*mut c_void; 4],
+    pub inc_ref: Option<extern "C" fn(*mut c_void)>,
+    pub dec_ref: Option<extern "C" fn(*mut c_void)>,
+  }
+  /// Legacy ANativeWindow ABI (AOSP system/window.h; NDK-stable - the public
+  /// ANativeWindow_* functions read these same fields). Field order matters:
+  /// lockBuffer_DEPRECATED sits between dequeueBuffer_DEPRECATED and
+  /// queueBuffer_DEPRECATED; omitting it shifts query/perform onto
+  /// queueBuffer and SIGSEGVs at Surface::getSlotFromBufferLocked.
+  #[repr(C)]
+  pub struct ANativeWindow {
+    pub common: AndroidNativeBase,
+    pub flags: u32,
+    pub min_swap_interval: c_int,
+    pub max_swap_interval: c_int,
+    pub xdpi: f32,
+    pub ydpi: f32,
+    pub oem: [isize; 4],
+    pub set_swap_interval: Option<extern "C" fn(*mut ANativeWindow, c_int) -> c_int>,
+    pub dequeue_buffer_deprecated: *mut c_void,
+    pub lock_buffer_deprecated: *mut c_void,
+    pub queue_buffer_deprecated: *mut c_void,
+    pub query: Option<extern "C" fn(*const ANativeWindow, c_int, *mut c_int) -> c_int>,
+    pub perform: Option<unsafe extern "C" fn(*mut ANativeWindow, c_int, ...) -> c_int>,
+  }
+  // ANDROID_NATIVE_MAKE_CONSTANT('_','w','n','d')
+  pub const ANDROID_NATIVE_WINDOW_MAGIC: u32 = 0x5f776e64;
+  pub const NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS: c_int = 3; // query()
+  pub const NATIVE_WINDOW_SET_BUFFER_COUNT: c_int = 4; // perform()
+  pub const NATIVE_WINDOW_SET_BUFFERS_TIMESTAMP: c_int = 7; // perform(), i64 nanos
+
+  /// The window's ANativeWindow, or null when the property is missing or the
+  /// magic does not match (callers decide whether that is worth a log line).
+  pub fn from_sdl(window: *mut sdl3::sys::video::SDL_Window) -> *mut ANativeWindow {
+    unsafe {
+      let props = sdl3::sys::video::SDL_GetWindowProperties(window);
+      let anw = sdl3::sys::properties::SDL_GetPointerProperty(
+        props,
+        sdl3::sys::video::SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER as *const c_char,
+        std::ptr::null_mut(),
+      ) as *mut ANativeWindow;
+      if anw.is_null() || (*anw).common.magic != ANDROID_NATIVE_WINDOW_MAGIC {
+        return std::ptr::null_mut();
+      }
+      anw
+    }
+  }
+}
+
+#[cfg(target_os = "android")]
+pub fn android_window_async_mode(window: *mut sdl3::sys::video::SDL_Window) {
+  use android_window::*;
+  use core::ffi::c_int;
+
+  let anw = from_sdl(window);
+  if anw.is_null() {
+    log::warn!("[alloy] async-mode experiment: no usable ANativeWindow property");
+    return;
+  }
+  unsafe {
+    let w = &*anw;
+    let mut min_undequeued: c_int = -1;
+    let query_result = match w.query {
+      Some(q) => q(anw, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS, &mut min_undequeued),
+      None => -1,
+    };
+    let interval_result = match w.set_swap_interval {
+      Some(f) => f(anw, 0),
+      None => -1,
+    };
+    // Legacy buffer-count raise: with maxDequeued stuck at 1 the producer can
+    // never run ahead of the compositor's late releases, so the dequeue
+    // inside eglSwapBuffers eats the full release latency every frame. The
+    // real Surface::setBufferCount is guarded (fails with an error code if
+    // buffers are dequeued) - safe to attempt, decisive if it takes.
+    let count: c_int = 5;
+    let count_result = match w.perform {
+      Some(p) => p(anw, NATIVE_WINDOW_SET_BUFFER_COUNT, count),
+      None => -1,
+    };
+    log::info!(
+      "[alloy] ANativeWindow: swap interval {}..{}, minUndequeued {} (query {}), setSwapInterval(0) -> {}, setBufferCount({}) -> {}",
+      w.min_swap_interval,
+      w.max_swap_interval,
+      min_undequeued,
+      query_result,
+      interval_result,
+      count,
+      count_result
+    );
+  }
+}
+
+/// EXPERIMENT (okf/backlog/android-surface-swap-latency.md): stamp each
+/// queued buffer with an explicit, rapidly advancing timestamp instead of
+/// NATIVE_WINDOW_TIMESTAMP_AUTO (real queue time). Theory under test: the
+/// MediaTek TV's SurfaceFlinger fork rate-matches its latch cadence to the
+/// layer's observed timestamp cadence (TV judder-free video pacing), so an
+/// app whose first frames arrive slowly (JS boot, demand-driven idle) is
+/// classified as low-rate content, latched at ~6 Hz, and then held there by
+/// sync-mode queueBuffer backpressure - while an app that streams 20 ms
+/// timestamps from frame 1 (the pre-3-thread engine, HWUI animation bursts,
+/// bootanimation) locks into vsync-rate latching. Millisecond-spaced,
+/// quickly-stale timestamps read as high-rate present-ASAP content to any
+/// such detector. Call once per frame on the raster thread, before the swap
+/// queues the buffer.
+///
+/// Tested 2026-07-28: no effect (still ~8 fps on the flower) when called
+/// before each swap from `present()`. Possibly stomped by Mali EGL
+/// re-setting AUTO at queue time - inconclusive-negative. Left unwired;
+/// the call site was `present()` in raster.rs. CAVEAT: that negative was
+/// measured with screenrecord, which was later shown to be invalid on this
+/// TV (encodes ~3.5 fps regardless of content), so the result is void -
+/// retest with SurfaceFlinger --latency if the timestamp theory ever
+/// becomes relevant again.
+#[cfg(target_os = "android")]
+pub fn android_stamp_buffer_timestamp(window: *mut sdl3::sys::video::SDL_Window) {
+  use std::sync::atomic::{AtomicI64, Ordering};
+  static NEXT_TS: AtomicI64 = AtomicI64::new(1_000_000);
+  let anw = android_window::from_sdl(window);
+  if anw.is_null() {
+    return;
+  }
+  let ts = NEXT_TS.fetch_add(1_000_000, Ordering::Relaxed);
+  unsafe {
+    if let Some(p) = (*anw).perform {
+      p(anw, android_window::NATIVE_WINDOW_SET_BUFFERS_TIMESTAMP, ts);
+    }
+  }
+}
+
 /// SDL's `Window::gl_swap_window` discards `SDL_GL_SwapWindow`'s result, but a
 /// present can fail permanently (EGL context lost / D3D device removed under
 /// ANGLE). Returns false on failure; the detail is in `sdl_error()`. Takes the

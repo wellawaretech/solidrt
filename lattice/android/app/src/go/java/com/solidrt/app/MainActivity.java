@@ -47,6 +47,30 @@ public class MainActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // TEMPORARY (swap-latency diagnosis): raise native log level so the
+        // raster phase trace (alloy FrameTiming, log::debug) reaches logcat.
+        // Remove when okf/backlog/android-surface-swap-latency.md closes.
+        try {
+            android.system.Os.setenv("SRT_LOG", "debug", true);
+        } catch (Exception e) {
+            Log.w(TAG, "setenv SRT_LOG failed", e);
+        }
+        // TEMPORARY (swap-latency diagnosis): forward the srt_swap_interval
+        // intent extra into the env so alloy's present path can be A/B
+        // switched per launch (see sdl_utils::window_swap_interval).
+        try {
+            Intent intent = getIntent();
+            String si = intent != null ? intent.getStringExtra("srt_swap_interval") : null;
+            if (si != null && !si.isEmpty()) {
+                android.system.Os.setenv("SRT_SWAP_INTERVAL", si, true);
+            }
+            String gf = intent != null ? intent.getStringExtra("srt_gl_finish") : null;
+            if (gf != null && !gf.isEmpty()) {
+                android.system.Os.setenv("SRT_GL_FINISH", gf, true);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "setenv SRT_SWAP_INTERVAL failed", e);
+        }
         extractAssets();
         super.onCreate(savedInstanceState);
 
