@@ -51,6 +51,11 @@ sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
 sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# GetCurrentThread/SetThreadPriority for the frame thread priority boost, the
+# Windows half of what libc covers on unix (sdl_utils::frame_thread_priority).
+# Already in the client's graph via tokio/rustix/socket2, and socket2 already
+# enables this feature, so the unified build compiles no extra crate.
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
 sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
 sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }

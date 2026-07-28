@@ -360,16 +360,10 @@ pub fn frame_thread_priority(critical: bool) {
     }
   }
   #[cfg(target_os = "windows")]
-  {
-    #[link(name = "kernel32")]
-    extern "system" {
-      fn GetCurrentThread() -> *mut core::ffi::c_void;
-      fn SetThreadPriority(thread: *mut core::ffi::c_void, priority: i32) -> i32;
-    }
-    const THREAD_PRIORITY_ABOVE_NORMAL: i32 = 1;
-    const THREAD_PRIORITY_HIGHEST: i32 = 2;
+  unsafe {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_HIGHEST};
     let priority = if critical { THREAD_PRIORITY_HIGHEST } else { THREAD_PRIORITY_ABOVE_NORMAL };
-    if unsafe { SetThreadPriority(GetCurrentThread(), priority) } == 0 {
+    if SetThreadPriority(GetCurrentThread(), priority) == 0 {
       log::debug!("[alloy] SetThreadPriority({priority}) failed");
     }
   }
