@@ -88,6 +88,9 @@ pub struct OffscreenRig {
   draw_fbo: Option<glow::NativeFramebuffer>,
   resolve_fbo: Option<glow::NativeFramebuffer>,
   msaa: Option<MsaaStorage>,
+  // In-tile MSAA storage for the window path (EXT_multisampled_render_to_
+  // texture); see draw_and_resolve.
+  ext: Option<ExtStorage>,
   // Depth-stencil for the single-sample path, where the resolve texture
   // attaches directly as color.
   ss_depth: Option<SizedRenderbuffer>,
@@ -95,6 +98,9 @@ pub struct OffscreenRig {
   // advertise MAX_SAMPLES yet reject this config, and one rejection means
   // every later attempt fails too, so stay single-sample for the process.
   msaa_unavailable: bool,
+  // Same latch policy for the in-tile path: one rejection and the process
+  // stays on the explicit resolve.
+  ext_unavailable: bool,
 }
 
 struct SizedRenderbuffer {
@@ -109,9 +115,54 @@ struct MsaaStorage {
   samples: i32,
 }
 
+/// Storage for the in-tile MSAA path: a single-sample color texture the
+/// driver resolves into at tile writeback, and a depth-stencil whose samples
+/// exist only in tile memory (RenderbufferStorageMultisampleEXT backs it
+/// single-sample). The sample-count multiples of memory the explicit path
+/// stores and re-reads never exist here.
+struct ExtStorage {
+  color: glow::NativeTexture,
+  depth_stencil: glow::NativeRenderbuffer,
+  size: (i32, i32),
+  samples: i32,
+}
+
+/// GL_EXT_multisampled_render_to_texture entry points, loaded once from the
+/// current context. On tiled GPUs this extension multisamples entirely inside
+/// tile memory and writes out only the resolved image, so MSAA stops costing
+/// sample-count multiples of DDR bandwidth - the difference between ~80 ms
+/// and a few ms per 1080p window frame on the 2017 MediaTek TV
+/// (okf/backlog/android-surface-swap-latency.md). None when the extension is
+/// not advertised; desktop GL lacks it and its bandwidth does not miss it.
+/// Call on the raster thread with the GL context current.
+struct MsrttFns {
+  framebuffer_texture_2d_multisample:
+    unsafe extern "C" fn(target: u32, attachment: u32, textarget: u32, texture: u32, level: i32, samples: i32),
+  renderbuffer_storage_multisample:
+    unsafe extern "C" fn(target: u32, samples: i32, internalformat: u32, width: i32, height: i32),
+}
+
+fn msrtt() -> Option<&'static MsrttFns> {
+  static FNS: std::sync::OnceLock<Option<MsrttFns>> = std::sync::OnceLock::new();
+  FNS
+    .get_or_init(|| unsafe {
+      if !sdl3::sys::video::SDL_GL_ExtensionSupported(c"GL_EXT_multisampled_render_to_texture".as_ptr()) {
+        return None;
+      }
+      let ftm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glFramebufferTexture2DMultisampleEXT".as_ptr())?;
+      let rsm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glRenderbufferStorageMultisampleEXT".as_ptr())?;
+      log::info!("[alloy] window MSAA uses EXT_multisampled_render_to_texture (in-tile resolve)");
+      Some(MsrttFns {
+        framebuffer_texture_2d_multisample: std::mem::transmute(ftm),
+        renderbuffer_storage_multisample: std::mem::transmute(rsm),
+      })
+    })
+    .as_ref()
+}
+
 impl OffscreenRig {
   pub fn new() -> Self {
-    Self { draw_fbo: None, resolve_fbo: None, msaa: None, ss_depth: None, msaa_unavailable: false }
+    Self { draw_fbo: None, resolve_fbo: None, msaa: None, ext: None, ss_depth: None, msaa_unavailable: false, ext_unavailable: false }
   }
 
   /// Grow the multisampled color + depth-stencil pair to cover `alloc`
@@ -170,6 +221,65 @@ impl OffscreenRig {
       self.ss_depth = Some(SizedRenderbuffer { rbo, size });
     }
     Ok(())
+  }
+
+  /// Grow the in-tile MSAA pair (see ExtStorage) to cover `alloc`, same
+  /// grow-only sizing rules as ensure_msaa. Leaves the texture and
+  /// renderbuffer bindings dirty; the caller restores them.
+  fn ensure_ext(&mut self, gl: &glow::Context, fns: &MsrttFns, alloc: (i32, i32), samples: i32) -> Result<(), String> {
+    let (cur_w, cur_h, cur_samples) =
+      self.ext.as_ref().map(|m| (m.size.0, m.size.1, m.samples)).unwrap_or((0, 0, samples));
+    let size = (cur_w.max(alloc.0), cur_h.max(alloc.1));
+    if self.ext.is_some() && size == (cur_w, cur_h) && cur_samples == samples {
+      return Ok(());
+    }
+    if let Some(old) = self.ext.take() {
+      unsafe {
+        gl.delete_texture(old.color);
+        gl.delete_renderbuffer(old.depth_stencil);
+      }
+    }
+    unsafe {
+      let color = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+      gl.bind_texture(glow::TEXTURE_2D, Some(color));
+      gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        glow::RGBA8 as i32,
+        size.0,
+        size.1,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
+      // Never sampled (only blitted from), but keep it sampling-complete.
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+      let depth_stencil = match gl.create_renderbuffer() {
+        Ok(rb) => rb,
+        Err(e) => {
+          gl.delete_texture(color);
+          return Err(format!("glGenRenderbuffers failed: {e}"));
+        }
+      };
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(depth_stencil));
+      (fns.renderbuffer_storage_multisample)(glow::RENDERBUFFER, samples, glow::DEPTH24_STENCIL8, size.0, size.1);
+      self.ext = Some(ExtStorage { color, depth_stencil, size, samples });
+    }
+    Ok(())
+  }
+
+  /// Latch the in-tile path off for the process and free its storage; the
+  /// window path falls back to the explicit resolve.
+  fn latch_ext_unavailable(&mut self, gl: &glow::Context) {
+    self.ext_unavailable = true;
+    if let Some(old) = self.ext.take() {
+      unsafe {
+        gl.delete_texture(old.color);
+        gl.delete_renderbuffer(old.depth_stencil);
+      }
+    }
   }
 
   /// Latch single-sample mode and free the multisampled storage.
@@ -504,7 +614,48 @@ pub fn render_display_list_to_window(
   dl: &DisplayList,
   size: ISize,
 ) -> Result<(), String> {
+  // Multisampled-backbuffer fast path (Android, see configure_opengl): the
+  // driver multisamples FBO 0 inside tile memory and resolves at swap, so
+  // the frame draws straight into the window - no rig pass, no resolve
+  // copy, and MSAA costs almost nothing. The layer variant below still goes
+  // via the rig (its target must end up in a sampleable texture).
+  if window_samples(gl) >= 2 {
+    unsafe {
+      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+      gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+      // Same defined-base rationale as the rig path: the backbuffer carries
+      // driver-defined garbage or a stale frame.
+      gl.disable(glow::SCISSOR_TEST);
+      gl.clear_color(0.0, 0.0, 0.0, 0.0);
+      gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+      let result = match impeller_ctx.wrap_fbo(0, PixelFormat::RGBA8888, size) {
+        Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("frame draw failed: {e}")),
+        None => Err("wrap_fbo failed for window framebuffer".to_string()),
+      };
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+      return result;
+    }
+  }
   render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None)
+}
+
+/// FBO 0's multisample count, queried once per process. Positive when the
+/// window backbuffer itself is multisampled (Android requests this, see
+/// configure_opengl); the driver then resolves in-tile at swap and plain
+/// window frames skip the rig entirely.
+fn window_samples(gl: &glow::Context) -> i32 {
+  static N: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+  *N.get_or_init(|| unsafe {
+    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    let sample_buffers = gl.get_parameter_i32(glow::SAMPLE_BUFFERS);
+    let samples = if sample_buffers > 0 { gl.get_parameter_i32(glow::SAMPLES) } else { 0 };
+    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+    if samples >= 2 {
+      log::info!("[alloy] window backbuffer is {samples}x multisampled (in-tile resolve at swap)");
+    }
+    samples
+  })
 }
 
 /// Rasterize a display list into the retained rig at the window's physical
@@ -549,13 +700,14 @@ fn render_display_list_via_rig(
   }
 }
 
-/// Render `dl` into the rig's renderbuffer storage and blit the window-sized
-/// rect into `dst` (None = the default framebuffer; Some = the retained
-/// window layer). `samples >= 2` draws multisampled and the blit is the MSAA
-/// resolve; `samples == 0` draws single-sample and the blit is a plain copy.
-/// Both cases attach the rig's renderbuffer pair, so one code path covers
-/// them. Restores the framebuffer and renderbuffer bindings it touches so
-/// Impeller's cached GL state stays valid.
+/// Render `dl` into the rig's storage and blit the window-sized rect into
+/// `dst` (None = the default framebuffer; Some = the retained window layer).
+/// `samples >= 2` draws multisampled - in-tile when the driver has
+/// EXT_multisampled_render_to_texture (the blit is then a plain copy),
+/// otherwise into the explicit multisampled renderbuffers (the blit is the
+/// resolve). `samples == 0` draws single-sample. Restores the framebuffer,
+/// renderbuffer, and texture bindings it touches so Impeller's cached GL
+/// state stays valid.
 fn draw_and_resolve(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -576,12 +728,6 @@ fn draw_and_resolve(
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_rbo = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
 
-    let ensured = rig.ensure_msaa(gl, alloc, samples);
-    gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
-    if let Err(e) = ensured {
-      return OffscreenDraw::Failed(e);
-    }
-
     let draw_fbo = match rig.draw_fbo {
       Some(fbo) => fbo,
       None => match gl.create_framebuffer() {
@@ -593,24 +739,79 @@ fn draw_and_resolve(
       },
     };
 
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
-    let msaa = rig.msaa.as_ref().expect("ensure_msaa populated the rig");
-    gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(msaa.color));
-    gl.framebuffer_renderbuffer(
-      glow::FRAMEBUFFER,
-      glow::DEPTH_STENCIL_ATTACHMENT,
-      glow::RENDERBUFFER,
-      Some(msaa.depth_stencil),
-    );
+    // In-tile MSAA first (EXT_multisampled_render_to_texture, see MsrttFns):
+    // the driver multisamples inside tile memory and resolves into the rig's
+    // single-sample texture at writeback, so the closing blit is a plain
+    // copy. The explicit path below stores and re-reads sample-count
+    // multiples of the frame instead, which on bandwidth-starved tiled GPUs
+    // dominates the whole frame budget (~80 ms at 1080p on the 2017 MediaTek
+    // TV). Any failure latches the path off and falls back.
+    let mut ext_attached = false;
+    if samples >= 2 && !rig.ext_unavailable {
+      if let Some(fns) = msrtt() {
+        let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+        let ensured = rig.ensure_ext(gl, fns, alloc, samples);
+        gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
+        gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
+        match ensured {
+          Ok(()) => {
+            let ext = rig.ext.as_ref().expect("ensure_ext populated the rig");
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
+            (fns.framebuffer_texture_2d_multisample)(
+              glow::FRAMEBUFFER,
+              glow::COLOR_ATTACHMENT0,
+              glow::TEXTURE_2D,
+              ext.color.0.get(),
+              0,
+              samples,
+            );
+            gl.framebuffer_renderbuffer(
+              glow::FRAMEBUFFER,
+              glow::DEPTH_STENCIL_ATTACHMENT,
+              glow::RENDERBUFFER,
+              Some(ext.depth_stencil),
+            );
+            if gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE {
+              ext_attached = true;
+            } else {
+              gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+              log::warn!("[alloy] in-tile MSAA framebuffer incomplete; using explicit resolve");
+              rig.latch_ext_unavailable(gl);
+            }
+          }
+          Err(e) => {
+            log::warn!("[alloy] in-tile MSAA storage failed ({e}); using explicit resolve");
+            rig.latch_ext_unavailable(gl);
+          }
+        }
+      }
+    }
 
-    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-    if status != glow::FRAMEBUFFER_COMPLETE {
-      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-      return if samples >= 2 {
-        OffscreenDraw::MsaaUnavailable
-      } else {
-        OffscreenDraw::Failed(format!("window framebuffer incomplete: {status:#x}"))
-      };
+    if !ext_attached {
+      let ensured = rig.ensure_msaa(gl, alloc, samples);
+      gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
+      if let Err(e) = ensured {
+        return OffscreenDraw::Failed(e);
+      }
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(draw_fbo));
+      let msaa = rig.msaa.as_ref().expect("ensure_msaa populated the rig");
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(msaa.color));
+      gl.framebuffer_renderbuffer(
+        glow::FRAMEBUFFER,
+        glow::DEPTH_STENCIL_ATTACHMENT,
+        glow::RENDERBUFFER,
+        Some(msaa.depth_stencil),
+      );
+
+      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+      if status != glow::FRAMEBUFFER_COMPLETE {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+        return if samples >= 2 {
+          OffscreenDraw::MsaaUnavailable
+        } else {
+          OffscreenDraw::Failed(format!("window framebuffer incomplete: {status:#x}"))
+        };
+      }
     }
 
     // Same defined-base rationale as draw_offscreen: rig storage carries the
@@ -692,8 +893,45 @@ pub fn read_fbo0_pixels(gl: &glow::Context, size: ISize) -> Vec<u8> {
   let mut pixels = vec![0u8; (width.max(0) as usize) * (height.max(0) as usize) * 4];
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING);
-    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
-    gl.read_pixels(0, 0, width, height, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
+    if window_samples(gl) >= 2 {
+      // glReadPixels cannot read a multisampled framebuffer: resolve the
+      // window rect into a temporary single-sample FBO first.
+      let prev_draw = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
+      let prev_rbo = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+      if let (Ok(rbo), Ok(fbo)) = (gl.create_renderbuffer(), gl.create_framebuffer()) {
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, width, height);
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_renderbuffer(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rbo));
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+        gl.blit_framebuffer(0, 0, width, height, 0, 0, width, height, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
+        gl.read_pixels(
+          0,
+          0,
+          width,
+          height,
+          glow::RGBA,
+          glow::UNSIGNED_BYTE,
+          glow::PixelPackData::Slice(Some(&mut pixels)),
+        );
+        gl.delete_framebuffer(fbo);
+        gl.delete_renderbuffer(rbo);
+      }
+      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, prev_framebuffer(prev_draw));
+      gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rbo));
+    } else {
+      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+      gl.read_pixels(
+        0,
+        0,
+        width,
+        height,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelPackData::Slice(Some(&mut pixels)),
+      );
+    }
     gl.bind_framebuffer(glow::READ_FRAMEBUFFER, prev_framebuffer(prev_fbo));
   }
   pixels
@@ -740,6 +978,9 @@ pub fn run_context(
   // requires exactly this: one context, used only on the thread it was
   // created on. Everything GL arrives over the command channel (raster.rs).
   let spawn_raster = std::thread::Builder::new().name("srt-raster".into()).spawn(move || {
+    // Display priority so background processes cannot preempt a frame
+    // mid-flight; see sdl_utils::frame_thread_priority.
+    crate::sdl_utils::frame_thread_priority(true);
     let window = window_ptr.get() as *mut sdl3::sys::video::SDL_Window;
     let current =
       unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context_ptr.get() as sdl3::sys::video::SDL_GLContext) };
@@ -748,15 +989,9 @@ pub fn run_context(
     // set on this thread, not where the context was created. Blocking this
     // thread in the vsync wait is the point: the UI thread stays free to
     // build the next frame and dispatch input. Playback never swaps, so the
-    // setting is inert there. SRT_SWAP_INTERVAL overrides the interval per
-    // launch for the Android present-path A/B (window_swap_interval).
-    let swap_interval = crate::sdl_utils::window_swap_interval();
-    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(swap_interval) } {
+    // setting is inert there.
+    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) } {
       log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
-    }
-    #[cfg(target_os = "android")]
-    if swap_interval == 0 {
-      crate::sdl_utils::android_window_async_mode(window);
     }
 
     let gl = create_gl_context();
@@ -789,6 +1024,9 @@ pub fn run_context(
   // The UI thread: QuickJS, layout, hit-testing, DisplayList building. No GL
   // at all; the Context it gets marshals GPU work over the command channel.
   let spawn_ui = std::thread::Builder::new().name("srt-ui".into()).stack_size(UI_THREAD_STACK_SIZE).spawn(move || {
+    // Same display-priority rationale as the raster thread, one tier lower
+    // (the raster thread owns the present deadline).
+    crate::sdl_utils::frame_thread_priority(false);
     closure(Arc::new(Context::new(raster_tx, idle_ticks, fence_timeouts)));
   });
   spawn_ui.expect("failed to spawn UI thread");
@@ -811,9 +1049,20 @@ pub(crate) fn configure_opengl(video: &sdl3::VideoSubsystem) {
   gl_attr.set_green_size(8);
   gl_attr.set_blue_size(8);
 
-  // The window is deliberately single-sample: every frame rasterizes into
-  // the multisampled offscreen rig and resolves into FBO 0 (see
-  // render_display_list_to_window), so a multisampled backbuffer would only
+  // On Android the window backbuffer itself is multisampled: the tiled GPU
+  // resolves in-tile at swap, so plain window frames draw straight into
+  // FBO 0 with no rig pass and no resolve copy - the only MSAA
+  // configuration this class of GPU runs at full rate
+  // (okf/backlog/android-surface-swap-latency.md).
+  #[cfg(target_os = "android")]
+  {
+    gl_attr.set_multisample_buffers(1);
+    gl_attr.set_multisample_samples(MSAA_SAMPLES as u8);
+  }
+
+  // On desktop the window is deliberately single-sample: every frame
+  // rasterizes into the multisampled offscreen rig and resolves into FBO 0
+  // (see render_display_list_to_window), so a multisampled backbuffer would only
   // duplicate that storage. This also removes the old dependency on the
   // driver exposing a multisampled EGL config at all (the Android emulator
   // does not, which used to force a retry-without-MSAA window path).

@@ -657,17 +657,6 @@ impl RasterState {
     let draw_start = std::time::Instant::now();
     let drawn = self.draw_to_window(&dl, size);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
-    // TEMPORARY (swap-latency diagnosis): SRT_GL_FINISH=1 blocks on glFinish
-    // between draw and present, splitting GPU execution time from present
-    // blocking so the two theories in
-    // okf/backlog/android-surface-swap-latency.md can be told apart.
-    let finish_ms = if crate::sdl_utils::gl_finish_probe() {
-      let finish_start = std::time::Instant::now();
-      unsafe { glow::HasContext::finish(&self.gl) };
-      finish_start.elapsed().as_secs_f32() * 1000.0
-    } else {
-      0.0
-    };
     if self.capture_frames {
       let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
       self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
@@ -691,11 +680,9 @@ impl RasterState {
       // per second so a sustained stall stays readable. Debug, not warn: a
       // saturated tiled GPU (Android TV) lives here in steady state, and the
       // timing stats carry the numbers - raise SRT_LOG=debug to see these.
-      if wait_ms + draw_ms + finish_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
+      if wait_ms + draw_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
         self.slow_frame_log = Some(std::time::Instant::now());
-        log::debug!(
-          "[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, finish {finish_ms:.1}ms, present {present_ms:.1}ms"
-        );
+        log::debug!("[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, present {present_ms:.1}ms");
       }
       // Resize-race diagnostics: the published surface size moved while this
       // frame was drawing, so what just reached the screen already has stale
@@ -963,7 +950,7 @@ impl RasterState {
       return false;
     }
     if !self.capture_frames
-      && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::window_swap_interval()) }
+      && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) }
     {
       log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
     }

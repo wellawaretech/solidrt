@@ -47,35 +47,6 @@ public class MainActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Forward the srt_log intent extra into the env so a diagnosis launch
-        // can raise the native log level per run (adb shell am start ...
-        // -e srt_log debug); by default the native side stays at info, so the
-        // steady-state debug traces (frame timing, pacing) do not flood logcat.
-        try {
-            Intent logIntent = getIntent();
-            String lvl = logIntent != null ? logIntent.getStringExtra("srt_log") : null;
-            if (lvl != null && !lvl.isEmpty()) {
-                android.system.Os.setenv("SRT_LOG", lvl, true);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "setenv SRT_LOG failed", e);
-        }
-        // TEMPORARY (swap-latency diagnosis): forward the srt_swap_interval
-        // intent extra into the env so alloy's present path can be A/B
-        // switched per launch (see sdl_utils::window_swap_interval).
-        try {
-            Intent intent = getIntent();
-            String si = intent != null ? intent.getStringExtra("srt_swap_interval") : null;
-            if (si != null && !si.isEmpty()) {
-                android.system.Os.setenv("SRT_SWAP_INTERVAL", si, true);
-            }
-            String gf = intent != null ? intent.getStringExtra("srt_gl_finish") : null;
-            if (gf != null && !gf.isEmpty()) {
-                android.system.Os.setenv("SRT_GL_FINISH", gf, true);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "setenv SRT_SWAP_INTERVAL failed", e);
-        }
         extractAssets();
         super.onCreate(savedInstanceState);
 

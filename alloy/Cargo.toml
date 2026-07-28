@@ -24,6 +24,13 @@ jni = "0.22"
 ndk = { version = "0.9", default-features = false }
 ndk-sys = "0.6"
 
+# setpriority/gettid (Android/Linux) and QoS classes (macOS) for the frame
+# thread priority boost (sdl_utils::frame_thread_priority): the UI and raster
+# threads run at display priority so background processes stop preempting
+# frames mid-flight.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
 # armv7 the pointer-sized struct fields don't line up, so re-run bindgen
 # against the real target (Makefile.android sets BINDGEN_EXTRA_CLANG_ARGS).

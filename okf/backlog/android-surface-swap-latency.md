@@ -449,3 +449,125 @@ Instrumentation left in tree (all marked TEMPORARY): SRT_SWAP_INTERVAL
 (srt_swap_interval extra), SRT_GL_FINISH (srt_gl_finish extra),
 SRT_LOG=debug in MainActivity. Measurement rule stands: SF --latency
 only; screenrecord and the engine fps stat both lie on this TV.
+
+## SOLVED 2026-07-28: it was the MSAA resolve, all along
+
+SRT_MSAA=0 (single-sample window rig) on the completely stock present
+path - no feed-pipe, no fence-gate bypass, no buffer-count raise, no
+layer-config changes - gives a rock-solid 20.0 ms latch cadence (50 fps)
+on tv-probe mode 0, and the glFinish probe collapses from a flat ~80 ms
+to 5.8 ms. Human-confirmed fluent on the panel ("FLUENT!" via the probe's
+remote-feedback path). The flower goes ~8 -> ~17-18 fps with a measured
+53 ms/frame of genuine content GPU work remaining (points + glow pass) -
+a normal optimization target now, not a platform mystery.
+
+The real mechanism: Impeller's GLES window path renders into a 4x
+multisampled renderbuffer and blit-resolves to FBO 0 every frame. That is
+full off-tile multisample traffic - ~1920x1080 x 4 B x 4 samples of color
+store plus depth/stencil plus the resolve read+write, roughly 200 MB of
+DDR traffic per frame - which on this TV's memory bus is ~80 ms, flat,
+regardless of content. Every observation in this file follows from that
+one number:
+- the ~80 ms "release fence wait" was the GPU draining its own resolve;
+- the content-independent ~12 fps ceiling (80 ms + scene cost);
+- SF's compositor swaps inflating to 75-145 ms only while our app runs
+  (its GLES composite queued behind our 80 ms of Mali work);
+- the 20/80/160 latch patterns (queue-shape quantization of an 80 ms
+  producer, reshaped but never fixed by the queue experiments);
+- Kodi/launcher/HWUI being fluent (nobody else multisamples);
+- the tablet being fine (Mali-G52's bandwidth and a smaller relative
+  cost) and desktop being fine (discrete bandwidth);
+- and the pre-refactor engine having been fluent IF that era's window
+  path was single-sample (unverified, but the refactor-era rig is when
+  4x MSAA became unconditional).
+
+The cadence-sensitive-display theory in the round-3 section above is
+WITHDRAWN - the display was innocent; everything it "held" was
+backpressure from a pegged GPU.
+
+Fix directions, in order of value:
+1. EXT_multisampled_render_to_texture (in this TV's extension list, and
+   standard on tiled GPUs): in-tile resolve makes 4x MSAA nearly free -
+   the proper fix that keeps AA. Requires the impellers GLES backend to
+   use it for the window rig.
+2. Until then: scale MSAA to the device (SRT_MSAA plumbing is in tree;
+   the old device-perf-model backlog item is the natural home - weak
+   tiled GPU => samples=0/2).
+3. App-level: the flower's remaining 53 ms is points + glow passes;
+   ordinary content optimization from here.
+
+Verdict on the experiment toggles this hunt produced: feed-pipe,
+no-fence-gate, buffer-count raise, translucent/alpha/on-top, hwui-pulse
+all proved unnecessary for the fix (the queue experiments reshaped
+patterns but could not beat an 80 ms GPU floor). They are all env-gated
+and marked EXPERIMENT/TEMPORARY; candidates for removal once SRT_MSAA
+handling is productized. SRT_GL_FINISH and SRT_LOG forwarding earned
+their keep as diagnosis tools.
+
+Measurement rules that made this solvable (keep for posterity):
+- dumpsys SurfaceFlinger --latency on the app's SurfaceView layer is the
+  only trustworthy external fps meter on this TV; screenrecord caps at
+  ~3.5 fps and the engine fps stat free-runs.
+- A timed glFinish between draw and present separates GPU execution from
+  present blocking; the flat 80 ms it exposed was the whole answer.
+
+### Final fix, shipped 2026-07-28: multisampled window backbuffer on Android
+
+Two implementations of the in-tile idea were measured, SF --latency,
+hiccups counted as latch gaps >= 39 ms:
+
+1. EXT_multisampled_render_to_texture in the rig (render into a single-
+   sample texture with implicit in-tile resolve, then blit to FBO 0):
+   50 fps but 4-9% dropped frames at 4x (draw 10-13 ms, spikes past the
+   20 ms budget - the extra fullscreen copy plus 4x tile overhead), 2-5%
+   at 2x. Human-visible micro-stutter ("not 100% fluent").
+2. Multisampled window backbuffer (Android requests EGL samples on the
+   window config; plain frames wrap FBO 0 directly - no rig pass, no
+   copy; the driver resolves in-tile at swap): 4x MSAA,
+   **0 hiccups in 250 frames**, perfect 20.0 ms cadence. Flower: steady
+   40/60 ms alternation (~20 fps), all remaining cost content-genuine.
+
+Landed state: Android window = multisampled backbuffer (SRT_MSAA
+overrides the sample count, 0/1 = single-sample); plain window frames
+skip the rig; the rig keeps the EXT in-tile path for the window-layer
+(shader) target and falls back to the explicit resolve where the
+extension is missing; desktop unchanged (single-sample window + rig,
+bandwidth does not care). read_fbo0_pixels resolves through a temp FBO
+when the backbuffer is multisampled (glReadPixels cannot read MSAA).
+
+The swap-latency experiment code (feed-pipe, fence-gate bypass, buffer-
+count raise, translucent/alpha/on-top, hwui-pulse) is removed; SRT_MSAA,
+SRT_GL_FINISH, SRT_SWAP_INTERVAL, and srt_log forwarding remain as
+diagnosis levers.
+
+### Addendum: the last hiccups were CPU preemption, fixed with thread priority
+
+With the multisampled window landed, ~1-3 latch gaps of 40 ms per 125
+frames remained in every config (including single-sample - and Kodi's
+own 50 fps stream shows the same rate). logcat over 12 s: cast_shell
+(Chromecast service) runs V8 GCs every few seconds and a vendor service
+polls a Hue bridge over HTTP - the little cores are shared and a
+default-priority frame thread loses ~20 ms about once a second.
+
+Fix: srt-raster now runs at Android display priority -8 and the UI
+thread at -4 (what HWUI's own threads use; children inherit it, so the
+JS/tokio workers land at -4 too). Census after: 750 steady-state frames,
+2 hiccups (0.27%, ~1 per 7.5 s) - the residue is other processes' own
+noise, at parity with the TV's native apps.
+
+### Post-fix pruning (user direction)
+
+All investigation toggles are gone: SRT_MSAA, SRT_SWAP_INTERVAL and the
+SRT_GL_FINISH probe (recipe stays in this doc), the ANativeWindow legacy-
+ABI module with the async-mode/timestamp experiments, and every srt_*
+intent-extra forward in MainActivity (including srt_log) - the Android
+app template is back to pristine. What ships: the 8-bit color request,
+the multisampled Android window backbuffer (4x, in-tile resolve at swap;
+plain frames wrap FBO 0 directly), the EXT_multisampled_render_to_texture
+path for the rig's window-layer target with explicit-resolve fallback,
+the multisample-aware read_fbo0_pixels, and frame_thread_priority() -
+now cross-platform (Android/Linux setpriority -8/-4, macOS QoS classes,
+Windows SetThreadPriority; best-effort, debug-logged when denied).
+
+Final acceptance on the TV, plain launch, no flags: 1 dropped frame in
+1001 (0.1%) at a 20.0 ms latch cadence with full 4x MSAA.
