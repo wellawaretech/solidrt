@@ -3,6 +3,7 @@
 // layouts (settings is a whole screen, never a pane).
 import { For } from "solid-js"
 import { View, Text, ScrollView, SegmentedControl, theme, space } from "@solidrt/components"
+import { navTarget, navRing } from "./nav"
 import {
   version as buildVersion,
   profile as buildProfile,
@@ -31,11 +32,18 @@ function CapabilityChip(props: { name: string }) {
   )
 }
 
+const THEME_MODES: ThemeMode[] = ["system", "light", "dark"]
+
 export function SettingsScreen(props: {
   mode: ThemeMode
   onMode: (mode: ThemeMode) => void
   onBack: () => void
 }) {
+  // The whole segmented control is one nav target; activating it steps to the
+  // next mode (a remote has no way to aim at a single segment).
+  let modeNav = navTarget(() =>
+    props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]!),
+  )
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
       <View layout={{ flexGrow: 1, alignItems: "center" }}>
@@ -53,15 +61,17 @@ export function SettingsScreen(props: {
             <Text variant="heading">Settings</Text>
           </View>
           <DetailCard title="Appearance">
-            <SegmentedControl
-              options={[
-                { value: "system", label: "System" },
-                { value: "light", label: "Light" },
-                { value: "dark", label: "Dark" },
-              ]}
-              value={props.mode}
-              onChange={(v) => props.onMode(v as ThemeMode)}
-            />
+            <View ref={modeNav.ref} style={navRing(modeNav.focused())}>
+              <SegmentedControl
+                options={[
+                  { value: "system", label: "System" },
+                  { value: "light", label: "Light" },
+                  { value: "dark", label: "Dark" },
+                ]}
+                value={props.mode}
+                onChange={(v) => props.onMode(v as ThemeMode)}
+              />
+            </View>
           </DetailCard>
           <DetailCard title="About">
             <DetailRow label="Build version" value={buildVersion} />

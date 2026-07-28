@@ -1,7 +1,8 @@
 // The manual connect screen: a host + port entry form plus recent addresses.
 // Scanning a QR feeds the same dial path; this is the type-it-in alternative.
 import { Show, For } from "solid-js"
-import { View, Card, Text, Button, TextInput, space } from "@solidrt/components"
+import { View, Card, Text, TextInput, space } from "@solidrt/components"
+import { NavButton } from "./nav"
 import { recentAddresses } from "./dev-connection"
 import { COLUMN_MAX_WIDTH } from "./types"
 
@@ -63,10 +64,10 @@ export function ConnectScreen(props: {
             />
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
-            <Button onPress={submit}>Connect</Button>
-            <Button variant="ghost" onPress={props.onCancel}>
+            <NavButton onPress={submit}>Connect</NavButton>
+            <NavButton variant="ghost" onPress={props.onCancel}>
               Cancel
-            </Button>
+            </NavButton>
           </View>
         </Card>
         <Show when={recentAddresses().length > 0}>
@@ -77,9 +78,9 @@ export function ConnectScreen(props: {
             <View layout={{ flexDirection: "column", gap: space("sm") }}>
               <For each={recentAddresses()}>
                 {(entry) => (
-                  <Button variant="secondary" onPress={() => props.onDial(entry)}>
+                  <NavButton variant="secondary" onPress={() => props.onDial(entry)}>
                     {recentLabel(entry)}
-                  </Button>
+                  </NavButton>
                 )}
               </For>
             </View>

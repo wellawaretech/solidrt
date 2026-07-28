@@ -22,7 +22,6 @@ import {
   View,
   Card,
   Text,
-  Button,
   Modal,
   theme,
   setTheme,
@@ -30,6 +29,7 @@ import {
   lightTheme,
   space,
 } from "@solidrt/components"
+import { NavButton } from "./parts/nav"
 import { HomeScreen } from "./parts/home-screen"
 import { SettingsScreen } from "./parts/settings-screen"
 import { ScanScreen } from "./parts/scan-screen"
@@ -141,10 +141,12 @@ function App() {
               <Card layout={{ gap: space("lg") }}>
                 <Text variant="title">Exit SolidRT?</Text>
                 <View layout={{ flexDirection: "row", gap: space("md") }}>
-                  <Button variant="ghost" onPress={() => setConfirmExit(false)}>
+                  <NavButton modal variant="ghost" onPress={() => setConfirmExit(false)}>
                     Cancel
-                  </Button>
-                  <Button onPress={() => exit()}>Exit</Button>
+                  </NavButton>
+                  <NavButton modal onPress={() => exit()}>
+                    Exit
+                  </NavButton>
                 </View>
               </Card>
             </View>

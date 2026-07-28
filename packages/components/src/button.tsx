@@ -24,6 +24,7 @@ export interface ButtonProps {
   size?: ButtonSize
   onPress?: () => void
   disabled?: boolean
+  ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps
 }
@@ -93,7 +94,10 @@ export function Button(props: ButtonProps) {
 
   return (
     <view
-      ref={press.ref}
+      ref={(n: { id: number }) => {
+        press.ref(n)
+        props.ref?.(n)
+      }}
       repaintBoundary
       flexDirection="row"
       alignItems="center"

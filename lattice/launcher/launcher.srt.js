@@ -5496,6 +5496,7 @@ var capabilities = {
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";
 import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
+import { compileShader, destroyProgram, destroyShader, linkProgram } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 // packages/core/src/image.ts
 var imageCache = new Map;
@@ -6919,8 +6920,10 @@ function Button(props) {
   });
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
-  var _ref$ = press.ref;
-  typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : press.ref = _el$;
+  ref(() => (n3) => {
+    press.ref(n3);
+    props.ref?.(n3);
+  }, _el$);
   setProp(_el$, "repaintBoundary", true);
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
@@ -8982,18 +8985,183 @@ function Icon(props) {
   }, () => props.layout), false);
   return _el$;
 }
+// lattice/launcher/parts/nav.tsx
+import { on as on4 } from "srt:events";
+var targets = [];
+var [focusedTarget, setFocusedTarget] = createSignal(null, {
+  ownedWrite: true
+});
+function navTarget(action2, opts) {
+  let target = {
+    node: null,
+    action: action2,
+    modal: opts?.modal ?? (() => false),
+    disabled: opts?.disabled ?? (() => false)
+  };
+  targets.push(target);
+  onSettled(() => () => {
+    targets.splice(targets.indexOf(target), 1);
+    if (untrack(focusedTarget) === target)
+      setFocusedTarget(null);
+  });
+  return {
+    ref: (n3) => {
+      target.node = n3;
+    },
+    focused: () => focusedTarget() === target
+  };
+}
+function navRing(focused, radius) {
+  if (!focused)
+    return {};
+  return {
+    borderWidth: 2,
+    borderColor: theme.color.text,
+    borderRadius: radius ?? theme.radius.md
+  };
+}
+function NavButton(props) {
+  let nav = navTarget(() => props.onPress?.(), {
+    modal: () => props.modal ?? false,
+    disabled: () => props.disabled ?? false
+  });
+  return createComponent2(Button, {
+    ref(r$) {
+      var _ref$ = nav.ref;
+      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
+    },
+    get variant() {
+      return props.variant;
+    },
+    get size() {
+      return props.size;
+    },
+    get onPress() {
+      return props.onPress;
+    },
+    get disabled() {
+      return props.disabled;
+    },
+    get layout() {
+      return props.layout;
+    },
+    get style() {
+      return {
+        ...props.style,
+        ...navRing(nav.focused())
+      };
+    },
+    get children() {
+      return props.children;
+    }
+  });
+}
+function reachable() {
+  let usable = targets.filter((t3) => !t3.disabled());
+  let modal = usable.filter((t3) => t3.modal());
+  let placed = [];
+  for (let t3 of modal.length > 0 ? modal : usable) {
+    let b2 = t3.node && getBoundingBoxViewport2(t3.node);
+    if (b2)
+      placed.push({
+        target: t3,
+        x: b2.x + b2.width / 2,
+        y: b2.y + b2.height / 2
+      });
+  }
+  return placed;
+}
+function focusFirst(placed) {
+  let first = placed.reduce((a3, b2) => b2.y < a3.y - 1 || Math.abs(b2.y - a3.y) <= 1 && b2.x < a3.x ? b2 : a3);
+  setFocusedTarget(first.target);
+}
+function move(dir) {
+  let placed = reachable();
+  if (placed.length === 0)
+    return;
+  let cur = untrack(focusedTarget);
+  let from = cur && placed.find((p3) => p3.target === cur);
+  if (!from)
+    return focusFirst(placed);
+  let best = null;
+  let bestScore = Infinity;
+  for (let p3 of placed) {
+    if (p3 === from)
+      continue;
+    let dx = p3.x - from.x;
+    let dy = p3.y - from.y;
+    let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
+    if (ahead <= 1)
+      continue;
+    let across = Math.abs(dir === "up" || dir === "down" ? dx : dy);
+    let score = ahead + 2 * across;
+    if (score < bestScore) {
+      bestScore = score;
+      best = p3;
+    }
+  }
+  if (best)
+    setFocusedTarget(best.target);
+}
+function activate() {
+  let placed = reachable();
+  if (placed.length === 0)
+    return;
+  let cur = untrack(focusedTarget);
+  let hit = cur && placed.find((p3) => p3.target === cur);
+  if (!hit)
+    return focusFirst(placed);
+  hit.target.action();
+}
+on4("keydown", (e3) => {
+  if (getFocusedNodeId() != null)
+    return;
+  if (e3.key === "ArrowUp")
+    move("up");
+  else if (e3.key === "ArrowDown")
+    move("down");
+  else if (e3.key === "ArrowLeft")
+    move("left");
+  else if (e3.key === "ArrowRight")
+    move("right");
+  else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
+    activate();
+});
+var prevButtons = new Set;
+on4("gamepads", (e3) => {
+  let now = new Set;
+  for (let pad of e3.pads ?? [])
+    for (let b2 of pad?.buttons ?? [])
+      now.add(b2);
+  for (let b2 of now) {
+    if (prevButtons.has(b2))
+      continue;
+    if (b2 === "dpadUp")
+      move("up");
+    else if (b2 === "dpadDown")
+      move("down");
+    else if (b2 === "dpadLeft")
+      move("left");
+    else if (b2 === "dpadRight")
+      move("right");
+    else if (b2 === "south")
+      activate();
+  }
+  prevButtons = now;
+});
+
 // lattice/launcher/parts/home-screen.tsx
 import { canDiscover, discover, stop } from "srt:dev";
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on4 } from "srt:events";
+import { on as on5 } from "srt:events";
 var devicesAccessor2;
 function cameraDevices() {
   if (!devicesAccessor2) {
     let [devices, setDevices] = createSignal(listCameras());
-    on4("cameraDeviceChange", () => setDevices(listCameras()));
+    on5("cameraDeviceChange", () => setDevices(listCameras()));
     devicesAccessor2 = devices;
   }
   return devicesAccessor2();
@@ -9247,7 +9415,12 @@ function normalizeAddress(raw) {
 // lattice/launcher/parts/back-button.tsx
 var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
 function BackButton(props) {
+  let nav = navTarget(() => props.onPress());
   return createComponent2(Pressable, {
+    ref(r$) {
+      var _ref$ = nav.ref;
+      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
+    },
     get onPress() {
       return props.onPress;
     },
@@ -9259,7 +9432,8 @@ function BackButton(props) {
     },
     style: (s2) => ({
       backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
-      borderRadius: theme.radius.md
+      borderRadius: theme.radius.md,
+      ...navRing(nav.focused())
     }),
     get children() {
       return createComponent2(Icon, {
@@ -9271,7 +9445,7 @@ function BackButton(props) {
 }
 
 // lattice/launcher/parts/dev-connection.ts
-import { on as on5 } from "srt:events";
+import { on as on6 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
 var [state, setState] = createSignal("idle");
@@ -9279,7 +9453,7 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on5("dev", (e3) => {
+  on6("dev", (e3) => {
     setState(e3.state);
     setAddress(e3.address);
     setTunneled(e3.tunneled);
@@ -9331,10 +9505,16 @@ function AppCard(props) {
     let details = [formatSize(props.app.size), formatStamp(props.app.updated)].filter(Boolean).join(", ");
     return props.app.name === props.app.id ? details : `${props.app.id} - ${details}`;
   };
+  let nav = navTarget(() => props.onPress());
   return createComponent2(Pressable, {
+    ref(r$) {
+      var _ref$ = nav.ref;
+      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
+    },
     get onPress() {
       return props.onPress;
     },
+    style: () => navRing(nav.focused(), theme.radius.lg),
     children: (s2) => createComponent2(Card, {
       get layout() {
         return {
@@ -9516,10 +9696,10 @@ function AppDetail(props) {
                   };
                 },
                 get children() {
-                  return [createComponent2(Button, {
+                  return [createComponent2(NavButton, {
                     onPress: () => props.onLaunch(),
                     children: "Launch"
-                  }), createComponent2(Button, {
+                  }), createComponent2(NavButton, {
                     variant: "secondary",
                     onPress: () => setConfirming(true),
                     children: "Remove"
@@ -9576,11 +9756,13 @@ function AppDetail(props) {
                                   };
                                 },
                                 get children() {
-                                  return [createComponent2(Button, {
+                                  return [createComponent2(NavButton, {
+                                    modal: true,
                                     variant: "ghost",
                                     onPress: () => setConfirming(false),
                                     children: "Cancel"
-                                  }), createComponent2(Button, {
+                                  }), createComponent2(NavButton, {
+                                    modal: true,
                                     variant: "danger",
                                     onPress: () => props.onRemove(),
                                     children: "Remove"
@@ -9745,7 +9927,7 @@ function AppDetail(props) {
                     return d2().cache.length > 0;
                   },
                   get children() {
-                    return createComponent2(Button, {
+                    return createComponent2(NavButton, {
                       variant: "danger",
                       onPress: () => {
                         clearCache(props.app.id);
@@ -9888,7 +10070,7 @@ function DevCard(props) {
               return [createComponent2(Show, {
                 when: canDiscover,
                 get children() {
-                  return createComponent2(Button, {
+                  return createComponent2(NavButton, {
                     variant: "secondary",
                     onPress: () => discover(),
                     children: "Discover"
@@ -9899,7 +10081,7 @@ function DevCard(props) {
                   return hasCamera();
                 },
                 get children() {
-                  return createComponent2(Button, {
+                  return createComponent2(NavButton, {
                     variant: "secondary",
                     get onPress() {
                       return props.onScan;
@@ -9907,7 +10089,7 @@ function DevCard(props) {
                     children: "Scan QR"
                   });
                 }
-              }), createComponent2(Button, {
+              }), createComponent2(NavButton, {
                 variant: "secondary",
                 get onPress() {
                   return props.onManual;
@@ -9920,7 +10102,7 @@ function DevCard(props) {
               return props.busy;
             },
             get children() {
-              return createComponent2(Button, {
+              return createComponent2(NavButton, {
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Cancel"
@@ -9931,7 +10113,7 @@ function DevCard(props) {
               return props.connected;
             },
             get children() {
-              return createComponent2(Button, {
+              return createComponent2(NavButton, {
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Disconnect"
@@ -9945,6 +10127,7 @@ function DevCard(props) {
 }
 function HomeScreen(props) {
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
+  let gearNav = navTarget(() => props.onSettings());
   let twoPane = () => policy.layout === "twoPane";
   let selectedApp = () => apps().find((a3) => a3.id === props.selectedId) ?? null;
   let status = () => isConnected() ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}` : props.notice ?? STATUS_TEXT[connectionState()];
@@ -10022,6 +10205,10 @@ function HomeScreen(props) {
                       })];
                     }
                   }), createComponent2(Pressable, {
+                    ref(r$) {
+                      var _ref$2 = gearNav.ref;
+                      typeof _ref$2 === "function" || Array.isArray(_ref$2) ? applyRef(_ref$2, r$) : gearNav.ref = r$;
+                    },
                     get onPress() {
                       return props.onSettings;
                     },
@@ -10033,7 +10220,8 @@ function HomeScreen(props) {
                     },
                     style: (s2) => ({
                       backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
-                      borderRadius: theme.radius.md
+                      borderRadius: theme.radius.md,
+                      ...navRing(gearNav.focused())
                     }),
                     get children() {
                       return createComponent2(Icon, {
@@ -10161,7 +10349,9 @@ function CapabilityChip(props) {
     }
   });
 }
+var THEME_MODES = ["system", "light", "dark"];
 function SettingsScreen(props) {
+  let modeNav = navTarget(() => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]));
   return createComponent2(ScrollView, {
     layout: {
       flexGrow: 1
@@ -10205,21 +10395,32 @@ function SettingsScreen(props) {
               }), createComponent2(DetailCard, {
                 title: "Appearance",
                 get children() {
-                  return createComponent2(SegmentedControl, {
-                    options: [{
-                      value: "system",
-                      label: "System"
-                    }, {
-                      value: "light",
-                      label: "Light"
-                    }, {
-                      value: "dark",
-                      label: "Dark"
-                    }],
-                    get value() {
-                      return props.mode;
+                  return createComponent2(View, {
+                    ref(r$) {
+                      var _ref$ = modeNav.ref;
+                      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : modeNav.ref = r$;
                     },
-                    onChange: (v2) => props.onMode(v2)
+                    get style() {
+                      return navRing(modeNav.focused());
+                    },
+                    get children() {
+                      return createComponent2(SegmentedControl, {
+                        options: [{
+                          value: "system",
+                          label: "System"
+                        }, {
+                          value: "light",
+                          label: "Light"
+                        }, {
+                          value: "dark",
+                          label: "Dark"
+                        }],
+                        get value() {
+                          return props.mode;
+                        },
+                        onChange: (v2) => props.onMode(v2)
+                      });
+                    }
                   });
                 }
               }), createComponent2(DetailCard, {
@@ -10283,6 +10484,7 @@ function ScanScreen(props) {
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
   })));
+  let closeNav = navTarget(() => props.onCancel());
   createEffect(() => cam.barcode(), (b2) => {
     if (b2)
       props.onScanned(b2.data);
@@ -10424,6 +10626,10 @@ function ScanScreen(props) {
                     },
                     get children() {
                       return createComponent2(Pressable, {
+                        ref(r$) {
+                          var _ref$ = closeNav.ref;
+                          typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : closeNav.ref = r$;
+                        },
                         get onPress() {
                           return props.onCancel;
                         },
@@ -10435,7 +10641,8 @@ function ScanScreen(props) {
                         },
                         style: (s2) => ({
                           backgroundColor: s2.hovered ? SCRIM_HOVER : SCRIM,
-                          borderRadius: TAP_TARGET / 2
+                          borderRadius: TAP_TARGET / 2,
+                          ...navRing(closeNav.focused(), TAP_TARGET / 2)
                         }),
                         get children() {
                           return createComponent2(Icon, {
@@ -10530,10 +10737,10 @@ function ConnectScreen(props) {
                   };
                 },
                 get children() {
-                  return [createComponent2(Button, {
+                  return [createComponent2(NavButton, {
                     onPress: submit,
                     children: "Connect"
-                  }), createComponent2(Button, {
+                  }), createComponent2(NavButton, {
                     variant: "ghost",
                     get onPress() {
                       return props.onCancel;
@@ -10572,7 +10779,7 @@ function ConnectScreen(props) {
                         get each() {
                           return recentAddresses();
                         },
-                        children: (entry) => createComponent2(Button, {
+                        children: (entry) => createComponent2(NavButton, {
                           variant: "secondary",
                           onPress: () => props.onDial(entry),
                           get children() {
@@ -10732,11 +10939,13 @@ function App() {
                               };
                             },
                             get children() {
-                              return [createComponent2(Button, {
+                              return [createComponent2(NavButton, {
+                                modal: true,
                                 variant: "ghost",
                                 onPress: () => setConfirmExit(false),
                                 children: "Cancel"
-                              }), createComponent2(Button, {
+                              }), createComponent2(NavButton, {
+                                modal: true,
                                 onPress: () => exit(),
                                 children: "Exit"
                               })];

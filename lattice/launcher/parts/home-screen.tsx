@@ -9,7 +9,6 @@ import {
   View,
   Card,
   Text,
-  Button,
   ScrollView,
   Pressable,
   type PressState,
@@ -35,6 +34,7 @@ import {
 import { cameraDevices } from "@solidrt/core/camera"
 import { PuzzleMark } from "./puzzle"
 import { AppIcon } from "./app-icon"
+import { navTarget, navRing, NavButton } from "./nav"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
 import { COLUMN_MAX_WIDTH, DETAIL_MAX_WIDTH, STATUS_TEXT, TAP_TARGET } from "./types"
@@ -100,8 +100,14 @@ function AppCard(props: {
     return props.app.name === props.app.id ? details : `${props.app.id} - ${details}`
   }
 
+  let nav = navTarget(() => props.onPress())
+
   return (
-    <Pressable onPress={props.onPress}>
+    <Pressable
+      ref={nav.ref}
+      onPress={props.onPress}
+      style={() => navRing(nav.focused(), theme.radius.lg)}
+    >
       {(s: PressState) => (
         <Card
           layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}
@@ -238,10 +244,10 @@ function AppDetail(props: {
             </View>
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
-            <Button onPress={() => props.onLaunch()}>Launch</Button>
-            <Button variant="secondary" onPress={() => setConfirming(true)}>
+            <NavButton onPress={() => props.onLaunch()}>Launch</NavButton>
+            <NavButton variant="secondary" onPress={() => setConfirming(true)}>
               Remove
-            </Button>
+            </NavButton>
           </View>
           <Show when={confirming()}>
             <Modal onClose={() => setConfirming(false)}>
@@ -254,12 +260,12 @@ function AppDetail(props: {
                     </Text>
                   </View>
                   <View layout={{ flexDirection: "row", gap: space("md") }}>
-                    <Button variant="ghost" onPress={() => setConfirming(false)}>
+                    <NavButton modal variant="ghost" onPress={() => setConfirming(false)}>
                       Cancel
-                    </Button>
-                    <Button variant="danger" onPress={() => props.onRemove()}>
+                    </NavButton>
+                    <NavButton modal variant="danger" onPress={() => props.onRemove()}>
                       Remove
-                    </Button>
+                    </NavButton>
                   </View>
                 </Card>
               </View>
@@ -330,7 +336,7 @@ function AppDetail(props: {
                   </Show>
                 </DetailCard>
                 <Show when={d().cache.length > 0}>
-                  <Button
+                  <NavButton
                     variant="danger"
                     onPress={() => {
                       clearCache(props.app.id)
@@ -338,7 +344,7 @@ function AppDetail(props: {
                     }}
                   >
                     Clear cache
-                  </Button>
+                  </NavButton>
                 </Show>
               </>
             )}
@@ -426,28 +432,28 @@ function DevCard(props: {
       <View layout={{ flexDirection: "row", gap: space("sm") }}>
         <Show when={props.idle}>
           <Show when={canDiscover}>
-            <Button variant="secondary" onPress={() => discover()}>
+            <NavButton variant="secondary" onPress={() => discover()}>
               Discover
-            </Button>
+            </NavButton>
           </Show>
           <Show when={hasCamera()}>
-            <Button variant="secondary" onPress={props.onScan}>
+            <NavButton variant="secondary" onPress={props.onScan}>
               Scan QR
-            </Button>
+            </NavButton>
           </Show>
-          <Button variant="secondary" onPress={props.onManual}>
+          <NavButton variant="secondary" onPress={props.onManual}>
             Address
-          </Button>
+          </NavButton>
         </Show>
         <Show when={props.busy}>
-          <Button variant="secondary" onPress={() => stop()}>
+          <NavButton variant="secondary" onPress={() => stop()}>
             Cancel
-          </Button>
+          </NavButton>
         </Show>
         <Show when={props.connected}>
-          <Button variant="secondary" onPress={() => stop()}>
+          <NavButton variant="secondary" onPress={() => stop()}>
             Disconnect
-          </Button>
+          </NavButton>
         </Show>
       </View>
     </Card>
@@ -472,6 +478,7 @@ export function HomeScreen(props: {
   onSettings: () => void
 }) {
   let [apps, setApps] = createSignal(appsAvailable ? list() : [])
+  let gearNav = navTarget(() => props.onSettings())
 
   let twoPane = () => policy.layout === "twoPane"
   // A stale selection (removed app, replaced store) resolves to null, which
@@ -540,6 +547,7 @@ export function HomeScreen(props: {
                 <Text variant="heading">SolidRT</Text>
               </View>
               <Pressable
+                ref={gearNav.ref}
                 onPress={props.onSettings}
                 layout={{
                   width: TAP_TARGET,
@@ -550,6 +558,7 @@ export function HomeScreen(props: {
                 style={(s: PressState) => ({
                   backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
                   borderRadius: theme.radius.md,
+                  ...navRing(gearNav.focused()),
                 })}
               >
                 <Icon src={GEAR_SVG} size={22} />

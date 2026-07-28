@@ -7,6 +7,7 @@ import { env, createEffect, untrack } from "@solidrt/core"
 import { createCamera, type BarcodeResult } from "@solidrt/core/camera"
 import { Show } from "solid-js"
 import { View, Pressable, Icon, SafeArea, space, type PressState } from "@solidrt/components"
+import { navTarget, navRing } from "./nav"
 import { TAP_TARGET } from "./types"
 
 // The scan reticle's stroke thickness and corner radius (logical px). The
@@ -35,6 +36,7 @@ export function ScanScreen(props: {
   onError: (message: string) => void
 }) {
   let cam = createCamera(untrack(() => ({ scan: ["qr"] as "qr"[] })))
+  let closeNav = navTarget(() => props.onCancel())
   createEffect(
     () => cam.barcode(),
     (b?: BarcodeResult) => {
@@ -117,6 +119,7 @@ export function ScanScreen(props: {
           <View layout={{ flexGrow: 1, padding: space("xl") }}>
             <View layout={{ flexDirection: "row" }}>
               <Pressable
+                ref={closeNav.ref}
                 onPress={props.onCancel}
                 layout={{
                   width: TAP_TARGET,
@@ -127,6 +130,7 @@ export function ScanScreen(props: {
                 style={(s: PressState) => ({
                   backgroundColor: s.hovered ? SCRIM_HOVER : SCRIM,
                   borderRadius: TAP_TARGET / 2,
+                  ...navRing(closeNav.focused(), TAP_TARGET / 2),
                 })}
               >
                 <Icon src={CLOSE_SVG} size={22} color="white" />
