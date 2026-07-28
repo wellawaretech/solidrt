@@ -663,9 +663,11 @@ fn ui_thread(
       let platform = platform.clone();
       let atx = atx.clone();
       // A reloaded app must not inherit (or leak) the previous app's open
-      // capture devices; their JS handles died with the old engine.
+      // capture devices or playing sounds; their JS handles died with the old
+      // engine, so nothing else will ever stop them.
       atx.close_all_cameras();
       atx.close_all_microphones();
+      atx.close_all_audio();
       let input_state = input_state.clone();
 
       let draw_platform = platform.clone();
