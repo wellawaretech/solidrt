@@ -108,15 +108,44 @@ timestamp: 2026-07-13T00:00:00Z
   with `None`, so Impeller's built-in blur/dilate/erode/matrix filters give
   frosted panels with correct see-through semantics, needing neither GLSL,
   impellerc, nor the root layer.
-- [Idle tick runs away when the raster thread falls behind](idle-tick-gpu-backlog-runaway.md) [partial] -
-  The idle-tick gate read `pending_presents == 0` as "GPU idle", but it is
-  equally true when the raster thread is too far behind to have returned a
+- [Idle tick runs away when the raster thread falls behind](idle-tick-gpu-backlog-runaway.md) [done] -
+  The idle-tick gate read `pending_presents == 0` as "GPU idle", but it was
+  equally true when the raster thread was too far behind to have returned a
   frame; on a slow GPU that closed a positive feedback loop and frame time
   diverged without bound (measured 900 JS ticks per presented frame). Fixed
-  via a raster queue-depth gate plus per-shader params load-shedding, and
-  `get_stats` now reports `rasterQueue`/`idleTicks`; verified on the TV
-  (unbounded doubling -> 120 ms flat, ticks now 1:1 with presents), the
-  adjacent findings (fence honesty, reload queue drain, pass timing) open.
+  via a raster queue-depth gate, per-shader params load-shedding and two-deep
+  present fencing, all TV-verified (unbounded doubling -> 120 ms flat, ticks
+  1:1 with presents); adjacent findings split into their own items below.
+- [Time the GPU pass work](gpu-pass-timing.md) [open] - Shader and pipeline
+  passes run in the raster command loop where nothing is timed, so a client at
+  50 s per frame reported a healthy `draw 40.3ms`; per-pass duration and count
+  is the last counter the GPU investigation lacked, and a pass count alone
+  would have caught that bug (~900 renders per presented frame).
+- [The documented perf model is desktop-shaped](device-perf-model-docs.md) [done] -
+  "GPU work is nearly free" holds on desktop and on a mid-range 2020 tablet but
+  is wrong by ~8x on TV-class hardware, where the compositor can set the frame
+  budget outright; the scaffold AGENTS.md now carries the device spread,
+  primitive count as a real budget, compositor-bound as a recognisable
+  condition, and how to measure your own numbers.
+- [Reload does not drain the raster queue](reload-drain-raster-queue.md) [deferred] -
+  A backed-up raster channel survives `load`/`reload`, so a wedged client
+  cannot be recovered from the dev loop and the natural instinct (edit, reload)
+  is exactly what does not help; defensive now that the runaway is fixed.
+- [Diagnostics queue behind the thing they diagnose](diagnostics-off-raster-queue.md) [deferred] -
+  `get_gpu_resources` is a raster command, so it times out precisely when the
+  client is wedged and blames the JS thread, which was running fine; serve the
+  inventory off published state, or at least name the real timeout.
+- [Android client forgets its dev-server address](android-dev-server-persistence.md) [deferred] -
+  The address only arrives as a launch-intent extra, so any relaunch outside
+  the CLI (the device's own launcher, a crash, a reboot) starts into
+  `apps/default` with no way back without adb - the common case on a TV.
+- [Android surface swap blocks four vsyncs](android-surface-swap-latency.md) [deferred] -
+  On a 2017 MediaTek Android TV `eglSwapBuffers` blocks 4-5 refresh periods
+  even for a near-empty animated scene, capping the client at ~12 fps
+  regardless of content; a second Android device (Adreno 610) runs the same
+  binary and scene vsync-locked at 60 fps, so this is a device limitation to
+  document rather than an engine bug. Kept for the app-facing consequence:
+  on such hardware the compositor sets the frame budget, not the GPU.
 - [Adaptive present-fence depth](adaptive-present-fence-depth.md) [deferred] -
   Fallback if unconditional two-deep present fencing (shipped 2026-07-27)
   ever shows up as desktop drag latency: grant the second in-flight frame

@@ -15,6 +15,12 @@ import { on } from "srt:events"
  * "back", "guide", "leftShoulder", "rightShoulder", "leftStick",
  * "rightStick"). `axes` has sticks ("leftX", "leftY", "rightX", "rightY") in
  * -1..1 and triggers ("leftTrigger", "rightTrigger") in 0..1.
+ *
+ * The snapshot is a faithful report. Note that pressing "back" (select) on a
+ * mapped pad ALSO emits the `back` event (see onBack) - it is the pad-side
+ * sibling of Android's system back, the runtime's exit-to-launcher gesture.
+ * Apps that bind "back" for their own controls should preventDefault that
+ * event.
  */
 export interface GamepadState {
   /** Runtime instance id: unique per connection, not stable across reconnects. */

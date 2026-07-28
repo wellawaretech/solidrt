@@ -130,24 +130,40 @@ fn axis_value(raw: i16) -> f32 {
 // controller-database mapping (semantic button positions are then reliable),
 // or through the raw joystick API otherwise - SDL refuses to guess a layout
 // it doesn't know, but for lua64's purposes a plain 2-button stick is a pad.
+//
+// A mapped pad also keeps a raw joystick handle to the same device (SDL
+// refcounts the open): Android's auto-mapping is built from a hasKeys probe
+// that TV remotes routinely fail for their Back key, so the mapping can lack
+// the back entry even though the press arrives as raw button 4 - the Android
+// driver sends gamepad-button enum values as joystick button indices. The
+// raw handle lets take_back_edge read past that gap.
 enum Pad {
-  Mapped(Gamepad),
+  Mapped { pad: Gamepad, joystick: Option<Joystick> },
   Raw(Joystick),
 }
+
+// SDL_GAMEPAD_BUTTON_BACK: on the Android joystick driver, raw button
+// indices are the gamepad-button enum values.
+#[cfg(target_os = "android")]
+const RAW_BACK_INDEX: u32 = 4;
 
 impl Pad {
   fn id(&self) -> u32 {
     match self {
-      Pad::Mapped(pad) => pad.id().ok().map_or(0, u32::from),
+      Pad::Mapped { pad, .. } => pad.id().ok().map_or(0, u32::from),
       Pad::Raw(joystick) => joystick.id(),
     }
   }
 
   fn state(&self) -> GamepadState {
     match self {
-      Pad::Mapped(pad) => GamepadState {
+      Pad::Mapped { pad, .. } => GamepadState {
         id: self.id(),
         name: pad.name().unwrap_or_default(),
+        // The full truth, including "back": that button doubles as the
+        // client-owned back trigger (see take_back_edge), but the snapshot
+        // stays faithful - consumers get facts, the back event carries the
+        // intent.
         buttons: BUTTONS.iter().copied().filter(|&b| pad.button(b)).map(button_name).collect(),
         axes: AXES.iter().map(|&(axis, name)| (name, axis_value(pad.axis(axis)))).collect(),
         mapped: true,
@@ -200,6 +216,7 @@ pub(crate) struct Gamepads {
   joystick: JoystickSubsystem,
   slots: Vec<Option<Pad>>,
   dirty: bool,
+  back_down: bool,
 }
 
 impl Gamepads {
@@ -218,7 +235,7 @@ impl Gamepads {
         return None;
       }
     };
-    Some(Gamepads { gamepad, joystick, slots: Vec::new(), dirty: false })
+    Some(Gamepads { gamepad, joystick, slots: Vec::new(), dirty: false, back_down: false })
   }
 
   // Track connection changes and mark state dirty on any pad activity. The
@@ -232,12 +249,21 @@ impl Gamepads {
         }
         let id = JoystickId::new(*which);
         let opened = if self.gamepad.is_gamepad(id) {
-          self.gamepad.open(id).map(Pad::Mapped).map_err(|e| e.to_string())
+          self
+            .gamepad
+            .open(id)
+            .map(|pad| Pad::Mapped { pad, joystick: self.joystick.open(id).ok() })
+            .map_err(|e| e.to_string())
         } else {
           self.joystick.open(id).map(Pad::Raw).map_err(|e| e.to_string())
         };
         match opened {
           Ok(pad) => {
+            let kind = match &pad {
+              Pad::Mapped { .. } => "mapped",
+              Pad::Raw(_) => "raw",
+            };
+            log::info!("[alloy] pad connected ({kind}): {}", pad.state().name);
             let free = self.slots.iter().position(|s| s.is_none());
             match free {
               Some(i) => self.slots[i] = Some(pad),
@@ -278,6 +304,39 @@ impl Gamepads {
   pub fn snapshot_event(&self) -> AlloyEvent {
     let pads = self.slots.iter().map(|slot| slot.as_ref().map(Pad::state)).collect();
     AlloyEvent::Gamepads { pads }
+  }
+
+  // The gamepad "back" (select) button is a client-owned back trigger, the
+  // pad-side sibling of AC_BACK on the key path: a press edge on any mapped
+  // pad becomes AlloyEvent::Back, and the button never appears in the JS
+  // snapshot (see Pad::state). Mapped pads only: on a raw HID pad "back" is a
+  // positional guess, too uncertain to hang an exit-the-app intent on. State
+  // is level-read per iteration, so a press outlasting one loop drain (any
+  // human press does) is never missed and holding is one request.
+  pub fn take_back_edge(&mut self) -> bool {
+    let down = self.slots.iter().flatten().any(|p| match p {
+      Pad::Mapped { pad, joystick } => {
+        if pad.button(Button::Back) {
+          return true;
+        }
+        // Android: read the raw button too - the auto-mapping may lack the
+        // back entry for TV remotes (see the Pad doc comment). Elsewhere raw
+        // indices are device-arbitrary, so only the mapping is trusted.
+        #[cfg(target_os = "android")]
+        {
+          joystick.as_ref().is_some_and(|j| j.button(RAW_BACK_INDEX).unwrap_or(false))
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+          let _ = joystick;
+          false
+        }
+      }
+      Pad::Raw(_) => false,
+    });
+    let edge = down && !self.back_down;
+    self.back_down = down;
+    edge
   }
 
   fn slot_of(&self, id: u32) -> Option<usize> {

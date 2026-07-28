@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: Idle tick runs away when the raster thread falls behind
-description: The idle-tick gate reads pending_presents == 0 as "GPU idle", but it is equally true when the raster thread is too far behind to have returned a frame; on a slow GPU that closes a positive feedback loop and frame time diverges without bound.
-status: partial
+description: The idle-tick gate read pending_presents == 0 as "GPU idle", but it was equally true when the raster thread was too far behind to have returned a frame, closing a positive feedback loop that diverged without bound; fixed and TV-verified, with the adjacent findings split into their own items.
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
@@ -269,45 +269,28 @@ before building the fix.
 
 ## Adjacent findings from the same session
 
-Each of these stands alone and could be split out; recording them here so
-they are not lost with the session.
+All split out into their own items 2026-07-27; kept here as an index because
+they were all found by the same investigation and each carries a slice of its
+evidence.
 
-- **The instrumentation is blind to this entire class of failure.** During a
-  50 s/frame collapse the engine logged `[alloy] slow frame: fence wait
-  0.0ms, draw 40.3ms, present 34.1ms` and `get_stats` reported `fps: 0,
-  frameMs: 22.6`. Both are truthful about `frame()` and see nothing else:
-  pipeline passes execute in the command loop, where nothing is timed. The
-  only way to see reality was reading present timestamps out of
-  `dumpsys SurfaceFlinger --latency`. Time the shader-pass work.
-- **Diagnostics queue behind the thing they diagnose.** `get_gpu_resources`
-  is a `RasterCmd::Resources` at the back of the same backlog, so it times
-  out precisely when the app is wedged; `get_stats` survived because it is
-  served elsewhere. Anything diagnostic wants a path that is not behind the
-  raster queue. Related: mcp-gpu-resource-inspection.md,
-  production-diagnostics-surface.md.
-- **The collapsed state survives `load`/`reload`.** The backlog lives in the
-  raster command channel, which replacing the app does not drain - a freshly
-  loaded app inherits a 50 s frame period, so a dev hitting this in the
-  normal edit-reload loop has no way out and no reason to suspect the
-  runtime. Reload should drain the queue. Related:
-  dev-state-across-reloads.md.
-- **Present-fence pacing caps throughput, not just latency.**
-  `await_present_fence` blocks on the previous present's GPU fence before
-  starting the next frame, so throughput is bounded by the compositor's
-  present latency. On this TV that is 4-5 vsyncs at 50 Hz even for a
-  20k-vertex trivial scene - a hard ~10 fps ceiling regardless of content.
-  Allowing one frame in flight (wait on the fence from two frames back) would
-  overlap draw with that latency. Measure the desktop cost before assuming it
-  is TV-specific.
-- **The documented perf model is desktop-shaped.** The scaffold AGENTS.md
-  says GPU work is nearly free and JS is the slow lane. That is right on a
-  discrete GPU and actively misleading on a tiled mobile/TV one, where every
-  point is a primitive the tiler charges for regardless of pixels covered -
-  see the vertex-count curve above, against fill and target size measuring as
-  free. Worth a paragraph, since the docs currently steer people toward
-  exactly the shape of app that trips this item.
-- **The Android client forgets its dev-server address.** It only arrives as
-  the `srt_dev_server` launch-intent extra, so relaunching from the TV
-  launcher starts into `apps/default` and never reconnects; recovery needs
-  `am start --es` by hand. Persisting the last address would make the client
-  recoverable from the couch. Related: client-build-info.md.
+- gpu-pass-timing.md [open] - shader/pipeline passes run in the raster command
+  loop where nothing is timed, so this bug reported `draw 40.3ms` at 50 s per
+  frame. The costliest diagnostic gap of the session and the last one still
+  missing.
+- device-perf-model-docs.md [open] - the scaffold's "GPU work is nearly free"
+  guidance holds on desktop and mid-range mobile and is wrong by ~8x on
+  TV-class hardware; the docs currently steer people toward exactly the app
+  shape that tripped this item.
+- android-surface-swap-latency.md [deferred] - the re-aimed
+  "present-fence pacing caps throughput" finding: a real 4-5 vsync swap on the
+  MediaTek TV, shown device-specific by a second Android device running the
+  same binary vsync-locked at 60 fps.
+- reload-drain-raster-queue.md [deferred] - a backed-up raster channel survives
+  `load`/`reload`, so a wedged client cannot be recovered from the dev loop.
+  Contaminated several measurements here before it was understood.
+- diagnostics-off-raster-queue.md [deferred] - `get_gpu_resources` queues behind
+  the backlog it would explain and times out precisely when wanted, blaming the
+  JS thread which was running fine.
+- android-dev-server-persistence.md [deferred] - the dev-server address only
+  arrives as a launch-intent extra, so any relaunch outside the CLI starts into
+  `apps/default` with no way back without adb.

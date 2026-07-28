@@ -213,15 +213,14 @@ fn map_mouse_button(b: sdl3::mouse::MouseButton) -> Option<u8> {
 }
 
 // The user's back triggers, normalized to AlloyEvent::Back before the generic
-// key path so apps never additionally see them as keydown/keyup: on Android
-// the system back button and back swipe arrive as AC_BACK (the only signal
-// with SDL_ANDROID_TRAP_BACK_BUTTON=1); on every platform the client-owned
-// chord is Ctrl+Shift+Backspace (Cmd+Shift+Backspace on macOS). Desktop
-// keyboards have a real BrowserBack media key that also arrives as AC_BACK,
-// so that mapping is Android-only - on desktop it stays a normal
-// "BrowserBack" key event.
+// key path so apps never additionally see them as keydown/keyup: AC_BACK on
+// every platform (on Android the system back button and back swipe, the only
+// signal with SDL_ANDROID_TRAP_BACK_BUTTON=1; on desktop the keyboard's
+// BrowserBack media key arrives as the same scancode), plus the client-owned
+// chord Ctrl+Shift+Backspace (Cmd+Shift+Backspace on macOS). The gamepad
+// "back" (select) button is the third trigger, normalized on the pad
+// snapshot path (see gamepad.rs take_back_edge).
 fn is_back_trigger(scancode: Option<Scancode>, keymod: sdl3::keyboard::Mod) -> bool {
-  #[cfg(target_os = "android")]
   if scancode == Some(Scancode::AcBack) {
     return true;
   }
@@ -287,47 +286,55 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         Rect::new(impellers::Point::new(r.x as f32, r.y as f32), impellers::Size::new(r.w as f32, r.h as f32));
       Some(AlloyEvent::Resize { size, safe_area, display_scale })
     }
-    // SDL3 reports mouse coordinates in the window's logical coordinate space
-    // (the same units as SDL_GetWindowSize), which is what the layout/hit tree
-    // uses, so they are passed through unscaled. Dividing by display_scale would
-    // over-shrink the pointer on a fractional-scaled display (a no-op at 1.0).
-    SdlEvent::MouseMotion { which, x, y, .. } => Some(AlloyEvent::PointerMove {
-      pointer_id: which as u64,
-      pointer_type: PointerType::Mouse,
-      x,
-      y,
-      modifiers: sdl_utils::mod_state().into(),
-    }),
+    // SDL reports mouse coordinates in window units, which are logical points
+    // on some backends (macOS, Wayland) and physical pixels on others
+    // (Android, X11). The JS-facing logical space is always
+    // size_in_pixels / display_scale (see current_resize_event), so mouse
+    // coordinates convert by mouse_scale: the ratio between the two spaces,
+    // 1.0 where SDL already reports logical points.
+    SdlEvent::MouseMotion { which, x, y, .. } => {
+      let k = mouse_scale(window);
+      Some(AlloyEvent::PointerMove {
+        pointer_id: which as u64,
+        pointer_type: PointerType::Mouse,
+        x: x * k,
+        y: y * k,
+        modifiers: sdl_utils::mod_state().into(),
+      })
+    }
     SdlEvent::MouseButtonDown { which, mouse_btn, x, y, .. } => {
+      let k = mouse_scale(window);
       let button = map_mouse_button(mouse_btn)?;
       Some(AlloyEvent::PointerDown {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
         button,
-        x,
-        y,
+        x: x * k,
+        y: y * k,
         modifiers: sdl_utils::mod_state().into(),
       })
     }
     SdlEvent::MouseButtonUp { which, mouse_btn, x, y, .. } => {
+      let k = mouse_scale(window);
       let button = map_mouse_button(mouse_btn)?;
       Some(AlloyEvent::PointerUp {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
         button,
-        x,
-        y,
+        x: x * k,
+        y: y * k,
         modifiers: sdl_utils::mod_state().into(),
       })
     }
     SdlEvent::MouseWheel { which, x, y, direction, mouse_x, mouse_y, .. } => {
+      let k = mouse_scale(window);
       let flipped = matches!(direction, sdl3::mouse::MouseWheelDirection::Flipped);
       let sign = if flipped { 1.0 } else { -1.0 };
       Some(AlloyEvent::Wheel {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
-        x: mouse_x,
-        y: mouse_y,
+        x: mouse_x * k,
+        y: mouse_y * k,
         delta_x: sign * x * 100.0,
         delta_y: sign * y * 100.0,
         modifiers: sdl_utils::mod_state().into(),
@@ -407,4 +414,18 @@ fn touch_window_logical_size(window: &sdl3::video::Window) -> (f32, f32) {
   let scale = sdl_utils::window_display_scale(window);
   let (pw, ph) = window.size_in_pixels();
   (pw as f32 / scale, ph as f32 / scale)
+}
+
+// SDL window units -> JS-facing logical points, for mouse coordinates. On
+// backends where SDL window units are already logical (macOS, Wayland) the
+// ratio is 1.0; where they are physical pixels (Android, X11) it collapses to
+// 1 / display_scale. Derived from the same sizes the resize event uses, so
+// mouse and layout can never disagree by construction.
+fn mouse_scale(window: &sdl3::video::Window) -> f32 {
+  let (w, _) = window.size();
+  let (pw, _) = window.size_in_pixels();
+  if w == 0 || pw == 0 {
+    return 1.0;
+  }
+  (pw as f32 / sdl_utils::window_display_scale(window)) / w as f32
 }

@@ -369,7 +369,10 @@ impl App {
         }
         if pending_presents > 0 {
           if !due && pending_since.elapsed() >= tick_period * 2 {
-            log::warn!("[alloy] vsync signal missed; emitting frame signal after timeout");
+            // Debug, not warn: a GPU-saturated device (Android TV) misses
+            // vsyncs in steady state, one line per missed frame. SRT_LOG=debug
+            // surfaces them when diagnosing the vsync source itself.
+            log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
             due = true;
           }
           if due {
@@ -395,9 +398,15 @@ impl App {
       }
 
       // At most one gamepad snapshot per iteration, however many pad events
-      // were drained above.
-      if let Some(e) = gamepads.as_mut().and_then(|g| g.take_snapshot_if_dirty()) {
-        event_tx.send(e).ok();
+      // were drained above. The back-button edge follows the snapshot so an
+      // app that watches pads sees the final state before the back intent.
+      if let Some(g) = gamepads.as_mut() {
+        if let Some(e) = g.take_snapshot_if_dirty() {
+          event_tx.send(e).ok();
+        }
+        if g.take_back_edge() {
+          event_tx.send(AlloyEvent::Back).ok();
+        }
       }
       while let Ok(cmd) = cmd_rx.try_recv() {
         match cmd {

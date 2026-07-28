@@ -47,11 +47,16 @@ public class MainActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // TEMPORARY (swap-latency diagnosis): raise native log level so the
-        // raster phase trace (alloy FrameTiming, log::debug) reaches logcat.
-        // Remove when okf/backlog/android-surface-swap-latency.md closes.
+        // Forward the srt_log intent extra into the env so a diagnosis launch
+        // can raise the native log level per run (adb shell am start ...
+        // -e srt_log debug); by default the native side stays at info, so the
+        // steady-state debug traces (frame timing, pacing) do not flood logcat.
         try {
-            android.system.Os.setenv("SRT_LOG", "debug", true);
+            Intent logIntent = getIntent();
+            String lvl = logIntent != null ? logIntent.getStringExtra("srt_log") : null;
+            if (lvl != null && !lvl.isEmpty()) {
+                android.system.Os.setenv("SRT_LOG", lvl, true);
+            }
         } catch (Exception e) {
             Log.w(TAG, "setenv SRT_LOG failed", e);
         }

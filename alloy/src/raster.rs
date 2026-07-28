@@ -688,10 +688,12 @@ impl RasterState {
       self.timing.record(wait_ms, draw_ms, present_ms);
       // A frame's native cost beyond ~2 vsync periods means this thread is
       // being stalled in the driver; log which step, rate-limited to one line
-      // per second so a sustained stall stays readable.
+      // per second so a sustained stall stays readable. Debug, not warn: a
+      // saturated tiled GPU (Android TV) lives here in steady state, and the
+      // timing stats carry the numbers - raise SRT_LOG=debug to see these.
       if wait_ms + draw_ms + finish_ms + present_ms > 35.0 && self.slow_frame_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
         self.slow_frame_log = Some(std::time::Instant::now());
-        log::warn!(
+        log::debug!(
           "[alloy] slow frame: fence wait {wait_ms:.1}ms, draw {draw_ms:.1}ms, finish {finish_ms:.1}ms, present {present_ms:.1}ms"
         );
       }
@@ -716,8 +718,10 @@ impl RasterState {
   /// `present_fences` field. A timeout is the "GPU is over budget for a full
   /// refresh period and then some" signal - pacing is lost for this frame
   /// (we draw anyway; hanging the raster thread would be worse). Counted for
-  /// get_stats (fenceTimeouts) and warned at 1/s, because a healthy discrete
-  /// GPU never hits this while a saturated tiled one lives near it (see
+  /// get_stats (fenceTimeouts) and logged at debug 1/s: a healthy discrete
+  /// GPU never hits this while a saturated tiled one (Android TV) lives near
+  /// it in steady state, so the counter is the observability and the log
+  /// line is SRT_LOG=debug diagnosis material (see
   /// okf/backlog/idle-tick-gpu-backlog-runaway.md, present-fence finding).
   fn await_present_fence(&mut self) {
     while self.present_fences.len() >= PRESENT_FENCE_DEPTH {
@@ -737,7 +741,7 @@ impl RasterState {
           if self.fence_wait_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             self.fence_wait_log = Some(std::time::Instant::now());
             if status == glow::TIMEOUT_EXPIRED {
-              log::warn!(
+              log::debug!(
                 "[alloy] present fence timed out after {}ms: GPU over budget, pacing lost this frame",
                 PRESENT_FENCE_TIMEOUT_NS / 1_000_000
               );
