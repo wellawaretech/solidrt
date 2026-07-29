@@ -36,7 +36,7 @@ pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
-pub use texture::{GpuTexture, TextureEntry, TextureRegistry};
+pub use texture::{GpuTexture, SamplerState, TextureEntry, TextureRegistry};
 
 use std::sync::atomic::{AtomicI32, Ordering};
 

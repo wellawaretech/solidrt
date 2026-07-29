@@ -10,7 +10,7 @@ use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{PipelineSpecOwned, RasterCmd, RasterSender, TargetSpecOwned};
 use crate::shader::ParamValue;
-use crate::texture::{TextureEntry, TextureRegistry};
+use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
 // compositing, present - runs on the raster thread, which owns the process's
@@ -97,6 +97,8 @@ pub struct PipelineSpec<'a> {
   /// "none" (default, overwrite) or "add" (accumulate, order-independent).
   pub blend: &'a str,
   pub clear_color: [f32; 4],
+  /// How the target's output is sampled everywhere (shader inputs, display).
+  pub sampler: SamplerState,
 }
 
 /// Everything `create_shader_target` needs to build a target over an
@@ -117,6 +119,8 @@ pub struct TargetSpec<'a> {
   pub depth_write: bool,
   pub blend: &'a str,
   pub clear_color: [f32; 4],
+  /// How the target's output is sampled everywhere (shader inputs, display).
+  pub sampler: SamplerState,
 }
 
 /// The window shader declaration: a linked program drawn over the window's
@@ -363,7 +367,7 @@ impl Context {
   pub fn get_or_create_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
-      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels);
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default());
     }
     self.textures.get(id).expect("texture must exist after insert")
   }
@@ -371,18 +375,20 @@ impl Context {
   pub fn get_or_update_texture(&self, id: u64, size: ISize, make_pixels: impl FnOnce() -> Vec<u8>) -> Rc<TextureEntry> {
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
-      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels);
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default());
     } else if let Err(e) = self.update_texture(id, &pixels, 0) {
       log::warn!("[alloy] texture {id} update failed: {e}");
     }
     self.textures.get(id).expect("texture must exist after insert or update")
   }
 
-  /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller.
-  /// Returns the registry id assigned to the new texture.
-  pub fn create_texture_from_pixels(&self, width: u32, height: u32, pixels: &[u8]) -> u64 {
+  /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller,
+  /// with the given sampling (how every consumer - shader passes and
+  /// `<texture>` display - samples it). Returns the registry id assigned to
+  /// the new texture.
+  pub fn create_texture_from_pixels(&self, width: u32, height: u32, pixels: &[u8], sampler: SamplerState) -> u64 {
     let id = self.textures.allocate_id();
-    self.create_texture_at(id, width, height, pixels);
+    self.create_texture_at(id, width, height, pixels, sampler);
     id
   }
 
@@ -390,12 +396,12 @@ impl Context {
   /// texture without invalidating the id handed out to consumers. Lookups pick
   /// up the new texture immediately; in-flight users of the old entry keep it
   /// alive until released.
-  pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8]) {
+  pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8], sampler: SamplerState) {
     let impeller = self
-      .rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), reply })
+      .rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), sampler, reply })
       .and_then(std::convert::identity)
       .expect("adopt texture failed");
-    self.textures.insert(id, TextureEntry { impeller, width, height });
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
   }
 
   /// Re-upload RGBA8 pixels into an existing texture. `pixels` may be a larger
@@ -435,7 +441,9 @@ impl Context {
     if pixels.len() < frame_size {
       return Err(format!("need {frame_size} bytes for {width}x{height}, buffer has {}", pixels.len()));
     }
-    self.create_texture_at(id, width, height, &pixels[..frame_size]);
+    // Sampling is a property of the id and survives the id-stable resize.
+    let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
+    self.create_texture_at(id, width, height, &pixels[..frame_size], sampler);
     Ok(())
   }
 
@@ -450,7 +458,8 @@ impl Context {
       return Err(format!("shader texture {id} not found"));
     }
     let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height });
+    let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     Ok(())
   }
 
@@ -468,6 +477,7 @@ impl Context {
     fragment_src: &str,
     params: &[(String, ParamValue)],
     textures: &[(String, u64)],
+    sampler: SamplerState,
   ) -> Result<u64, String> {
     let id = self.textures.allocate_id();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTexture {
@@ -477,9 +487,10 @@ impl Context {
       fragment_src: fragment_src.to_string(),
       params: params.to_vec(),
       textures: textures.to_vec(),
+      sampler,
       reply,
     })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height });
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     self.shader_kinds.borrow_mut().insert(id, false);
     self.shader_sources.borrow_mut().insert(id, textures.iter().cloned().collect());
     Ok(id)
@@ -593,9 +604,10 @@ impl Context {
       depth_write: spec.depth_write,
       blend: spec.blend.to_string(),
       clear_color: spec.clear_color,
+      sampler: spec.sampler,
     };
     let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec: owned, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
+    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height, sampler: spec.sampler });
     self.shader_kinds.borrow_mut().insert(id, true);
     self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
     Ok(id)
@@ -687,9 +699,10 @@ impl Context {
       depth_write: spec.depth_write,
       blend: spec.blend.to_string(),
       clear_color: spec.clear_color,
+      sampler: spec.sampler,
     };
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, program, spec: owned, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
+    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height, sampler: spec.sampler });
     self.shader_kinds.borrow_mut().insert(id, is_pipeline);
     self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
     Ok(id)
@@ -738,8 +751,9 @@ impl Context {
 
   /// Inventory the GPU resources the raster thread tracks: registered
   /// textures, vertex buffers, and shader/pipeline targets with their
-  /// bookkeeping (draw state, layout, bindings, last-applied params). Sorted
-  /// by id for stable output.
+  /// bookkeeping (draw state, layout, bindings, current params - the most
+  /// recent writes, which the next flush renders with). Sorted by id for
+  /// stable output.
   pub fn gpu_resources(&self) -> GpuResources {
     self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
       textures: Vec::new(),
@@ -806,7 +820,7 @@ impl Context {
   /// texture never leaves the raster thread.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
     let pixels = self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })??;
-    Ok(self.create_texture_from_pixels(width, height, &pixels))
+    Ok(self.create_texture_from_pixels(width, height, &pixels, SamplerState::default()))
   }
 
   /// Read back a registered texture's RGBA8 pixels by id, using the entry's

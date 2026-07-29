@@ -878,7 +878,7 @@ fn draw_and_resolve(
           dst,
           width as u32,
           height as u32,
-          &[("uSource".to_string(), ext_color)],
+          &[("uSource".to_string(), ext_color, None)],
         );
       }
       // Only the depth-stencil samples are dead here; ext.color must survive

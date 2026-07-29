@@ -303,7 +303,7 @@ impl crate::context::Context {
       _ => true,
     };
     if recreate {
-      self.create_texture_at(session.texture_id, width, height, pixels);
+      self.create_texture_at(session.texture_id, width, height, pixels, Default::default());
       log::info!("[camera] streaming {width}x{height} (rotation {rotation}) -> texture {}", session.texture_id);
       session.status = CameraStatus::Ready { texture_id: session.texture_id, width, height };
     } else {

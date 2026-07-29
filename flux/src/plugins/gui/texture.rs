@@ -107,6 +107,17 @@ fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
   obj.props::<String, u64>().filter_map(|r| r.ok()).collect()
 }
 
+// Decode the { filter?, wrap? } sampling options every create path accepts
+// ("linear"/"nearest", "clamp"/"repeat", defaults linear/clamp); an unknown
+// value throws at the create call site.
+fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::SamplerState> {
+  let (filter, wrap) = match opts {
+    Some(o) => (o.get::<_, Option<String>>("filter")?, o.get::<_, Option<String>>("wrap")?),
+    None => (None, None),
+  };
+  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref()).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+}
+
 // The target-shaped options shared by createPipeline and createShaderTarget:
 // params/textures plus the mesh fields (meaningful for pipelines only, left
 // at their defaults otherwise).
@@ -238,14 +249,15 @@ impl ModuleDef for GpuModule {
     let create_atx = atx.clone();
     let create_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createTexture: detached buffer"))?;
         let expected = (width as usize) * (height as usize) * 4;
         if raw.len != expected {
           return Err(throw_str(&ctx, &format!("createTexture: expected {expected} RGBA8 bytes, got {}", raw.len)));
         }
+        let sampler = collect_sampler(&ctx, &opts.0, "createTexture")?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-        let id = create_atx.create_texture_from_pixels(width, height, pixels);
+        let id = create_atx.create_texture_from_pixels(width, height, pixels, sampler);
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
@@ -260,7 +272,7 @@ impl ModuleDef for GpuModule {
     let mutable_atx = atx.clone();
     let create_mutable_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
         let frame_size = (width as usize) * (height as usize) * 4;
         if raw.len < frame_size {
@@ -269,8 +281,9 @@ impl ModuleDef for GpuModule {
             &format!("createMutableTexture: need at least {frame_size} RGBA8 bytes, got {}", raw.len),
           ));
         }
+        let sampler = collect_sampler(&ctx, &opts.0, "createMutableTexture")?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
-        let id = mutable_atx.create_texture_from_pixels(width, height, pixels);
+        let id = mutable_atx.create_texture_from_pixels(width, height, pixels, sampler);
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
@@ -328,12 +341,14 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            textures: Option<Object<'_>>|
+            textures: Option<Object<'_>>,
+            opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let params = params.as_ref().map(collect_params).unwrap_or_default();
         let textures = textures.as_ref().map(collect_textures).unwrap_or_default();
+        let sampler = collect_sampler(&ctx, &opts.0, "createShader")?;
         let id = create_shader_atx
-          .create_shader_texture(width, height, &fragment_src, &params, &textures)
+          .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler)
           .map_err(|e| throw_str(&ctx, &format!("createShader: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -403,6 +418,7 @@ impl ModuleDef for GpuModule {
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let o = collect_target_opts(&opts.0)?;
+        let sampler = collect_sampler(&ctx, &opts.0, "createPipeline")?;
         let id = create_pipeline_atx
           .create_pipeline_texture(&alloy::PipelineSpec {
             width,
@@ -419,6 +435,7 @@ impl ModuleDef for GpuModule {
             depth_write: o.depth_write,
             blend: &o.blend,
             clear_color: o.clear_color,
+            sampler,
           })
           .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
@@ -480,6 +497,7 @@ impl ModuleDef for GpuModule {
       ctx.clone(),
       move |ctx: Ctx<'_>, program: u64, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
         let o = collect_target_opts(&opts.0)?;
+        let sampler = collect_sampler(&ctx, &opts.0, "createShaderTarget")?;
         let id = create_target_atx
           .create_shader_target(
             program,
@@ -496,6 +514,7 @@ impl ModuleDef for GpuModule {
               depth_write: o.depth_write,
               blend: &o.blend,
               clear_color: o.clear_color,
+              sampler,
             },
           )
           .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;

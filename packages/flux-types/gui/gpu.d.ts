@@ -8,11 +8,12 @@
 // sources, explicit header opt-in); createShader/createPipeline are fused
 // conveniences (compile + link + target in one call, curated preamble).
 //
-// Sampling state is fixed, not an option: every texture id samples with linear
-// filtering (there is no nearest/point magnification, and no mipmaps exist).
-// Wrapping differs by origin - shader and pipeline render targets are
-// clamp-to-edge, while createTexture/createMutableTexture textures repeat
-// outside 0..1.
+// Sampling is a per-texture property declared at creation: every create path
+// accepts `{ filter?, wrap? }` ("linear"/"nearest", "clamp"/"repeat";
+// defaults linear + clamp for every origin). The state follows the id
+// everywhere it is sampled - shader passes and `<texture>` display alike -
+// and survives id-stable resizes. It cannot be changed after creation. No
+// mipmaps exist.
 //
 // Compositing several targets is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (the full Skia set, e.g.
@@ -31,17 +32,29 @@ declare module "flux:gpu" {
    * with a runtime warning, as is a name with no active uniform.
    */
   export type ShaderParams = Record<string, number | number[]>
+  /** Magnification/minification filter; "linear" (default) or hard-pixel "nearest". */
+  export type FilterMode = "linear" | "nearest"
+  /** Sampling outside 0..1: "clamp" (default, extend edge pixels) or "repeat" (tile). */
+  export type WrapMode = "clamp" | "repeat"
+  /**
+   * Per-texture sampling, declared at creation and fixed for the id's
+   * lifetime. Applies wherever the texture is sampled: shader/pipeline
+   * sampler2D inputs AND `<texture src>` display (a "nearest" texture
+   * upscales with hard pixels on screen - the pixel-art path). `wrap` only
+   * matters to shaders sampling outside 0..1; the display draw never tiles.
+   */
+  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode }
   /**
    * Create an immutable texture from an RGBA8 pixel buffer (exactly
    * width*height*4 bytes). Returns the texture id.
    */
-  export function createTexture(data: Uint8Array, width: number, height: number): number
+  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): number
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame (width*height*4 bytes) and may hold
    * more (uploadTexture selects a frame by offset).
    */
-  export function createMutableTexture(data: Uint8Array, width: number, height: number): number
+  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): number
   /**
    * Replace a mutable texture's pixels. `data` may hold several frames; `offset`
    * (default 0) selects which frame to upload.
@@ -95,6 +108,7 @@ declare module "flux:gpu" {
     height: number,
     params?: ShaderParams,
     textures?: Record<string, number>,
+    opts?: SamplerOptions,
   ): number
   /**
    * Compile a single shader stage from raw GLSL ES: the primitive under
@@ -155,7 +169,7 @@ declare module "flux:gpu" {
       depthWrite?: boolean
       blend?: BlendMode
       clearColor?: [number, number, number, number]
-    },
+    } & SamplerOptions,
   ): number
   /**
    * Destroy a linked program by id. Targets created from it are unaffected:
@@ -242,7 +256,7 @@ declare module "flux:gpu" {
       depthWrite?: boolean
       blend?: BlendMode
       clearColor?: [number, number, number, number]
-    },
+    } & SamplerOptions,
   ): number
 
   /**

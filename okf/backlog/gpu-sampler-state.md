@@ -2,7 +2,7 @@
 type: backlog-item
 title: Sampler filter and wrap state
 description: Every texture samples linear, with wrap fixed per creation path (clamp-to-edge for targets, repeat for createTexture); nearest magnification is unreachable, which rules out the whole retro/pixel-art category.
-status: open
+status: done
 timestamp: 2026-07-29T00:00:00Z
 ---
 
@@ -50,3 +50,37 @@ to change filtering on a live texture.
 Worth deciding at the same time whether the per-path wrap default should be
 unified rather than merely documented; the split looks like history rather than
 intent.
+
+## Resolution (2026-07-29)
+
+Implemented as proposed, plus two decisions and one architectural change:
+
+- **API**: `filter?: "linear" | "nearest"` and `wrap?: "clamp" | "repeat"` on
+  `createTexture`/`createMutableTexture`/`createShader`/`createPipeline`/
+  `createShaderTarget`, applied at creation as a property of the texture id.
+  Creation-time only; no `setSamplerState` (still demand-gated, and now a
+  two-liner if demanded: update the registry entry, mark the id dirty).
+- **Wrap default unified to clamp** for every creation path - the
+  `createTexture` implicit repeat is gone; repeat is an explicit opt-in.
+  Breaking, accepted deliberately (no backwards-compat requirement).
+- **Not GL texture-object state.** Impeller GLES configures per-draw sampling
+  by mutating the bound texture's parameters, so object state on any
+  displayed texture would not survive a frame. Instead: four shared GL
+  sampler objects (SamplerCache, alloy/src/texture.rs), bound per input unit
+  in `run_pass` and restored on exit - alloy's passes are immune to
+  Impeller's writes and vice versa. This also deleted the reapply-on-resize
+  problem: the state lives in the registry entries (`GpuTexture`,
+  `TextureEntry`, `ShaderTexture`) and follows the id through resizes.
+- **Display path**: `<texture>` paint maps the id's filter to Impeller's
+  per-draw `TextureSampling` (kinds/texture.rs), so nearest applies on screen
+  too - the actual retro/pixel-art case. Internal textures (window-shader
+  layers, MSAA resolve, snapshot rigs) are untouched and keep linear.
+
+Depends on [[gpu-target-dependency-propagation]]: consumer re-renders after
+resizes and any future sampler mutation ride the dirty-flush propagation.
+
+Docs: docs/core.md, flux-types gui/gpu.d.ts (`SamplerOptions`), core gpu.ts
+(`createShaderMemo` rebuilds on filter/wrap change). Runtime-unverified as of
+writing; the decisive check is a nearest low-res target upscaled by
+`<texture>` showing hard pixels, and a repeat-wrap shader sampling outside
+0..1.

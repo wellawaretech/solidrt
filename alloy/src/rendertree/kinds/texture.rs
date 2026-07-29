@@ -120,7 +120,13 @@ impl Buildable for Texture {
     // `to_paint`, not `to_paint_in`: the draw ignores color sources, so
     // resolving a box-relative gradient would build one per frame for nothing.
     let paint = self.paint.to_paint();
-    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, TextureSampling::Linear, Some(&paint));
+    // Display sampling follows the texture's declared filter (Impeller
+    // applies it per draw; the GL-side sampler objects cover shader passes).
+    let sampling = match entry.sampler().filter {
+      crate::texture::SamplerFilter::Linear => TextureSampling::Linear,
+      crate::texture::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
+    };
+    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, sampling, Some(&paint));
   }
 }
 

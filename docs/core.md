@@ -241,7 +241,12 @@ createTexture(data: Uint8Array, width: number, height: number): number
 
 Uploads raw RGBA pixel data to the GPU and returns a texture ID. Pass the returned ID as the `src` prop on a `<texture>` element.
 
-Sampling state is fixed and not configurable: every texture samples with linear filtering (there is no nearest/point magnification, and no mipmaps exist). Wrapping depends on where the texture came from - shader and pipeline render targets are clamp-to-edge, while `createTexture`/`createMutableTexture` textures repeat outside `0..1`.
+Sampling is a per-texture property declared at creation: every create helper (`createTexture`, `createMutableTexture`, `createShader`, `createPipeline`, `createShaderTarget`) accepts `filter` (`"linear"` default, or `"nearest"`) and `wrap` (`"clamp"` default, or `"repeat"`) in its options. The state belongs to the texture id and applies everywhere it is sampled - shader `sampler2D` inputs and `<texture src>` display alike - so a `"nearest"` texture upscales with hard pixels on screen: render at 320x200, display window-sized, and you have the pixel-art path. `wrap` only matters to shaders sampling outside `0..1` (the display draw never tiles). The state survives id-stable resizes and cannot be changed after creation; no mipmaps exist.
+
+```js
+let screen = createShader(src, 320, 200, { iTime: 0 }, undefined, { filter: "nearest" })
+// <texture src={screen} /> filling the window shows hard pixels, not smoothing
+```
 
 ```js
 let img = decodeImage(bytes)
@@ -259,7 +264,7 @@ For a shader whose spec is itself reactive, `createShaderMemo(() => ({ fragmentS
 
 Pass `{ onError }` as a second argument when the source is not known-good - a shader editor, live coding, a dialect ported from elsewhere. A shader that fails to compile then hands you the error and leaves the last shader that *did* compile current (id, size, params and accessor all unchanged), so the app keeps drawing instead of tearing down. Without `onError` the failure throws from inside the effect, where no caller can catch it and the reactive system halts. The initial compile is not covered either way: it throws at the call site, where an ordinary `try`/`catch` works and there is no previous shader to keep.
 
-A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its last-applied params against the new sources, without recompiling. Bindings not named keep their current source.
+A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its current params against the new sources, without recompiling. Bindings not named keep their current source.
 
 Sampler bindings are live dependencies. A target may sample another target's output, and when a source re-renders - a params write, a vertex-buffer write, a data-texture upload, a rebind - every target sampling it re-renders too, transitively through the chain, before the next frame or readback observes them. Each target renders at most once per frame no matter how many of its inputs changed, so a multi-pass chain (a plasma target feeding a cube pipeline) stays current without any consumer writing a uniform per frame. A binding that would close a sampling cycle throws (binding a shader's own target is the shortest case).
 

@@ -177,6 +177,15 @@ fn prev_vertex_array(name: i32) -> Option<glow::NativeVertexArray> {
 fn prev_buffer(name: i32) -> Option<glow::NativeBuffer> {
   NonZeroU32::new(name as u32).map(glow::NativeBuffer)
 }
+fn prev_sampler(name: i32) -> Option<glow::NativeSampler> {
+  NonZeroU32::new(name as u32).map(glow::NativeSampler)
+}
+
+/// A resolved sampler input for a pass: uniform name, source GL texture, and
+/// the sampler object carrying the source's declared filter/wrap (None for
+/// internal textures - window layers, the MSAA resolve - which keep their
+/// texture-object state).
+pub type PassInput = (String, glow::Texture, Option<glow::Sampler>);
 
 /// A stage of the programmable pipeline, for the raw compile path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -493,6 +502,10 @@ pub struct ShaderTexture {
   /// Params applied on the most recent render, kept so a vertex-buffer write or
   /// draw-count change can re-render without the caller re-supplying them.
   last_params: RefCell<Vec<(String, ParamValue)>>,
+  /// Declared sampling for this target's output (how OTHER passes and the
+  /// display draw sample it; the target's own inputs carry their own states).
+  /// Survives resize; set via `with_sampler` after construction.
+  sampler: crate::texture::SamplerState,
 }
 
 /// Target texture + FBO shared by both shader kinds. Returns (target, fbo)
@@ -676,6 +689,7 @@ impl ShaderTexture {
         sampler_bindings,
         mesh: None,
         last_params: RefCell::new(Vec::new()),
+        sampler: crate::texture::SamplerState::default(),
       })
     }
   }
@@ -868,8 +882,20 @@ impl ShaderTexture {
           clear_color,
         }),
         last_params: RefCell::new(Vec::new()),
+        sampler: crate::texture::SamplerState::default(),
       })
     }
+  }
+
+  /// Set the declared sampling for this target's output (builder-style, right
+  /// after construction).
+  pub fn with_sampler(mut self, sampler: crate::texture::SamplerState) -> Self {
+    self.sampler = sampler;
+    self
+  }
+
+  pub fn sampler(&self) -> crate::texture::SamplerState {
+    self.sampler
   }
 
   pub fn gl_texture(&self) -> glow::Texture {
@@ -1056,7 +1082,7 @@ impl ShaderTexture {
     Ok(())
   }
 
-  /// Fold a params update into the last-applied record by name (new names
+  /// Fold a params update into the current record by name (new names
   /// append, existing names overwrite). Uniforms are program state in GL, so
   /// rendering once with the merged record is equivalent to rendering after
   /// each partial params list; the owner defers that render to its dirty
@@ -1077,9 +1103,9 @@ impl ShaderTexture {
   /// contract; Context::submit's per-frame fence orders the work ahead of the
   /// render thread sampling the target from its shared GL context, so no
   /// glFinish is needed here.
-  pub fn render(&self, gl: &glow::Context, params: &[(String, ParamValue)], textures: &[(String, glow::Texture)]) {
+  pub fn render(&self, gl: &glow::Context, params: &[(String, ParamValue)], textures: &[PassInput]) {
     // Recorded for both kinds: pipelines need it for buffer-write re-renders,
-    // and resource introspection reports it as the last-applied uniforms.
+    // and resource introspection reports it as the target's current uniforms.
     // Re-renders triggered with an empty list (a sampled texture's contents
     // changed before any params update) keep the previous record: uniforms are
     // program state in GL, so the old values still apply.
@@ -1115,7 +1141,7 @@ pub fn render_program_to_window(
   width: u32,
   height: u32,
   params: &[(String, ParamValue)],
-  textures: &[(String, glow::Texture)],
+  textures: &[PassInput],
   vertex_count: i32,
 ) {
   let draw = PassDraw::Fullscreen { vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]) };
@@ -1132,7 +1158,7 @@ pub fn render_program_to_fbo(
   fbo: Option<glow::Framebuffer>,
   width: u32,
   height: u32,
-  textures: &[(String, glow::Texture)],
+  textures: &[PassInput],
 ) {
   let draw = PassDraw::Fullscreen { vertex_count: 3, clear: None };
   run_pass(gl, program, fbo, width, height, &[], textures, draw);
@@ -1152,7 +1178,7 @@ fn run_pass(
   width: u32,
   height: u32,
   params: &[(String, ParamValue)],
-  textures: &[(String, glow::Texture)],
+  textures: &[PassInput],
   draw: PassDraw,
 ) {
   unsafe {
@@ -1183,16 +1209,25 @@ fn run_pass(
       }
     }
 
-    // Bind each resolved sampler input to its own texture unit and point the
-    // sampler uniform at that unit. Save the prior binding per unit so Impeller
-    // (which assumes its own units) is not left looking at our textures.
-    let mut prev_unit_bindings: Vec<(u32, i32)> = Vec::new();
-    for (unit, (name, tex)) in textures.iter().enumerate() {
+    // Bind each resolved sampler input to its own texture unit, bind the
+    // input's sampler object on that unit (its declared filter/wrap; the
+    // bound sampler overrides texture-object parameters, which Impeller
+    // rewrites at will on textures it draws), and point the sampler uniform
+    // at the unit. Save the prior texture and sampler binding per unit so
+    // Impeller (which assumes its own units) is not left looking at our
+    // textures or sampling through our state.
+    let mut prev_unit_bindings: Vec<(u32, i32, i32)> = Vec::new();
+    for (unit, (name, tex, sampler)) in textures.iter().enumerate() {
       let Some((loc, _)) = program.uniforms.get(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);
-      prev_unit_bindings.push((unit, gl.get_parameter_i32(glow::TEXTURE_BINDING_2D)));
+      prev_unit_bindings.push((
+        unit,
+        gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
+        gl.get_parameter_i32(glow::SAMPLER_BINDING),
+      ));
       gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
+      gl.bind_sampler(unit, *sampler);
       gl.uniform_1_i32(Some(loc), unit as i32);
     }
 
@@ -1318,9 +1353,10 @@ fn run_pass(
     }
     gl.color_mask(prev_color_mask[0] != 0, prev_color_mask[1] != 0, prev_color_mask[2] != 0, prev_color_mask[3] != 0);
     gl.depth_range_f32(prev_depth_range[0], prev_depth_range[1]);
-    for (unit, prev) in prev_unit_bindings {
+    for (unit, prev, prev_smp) in prev_unit_bindings {
       gl.active_texture(glow::TEXTURE0 + unit);
       gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev));
+      gl.bind_sampler(unit, prev_sampler(prev_smp));
     }
     gl.active_texture(prev_active as u32);
     gl.use_program(prev_program(prev_program_name));

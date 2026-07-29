@@ -151,14 +151,14 @@ let TOOLS: {
     name: "get_gpu_resources",
     readOnly: true,
     description:
-      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount, depth, attribute layout, bound sampler texture ids, last-applied uniform values). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
+      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount, depth, attribute layout, bound sampler texture ids, current uniform values - the most recent writes, which the next frame or readback draws with). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
     inputSchema: { client: CLIENT_ARG },
   },
   {
     name: "get_texture",
     readOnly: true,
     description:
-      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShader/createPipeline in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
+      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShader/createPipeline in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame: a render target reads as its current output, with any pending params, geometry or sampled-input changes resolved first. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
     inputSchema: {
       id: z.number().int().describe("Texture id, from get_gpu_resources"),
       x: z.number().int().describe("Crop rect left edge in texture pixels (requires y, width, height)").optional(),

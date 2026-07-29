@@ -8,10 +8,12 @@
 // sampler2D input. The imperative primitives (uploadTexture, setShaderParams,
 // destroyTexture, ...) live in the `flux:gpu` module.
 //
-// Sampling state is fixed, not an option: every texture id samples with linear
-// filtering (no nearest/point magnification, no mipmaps). Wrapping differs by
-// origin - shader and pipeline render targets are clamp-to-edge, while
-// createTexture/createMutableTexture textures repeat outside 0..1.
+// Sampling is a per-texture property declared at creation: `filter`
+// ("linear" default | "nearest") and `wrap` ("clamp" default | "repeat") on
+// every create* helper. One state for every consumer - `<texture>` display
+// and shader sampling both follow it - so a nearest texture upscales with
+// hard pixels everywhere (the retro/pixel-art path: render small, display
+// big). No mipmaps exist.
 //
 // Combining several passes is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (e.g. `blendMode="plus"` for
@@ -29,6 +31,11 @@ import * as gpu from "flux:gpu"
 // Without it, each rebuild would stack another onCleanup on the component
 // owner: a leak until unmount, then a double-free against manual destroys.
 export type CreateOptions = { manual?: boolean }
+
+// Sampling options every texture-producing create* helper accepts, applied at
+// creation as a property of the texture id (there is no set-sampler-later).
+export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode }
+export type { FilterMode, WrapMode } from "flux:gpu"
 
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
@@ -96,8 +103,13 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * yourself. Pass `{ manual: true }` to skip the auto-free and own the
  * disposal yourself even inside a reactive scope.
  */
-export function createTexture(data: Uint8Array, width: number, height: number, opts?: CreateOptions): number {
-  let id = gpu.createTexture(data, width, height)
+export function createTexture(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  opts?: CreateOptions & SamplerOptions,
+): number {
+  let id = gpu.createTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -111,8 +123,13 @@ export function createTexture(data: Uint8Array, width: number, height: number, o
  * outside a reactive scope you must call `destroyTexture` (from flux:gpu)
  * yourself.
  */
-export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: CreateOptions): number {
-  let id = gpu.createMutableTexture(data, width, height)
+export function createMutableTexture(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  opts?: CreateOptions & SamplerOptions,
+): number {
+  let id = gpu.createMutableTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -150,9 +167,9 @@ export function createShader(
   height: number,
   params?: gpu.ShaderParams,
   textures?: Record<string, number>,
-  opts?: CreateOptions,
+  opts?: CreateOptions & SamplerOptions,
 ): number {
-  let id = gpu.createShader(fragmentSrc, width, height, params, textures)
+  let id = gpu.createShader(fragmentSrc, width, height, params, textures, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -183,21 +200,24 @@ export function createShaderTarget(
     depthWrite?: boolean
     blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
-  } & CreateOptions,
+  } & CreateOptions &
+    SamplerOptions,
 ): number {
   let id = gpu.createShaderTarget(program, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
-/** The reactive shader description `createShaderMemo` builds from. */
+/** The reactive shader description `createShaderMemo` builds from. Sampling
+ * (`filter`/`wrap`) is creation-time state, so changing it rebuilds at a
+ * fresh id, like a fragment-source or sampler-binding change. */
 export type ShaderSpec = {
   fragmentSrc: string
   width: number
   height: number
   params?: gpu.ShaderParams
   textures?: Record<string, number>
-}
+} & SamplerOptions
 
 // Shallow name->value equality for params/textures records; treats undefined
 // as the empty record. A param value may be a number or a flat number array
@@ -245,12 +265,19 @@ export function createShaderMemo(
   spec: () => ShaderSpec,
   opts?: { onError?: (error: unknown) => void },
 ): () => number {
+  let make = (s: ShaderSpec) =>
+    gpu.createShader(s.fragmentSrc, s.width, s.height, s.params, s.textures, { filter: s.filter, wrap: s.wrap })
   let current = untrack(spec)
-  let currentId = gpu.createShader(current.fragmentSrc, current.width, current.height, current.params, current.textures)
+  let currentId = make(current)
   let [id, setId] = createSignal(currentId)
   createEffect(spec, next => {
     try {
-      if (next.fragmentSrc === current.fragmentSrc && sameRecord(next.textures, current.textures)) {
+      if (
+        next.fragmentSrc === current.fragmentSrc &&
+        sameRecord(next.textures, current.textures) &&
+        next.filter === current.filter &&
+        next.wrap === current.wrap
+      ) {
         // Program and inputs unchanged: mutate in place, the id stays stable.
         if (next.width !== current.width || next.height !== current.height) {
           gpu.setShaderSize(currentId, next.width, next.height)
@@ -264,7 +291,7 @@ export function createShaderMemo(
       // Compile before touching any state: a throw here must leave `current`,
       // `currentId` and the accessor all still pointing at the last shader
       // that worked, which is what makes onError's keep-last-good real.
-      let rebuilt = gpu.createShader(next.fragmentSrc, next.width, next.height, next.params, next.textures)
+      let rebuilt = make(next)
       let old = currentId
       current = next
       currentId = rebuilt
@@ -325,7 +352,8 @@ export function createPipeline(
     depthWrite?: boolean
     blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
-  } & CreateOptions,
+  } & CreateOptions &
+    SamplerOptions,
 ): number {
   let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))

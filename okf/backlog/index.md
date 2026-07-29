@@ -236,10 +236,10 @@ timestamp: 2026-07-13T00:00:00Z
   as zero-sized; captures are now sized from the node's painted box
   (local_bounds over the same ctx.size the paint path uses), verified by
   alloy/examples/capture_detached.rs.
-- [Sampler filter and wrap state](gpu-sampler-state.md) [open] - Every texture
-  samples linear, with wrap fixed per creation path (clamp-to-edge for targets,
-  repeat for createTexture); nearest magnification is unreachable, which rules
-  out the whole retro/pixel-art category.
+- [Sampler filter and wrap state](gpu-sampler-state.md) [done] - filter/wrap
+  options on every create path, per-texture-id state applied via GL sampler
+  objects (shader passes) and per-draw Impeller sampling (display); wrap
+  default unified to clamp everywhere, repeat now explicit.
 - [Dependency propagation between GPU targets](gpu-target-dependency-propagation.md) [done] -
   Target rendering is now pull-based: writes mark dirty, and a flush at each
   observation point (frame, capture, readback) re-renders the affected

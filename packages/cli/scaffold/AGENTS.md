@@ -158,7 +158,12 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    compositing shader. Within one pipeline draw, createPipeline's
    `blend: "add"` accumulates overlapping geometry additively (soft point
    splats, glow) - pair it with `depthWrite: false` when depth-tested;
-   neither option implies the other.
+   neither option implies the other. Sampling is a create-time option on
+   every texture: `{ filter: "nearest" }` for hard-pixel upscaling (render a
+   small target, display it big - the retro/pixel-art path) and
+   `{ wrap: "repeat" }` to tile outside 0..1 in shaders; the defaults are
+   linear and clamp, and the choice applies both on screen and to shaders
+   sampling the texture.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
    string. get_stats' setPropsPerFrame is the counter to watch.
@@ -289,11 +294,12 @@ its tools over guessing at runtime state:
   (e.g. keep a before/after pair to diff)
 - get_gpu_resources: inventory of GPU state - textures (size, render target
   or not), vertex buffers (byteLength), pipelines (draw count, attribute
-  layout, bound textures, last-applied uniform values)
+  layout, bound textures, current uniform values - the most recent writes,
+  which the next frame or readback draws with)
 - get_texture: any GPU texture read back as a PNG by id - atlases, data
-  textures, and shader/pipeline render targets alike (a render target is
-  "what this pipeline last drew", no frame or snapshot needed); crop with
-  x/y/width/height
+  textures, and shader/pipeline render targets alike (a render target reads
+  as its current output, pending writes included, with no frame or snapshot
+  needed); crop with x/y/width/height
 - get_buffer: a vertex-buffer range decoded to numbers (f32/u16/u8, 64 KiB
   per call) - verify geometry after a writeBuffer instead of inferring it
   from pixels

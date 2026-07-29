@@ -29,8 +29,10 @@ use crate::context::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, WindowShader,
 };
 use crate::gl;
-use crate::shader::{release_program, AttrFormat, GpuBuffer, ParamValue, ShaderProgram, ShaderStage, ShaderTexture};
-use crate::texture::GpuTexture;
+use crate::shader::{
+  release_program, AttrFormat, GpuBuffer, ParamValue, PassInput, ShaderProgram, ShaderStage, ShaderTexture,
+};
+use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
 /// Owned form of `context::PipelineSpec` (whose fields borrow from JS values),
 /// so the spec can cross the channel.
@@ -49,6 +51,7 @@ pub(crate) struct PipelineSpecOwned {
   pub depth_write: bool,
   pub blend: String,
   pub clear_color: [f32; 4],
+  pub sampler: SamplerState,
 }
 
 /// Owned form of `context::TargetSpec`: a shader/pipeline target over an
@@ -68,6 +71,7 @@ pub(crate) struct TargetSpecOwned {
   pub depth_write: bool,
   pub blend: String,
   pub clear_color: [f32; 4],
+  pub sampler: SamplerState,
 }
 
 /// The UI thread's half of the raster command channel, paired with the shared
@@ -126,6 +130,7 @@ pub(crate) enum RasterCmd {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+    sampler: SamplerState,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
@@ -141,6 +146,7 @@ pub(crate) enum RasterCmd {
     fragment_src: String,
     params: Vec<(String, ParamValue)>,
     textures: Vec<(String, u64)>,
+    sampler: SamplerState,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
   /// Compile a vertex+fragment pipeline into a new target texture and adopt
@@ -254,6 +260,9 @@ pub(crate) struct RasterState {
   // Physical framebuffer size (see backend::pack_size), published by the main
   // thread on resize and read when wrapping FBO 0.
   surface_size: Arc<AtomicU64>,
+  // The four shared GL sampler objects alloy's passes bind per sampled input
+  // (see SamplerCache for why texture-object state cannot carry this).
+  samplers: SamplerCache,
   // Retained FBOs and scratch storage for every rig rasterization: the
   // window frame itself plus offscreen rasters (snapshot boundaries, node
   // captures), grown to the largest allocation requested. Retained because
@@ -411,12 +420,14 @@ impl RasterState {
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
+    let samplers = SamplerCache::new(&gl);
     RasterState {
       backend,
       gl,
       impeller_ctx,
       window,
       surface_size,
+      samplers,
       offscreen_rig: gl::OffscreenRig::new(),
       last_size: ISize::new(0, 0),
       capture_frames,
@@ -488,16 +499,16 @@ impl RasterState {
               self.present_failures = 0;
             }
           }
-          RasterCmd::CreateTexture { id, width, height, pixels, reply: tx } => {
-            reply(tx, self.create_texture(id, width, height, &pixels));
+          RasterCmd::CreateTexture { id, width, height, pixels, sampler, reply: tx } => {
+            reply(tx, self.create_texture(id, width, height, &pixels, sampler));
           }
           RasterCmd::UpdateTexture { id, pixels } => {
             if let Err(e) = self.update_texture(id, &pixels) {
               log::warn!("[alloy] texture update failed: {e}");
             }
           }
-          RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, reply: tx } => {
-            reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures));
+          RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, sampler, reply: tx } => {
+            reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler));
           }
           RasterCmd::CreatePipelineTexture { id, spec, reply: tx } => {
             reply(tx, self.create_pipeline_texture(id, &spec));
@@ -833,18 +844,20 @@ impl RasterState {
     let layer = state.layer.as_ref().expect("resolved or retained above");
 
     // The layer binds as uSource, the history layer (when declared and live)
-    // as uPrevious; extra declared inputs resolve through the registry by id,
-    // a missing id dropping to unbound (samples black), the same contract as
+    // as uPrevious - internal textures, no sampler object (their linear/clamp
+    // object state stands; Impeller never draws them). Extra declared inputs
+    // resolve through the registry by id with their declared sampling, a
+    // missing id dropping to unbound (samples black), the same contract as
     // shader targets.
-    let mut textures: Vec<(String, glow::Texture)> = vec![("uSource".to_string(), layer.tex)];
+    let mut textures: Vec<PassInput> = vec![("uSource".to_string(), layer.tex, None)];
     if state.spec.previous {
       if let Some(prev) = &state.prev_layer {
-        textures.push(("uPrevious".to_string(), prev.tex));
+        textures.push(("uPrevious".to_string(), prev.tex, None));
       }
     }
     for (name, id) in &state.spec.textures {
       match self.textures.get(id) {
-        Some(gpu) => textures.push((name.clone(), gpu.gl_texture)),
+        Some(gpu) => textures.push((name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)))),
         None => log::warn!("[alloy] window shader input '{name}': texture {id} not found"),
       }
     }
@@ -950,9 +963,16 @@ impl RasterState {
     true
   }
 
-  fn create_texture(&mut self, id: u64, width: u32, height: u32, pixels: &[u8]) -> Result<Texture, String> {
+  fn create_texture(
+    &mut self,
+    id: u64,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+  ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture::new(&self.gl, self.backend, size);
+    let gpu = GpuTexture::new(&self.gl, self.backend, size, sampler);
     gpu.upload(&self.gl, pixels, size);
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
@@ -998,7 +1018,7 @@ impl RasterState {
     }
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
-        let resolved = resolve_sampler_bindings(&self.textures, shader);
+        let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
         shader.render(&self.gl, &shader.last_params(), &resolved);
       }
     }
@@ -1015,7 +1035,8 @@ impl RasterState {
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
+    let gpu =
+      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height, sampler: shader.sampler() };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
@@ -1054,8 +1075,9 @@ impl RasterState {
     fragment_src: &str,
     params: &[(String, ParamValue)],
     textures: Vec<(String, u64)>,
+    sampler: SamplerState,
   ) -> Result<Texture, String> {
-    let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?;
+    let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?.with_sampler(sampler);
     shader.merge_params(params);
     self.register_shader_target(id, shader, width, height, "adopt shader texture failed")
   }
@@ -1081,6 +1103,7 @@ impl RasterState {
       blend,
       spec.clear_color,
     )?;
+    let shader = shader.with_sampler(spec.sampler);
     shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt pipeline texture failed")
   }
@@ -1133,6 +1156,7 @@ impl RasterState {
       )
       .map_err(|(_, e)| e)?
     };
+    let shader = shader.with_sampler(spec.sampler);
     shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
   }
@@ -1150,7 +1174,8 @@ impl RasterState {
     adopt_err: &str,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
+    let gpu =
+      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height, sampler: shader.sampler() };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
@@ -1378,11 +1403,14 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
 
 fn resolve_sampler_bindings(
   textures: &HashMap<u64, GpuTexture>,
+  samplers: &SamplerCache,
   shader: &ShaderTexture,
-) -> Vec<(String, glow::Texture)> {
+) -> Vec<PassInput> {
   shader
     .sampler_bindings()
     .iter()
-    .filter_map(|(name, src_id)| textures.get(src_id).map(|gpu| (name.clone(), gpu.gl_texture)))
+    .filter_map(|(name, src_id)| {
+      textures.get(src_id).map(|gpu| (name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler))))
+    })
     .collect()
 }
