@@ -34,6 +34,15 @@ pub struct Context {
   // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
   // Enough to validate params/draw-count updates without an RPC.
   shader_kinds: RefCell<HashMap<u64, bool>>,
+  // UI-side mirror of each shader target's sampler graph: target id ->
+  // (uniform name -> source texture id). Lets update_shader_textures reject
+  // sampling cycles synchronously; the raster thread walks the same edges to
+  // propagate re-renders through target chains, and a cycle there would
+  // under-render, so it must never form. One divergence: a rebind naming an
+  // unknown uniform is warn-and-ignored raster-side but still recorded here
+  // (the name is only known to the compiled program), which can at worst
+  // falsely reject a later rebind - after the dev error was already warned.
+  shader_sources: RefCell<HashMap<u64, HashMap<String, u64>>>,
   // UI-side mirror of the raster thread's program registry: id -> is_pipeline.
   // Programs are their own id space (like buffers), separate from texture ids.
   program_kinds: RefCell<HashMap<u64, bool>>,
@@ -230,6 +239,7 @@ impl Context {
       fence_timeouts,
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
+      shader_sources: RefCell::new(HashMap::new()),
       program_kinds: RefCell::new(HashMap::new()),
       next_program_id: Cell::new(1),
       stage_kinds: RefCell::new(HashMap::new()),
@@ -431,9 +441,10 @@ impl Context {
 
   /// Recreate a shader/pipeline target at a new size under the same id: the
   /// compiled program, sampler bindings, last-applied params, and draw state
-  /// carry over, and the output re-renders at the new size immediately.
-  /// Lookups pick up the new target right away; in-flight users of the old
-  /// one keep it alive until released. The caller must request a frame.
+  /// carry over, and the output re-renders at the new size at the next dirty
+  /// flush. Lookups pick up the new target right away; in-flight users of
+  /// the old one keep it alive until released. The caller must request a
+  /// frame.
   pub fn resize_shader_texture(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
     if !self.shader_kinds.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
@@ -443,11 +454,13 @@ impl Context {
     Ok(())
   }
 
-  /// Compile a GLSL ES fragment shader, render it once into a new RGBA8 target
-  /// texture, and register the output in the texture registry. Returns the id
-  /// the output is sampleable under (usable anywhere a normal texture id is).
-  /// The compiled program is retained so update_shader_params can re-render the
-  /// same texture without recompiling or re-adopting.
+  /// Compile a GLSL ES fragment shader into a new RGBA8 target texture and
+  /// register the output in the texture registry. Returns the id the output
+  /// is sampleable under (usable anywhere a normal texture id is); the first
+  /// render happens at the raster thread's next dirty flush, before anything
+  /// observes the pixels. The compiled program is retained so
+  /// update_shader_params can re-render the same texture without recompiling
+  /// or re-adopting.
   pub fn create_shader_texture(
     &self,
     width: u32,
@@ -468,13 +481,15 @@ impl Context {
     })??;
     self.textures.insert(id, TextureEntry { impeller, width, height });
     self.shader_kinds.borrow_mut().insert(id, false);
+    self.shader_sources.borrow_mut().insert(id, textures.iter().cloned().collect());
     Ok(id)
   }
 
-  /// Re-render an existing shader texture with new params. The output keeps its
-  /// id and Impeller texture (no re-adoption); only the GL contents change, so
-  /// the caller must request a frame for the new pixels to reach the screen.
-  /// Sampler inputs are re-resolved, so updated source textures are picked up.
+  /// Update an existing shader texture's params; it re-renders (sampler
+  /// inputs re-resolved) at the raster thread's next dirty flush, as do any
+  /// targets sampling it, transitively. The output keeps its id and Impeller
+  /// texture (no re-adoption); only the GL contents change, so the caller
+  /// must request a frame for the new pixels to reach the screen.
   pub fn update_shader_params(&self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     if !self.shader_kinds.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
@@ -483,26 +498,42 @@ impl Context {
     Ok(())
   }
 
-  /// Rebind an existing shader texture's sampler2D inputs by uniform name and
-  /// re-render it with its last-applied params; bindings not named keep their
-  /// current source. The output keeps its id and Impeller texture (no
-  /// re-adoption), so the caller must request a frame, same as
-  /// `update_shader_params`. Errors if the shader or any source texture id is
-  /// unknown, or a sampler would source the shader's own target (a feedback
-  /// loop, undefined in GL); an unknown uniform name is reported by the
-  /// raster thread as a warning, leaving all bindings unchanged.
+  /// Rebind an existing shader texture's sampler2D inputs by uniform name;
+  /// bindings not named keep their current source. The target re-renders
+  /// against the new sources at the raster thread's next dirty flush, and
+  /// keeps its id and Impeller texture (no re-adoption), so the caller must
+  /// request a frame, same as `update_shader_params`. Errors if the shader or
+  /// any source texture id is unknown, or a binding would create a sampling
+  /// cycle among targets (self-binding is the length-1 case; a cycle is a GL
+  /// feedback loop and would break re-render propagation). An unknown
+  /// uniform name is reported by the raster thread as a warning, leaving all
+  /// bindings unchanged.
   pub fn update_shader_textures(&self, id: u64, textures: &[(String, u64)]) -> Result<(), String> {
     if !self.shader_kinds.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }
-    for (name, src_id) in textures {
-      if self.textures.get(*src_id).is_none() {
-        return Err(format!("texture {src_id} (sampler '{name}') not found"));
-      }
-      if *src_id == id {
-        return Err(format!("sampler '{name}' cannot source the shader's own target"));
+    {
+      let sources = self.shader_sources.borrow();
+      for (name, src_id) in textures {
+        if self.textures.get(*src_id).is_none() {
+          return Err(format!("texture {src_id} (sampler '{name}') not found"));
+        }
+        // The current graph is acyclic, and this call only changes `id`'s own
+        // outgoing edges, so any new cycle runs through one of the updated
+        // bindings: per binding, reject if the target can already be reached
+        // from the new source. The walk never needs `id`'s own edges (it
+        // stops on reaching `id`), so the pre-update graph is the right one.
+        if samples_transitively(&sources, *src_id, id) {
+          return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
+        }
       }
     }
+    let mut sources = self.shader_sources.borrow_mut();
+    let entry = sources.entry(id).or_default();
+    for (name, src_id) in textures {
+      entry.insert(name.clone(), *src_id);
+    }
+    drop(sources);
     self.send(RasterCmd::UpdateShaderTextures { id, textures: textures.to_vec() });
     Ok(())
   }
@@ -519,9 +550,10 @@ impl Context {
   }
 
   /// Overwrite part of a vertex buffer (`data` at `byte_offset`, within the
-  /// buffer's original size), then re-render every pipeline drawing from it
-  /// with its last-applied params, so geometry-only changes reach the screen
-  /// even when no new params arrive. The caller must request a frame.
+  /// buffer's original size); every pipeline drawing from it re-renders with
+  /// its last-applied params at the next dirty flush, so geometry-only
+  /// changes reach the screen even when no new params arrive. The caller
+  /// must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
     let end = byte_offset.checked_add(data.len()).ok_or_else(|| "offset overflow".to_string())?;
@@ -565,6 +597,7 @@ impl Context {
     let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec: owned, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
     self.shader_kinds.borrow_mut().insert(id, true);
+    self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
     Ok(id)
   }
 
@@ -658,6 +691,7 @@ impl Context {
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, program, spec: owned, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height });
     self.shader_kinds.borrow_mut().insert(id, is_pipeline);
+    self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
     Ok(id)
   }
 
@@ -827,8 +861,29 @@ impl Context {
       }
       self.textures.remove(id);
       self.shader_kinds.borrow_mut().remove(&id);
+      self.shader_sources.borrow_mut().remove(&id);
       self.send(RasterCmd::DestroyTexture { id });
       false
     });
   }
+}
+
+/// Whether `to` is reachable from `from` (inclusive: `from == to` is a hit)
+/// by following sampler edges in `sources` (target id -> its source id per
+/// uniform name): the sampling-cycle test behind `update_shader_textures`.
+/// Pure over the id graph, so it unit-tests without a Context.
+pub(crate) fn samples_transitively(sources: &HashMap<u64, HashMap<String, u64>>, from: u64, to: u64) -> bool {
+  let mut stack = vec![from];
+  let mut visited: HashSet<u64> = HashSet::new();
+  while let Some(node) = stack.pop() {
+    if node == to {
+      return true;
+    }
+    if visited.insert(node) {
+      if let Some(srcs) = sources.get(&node) {
+        stack.extend(srcs.values().copied());
+      }
+    }
+  }
+  false
 }

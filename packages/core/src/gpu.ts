@@ -127,8 +127,10 @@ export function createMutableTexture(data: Uint8Array, width: number, height: nu
  * (preferred) or, when there is no `<texture>` element for it, imperatively
  * with `setShaderParams`.
  * `textures` binds each declared `uniform sampler2D` to an existing texture id
- * (e.g. a camera or decoded image) so the shader can read it; those inputs are
- * re-sampled on every params update, so live sources stay current. Frees the
+ * (e.g. a camera or decoded image, or another shader/pipeline target) so the
+ * shader can read it; bound inputs are live dependencies, so the shader
+ * re-renders whenever a source changes - including a sampled target
+ * re-rendering, transitively through chains. Frees the
  * texture and shader program when the reactive owner is disposed (opt out
  * with `{ manual: true }`); create outside any reactive scope for
  * app-lifetime shaders. For a shader whose source or inputs change

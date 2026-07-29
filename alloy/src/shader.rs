@@ -1056,6 +1056,21 @@ impl ShaderTexture {
     Ok(())
   }
 
+  /// Fold a params update into the last-applied record by name (new names
+  /// append, existing names overwrite). Uniforms are program state in GL, so
+  /// rendering once with the merged record is equivalent to rendering after
+  /// each partial params list; the owner defers that render to its dirty
+  /// flush.
+  pub fn merge_params(&self, params: &[(String, ParamValue)]) {
+    let mut last = self.last_params.borrow_mut();
+    for (name, value) in params {
+      match last.iter_mut().find(|(n, _)| n == name) {
+        Some(entry) => entry.1 = value.clone(),
+        None => last.push((name.clone(), value.clone())),
+      }
+    }
+  }
+
   /// Render the shader into its target texture with the given float params and
   /// resolved sampler inputs (uniform name -> source GL texture, in the order
   /// `sampler_bindings` declared them). See `run_pass` for the GL state

@@ -344,11 +344,13 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
   `code` are W3C KeyboardEvent values, so arrow keys arrive as "ArrowLeft"/
   "ArrowRight"/"ArrowUp"/"ArrowDown" (not "Left"), alongside "Enter",
   "Escape", "a".
-- Idle frames skip work: shaders/pipelines only re-render when their params
-  change, so measure performance while uniforms are actually changing.
-  get_snapshot works on an idle client (it requests its own frame); a
-  timeout means the JS thread is busy or wedged. get_texture on a pipeline's
-  render target reads the last-drawn frame without needing a new one.
+- Idle frames skip work: shaders/pipelines only re-render when an input
+  changes - their own params/geometry, or a sampled texture (a data upload,
+  or a sampled target re-rendering; chains propagate automatically). Measure
+  performance while inputs are actually changing. get_snapshot works on an
+  idle client (it requests its own frame); a timeout means the JS thread is
+  busy or wedged. get_texture on a pipeline's render target reads the
+  current output, pending writes included, without needing a new frame.
 - When a human reports a visual bug: capture a snapshot and SAY WHAT YOU SEE
   in it before investigating, so you agree on the symptom. If you cannot see
   the problem in the capture, say that instead of guessing.

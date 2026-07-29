@@ -1,4 +1,5 @@
 mod fonts;
+mod gpu_graph;
 mod hit;
 mod layout_cache;
 mod paint;

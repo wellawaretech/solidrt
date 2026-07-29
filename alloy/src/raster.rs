@@ -131,8 +131,9 @@ pub(crate) enum RasterCmd {
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
-  /// Compile a fragment shader, render once into a new target texture, adopt
-  /// it. Compile errors must reach JS, hence the reply.
+  /// Compile a fragment shader into a new target texture and adopt it; the
+  /// first render happens at the next dirty flush. Compile errors must reach
+  /// JS, hence the reply.
   CreateShaderTexture {
     id: u64,
     width: u32,
@@ -142,7 +143,8 @@ pub(crate) enum RasterCmd {
     textures: Vec<(String, u64)>,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
-  /// Compile a vertex+fragment pipeline, render once, adopt the target.
+  /// Compile a vertex+fragment pipeline into a new target texture and adopt
+  /// it; first render at the next dirty flush.
   CreatePipelineTexture { id: u64, spec: PipelineSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
   /// Compile a single raw stage into the stage registry: a complete GLSL ES
   /// source, or one that explicitly asked for the standard header. Compile
@@ -155,8 +157,8 @@ pub(crate) enum RasterCmd {
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },
-  /// Create a target over an already-compiled program, render it once, adopt
-  /// it. The target shares the program; many targets may share one.
+  /// Create a target over an already-compiled program and adopt it (first
+  /// render at the next dirty flush). Many targets may share one program.
   CreateShaderTarget { id: u64, program: u64, spec: TargetSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
   /// Drop a program from the registry. Targets created from it keep it alive
   /// (and keep rendering); the GL program is deleted when the last user goes.
@@ -166,17 +168,18 @@ pub(crate) enum RasterCmd {
   /// declared program is held by Rc while active; the layer texture is
   /// allocated lazily by the first shaded frame and freed on clear.
   SetWindowShader { shader: Option<WindowShader> },
-  /// Re-render an existing shader/pipeline target with new params.
+  /// Fold new params into an existing shader/pipeline target's record and
+  /// mark it dirty; it re-renders at the next flush.
   UpdateShaderParams { id: u64, params: Vec<(String, ParamValue)> },
   /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
-  /// name and re-render it with its last-applied params. Unnamed bindings
-  /// keep their current source.
+  /// name and mark it dirty. Unnamed bindings keep their current source.
   UpdateShaderTextures { id: u64, textures: Vec<(String, u64)> },
   /// Recreate a shader/pipeline target at a new size (same compiled program,
-  /// params, and bindings), re-render, and adopt the new target. Replies with
-  /// the adopted handle so the UI side re-registers it under the same id.
+  /// params, and bindings) and adopt the new target; it re-renders at the
+  /// next flush. Replies with the adopted handle so the UI side re-registers
+  /// it under the same id.
   ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Set a pipeline's vertex draw count and re-render it.
+  /// Set a pipeline's vertex draw count and mark it dirty.
   SetDrawCount { id: u64, count: i32 },
   /// Drop raster-side bookkeeping for a texture id (and destroy its shader
   /// program/FBO when the id is a shader target). The GL name itself is owned
@@ -184,7 +187,8 @@ pub(crate) enum RasterCmd {
   DestroyTexture { id: u64 },
   /// Create an interleaved vertex buffer from raw bytes.
   CreateBuffer { id: u64, data: Vec<u8>, reply: mpsc::Sender<Result<(), String>> },
-  /// Overwrite part of a vertex buffer, then re-render pipelines drawing from it.
+  /// Overwrite part of a vertex buffer and mark pipelines drawing from it
+  /// dirty.
   WriteBuffer { id: u64, data: Vec<u8>, byte_offset: usize },
   /// Read back part of a vertex buffer.
   ReadBuffer { id: u64, byte_offset: usize, len: usize, reply: mpsc::Sender<Result<Vec<u8>, String>> },
@@ -299,6 +303,14 @@ pub(crate) struct RasterState {
   // The declared window shader, with its retained layer texture. None = the
   // frame resolves straight to FBO 0 (the free path).
   window_shader: Option<WindowShaderState>,
+  // Texture ids whose content changed (or, for shader targets, whose own
+  // params/bindings/geometry changed) since the last dirty flush. Writes only
+  // mark; flush_dirty renders the affected shader targets in dependency order
+  // at the points pixels become observable (a drawn frame, an offscreen
+  // rasterization, a readback). This is what makes target chains propagate,
+  // and it renders each target at most once per flush no matter how many
+  // writes landed.
+  dirty: HashSet<u64>,
   // Sampled content may have changed since the last layer resolve: set by
   // every command except Frame/SetWindowShader (and by any non-clean Frame),
   // cleared by a resolve. While set, a clean-tree frame may not skip its
@@ -419,6 +431,7 @@ impl RasterState {
       programs: HashMap::new(),
       stages: HashMap::new(),
       buffers: HashMap::new(),
+      dirty: HashSet::new(),
       window_shader: None,
       content_dirty: true,
       pass_only_frames: 0,
@@ -445,27 +458,6 @@ impl RasterState {
       } else {
         batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. }))
       };
-      // Mirror the Frame load-shed for params updates: N params writes to one
-      // shader queued in a batch render N times with only the last result ever
-      // sampled, which is what lets a backlogged raster thread fall further
-      // behind instead of catching up. A shed write folds its params into the
-      // surviving render (uniforms are program state and params lists may be
-      // partial, so dropping one outright could lose a uniform); by-name
-      // application in order makes the one concatenated render equivalent to
-      // N. Never shed across a frame that draws: that frame samples the
-      // target, so every params write before it must have rendered.
-      let mut shed = vec![false; batch.len()];
-      {
-        let mut later: HashSet<u64> = HashSet::new();
-        for (i, cmd) in batch.iter().enumerate().rev() {
-          match cmd {
-            RasterCmd::Frame { .. } if self.capture_frames || Some(i) == last_frame => later.clear(),
-            RasterCmd::UpdateShaderParams { id, .. } => shed[i] = !later.insert(*id),
-            _ => {}
-          }
-        }
-      }
-      let mut shed_params: HashMap<u64, Vec<(String, ParamValue)>> = HashMap::new();
       for (i, cmd) in batch.into_iter().enumerate() {
         // Any command that can change what a frame samples (texture uploads,
         // target renders, program changes, ...) invalidates the clean-tree
@@ -536,33 +528,22 @@ impl RasterState {
             self.set_window_shader(shader);
           }
           RasterCmd::UpdateShaderParams { id, params } => {
-            if shed[i] {
-              shed_params.entry(id).or_default().extend(params);
-            } else {
-              match self.shaders.get(&id) {
-                Some(shader) => {
-                  let mut all = shed_params.remove(&id).unwrap_or_default();
-                  all.extend(params);
-                  let resolved = resolve_sampler_bindings(&self.textures, shader);
-                  shader.render(&self.gl, &all, &resolved);
-                }
-                None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
+            match self.shaders.get(&id) {
+              Some(shader) => {
+                shader.merge_params(&params);
+                self.dirty.insert(id);
               }
+              None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
             }
           }
           RasterCmd::UpdateShaderTextures { id, textures } => {
-            // Mutate first (needs &mut), then re-borrow shared for the render:
-            // resolve_sampler_bindings reads the whole texture map alongside
-            // the shader.
             let rebound = match self.shaders.get_mut(&id) {
               Some(shader) => shader.set_sampler_bindings(&textures),
               None => Err(format!("shader texture {id} not found")),
             };
             match rebound {
               Ok(()) => {
-                let shader = self.shaders.get(&id).expect("shader present after rebind");
-                let resolved = resolve_sampler_bindings(&self.textures, shader);
-                shader.render(&self.gl, &shader.last_params(), &resolved);
+                self.dirty.insert(id);
               }
               Err(e) => log::warn!("[alloy] shader texture rebind failed: {e}"),
             }
@@ -571,20 +552,21 @@ impl RasterState {
             reply(tx, self.resize_shader_texture(id, width, height));
           }
           RasterCmd::SetDrawCount { id, count } => {
-            let result = self.shaders.get(&id).ok_or_else(|| format!("shader texture {id} not found")).and_then(
-              |shader| {
-                shader.set_draw_count(count)?;
-                let resolved = resolve_sampler_bindings(&self.textures, shader);
-                shader.render(&self.gl, &shader.last_params(), &resolved);
-                Ok(())
-              },
-            );
-            if let Err(e) = result {
-              log::warn!("[alloy] draw count update failed: {e}");
+            let result = self
+              .shaders
+              .get(&id)
+              .ok_or_else(|| format!("shader texture {id} not found"))
+              .and_then(|shader| shader.set_draw_count(count));
+            match result {
+              Ok(()) => {
+                self.dirty.insert(id);
+              }
+              Err(e) => log::warn!("[alloy] draw count update failed: {e}"),
             }
           }
           RasterCmd::DestroyTexture { id } => {
             self.textures.remove(&id);
+            self.dirty.remove(&id);
             if let Some(shader) = self.shaders.remove(&id) {
               shader.destroy(&self.gl);
             }
@@ -616,12 +598,15 @@ impl RasterState {
             }
           }
           RasterCmd::RasterizeDl { dl, width, height, aa, reply: tx } => {
+            self.flush_dirty();
             reply(tx, self.rasterize(&dl, width, height, aa));
           }
           RasterCmd::RasterizeDlInto { dl, texture, width, height, aa, reply: tx } => {
+            self.flush_dirty();
             reply(tx, self.rasterize_into(&dl, &texture, width, height, aa));
           }
           RasterCmd::RasterizeReadback { dl, width, height, reply: tx } => {
+            self.flush_dirty();
             // Node captures carry no boundary prop, so they stay at full AA.
             let result = self.rasterize(&dl, width, height, true).and_then(|texture| {
               let size = ISize::new(width as i64, height as i64);
@@ -632,6 +617,7 @@ impl RasterState {
             reply(tx, result);
           }
           RasterCmd::ReadTexture { texture, width, height, reply: tx } => {
+            self.flush_dirty();
             let size = ISize::new(width as i64, height as i64);
             reply(tx, gl::read_texture_pixels(&self.gl, &texture, size));
           }
@@ -653,6 +639,9 @@ impl RasterState {
   /// FrameRendered) and playback encoding. Err means the main loop is gone
   /// and this thread should exit.
   fn frame(&mut self, dl: DisplayList) -> Result<(), ()> {
+    // The frame samples shader targets (directly via <texture src>, or through
+    // the window-shader layer); resolve every pending target write first.
+    self.flush_dirty();
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
     let wait_start = std::time::Instant::now();
@@ -969,10 +958,10 @@ impl RasterState {
       Some(impeller) => {
         let replaced = self.textures.insert(id, gpu).is_some();
         // Replacing at an existing id (an id-stable resize): same contract as
-        // UpdateTexture - shaders sampling this id re-render so they pick up
-        // the new texture without waiting for a params change.
+        // UpdateTexture - shaders sampling this id re-render at the next
+        // flush so they pick up the new texture without a params change.
         if replaced {
-          self.rerender_samplers_of(id);
+          self.dirty.insert(id);
         }
         Ok(impeller)
       }
@@ -984,16 +973,36 @@ impl RasterState {
     }
   }
 
-  /// Re-render every shader/pipeline that samples texture id `id` with its
-  /// last-applied params, so a content or registry change to the source is
-  /// visible without a params update.
-  fn rerender_samplers_of(&self, id: u64) {
-    for shader in self.shaders.values() {
-      if shader.sampler_bindings().iter().any(|(_, tex)| *tex == id) {
+  /// Resolve every pending target write: render each shader/pipeline target
+  /// whose own state changed, or whose sampled content (transitively) did,
+  /// in dependency order - sources before the targets sampling them - then
+  /// clear the dirty set. The only place target renders happen; called at
+  /// the points target pixels become observable (a drawn frame, an offscreen
+  /// rasterization, a readback), so a chain of targets propagates end to end
+  /// with each target rendered at most once per flush.
+  fn flush_dirty(&mut self) {
+    if self.dirty.is_empty() {
+      return;
+    }
+    let edges: HashMap<u64, Vec<u64>> = self
+      .shaders
+      .iter()
+      .map(|(id, shader)| (*id, shader.sampler_bindings().iter().map(|(_, src)| *src).collect()))
+      .collect();
+    let (order, cyclic) = propagation_order(&self.dirty, &edges);
+    if !cyclic.is_empty() {
+      // The UI side rejects sampling cycles at bind time, so reaching this
+      // means the mirrors diverged. Render each member once anyway: stale
+      // inputs, but forward progress and no hang.
+      log::warn!("[alloy] sampling cycle between shader targets {cyclic:?}; rendering each once");
+    }
+    for id in order.iter().chain(cyclic.iter()) {
+      if let Some(shader) = self.shaders.get(id) {
         let resolved = resolve_sampler_bindings(&self.textures, shader);
         shader.render(&self.gl, &shader.last_params(), &resolved);
       }
     }
+    self.dirty.clear();
   }
 
   /// Resize an existing shader/pipeline target in place: a new target texture
@@ -1005,13 +1014,14 @@ impl RasterState {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
-    let resolved = resolve_sampler_bindings(&self.textures, shader);
-    shader.render(&self.gl, &shader.last_params(), &resolved);
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
+        // The new storage renders (and its samplers re-resolve) at the next
+        // flush, before anything observes it.
+        self.dirty.insert(id);
         Ok(impeller)
       }
       // Should-not-happen path (adoption of a valid GL name): the shader keeps
@@ -1030,10 +1040,9 @@ impl RasterState {
     }
     let size = ISize::new(gpu.width as i64, gpu.height as i64);
     gpu.upload(&self.gl, pixels, size);
-    // Shader targets sampling this texture show stale output until their next
-    // params update; re-render them now (same contract as WriteBuffer, so
-    // data-texture changes are visible without a params change).
-    self.rerender_samplers_of(id);
+    // Shader targets sampling this texture re-render at the next flush, so
+    // data-texture changes are visible without a params change.
+    self.dirty.insert(id);
     Ok(())
   }
 
@@ -1047,8 +1056,7 @@ impl RasterState {
     textures: Vec<(String, u64)>,
   ) -> Result<Texture, String> {
     let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?;
-    let resolved = resolve_sampler_bindings(&self.textures, &shader);
-    shader.render(&self.gl, params, &resolved);
+    shader.merge_params(params);
     self.register_shader_target(id, shader, width, height, "adopt shader texture failed")
   }
 
@@ -1073,8 +1081,7 @@ impl RasterState {
       blend,
       spec.clear_color,
     )?;
-    let resolved = resolve_sampler_bindings(&self.textures, &shader);
-    shader.render(&self.gl, &spec.params, &resolved);
+    shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt pipeline texture failed")
   }
 
@@ -1126,13 +1133,14 @@ impl RasterState {
       )
       .map_err(|(_, e)| e)?
     };
-    let resolved = resolve_sampler_bindings(&self.textures, &shader);
-    shader.render(&self.gl, &spec.params, &resolved);
+    shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
   }
 
-  /// Adopt a freshly rendered shader/pipeline target into Impeller and record
-  /// it under `id` in both the texture and shader maps.
+  /// Adopt a new shader/pipeline target into Impeller and record it under
+  /// `id` in both the texture and shader maps. The target starts dirty: its
+  /// first render happens at the next flush, before anything observes its
+  /// pixels, so the blocking create RPC never pays for a draw.
   fn register_shader_target(
     &mut self,
     id: u64,
@@ -1147,6 +1155,7 @@ impl RasterState {
       Some(impeller) => {
         self.textures.insert(id, gpu);
         self.shaders.insert(id, shader);
+        self.dirty.insert(id);
         Ok(impeller)
       }
       None => {
@@ -1160,15 +1169,12 @@ impl RasterState {
   fn write_buffer(&mut self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let buffer = self.buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
     buffer.write(&self.gl, data, byte_offset)?;
-    // Re-render every pipeline drawing from this buffer with its last-applied
-    // params, so geometry-only changes reach the screen even when no new
-    // params arrive.
-    for shader in self.shaders.values() {
-      if shader.buffer_id() == Some(id) {
-        let resolved = resolve_sampler_bindings(&self.textures, shader);
-        shader.render(&self.gl, &shader.last_params(), &resolved);
-      }
-    }
+    // Every pipeline drawing from this buffer re-renders at the next flush,
+    // so geometry-only changes reach the screen even when no new params
+    // arrive. (Marked by target id: buffer ids are their own space.)
+    let drawing: Vec<u64> =
+      self.shaders.iter().filter(|(_, s)| s.buffer_id() == Some(id)).map(|(tid, _)| *tid).collect();
+    self.dirty.extend(drawing);
     Ok(())
   }
 
@@ -1324,6 +1330,50 @@ fn flip_for_fbo(dl: &DisplayList, height: u32) -> Result<DisplayList, String> {
   flipped.scale(1.0, -1.0);
   flipped.draw_display_list(dl, 1.0);
   flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())
+}
+
+/// Which shader targets need re-rendering after the contents of the `dirty`
+/// ids changed, given the sampler graph `edges` (target id -> the ids it
+/// samples, with multiplicity): every target that is itself dirty or samples
+/// a dirty/affected id, in dependency order - sources before the targets
+/// sampling them - so one pass over the result renders a chain end to end.
+/// Targets on a sampling cycle cannot be ordered and come back in the second
+/// list. Both lists are deterministic (ascending id per Kahn layer) for a
+/// given input. Pure over the id graph, so it unit-tests without GL.
+pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
+  use std::collections::BTreeSet;
+  // Affected = fixpoint of "dirty target, or samples a dirty/affected id".
+  let mut affected: BTreeSet<u64> = BTreeSet::new();
+  loop {
+    let before = affected.len();
+    for (id, sources) in edges {
+      if !affected.contains(id)
+        && (dirty.contains(id) || sources.iter().any(|s| dirty.contains(s) || affected.contains(s)))
+      {
+        affected.insert(*id);
+      }
+    }
+    if affected.len() == before {
+      break;
+    }
+  }
+  // Kahn's algorithm over the affected subgraph: a target is ready once none
+  // of its sources are still waiting (sources outside `remaining` are either
+  // unaffected or already ordered).
+  let mut order = Vec::with_capacity(affected.len());
+  let mut remaining = affected;
+  loop {
+    let ready: Vec<u64> =
+      remaining.iter().copied().filter(|id| edges[id].iter().all(|s| !remaining.contains(s))).collect();
+    if ready.is_empty() {
+      break;
+    }
+    for id in ready {
+      remaining.remove(&id);
+      order.push(id);
+    }
+  }
+  (order, remaining.into_iter().collect())
 }
 
 fn resolve_sampler_bindings(

@@ -240,10 +240,10 @@ timestamp: 2026-07-13T00:00:00Z
   samples linear, with wrap fixed per creation path (clamp-to-edge for targets,
   repeat for createTexture); nearest magnification is unreachable, which rules
   out the whole retro/pixel-art category.
-- [Dependency propagation between GPU targets](gpu-target-dependency-propagation.md) [open] -
-  A target sampling another target keeps a stale frame forever unless its own
-  params are written; the API accepts the binding and then quietly stops
-  propagating, an invisible failure mode in any multi-pass chain.
+- [Dependency propagation between GPU targets](gpu-target-dependency-propagation.md) [done] -
+  Target rendering is now pull-based: writes mark dirty, and a flush at each
+  observation point (frame, capture, readback) re-renders the affected
+  subgraph in dependency order; sampling cycles are rejected at bind time.
 - [Guard that every referenced example ships](release-example-parity-check.md) [open] -
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check between the

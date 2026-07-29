@@ -261,6 +261,8 @@ Pass `{ onError }` as a second argument when the source is not known-good - a sh
 
 A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its last-applied params against the new sources, without recompiling. Bindings not named keep their current source.
 
+Sampler bindings are live dependencies. A target may sample another target's output, and when a source re-renders - a params write, a vertex-buffer write, a data-texture upload, a rebind - every target sampling it re-renders too, transitively through the chain, before the next frame or readback observes them. Each target renders at most once per frame no matter how many of its inputs changed, so a multi-pass chain (a plasma target feeding a cube pipeline) stays current without any consumer writing a uniform per frame. A binding that would close a sampling cycle throws (binding a shader's own target is the shortest case).
+
 ### Raw shading layer
 
 `createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources.

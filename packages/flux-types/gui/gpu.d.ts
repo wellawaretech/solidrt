@@ -68,7 +68,12 @@ declare module "flux:gpu" {
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
    * size. `params` sets uniforms by name (see {@link ShaderParams} for the
-   * value shapes); `textures` binds sampler2D uniforms to texture ids. Returns the resulting texture id. The fused
+   * value shapes); `textures` binds sampler2D uniforms to texture ids - any
+   * texture id, including another shader/pipeline target's output. Bound
+   * targets are live dependencies: when a source re-renders (its params,
+   * geometry, or data change), every target sampling it re-renders too,
+   * transitively through chains, before the next frame or readback - no
+   * per-frame uniform write is needed to keep a chain current. Returns the resulting texture id. The fused
    * convenience: one call compiles a program and creates a target over it,
    * and the program lives and dies with the target. To share one compile
    * across targets (or hold a program with no target yet), use the raw layer:
@@ -170,8 +175,9 @@ declare module "flux:gpu" {
    * {@link setShaderParams}. Bindings not named keep their current source, so
    * a single input can be retargeted (post-process source swap, ping-pong
    * between two data textures) without recompiling the shader. Throws if the
-   * shader or a source texture id is unknown, or a sampler would source the
-   * shader's own target.
+   * shader or a source texture id is unknown, or a binding would create a
+   * sampling cycle among targets (binding a shader's own target is the
+   * shortest case).
    */
   export function setShaderTextures(id: number, textures: Record<string, number>): void
   /**
