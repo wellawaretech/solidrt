@@ -1,17 +1,26 @@
 // The raw shading layer: compileShader compiles one stage from complete GLSL
 // ES (nothing injected - the source declares its own #version, precision,
 // varyings and uniforms), linkProgram links a vertex and a fragment stage
-// into a program, and createShaderTarget builds a render target over it. One
-// program can back many targets, and creating a target compiles nothing, so
-// swapping precompiled programs is free of compilation. Stages can be
-// destroyed right after linking; the program keeps its own compiled copies.
+// into a program, createRenderPipeline pairs the program with draw state
+// (none here: attributeless triangles are the defaults), and
+// createShaderTarget builds a render target over the pipeline. One program
+// can back many pipelines, one pipeline many targets, and only the compile
+// step compiles, so swapping precompiled programs is free of compilation.
+// Stages can be destroyed right after linking; the program keeps its own
+// compiled copies.
 //
 // A raw program carries its own vertex stage, so a fullscreen pass is a
 // covering triangle from gl_VertexID with vertexCount: 3. Compare
 // gpu-shader.tsx, where the fused createShader does all of this in one call
 // with an injected preamble.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { compileShader, createShaderTarget, destroyShader, linkProgram } from "@solidrt/core/gpu"
+import {
+  compileShader,
+  createRenderPipeline,
+  createShaderTarget,
+  destroyShader,
+  linkProgram,
+} from "@solidrt/core/gpu"
 
 let VERTEX = `#version 300 es
 precision highp float;
@@ -59,8 +68,11 @@ function App() {
   destroyShader(wavesFs)
   destroyShader(ringsFs)
 
-  let wavesId = createShaderTarget(waves, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
-  let ringsId = createShaderTarget(rings, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
+  let wavesPipeline = createRenderPipeline(waves)
+  let ringsPipeline = createRenderPipeline(rings)
+
+  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
+  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
 
   let [time, setTime] = createSignal(0)
   onFrame(tick => setTime(tick / 1000))

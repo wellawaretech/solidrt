@@ -43,7 +43,13 @@ draw count. Deliberately deferred, in rough order of expected demand:
   missing cull for now, but a closed mesh pays double the fragment work.
 - **Multiple draw passes into one target** (shared depth buffer, different
   programs). One pipeline + a dynamic buffer region covers the known use
-  cases so far.
+  cases so far. The object-model blocker is gone: the
+  [split](gpu-pipeline-object-model.md) landed 2026-07-30, so draw state now
+  lives on RenderPipeline and "N pipelines into one target" has a natural
+  shape (a target that takes several pipelines, or targets sharing a depth
+  attachment). Cull/depth-func likewise now have their home
+  (`PipelineDesc`); each remaining item extends the desc or the target spec,
+  not a fused struct.
 
 Adjacent, filed separately because they are not createPipeline options:
 [anti-aliasing for pipeline targets](gpu-target-antialiasing.md),

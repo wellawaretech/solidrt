@@ -26,53 +26,15 @@ use std::sync::{mpsc, Arc};
 
 use crate::backend::{Backend, FrameOutput};
 use crate::context::{
-  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, WindowShader,
+  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
+  GpuWindowShaderInfo, PipelineSpec, TargetSpec, WindowShader,
 };
 use crate::gl;
 use crate::shader::{
-  release_program, AttrFormat, GpuBuffer, ParamValue, PassInput, ShaderProgram, ShaderStage, ShaderTexture,
+  release_pipeline, release_program, AttrFormat, GpuBuffer, ParamValue, PassInput, PipelineDesc, RenderPipeline,
+  ShaderProgram, ShaderStage, ShaderTexture,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
-
-/// Owned form of `context::PipelineSpec` (whose fields borrow from JS values),
-/// so the spec can cross the channel.
-pub(crate) struct PipelineSpecOwned {
-  pub width: u32,
-  pub height: u32,
-  pub vertex_src: String,
-  pub fragment_src: String,
-  pub params: Vec<(String, ParamValue)>,
-  pub textures: Vec<(String, u64)>,
-  pub attributes: Vec<(String, String)>,
-  pub buffer_id: u64,
-  pub topology: String,
-  pub draw_count: i32,
-  pub depth: bool,
-  pub depth_write: bool,
-  pub blend: String,
-  pub clear_color: [f32; 4],
-  pub sampler: SamplerState,
-}
-
-/// Owned form of `context::TargetSpec`: a shader/pipeline target over an
-/// already-compiled program, so everything of PipelineSpecOwned except the
-/// sources. The mesh fields are meaningful only for pipeline programs; the UI
-/// side rejects them for fragment programs before sending.
-pub(crate) struct TargetSpecOwned {
-  pub width: u32,
-  pub height: u32,
-  pub params: Vec<(String, ParamValue)>,
-  pub textures: Vec<(String, u64)>,
-  pub attributes: Vec<(String, String)>,
-  pub buffer_id: u64,
-  pub topology: String,
-  pub draw_count: i32,
-  pub depth: bool,
-  pub depth_write: bool,
-  pub blend: String,
-  pub clear_color: [f32; 4],
-  pub sampler: SamplerState,
-}
 
 /// The UI thread's half of the raster command channel, paired with the shared
 /// queue-depth counter: every send increments it, and the raster loop
@@ -151,7 +113,7 @@ pub(crate) enum RasterCmd {
   },
   /// Compile a vertex+fragment pipeline into a new target texture and adopt
   /// it; first render at the next dirty flush.
-  CreatePipelineTexture { id: u64, spec: PipelineSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
+  CreatePipelineTexture { id: u64, spec: PipelineSpec, reply: mpsc::Sender<Result<Texture, String>> },
   /// Compile a single raw stage into the stage registry: a complete GLSL ES
   /// source, or one that explicitly asked for the standard header. Compile
   /// errors must reach JS, hence the reply.
@@ -163,11 +125,18 @@ pub(crate) enum RasterCmd {
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },
-  /// Create a target over an already-compiled program and adopt it (first
-  /// render at the next dirty flush). Many targets may share one program.
-  CreateShaderTarget { id: u64, program: u64, spec: TargetSpecOwned, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Drop a program from the registry. Targets created from it keep it alive
-  /// (and keep rendering); the GL program is deleted when the last user goes.
+  /// Pair a registered program with draw state in the pipeline registry.
+  /// Kind errors ("program is a fragment shader") reach JS via the reply.
+  CreateRenderPipeline { id: u64, program: u64, desc: PipelineDesc, reply: mpsc::Sender<Result<(), String>> },
+  /// Drop a pipeline from the registry. Targets created from it keep it alive
+  /// (and keep rendering); GL resources are freed when the last user goes.
+  DestroyRenderPipeline { id: u64 },
+  /// Create a target over a registered pipeline and adopt it (first render at
+  /// the next dirty flush). Many targets may share one pipeline.
+  CreateShaderTarget { id: u64, pipeline: u64, spec: TargetSpec, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Drop a program from the registry. Pipelines created from it keep it
+  /// alive (and keep rendering); the GL program is deleted when the last user
+  /// goes.
   DestroyProgram { id: u64 },
   /// Declare (Some) or clear (None) the window shader. Fire-and-forget on
   /// this ordered channel, so it applies exactly between two frames. The
@@ -300,10 +269,13 @@ pub(crate) struct RasterState {
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
-  // Shared shader/pipeline programs in their own id space. Targets hold their
-  // program by Rc, so removal here only deletes the GL program once no target
-  // uses it (see shader::release_program).
+  // Shared shader/pipeline programs in their own id space. Pipelines and
+  // targets hold their program by Rc, so removal here only deletes the GL
+  // program once no user is left (see shader::release_program).
   programs: HashMap<u64, Rc<ShaderProgram>>,
+  // Shared render pipelines (program + draw state) in their own id space.
+  // Targets hold their pipeline by Rc, like programs.
+  render_pipelines: HashMap<u64, Rc<RenderPipeline>>,
   // Raw compiled stages in their own id space, inputs to LinkProgram. The GL
   // shader object is deleted on DestroyStage; linked programs are unaffected.
   stages: HashMap<u64, glow::Shader>,
@@ -440,6 +412,7 @@ impl RasterState {
       textures: HashMap::new(),
       shaders: HashMap::new(),
       programs: HashMap::new(),
+      render_pipelines: HashMap::new(),
       stages: HashMap::new(),
       buffers: HashMap::new(),
       dirty: HashSet::new(),
@@ -511,7 +484,7 @@ impl RasterState {
             reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler));
           }
           RasterCmd::CreatePipelineTexture { id, spec, reply: tx } => {
-            reply(tx, self.create_pipeline_texture(id, &spec));
+            reply(tx, self.create_pipeline_texture(id, spec));
           }
           RasterCmd::CompileStage { id, stage, source, header, reply: tx } => {
             let result = crate::shader::compile_stage(&self.gl, stage, &source, header).map(|shader| {
@@ -527,8 +500,16 @@ impl RasterState {
               crate::shader::delete_stage(&self.gl, shader);
             }
           }
-          RasterCmd::CreateShaderTarget { id, program, spec, reply: tx } => {
-            reply(tx, self.create_shader_target(id, program, &spec));
+          RasterCmd::CreateRenderPipeline { id, program, desc, reply: tx } => {
+            reply(tx, self.create_render_pipeline(id, program, desc));
+          }
+          RasterCmd::DestroyRenderPipeline { id } => {
+            if let Some(pipeline) = self.render_pipelines.remove(&id) {
+              release_pipeline(&self.gl, pipeline);
+            }
+          }
+          RasterCmd::CreateShaderTarget { id, pipeline, spec, reply: tx } => {
+            reply(tx, self.create_shader_target(id, pipeline, spec));
           }
           RasterCmd::DestroyProgram { id } => {
             if let Some(program) = self.programs.remove(&id) {
@@ -1082,30 +1063,24 @@ impl RasterState {
     self.register_shader_target(id, shader, width, height, "adopt shader texture failed")
   }
 
-  fn create_pipeline_texture(&mut self, id: u64, spec: &PipelineSpecOwned) -> Result<Texture, String> {
-    let (attrs, topology, vbo, draw_count) =
-      resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
-    let blend = crate::shader::parse_blend(&spec.blend)?;
+  fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<Texture, String> {
+    let (vbo, draw_count) = resolve_target_mesh(&self.buffers, &spec.pipeline.attributes, &spec.target)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
-      spec.width,
-      spec.height,
+      spec.target.width,
+      spec.target.height,
       &spec.vertex_src,
       &spec.fragment_src,
-      spec.textures.clone(),
-      &attrs,
+      spec.target.textures.clone(),
+      spec.pipeline,
       vbo,
-      spec.buffer_id,
-      topology,
+      spec.target.buffer,
       draw_count,
-      spec.depth,
-      spec.depth_write,
-      blend,
-      spec.clear_color,
+      spec.target.clear_color,
     )?;
-    let shader = shader.with_sampler(spec.sampler);
-    shader.merge_params(&spec.params);
-    self.register_shader_target(id, shader, spec.width, spec.height, "adopt pipeline texture failed")
+    let shader = shader.with_sampler(spec.target.sampler);
+    shader.merge_params(&spec.target.params);
+    self.register_shader_target(id, shader, spec.target.width, spec.target.height, "adopt pipeline texture failed")
   }
 
   /// Link two compiled stages from the stage registry into a registered
@@ -1119,43 +1094,34 @@ impl RasterState {
     Ok(())
   }
 
-  /// Create a target over a registered program (the target half of the fused
-  /// create paths), render it once, and adopt it under texture id `id`.
-  fn create_shader_target(&mut self, id: u64, program_id: u64, spec: &TargetSpecOwned) -> Result<Texture, String> {
+  /// Pair a registered program with draw state under pipeline id `id`.
+  fn create_render_pipeline(&mut self, id: u64, program_id: u64, desc: PipelineDesc) -> Result<(), String> {
     let program = self.programs.get(&program_id).ok_or_else(|| format!("program {program_id} not found"))?.clone();
-    let shader = if program.is_pipeline() {
-      let (attrs, topology, vbo, draw_count) =
-        resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
-      let blend = crate::shader::parse_blend(&spec.blend)?;
-      ShaderTexture::from_pipeline_program(
-        &self.gl,
-        program,
-        Some(program_id),
-        spec.width,
-        spec.height,
-        spec.textures.clone(),
-        &attrs,
-        vbo,
-        spec.buffer_id,
-        topology,
-        draw_count,
-        spec.depth,
-        spec.depth_write,
-        blend,
-        spec.clear_color,
-      )
-      .map_err(|(_, e)| e)?
-    } else {
-      ShaderTexture::from_fragment_program(
-        &self.gl,
-        program,
-        Some(program_id),
-        spec.width,
-        spec.height,
-        spec.textures.clone(),
-      )
-      .map_err(|(_, e)| e)?
-    };
+    let pipeline = RenderPipeline::new(program, Some(program_id), desc).map_err(|(_, e)| e)?;
+    self.render_pipelines.insert(id, Rc::new(pipeline));
+    Ok(())
+  }
+
+  /// Create a target over a registered pipeline (the target half of the fused
+  /// create paths) and adopt it under texture id `id`; the first render
+  /// happens at the next dirty flush.
+  fn create_shader_target(&mut self, id: u64, pipeline_id: u64, spec: TargetSpec) -> Result<Texture, String> {
+    let pipeline =
+      self.render_pipelines.get(&pipeline_id).ok_or_else(|| format!("pipeline {pipeline_id} not found"))?.clone();
+    let (vbo, draw_count) = resolve_target_mesh(&self.buffers, &pipeline.desc().attributes, &spec)?;
+    let shader = ShaderTexture::from_pipeline(
+      &self.gl,
+      pipeline,
+      Some(pipeline_id),
+      spec.width,
+      spec.height,
+      spec.textures.clone(),
+      vbo,
+      spec.buffer,
+      draw_count,
+      spec.clear_color,
+    )
+    .map_err(|(_, e)| e)?;
     let shader = shader.with_sampler(spec.sampler);
     shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
@@ -1280,6 +1246,7 @@ impl RasterState {
         texture_id: *texture_id,
         kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
         program_id: shader.program_id(),
+        pipeline_id: shader.pipeline_id(),
         buffer_id: shader.buffer_id(),
         topology: shader.topology_name(),
         draw_count: shader.draw_count(),
@@ -1293,11 +1260,25 @@ impl RasterState {
       .collect();
     pipelines.sort_by_key(|p| p.texture_id);
 
-    let mut programs: Vec<GpuProgramInfo> = self
-      .programs
+    let mut render_pipelines: Vec<GpuRenderPipelineInfo> = self
+      .render_pipelines
       .iter()
-      .map(|(id, program)| GpuProgramInfo { id: *id, kind: if program.is_pipeline() { "pipeline" } else { "fragment" } })
+      .map(|(id, pipeline)| {
+        let desc = pipeline.desc();
+        GpuRenderPipelineInfo {
+          id: *id,
+          program_id: pipeline.program_id().unwrap_or(0),
+          topology: desc.topology.name(),
+          blend: crate::shader::blend_name(desc.blend),
+          depth: desc.depth.is_some(),
+          depth_write: desc.depth.map_or(true, |d| d.write),
+          attributes: desc.attributes.iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
+        }
+      })
       .collect();
+    render_pipelines.sort_by_key(|p| p.id);
+
+    let mut programs: Vec<GpuProgramInfo> = self.programs.keys().map(|id| GpuProgramInfo { id: *id }).collect();
     programs.sort_by_key(|p| p.id);
 
     let window_shader = self.window_shader.as_ref().map(|state| GpuWindowShaderInfo {
@@ -1308,41 +1289,34 @@ impl RasterState {
       pass_only_frames: self.pass_only_frames,
     });
 
-    GpuResources { textures, buffers, pipelines, programs, window_shader }
+    GpuResources { textures, buffers, pipelines, render_pipelines, programs, window_shader }
   }
 }
 
-/// Resolve the mesh half of a pipeline (target) spec against the buffer
-/// registry: parsed attribute formats, GL topology, the source buffer's GL
-/// name, and the effective draw count (a negative request means "the whole
-/// buffer", derived from buffer size / vertex stride).
-fn resolve_mesh_spec(
+/// Resolve a target's mesh bindings against the buffer registry: the source
+/// buffer's GL name and the effective draw count (a negative request means
+/// "the whole buffer", derived from buffer size / the pipeline's vertex
+/// stride).
+fn resolve_target_mesh(
   buffers: &HashMap<u64, GpuBuffer>,
-  attributes: &[(String, String)],
-  topology: &str,
-  buffer_id: u64,
-  draw_count: i32,
-) -> Result<(Vec<(String, AttrFormat)>, u32, Option<glow::Buffer>, i32), String> {
-  let mut attrs = Vec::with_capacity(attributes.len());
-  for (name, fmt) in attributes {
-    attrs.push((name.clone(), AttrFormat::parse(fmt)?));
-  }
-  let topology = crate::shader::parse_topology(topology)?;
-  let buffer = if buffer_id != 0 {
-    Some(buffers.get(&buffer_id).ok_or_else(|| format!("buffer {buffer_id} not found"))?)
+  attributes: &[(String, AttrFormat)],
+  spec: &TargetSpec,
+) -> Result<(Option<glow::Buffer>, i32), String> {
+  let buffer = if spec.buffer != 0 {
+    Some(buffers.get(&spec.buffer).ok_or_else(|| format!("buffer {} not found", spec.buffer))?)
   } else {
     None
   };
-  let count = if draw_count >= 0 {
-    draw_count
+  let count = if spec.draw_count >= 0 {
+    spec.draw_count
   } else {
-    let stride = crate::shader::vertex_stride(&attrs);
+    let stride = crate::shader::vertex_stride(attributes);
     match buffer {
       Some(b) if stride > 0 => (b.size / stride as usize) as i32,
       _ => 0,
     }
   };
-  Ok((attrs, topology, buffer.map(|b| b.vbo), count))
+  Ok((buffer.map(|b| b.vbo), count))
 }
 
 /// Map a shader's (name -> source texture id) bindings to live GL textures,

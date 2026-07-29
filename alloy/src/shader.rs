@@ -134,26 +134,81 @@ pub fn blend_name(b: Option<BlendMode>) -> &'static str {
   }
 }
 
-pub fn parse_topology(s: &str) -> Result<u32, String> {
-  Ok(match s {
-    "points" => glow::POINTS,
-    "lines" => glow::LINES,
-    "line-strip" => glow::LINE_STRIP,
-    "triangles" => glow::TRIANGLES,
-    "triangle-strip" => glow::TRIANGLE_STRIP,
-    _ => return Err(format!("unsupported topology '{s}'")),
-  })
+/// How a pipeline's vertices assemble into primitives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Topology {
+  Points,
+  Lines,
+  LineStrip,
+  Triangles,
+  TriangleStrip,
 }
 
-/// The string form `parse_topology` accepts, for reporting back out.
-pub fn topology_name(t: u32) -> &'static str {
-  match t {
-    glow::POINTS => "points",
-    glow::LINES => "lines",
-    glow::LINE_STRIP => "line-strip",
-    glow::TRIANGLES => "triangles",
-    glow::TRIANGLE_STRIP => "triangle-strip",
-    _ => "unknown",
+impl Topology {
+  pub fn parse(s: &str) -> Result<Self, String> {
+    Ok(match s {
+      "points" => Topology::Points,
+      "lines" => Topology::Lines,
+      "line-strip" => Topology::LineStrip,
+      "triangles" => Topology::Triangles,
+      "triangle-strip" => Topology::TriangleStrip,
+      _ => return Err(format!("unsupported topology '{s}'")),
+    })
+  }
+
+  /// The string form `parse` accepts, for reporting back out.
+  pub fn name(self) -> &'static str {
+    match self {
+      Topology::Points => "points",
+      Topology::Lines => "lines",
+      Topology::LineStrip => "line-strip",
+      Topology::Triangles => "triangles",
+      Topology::TriangleStrip => "triangle-strip",
+    }
+  }
+
+  fn gl(self) -> u32 {
+    match self {
+      Topology::Points => glow::POINTS,
+      Topology::Lines => glow::LINES,
+      Topology::LineStrip => glow::LINE_STRIP,
+      Topology::Triangles => glow::TRIANGLES,
+      Topology::TriangleStrip => glow::TRIANGLE_STRIP,
+    }
+  }
+}
+
+/// Depth state for a pipeline's draws. Present means every target gets a
+/// private depth buffer and the draw tests against it; `write` is whether the
+/// draw also writes it (the clear always does). "Test without write" is the
+/// blended-pass half an app opts into explicitly; "write without test" does
+/// not exist, which is exactly why this is an Option of a struct and not two
+/// booleans.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DepthState {
+  pub write: bool,
+}
+
+/// The draw-state half of a render pipeline: everything about HOW a program
+/// draws (vertex layout, primitive assembly, blending, depth), as opposed to
+/// where it draws (the target's size, buffer, and clear are per-target).
+/// Vocabulary is typed here - callers parse strings at their own boundary
+/// (`AttrFormat::parse`, `Topology::parse`, `parse_blend`), so an invalid
+/// word fails at the call site, not on the raster thread.
+#[derive(Clone, Debug)]
+pub struct PipelineDesc {
+  /// One interleaved float vertex, in buffer order: (attribute name, format).
+  /// Empty for attributeless rendering driven by gl_VertexID.
+  pub attributes: Vec<(String, AttrFormat)>,
+  pub topology: Topology,
+  /// None = overwrite (the default); see `BlendMode`.
+  pub blend: Option<BlendMode>,
+  pub depth: Option<DepthState>,
+}
+
+impl Default for PipelineDesc {
+  fn default() -> Self {
+    PipelineDesc { attributes: Vec::new(), topology: Topology::Triangles, blend: None, depth: None }
   }
 }
 
@@ -454,26 +509,73 @@ pub fn release_program(gl: &glow::Context, program: Rc<ShaderProgram>) {
   }
 }
 
-/// Everything that makes a shader target a vertex+fragment pipeline instead of
-/// a fullscreen fragment pass: the VAO describing the interleaved vertex
-/// layout, the source buffer's registry id, and the draw state.
+/// A pipeline-kind program paired with the draw state its targets share: the
+/// pipeline state object of every modern GPU API, minus anything per-target
+/// (a target brings its own size, vertex buffer, clear color, and FBO). One
+/// pipeline can back many targets; targets hold it by Rc, like programs, so
+/// either destruction order is safe.
+pub struct RenderPipeline {
+  program: Rc<ShaderProgram>,
+  /// Registry id of the shared program this pipeline was created from; None
+  /// for the fused create path, whose program is anonymous and dies with the
+  /// pipeline.
+  program_id: Option<u64>,
+  desc: PipelineDesc,
+}
+
+impl RenderPipeline {
+  /// Pair a linked program with draw state. Fragment programs never get here
+  /// through the public surface (a fullscreen fragment pass has no draw
+  /// state); the check is the raster-side backstop. On error the program Rc
+  /// is handed back so the caller decides its fate.
+  pub fn new(
+    program: Rc<ShaderProgram>,
+    program_id: Option<u64>,
+    desc: PipelineDesc,
+  ) -> Result<Self, (Rc<ShaderProgram>, String)> {
+    if !program.is_pipeline() {
+      return Err((program, "program is a fragment shader, not a pipeline".to_string()));
+    }
+    Ok(RenderPipeline { program, program_id, desc })
+  }
+
+  pub fn program_id(&self) -> Option<u64> {
+    self.program_id
+  }
+
+  pub fn desc(&self) -> &PipelineDesc {
+    &self.desc
+  }
+}
+
+/// Drop a use of a shared render pipeline, releasing its program use when
+/// this was the last one (which in turn deletes the GL program once nothing
+/// else holds it). The pipeline Rcs all live on the raster thread, like
+/// program Rcs.
+pub fn release_pipeline(gl: &glow::Context, pipeline: Rc<RenderPipeline>) {
+  if let Ok(pipeline) = Rc::try_unwrap(pipeline) {
+    release_program(gl, pipeline.program);
+  }
+}
+
+/// The per-target mesh half of a pipeline target: the pipeline it draws with
+/// (which owns the draw state), plus everything bound to THIS target - the
+/// VAO built against its concrete vertex buffer, that buffer's registry id,
+/// the draw count, the private depth storage, and the clear color.
 struct MeshState {
+  pipeline: Rc<RenderPipeline>,
+  /// Registry id of the shared pipeline this target was created from; None
+  /// for the fused create path, whose pipeline is anonymous and dies with the
+  /// target.
+  pipeline_id: Option<u64>,
   vao: glow::VertexArray,
   /// Registry id of the interleaved vertex buffer (Context resolves writes to
   /// re-renders through this). 0 when the pipeline is attributeless.
   buffer_id: u64,
-  /// The declared interleaved layout, kept for resource introspection (the VAO
-  /// holds the live GL form).
-  attributes: Vec<(String, AttrFormat)>,
-  topology: u32,
   draw_count: Cell<i32>,
-  /// Present when the pipeline was created with depth testing; the
-  /// renderbuffer stays private to the FBO (never adopted into Impeller).
+  /// Present when the pipeline carries depth state; the renderbuffer stays
+  /// private to the FBO (never adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
-  /// Whether the draw writes depth (the clear always does). Only meaningful
-  /// with a depth attachment; an explicit option, never inferred from blend.
-  depth_write: bool,
-  blend: Option<BlendMode>,
   clear_color: [f32; 4],
 }
 
@@ -485,11 +587,10 @@ struct MeshState {
 /// new params. Like GpuTexture it never deletes the target name: Impeller
 /// owns it once adopted, and deleting here would double-free.
 pub struct ShaderTexture {
+  /// The program rendering this target: a mesh target's own clone of its
+  /// pipeline's program Rc (so render and reflection never branch on kind),
+  /// a fragment target's whole identity.
   program: Rc<ShaderProgram>,
-  /// Registry id of the shared program this target was created from; None for
-  /// the fused create path, whose program is anonymous and dies with the
-  /// target.
-  program_id: Option<u64>,
   fbo: glow::Framebuffer,
   target: glow::Texture,
   width: u32,
@@ -646,25 +747,23 @@ impl ShaderTexture {
     sampler_bindings: Vec<(String, u64)>,
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_fragment(gl, fragment_src)?);
-    Self::from_fragment_program(gl, program, None, width, height, sampler_bindings).map_err(|(program, e)| {
+    Self::from_fragment_program(gl, program, width, height, sampler_bindings).map_err(|(program, e)| {
       release_program(gl, program);
       e
     })
   }
 
   /// A fullscreen fragment target over an already-compiled program. On error
-  /// the program Rc is handed back so the caller decides its fate (a fused
-  /// create releases it, a shared program stays registered).
+  /// the program Rc is handed back so the caller decides its fate.
   pub fn from_fragment_program(
     gl: &glow::Context,
     program: Rc<ShaderProgram>,
-    program_id: Option<u64>,
     width: u32,
     height: u32,
     sampler_bindings: Vec<(String, u64)>,
   ) -> Result<Self, (Rc<ShaderProgram>, String)> {
     if program.is_pipeline() {
-      return Err((program, "program is a pipeline; the target needs pipeline options".to_string()));
+      return Err((program, "program is a pipeline; the target needs a render pipeline".to_string()));
     }
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
@@ -683,7 +782,6 @@ impl ShaderTexture {
 
       Ok(ShaderTexture {
         program,
-        program_id,
         fbo,
         target,
         width,
@@ -696,12 +794,8 @@ impl ShaderTexture {
     }
   }
 
-  /// A vertex+fragment pipeline rendering into its own target texture.
-  /// `attributes` describes one interleaved float vertex in `vbo` (resolved by
-  /// the owner from `buffer_id`); locations are looked up by name, so an
-  /// attribute the shader does not use is skipped (its bytes still occupy the
-  /// stride). Pass an empty attribute list (and `buffer_id` 0) for
-  /// attributeless rendering driven by gl_VertexID.
+  /// The fused create path: compile a vertex+fragment pair, wrap it in an
+  /// anonymous pipeline, and build a target over it in one step.
   #[allow(clippy::too_many_arguments)]
   pub fn new_pipeline(
     gl: &glow::Context,
@@ -710,70 +804,53 @@ impl ShaderTexture {
     vertex_src: &str,
     fragment_src: &str,
     sampler_bindings: Vec<(String, u64)>,
-    attributes: &[(String, AttrFormat)],
+    desc: PipelineDesc,
     vbo: Option<glow::Buffer>,
     buffer_id: u64,
-    topology: u32,
     draw_count: i32,
-    depth: bool,
-    depth_write: bool,
-    blend: Option<BlendMode>,
     clear_color: [f32; 4],
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_pipeline(gl, vertex_src, fragment_src)?);
-    Self::from_pipeline_program(
-      gl,
-      program,
-      None,
-      width,
-      height,
-      sampler_bindings,
-      attributes,
-      vbo,
-      buffer_id,
-      topology,
-      draw_count,
-      depth,
-      depth_write,
-      blend,
-      clear_color,
-    )
-    .map_err(|(program, e)| {
-      release_program(gl, program);
-      e
-    })
+    let pipeline = match RenderPipeline::new(program, None, desc) {
+      Ok(p) => Rc::new(p),
+      Err((program, e)) => {
+        release_program(gl, program);
+        return Err(e);
+      }
+    };
+    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, vbo, buffer_id, draw_count, clear_color)
+      .map_err(|(pipeline, e)| {
+        release_pipeline(gl, pipeline);
+        e
+      })
   }
 
-  /// A pipeline target over an already-compiled program. On error the program
-  /// Rc is handed back so the caller decides its fate (a fused create releases
-  /// it, a shared program stays registered).
+  /// A target over a render pipeline: the pipeline's vertex layout is bound
+  /// to this target's concrete buffer in a fresh VAO (attribute locations are
+  /// looked up by name, so an attribute the shader does not use is skipped -
+  /// its bytes still occupy the stride), and depth state gets a private
+  /// renderbuffer. On error the pipeline Rc is handed back so the caller
+  /// decides its fate (a fused create releases it, a shared pipeline stays
+  /// registered).
   #[allow(clippy::too_many_arguments)]
-  pub fn from_pipeline_program(
+  pub fn from_pipeline(
     gl: &glow::Context,
-    program: Rc<ShaderProgram>,
-    program_id: Option<u64>,
+    pipeline: Rc<RenderPipeline>,
+    pipeline_id: Option<u64>,
     width: u32,
     height: u32,
     sampler_bindings: Vec<(String, u64)>,
-    attributes: &[(String, AttrFormat)],
     vbo: Option<glow::Buffer>,
     buffer_id: u64,
-    topology: u32,
     draw_count: i32,
-    depth: bool,
-    depth_write: bool,
-    blend: Option<BlendMode>,
     clear_color: [f32; 4],
-  ) -> Result<Self, (Rc<ShaderProgram>, String)> {
-    if !program.is_pipeline() {
-      return Err((program, "program is a fragment shader, not a pipeline".to_string()));
+  ) -> Result<Self, (Rc<RenderPipeline>, String)> {
+    if !pipeline.desc.attributes.is_empty() && vbo.is_none() {
+      return Err((pipeline, "pipeline declares attributes but no vertex buffer".to_string()));
     }
-    if !attributes.is_empty() && vbo.is_none() {
-      return Err((program, "pipeline declares attributes but no vertex buffer".to_string()));
-    }
-    if !depth_write && !depth {
-      return Err((program, "depthWrite: false requires depth: true (there is no depth buffer to leave unwritten)".to_string()));
-    }
+    let program = pipeline.program.clone();
+    let attributes = &pipeline.desc.attributes;
+    let depth = pipeline.desc.depth.is_some();
 
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
@@ -781,8 +858,8 @@ impl ShaderTexture {
       let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
       let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
 
-      // Cleanup helper for every early exit below; the program itself travels
-      // back in the Err.
+      // Cleanup helper for every early exit below; the pipeline itself
+      // travels back in the Err.
       let fail = |gl: &glow::Context,
                   target: Option<glow::Texture>,
                   fbo: Option<glow::Framebuffer>,
@@ -806,7 +883,7 @@ impl ShaderTexture {
         Ok(pair) => pair,
         Err(e) => {
           gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-          return Err((program, e));
+          return Err((pipeline, e));
         }
       };
 
@@ -823,7 +900,7 @@ impl ShaderTexture {
           Err(e) => {
             gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
             fail(gl, Some(target), Some(fbo), None, None);
-            return Err((program, format!("glGenRenderbuffers failed: {e}")));
+            return Err((pipeline, format!("glGenRenderbuffers failed: {e}")));
           }
         }
       } else {
@@ -834,7 +911,7 @@ impl ShaderTexture {
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       if status != glow::FRAMEBUFFER_COMPLETE {
         fail(gl, Some(target), Some(fbo), depth_rb, None);
-        return Err((program, format!("pipeline framebuffer incomplete: {status:#x}")));
+        return Err((pipeline, format!("pipeline framebuffer incomplete: {status:#x}")));
       }
 
       // Record the interleaved vertex layout in a VAO. The VAO captures the
@@ -843,7 +920,7 @@ impl ShaderTexture {
         Ok(vao) => vao,
         Err(e) => {
           fail(gl, Some(target), Some(fbo), depth_rb, None);
-          return Err((program, format!("glGenVertexArrays failed: {e}")));
+          return Err((pipeline, format!("glGenVertexArrays failed: {e}")));
         }
       };
       gl.bind_vertex_array(Some(vao));
@@ -866,21 +943,18 @@ impl ShaderTexture {
 
       Ok(ShaderTexture {
         program,
-        program_id,
         fbo,
         target,
         width,
         height,
         sampler_bindings,
         mesh: Some(MeshState {
+          pipeline,
+          pipeline_id,
           vao,
           buffer_id,
-          attributes: attributes.to_vec(),
-          topology,
           draw_count: Cell::new(draw_count),
           depth: depth_rb,
-          depth_write,
-          blend,
           clear_color,
         }),
         last_params: RefCell::new(Vec::new()),
@@ -904,10 +978,17 @@ impl ShaderTexture {
     self.target
   }
 
-  /// Registry id of the shared program backing this target; None when the
-  /// target was created through the fused path and owns its program alone.
+  /// Registry id of the shared program behind this target's pipeline; None
+  /// for fragment targets and for the fused create path, whose program is
+  /// anonymous.
   pub fn program_id(&self) -> Option<u64> {
-    self.program_id
+    self.mesh.as_ref().and_then(|m| m.pipeline.program_id)
+  }
+
+  /// Registry id of the shared pipeline this target was created from; None
+  /// for fragment targets and the fused create path.
+  pub fn pipeline_id(&self) -> Option<u64> {
+    self.mesh.as_ref().and_then(|m| m.pipeline_id)
   }
 
   /// Registry id of the vertex buffer this pipeline draws from, if any.
@@ -926,16 +1007,16 @@ impl ShaderTexture {
     self.mesh.as_ref().map(|m| m.draw_count.get())
   }
 
-  /// The pipeline's topology as the string `parse_topology` accepts; None on a
-  /// fragment-only shader.
+  /// The pipeline's topology as the string `Topology::parse` accepts; None on
+  /// a fragment-only shader.
   pub fn topology_name(&self) -> Option<&'static str> {
-    self.mesh.as_ref().map(|m| topology_name(m.topology))
+    self.mesh.as_ref().map(|m| m.pipeline.desc.topology.name())
   }
 
   /// The declared interleaved attribute layout; empty for fragment-only
   /// shaders and attributeless pipelines.
   pub fn attributes(&self) -> &[(String, AttrFormat)] {
-    self.mesh.as_ref().map(|m| m.attributes.as_slice()).unwrap_or(&[])
+    self.mesh.as_ref().map(|m| m.pipeline.desc.attributes.as_slice()).unwrap_or(&[])
   }
 
   /// Whether the pipeline renders with a depth buffer attached.
@@ -945,13 +1026,13 @@ impl ShaderTexture {
 
   /// Whether the pipeline's draw writes depth; None on a fragment-only shader.
   pub fn depth_write(&self) -> Option<bool> {
-    self.mesh.as_ref().map(|m| m.depth_write)
+    self.mesh.as_ref().map(|m| m.pipeline.desc.depth.map_or(true, |d| d.write))
   }
 
   /// The pipeline's blend mode as the string `parse_blend` accepts; None on a
   /// fragment-only shader.
   pub fn blend_name(&self) -> Option<&'static str> {
-    self.mesh.as_ref().map(|m| blend_name(m.blend))
+    self.mesh.as_ref().map(|m| blend_name(m.pipeline.desc.blend))
   }
 
   /// Set the number of vertices the next render draws. Errors on a
@@ -1039,12 +1120,12 @@ impl ShaderTexture {
   }
 
   /// Release GL resources owned by this target (FBO, and for pipelines the
-  /// VAO and depth renderbuffer), and drop its use of the program - which
-  /// deletes the GL program only when nothing else (the program registry,
-  /// another target) still holds it. The target texture is NOT deleted here:
-  /// Impeller owns it via the adopted Texture handle in the TextureRegistry,
-  /// and that handle is responsible for deletion. The vertex buffer is owned
-  /// by the buffer registry, not deleted here either.
+  /// VAO and depth renderbuffer), and drop its uses of the pipeline and
+  /// program - which delete the underlying GL program only when nothing else
+  /// (a registry, another target) still holds them. The target texture is NOT
+  /// deleted here: Impeller owns it via the adopted Texture handle in the
+  /// TextureRegistry, and that handle is responsible for deletion. The vertex
+  /// buffer is owned by the buffer registry, not deleted here either.
   pub fn destroy(self, gl: &glow::Context) {
     unsafe {
       if let Some(mesh) = &self.mesh {
@@ -1056,6 +1137,9 @@ impl ShaderTexture {
       gl.delete_framebuffer(self.fbo);
     }
     release_program(gl, self.program);
+    if let Some(mesh) = self.mesh {
+      release_pipeline(gl, mesh.pipeline);
+    }
   }
 
   /// The sampler2D inputs this shader declared, as (uniform name, source texture
@@ -1281,9 +1365,10 @@ fn run_pass(
         let prev_depth_func = gl.get_parameter_i32(glow::DEPTH_FUNC) as u32;
         let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
 
+        let desc = &mesh.pipeline.desc;
         let [r, g, b, a] = mesh.clear_color;
         gl.clear_color(r, g, b, a);
-        if mesh.depth.is_some() {
+        if let Some(depth) = desc.depth {
           gl.enable(glow::DEPTH_TEST);
           // The clear always writes depth (glClear honors the write mask);
           // the draw's mask is the pipeline's depthWrite option.
@@ -1294,14 +1379,14 @@ fn run_pass(
           // silently discards every fragment. Always clear to the far plane.
           gl.clear_depth_f32(1.0);
           gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-          gl.depth_mask(mesh.depth_write);
+          gl.depth_mask(depth.write);
         } else {
           gl.clear(glow::COLOR_BUFFER_BIT);
         }
         // Blend func is Impeller-cached state like the rest: save and restore
         // around the draw, and re-disable BLEND after it (the outer restore
         // only re-enables). Off the blended path nothing is touched.
-        let prev_blend_func = mesh.blend.map(|_| {
+        let prev_blend_func = desc.blend.map(|_| {
           [
             gl.get_parameter_i32(glow::BLEND_SRC_RGB) as u32,
             gl.get_parameter_i32(glow::BLEND_DST_RGB) as u32,
@@ -1309,7 +1394,7 @@ fn run_pass(
             gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
           ]
         });
-        match mesh.blend {
+        match desc.blend {
           Some(BlendMode::Add) => {
             gl.enable(glow::BLEND);
             gl.blend_func(glow::ONE, glow::ONE);
@@ -1317,7 +1402,7 @@ fn run_pass(
           None => {}
         }
         gl.bind_vertex_array(Some(mesh.vao));
-        gl.draw_arrays(mesh.topology, 0, mesh.draw_count.get());
+        gl.draw_arrays(desc.topology.gl(), 0, mesh.draw_count.get());
 
         if let Some([src_rgb, dst_rgb, src_alpha, dst_alpha]) = prev_blend_func {
           gl.disable(glow::BLEND);

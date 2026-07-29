@@ -256,3 +256,9 @@ timestamp: 2026-07-13T00:00:00Z
   createPipeline blend vocabulary stops at "none"/"add"; multiply, screen,
   subtract, min/max are each a two-line addition, and alpha-over waits on
   sorting plus premultiplied-vs-straight semantics.
+- [Split GPU pipeline state from the render target](gpu-pipeline-object-model.md) [done] -
+  Landed 2026-07-30: RenderPipeline (program + typed draw state) with
+  createRenderPipeline/createShaderTarget split, one owned spec instead of
+  the 2x2, invalid depth states unrepresentable, vocabulary parsed at the JS
+  boundary, and headless assertion examples covering blend, typed uniforms,
+  and the full JS surface.

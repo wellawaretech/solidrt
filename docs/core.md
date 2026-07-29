@@ -274,21 +274,23 @@ Sampler bindings are live dependencies. A target may sample another target's out
 
 That injection is conditional. A source that starts with its own `#version` line is compiled exactly as written, so `createShader` doubles as the complete-source path: a shader that declares its own uniform names - one ported from elsewhere - runs unchanged without dropping to the raw layer below. The built-in vertex stage still supplies `vUV` to such a source; declare `in vec2 vUV;` yourself to read it. Reach for the raw layer for what it alone gives: sharing one compile across several targets, or holding a program with no target yet.
 
-Underneath sits the raw GL model, exposed directly:
+Underneath sits the raw GPU model, exposed directly:
 
 ```ts
 compileShader(stage: "vertex" | "fragment", source: string, opts?: { header?: boolean }): number
 linkProgram(vertexShader: number, fragmentShader: number): number
-createShaderTarget(program: number, width: number, height: number, opts?): number
-destroyShader(id: number): void    // stages; safe right after linking
-destroyProgram(id: number): void   // programs; live targets keep theirs alive
+createRenderPipeline(program: number, opts?: { attributes?, topology?, blend?, depth?, depthWrite? }): number
+createShaderTarget(pipeline: number, width: number, height: number, opts?): number
+destroyShader(id: number): void          // stages; safe right after linking
+destroyProgram(id: number): void         // programs; live pipelines keep theirs alive
+destroyRenderPipeline(id: number): void  // pipelines; live targets keep theirs alive
 ```
 
 `compileShader` compiles one stage from complete GLSL ES - the source declares its own `#version 300 es`, precision, varyings, and uniforms; nothing is injected. `{ header: true }` explicitly prepends the standard header (`#version 300 es`, highp precision, `iResolution`/`iTime`, and `out vec4 fragColor` for fragment stages - the same text `createPipeline` injects); do not combine it with your own `#version`. Compile and link errors throw at the call, so a bad shader fails where it was written, not later at a prop write.
 
-`linkProgram` yields a program handle in its own id space. One compiled stage can back many programs, one program many targets, and creating a target compiles nothing - which is what makes precompiling all programs at startup and swapping between them free of compilation. `createShaderTarget` takes `createPipeline`'s options: a raw-linked program carries its own vertex stage, so a fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex stage, and a uniform named `iResolution`, if declared, is filled with the target size at render - as `vec2 (w, h)`, or `vec3 (w, h, 1.0)` for a source that declares it vec3 (the Shadertoy shape).
+`linkProgram` yields a program handle in its own id space. `createRenderPipeline` pairs a program with draw state - the vertex layout (`attributes`), `topology`, `blend`, and `depth`/`depthWrite` - into a pipeline handle: how it draws, the pipeline state object of every modern GPU API. `createShaderTarget` then builds a texture-backed target over the pipeline with the per-target half: size, the concrete vertex `buffer` the pipeline's layout describes, `vertexCount`, uniforms, and `clearColor` - where it draws. Passing a draw-state key to `createShaderTarget` throws. One compiled stage can back many programs, one program many pipelines, one pipeline many targets, and only `compileShader` compiles - which is what makes precompiling all programs at startup and swapping between them free of compilation. A raw-linked program carries its own vertex stage, so a fullscreen pass is a default pipeline plus `{ vertexCount: 3 }` over a covering-triangle vertex stage; a uniform named `iResolution`, if declared, is filled with the target size at render - as `vec2 (w, h)`, or `vec3 (w, h, 1.0)` for a source that declares it vec3 (the Shadertoy shape).
 
-`compileShader`, `linkProgram`, `destroyShader`, and `destroyProgram` are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
+`compileShader`, `linkProgram`, `createRenderPipeline`, and their destroyers are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
 
 ### Window shader
 

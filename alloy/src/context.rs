@@ -8,8 +8,8 @@ use std::sync::{mpsc, Arc};
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
-use crate::raster::{PipelineSpecOwned, RasterCmd, RasterSender, TargetSpecOwned};
-use crate::shader::ParamValue;
+use crate::raster::{RasterCmd, RasterSender};
+use crate::shader::{ParamValue, PipelineDesc};
 use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -43,10 +43,14 @@ pub struct Context {
   // (the name is only known to the compiled program), which can at worst
   // falsely reject a later rebind - after the dev error was already warned.
   shader_sources: RefCell<HashMap<u64, HashMap<String, u64>>>,
-  // UI-side mirror of the raster thread's program registry: id -> is_pipeline.
-  // Programs are their own id space (like buffers), separate from texture ids.
-  program_kinds: RefCell<HashMap<u64, bool>>,
+  // UI-side mirror of the raster thread's program registry. Programs are
+  // their own id space (like buffers), separate from texture ids.
+  program_ids: RefCell<HashSet<u64>>,
   next_program_id: Cell<u64>,
+  // UI-side mirror of the raster thread's render pipeline registry, its own
+  // id space again.
+  pipeline_ids: RefCell<HashSet<u64>>,
+  next_pipeline_id: Cell<u64>,
   // UI-side mirror of the raster thread's raw stage registry: id -> stage,
   // for validating link_program's arguments without an RPC.
   stage_kinds: RefCell<HashMap<u64, crate::shader::ShaderStage>>,
@@ -73,54 +77,35 @@ pub struct Context {
   pending_destroys: RefCell<Vec<u64>>,
 }
 
-/// Everything `create_pipeline_texture` needs to build a vertex+fragment
-/// pipeline target. `attributes` is (name, format) with the string formats
-/// `AttrFormat::parse` accepts, describing one interleaved vertex in the
-/// buffer `buffer_id` (0 = attributeless rendering via gl_VertexID). A
-/// negative `draw_count` derives the count from buffer size / vertex stride.
-pub struct PipelineSpec<'a> {
+/// Everything `create_shader_target` needs to build one target over a render
+/// pipeline: the per-target half of the split (output size, uniform values,
+/// sampler inputs, the concrete vertex buffer, draw count, clear, sampling).
+/// The draw-state half lives on the pipeline (`shader::PipelineDesc`). Owned,
+/// so the one struct serves both the public API and the raster channel.
+pub struct TargetSpec {
   pub width: u32,
   pub height: u32,
-  pub vertex_src: &'a str,
-  pub fragment_src: &'a str,
-  pub params: &'a [(String, ParamValue)],
-  pub textures: &'a [(String, u64)],
-  pub attributes: &'a [(String, String)],
-  pub buffer_id: u64,
-  pub topology: &'a str,
+  pub params: Vec<(String, ParamValue)>,
+  pub textures: Vec<(String, u64)>,
+  /// Registry id of the interleaved vertex buffer the pipeline's attributes
+  /// describe; 0 = attributeless rendering via gl_VertexID.
+  pub buffer: u64,
+  /// Number of vertices to draw; negative derives it from buffer size /
+  /// vertex stride.
   pub draw_count: i32,
-  pub depth: bool,
-  /// Whether the draw writes depth (default true; the clear always writes).
-  /// Only valid with `depth`; `false` is the blended-pass half an app opts
-  /// into explicitly, never inferred from `blend`.
-  pub depth_write: bool,
-  /// "none" (default, overwrite) or "add" (accumulate, order-independent).
-  pub blend: &'a str,
   pub clear_color: [f32; 4],
   /// How the target's output is sampled everywhere (shader inputs, display).
   pub sampler: SamplerState,
 }
 
-/// Everything `create_shader_target` needs to build a target over an
-/// already-compiled program: `PipelineSpec` minus the sources. The mesh
-/// fields apply to pipeline programs only and must be at their defaults
-/// (empty attributes, buffer 0, "triangles", -1, false, true, "none", zeros)
-/// for a fragment program.
-pub struct TargetSpec<'a> {
-  pub width: u32,
-  pub height: u32,
-  pub params: &'a [(String, ParamValue)],
-  pub textures: &'a [(String, u64)],
-  pub attributes: &'a [(String, String)],
-  pub buffer_id: u64,
-  pub topology: &'a str,
-  pub draw_count: i32,
-  pub depth: bool,
-  pub depth_write: bool,
-  pub blend: &'a str,
-  pub clear_color: [f32; 4],
-  /// How the target's output is sampled everywhere (shader inputs, display).
-  pub sampler: SamplerState,
+/// Everything `create_pipeline_texture` (the fused convenience) needs:
+/// sources to compile, the draw state they run with, and the target to
+/// render into - the same two halves the split API takes separately.
+pub struct PipelineSpec {
+  pub vertex_src: String,
+  pub fragment_src: String,
+  pub pipeline: PipelineDesc,
+  pub target: TargetSpec,
 }
 
 /// The window shader declaration: a linked program drawn over the window's
@@ -153,6 +138,7 @@ pub struct GpuResources {
   pub textures: Vec<GpuTextureInfo>,
   pub buffers: Vec<GpuBufferInfo>,
   pub pipelines: Vec<GpuPipelineInfo>,
+  pub render_pipelines: Vec<GpuRenderPipelineInfo>,
   pub programs: Vec<GpuProgramInfo>,
   pub window_shader: Option<GpuWindowShaderInfo>,
 }
@@ -186,8 +172,20 @@ pub struct GpuBufferInfo {
 
 pub struct GpuProgramInfo {
   pub id: u64,
-  /// "pipeline" (vertex+fragment) or "fragment" (fullscreen pass).
-  pub kind: &'static str,
+}
+
+/// A registered render pipeline: a program paired with the draw state its
+/// targets share.
+pub struct GpuRenderPipelineInfo {
+  pub id: u64,
+  pub program_id: u64,
+  pub topology: &'static str,
+  /// "none" or "add".
+  pub blend: &'static str,
+  pub depth: bool,
+  pub depth_write: bool,
+  /// (name, format string) of the declared interleaved vertex layout.
+  pub attributes: Vec<(String, String)>,
 }
 
 pub struct GpuPipelineInfo {
@@ -195,9 +193,12 @@ pub struct GpuPipelineInfo {
   pub texture_id: u64,
   /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
   pub kind: &'static str,
-  /// The shared program backing this target; None when it was created through
-  /// the fused path and owns its program alone.
+  /// The shared program behind this target's pipeline; None when it was
+  /// created through the fused path and owns its program alone.
   pub program_id: Option<u64>,
+  /// The registered pipeline this target was created from; None for fragment
+  /// targets and the fused path.
+  pub pipeline_id: Option<u64>,
   pub buffer_id: Option<u64>,
   pub topology: Option<&'static str>,
   pub draw_count: Option<i32>,
@@ -244,8 +245,10 @@ impl Context {
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
-      program_kinds: RefCell::new(HashMap::new()),
+      program_ids: RefCell::new(HashSet::new()),
       next_program_id: Cell::new(1),
+      pipeline_ids: RefCell::new(HashSet::new()),
+      next_pipeline_id: Cell::new(1),
       stage_kinds: RefCell::new(HashMap::new()),
       next_stage_id: Cell::new(1),
       buffer_sizes: RefCell::new(HashMap::new()),
@@ -586,30 +589,17 @@ impl Context {
   /// Compile a vertex+fragment pipeline, render it once into a new RGBA8
   /// target texture, and register the output exactly like
   /// `create_shader_texture` (same id space; `update_shader_params`,
-  /// `destroy_texture`, and `<texture src>` all apply).
-  pub fn create_pipeline_texture(&self, spec: &PipelineSpec) -> Result<u64, String> {
+  /// `destroy_texture`, and `<texture src>` all apply). The fused convenience
+  /// over `create_render_pipeline` + `create_shader_target`; the anonymous
+  /// program and pipeline die with the target.
+  pub fn create_pipeline_texture(&self, spec: PipelineSpec) -> Result<u64, String> {
     let id = self.textures.allocate_id();
-    let owned = PipelineSpecOwned {
-      width: spec.width,
-      height: spec.height,
-      vertex_src: spec.vertex_src.to_string(),
-      fragment_src: spec.fragment_src.to_string(),
-      params: spec.params.to_vec(),
-      textures: spec.textures.to_vec(),
-      attributes: spec.attributes.to_vec(),
-      buffer_id: spec.buffer_id,
-      topology: spec.topology.to_string(),
-      draw_count: spec.draw_count,
-      depth: spec.depth,
-      depth_write: spec.depth_write,
-      blend: spec.blend.to_string(),
-      clear_color: spec.clear_color,
-      sampler: spec.sampler,
-    };
-    let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec: owned, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height, sampler: spec.sampler });
+    let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
+    let sources: HashMap<String, u64> = spec.target.textures.iter().cloned().collect();
+    let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     self.shader_kinds.borrow_mut().insert(id, true);
-    self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
+    self.shader_sources.borrow_mut().insert(id, sources);
     Ok(id)
   }
 
@@ -653,8 +643,7 @@ impl Context {
     let id = self.next_program_id.get();
     self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, reply })??;
     self.next_program_id.set(id + 1);
-    // Raw-linked programs carry their own vertex stage: pipeline-kind.
-    self.program_kinds.borrow_mut().insert(id, true);
+    self.program_ids.borrow_mut().insert(id);
     Ok(id)
   }
 
@@ -665,55 +654,55 @@ impl Context {
     self.send(RasterCmd::DestroyStage { id });
   }
 
-  /// Create a render target over an already-compiled program and register the
-  /// output exactly like `create_shader_texture` (same texture id space:
-  /// params updates, `setShaderSize`, `<texture src>` and `destroy_texture`
-  /// all apply). Many targets may share one program. The mesh fields of
-  /// `spec` apply only to pipeline programs; a fragment program with any of
-  /// them off their defaults is an error.
-  pub fn create_shader_target(&self, program: u64, spec: &TargetSpec) -> Result<u64, String> {
-    let is_pipeline =
-      *self.program_kinds.borrow().get(&program).ok_or_else(|| format!("program {program} not found"))?;
-    if !is_pipeline
-      && (!spec.attributes.is_empty()
-        || spec.buffer_id != 0
-        || spec.depth
-        || !spec.depth_write
-        || spec.blend != "none"
-        || spec.draw_count >= 0
-        || spec.topology != "triangles")
-    {
-      return Err("pipeline options given, but the program is a fragment shader".to_string());
+  /// Pair a program from `link_shader_program` with draw state, returning the
+  /// pipeline id (its own id space, like programs and buffers). The pipeline
+  /// is the draw-state object every target created from it shares; creating
+  /// one compiles nothing. Free with `destroy_render_pipeline`.
+  pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc) -> Result<u64, String> {
+    if !self.program_ids.borrow().contains(&program) {
+      return Err(format!("program {program} not found"));
     }
-    let id = self.textures.allocate_id();
-    let owned = TargetSpecOwned {
-      width: spec.width,
-      height: spec.height,
-      params: spec.params.to_vec(),
-      textures: spec.textures.to_vec(),
-      attributes: spec.attributes.to_vec(),
-      buffer_id: spec.buffer_id,
-      topology: spec.topology.to_string(),
-      draw_count: spec.draw_count,
-      depth: spec.depth,
-      depth_write: spec.depth_write,
-      blend: spec.blend.to_string(),
-      clear_color: spec.clear_color,
-      sampler: spec.sampler,
-    };
-    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, program, spec: owned, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width: spec.width, height: spec.height, sampler: spec.sampler });
-    self.shader_kinds.borrow_mut().insert(id, is_pipeline);
-    self.shader_sources.borrow_mut().insert(id, spec.textures.iter().cloned().collect());
+    let id = self.next_pipeline_id.get();
+    self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, reply })??;
+    self.next_pipeline_id.set(id + 1);
+    self.pipeline_ids.borrow_mut().insert(id);
     Ok(id)
   }
 
-  /// Drop a shared program's registry entry and retire its id. Targets
+  /// Drop a shared pipeline's registry entry and retire its id. Targets
+  /// created from it keep rendering - they hold the pipeline until they are
+  /// destroyed - so either destruction order is safe. The program it was
+  /// created from is yours and unaffected.
+  pub fn destroy_render_pipeline(&self, id: u64) {
+    self.pipeline_ids.borrow_mut().remove(&id);
+    self.send(RasterCmd::DestroyRenderPipeline { id });
+  }
+
+  /// Create a render target over a pipeline from `create_render_pipeline` and
+  /// register the output exactly like `create_shader_texture` (same texture
+  /// id space: params updates, `setShaderSize`, `<texture src>` and
+  /// `destroy_texture` all apply). Many targets may share one pipeline, and
+  /// creating a target compiles nothing.
+  pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec) -> Result<u64, String> {
+    if !self.pipeline_ids.borrow().contains(&pipeline) {
+      return Err(format!("pipeline {pipeline} not found"));
+    }
+    let id = self.textures.allocate_id();
+    let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
+    let sources: HashMap<String, u64> = spec.textures.iter().cloned().collect();
+    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, pipeline, spec, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
+    self.shader_kinds.borrow_mut().insert(id, true);
+    self.shader_sources.borrow_mut().insert(id, sources);
+    Ok(id)
+  }
+
+  /// Drop a shared program's registry entry and retire its id. Pipelines
   /// created from it keep rendering - they hold the program until they are
   /// destroyed - and the GL program is deleted once the last user is gone, so
   /// either destruction order is safe.
   pub fn destroy_shader_program(&self, id: u64) {
-    self.program_kinds.borrow_mut().remove(&id);
+    self.program_ids.borrow_mut().remove(&id);
     self.send(RasterCmd::DestroyProgram { id });
   }
 
@@ -727,7 +716,7 @@ impl Context {
   /// handle.
   pub fn set_window_shader(&self, shader: Option<WindowShader>) -> Result<(), String> {
     if let Some(ws) = &shader {
-      if !self.program_kinds.borrow().contains_key(&ws.program) {
+      if !self.program_ids.borrow().contains(&ws.program) {
         return Err(format!("program {} not found", ws.program));
       }
     }
@@ -759,6 +748,7 @@ impl Context {
       textures: Vec::new(),
       buffers: Vec::new(),
       pipelines: Vec::new(),
+      render_pipelines: Vec::new(),
       programs: Vec::new(),
       window_shader: None,
     })

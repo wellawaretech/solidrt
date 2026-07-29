@@ -898,6 +898,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if let Some(program_id) = p.program_id {
         map.insert("programId".into(), program_id.into());
       }
+      if let Some(pipeline_id) = p.pipeline_id {
+        map.insert("pipelineId".into(), pipeline_id.into());
+      }
       if let Some(buffer_id) = p.buffer_id {
         map.insert("bufferId".into(), buffer_id.into());
       }
@@ -927,11 +930,39 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     })
     .collect();
 
-  let programs: Vec<serde_json::Value> =
-    res.programs.iter().map(|p| serde_json::json!({"id": p.id, "kind": p.kind})).collect();
+  let render_pipelines: Vec<serde_json::Value> = res
+    .render_pipelines
+    .iter()
+    .map(|p| {
+      let mut obj = serde_json::json!({"id": p.id, "programId": p.program_id});
+      let map = obj.as_object_mut().expect("render pipeline json is an object");
+      // Draw state reported only off its defaults, like the per-target infos.
+      if p.topology != "triangles" {
+        map.insert("topology".into(), p.topology.into());
+      }
+      if p.blend != "none" {
+        map.insert("blend".into(), p.blend.into());
+      }
+      if p.depth {
+        map.insert("depth".into(), true.into());
+      }
+      if !p.depth_write {
+        map.insert("depthWrite".into(), false.into());
+      }
+      if !p.attributes.is_empty() {
+        let attrs: Vec<serde_json::Value> =
+          p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
+        map.insert("attributes".into(), attrs.into());
+      }
+      obj
+    })
+    .collect();
+
+  let programs: Vec<serde_json::Value> = res.programs.iter().map(|p| serde_json::json!({"id": p.id})).collect();
 
   let mut data = serde_json::json!({
-    "textures": textures, "buffers": buffers, "pipelines": pipelines, "programs": programs,
+    "textures": textures, "buffers": buffers, "pipelines": pipelines,
+    "renderPipelines": render_pipelines, "programs": programs,
   });
   if let Some(ws) = &res.window_shader {
     data["windowShader"] = serde_json::json!({

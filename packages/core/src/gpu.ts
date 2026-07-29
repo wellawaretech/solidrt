@@ -66,11 +66,21 @@ export type { BlendMode, ShaderParams, Topology, VertexAttribute } from "flux:gp
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
 // owns these lifetimes. compileShader compiles one stage from complete GLSL
 // ES (or with the standard header via { header: true }); linkProgram links a
-// vertex and a fragment stage into a program handle that backs any number of
-// createShaderTarget calls (and compiles nothing per target); destroyShader /
-// destroyProgram free by id space, either order safe against live targets.
-// createShader/createPipeline remain the fused conveniences on top.
-export { compileShader, destroyProgram, destroyShader, linkProgram } from "flux:gpu"
+// vertex and a fragment stage into a program handle; createRenderPipeline
+// pairs a program with draw state (vertex layout, topology, blend, depth -
+// how it draws) into a pipeline handle that backs any number of
+// createShaderTarget calls (and compiles nothing per pipeline or target);
+// destroyShader / destroyProgram / destroyRenderPipeline free by id space,
+// any order safe against live users. createShader/createPipeline remain the
+// fused conveniences on top.
+export {
+  compileShader,
+  createRenderPipeline,
+  destroyProgram,
+  destroyRenderPipeline,
+  destroyShader,
+  linkProgram,
+} from "flux:gpu"
 
 // captureSnapshot renders a node to a texture and readTexture reads any
 // texture's bytes back. A laid-out node captures its layout box; a `d-*` node
@@ -175,35 +185,34 @@ export function createShader(
 }
 
 /**
- * Creates a render target over a program from `linkProgram` and renders it
- * once, returning the texture id (usable anywhere a normal texture id is,
- * e.g. `<texture src>`; resize with `setShaderSize`, drive uniforms with
- * `<texture params>` or `setShaderParams`). Many targets may share one
- * program, and creating a target compiles nothing. The mesh options mirror
- * `createPipeline`: a raw-linked program carries its own vertex stage, so a
- * fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex
- * stage. Frees the target when the reactive owner is disposed (opt out with
- * `opts.manual`); the program is yours and outlives it.
+ * Creates a render target over a pipeline from `createRenderPipeline` and
+ * renders it once, returning the texture id (usable anywhere a normal
+ * texture id is, e.g. `<texture src>`; resize with `setShaderSize`, drive
+ * uniforms with `<texture params>` or `setShaderParams`). Many targets may
+ * share one pipeline, and creating a target compiles nothing. The target
+ * brings the per-target half: size, the concrete vertex `buffer` the
+ * pipeline's attribute layout describes, `vertexCount` (defaults to the
+ * whole buffer; a fullscreen pass over an attributeless pipeline is
+ * `{ vertexCount: 3 }` with a covering-triangle vertex stage), uniforms, and
+ * `clearColor`. Draw state (`attributes`, `topology`, `blend`, `depth`,
+ * `depthWrite`) lives on the pipeline and throws here. Frees the target when
+ * the reactive owner is disposed (opt out with `opts.manual`); the pipeline
+ * is yours and outlives it.
  */
 export function createShaderTarget(
-  program: number,
+  pipeline: number,
   width: number,
   height: number,
   opts?: {
     params?: gpu.ShaderParams
     textures?: Record<string, number>
-    attributes?: gpu.VertexAttribute[]
     buffer?: number
-    topology?: gpu.Topology
     vertexCount?: number
-    depth?: boolean
-    depthWrite?: boolean
-    blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
   } & CreateOptions &
     SamplerOptions,
 ): number {
-  let id = gpu.createShaderTarget(program, width, height, opts)
+  let id = gpu.createShaderTarget(pipeline, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

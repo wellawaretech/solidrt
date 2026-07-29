@@ -31,9 +31,10 @@ struct TextureInner {
   created: RefCell<HashSet<u64>>,
   // Same bookkeeping for vertex buffers (their own id space in alloy).
   created_buffers: RefCell<HashSet<u64>>,
-  // Same bookkeeping for linked programs and compiled raw stages (each their
-  // own id space in alloy).
+  // Same bookkeeping for linked programs, render pipelines, and compiled raw
+  // stages (each their own id space in alloy).
   created_programs: RefCell<HashSet<u64>>,
+  created_pipelines: RefCell<HashSet<u64>>,
   created_stages: RefCell<HashSet<u64>>,
   // captureSnapshot is async: alloy services the request on a later paint pass
   // and invokes our completion callback (during `deliver_captures`), which moves
@@ -59,14 +60,18 @@ impl Drop for TextureInner {
     // stop the pass.
     self.atx.set_window_shader(None).ok();
     // Then textures before buffers: destroying a pipeline before its buffer
-    // is the documented order for destroy_gpu_buffer. Programs and stages are
-    // order-safe (targets keep their program alive, programs keep their own
-    // compiled stage copies), released last for symmetry.
+    // is the documented order for destroy_gpu_buffer. Pipelines, programs and
+    // stages are order-safe (targets keep their pipeline alive, pipelines
+    // their program, programs their own compiled stage copies), released last
+    // for symmetry.
     for id in self.created.borrow_mut().drain() {
       self.atx.destroy_texture(id);
     }
     for id in self.created_buffers.borrow_mut().drain() {
       self.atx.destroy_gpu_buffer(id);
+    }
+    for id in self.created_pipelines.borrow_mut().drain() {
+      self.atx.destroy_render_pipeline(id);
     }
     for id in self.created_programs.borrow_mut().drain() {
       self.atx.destroy_shader_program(id);
@@ -118,26 +123,16 @@ fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquic
   alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref()).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
-// The target-shaped options shared by createPipeline and createShaderTarget:
-// params/textures plus the mesh fields (meaningful for pipelines only, left
-// at their defaults otherwise).
-struct TargetOpts {
-  params: Vec<(String, alloy::ParamValue)>,
-  textures: Vec<(String, u64)>,
-  attributes: Vec<(String, String)>,
-  buffer_id: u64,
-  topology: String,
-  draw_count: i32,
-  depth: bool,
-  depth_write: bool,
-  blend: String,
-  clear_color: [f32; 4],
-}
-
-// Decode the shared opts object: { params, textures, attributes: [{name,
-// format}], buffer, topology, vertexCount, depth, depthWrite, blend,
-// clearColor }, everything optional. Marshalling only; alloy validates.
-fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts> {
+// Decode the per-target options shared by createPipeline and
+// createShaderTarget - { params, textures, buffer, vertexCount, clearColor,
+// filter, wrap }, everything optional - into the alloy target spec.
+fn collect_target_spec(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  width: u32,
+  height: u32,
+  api: &str,
+) -> rquickjs::Result<alloy::TargetSpec> {
   let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
     match opts {
       Some(o) => o.get::<_, Option<Object>>(name),
@@ -146,40 +141,13 @@ fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts
   };
   let params = get_obj("params")?.as_ref().map(collect_params).unwrap_or_default();
   let textures = get_obj("textures")?.as_ref().map(collect_textures).unwrap_or_default();
-
-  let mut attributes: Vec<(String, String)> = Vec::new();
-  if let Some(opts) = opts {
-    if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
-      for item in arr.iter::<Object>() {
-        let entry = item?;
-        attributes.push((entry.get("name")?, entry.get("format")?));
-      }
-    }
-  }
-
-  let buffer_id = match opts {
+  let buffer = match opts {
     Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
     None => 0,
-  };
-  let topology = match opts {
-    Some(o) => o.get::<_, Option<String>>("topology")?.unwrap_or_else(|| "triangles".to_string()),
-    None => "triangles".to_string(),
   };
   let draw_count = match opts {
     Some(o) => o.get::<_, Option<i32>>("vertexCount")?.unwrap_or(-1),
     None => -1,
-  };
-  let depth = match opts {
-    Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
-    None => false,
-  };
-  let depth_write = match opts {
-    Some(o) => o.get::<_, Option<bool>>("depthWrite")?.unwrap_or(true),
-    None => true,
-  };
-  let blend = match opts {
-    Some(o) => o.get::<_, Option<String>>("blend")?.unwrap_or_else(|| "none".to_string()),
-    None => "none".to_string(),
   };
   let mut clear_color = [0f32; 4];
   if let Some(opts) = opts {
@@ -189,8 +157,72 @@ fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts
       }
     }
   }
+  let sampler = collect_sampler(ctx, opts, api)?;
+  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw_count, clear_color, sampler })
+}
 
-  Ok(TargetOpts { params, textures, attributes, buffer_id, topology, draw_count, depth, depth_write, blend, clear_color })
+// Decode the draw-state options of createRenderPipeline and createPipeline -
+// { attributes: [{name, format}], topology, blend, depth, depthWrite },
+// everything optional - into the typed alloy desc. The vocabulary parses
+// here, at the boundary, so `blend: "addd"` (or an invalid depth/depthWrite
+// combination) throws at the call site instead of failing on the raster
+// thread.
+fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::PipelineDesc> {
+  let mut attributes: Vec<(String, alloy::AttrFormat)> = Vec::new();
+  if let Some(opts) = opts {
+    if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
+      for item in arr.iter::<Object>() {
+        let entry = item?;
+        let name: String = entry.get("name")?;
+        let format: String = entry.get("format")?;
+        let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+        attributes.push((name, format));
+      }
+    }
+  }
+  let topology = match opts {
+    Some(o) => match o.get::<_, Option<String>>("topology")? {
+      Some(s) => alloy::Topology::parse(&s).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?,
+      None => alloy::Topology::Triangles,
+    },
+    None => alloy::Topology::Triangles,
+  };
+  let blend = match opts {
+    Some(o) => match o.get::<_, Option<String>>("blend")? {
+      Some(s) => alloy::parse_blend(&s).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?,
+      None => None,
+    },
+    None => None,
+  };
+  let (depth, depth_write) = match opts {
+    Some(o) => (o.get::<_, Option<bool>>("depth")?.unwrap_or(false), o.get::<_, Option<bool>>("depthWrite")?),
+    None => (false, None),
+  };
+  let depth = match (depth, depth_write) {
+    (true, write) => Some(alloy::DepthState { write: write.unwrap_or(true) }),
+    (false, Some(false)) => {
+      return Err(throw_str(
+        ctx,
+        &format!("{api}: depthWrite: false requires depth: true (there is no depth buffer to leave unwritten)"),
+      ))
+    }
+    (false, _) => None,
+  };
+  Ok(alloy::PipelineDesc { attributes, topology, blend, depth })
+}
+
+// The migration guard for the split object model: draw state belongs to
+// createRenderPipeline, and a target create silently ignoring these keys is
+// exactly the bug class the split removes - so their presence throws.
+fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<()> {
+  if let Some(o) = opts {
+    for key in ["attributes", "topology", "blend", "depth", "depthWrite"] {
+      if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
+        return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
+      }
+    }
+  }
+  Ok(())
 }
 
 /// Store the texture plugin state (alloy context, platform, and the created-id
@@ -204,6 +236,7 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformConte
       created: RefCell::new(HashSet::new()),
       created_buffers: RefCell::new(HashSet::new()),
       created_programs: RefCell::new(HashSet::new()),
+      created_pipelines: RefCell::new(HashSet::new()),
       created_stages: RefCell::new(HashSet::new()),
       capture_settle: RefCell::new(Vec::new()),
     })))
@@ -227,6 +260,8 @@ impl ModuleDef for GpuModule {
     decl.declare("linkProgram")?;
     decl.declare("destroyShader")?;
     decl.declare("createShaderTarget")?;
+    decl.declare("createRenderPipeline")?;
+    decl.declare("destroyRenderPipeline")?;
     decl.declare("destroyProgram")?;
     decl.declare("setShaderParams")?;
     decl.declare("setShaderTextures")?;
@@ -404,9 +439,9 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setShaderSize");
 
-    // createPipeline(vertexSrc, fragmentSrc, width, height, opts?) -> texture id.
-    // opts: { params, textures, attributes: [{name, format}], buffer, topology,
-    // vertexCount, depth, clearColor }. Marshalling only; alloy validates.
+    // createPipeline(vertexSrc, fragmentSrc, width, height, opts?) -> texture
+    // id: the fused convenience, taking the draw-state options AND the target
+    // options in one bag. Vocabulary parses here; alloy validates the rest.
     let create_pipeline_atx = atx.clone();
     let create_pipeline = Function::new(
       ctx.clone(),
@@ -417,26 +452,10 @@ impl ModuleDef for GpuModule {
             height: u32,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let o = collect_target_opts(&opts.0)?;
-        let sampler = collect_sampler(&ctx, &opts.0, "createPipeline")?;
+        let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipeline")?;
+        let target = collect_target_spec(&ctx, &opts.0, width, height, "createPipeline")?;
         let id = create_pipeline_atx
-          .create_pipeline_texture(&alloy::PipelineSpec {
-            width,
-            height,
-            vertex_src: &vertex_src,
-            fragment_src: &fragment_src,
-            params: &o.params,
-            textures: &o.textures,
-            attributes: &o.attributes,
-            buffer_id: o.buffer_id,
-            topology: &o.topology,
-            draw_count: o.draw_count,
-            depth: o.depth,
-            depth_write: o.depth_write,
-            blend: &o.blend,
-            clear_color: o.clear_color,
-            sampler,
-          })
+          .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target })
           .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -444,6 +463,30 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create createPipeline");
+
+    // createRenderPipeline(program, opts?) -> pipeline id: pair a linked
+    // program with draw state. Its own id space (like programs and buffers);
+    // creating one compiles nothing.
+    let create_render_pipeline_atx = atx.clone();
+    let create_render_pipeline =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, program: u64, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        let desc = collect_pipeline_desc(&ctx, &opts.0, "createRenderPipeline")?;
+        let id = create_render_pipeline_atx
+          .create_render_pipeline(program, desc)
+          .map_err(|e| throw_str(&ctx, &format!("createRenderPipeline: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created_pipelines.borrow_mut().insert(id);
+        Ok(id)
+      })
+      .expect("create createRenderPipeline");
+
+    let destroy_render_pipeline_atx = atx.clone();
+    let destroy_render_pipeline = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
+      let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      state.0.created_pipelines.borrow_mut().remove(&id);
+      destroy_render_pipeline_atx.destroy_render_pipeline(id);
+    })
+    .expect("create destroyRenderPipeline");
 
     // Raw stage compile: complete GLSL ES by default, the standard header on
     // explicit request. Compile errors throw here, at a call site the app
@@ -489,34 +532,17 @@ impl ModuleDef for GpuModule {
     })
     .expect("create destroyShader");
 
-    // createShaderTarget(program, width, height, opts?) -> texture id: the
-    // target half, over an already-compiled program. Same opts shape as
-    // createPipeline (the mesh fields apply to pipeline programs only).
+    // createShaderTarget(pipeline, width, height, opts?) -> texture id: the
+    // per-target half over a render pipeline. Draw-state keys in opts throw
+    // (they belong to createRenderPipeline).
     let create_target_atx = atx.clone();
     let create_shader_target = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, program: u64, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
-        let o = collect_target_opts(&opts.0)?;
-        let sampler = collect_sampler(&ctx, &opts.0, "createShaderTarget")?;
+      move |ctx: Ctx<'_>, pipeline: u64, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        reject_pipeline_keys(&ctx, &opts.0, "createShaderTarget")?;
+        let spec = collect_target_spec(&ctx, &opts.0, width, height, "createShaderTarget")?;
         let id = create_target_atx
-          .create_shader_target(
-            program,
-            &alloy::TargetSpec {
-              width,
-              height,
-              params: &o.params,
-              textures: &o.textures,
-              attributes: &o.attributes,
-              buffer_id: o.buffer_id,
-              topology: &o.topology,
-              draw_count: o.draw_count,
-              depth: o.depth,
-              depth_write: o.depth_write,
-              blend: &o.blend,
-              clear_color: o.clear_color,
-              sampler,
-            },
-          )
+          .create_shader_target(pipeline, spec)
           .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -604,6 +630,8 @@ impl ModuleDef for GpuModule {
     exports.export("linkProgram", link_program)?;
     exports.export("destroyShader", destroy_shader)?;
     exports.export("createShaderTarget", create_shader_target)?;
+    exports.export("createRenderPipeline", create_render_pipeline)?;
+    exports.export("destroyRenderPipeline", destroy_render_pipeline)?;
     exports.export("destroyProgram", destroy_program)?;
     exports.export("setShaderParams", set_shader_params)?;
     exports.export("setShaderTextures", set_shader_textures)?;

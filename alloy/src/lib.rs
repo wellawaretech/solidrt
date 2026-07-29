@@ -30,7 +30,7 @@ pub use sdl3;
 pub use app::{setup, App};
 pub use backend::{Backend, DisplayContext};
 pub use context::{CaptureDone, CaptureInfo, Context, PipelineSpec, TargetSpec, WindowShader};
-pub use shader::{ParamValue, ShaderStage};
+pub use shader::{parse_blend, AttrFormat, BlendMode, DepthState, ParamValue, PipelineDesc, ShaderStage, Topology};
 pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
 pub use logging::install_logger;
 pub use mode::Mode;

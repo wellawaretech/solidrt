@@ -1,12 +1,17 @@
 // Low-level GPU textures and shaders (gui-enabled runtime only). The
 // imperative primitive; @solidrt/core's gpu helpers add reactive auto-cleanup
-// on top. Three id spaces, each destroyed by its own destroyer: texture ids
-// (the public token used as `<texture src>` and sampler inputs ->
-// destroyTexture), buffer ids (-> destroyBuffer), and the raw shading layer's
-// shader-stage ids (-> destroyShader) and program ids (-> destroyProgram).
+// on top. Each id space has its own destroyer: texture ids (the public token
+// used as `<texture src>` and sampler inputs -> destroyTexture), buffer ids
+// (-> destroyBuffer), and the raw shading layer's shader-stage ids
+// (-> destroyShader), program ids (-> destroyProgram), and render-pipeline
+// ids (-> destroyRenderPipeline).
 // Layering: compileShader/linkProgram are the raw GL primitives (complete
-// sources, explicit header opt-in); createShader/createPipeline are fused
-// conveniences (compile + link + target in one call, curated preamble).
+// sources, explicit header opt-in); createRenderPipeline pairs a program with
+// draw state (topology, blend, depth, vertex layout - how it draws);
+// createShaderTarget builds a texture-backed target over a pipeline (size,
+// buffer, uniforms, clear - where it draws). createShader/createPipeline are
+// fused conveniences (compile + link + pipeline + target in one call, curated
+// preamble).
 //
 // Sampling is a per-texture property declared at creation: every create path
 // accepts `{ filter?, wrap? }` ("linear"/"nearest", "clamp"/"repeat";
@@ -90,7 +95,8 @@ declare module "flux:gpu" {
    * convenience: one call compiles a program and creates a target over it,
    * and the program lives and dies with the target. To share one compile
    * across targets (or hold a program with no target yet), use the raw layer:
-   * {@link compileShader} + {@link linkProgram} + {@link createShaderTarget}.
+   * {@link compileShader} + {@link linkProgram} + {@link createRenderPipeline}
+   * + {@link createShaderTarget}.
    *
    * The preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
    * `fragColor`) is injected only into sources that do not declare their own
@@ -143,38 +149,64 @@ declare module "flux:gpu" {
    */
   export function destroyShader(id: number): void
   /**
-   * Create a render target over a linked program and render it once: the
-   * target half of {@link createPipeline}. Returns a texture id exactly like
-   * createShader/createPipeline do (drive uniforms via the `params` prop or
-   * {@link setShaderParams}, resize with {@link setShaderSize}, destroy with
-   * {@link destroyTexture}). Many targets may share one program. A raw-linked
-   * program carries its own vertex stage, so the mesh options apply:
-   * `attributes`/`buffer` for vertex input (omit for attributeless rendering
-   * via gl_VertexID - a fullscreen pass is `vertexCount: 3` with a
-   * covering-triangle vertex stage), `topology`, `vertexCount`, `depth`,
-   * `clearColor`, all as in {@link createPipeline}.
+   * Pair a linked program with draw state, returning a render pipeline id
+   * (its own id space, like programs and buffers - not a texture id): the
+   * pipeline state object of every modern GPU API. The pipeline owns HOW its
+   * targets draw - `attributes` (the interleaved vertex layout; omit for
+   * attributeless rendering via gl_VertexID), `topology`, `blend`, `depth`,
+   * `depthWrite` (`false` requires `depth: true`) - while each target brings
+   * its own size, buffer, uniforms, and clear. Creating a pipeline compiles
+   * nothing, and many pipelines may share one program. The vocabulary is
+   * validated here, so a bad word throws at this call site. Free with
+   * {@link destroyRenderPipeline}; the program is yours and outlives it.
+   */
+  export function createRenderPipeline(
+    program: number,
+    opts?: {
+      attributes?: VertexAttribute[]
+      topology?: Topology
+      blend?: BlendMode
+      depth?: boolean
+      depthWrite?: boolean
+    },
+  ): number
+  /**
+   * Destroy a render pipeline by id. Targets created from it are unaffected:
+   * each holds the pipeline until it is itself destroyed, so either
+   * destruction order is safe. The id stops being usable for new targets
+   * immediately.
+   */
+  export function destroyRenderPipeline(id: number): void
+  /**
+   * Create a render target over a {@link createRenderPipeline} pipeline and
+   * render it once: the target half of {@link createPipeline}. Returns a
+   * texture id exactly like createShader/createPipeline do (drive uniforms
+   * via the `params` prop or {@link setShaderParams}, resize with
+   * {@link setShaderSize}, destroy with {@link destroyTexture}). Many targets
+   * may share one pipeline, and creating a target compiles nothing. `buffer`
+   * supplies the concrete vertex buffer the pipeline's attribute layout
+   * describes (required when the pipeline declares attributes);
+   * `vertexCount` defaults to the whole buffer, and a fullscreen pass over an
+   * attributeless pipeline is `vertexCount: 3` with a covering-triangle
+   * vertex stage. Draw-state keys (`attributes`, `topology`, `blend`,
+   * `depth`, `depthWrite`) belong to the pipeline and throw here.
    */
   export function createShaderTarget(
-    program: number,
+    pipeline: number,
     width: number,
     height: number,
     opts?: {
       params?: ShaderParams
       textures?: Record<string, number>
-      attributes?: VertexAttribute[]
       buffer?: number
-      topology?: Topology
       vertexCount?: number
-      depth?: boolean
-      depthWrite?: boolean
-      blend?: BlendMode
       clearColor?: [number, number, number, number]
     } & SamplerOptions,
   ): number
   /**
-   * Destroy a linked program by id. Targets created from it are unaffected:
+   * Destroy a linked program by id. Pipelines created from it are unaffected:
    * each holds the program until it is itself destroyed, so either
-   * destruction order is safe. The id stops being usable for new targets
+   * destruction order is safe. The id stops being usable for new pipelines
    * immediately.
    */
   export function destroyProgram(id: number): void
