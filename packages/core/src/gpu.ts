@@ -16,9 +16,9 @@
 // Combining several passes is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (e.g. `blendMode="plus"` for
 // an additive pass over a base pass) instead of writing a pass that samples
-// both. Blending WITHIN one draw is unavailable - a target's own draw runs
-// with GL blending disabled, so overlapping geometry in a single pipeline
-// overwrites rather than accumulates.
+// both. WITHIN one pipeline draw, `blend: "add"` accumulates overlapping
+// geometry additively (order-independent, no sorting); anything else draws
+// with GL blending disabled and overwrites.
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
@@ -54,7 +54,7 @@ export {
 // its buffer gained or lost dynamic geometry; destroyBuffer is the manual
 // cleanup path for buffers created outside a reactive scope.
 export { destroyBuffer, setDrawCount } from "flux:gpu"
-export type { ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
 // owns these lifetimes. compileShader compiles one stage from complete GLSL
@@ -178,6 +178,8 @@ export function createShaderTarget(
     topology?: gpu.Topology
     vertexCount?: number
     depth?: boolean
+    depthWrite?: boolean
+    blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
   } & CreateOptions,
 ): number {
@@ -295,8 +297,13 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * `<texture src={id} params={{...}} />` or `setShaderParams`, exactly like a
  * fragment shader.
  * `opts.depth` attaches a private depth buffer (cleared + tested per render);
- * `opts.vertexCount` defaults to the whole buffer and can be changed later
- * with `setDrawCount`. Frees the texture and GL program when the reactive
+ * `opts.depthWrite: false` (requires depth) keeps the test but stops the
+ * draw from writing depth. `opts.blend: "add"` makes the draw accumulate
+ * overlapping geometry additively (order-independent, no sorting) instead of
+ * overwriting; a depth-tested additive pass is `{ depth: true, blend: "add",
+ * depthWrite: false }` - each option only does what it says, neither implies
+ * the other. `opts.vertexCount` defaults to the whole buffer and can be
+ * changed later with `setDrawCount`. Frees the texture and GL program when the reactive
  * owner is disposed (opt out with `opts.manual`); create outside any reactive
  * scope for app-lifetime pipelines.
  */
@@ -313,6 +320,8 @@ export function createPipeline(
     topology?: gpu.Topology
     vertexCount?: number
     depth?: boolean
+    depthWrite?: boolean
+    blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
   } & CreateOptions,
 ): number {

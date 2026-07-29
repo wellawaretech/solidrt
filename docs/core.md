@@ -211,7 +211,7 @@ Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports
 
 `fit` maps the pixels into the element box with CSS object-fit semantics: `"fill"` (default) stretches, `"cover"`/`"none"` crop, `"contain"`/`"scale-down"` letterbox, everything centered. Paint-only: the box (and hit testing) is unchanged.
 
-`blendMode` (the full Skia set: `"plus"`, `"screen"`, `"multiply"`, ...) is how several GPU passes composite in the tree. Stack absolutely-positioned `<texture>` elements - a base pass, then an additive `blendMode="plus"` pass over it - instead of writing a shader that samples both targets. Texture alpha is premultiplied, so additive modes need no manual premultiplication. This is also the only blending available: a shader or pipeline target's own draw runs with GL blending disabled, so overlapping geometry within one pass overwrites rather than accumulates.
+`blendMode` (the full Skia set: `"plus"`, `"screen"`, `"multiply"`, ...) is how several GPU passes composite in the tree. Stack absolutely-positioned `<texture>` elements - a base pass, then an additive `blendMode="plus"` pass over it - instead of writing a shader that samples both targets. Texture alpha is premultiplied, so additive modes need no manual premultiplication. Within one pipeline's own draw, `createPipeline`'s `blend: "add"` option makes overlapping geometry accumulate additively (order-independent, so no sorting; a depth-tested additive pass pairs it with `depthWrite: false`, stated explicitly - neither option implies the other); without it a target's draw runs with GL blending disabled and overwrites.
 
 For loading images from URLs or bytes without working directly with textures, use the [`<Image>`](components.md#image) component instead.
 

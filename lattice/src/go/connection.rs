@@ -910,6 +910,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if p.depth {
         map.insert("depth".into(), true.into());
       }
+      // Reported only off their defaults, like depth: absent means the
+      // ordinary opaque draw.
+      if p.depth_write == Some(false) {
+        map.insert("depthWrite".into(), false.into());
+      }
+      if let Some(blend) = p.blend.filter(|b| *b != "none") {
+        map.insert("blend".into(), blend.into());
+      }
       if !p.attributes.is_empty() {
         let attrs: Vec<serde_json::Value> =
           p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();

@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: GPU example gaps blocked on runtime work
-description: Two core examples worth writing - a multi-pass shader chain and a points-topology particle field - each deliberately deferred until the runtime behaviour they would demonstrate is settled.
+description: A multi-pass shader chain example, deferred until target dependency propagation is decided. The points-topology particle field shipped 2026-07-29 once the blend toggle landed.
 status: deferred
 timestamp: 2026-07-29T00:00:00Z
 ---
@@ -30,18 +30,13 @@ the place the rule is demonstrated rather than merely documented.
 
 ## Points topology / particle field
 
-`topology: "points"` has no example. Second-reality verified it works well:
-`gl_PointSize` honored across 4..64px and `gl_PointCoord` available, so
-shader-driven point clouds are viable.
+DONE 2026-07-29: `packages/core/examples/gpu-particles.tsx`, written the day
+the blend toggle landed in [[gpu-pipeline-extensions]]. An additive fibonacci-
+sphere splat field: `topology: "points"` + `blend: "add"`, gl_PointSize from
+the vertex stage, gaussian gl_PointCoord splats, premultiplied additive
+output, typed vec3 tint uniforms. Deliberately no depth buffer (nothing
+occludes in a pure additive pass); the header comment states when a scene
+adds `depth: true` with `depthWrite: false`. Runtime-unverified as of filing.
 
-Softly blocked on the blending toggle in [[gpu-pipeline-extensions]]. A
-convincing particle field wants additive accumulation between overlapping
-splats, and a target's own draw currently runs with GL blending disabled, so
-overlapping points overwrite instead of accumulating - the organism project hit
-exactly this ("`gl_PointSize > 1` draws opaque discs, so a point cloud can only
-be thickened into a scaly overlap, never a smooth field"). An example is
-possible today with non-overlapping points, but it would showcase the
-limitation rather than the capability.
-
-Neither is urgent. Filed so they are picked up with the runtime change that
-unblocks them rather than rediscovered later.
+The multi-pass gap above is not urgent. Filed so it is picked up with the
+runtime change that unblocks it rather than rediscovered later.

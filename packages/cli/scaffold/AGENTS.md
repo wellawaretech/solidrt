@@ -152,9 +152,13 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    fills a `float`/`int` scalar, a flat number array fills `vec2`/`vec3`/
    `vec4` (2/3/4 numbers) or `mat4` (16, column-major), dispatched by the
    shader's own declaration - a ported shader's `vec2 uCenter` or Shadertoy's
-   `vec3 iResolution` needs no splitting into scalars. To combine several GPU passes, stack
-   `<texture>` elements and set `blendMode` (e.g. a base pass plus an
-   additive `blendMode="plus"` pass) rather than writing a compositing shader.
+   `vec3 iResolution` needs no splitting into scalars. To combine several
+   GPU passes, stack `<texture>` elements and set `blendMode` (e.g. a base
+   pass plus an additive `blendMode="plus"` pass) rather than writing a
+   compositing shader. Within one pipeline draw, createPipeline's
+   `blend: "add"` accumulates overlapping geometry additively (soft point
+   splats, glow) - pair it with `depthWrite: false` when depth-tested;
+   neither option implies the other.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
    string. get_stats' setPropsPerFrame is the counter to watch.

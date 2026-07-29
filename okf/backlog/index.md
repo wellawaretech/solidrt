@@ -21,8 +21,9 @@ timestamp: 2026-07-13T00:00:00Z
   web image format decodeImage lacks; pure-Rust decode does not exist in the
   image crate, so it needs the dav1d C system dependency.
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
-  (vec, mat4) uniforms, index buffers, float data textures, blending and
-  multi-pass targets on top of the minimal createPipeline.
+  uniforms and the additive blend/depthWrite toggles landed 2026-07-29; still
+  deferred: index buffers, float data textures, cull/depth-func raster state,
+  alpha translucency, multi-pass targets.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI
@@ -248,6 +249,10 @@ timestamp: 2026-07-13T00:00:00Z
   the doc ships and the file does not; a release-time parity check between the
   README and the packed output would catch it.
 - [GPU example gaps blocked on runtime work](gpu-example-gaps.md) [deferred] -
-  A multi-pass shader chain and a points-topology particle field, each deferred
-  until the runtime behaviour it would demonstrate is settled (target
-  propagation; in-draw blending).
+  A multi-pass shader chain example, deferred until target dependency
+  propagation is settled. The points-topology particle field shipped
+  2026-07-29 (gpu-particles.tsx) once in-draw blending landed.
+- [More pipeline blend modes](gpu-pipeline-blend-modes.md) [deferred] - The
+  createPipeline blend vocabulary stops at "none"/"add"; multiply, screen,
+  subtract, min/max are each a two-line addition, and alpha-over waits on
+  sorting plus premultiplied-vs-straight semantics.

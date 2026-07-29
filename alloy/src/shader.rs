@@ -107,6 +107,33 @@ impl AttrFormat {
   }
 }
 
+/// Blending applied to a pipeline's mesh draw. Absent (the default) the draw
+/// overwrites: overlapping geometry resolves by depth or draw order, never by
+/// accumulation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BlendMode {
+  /// glBlendFunc(ONE, ONE): every fragment adds onto what is already in the
+  /// target. Order-independent, so geometry needs no sorting - the additive
+  /// half of translucency (point splats, glow passes).
+  Add,
+}
+
+pub fn parse_blend(s: &str) -> Result<Option<BlendMode>, String> {
+  Ok(match s {
+    "none" => None,
+    "add" => Some(BlendMode::Add),
+    _ => return Err(format!("unsupported blend mode '{s}' (expected none|add)")),
+  })
+}
+
+/// The string form `parse_blend` accepts, for reporting back out.
+pub fn blend_name(b: Option<BlendMode>) -> &'static str {
+  match b {
+    None => "none",
+    Some(BlendMode::Add) => "add",
+  }
+}
+
 pub fn parse_topology(s: &str) -> Result<u32, String> {
   Ok(match s {
     "points" => glow::POINTS,
@@ -434,6 +461,10 @@ struct MeshState {
   /// Present when the pipeline was created with depth testing; the
   /// renderbuffer stays private to the FBO (never adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
+  /// Whether the draw writes depth (the clear always does). Only meaningful
+  /// with a depth attachment; an explicit option, never inferred from blend.
+  depth_write: bool,
+  blend: Option<BlendMode>,
   clear_color: [f32; 4],
 }
 
@@ -669,6 +700,8 @@ impl ShaderTexture {
     topology: u32,
     draw_count: i32,
     depth: bool,
+    depth_write: bool,
+    blend: Option<BlendMode>,
     clear_color: [f32; 4],
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_pipeline(gl, vertex_src, fragment_src)?);
@@ -685,6 +718,8 @@ impl ShaderTexture {
       topology,
       draw_count,
       depth,
+      depth_write,
+      blend,
       clear_color,
     )
     .map_err(|(program, e)| {
@@ -710,6 +745,8 @@ impl ShaderTexture {
     topology: u32,
     draw_count: i32,
     depth: bool,
+    depth_write: bool,
+    blend: Option<BlendMode>,
     clear_color: [f32; 4],
   ) -> Result<Self, (Rc<ShaderProgram>, String)> {
     if !program.is_pipeline() {
@@ -717,6 +754,9 @@ impl ShaderTexture {
     }
     if !attributes.is_empty() && vbo.is_none() {
       return Err((program, "pipeline declares attributes but no vertex buffer".to_string()));
+    }
+    if !depth_write && !depth {
+      return Err((program, "depthWrite: false requires depth: true (there is no depth buffer to leave unwritten)".to_string()));
     }
 
     unsafe {
@@ -823,6 +863,8 @@ impl ShaderTexture {
           topology,
           draw_count: Cell::new(draw_count),
           depth: depth_rb,
+          depth_write,
+          blend,
           clear_color,
         }),
         last_params: RefCell::new(Vec::new()),
@@ -871,6 +913,17 @@ impl ShaderTexture {
   /// Whether the pipeline renders with a depth buffer attached.
   pub fn has_depth(&self) -> bool {
     self.mesh.as_ref().is_some_and(|m| m.depth.is_some())
+  }
+
+  /// Whether the pipeline's draw writes depth; None on a fragment-only shader.
+  pub fn depth_write(&self) -> Option<bool> {
+    self.mesh.as_ref().map(|m| m.depth_write)
+  }
+
+  /// The pipeline's blend mode as the string `parse_blend` accepts; None on a
+  /// fragment-only shader.
+  pub fn blend_name(&self) -> Option<&'static str> {
+    self.mesh.as_ref().map(|m| blend_name(m.blend))
   }
 
   /// Set the number of vertices the next render draws. Errors on a
@@ -1186,6 +1239,8 @@ fn run_pass(
         gl.clear_color(r, g, b, a);
         if mesh.depth.is_some() {
           gl.enable(glow::DEPTH_TEST);
+          // The clear always writes depth (glClear honors the write mask);
+          // the draw's mask is the pipeline's depthWrite option.
           gl.depth_mask(true);
           gl.depth_func(glow::LESS);
           // Impeller's clip-culling passes set their own depth-clear value
@@ -1193,12 +1248,35 @@ fn run_pass(
           // silently discards every fragment. Always clear to the far plane.
           gl.clear_depth_f32(1.0);
           gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+          gl.depth_mask(mesh.depth_write);
         } else {
           gl.clear(glow::COLOR_BUFFER_BIT);
+        }
+        // Blend func is Impeller-cached state like the rest: save and restore
+        // around the draw, and re-disable BLEND after it (the outer restore
+        // only re-enables). Off the blended path nothing is touched.
+        let prev_blend_func = mesh.blend.map(|_| {
+          [
+            gl.get_parameter_i32(glow::BLEND_SRC_RGB) as u32,
+            gl.get_parameter_i32(glow::BLEND_DST_RGB) as u32,
+            gl.get_parameter_i32(glow::BLEND_SRC_ALPHA) as u32,
+            gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
+          ]
+        });
+        match mesh.blend {
+          Some(BlendMode::Add) => {
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::ONE, glow::ONE);
+          }
+          None => {}
         }
         gl.bind_vertex_array(Some(mesh.vao));
         gl.draw_arrays(mesh.topology, 0, mesh.draw_count.get());
 
+        if let Some([src_rgb, dst_rgb, src_alpha, dst_alpha]) = prev_blend_func {
+          gl.disable(glow::BLEND);
+          gl.blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha);
+        }
         gl.bind_vertex_array(prev_vertex_array(prev_vao));
         gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
         gl.depth_mask(prev_depth_mask);

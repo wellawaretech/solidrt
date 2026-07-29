@@ -46,6 +46,8 @@ pub(crate) struct PipelineSpecOwned {
   pub topology: String,
   pub draw_count: i32,
   pub depth: bool,
+  pub depth_write: bool,
+  pub blend: String,
   pub clear_color: [f32; 4],
 }
 
@@ -63,6 +65,8 @@ pub(crate) struct TargetSpecOwned {
   pub topology: String,
   pub draw_count: i32,
   pub depth: bool,
+  pub depth_write: bool,
+  pub blend: String,
   pub clear_color: [f32; 4],
 }
 
@@ -1051,6 +1055,7 @@ impl RasterState {
   fn create_pipeline_texture(&mut self, id: u64, spec: &PipelineSpecOwned) -> Result<Texture, String> {
     let (attrs, topology, vbo, draw_count) =
       resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
+    let blend = crate::shader::parse_blend(&spec.blend)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.width,
@@ -1064,6 +1069,8 @@ impl RasterState {
       topology,
       draw_count,
       spec.depth,
+      spec.depth_write,
+      blend,
       spec.clear_color,
     )?;
     let resolved = resolve_sampler_bindings(&self.textures, &shader);
@@ -1089,6 +1096,7 @@ impl RasterState {
     let shader = if program.is_pipeline() {
       let (attrs, topology, vbo, draw_count) =
         resolve_mesh_spec(&self.buffers, &spec.attributes, &spec.topology, spec.buffer_id, spec.draw_count)?;
+      let blend = crate::shader::parse_blend(&spec.blend)?;
       ShaderTexture::from_pipeline_program(
         &self.gl,
         program,
@@ -1102,6 +1110,8 @@ impl RasterState {
         topology,
         draw_count,
         spec.depth,
+        spec.depth_write,
+        blend,
         spec.clear_color,
       )
       .map_err(|(_, e)| e)?
@@ -1243,6 +1253,8 @@ impl RasterState {
         topology: shader.topology_name(),
         draw_count: shader.draw_count(),
         depth: shader.has_depth(),
+        depth_write: shader.depth_write(),
+        blend: shader.blend_name(),
         attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
         textures: shader.sampler_bindings().to_vec(),
         params: shader.last_params(),

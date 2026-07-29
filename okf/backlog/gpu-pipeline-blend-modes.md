@@ -1,0 +1,48 @@
+---
+type: backlog-item
+title: More pipeline blend modes
+description: The blend vocabulary on createPipeline stops at "none" and "add"; the rest of GL's fixed-function space (multiply, screen, subtract, min/max, and the order-dependent alpha-over) is unexposed.
+status: deferred
+timestamp: 2026-07-29T00:00:00Z
+---
+
+# More pipeline blend modes
+
+The `blend` option on createPipeline/createShaderTarget
+([gpu-pipeline-extensions](gpu-pipeline-extensions.md)) shipped 2026-07-29
+with exactly two values: `"none"` and `"add"` (`glBlendFunc(ONE, ONE)`),
+because additive was the mode with three independent field requesters.
+GL's fixed-function blend stage (glBlendEquation x glBlendFunc factors)
+reaches considerably more; each named mode below is one `BlendMode` enum arm
+in alloy/src/shader.rs plus one func/equation call in `run_pass`'s mesh arm,
+so any of them lands as a two-line change when a project asks.
+
+Order-independent (commutative like "add": no sorting, no depth question
+beyond the existing explicit `depthWrite`):
+
+- `"multiply"` - `(DST_COLOR, ZERO)`: darkening accumulation (shadow or dust
+  passes).
+- `"screen"` - `(ONE, ONE_MINUS_SRC_COLOR)`: inverse of multiply; a softer
+  glow that saturates toward white instead of clipping the way add does.
+- `"subtract"` - reverse-subtract equation with `(ONE, ONE)`: additive
+  darkening; dst - src accumulates commutatively.
+- `"min"` / `"max"` - blend equation only; niche (data/heightfield tricks).
+
+Order-dependent, the big one:
+
+- alpha-over - `(ONE, ONE_MINUS_SRC_ALPHA)` premultiplied, or
+  `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` straight. The GL call is equally
+  trivial; what defers it is correctness: it needs sorted geometry (which the
+  pipeline API has no story for) and an answer to straight-vs-premultiplied
+  against how Impeller composites the target. Tracked as the remaining
+  blending piece in [gpu-pipeline-extensions](gpu-pipeline-extensions.md);
+  do not add the mode without deciding those two.
+
+Out of scope on ES 3.0: the fancy end of the tree-level `<texture blendMode>`
+set (overlay, hue, color-dodge, ...). Those are Skia shader-level composites;
+fixed-function GL cannot express them within a draw short of
+KHR_blend_equation_advanced, which is not baseline. The two layers stay
+honestly different: full Skia set between stacked targets, a small
+factor/equation vocabulary within one draw.
+
+Demand-driven: leave the vocabulary as-is until a field report names a mode.

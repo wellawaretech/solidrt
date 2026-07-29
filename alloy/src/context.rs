@@ -81,14 +81,20 @@ pub struct PipelineSpec<'a> {
   pub topology: &'a str,
   pub draw_count: i32,
   pub depth: bool,
+  /// Whether the draw writes depth (default true; the clear always writes).
+  /// Only valid with `depth`; `false` is the blended-pass half an app opts
+  /// into explicitly, never inferred from `blend`.
+  pub depth_write: bool,
+  /// "none" (default, overwrite) or "add" (accumulate, order-independent).
+  pub blend: &'a str,
   pub clear_color: [f32; 4],
 }
 
 /// Everything `create_shader_target` needs to build a target over an
 /// already-compiled program: `PipelineSpec` minus the sources. The mesh
 /// fields apply to pipeline programs only and must be at their defaults
-/// (empty attributes, buffer 0, "triangles", -1, false, zeros) for a
-/// fragment program.
+/// (empty attributes, buffer 0, "triangles", -1, false, true, "none", zeros)
+/// for a fragment program.
 pub struct TargetSpec<'a> {
   pub width: u32,
   pub height: u32,
@@ -99,6 +105,8 @@ pub struct TargetSpec<'a> {
   pub topology: &'a str,
   pub draw_count: i32,
   pub depth: bool,
+  pub depth_write: bool,
+  pub blend: &'a str,
   pub clear_color: [f32; 4],
 }
 
@@ -181,6 +189,10 @@ pub struct GpuPipelineInfo {
   pub topology: Option<&'static str>,
   pub draw_count: Option<i32>,
   pub depth: bool,
+  /// Whether the draw writes depth; None on a fragment-only target.
+  pub depth_write: Option<bool>,
+  /// "none" or "add"; None on a fragment-only target.
+  pub blend: Option<&'static str>,
   /// (name, format string) of the declared interleaved vertex layout.
   pub attributes: Vec<(String, String)>,
   /// sampler2D uniform name -> source texture id.
@@ -546,6 +558,8 @@ impl Context {
       topology: spec.topology.to_string(),
       draw_count: spec.draw_count,
       depth: spec.depth,
+      depth_write: spec.depth_write,
+      blend: spec.blend.to_string(),
       clear_color: spec.clear_color,
     };
     let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec: owned, reply })??;
@@ -619,6 +633,8 @@ impl Context {
       && (!spec.attributes.is_empty()
         || spec.buffer_id != 0
         || spec.depth
+        || !spec.depth_write
+        || spec.blend != "none"
         || spec.draw_count >= 0
         || spec.topology != "triangles")
     {
@@ -635,6 +651,8 @@ impl Context {
       topology: spec.topology.to_string(),
       draw_count: spec.draw_count,
       depth: spec.depth,
+      depth_write: spec.depth_write,
+      blend: spec.blend.to_string(),
       clear_color: spec.clear_color,
     };
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, program, spec: owned, reply })??;

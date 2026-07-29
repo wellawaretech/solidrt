@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: GPU pipeline extensions
-description: Typed (vec, mat4) uniforms, index buffers, float data textures, blending and multi-pass targets on top of the minimal createPipeline.
+description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29; index buffers, float data textures, raster state, alpha translucency and multi-pass targets remain deferred.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -28,17 +28,19 @@ draw count. Deliberately deferred, in rough order of expected demand:
 - **Float texture formats** (`R32F`/`RGBA32F`) for data textures sampled in
   the vertex stage (e.g. per-sector heights via texelFetch). Workaround:
   fixed-point encode into RGBA8 channels and decode in the shader.
-- **Blending toggle** for translucent geometry. Alpha-tested cutouts already
-  work via `discard` (depth writes stay correct); true translucency needs
-  sorted geometry plus GL blend state on the pipeline. Additive is the case
-  that keeps coming up and is the easy half: order-independent, no sorting,
-  and it is what soft point splats and glow passes want. Without it,
-  `gl_PointSize > 1` draws opaque discs, so a point cloud can only be
-  thickened into a scaly overlap, never a smooth field (projects/organism).
-- **Raster state**: cull mode and depth func/write are fixed. Two-sided
-  shading (`abs(dot(n, l))`) hides the missing cull for now, but a closed
-  mesh pays double the fragment work, and depth-write-off is the other half
-  of any blended pass.
+- **Blending toggle.** Additive half DONE 2026-07-29: `blend: "add"`
+  (`glBlendFunc(ONE, ONE)`) plus the independent `depthWrite: boolean`
+  (default true; requires `depth`) on createPipeline/createShaderTarget.
+  Explicit by design - the additive-pass recipe is `{ depth: true, blend:
+  "add", depthWrite: false }`, written by the app, never inferred (blend does
+  NOT imply depth-write off). The clear always writes depth; only the draw
+  honors depthWrite. Both reported by get_gpu_resources when off their
+  defaults. Still open: true alpha translucency (sorted geometry plus the
+  straight-vs-premultiplied question against Impeller's compositing of the
+  target).
+- **Raster state**: cull mode and depth func are fixed (depth WRITE is now an
+  option, see blending above). Two-sided shading (`abs(dot(n, l))`) hides the
+  missing cull for now, but a closed mesh pays double the fragment work.
 - **Multiple draw passes into one target** (shared depth buffer, different
   programs). One pipeline + a dynamic buffer region covers the known use
   cases so far.
@@ -83,4 +85,5 @@ building real apps rather than reviewing the API.
 Note the tree-level compositing half is DONE
 ([texture-element-compositing](texture-element-compositing.md)) and documented
 as of 2026-07-29, with an example in packages/core/examples/gpu-texture-blend.tsx.
-What remains here is blending WITHIN one draw.
+Blending WITHIN one draw landed the same day (additive only, see the blending
+bullet above); both top demand-signal items are now closed.

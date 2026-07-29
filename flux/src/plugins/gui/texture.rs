@@ -118,12 +118,14 @@ struct TargetOpts {
   topology: String,
   draw_count: i32,
   depth: bool,
+  depth_write: bool,
+  blend: String,
   clear_color: [f32; 4],
 }
 
 // Decode the shared opts object: { params, textures, attributes: [{name,
-// format}], buffer, topology, vertexCount, depth, clearColor }, everything
-// optional. Marshalling only; alloy validates.
+// format}], buffer, topology, vertexCount, depth, depthWrite, blend,
+// clearColor }, everything optional. Marshalling only; alloy validates.
 fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts> {
   let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
     match opts {
@@ -160,6 +162,14 @@ fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts
     Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
     None => false,
   };
+  let depth_write = match opts {
+    Some(o) => o.get::<_, Option<bool>>("depthWrite")?.unwrap_or(true),
+    None => true,
+  };
+  let blend = match opts {
+    Some(o) => o.get::<_, Option<String>>("blend")?.unwrap_or_else(|| "none".to_string()),
+    None => "none".to_string(),
+  };
   let mut clear_color = [0f32; 4];
   if let Some(opts) = opts {
     if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
@@ -169,7 +179,7 @@ fn collect_target_opts(opts: &Option<Object<'_>>) -> rquickjs::Result<TargetOpts
     }
   }
 
-  Ok(TargetOpts { params, textures, attributes, buffer_id, topology, draw_count, depth, clear_color })
+  Ok(TargetOpts { params, textures, attributes, buffer_id, topology, draw_count, depth, depth_write, blend, clear_color })
 }
 
 /// Store the texture plugin state (alloy context, platform, and the created-id
@@ -406,6 +416,8 @@ impl ModuleDef for GpuModule {
             topology: &o.topology,
             draw_count: o.draw_count,
             depth: o.depth,
+            depth_write: o.depth_write,
+            blend: &o.blend,
             clear_color: o.clear_color,
           })
           .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
@@ -481,6 +493,8 @@ impl ModuleDef for GpuModule {
               topology: &o.topology,
               draw_count: o.draw_count,
               depth: o.depth,
+              depth_write: o.depth_write,
+              blend: &o.blend,
               clear_color: o.clear_color,
             },
           )

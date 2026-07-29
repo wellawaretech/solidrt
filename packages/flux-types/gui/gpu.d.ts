@@ -17,8 +17,9 @@
 // Compositing several targets is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (the full Skia set, e.g.
 // "plus" for an additive pass over a base pass) instead of writing a pass that
-// samples both. Blending WITHIN one draw is unavailable - a target's own draw
-// runs with GL blending disabled.
+// samples both. WITHIN one pipeline draw, `blend: "add"` accumulates
+// overlapping geometry additively; anything else (a fragment target, or a
+// pipeline without the option) draws with GL blending disabled and overwrites.
 
 declare module "flux:gpu" {
   /**
@@ -146,6 +147,8 @@ declare module "flux:gpu" {
       topology?: Topology
       vertexCount?: number
       depth?: boolean
+      depthWrite?: boolean
+      blend?: BlendMode
       clearColor?: [number, number, number, number]
     },
   ): number
@@ -181,6 +184,17 @@ declare module "flux:gpu" {
 
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**
+   * Blending for a pipeline's own draw. "none" (default) overwrites:
+   * overlapping geometry resolves by depth or draw order. "add" accumulates
+   * (glBlendFunc(ONE, ONE)): order-independent, so geometry needs no sorting
+   * - the additive half of translucency (point splats, glow passes). A
+   * depth-tested additive pass usually pairs with `depthWrite: false`; with
+   * writes on, unsorted geometry depth-rejects its own later fragments and
+   * accumulation becomes draw-order-dependent. That pairing is the app's to
+   * state - neither option implies the other.
+   */
+  export type BlendMode = "none" | "add"
+  /**
    * One float attribute of an interleaved vertex. The attribute list's order
    * defines the byte layout; locations are resolved by name against the
    * vertex shader's `in` declarations.
@@ -195,8 +209,13 @@ declare module "flux:gpu" {
    * `buffer` (a {@link createBuffer} id); omit both for attributeless
    * rendering via gl_VertexID. `vertexCount` defaults to the whole buffer
    * (buffer size / vertex stride). With `depth: true` the pipeline gets a
-   * private depth buffer, cleared and tested on every render. The target is
-   * cleared to `clearColor` (default transparent black) before each draw.
+   * private depth buffer, cleared and tested on every render; `depthWrite:
+   * false` (requires `depth: true`) keeps the test but stops the draw from
+   * writing depth. `blend` sets the draw's own blending (see
+   * {@link BlendMode}); an additive pass over a depth buffer is
+   * `{ depth: true, blend: "add", depthWrite: false }`, stated explicitly.
+   * The target is cleared to `clearColor` (default transparent black) before
+   * each draw.
    * Returns a texture id: display it with `<texture src>`, drive uniforms via
    * the `params` prop or {@link setShaderParams}, destroy with
    * {@link destroyTexture}.
@@ -214,6 +233,8 @@ declare module "flux:gpu" {
       topology?: Topology
       vertexCount?: number
       depth?: boolean
+      depthWrite?: boolean
+      blend?: BlendMode
       clearColor?: [number, number, number, number]
     },
   ): number
