@@ -5,7 +5,23 @@ import { state, print, printErr, requireBinary, pipeAbovePrompt, shutdown } from
 import { values } from "./args"
 
 export const DEV_HOST = "127.0.0.1"
-export const DEV_PORT = 0x8844
+export const DEFAULT_DEV_PORT = 0x8844
+
+// The port every dev-server consumer dials: the spawned server, the local and
+// Android clients' --dev-server address, and the MCP bridge's control base.
+// Resolved once here, so --port needs no threading through those call sites.
+function resolveDevPort(): number {
+  let raw = values.port
+  if (raw === undefined) return DEFAULT_DEV_PORT
+  let port = Number(raw)
+  if (!/^\d+$/.test(raw) || port < 1 || port > 65535) {
+    console.error(`Invalid --port value "${raw}": expected a port number between 1 and 65535`)
+    process.exit(1)
+  }
+  return port
+}
+
+export let DEV_PORT = resolveDevPort()
 
 // The dev server itself is a flux script (packages/cli/server/), spawned by
 // srt: bundling, file watching, and the repl stay here and drive the server
@@ -157,8 +173,23 @@ async function bundleServer(): Promise<string> {
   return outfile
 }
 
+// The server runs as a separate flux process, so a port clash surfaces there as
+// a bare non-zero exit ("Dev server exited unexpectedly (1)"). Claim the port
+// here first to turn that into the actual reason, and into the fix.
+function requireFreePort(port: number) {
+  try {
+    // Default hostname: the server binds every interface, so probe the same way.
+    let probe = Bun.serve({ port, fetch: () => new Response() })
+    probe.stop(true)
+  } catch {
+    printErr(`[cli] Port ${port} is already in use; start on another port with --port <N>`)
+    process.exit(1)
+  }
+}
+
 export async function startServer() {
   let flux = requireBinary("flux")
+  requireFreePort(DEV_PORT)
   let script = await bundleServer()
 
   let lanAddress = Object.values(networkInterfaces())

@@ -21,6 +21,7 @@ export let { values, positionals } = parseArgs({
     "data-root": { type: "string" },
     client: { type: "string" },
     server: { type: "string" },
+    port: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
     template: { type: "string", short: "t" },
@@ -95,6 +96,12 @@ export function validateArgs() {
   if (values.server && command !== "client") {
     usage("srt client --server <host[:port]>  (--server is only valid with the client command)")
   }
+  // --port moves the dev server off its default port, so it belongs to the
+  // commands that start one (`run`, `server`) or attach to one (`mcp`). A
+  // standalone client carries the port in --server <host:port> instead.
+  if (values.port !== undefined && command !== "run" && command !== "server" && command !== "mcp") {
+    usage("srt <run|server|mcp> --port <N>  (--port is only valid with the run, server and mcp commands)")
+  }
 }
 
 export function printUsage() {
@@ -115,6 +122,7 @@ init options:
   -t, --template <name>  Start from a named template (skips the interactive picker)
 
 run/server options:
+      --port <N>         Dev server port (default: 34884)
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel
@@ -129,6 +137,9 @@ client options:
       --server <host[:port]>  Connect to a dev server at this address (default port: 34884)
       --android          Install and launch the client on a connected Android device
       --device <serial>  Target a specific adb device by serial or unique prefix
+
+mcp options:
+      --port <N>         Port of the dev server to attach to (default: 34884)
 
 bundle options:
   -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
