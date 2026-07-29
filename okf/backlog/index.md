@@ -230,3 +230,24 @@ timestamp: 2026-07-13T00:00:00Z
   The two real gaps behind "something like stylesheets": no scoped text
   defaults and no state/variant selection, both constrained to stay
   per-element property writes.
+- [captureSnapshot on detached (d-*) nodes](capture-detached-nodes.md) [done] -
+  A d-* node is drawn but has no layout entry, so every capture of one rejected
+  as zero-sized; captures are now sized from the node's painted box
+  (local_bounds over the same ctx.size the paint path uses), verified by
+  alloy/examples/capture_detached.rs.
+- [Sampler filter and wrap state](gpu-sampler-state.md) [open] - Every texture
+  samples linear, with wrap fixed per creation path (clamp-to-edge for targets,
+  repeat for createTexture); nearest magnification is unreachable, which rules
+  out the whole retro/pixel-art category.
+- [Dependency propagation between GPU targets](gpu-target-dependency-propagation.md) [open] -
+  A target sampling another target keeps a stale frame forever unless its own
+  params are written; the API accepts the binding and then quietly stops
+  propagating, an invisible failure mode in any multi-pass chain.
+- [Guard that every referenced example ships](release-example-parity-check.md) [open] -
+  A committed examples README can name an example file that is untracked, so
+  the doc ships and the file does not; a release-time parity check between the
+  README and the packed output would catch it.
+- [GPU example gaps blocked on runtime work](gpu-example-gaps.md) [deferred] -
+  A multi-pass shader chain and a points-topology particle field, each deferred
+  until the runtime behaviour it would demonstrate is settled (target
+  propagation; in-draw blending).

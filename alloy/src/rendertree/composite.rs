@@ -418,12 +418,35 @@ fn snapshot_node<'a>(
 // here does not perturb the frame being built.
 fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<CaptureDone>) {
   let element = scene.node(node_id);
-  let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
   let scale = ctx.platform.display_scale();
-  let (tex_w, tex_h) = ((size.width * scale).ceil() as u32, (size.height * scale).ceil() as u32);
+  // A laid-out node captures its layout box. A detached (d-*) node has none,
+  // but it is still drawn into a definite rectangle: its kind's painted box,
+  // sized with the same ctx.size its build() reads (the caller's child walk
+  // set it just before recursing here), so the capture box equals the painted
+  // box by construction rather than by a second size derivation. The box's
+  // x/y is the node's own paint offset, countered below so the content lands
+  // at the texture origin - except for a View, whose offset (translate) lives
+  // in the matrix that Hoist::Transform keeps out of the recording anyway.
+  let (width, height, offset) = match element.layout.as_ref() {
+    Some(l) => (l.computed.size.width, l.computed.size.height, (0.0, 0.0)),
+    None => {
+      let local = element.kind.local_bounds(Size { width: ctx.size.w, height: ctx.size.h });
+      let offset = match &element.kind {
+        ElementKind::View(_) => (0.0, 0.0),
+        _ => (local.x, local.y),
+      };
+      (local.width, local.height, offset)
+    }
+  };
+  let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
   if tex_w == 0 || tex_h == 0 {
+    let why = if element.layout.is_none() {
+      "capture node is detached (d-*) with no painted size: neither its own w/h nor a laid-out ancestor gives it a box"
+    } else {
+      "capture node has no layout box (zero size)"
+    };
     for done in requests {
-      ctx.alloy.complete_capture(done, Err("capture node has no layout box (zero size)".to_string()));
+      ctx.alloy.complete_capture(done, Err(why.to_string()));
     }
     return;
   }
@@ -436,6 +459,9 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
     (ctx.boundaries_reused, ctx.boundaries_recorded, ctx.snapshots_reused, ctx.snapshots_rerendered, ctx.snapshots_rasterized);
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
+  if offset != (0.0, 0.0) {
+    sub.translate(-offset.0, -offset.1);
+  }
   record_node(scene, node_id, ctx, &mut sub, hoist);
   ctx.size = saved_size;
   ctx.boundaries_reused = saved_stats.0;

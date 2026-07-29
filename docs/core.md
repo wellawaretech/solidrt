@@ -257,6 +257,8 @@ To change a texture's size without invalidating its id (for example a data textu
 
 For a shader whose spec is itself reactive, `createShaderMemo(() => ({ fragmentSrc, width, height, params?, textures? }))` returns an accessor for the current texture id and keeps the GPU resource in step: size changes route to `setShaderSize` and params changes to `setShaderParams` (id stays stable), while a new fragment source or new sampler bindings rebuild at a fresh id, update the accessor, and frame-safely destroy the old one.
 
+Pass `{ onError }` as a second argument when the source is not known-good - a shader editor, live coding, a dialect ported from elsewhere. A shader that fails to compile then hands you the error and leaves the last shader that *did* compile current (id, size, params and accessor all unchanged), so the app keeps drawing instead of tearing down. Without `onError` the failure throws from inside the effect, where no caller can catch it and the reactive system halts. The initial compile is not covered either way: it throws at the call site, where an ordinary `try`/`catch` works and there is no previous shader to keep.
+
 A live shader's sampler2D inputs can also be retargeted directly with `setShaderTextures(id, { samplerName: textureId })` - the sampler analog of `setShaderParams`: the shader re-renders with its last-applied params against the new sources, without recompiling. Bindings not named keep their current source.
 
 ### Raw shading layer

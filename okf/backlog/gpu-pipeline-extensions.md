@@ -42,5 +42,43 @@ draw count. Deliberately deferred, in rough order of expected demand:
   cases so far.
 
 Adjacent, filed separately because they are not createPipeline options:
-[anti-aliasing for pipeline targets](gpu-target-antialiasing.md) and
-[paint properties on the texture element](texture-element-compositing.md).
+[anti-aliasing for pipeline targets](gpu-target-antialiasing.md),
+[paint properties on the texture element](texture-element-compositing.md),
+[sampler filter and wrap state](gpu-sampler-state.md) and
+[dependency propagation between targets](gpu-target-dependency-propagation.md).
+
+## Demand signal (2026-07-29)
+
+Two field reports against 0.0.39 independently ranked items from the list above
+as their top ask, which is worth recording because both were written by people
+building real apps rather than reviewing the API.
+
+- **Typed uniforms** is named the highest-leverage change by BOTH
+  projects/shadertoy (#2) and projects/second-reality (#5). Every vec2 centre,
+  vec3 camera or palette phase becomes N scalar uniforms plus a reassembly
+  macro:
+
+      uniform float iResX;
+      uniform float iResY;
+      #define iResolution vec3(iResX, iResY, 1.0)
+
+  Shadertoy's contract is `vec3 iResolution`, `vec4 iMouse`, `vec4 iDate`,
+  `int iFrame` - none settable - so an entire compat block exists purely to
+  work around this. Landing it lets unmodified Shadertoy, GLSL Sandbox and Book
+  of Shaders code run as-is. The marshalling site is
+  `collect_params` in flux/src/plugins/gui/texture.rs, hard-wired to
+  `Vec<(String, f32)>` end to end.
+
+- **Blending toggle** now has three independent requesters: projects/organism
+  (point splats, noted above), projects/second-reality (glenz vectors), and
+  projects/shadertoy implicitly. Second-reality shipped a convex-only
+  workaround - front/back faces split into two targets composited with
+  `<texture blendMode="plus">` - which works only because a convex object has
+  exactly one front and one back face per pixel. Non-convex transparent meshes
+  and many-particle additive accumulation with per-particle colour still have no
+  path.
+
+Note the tree-level compositing half is DONE
+([texture-element-compositing](texture-element-compositing.md)) and documented
+as of 2026-07-29, with an example in packages/core/examples/gpu-texture-blend.tsx.
+What remains here is blending WITHIN one draw.

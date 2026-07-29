@@ -66,7 +66,10 @@ export type { Topology, VertexAttribute } from "flux:gpu"
 export { compileShader, destroyProgram, destroyShader, linkProgram } from "flux:gpu"
 
 // captureSnapshot renders a node to a texture and readTexture reads any
-// texture's bytes back. Re-exported raw (no reactive auto-cleanup wrapper):
+// texture's bytes back. A laid-out node captures its layout box; a `d-*` node
+// captures its painted box - its own w/h when set, else the nearest laid-out
+// ancestor's box, its x/y offset mapped to the texture origin. Re-exported raw
+// (no reactive auto-cleanup wrapper):
 // captureSnapshot resolves asynchronously, by which point the reactive owner is
 // no longer current, so the caller owns the returned id and frees it with
 // destroyTexture (as with any texture created after an await).
@@ -211,28 +214,50 @@ function sameRecord(a: Record<string, number> | undefined, b: Record<string, num
  * so the swap never paints a blank frame. The current id is freed when the
  * owning scope is disposed. Data textures need no analog: `uploadTexture` and
  * `resizeTexture` already cover their reactive changes id-stably.
+ *
+ * `onError` makes a failed rebuild survivable. Without it a shader that does
+ * not compile throws from inside the effect, where no caller can catch it;
+ * with it the error is handed to you and the last shader that DID compile
+ * stays current - id, size, params and accessor all unchanged - so the app
+ * keeps drawing the previous frame's shader instead of tearing down. That is
+ * the normal case whenever the source is not known-good: a shader editor, live
+ * coding, or a dialect ported from elsewhere. The initial compile is not
+ * covered: it throws at the call site, where an ordinary try/catch works and
+ * there is no previous shader to fall back to.
  */
-export function createShaderMemo(spec: () => ShaderSpec): () => number {
+export function createShaderMemo(
+  spec: () => ShaderSpec,
+  opts?: { onError?: (error: unknown) => void },
+): () => number {
   let current = untrack(spec)
   let currentId = gpu.createShader(current.fragmentSrc, current.width, current.height, current.params, current.textures)
   let [id, setId] = createSignal(currentId)
   createEffect(spec, next => {
-    if (next.fragmentSrc === current.fragmentSrc && sameRecord(next.textures, current.textures)) {
-      // Program and inputs unchanged: mutate in place, the id stays stable.
-      if (next.width !== current.width || next.height !== current.height) {
-        gpu.setShaderSize(currentId, next.width, next.height)
+    try {
+      if (next.fragmentSrc === current.fragmentSrc && sameRecord(next.textures, current.textures)) {
+        // Program and inputs unchanged: mutate in place, the id stays stable.
+        if (next.width !== current.width || next.height !== current.height) {
+          gpu.setShaderSize(currentId, next.width, next.height)
+        }
+        if (!sameRecord(next.params, current.params) && next.params) {
+          gpu.setShaderParams(currentId, next.params)
+        }
+        current = next
+        return
       }
-      if (!sameRecord(next.params, current.params) && next.params) {
-        gpu.setShaderParams(currentId, next.params)
-      }
+      // Compile before touching any state: a throw here must leave `current`,
+      // `currentId` and the accessor all still pointing at the last shader
+      // that worked, which is what makes onError's keep-last-good real.
+      let rebuilt = gpu.createShader(next.fragmentSrc, next.width, next.height, next.params, next.textures)
+      let old = currentId
       current = next
-      return
+      currentId = rebuilt
+      setId(rebuilt)
+      gpu.destroyTexture(old)
+    } catch (error) {
+      if (!opts?.onError) throw error
+      opts.onError(error)
     }
-    let old = currentId
-    current = next
-    currentId = gpu.createShader(next.fragmentSrc, next.width, next.height, next.params, next.textures)
-    setId(currentId)
-    gpu.destroyTexture(old)
   })
   if (getOwner()) onCleanup(() => gpu.destroyTexture(currentId))
   return id

@@ -226,7 +226,12 @@ declare module "flux:gpu" {
   /**
    * Capture a render-tree node's subtree into a new GPU texture, resolving once
    * it has been rendered on the next paint pass. The node must be attached to
-   * the live tree (a detached node is never painted, so its capture rejects).
+   * the live tree (an unmounted node is never painted, so its capture rejects)
+   * and paint a non-zero box. A laid-out node captures its layout box. A `d-*`
+   * node has no layout box - that is what detached means - so it captures its
+   * painted box instead: its own `w`/`h` when set, else the nearest laid-out
+   * ancestor's box (the same box the render tree reports for it), with its
+   * `x`/`y` paint offset mapped to the texture origin.
    * Rendered at the current display scale, so `width`/`height` are the texture's
    * actual pixel dimensions (ceil(logicalSize * displayScale)), not logical
    * points. Each call returns an independent id you must {@link destroyTexture}
