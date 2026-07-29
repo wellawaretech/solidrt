@@ -117,7 +117,15 @@ Authoritative references ship inside the installed packages - read them:
     mounted. To inspect children (a typeof probe, counting), resolve them
     first with the children() helper (re-exported from @solidrt/core) and
     probe the resolved memo - never `typeof props.children` on the raw prop.
-18. Cover/contain images: give `Image` a `fit` prop ("fill" | "cover" |
+18. Writing a signal or store from inside an owned scope - a component body, a
+    `createMemo`, an effect's compute phase - throws
+    `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev. Calling a loader/init function in
+    the component body that sets state is the classic React / Solid 1.x
+    reflex and hits this every time. Move the write into an event handler, an
+    effect's apply phase, or `onSettled`; opt in narrowly with
+    `createSignal(v, { ownedWrite: true })` for a signal that genuinely is
+    internal state.
+19. Cover/contain images: give `Image` a `fit` prop ("fill" | "cover" |
     "contain" | "none" | "scale-down", CSS object-fit semantics, centered)
     plus a box via `layout` in any form - numbers, pct(), flex. Without
     `fit`, only NUMERIC layout sizes reach the image; `width: pct(100)`
@@ -128,14 +136,21 @@ Authoritative references ship inside the installed packages - read them:
 
 The JS engine is interpreted and every property write crosses an FFI boundary
 into the runtime, so per-frame JS work is the expensive path while GPU work is
-nearly free. Rules, in order of leverage:
+nearly free. That holds on desktop and on current mobile hardware; "Where GPU
+work stops being free" below is where it does not. Rules, in order of leverage:
 
 1. Continuous effects (snow, particles, animated backgrounds) belong in a
    fragment shader: createShader (from @solidrt/core/gpu) + `<texture
    params={{ iTime }}>`. The whole effect then costs one setProperty per
    frame - the iTime write - regardless of visual complexity. Shader output
    must be premultiplied alpha (white flakes are `vec4(vec3(a), a)`);
-   straight alpha (`vec4(1,1,1,a)`) composites as opaque white.
+   straight alpha (`vec4(1,1,1,a)`) composites as opaque white. A source that
+   starts with `#version 300 es` is compiled exactly as written - no preamble
+   is injected, though the built-in vertex stage still supplies `vUV` - so a
+   shader ported from elsewhere keeps its own uniform names without dropping
+   to compileShader/linkProgram. To combine several GPU passes, stack
+   `<texture>` elements and set `blendMode` (e.g. a base pass plus an
+   additive `blendMode="plus"` pass) rather than writing a compositing shader.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
    string. get_stats' setPropsPerFrame is the counter to watch.
@@ -159,6 +174,44 @@ nearly free. Rules, in order of leverage:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters.
 
+### Where GPU work stops being free
+
+"GPU work is nearly free" is a property of the hardware, not of the engine, and
+the spread is wide enough to design against rather than discover late. The same
+app - two point-cloud pipelines, 233,600 vertices, one params write each per
+onFrame, i.e. exactly what rule 1 recommends - measured 16.7 ms/frame (60 fps,
+vsync-locked) on both desktop and a mid-range 2020 tablet, and 120 ms/frame
+(8.3 fps) on a 2017 Android TV. Roughly 8x for identical work, with the tablet
+indistinguishable from desktop. Measure on a target device if it matters; do
+not infer it from the desktop number.
+
+- **On a tiled GPU the budget is primitive count, not pixels.** Every point or
+  triangle costs the tiler regardless of how few pixels it covers. On that TV,
+  frame time against total vertices with a trivial vertex shader: 20k -> 80 ms,
+  35k -> 100 ms, 100k -> 380 ms. Meanwhile `gl_PointSize = 3.0` - nine times
+  the fill - measured within one vsync of 1.0, and rendering into a
+  quarter-size target measured identical to full size. So for a heavy pass the
+  lever is fewer primitives; shrinking the target or the splat usually is not,
+  and coverage is far cheaper bought with point size than with more points.
+- **A device's compositor can set the frame budget outright**, in which case
+  none of the above moves. That TV never presents faster than every 80 ms -
+  four refresh periods blocked inside `eglSwapBuffers` - even for a near-empty
+  scene, so its ceiling is ~12 fps whatever you draw. Recognise it by a
+  content-independent floor: if a trivial scene and a heavy one present at
+  nearly the same rate, you are compositor-bound and tuning the scene is
+  wasted effort.
+- **Per-frame writes are gated on the raster thread, not on vsync**, so a pass
+  that costs more than a refresh period does not silently pile up. If
+  `rasterQueue` sits persistently above 0 the raster thread is behind; if
+  `fenceTimeouts` climbs, the GPU is over its pacing budget.
+
+Finding your own numbers: `get_stats` gives fps, frameMs, setPropsPerFrame,
+rasterQueue and fenceTimeouts. When those disagree with what the screen is
+visibly doing, ground truth on Android is
+`adb shell dumpsys SurfaceFlinger --latency <layer>` for real present
+timestamps - engine-reported phase timings can each be honest and still not add
+up to the frame period, because work outside the frame call is not in them.
+
 ## Assets and app identity
 
 - Everything under `assets/` ships with the app: the folder is collected
@@ -167,10 +220,13 @@ nearly free. Rules, in order of leverage:
   from `flux:fs` - and treat them as read-only at runtime; writes belong in
   plain relative paths, which land in the app's private data dir.
 - Small text-like assets (SVG documents, shaders) can instead be inlined via
-  imports (`import icon from "./icon.svg"` yields the file's text;
-  `with { type: "binary" }` yields a Uint8Array). Inlining trades update
-  granularity for zero I/O - keep big or streamable files (audio, images) in
-  `assets/`.
+  imports. An import attribute picks the form and works on any extension:
+  `import src from "./effect.glsl" with { type: "text" }` yields the file's
+  contents as a string, `with { type: "binary" }` yields a Uint8Array. `.svg`
+  is text-loaded with no attribute needed. Shader sources (`.glsl`/`.vert`/
+  `.frag`) are declared as text modules out of the box, so they typecheck
+  without setup. Inlining trades update granularity for zero I/O - keep big or
+  streamable files (audio, images) in `assets/`.
 - Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
   map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
   replace the built-in defaults, `false` drops one, other keys add fonts
@@ -246,7 +302,9 @@ its tools over guessing at runtime state:
   when you stop working - the user's own saves rely on it.
 
 The tools need a running app: if list_clients is empty, ask the user to start
-`bunx srt run src/index.tsx`.
+`bunx srt run src/index.tsx`. The bridge dials the dev server's default port
+(34884), so if the user started it with `--port N`, .mcp.json needs the same
+flag: `"args": [..., "mcp", "--port", "N"]`.
 
 - Permission prompts: agents typically ask approval per MCP tool. All of
   these tools only talk to the local dev server the user started with
@@ -274,8 +332,10 @@ The tools need a running app: if list_clients is empty, ask the user to start
   you will want repeatedly (a pose, a mode, a counter), bind a debug key that
   logs it and read it back via get_logs.
 - Key events are delivered ONLY to the focused node (no bubbling): call
-  setFocus(node.id) from the window's ref or onKeyDown never fires. This
-  runtime names arrow keys "Left"/"Right"/"Up"/"Down", not "ArrowLeft".
+  setFocus(node.id) from the window's ref or onKeyDown never fires. `key` and
+  `code` are W3C KeyboardEvent values, so arrow keys arrive as "ArrowLeft"/
+  "ArrowRight"/"ArrowUp"/"ArrowDown" (not "Left"), alongside "Enter",
+  "Escape", "a".
 - Idle frames skip work: shaders/pipelines only re-render when their params
   change, so measure performance while uniforms are actually changing.
   get_snapshot works on an idle client (it requests its own frame); a

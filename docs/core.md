@@ -211,6 +211,8 @@ Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports
 
 `fit` maps the pixels into the element box with CSS object-fit semantics: `"fill"` (default) stretches, `"cover"`/`"none"` crop, `"contain"`/`"scale-down"` letterbox, everything centered. Paint-only: the box (and hit testing) is unchanged.
 
+`blendMode` (the full Skia set: `"plus"`, `"screen"`, `"multiply"`, ...) is how several GPU passes composite in the tree. Stack absolutely-positioned `<texture>` elements - a base pass, then an additive `blendMode="plus"` pass over it - instead of writing a shader that samples both targets. Texture alpha is premultiplied, so additive modes need no manual premultiplication. This is also the only blending available: a shader or pipeline target's own draw runs with GL blending disabled, so overlapping geometry within one pass overwrites rather than accumulates.
+
 For loading images from URLs or bytes without working directly with textures, use the [`<Image>`](components.md#image) component instead.
 
 ---
@@ -239,6 +241,8 @@ createTexture(data: Uint8Array, width: number, height: number): number
 
 Uploads raw RGBA pixel data to the GPU and returns a texture ID. Pass the returned ID as the `src` prop on a `<texture>` element.
 
+Sampling state is fixed and not configurable: every texture samples with linear filtering (there is no nearest/point magnification, and no mipmaps exist). Wrapping depends on where the texture came from - shader and pipeline render targets are clamp-to-edge, while `createTexture`/`createMutableTexture` textures repeat outside `0..1`.
+
 ```js
 let img = decodeImage(bytes)
 let id = createTexture(img.data, img.width, img.height)
@@ -257,7 +261,11 @@ A live shader's sampler2D inputs can also be retargeted directly with `setShader
 
 ### Raw shading layer
 
-`createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources. Underneath sits the raw GL model, exposed directly:
+`createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources.
+
+That injection is conditional. A source that starts with its own `#version` line is compiled exactly as written, so `createShader` doubles as the complete-source path: a shader that declares its own uniform names - one ported from elsewhere - runs unchanged without dropping to the raw layer below. The built-in vertex stage still supplies `vUV` to such a source; declare `in vec2 vUV;` yourself to read it. Reach for the raw layer for what it alone gives: sharing one compile across several targets, or holding a program with no target yet.
+
+Underneath sits the raw GL model, exposed directly:
 
 ```ts
 compileShader(stage: "vertex" | "fragment", source: string, opts?: { header?: boolean }): number

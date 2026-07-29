@@ -7,6 +7,18 @@
 // Layering: compileShader/linkProgram are the raw GL primitives (complete
 // sources, explicit header opt-in); createShader/createPipeline are fused
 // conveniences (compile + link + target in one call, curated preamble).
+//
+// Sampling state is fixed, not an option: every texture id samples with linear
+// filtering (there is no nearest/point magnification, and no mipmaps exist).
+// Wrapping differs by origin - shader and pipeline render targets are
+// clamp-to-edge, while createTexture/createMutableTexture textures repeat
+// outside 0..1.
+//
+// Compositing several targets is a render-tree job, not a shader one: stack
+// `<texture>` elements and set their `blendMode` (the full Skia set, e.g.
+// "plus" for an additive pass over a base pass) instead of writing a pass that
+// samples both. Blending WITHIN one draw is unavailable - a target's own draw
+// runs with GL blending disabled.
 
 declare module "flux:gpu" {
   /**
@@ -51,6 +63,14 @@ declare module "flux:gpu" {
    * and the program lives and dies with the target. To share one compile
    * across targets (or hold a program with no target yet), use the raw layer:
    * {@link compileShader} + {@link linkProgram} + {@link createShaderTarget}.
+   *
+   * The preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
+   * `fragColor`) is injected only into sources that do not declare their own
+   * `#version` line. A source that starts with `#version 300 es` is compiled
+   * exactly as written, so a shader with its own uniform names (a port from
+   * elsewhere) needs no rewriting and no drop to the raw layer. The built-in
+   * vertex stage still supplies `vUV` to a complete source; declare
+   * `in vec2 vUV;` yourself to read it. Same rule on {@link createPipeline}.
    */
   export function createShader(
     fragmentSrc: string,

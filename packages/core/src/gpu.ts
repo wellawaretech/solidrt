@@ -7,6 +7,18 @@
 // to hold a params prop, e.g. a shader that only feeds another shader as a
 // sampler2D input. The imperative primitives (uploadTexture, setShaderParams,
 // destroyTexture, ...) live in the `flux:gpu` module.
+//
+// Sampling state is fixed, not an option: every texture id samples with linear
+// filtering (no nearest/point magnification, no mipmaps). Wrapping differs by
+// origin - shader and pipeline render targets are clamp-to-edge, while
+// createTexture/createMutableTexture textures repeat outside 0..1.
+//
+// Combining several passes is a render-tree job, not a shader one: stack
+// `<texture>` elements and set their `blendMode` (e.g. `blendMode="plus"` for
+// an additive pass over a base pass) instead of writing a pass that samples
+// both. Blending WITHIN one draw is unavailable - a target's own draw runs
+// with GL blending disabled, so overlapping geometry in a single pipeline
+// overwrites rather than accumulates.
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
@@ -116,6 +128,14 @@ export function createMutableTexture(data: Uint8Array, width: number, height: nu
  * with `{ manual: true }`); create outside any reactive scope for
  * app-lifetime shaders. For a shader whose source or inputs change
  * reactively, use {@link createShaderMemo} instead.
+ *
+ * That preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
+ * `fragColor`) is injected only into sources that do not declare their own
+ * `#version` line. A source starting with `#version 300 es` compiles exactly
+ * as written, so a shader carrying its own uniform names - one ported from
+ * elsewhere - runs unchanged here without dropping to compileShader /
+ * linkProgram. The built-in vertex stage still supplies `vUV`; declare
+ * `in vec2 vUV;` yourself to read it.
  */
 export function createShader(
   fragmentSrc: string,

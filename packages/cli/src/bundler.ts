@@ -11,40 +11,48 @@ import { state, print, requireBinary } from "./util"
 import { buildManifest } from "./project"
 
 // Babel plugin: rewrite `import data from "./x" with { type: "binary" }` into an
-// inline Uint8Array of the file's bytes. The import attribute is invisible to
+// inline Uint8Array of the file's bytes, and `with { type: "text" }` into an
+// inline string of its UTF-8 contents. The import attribute is invisible to
 // Bun's bundler and its plugins in this Bun version, so we handle it here in the
 // transform where the AST still carries it. Inlining (rather than emitting a
 // separate asset) keeps a single bundle output and hands JS a Uint8Array, which
-// is what createImage and friends expect. Decoded at runtime via the global
-// atob; for ASCII-extension files (.jpg/.png/...) we may add an attribute-free
-// path later.
-function binaryImport({ types: t }: { types: any }) {
+// is what createImage and friends expect. Binary is decoded at runtime via the
+// global atob; for ASCII-extension files (.jpg/.png/...) we may add an
+// attribute-free path later. Both attributes work on any extension, so shader
+// and other text sources inline by attribute the same way bytes do; `.svg` is
+// additionally text-loaded without an attribute (see Bun's `loader` below).
+function inlineImport({ types: t }: { types: any }) {
   return {
     visitor: {
       ImportDeclaration(path: any, pluginState: any) {
         let attrs = path.node.attributes ?? path.node.assertions
-        let isBinary = attrs?.some((a: any) => a.key.name === "type" && a.value.value === "binary")
-        if (!isBinary) return
+        let kind = attrs?.find((a: any) => a.key.name === "type")?.value.value
+        if (kind !== "binary" && kind !== "text") return
 
         let def = path.node.specifiers.find((s: any) => s.type === "ImportDefaultSpecifier")
         if (!def) {
           throw path.buildCodeFrameError(
-            'A binary import needs a default import: import data from "./file" with { type: "binary" }',
+            `A ${kind} import needs a default import: import data from "./file" with { type: "${kind}" }`,
           )
         }
 
         let importer = pluginState.file.opts.filename as string
         let abs = resolvePath(dirname(importer), path.node.source.value)
-        let b64 = readFileSync(abs).toString("base64")
 
-        // var <local> = Uint8Array.from(atob("<b64>"), c => c.charCodeAt(0))
-        let expr = t.callExpression(t.memberExpression(t.identifier("Uint8Array"), t.identifier("from")), [
-          t.callExpression(t.identifier("atob"), [t.stringLiteral(b64)]),
-          t.arrowFunctionExpression(
-            [t.identifier("c")],
-            t.callExpression(t.memberExpression(t.identifier("c"), t.identifier("charCodeAt")), [t.numericLiteral(0)]),
-          ),
-        ])
+        // text: var <local> = "<contents>"
+        // binary: var <local> = Uint8Array.from(atob("<b64>"), c => c.charCodeAt(0))
+        let expr =
+          kind === "text"
+            ? t.stringLiteral(readFileSync(abs, "utf8"))
+            : t.callExpression(t.memberExpression(t.identifier("Uint8Array"), t.identifier("from")), [
+                t.callExpression(t.identifier("atob"), [t.stringLiteral(readFileSync(abs).toString("base64"))]),
+                t.arrowFunctionExpression(
+                  [t.identifier("c")],
+                  t.callExpression(t.memberExpression(t.identifier("c"), t.identifier("charCodeAt")), [
+                    t.numericLiteral(0),
+                  ]),
+                ),
+              ])
         path.replaceWith(t.variableDeclaration("var", [t.variableDeclarator(t.identifier(def.local.name), expr)]))
       },
     },
@@ -65,7 +73,7 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
 
 // Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
 // generate, targeting @solidrt/core) plus the TS preset. Plain .js/.ts app
-// modules take the same path (solid is a no-op without JSX) so binaryImport
+// modules take the same path (solid is a no-op without JSX) so inlineImport
 // can rewrite their `with { type: "binary" }` imports too; dependency code
 // (node_modules) skips the babel detour and keeps Bun's native loaders.
 // With `babelMaps`, each file's transform map (original -> babel output) is
@@ -82,7 +90,7 @@ function solidPlugin(babelMaps?: Map<string, object>): BunPlugin {
           filename: args.path,
           sourceMaps: !!babelMaps,
           presets: [[solid, { moduleName: "@solidrt/core", generate: "universal" }], [ts]],
-          plugins: [jsx, binaryImport],
+          plugins: [jsx, inlineImport],
         })
         if (babelMaps && transforms?.map) babelMaps.set(args.path, transforms.map)
         return { contents: transforms?.code ?? "", loader: "js" }

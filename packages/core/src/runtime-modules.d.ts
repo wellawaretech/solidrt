@@ -8,9 +8,25 @@ declare module "*.svg" {
   export default content
 }
 
+// Text asset imports: `import src from "./effect.glsl" with { type: "text" }`.
+// The bundler inlines the file's UTF-8 contents as a string literal, so a
+// shader source travels in the bundle and needs no runtime read.
+declare module "*.glsl" {
+  const content: string
+  export default content
+}
+declare module "*.vert" {
+  const content: string
+  export default content
+}
+declare module "*.frag" {
+  const content: string
+  export default content
+}
+
 // Binary asset imports: `import data from "./pic.png" with { type: "binary" }`.
 // The bundler inlines the file's bytes as a Uint8Array (see packages/cli
-// bundler `binaryImport`); feed it straight into createImage/decodeImage.
+// bundler `inlineImport`); feed it straight into createImage/decodeImage.
 declare module "*.png" {
   const bytes: Uint8Array
   export default bytes

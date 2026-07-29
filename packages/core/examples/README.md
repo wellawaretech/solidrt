@@ -35,7 +35,8 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Images and GPU
 - `image.tsx` - `createImage` (async value: fetch + decode + upload) read inside a `<Loading>` boundary and shown with `<texture>`.
 - `inline-image.tsx` - bytes already in memory: `decodeImage` + `createTexture` (both synchronous) show an image with no `<Loading>` boundary. The sync counterpart to `image.tsx`.
-- `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop.
+- `gpu-shader.tsx` - a GLSL fragment shader rendered to a texture, animated by driving its `iTime` uniform declaratively through the `<texture params={{...}}>` prop. Shows both source dialects side by side: without a `#version` line the runtime injects the `vUV`/`iResolution`/`iTime`/`fragColor` preamble, while a source starting with `#version 300 es` is compiled exactly as written and names its own uniforms - which is what lets a shader written elsewhere run unchanged.
+- `gpu-texture-blend.tsx` - compositing two shader targets as stacked `<texture>` layers with `blendMode` ("plus" additive over a base pass), the alternative to a third shader that samples both. Click toggles against `"source-over"` to show why. Also the only blending available: a target's own draw has GL blending disabled.
 - `gpu-raw-program.tsx` - the raw shading layer: compileShader/linkProgram/createShaderTarget, one vertex stage shared by two programs, with and without the standard header.
 - `window-shader.tsx` - the `shader` prop on `<window>`: the finished frame drawn through a raw-linked warp program before present, click to toggle between warp and identity.
 - `window-shader-history.tsx` - the window shader's frame history: `previous` binds last frame as uPrevious, drawn as a one-frame motion echo behind an orbiting square; click toggles the echo term.
@@ -47,4 +48,5 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `svg.tsx` - `<svg src={...}>` draws a whole SVG *document string* (not HTML/JSX children); multi-color fills vs a `currentColor` icon recolored by the `color` prop. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `src`.
 
 ## Bundling assets
-- `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path). `with { type: "text" }` works the same way for a string.
+- `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path).
+- `text-import.tsx` - `with { type: "text" }`, the string counterpart: inlines a `.glsl` shader source (`wave.glsl`) into the bundle, available synchronously with no runtime read. Works on any extension; `.svg` needs no attribute and `.glsl`/`.vert`/`.frag` are declared as text modules already.

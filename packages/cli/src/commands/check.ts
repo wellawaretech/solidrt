@@ -60,11 +60,11 @@ function findTsc(fromDir: string): string | null {
 
 // Typecheck the entry's program, not the enclosing project: a transient
 // config extends the project's tsconfig and roots the program at the entry
-// alone, so tsc checks exactly the entry's import closure - unrelated files
-// are excluded by construction. The config lives in the project-local
-// .srt-data (the dev-artifact dir; absolute paths inside, so its location
-// only matters for type-package resolution, which walks up to the project's
-// node_modules from there).
+// alone (plus the project's ambient declarations), so tsc checks exactly the
+// entry's import closure - unrelated files are excluded by construction. The
+// config lives in the project-local .srt-data (the dev-artifact dir; absolute
+// paths inside, so its location only matters for type-package resolution,
+// which walks up to the project's node_modules from there).
 export async function typecheck(root: string, entry: string): Promise<{ app: Diagnostic[]; hidden: number } | null> {
   let tsconfig = join(root, "tsconfig.json")
   if (!existsSync(tsconfig)) {
@@ -79,10 +79,14 @@ export async function typecheck(root: string, entry: string): Promise<{ app: Dia
   let dataDir = join(root, ".srt-data")
   mkdirSync(dataDir, { recursive: true })
   let config = join(dataDir, `typecheck-${process.pid}.tsconfig.json`)
-  // include: [] overrides any include inherited from the extended config -
-  // files and include are unioned, so without this a base config's include
-  // would drag the whole project back into the program.
-  await Bun.write(config, JSON.stringify({ extends: tsconfig, include: [], files: [resolve(entry)] }))
+  // The include narrows the inherited one (files and include are unioned, so
+  // without it a base config's include would drag the whole project back into
+  // the program) down to declaration files only. Those are the one thing the
+  // entry's import closure cannot reach: an ambient `declare module "*.glsl"`
+  // applies precisely because nothing imports it, so entry-only rooting would
+  // silently drop it and every asset import would fail with TS2307. The
+  // pattern is relative to this config, which sits one level under the root.
+  await Bun.write(config, JSON.stringify({ extends: tsconfig, include: ["../**/*.d.ts"], files: [resolve(entry)] }))
   try {
     let proc = Bun.spawn([tsc, "-p", config, "--noEmit", "--pretty", "false"], {
       cwd: root,
