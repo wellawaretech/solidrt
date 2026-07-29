@@ -2,6 +2,7 @@ package com.solidrt.app;
 
 import android.content.Intent;
 import android.content.res.AssetManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -53,11 +54,17 @@ public class MainActivity extends SDLActivity {
         // Report the IME inset to native whenever insets change (keyboard
         // show/hide). Listens on the content view so it sees the insets before
         // the SDL surface; returns them unconsumed so SDL still gets them.
-        View content = findViewById(android.R.id.content);
-        content.setOnApplyWindowInsetsListener((v, insets) -> {
-            nativeKeyboardInset(insets.getInsets(WindowInsets.Type.ime()).bottom);
-            return insets;
-        });
+        //
+        // WindowInsets.Type is API 30+, and there is no equivalent IME inset on
+        // older releases, so below that we skip the listener entirely and leave
+        // the inset at 0 (content simply does not lift for the keyboard).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            View content = findViewById(android.R.id.content);
+            content.setOnApplyWindowInsetsListener((v, insets) -> {
+                nativeKeyboardInset(insets.getInsets(WindowInsets.Type.ime()).bottom);
+                return insets;
+            });
+        }
     }
 
     private void extractAssets() {
