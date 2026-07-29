@@ -1019,7 +1019,7 @@ impl RasterState {
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
         let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
-        shader.render(&self.gl, &shader.last_params(), &resolved);
+        shader.render(&self.gl, &resolved);
       }
     }
     self.dirty.clear();

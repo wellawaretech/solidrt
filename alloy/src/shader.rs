@@ -499,8 +499,10 @@ pub struct ShaderTexture {
   /// whose contents or registry entry changed is picked up automatically.
   sampler_bindings: Vec<(String, u64)>,
   mesh: Option<MeshState>,
-  /// Params applied on the most recent render, kept so a vertex-buffer write or
-  /// draw-count change can re-render without the caller re-supplying them.
+  /// The target's current uniform values, folded in by `merge_params` (its
+  /// only writer) and read by every render. Held here so a re-render the app
+  /// did not ask for directly - a vertex-buffer write, a draw-count change, a
+  /// sampled input that changed - needs no params from the caller.
   last_params: RefCell<Vec<(String, ParamValue)>>,
   /// Declared sampling for this target's output (how OTHER passes and the
   /// display draw sample it; the target's own inputs carry their own states).
@@ -960,8 +962,8 @@ impl ShaderTexture {
     Ok(())
   }
 
-  /// The params applied on the most recent render, for re-renders triggered by
-  /// vertex-buffer writes or draw-count changes.
+  /// A copy of the target's current uniform values, for resource
+  /// introspection (`render` reads the record directly).
   pub fn last_params(&self) -> Vec<(String, ParamValue)> {
     self.last_params.borrow().clone()
   }
@@ -1097,26 +1099,20 @@ impl ShaderTexture {
     }
   }
 
-  /// Render the shader into its target texture with the given float params and
-  /// resolved sampler inputs (uniform name -> source GL texture, in the order
-  /// `sampler_bindings` declared them). See `run_pass` for the GL state
-  /// contract; Context::submit's per-frame fence orders the work ahead of the
-  /// render thread sampling the target from its shared GL context, so no
-  /// glFinish is needed here.
-  pub fn render(&self, gl: &glow::Context, params: &[(String, ParamValue)], textures: &[PassInput]) {
-    // Recorded for both kinds: pipelines need it for buffer-write re-renders,
-    // and resource introspection reports it as the target's current uniforms.
-    // Re-renders triggered with an empty list (a sampled texture's contents
-    // changed before any params update) keep the previous record: uniforms are
-    // program state in GL, so the old values still apply.
-    if !params.is_empty() {
-      *self.last_params.borrow_mut() = params.to_vec();
-    }
+  /// Render the shader into its target texture with its current params (see
+  /// `merge_params`, the only writer) and the given resolved sampler inputs
+  /// (uniform name -> source GL texture, in the order `sampler_bindings`
+  /// declared them). See `run_pass` for the GL state contract;
+  /// Context::submit's per-frame fence orders the work ahead of the render
+  /// thread sampling the target from its shared GL context, so no glFinish is
+  /// needed here.
+  pub fn render(&self, gl: &glow::Context, textures: &[PassInput]) {
+    let params = self.last_params.borrow();
     let draw = match &self.mesh {
       None => PassDraw::Fullscreen { vertex_count: 3, clear: None },
       Some(mesh) => PassDraw::Mesh(mesh),
     };
-    run_pass(gl, &self.program, Some(self.fbo), self.width, self.height, params, textures, draw);
+    run_pass(gl, &self.program, Some(self.fbo), self.width, self.height, &params, textures, draw);
   }
 }
 
