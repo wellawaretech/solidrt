@@ -29,7 +29,7 @@ use crate::context::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, WindowShader,
 };
 use crate::gl;
-use crate::shader::{release_program, AttrFormat, GpuBuffer, ShaderProgram, ShaderStage, ShaderTexture};
+use crate::shader::{release_program, AttrFormat, GpuBuffer, ParamValue, ShaderProgram, ShaderStage, ShaderTexture};
 use crate::texture::GpuTexture;
 
 /// Owned form of `context::PipelineSpec` (whose fields borrow from JS values),
@@ -39,7 +39,7 @@ pub(crate) struct PipelineSpecOwned {
   pub height: u32,
   pub vertex_src: String,
   pub fragment_src: String,
-  pub params: Vec<(String, f32)>,
+  pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<(String, u64)>,
   pub attributes: Vec<(String, String)>,
   pub buffer_id: u64,
@@ -56,7 +56,7 @@ pub(crate) struct PipelineSpecOwned {
 pub(crate) struct TargetSpecOwned {
   pub width: u32,
   pub height: u32,
-  pub params: Vec<(String, f32)>,
+  pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<(String, u64)>,
   pub attributes: Vec<(String, String)>,
   pub buffer_id: u64,
@@ -134,7 +134,7 @@ pub(crate) enum RasterCmd {
     width: u32,
     height: u32,
     fragment_src: String,
-    params: Vec<(String, f32)>,
+    params: Vec<(String, ParamValue)>,
     textures: Vec<(String, u64)>,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
@@ -163,7 +163,7 @@ pub(crate) enum RasterCmd {
   /// allocated lazily by the first shaded frame and freed on clear.
   SetWindowShader { shader: Option<WindowShader> },
   /// Re-render an existing shader/pipeline target with new params.
-  UpdateShaderParams { id: u64, params: Vec<(String, f32)> },
+  UpdateShaderParams { id: u64, params: Vec<(String, ParamValue)> },
   /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
   /// name and re-render it with its last-applied params. Unnamed bindings
   /// keep their current source.
@@ -461,7 +461,7 @@ impl RasterState {
           }
         }
       }
-      let mut shed_params: HashMap<u64, Vec<(String, f32)>> = HashMap::new();
+      let mut shed_params: HashMap<u64, Vec<(String, ParamValue)>> = HashMap::new();
       for (i, cmd) in batch.into_iter().enumerate() {
         // Any command that can change what a frame samples (texture uploads,
         // target renders, program changes, ...) invalidates the clean-tree
@@ -1039,7 +1039,7 @@ impl RasterState {
     width: u32,
     height: u32,
     fragment_src: &str,
-    params: &[(String, f32)],
+    params: &[(String, ParamValue)],
     textures: Vec<(String, u64)>,
   ) -> Result<Texture, String> {
     let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?;

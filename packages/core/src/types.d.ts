@@ -299,8 +299,12 @@ export interface WindowProps extends LayoutProps, PointerProps {
 export interface WindowShaderProps {
   /** Linked program handle from linkProgram. */
   program: number
-  /** Float uniforms filled by name, paced to the next real repaint. */
-  params?: Record<string, number>
+  /**
+   * Uniforms filled by name, paced to the next real repaint. A number drives
+   * a scalar (`float`/`int`); a flat number array drives the declared GLSL
+   * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
+   */
+  params?: Record<string, number | number[]>
   /** Extra sampler2D inputs: uniform name to texture id. */
   textures?: Record<string, number>
   /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
@@ -434,6 +438,9 @@ export interface TextureProps extends Position, PaintProps, PointerProps {
   srcH?: number
   // Shader uniform values, when src names a shader texture. Applied at the
   // next repaint (not synchronously), so a fast-changing signal stays paced
-  // to real frames rather than triggering a GL render pass per write.
-  params?: Record<string, number>
+  // to real frames rather than triggering a GL render pass per write. A
+  // number drives a scalar (`float`/`int`); a flat number array drives the
+  // declared GLSL type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major)
+  // for `mat4`.
+  params?: Record<string, number | number[]>
 }

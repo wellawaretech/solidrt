@@ -4,6 +4,7 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, Point, Rect, Size as ISize, TextureSampling};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
+use crate::shader::ParamValue;
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };
@@ -75,7 +76,7 @@ pub struct Texture {
   // into this texture id) and cleared the next time this element is actually
   // built, so a prop write only ever costs a field write - the GPU work stays
   // paced to real frames instead of firing once per reactive update.
-  pending_params: RefCell<Option<Vec<(String, f32)>>>,
+  pending_params: RefCell<Option<Vec<(String, ParamValue)>>>,
   // The same paint every other kind carries, so a texture composites like one:
   // `blend_mode` is the reason it is here (stacking GPU layers additively in
   // the tree instead of hand-writing a compositing shader pass). A raster draw
@@ -224,7 +225,7 @@ impl Texture {
 
   // Only meaningful when texture_id names a shader texture; applied at the
   // next build (see pending_params above), not here.
-  pub fn set_params(&mut self, params: Vec<(String, f32)>) -> Damage {
+  pub fn set_params(&mut self, params: Vec<(String, ParamValue)>) -> Damage {
     *self.pending_params.get_mut() = Some(params);
     Damage::Paint
   }

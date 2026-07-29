@@ -9,6 +9,7 @@ use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{PipelineSpecOwned, RasterCmd, RasterSender, TargetSpecOwned};
+use crate::shader::ParamValue;
 use crate::texture::{TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -73,7 +74,7 @@ pub struct PipelineSpec<'a> {
   pub height: u32,
   pub vertex_src: &'a str,
   pub fragment_src: &'a str,
-  pub params: &'a [(String, f32)],
+  pub params: &'a [(String, ParamValue)],
   pub textures: &'a [(String, u64)],
   pub attributes: &'a [(String, String)],
   pub buffer_id: u64,
@@ -91,7 +92,7 @@ pub struct PipelineSpec<'a> {
 pub struct TargetSpec<'a> {
   pub width: u32,
   pub height: u32,
-  pub params: &'a [(String, f32)],
+  pub params: &'a [(String, ParamValue)],
   pub textures: &'a [(String, u64)],
   pub attributes: &'a [(String, String)],
   pub buffer_id: u64,
@@ -112,7 +113,7 @@ pub struct WindowShader {
   /// Registered program handle (see `link_shader_program`).
   pub program: u64,
   /// Float uniforms filled by name.
-  pub params: Vec<(String, f32)>,
+  pub params: Vec<(String, ParamValue)>,
   /// Extra sampler2D inputs: uniform name -> texture registry id.
   pub textures: Vec<(String, u64)>,
   pub vertex_count: i32,
@@ -185,7 +186,7 @@ pub struct GpuPipelineInfo {
   /// sampler2D uniform name -> source texture id.
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render.
-  pub params: Vec<(String, f32)>,
+  pub params: Vec<(String, ParamValue)>,
 }
 
 /// The successful outcome of a node capture: the registry id of the texture the
@@ -440,7 +441,7 @@ impl Context {
     width: u32,
     height: u32,
     fragment_src: &str,
-    params: &[(String, f32)],
+    params: &[(String, ParamValue)],
     textures: &[(String, u64)],
   ) -> Result<u64, String> {
     let id = self.textures.allocate_id();
@@ -462,7 +463,7 @@ impl Context {
   /// id and Impeller texture (no re-adoption); only the GL contents change, so
   /// the caller must request a frame for the new pixels to reach the screen.
   /// Sampler inputs are re-resolved, so updated source textures are picked up.
-  pub fn update_shader_params(&self, id: u64, params: &[(String, f32)]) -> Result<(), String> {
+  pub fn update_shader_params(&self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     if !self.shader_kinds.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }

@@ -140,11 +140,22 @@ pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> &'a str {
   value.as_str().unwrap_or_else(|| panic!("{what} must be a string"))
 }
 
-// { name: number } shader uniform values; non-numeric entries are skipped.
-pub(super) fn decode_params(value: &PropValue) -> Vec<(String, f32)> {
+// { name: number | number[] } shader uniform values, dispatched by the
+// shader's declared GLSL type in alloy (float/int scalar, vec2/3/4, mat4 as
+// 16 numbers). Non-numeric entries (and arrays with non-numeric elements) are
+// skipped.
+pub(super) fn decode_params(value: &PropValue) -> Vec<(String, alloy::ParamValue)> {
+  let decode_one = |v: &PropValue| -> Option<alloy::ParamValue> {
+    if let Some(n) = v.as_f64() {
+      Some(alloy::ParamValue::Scalar(n as f32))
+    } else {
+      let nums: Option<Vec<f32>> = v.as_list()?.iter().map(|x| x.as_f64().map(|n| n as f32)).collect();
+      nums.map(alloy::ParamValue::Array)
+    }
+  };
   value
     .as_map()
-    .map(|entries| entries.iter().filter_map(|(k, v)| v.as_f64().map(|n| (k.clone(), n as f32))).collect())
+    .map(|entries| entries.iter().filter_map(|(k, v)| decode_one(v).map(|p| (k.clone(), p))).collect())
     .unwrap_or_default()
 }
 

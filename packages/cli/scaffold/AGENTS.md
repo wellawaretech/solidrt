@@ -148,7 +148,11 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    starts with `#version 300 es` is compiled exactly as written - no preamble
    is injected, though the built-in vertex stage still supplies `vUV` - so a
    shader ported from elsewhere keeps its own uniform names without dropping
-   to compileShader/linkProgram. To combine several GPU passes, stack
+   to compileShader/linkProgram. Params drive any uniform type: a number
+   fills a `float`/`int` scalar, a flat number array fills `vec2`/`vec3`/
+   `vec4` (2/3/4 numbers) or `mat4` (16, column-major), dispatched by the
+   shader's own declaration - a ported shader's `vec2 uCenter` or Shadertoy's
+   `vec3 iResolution` needs no splitting into scalars. To combine several GPU passes, stack
    `<texture>` elements and set `blendMode` (e.g. a base pass plus an
    additive `blendMode="plus"` pass) rather than writing a compositing shader.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per

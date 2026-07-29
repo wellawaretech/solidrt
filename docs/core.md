@@ -207,7 +207,7 @@ Draws an SVG path. `d` is the SVG path data string. `x` and `y` offset the entir
 
 ### `<texture>`
 
-Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `w`, `h`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters.
+Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `w`, `h`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters. A param value is a number for a scalar uniform (`float`, or `int`/`bool`, truncated) or a flat number array for a typed one - the shader's own declaration decides the dispatch, so `vec2`/`vec3`/`vec4` take 2/3/4 numbers and `mat4` takes 16 in column-major order. A value whose length does not fit the declared type is skipped with a runtime warning. The same value shapes apply everywhere params appear (`createShader`, `createPipeline`, `setShaderParams`, the window shader).
 
 `fit` maps the pixels into the element box with CSS object-fit semantics: `"fill"` (default) stretches, `"cover"`/`"none"` crop, `"contain"`/`"scale-down"` letterbox, everything centered. Paint-only: the box (and hit testing) is unchanged.
 
@@ -279,7 +279,7 @@ destroyProgram(id: number): void   // programs; live targets keep theirs alive
 
 `compileShader` compiles one stage from complete GLSL ES - the source declares its own `#version 300 es`, precision, varyings, and uniforms; nothing is injected. `{ header: true }` explicitly prepends the standard header (`#version 300 es`, highp precision, `iResolution`/`iTime`, and `out vec4 fragColor` for fragment stages - the same text `createPipeline` injects); do not combine it with your own `#version`. Compile and link errors throw at the call, so a bad shader fails where it was written, not later at a prop write.
 
-`linkProgram` yields a program handle in its own id space. One compiled stage can back many programs, one program many targets, and creating a target compiles nothing - which is what makes precompiling all programs at startup and swapping between them free of compilation. `createShaderTarget` takes `createPipeline`'s options: a raw-linked program carries its own vertex stage, so a fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex stage, and a uniform named `iResolution`, if declared, is filled with the target size at render.
+`linkProgram` yields a program handle in its own id space. One compiled stage can back many programs, one program many targets, and creating a target compiles nothing - which is what makes precompiling all programs at startup and swapping between them free of compilation. `createShaderTarget` takes `createPipeline`'s options: a raw-linked program carries its own vertex stage, so a fullscreen pass is `{ vertexCount: 3 }` over a covering-triangle vertex stage, and a uniform named `iResolution`, if declared, is filled with the target size at render - as `vec2 (w, h)`, or `vec3 (w, h, 1.0)` for a source that declares it vec3 (the Shadertoy shape).
 
 `compileShader`, `linkProgram`, `destroyShader`, and `destroyProgram` are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
 
@@ -303,7 +303,7 @@ The program's contract:
 
 - `uniform sampler2D uSource`, filled by name, is the frame. Top-left origin like every sampled texture, so a vertex stage mapping it onto the window flips the v coordinate (`vUV = vec2(uv.x, 1.0 - uv.y)` for the standard covering triangle).
 - `uniform vec2 iResolution`, filled by name, is the window size in physical pixels - what the pass actually covers, unlike the logical points the rest of the API speaks.
-- `params` are float uniforms filled by name, paced to the next real repaint like every params prop. `textures` adds extra sampler2D inputs (a noise texture, a mask) by uniform name.
+- `params` are uniforms filled by name (numbers for scalars, flat number arrays for `vec2`/`vec3`/`vec4`/`mat4`, as on [`<texture>`](#texture)), paced to the next real repaint like every params prop. `textures` adds extra sampler2D inputs (a noise texture, a mask) by uniform name.
 - The draw is attributeless: `vertexCount` vertices (default 3, the covering triangle) as triangles, positions fetched via `gl_VertexID`. The window is cleared to opaque black first, so geometry that does not cover it still presents a defined frame.
 
 An identity program (`fragColor = texture(uSource, vUV)`) is pixel-identical to no shader at all. Swapping between two precompiled program handles compiles nothing; compile and link cost sits at the `compileShader`/`linkProgram` call sites. MCP `get_snapshot` renders the tree offscreen and shows the pre-shader image; the screen (and playback capture) shows the post-shader result.

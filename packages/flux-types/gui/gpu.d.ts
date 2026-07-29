@@ -22,6 +22,15 @@
 
 declare module "flux:gpu" {
   /**
+   * Shader uniform values by name. A number drives a scalar uniform (`float`,
+   * or `int`/`bool`, truncated); a flat number array drives a typed uniform
+   * whose declared GLSL type sets the expected length: 2/3/4 for
+   * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. Dispatch follows the
+   * shader's own declaration; a value whose length does not fit it is skipped
+   * with a runtime warning, as is a name with no active uniform.
+   */
+  export type ShaderParams = Record<string, number | number[]>
+  /**
    * Create an immutable texture from an RGBA8 pixel buffer (exactly
    * width*height*4 bytes). Returns the texture id.
    */
@@ -57,8 +66,8 @@ declare module "flux:gpu" {
   export function destroyTexture(id: number): void
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
-   * size. `params` sets float uniforms by name; `textures` binds sampler2D
-   * uniforms to texture ids. Returns the resulting texture id. The fused
+   * size. `params` sets uniforms by name (see {@link ShaderParams} for the
+   * value shapes); `textures` binds sampler2D uniforms to texture ids. Returns the resulting texture id. The fused
    * convenience: one call compiles a program and creates a target over it,
    * and the program lives and dies with the target. To share one compile
    * across targets (or hold a program with no target yet), use the raw layer:
@@ -71,12 +80,14 @@ declare module "flux:gpu" {
    * elsewhere) needs no rewriting and no drop to the raw layer. The built-in
    * vertex stage still supplies `vUV` to a complete source; declare
    * `in vec2 vUV;` yourself to read it. Same rule on {@link createPipeline}.
+   * A complete source may also declare `iResolution` as vec3 (the Shadertoy
+   * shape); it is then filled as `(w, h, 1.0)`.
    */
   export function createShader(
     fragmentSrc: string,
     width: number,
     height: number,
-    params?: Record<string, number>,
+    params?: ShaderParams,
     textures?: Record<string, number>,
   ): number
   /**
@@ -128,7 +139,7 @@ declare module "flux:gpu" {
     width: number,
     height: number,
     opts?: {
-      params?: Record<string, number>
+      params?: ShaderParams
       textures?: Record<string, number>
       attributes?: VertexAttribute[]
       buffer?: number
@@ -145,8 +156,11 @@ declare module "flux:gpu" {
    * immediately.
    */
   export function destroyProgram(id: number): void
-  /** Update a shader texture's float uniforms by name and re-render it. */
-  export function setShaderParams(id: number, params: Record<string, number>): void
+  /**
+   * Update a shader texture's uniforms by name and re-render it (see
+   * {@link ShaderParams} for the value shapes).
+   */
+  export function setShaderParams(id: number, params: ShaderParams): void
   /**
    * Rebind a shader texture's sampler2D inputs by uniform name and re-render
    * it with its last-applied params - the sampler analog of
@@ -193,7 +207,7 @@ declare module "flux:gpu" {
     width: number,
     height: number,
     opts?: {
-      params?: Record<string, number>
+      params?: ShaderParams
       textures?: Record<string, number>
       attributes?: VertexAttribute[]
       buffer?: number

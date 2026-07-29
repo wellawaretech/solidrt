@@ -4,8 +4,8 @@
 //
 // There are two source dialects and the source itself picks which one applies.
 // WITHOUT a #version line the runtime injects a preamble, so the body may
-// reference vUV (0..1, top-left origin), iResolution, iTime, and any
-// `uniform float` it declares - the left square below. A source that STARTS
+// reference vUV (0..1, top-left origin), iResolution, iTime, and any uniform
+// it declares - the left square below. A source that STARTS
 // with #version 300 es is taken as complete and compiled exactly as written:
 // nothing is injected and it names its own uniforms - the right square.
 //
@@ -19,7 +19,10 @@
 // iResolution is filled in for you, but iTime is NOT - drive it (and any other
 // uniform) declaratively via the <texture> element's params prop; it applies at
 // the next repaint, so a signal updated every frame stays paced to actual frames.
-// The shader's size is baked in at creation.
+// A param value is a number for a scalar uniform or a flat number array for a
+// typed one (2/3/4 numbers for vec2/vec3/vec4, 16 column-major for mat4),
+// dispatched by the shader's own declaration - uTint below is a vec3 driven
+// from one array value. The shader's size is baked in at creation.
 import { render, onFrame, createSignal } from "@solidrt/core"
 import { createShader } from "@solidrt/core/gpu"
 
@@ -36,24 +39,26 @@ void main() {
 `
 
 // Complete-source dialect: declares its own version, precision, varying and
-// output, and calls its time uniform uSpin rather than iTime.
+// output, and calls its time uniform uSpin rather than iTime. uTint is a
+// typed (vec3) uniform, filled from a 3-number array param.
 let RAW_FRAGMENT = `#version 300 es
 precision highp float;
 in vec2 vUV;
 out vec4 fragColor;
 uniform float uSpin;
+uniform vec3 uTint;
 void main() {
   vec2 p = vUV - 0.5;
   float a = atan(p.y, p.x) + uSpin;
   float r = length(p);
   float band = 0.5 + 0.5 * sin(a * 6.0 + r * 18.0);
-  fragColor = vec4(band * 0.9, band * 0.4, 1.0 - band * 0.6, 1.0);
+  fragColor = vec4(band * uTint.r, band * uTint.g, 1.0 - band * uTint.b, 1.0);
 }
 `
 
 function App() {
   let id = createShader(FRAGMENT, 512, 512, { iTime: 0 })
-  let rawId = createShader(RAW_FRAGMENT, 512, 512, { uSpin: 0 })
+  let rawId = createShader(RAW_FRAGMENT, 512, 512, { uSpin: 0, uTint: [0.9, 0.4, 0.6] })
   let [time, setTime] = createSignal(0)
   onFrame((tick) => setTime(tick / 1000))
 

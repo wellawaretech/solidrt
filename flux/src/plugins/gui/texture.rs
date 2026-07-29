@@ -81,10 +81,24 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
 }
 
-// Flatten a JS { name: number } object into the (name, f32) pairs alloy matches
-// against the shader's uniforms by name. Non-numeric values are skipped.
-fn collect_params(obj: &Object<'_>) -> Vec<(String, f32)> {
-  obj.props::<String, f64>().filter_map(|r| r.ok()).map(|(k, v)| (k, v as f32)).collect()
+// Flatten a JS { name: number | number[] } object into the (name, value) pairs
+// alloy matches against the shader's uniforms by name and dispatches by the
+// declared GLSL type (float/int scalar, vec2/3/4, mat4 as 16 numbers).
+// Non-numeric values (and arrays with non-numeric elements) are skipped.
+fn collect_params(obj: &Object<'_>) -> Vec<(String, alloy::ParamValue)> {
+  let mut out = Vec::new();
+  for entry in obj.props::<String, rquickjs::Value>() {
+    let Ok((name, value)) = entry else { continue };
+    if let Some(n) = value.as_number() {
+      out.push((name, alloy::ParamValue::Scalar(n as f32)));
+    } else if let Some(arr) = value.as_array() {
+      let nums: Result<Vec<f32>, _> = arr.iter::<f64>().map(|r| r.map(|n| n as f32)).collect();
+      if let Ok(nums) = nums {
+        out.push((name, alloy::ParamValue::Array(nums)));
+      }
+    }
+  }
+  out
 }
 
 // Flatten a JS { samplerName: textureId } object into (name, id) pairs alloy
@@ -97,7 +111,7 @@ fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
 // params/textures plus the mesh fields (meaningful for pipelines only, left
 // at their defaults otherwise).
 struct TargetOpts {
-  params: Vec<(String, f32)>,
+  params: Vec<(String, alloy::ParamValue)>,
   textures: Vec<(String, u64)>,
   attributes: Vec<(String, String)>,
   buffer_id: u64,

@@ -47,6 +47,26 @@ uniform vec2 iResolution;
 uniform float iTime;
 ";
 
+/// A shader uniform value as supplied from the app: a scalar or a flat
+/// component array. The shader's own declaration decides how components are
+/// dispatched (vec2/vec3/vec4/mat4, float or int scalar) - the value only
+/// carries numbers, matched against the reflected uniform type at render.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ParamValue {
+  Scalar(f32),
+  Array(Vec<f32>),
+}
+
+impl ParamValue {
+  /// The value's components as one flat slice (a scalar is one component).
+  pub fn components(&self) -> &[f32] {
+    match self {
+      ParamValue::Scalar(v) => std::slice::from_ref(v),
+      ParamValue::Array(a) => a.as_slice(),
+    }
+  }
+}
+
 /// A float vertex attribute's shape within the interleaved vertex buffer.
 #[derive(Clone, Copy, Debug)]
 pub enum AttrFormat {
@@ -325,10 +345,10 @@ impl GpuBuffer {
 /// held only by its target.
 pub struct ShaderProgram {
   program: glow::Program,
-  /// Active uniform name -> location, reflected once at link time. JS params
-  /// are matched to locations by name; iResolution is filled from the target
-  /// size at render.
-  uniforms: HashMap<String, glow::UniformLocation>,
+  /// Active uniform name -> (location, GL type), reflected once at link time.
+  /// JS params are matched to locations by name and dispatched by the
+  /// reflected type; iResolution is filled from the target size at render.
+  uniforms: HashMap<String, (glow::UniformLocation, u32)>,
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
@@ -441,7 +461,7 @@ pub struct ShaderTexture {
   mesh: Option<MeshState>,
   /// Params applied on the most recent render, kept so a vertex-buffer write or
   /// draw-count change can re-render without the caller re-supplying them.
-  last_params: RefCell<Vec<(String, f32)>>,
+  last_params: RefCell<Vec<(String, ParamValue)>>,
 }
 
 /// Target texture + FBO shared by both shader kinds. Returns (target, fbo)
@@ -533,20 +553,42 @@ pub fn create_layer_target(
   }
 }
 
-/// Reflect active uniforms so JS params can be matched to locations by name.
-fn reflect_uniforms(gl: &glow::Context, program: glow::Program) -> HashMap<String, glow::UniformLocation> {
+/// Reflect active uniforms so JS params can be matched to locations by name
+/// and dispatched by the declared GL type.
+fn reflect_uniforms(gl: &glow::Context, program: glow::Program) -> HashMap<String, (glow::UniformLocation, u32)> {
   let mut uniforms = HashMap::new();
   unsafe {
     let count = gl.get_active_uniforms(program);
     for i in 0..count {
       if let Some(u) = gl.get_active_uniform(program, i) {
         if let Some(loc) = gl.get_uniform_location(program, &u.name) {
-          uniforms.insert(u.name, loc);
+          uniforms.insert(u.name, (loc, u.utype));
         }
       }
     }
   }
   uniforms
+}
+
+/// Set one uniform from a param value, dispatching on the reflected GL type.
+/// A component count that does not match the declaration is skipped with a
+/// warning (renders run on the raster thread after fire-and-forget commands,
+/// so there is no JS call site left to throw at), as is a type outside the
+/// supported set - notably samplers, which are bound via `textures`, not
+/// params.
+fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, utype: u32, value: &ParamValue) {
+  let c = value.components();
+  unsafe {
+    match (utype, c.len()) {
+      (glow::FLOAT, 1) => gl.uniform_1_f32(Some(loc), c[0]),
+      (glow::INT | glow::BOOL, 1) => gl.uniform_1_i32(Some(loc), c[0] as i32),
+      (glow::FLOAT_VEC2, 2) => gl.uniform_2_f32(Some(loc), c[0], c[1]),
+      (glow::FLOAT_VEC3, 3) => gl.uniform_3_f32(Some(loc), c[0], c[1], c[2]),
+      (glow::FLOAT_VEC4, 4) => gl.uniform_4_f32(Some(loc), c[0], c[1], c[2], c[3]),
+      (glow::FLOAT_MAT4, 16) => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
+      _ => log::warn!("[shader] param '{name}' has {} component(s), which does not fit uniform type {utype:#x}; skipped", c.len()),
+    }
+  }
 }
 
 impl ShaderTexture {
@@ -841,7 +883,7 @@ impl ShaderTexture {
 
   /// The params applied on the most recent render, for re-renders triggered by
   /// vertex-buffer writes or draw-count changes.
-  pub fn last_params(&self) -> Vec<(String, f32)> {
+  pub fn last_params(&self) -> Vec<(String, ParamValue)> {
     self.last_params.borrow().clone()
   }
 
@@ -967,7 +1009,7 @@ impl ShaderTexture {
   /// contract; Context::submit's per-frame fence orders the work ahead of the
   /// render thread sampling the target from its shared GL context, so no
   /// glFinish is needed here.
-  pub fn render(&self, gl: &glow::Context, params: &[(String, f32)], textures: &[(String, glow::Texture)]) {
+  pub fn render(&self, gl: &glow::Context, params: &[(String, ParamValue)], textures: &[(String, glow::Texture)]) {
     // Recorded for both kinds: pipelines need it for buffer-write re-renders,
     // and resource introspection reports it as the last-applied uniforms.
     // Re-renders triggered with an empty list (a sampled texture's contents
@@ -1004,7 +1046,7 @@ pub fn render_program_to_window(
   program: &ShaderProgram,
   width: u32,
   height: u32,
-  params: &[(String, f32)],
+  params: &[(String, ParamValue)],
   textures: &[(String, glow::Texture)],
   vertex_count: i32,
 ) {
@@ -1041,7 +1083,7 @@ fn run_pass(
   fbo: Option<glow::Framebuffer>,
   width: u32,
   height: u32,
-  params: &[(String, f32)],
+  params: &[(String, ParamValue)],
   textures: &[(String, glow::Texture)],
   draw: PassDraw,
 ) {
@@ -1060,12 +1102,16 @@ fn run_pass(
     gl.viewport(0, 0, width as i32, height as i32);
     gl.use_program(Some(program.program));
 
-    if let Some(loc) = program.uniforms.get("iResolution") {
-      gl.uniform_2_f32(Some(loc), width as f32, height as f32);
+    // The preambles declare iResolution as vec2; a raw source may declare it
+    // vec3 (the Shadertoy contract), which gets the size with z = 1.
+    match program.uniforms.get("iResolution") {
+      Some((loc, glow::FLOAT_VEC2)) => gl.uniform_2_f32(Some(loc), width as f32, height as f32),
+      Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
+      _ => {}
     }
     for (name, value) in params {
-      if let Some(loc) = program.uniforms.get(name) {
-        gl.uniform_1_f32(Some(loc), *value);
+      if let Some((loc, utype)) = program.uniforms.get(name) {
+        apply_uniform(gl, name, loc, *utype, value);
       }
     }
 
@@ -1074,7 +1120,7 @@ fn run_pass(
     // (which assumes its own units) is not left looking at our textures.
     let mut prev_unit_bindings: Vec<(u32, i32)> = Vec::new();
     for (unit, (name, tex)) in textures.iter().enumerate() {
-      let Some(loc) = program.uniforms.get(name) else { continue };
+      let Some((loc, _)) = program.uniforms.get(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);
       prev_unit_bindings.push((unit, gl.get_parameter_i32(glow::TEXTURE_BINDING_2D)));

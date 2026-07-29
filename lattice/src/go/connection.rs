@@ -886,7 +886,13 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
         "textureId": p.texture_id,
         "kind": p.kind,
         "textures": p.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
-        "params": p.params.iter().map(|(name, v)| (name.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+        "params": p.params.iter().map(|(name, v)| {
+          let v = match v {
+            alloy::ParamValue::Scalar(n) => serde_json::json!(n),
+            alloy::ParamValue::Array(a) => serde_json::json!(a),
+          };
+          (name.clone(), v)
+        }).collect::<serde_json::Map<_, _>>(),
       });
       let map = obj.as_object_mut().expect("pipeline json is an object");
       if let Some(program_id) = p.program_id {

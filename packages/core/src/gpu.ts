@@ -54,7 +54,7 @@ export {
 // its buffer gained or lost dynamic geometry; destroyBuffer is the manual
 // cleanup path for buffers created outside a reactive scope.
 export { destroyBuffer, setDrawCount } from "flux:gpu"
-export type { Topology, VertexAttribute } from "flux:gpu"
+export type { ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
 // owns these lifetimes. compileShader compiles one stage from complete GLSL
@@ -121,9 +121,11 @@ export function createMutableTexture(data: Uint8Array, width: number, height: nu
  * Compiles a GLSL ES 3.00 fragment shader and renders it into a texture,
  * returning the texture id (usable anywhere a normal texture id is, e.g.
  * `<texture src>`). The fragment body may reference `vUV` (0..1, top-left
- * origin), `iResolution`, `iTime`, and any `uniform float` it declares; drive
- * their values with `<texture src={id} params={{...}} />` (preferred) or, when
- * there is no `<texture>` element for it, imperatively with `setShaderParams`.
+ * origin), `iResolution`, `iTime`, and any uniform it declares (`float`/`int`
+ * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
+ * array); drive their values with `<texture src={id} params={{...}} />`
+ * (preferred) or, when there is no `<texture>` element for it, imperatively
+ * with `setShaderParams`.
  * `textures` binds each declared `uniform sampler2D` to an existing texture id
  * (e.g. a camera or decoded image) so the shader can read it; those inputs are
  * re-sampled on every params update, so live sources stay current. Frees the
@@ -144,7 +146,7 @@ export function createShader(
   fragmentSrc: string,
   width: number,
   height: number,
-  params?: Record<string, number>,
+  params?: gpu.ShaderParams,
   textures?: Record<string, number>,
   opts?: CreateOptions,
 ): number {
@@ -169,7 +171,7 @@ export function createShaderTarget(
   width: number,
   height: number,
   opts?: {
-    params?: Record<string, number>
+    params?: gpu.ShaderParams
     textures?: Record<string, number>
     attributes?: gpu.VertexAttribute[]
     buffer?: number
@@ -189,17 +191,27 @@ export type ShaderSpec = {
   fragmentSrc: string
   width: number
   height: number
-  params?: Record<string, number>
+  params?: gpu.ShaderParams
   textures?: Record<string, number>
 }
 
-// Shallow name->number equality for params/textures records; treats undefined
-// as the empty record.
-function sameRecord(a: Record<string, number> | undefined, b: Record<string, number> | undefined): boolean {
+// Shallow name->value equality for params/textures records; treats undefined
+// as the empty record. A param value may be a number or a flat number array
+// (typed uniforms), so arrays compare elementwise.
+function sameValue(a: number | number[] | undefined, b: number | number[] | undefined): boolean {
+  if (a === b) return true
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+function sameRecord(
+  a: Record<string, number | number[]> | undefined,
+  b: Record<string, number | number[]> | undefined,
+): boolean {
   if (a === b) return true
   let ka = a ? Object.keys(a) : []
   let kb = b ? Object.keys(b) : []
-  return ka.length === kb.length && ka.every(k => a![k] === b![k])
+  return ka.length === kb.length && ka.every(k => sameValue(a![k], b![k]))
 }
 
 /**
@@ -277,9 +289,11 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * e.g. `<texture src>`). Unlike `createShader` the vertex stage is yours:
  * declare `in` attributes matching `opts.attributes` (one interleaved vertex
  * in `opts.buffer`, a {@link createBuffer} id) and your own varyings toward
- * the fragment stage. Both sources may reference `iResolution`/`iTime` and any
- * `uniform float` they declare; drive values with `<texture src={id}
- * params={{...}} />` or `setShaderParams`, exactly like a fragment shader.
+ * the fragment stage. Both sources may reference `iResolution`/`iTime` and
+ * any uniform they declare (`float`/`int` scalars from a number,
+ * `vec2`/`vec3`/`vec4`/`mat4` from a flat number array); drive values with
+ * `<texture src={id} params={{...}} />` or `setShaderParams`, exactly like a
+ * fragment shader.
  * `opts.depth` attaches a private depth buffer (cleared + tested per render);
  * `opts.vertexCount` defaults to the whole buffer and can be changed later
  * with `setDrawCount`. Frees the texture and GL program when the reactive
@@ -292,7 +306,7 @@ export function createPipeline(
   width: number,
   height: number,
   opts?: {
-    params?: Record<string, number>
+    params?: gpu.ShaderParams
     textures?: Record<string, number>
     attributes?: gpu.VertexAttribute[]
     buffer?: number
