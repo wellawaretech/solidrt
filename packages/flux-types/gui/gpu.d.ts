@@ -389,7 +389,11 @@ declare module "flux:gpu" {
    * with their last-applied params.
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
-  /** Destroy a vertex buffer. Destroy pipelines drawing from it first. */
+  /**
+   * Destroy a vertex buffer. Pipeline textures drawing from it hold their own
+   * reference, so destruction order does not matter; further writes to the id
+   * throw.
+   */
   export function destroyBuffer(id: BufferId): void
   /**
    * Set how many vertices a pipeline texture draws and re-render it, e.g.

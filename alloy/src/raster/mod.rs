@@ -33,9 +33,9 @@ use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
-  release_pipeline, release_program, AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo,
-  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc,
-  PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, WindowShader,
+  release_buffer, release_pipeline, release_program, AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo,
+  GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
+  PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
@@ -206,8 +206,11 @@ pub(crate) struct RasterState {
   // Raw compiled stages in their own id space, inputs to LinkProgram. The GL
   // shader object is deleted on DestroyStage; linked programs are unaffected.
   stages: HashMap<u64, glow::Shader>,
-  // Vertex buffers pipelines draw from, in their own id space.
-  buffers: HashMap<u64, GpuBuffer>,
+  // Vertex buffers pipelines draw from, in their own id space. Targets hold
+  // their buffer by Rc, like programs and pipelines, so removal here only
+  // deletes the GL buffer once no target draws from it (see
+  // gpu::release_buffer).
+  buffers: HashMap<u64, Rc<GpuBuffer>>,
   // The declared window shader, with its retained layer texture. None = the
   // frame resolves straight to FBO 0 (the free path).
   window_shader: Option<WindowShaderState>,
@@ -535,7 +538,7 @@ impl RasterState {
             reply(
               tx,
               GpuBuffer::new(&self.gl, &data).map(|buffer| {
-                self.buffers.insert(id, buffer);
+                self.buffers.insert(id, Rc::new(buffer));
               }),
             );
           }
@@ -554,7 +557,7 @@ impl RasterState {
           }
           RasterCmd::DestroyBuffer { id } => {
             if let Some(buffer) = self.buffers.remove(&id) {
-              buffer.destroy(&self.gl);
+              release_buffer(&self.gl, buffer);
             }
           }
           RasterCmd::RasterizeDl { dl, width, height, aa, reply: tx } => {
@@ -1056,7 +1059,7 @@ impl RasterState {
   }
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<Texture, String> {
-    let (vbo, draw_count) = resolve_target_mesh(&self.buffers, &spec.pipeline.attributes, &spec.target)?;
+    let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &spec.pipeline.attributes, &spec.target)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
@@ -1065,7 +1068,7 @@ impl RasterState {
       &spec.fragment_src,
       spec.target.textures.clone(),
       spec.pipeline,
-      vbo,
+      buffer,
       spec.target.buffer,
       draw_count,
       spec.target.clear_color,
@@ -1100,7 +1103,7 @@ impl RasterState {
   fn create_shader_target(&mut self, id: u64, pipeline_id: u64, spec: TargetSpec) -> Result<Texture, String> {
     let pipeline =
       self.render_pipelines.get(&pipeline_id).ok_or_else(|| format!("pipeline {pipeline_id} not found"))?.clone();
-    let (vbo, draw_count) = resolve_target_mesh(&self.buffers, &pipeline.desc().attributes, &spec)?;
+    let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &pipeline.desc().attributes, &spec)?;
     let shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
@@ -1108,7 +1111,7 @@ impl RasterState {
       spec.width,
       spec.height,
       spec.textures.clone(),
-      vbo,
+      buffer,
       spec.buffer,
       draw_count,
       spec.clear_color,
@@ -1278,14 +1281,14 @@ impl RasterState {
 }
 
 /// Resolve a target's mesh bindings against the buffer registry: the source
-/// buffer's GL name and the effective draw count (a negative request means
-/// "the whole buffer", derived from buffer size / the pipeline's vertex
-/// stride).
+/// buffer (an Rc clone the target keeps for the VAO's lifetime) and the
+/// effective draw count (a negative request means "the whole buffer", derived
+/// from buffer size / the pipeline's vertex stride).
 fn resolve_target_mesh(
-  buffers: &HashMap<u64, GpuBuffer>,
+  buffers: &HashMap<u64, Rc<GpuBuffer>>,
   attributes: &[(String, AttrFormat)],
   spec: &TargetSpec,
-) -> Result<(Option<glow::Buffer>, i32), String> {
+) -> Result<(Option<Rc<GpuBuffer>>, i32), String> {
   let buffer = if spec.buffer != 0 {
     Some(buffers.get(&spec.buffer).ok_or_else(|| format!("buffer {} not found", spec.buffer))?)
   } else {
@@ -1300,7 +1303,7 @@ fn resolve_target_mesh(
       _ => 0,
     }
   };
-  Ok((buffer.map(|b| b.vbo), count))
+  Ok((buffer.cloned(), count))
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`

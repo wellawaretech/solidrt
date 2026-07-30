@@ -1,10 +1,14 @@
 use glow::HasContext;
+use std::rc::Rc;
 
 use super::prev_buffer;
 
-/// A vertex buffer usable as a pipeline's interleaved attribute source. Owned
-/// by the Context's buffer registry; pipelines reference it by registry id so a
-/// write re-renders every pipeline drawing from it.
+/// A vertex buffer usable as a pipeline's interleaved attribute source.
+/// Shared by Rc between the raster registry and each target's mesh state,
+/// like programs and pipelines, so either destruction order is safe: the GL
+/// buffer is deleted when the last user is gone (see `release_buffer`).
+/// Targets also record the registry id so a write re-renders every pipeline
+/// drawing from it.
 pub struct GpuBuffer {
   pub vbo: glow::Buffer,
   pub size: usize,
@@ -67,5 +71,15 @@ impl GpuBuffer {
 
   pub fn destroy(self, gl: &glow::Context) {
     unsafe { gl.delete_buffer(self.vbo) };
+  }
+}
+
+/// Drop a use of a shared vertex buffer, deleting the GL buffer when this was
+/// the last one. The raster thread is the only place buffer Rcs live, so
+/// try_unwrap succeeding is exactly "no registry entry and no target still
+/// draws from it" (same contract as `release_program`).
+pub fn release_buffer(gl: &glow::Context, buffer: Rc<GpuBuffer>) {
+  if let Ok(buffer) = Rc::try_unwrap(buffer) {
+    buffer.destroy(gl);
   }
 }

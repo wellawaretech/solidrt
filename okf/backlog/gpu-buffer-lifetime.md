@@ -2,11 +2,19 @@
 type: backlog-item
 title: Buffers held like programs
 description: Buffers are the one GPU id space with an ordered-destroy rule ("destroy pipelines drawing from it first") whose violation silently freezes geometry; holding them by Rc from targets, like programs and pipelines, deletes the rule and the failure mode together.
-status: open
+status: done
 timestamp: 2026-07-30T00:00:00Z
 ---
 
 # Buffers held like programs
+
+Shipped 2026-07-30, exactly per the shape below: the raster registry stores
+`Rc<GpuBuffer>`, each target's MeshState clones the Rc at create (it also
+keeps the registry id for write-driven re-renders), `DestroyBuffer` goes
+through the new `gpu::release_buffer` (the `release_program` pattern), and
+`ShaderTexture::destroy` releases the target's use. The ordered-destroy
+sentence is gone from `destroy_gpu_buffer`, `gpu.d.ts`, and core `gpu.ts`;
+`writeBuffer` to a destroyed id still errors (the id retires immediately).
 
 From [gpu-review](../analysis/gpu-review.md) (lesson 9), shortlist item 4 -
 the cheapest correctness item on its list.

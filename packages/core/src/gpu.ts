@@ -429,7 +429,7 @@ export function createPipeline(
  * creation, so reserve room up front for dynamic geometry. Freed automatically
  * when the reactive owner is disposed (opt out with `{ manual: true }`);
  * created outside a reactive scope you must call `destroyBuffer` yourself.
- * Destroy pipelines before their buffer.
+ * (Destruction order relative to pipelines does not matter.)
  */
 export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): gpu.BufferId {
   let id = gpu.createBuffer(toUint8(data))

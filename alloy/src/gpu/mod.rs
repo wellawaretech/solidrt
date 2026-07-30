@@ -12,7 +12,7 @@ mod spec;
 mod target;
 mod vocab;
 
-pub use buffer::GpuBuffer;
+pub use buffer::{release_buffer, GpuBuffer};
 pub use pass::{render_program_to_fbo, render_program_to_window, PassInput};
 pub use program::{compile_stage, delete_stage, release_pipeline, release_program, RenderPipeline, ShaderProgram};
 pub use resources::{

@@ -473,9 +473,10 @@ impl Context {
     Ok(())
   }
 
-  /// Free a vertex buffer. Destroy pipelines drawing from it first: the VAO
-  /// reference keeps the GL storage alive so they keep rendering stale
-  /// geometry, but further writes to the id error.
+  /// Free a vertex buffer: the id retires immediately (further writes error),
+  /// while targets drawing from it hold their own reference - like their
+  /// pipeline - so either destruction order is safe; the GL buffer is deleted
+  /// once the last such target is destroyed.
   pub fn destroy_gpu_buffer(&self, id: u64) {
     self.buffer_sizes.borrow_mut().remove(&id);
     self.send(RasterCmd::DestroyBuffer { id });

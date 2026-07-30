@@ -8,6 +8,7 @@ use std::cell::{Cell, RefCell};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
+use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, PassDraw, PassInput};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::vocab::{blend_name, vertex_stride, AttrFormat, ParamValue, PipelineDesc};
@@ -24,8 +25,12 @@ pub(super) struct MeshState {
   /// target.
   pipeline_id: Option<u64>,
   pub(super) vao: glow::VertexArray,
-  /// Registry id of the interleaved vertex buffer (Context resolves writes to
-  /// re-renders through this). 0 when the pipeline is attributeless.
+  /// The interleaved vertex buffer this target's VAO reads, held by Rc like
+  /// the pipeline so destroying the registry entry in either order is safe;
+  /// None when the pipeline is attributeless.
+  buffer: Option<Rc<GpuBuffer>>,
+  /// Registry id of that buffer (Context resolves writes to re-renders
+  /// through this). 0 when the pipeline is attributeless.
   buffer_id: u64,
   pub(super) draw_count: Cell<i32>,
   /// Present when the pipeline carries depth state; the renderbuffer stays
@@ -238,7 +243,7 @@ impl ShaderTexture {
     fragment_src: &str,
     sampler_bindings: Vec<(String, u64)>,
     desc: PipelineDesc,
-    vbo: Option<glow::Buffer>,
+    buffer: Option<Rc<GpuBuffer>>,
     buffer_id: u64,
     draw_count: i32,
     clear_color: [f32; 4],
@@ -251,7 +256,7 @@ impl ShaderTexture {
         return Err(e);
       }
     };
-    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, vbo, buffer_id, draw_count, clear_color)
+    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffer, buffer_id, draw_count, clear_color)
       .map_err(|(pipeline, e)| {
         release_pipeline(gl, pipeline);
         e
@@ -273,12 +278,12 @@ impl ShaderTexture {
     width: u32,
     height: u32,
     sampler_bindings: Vec<(String, u64)>,
-    vbo: Option<glow::Buffer>,
+    buffer: Option<Rc<GpuBuffer>>,
     buffer_id: u64,
     draw_count: i32,
     clear_color: [f32; 4],
   ) -> Result<Self, (Rc<RenderPipeline>, String)> {
-    if !pipeline.desc.attributes.is_empty() && vbo.is_none() {
+    if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
       return Err((pipeline, "pipeline declares attributes but no vertex buffer".to_string()));
     }
     let program = pipeline.program.clone();
@@ -357,8 +362,8 @@ impl ShaderTexture {
         }
       };
       gl.bind_vertex_array(Some(vao));
-      if let Some(vbo) = vbo {
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+      if let Some(buffer) = &buffer {
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
         let stride = vertex_stride(attributes);
         let mut offset = 0i32;
         for (name, fmt) in attributes {
@@ -385,6 +390,7 @@ impl ShaderTexture {
           pipeline,
           pipeline_id,
           vao,
+          buffer,
           buffer_id,
           draw_count: Cell::new(draw_count),
           depth: depth_rb,
@@ -596,12 +602,12 @@ impl ShaderTexture {
   }
 
   /// Release GL resources owned by this target (FBO, and for pipelines the
-  /// VAO and depth renderbuffer), and drop its uses of the pipeline and
-  /// program - which delete the underlying GL program only when nothing else
-  /// (a registry, another target) still holds them. The target texture is NOT
-  /// deleted here: Impeller owns it via the adopted Texture handle in the
-  /// TextureRegistry, and that handle is responsible for deletion. The vertex
-  /// buffer is owned by the buffer registry, not deleted here either.
+  /// VAO and depth renderbuffer), and drop its uses of the pipeline, program,
+  /// and vertex buffer - which delete the underlying GL objects only when
+  /// nothing else (a registry, another target) still holds them. The target
+  /// texture is NOT deleted here: Impeller owns it via the adopted Texture
+  /// handle in the TextureRegistry, and that handle is responsible for
+  /// deletion.
   pub fn destroy(self, gl: &glow::Context) {
     unsafe {
       if let Some(mesh) = &self.mesh {
@@ -615,6 +621,9 @@ impl ShaderTexture {
     release_program(gl, self.program);
     if let Some(mesh) = self.mesh {
       release_pipeline(gl, mesh.pipeline);
+      if let Some(buffer) = mesh.buffer {
+        release_buffer(gl, buffer);
+      }
     }
   }
 
