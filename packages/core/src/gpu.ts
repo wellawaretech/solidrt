@@ -21,6 +21,26 @@
 // both. WITHIN one pipeline draw, `blend: "add"` accumulates overlapping
 // geometry additively (order-independent, no sorting); anything else draws
 // with GL blending disabled and overwrites.
+//
+// The pixel contract. Three facts hold for every texture and target:
+//
+// - Clip space is y-down. `gl_Position` y = -1 is the top of the target, +1
+//   the bottom (GL's row 0 is clip y = -1, and Impeller samples row 0 as the
+//   top). A vertex stage carrying camera-up geometry must negate y, or fold
+//   the flip into its projection, or it draws upside down: Vulkan's
+//   convention, not desktop GL's. The fragment path absorbs the same flip
+//   already, so `vUV` is 0..1 with top-left origin and a fragment-only shader
+//   never sees it.
+// - Color is premultiplied alpha. A target's RGB is expected already
+//   multiplied by its A - `vec4(rgb * a, a)`, not `vec4(rgb, a)`, which
+//   composites as opaque. That is what Impeller composites and what
+//   `<texture blendMode>` blends; `clearColor` is premultiplied too, so the
+//   default transparent black needs no thought.
+// - Values are non-linear RGBA8, with no color-space concept. Every texture
+//   and target holds 8-bit RGBA UNORM exactly as written; nothing converts to
+//   or from linear light. `filter: "linear"` averages and `blend: "add"`
+//   accumulates non-linear values - the usual approximation, stated so
+//   shaders written today stay correct if a format vocabulary arrives.
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
@@ -335,11 +355,13 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * e.g. `<texture src>`). Unlike `createShader` the vertex stage is yours:
  * declare `in` attributes matching `opts.attributes` (one interleaved vertex
  * in `opts.buffer`, a {@link createBuffer} id) and your own varyings toward
- * the fragment stage. Both sources may reference `iResolution`/`iTime` and
- * any uniform they declare (`float`/`int` scalars from a number,
- * `vec2`/`vec3`/`vec4`/`mat4` from a flat number array); drive values with
- * `<texture src={id} params={{...}} />` or `setShaderParams`, exactly like a
- * fragment shader.
+ * the fragment stage. Clip space is y-down: `gl_Position` y = -1 is the top
+ * row of the target and +1 the bottom, so camera-up geometry must negate y
+ * (or fold the flip into its projection) to display up. Both sources may
+ * reference `iResolution`/`iTime` and any uniform they declare (`float`/`int`
+ * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
+ * array); drive values with `<texture src={id} params={{...}} />` or
+ * `setShaderParams`, exactly like a fragment shader.
  * `opts.depth` attaches a private depth buffer (cleared + tested per render);
  * `opts.depthWrite: false` (requires depth) keeps the test but stops the
  * draw from writing depth. `opts.blend: "add"` makes the draw accumulate

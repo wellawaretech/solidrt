@@ -270,6 +270,14 @@ A live shader's sampler2D inputs can also be retargeted directly with `setShader
 
 Sampler bindings are live dependencies. A target may sample another target's output, and when a source re-renders - a params write, a vertex-buffer write, a data-texture upload, a rebind - every target sampling it re-renders too, transitively through the chain, before the next frame or readback observes them. Each target renders at most once per frame no matter how many of its inputs changed, so a multi-pass chain (a plasma target feeding a cube pipeline) stays current without any consumer writing a uniform per frame. A binding that would close a sampling cycle throws (binding a shader's own target is the shortest case).
 
+### Pixel contract
+
+Three facts hold for every texture and target. None of them is configurable, and each is a thing pipeline authors otherwise discover from a wrong-looking frame.
+
+- **Clip space is y-down.** `gl_Position` y = -1 is the top of the target, +1 the bottom (GL's row 0 is clip y = -1, and Impeller samples row 0 as the top). A vertex stage carrying camera-up geometry must negate y - `gl_Position = vec4(x, -y, z, w)`, or the same flip folded into its projection matrix - or it draws upside down. That is Vulkan's convention, not desktop GL's. The fragment path absorbs the same flip already: `vUV` is 0..1 with top-left origin, so a fragment-only shader never sees it.
+- **Color is premultiplied alpha.** A target's RGB is expected already multiplied by its A: write `vec4(rgb * a, a)`, not `vec4(rgb, a)`, which composites as opaque. That is what Impeller composites and what [`blendMode`](#texture) blends. `clearColor` is premultiplied too, so the default transparent black needs no thought.
+- **Values are non-linear RGBA8, with no color-space concept.** Every texture and target holds 8-bit RGBA UNORM exactly as the shader wrote it; nothing converts to or from linear light. So `filter: "linear"` averages and `blend: "add"` accumulates non-linear values - the usual approximation, stated here so shaders written today stay correct if a format vocabulary ever arrives.
+
 ### Raw shading layer
 
 `createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources.

@@ -26,6 +26,26 @@
 // samples both. WITHIN one pipeline draw, `blend: "add"` accumulates
 // overlapping geometry additively; anything else (a fragment target, or a
 // pipeline without the option) draws with GL blending disabled and overwrites.
+//
+// The pixel contract. Three facts hold for every texture and target:
+//
+// - Clip space is y-down. `gl_Position` y = -1 is the top of the target, +1
+//   the bottom (GL's row 0 is clip y = -1, and Impeller samples row 0 as the
+//   top). A vertex stage carrying camera-up geometry must negate y, or fold
+//   the flip into its projection, or it draws upside down: Vulkan's
+//   convention, not desktop GL's. The fragment path absorbs the same flip
+//   already, so `vUV` is 0..1 with top-left origin and a fragment-only shader
+//   never sees it.
+// - Color is premultiplied alpha. A target's RGB is expected already
+//   multiplied by its A - `vec4(rgb * a, a)`, not `vec4(rgb, a)`, which
+//   composites as opaque. That is what Impeller composites and what
+//   `<texture blendMode>` blends; `clearColor` is premultiplied too, so the
+//   default transparent black needs no thought.
+// - Values are non-linear RGBA8, with no color-space concept. Every texture
+//   and target holds 8-bit RGBA UNORM exactly as written; nothing converts to
+//   or from linear light. `filter: "linear"` averages and `blend: "add"`
+//   accumulates non-linear values - the usual approximation, stated so
+//   shaders written today stay correct if a format vocabulary arrives.
 
 declare module "flux:gpu" {
   /**
@@ -147,6 +167,10 @@ declare module "flux:gpu" {
    * own `#version` line. Returns a shader (stage) id in its own id space;
    * compile errors throw here, synchronously, at a call site the app chose.
    * Free with {@link destroyShader}.
+   *
+   * A vertex stage writes into a y-down clip space: `gl_Position` y = -1 is
+   * the top row of the target and +1 the bottom, so camera-up geometry must
+   * negate y (or fold the flip into its projection) to display up.
    */
   export function compileShader(
     stage: "vertex" | "fragment",
@@ -276,13 +300,15 @@ declare module "flux:gpu" {
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
    * the given size and render it once. Sources without a `#version` line get
    * a 300 es preamble declaring `iResolution`/`iTime` (no vUV: varyings are
-   * the pipeline's own). `attributes` describes one interleaved vertex in
-   * `buffer` (a {@link createBuffer} id); omit both for attributeless
-   * rendering via gl_VertexID. `vertexCount` defaults to the whole buffer
-   * (buffer size / vertex stride). With `depth: true` the pipeline gets a
-   * private depth buffer, cleared and tested on every render; `depthWrite:
-   * false` (requires `depth: true`) keeps the test but stops the draw from
-   * writing depth. `blend` sets the draw's own blending (see
+   * the pipeline's own). Clip space is y-down: `gl_Position` y = -1 is the top
+   * row of the target and +1 the bottom, so camera-up geometry must negate y
+   * (or fold the flip into its projection) to display up. `attributes`
+   * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
+   * omit both for attributeless rendering via gl_VertexID. `vertexCount`
+   * defaults to the whole buffer (buffer size / vertex stride). With
+   * `depth: true` the pipeline gets a private depth buffer, cleared and tested
+   * on every render; `depthWrite: false` (requires `depth: true`) keeps the
+   * test but stops the draw from writing depth. `blend` sets the draw's own blending (see
    * {@link BlendMode}); an additive pass over a depth buffer is
    * `{ depth: true, blend: "add", depthWrite: false }`, stated explicitly.
    * The target is cleared to `clearColor` (default transparent black) before

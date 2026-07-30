@@ -290,10 +290,11 @@ timestamp: 2026-07-13T00:00:00Z
 - [Buffers held like programs](gpu-buffer-lifetime.md) [open] - The one id
   space with an ordered-destroy rule whose violation silently freezes
   geometry; Rc from targets deletes the rule and the failure mode together.
-- [Document the GPU pixel contract](gpu-pixel-contract-docs.md) [open] -
+- [Document the GPU pixel contract](gpu-pixel-contract-docs.md) [done] -
   Clip-space y points down, targets are premultiplied, values are
-  non-linear RGBA8: three facts currently discoverable only the hard way,
-  declared as named contracts. Docs only.
+  non-linear RGBA8: three facts previously discoverable only the hard way,
+  now one named "pixel contract" in gui/gpu.d.ts, core gpu.ts, docs/core.md
+  and scaffold AGENTS.md. Docs only, landed 2026-07-30.
 - [Compressed texture uploads (ETC2)](gpu-compressed-textures.md) [deferred] -
   ES 3.0 mandates ETC2 in core (4-8x texture memory), uploadTexture is
   RGBA8-only; demand-gated with the ANGLE-may-software-expand caveat

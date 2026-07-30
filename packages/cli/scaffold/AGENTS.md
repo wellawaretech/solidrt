@@ -158,12 +158,15 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    compositing shader. Within one pipeline draw, createPipeline's
    `blend: "add"` accumulates overlapping geometry additively (soft point
    splats, glow) - pair it with `depthWrite: false` when depth-tested;
-   neither option implies the other. Sampling is a create-time option on
-   every texture: `{ filter: "nearest" }` for hard-pixel upscaling (render a
-   small target, display it big - the retro/pixel-art path) and
-   `{ wrap: "repeat" }` to tile outside 0..1 in shaders; the defaults are
-   linear and clamp, and the choice applies both on screen and to shaders
-   sampling the texture.
+   neither option implies the other. A pipeline's own vertex stage writes
+   into a y-down clip space: `gl_Position` y = -1 is the top row of the
+   target and +1 the bottom, so camera-up geometry must negate y (or fold
+   the flip into its projection) or it draws upside down. Sampling is a
+   create-time option on every texture: `{ filter: "nearest" }` for
+   hard-pixel upscaling (render a small target, display it big - the
+   retro/pixel-art path) and `{ wrap: "repeat" }` to tile outside 0..1 in
+   shaders; the defaults are linear and clamp, and the choice applies both
+   on screen and to shaders sampling the texture.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
    string. get_stats' setPropsPerFrame is the counter to watch.
