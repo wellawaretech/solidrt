@@ -8,10 +8,10 @@ _SolidRT is in alpha: useful today, but APIs are still stabilizing._
 
 **Rust crates**
 
-- `alloy` - rendering layer combining SDL, Impeller, and glow (GL)
+- `alloy` - rendering layer: SDL, Impeller, and glow (GL), plus the render tree and layout engine (taffy)
 - `forge` - engine-independent capability cores (HTTP, sqlite, p2p, fs, events, ...) that Flux builds on
 - `flux` - JavaScript runtime (QuickJS) with `flux:*` capability modules; embeddable and standalone
-- `lattice` - ties Alloy and Flux together; exposes rendering to JavaScript via a command API
+- `lattice` - ties Alloy and Flux together; exposes Alloy's render tree to JavaScript via a command API
 
 **npm packages**
 

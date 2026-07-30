@@ -22,8 +22,9 @@ timestamp: 2026-07-13T00:00:00Z
   image crate, so it needs the dav1d C system dependency.
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
   uniforms and the additive blend/depthWrite toggles landed 2026-07-29; still
-  deferred: index buffers, float data textures, cull/depth-func raster state,
-  alpha translucency, multi-pass targets.
+  deferred: index buffers (shape decided), draw range/instancing, float data
+  textures, cull/depth-func raster state, alpha translucency, multi-pass
+  targets (gated on the gpu-review purity decision).
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI
@@ -216,8 +217,10 @@ timestamp: 2026-07-13T00:00:00Z
 - [Refactor createShader/createPipeline over the raw shading layer](gpu-fused-create-refactor.md) [open] -
   The fused conveniences predate compileShader/linkProgram/createShaderTarget
   and still compile+link internally with conditional preamble sniffing; decide
-  whether they become thin compositions of the raw layer, and whether a
-  mid-level program shorthand (wanted by the window effect) is added.
+  whether they become thin compositions of the raw layer, whether a
+  mid-level program shorthand (wanted by the window effect) is added, and the
+  gpu-review naming findings (createShader/createPipeline return textures;
+  iTime declared but never filled).
 - [Anti-aliasing for GPU pipeline targets](gpu-target-antialiasing.md) [open] -
   createPipeline targets are single-sample, so any filled geometry has hard
   jaggies; wanted a sample count (MSAA + resolve) or a documented supersample
@@ -248,10 +251,11 @@ timestamp: 2026-07-13T00:00:00Z
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check between the
   README and the packed output would catch it.
-- [GPU example gaps blocked on runtime work](gpu-example-gaps.md) [deferred] -
-  A multi-pass shader chain example, deferred until target dependency
-  propagation is settled. The points-topology particle field shipped
-  2026-07-29 (gpu-particles.tsx) once in-draw blending landed.
+- [GPU example gaps](gpu-example-gaps.md) [open] -
+  A multi-pass shader chain example; its blocker (target dependency
+  propagation) landed 2026-07-29, so it is now simply unwritten. The
+  points-topology particle field shipped 2026-07-29 (gpu-particles.tsx) once
+  in-draw blending landed.
 - [More pipeline blend modes](gpu-pipeline-blend-modes.md) [deferred] - The
   createPipeline blend vocabulary stops at "none"/"add"; multiply, screen,
   subtract, min/max are each a two-line addition, and alpha-over waits on
@@ -262,3 +266,39 @@ timestamp: 2026-07-13T00:00:00Z
   the 2x2, invalid depth states unrepresentable, vocabulary parsed at the JS
   boundary, and headless assertion examples covering blend, typed uniforms,
   and the full JS surface.
+- [GPU target purity and an explicit render verb](gpu-purity-decision.md) [open] -
+  The retained target model silently relies on every pass being pure, and
+  the whole accumulation/feedback/multi-pass/transform-feedback class breaks
+  that; decide pure-vs-escape-hatch (recommended: manual targets + one
+  renderTarget verb) before building any of them.
+- [Branded GPU id types](gpu-branded-ids.md) [open] - Every GPU handle is a
+  plain number across five id spaces, so destroyBuffer(textureId)
+  typechecks and usually hits a valid id in the wrong space; branded types
+  in flux-types close the class with no runtime cost.
+- [Call-site validation for uniforms and draw bounds](gpu-callsite-validation.md) [open] -
+  Param typos drop silently at render and arity mismatches warn where no
+  app can see; a draw count past the buffer end is undefined-behaviour
+  vertex fetch; both checkable synchronously from state the UI thread
+  already mirrors.
+- [GPU object labels and device limits](gpu-labels-limits.md) [open] -
+  label? on every create surfaced in get_gpu_resources and error strings,
+  plus a queryable gpu.limits with named-limit errors at create instead of
+  framebuffer-incomplete hex.
+- [Mipmaps](gpu-mipmaps.md) [deferred] - Minified textures alias by axiom
+  today; mipmap?: boolean on the sampler state, generateMipmap under it,
+  auto-regeneration for render targets off the dirty flush.
+- [Buffers held like programs](gpu-buffer-lifetime.md) [open] - The one id
+  space with an ordered-destroy rule whose violation silently freezes
+  geometry; Rc from targets deletes the rule and the failure mode together.
+- [Document the GPU pixel contract](gpu-pixel-contract-docs.md) [open] -
+  Clip-space y points down, targets are premultiplied, values are
+  non-linear RGBA8: three facts currently discoverable only the hard way,
+  declared as named contracts. Docs only.
+- [Compressed texture uploads (ETC2)](gpu-compressed-textures.md) [deferred] -
+  ES 3.0 mandates ETC2 in core (4-8x texture memory), uploadTexture is
+  RGBA8-only; demand-gated with the ANGLE-may-software-expand caveat
+  recorded.
+- [GPU file reorganization](gpu-file-reorg.md) [open] - Split shader.rs
+  (1466 lines, six concerns) into an alloy gpu/ folder, rename flux
+  plugins/gui/texture.rs to gpu.rs, lift the RasterCmd enum, capture path
+  and context DTOs.

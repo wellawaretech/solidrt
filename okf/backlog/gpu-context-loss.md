@@ -54,6 +54,20 @@ still Remaining #2.
    context-loss-on-background needs, so it should be designed against the
    Android lifecycle, not as a Windows special case.
 
+   Scoping note from [gpu-review](../analysis/gpu-review.md) (lesson 10):
+   recovery here can be *transparent* in a way neither WebGL nor WebGPU can
+   offer, because apps hold registry ids rather than device-bound handles,
+   and the registries already retain what recreation needs - each target's
+   pipeline, spec, sampler bindings and last params, each pipeline's desc
+   and program, each texture's size and sampler state. Shader targets,
+   pipelines and programs are therefore recreatable engine-side (recreate
+   the GL objects behind the same ids, mark everything dirty, flush). The
+   app-visible half shrinks to content the engine cannot reproduce -
+   uploaded texture pixels and buffer contents - which needs either retained
+   CPU copies (memory cost) or a re-upload event. The standards are right
+   that some loss is unrecoverable, so the app-visible event still needs to
+   exist; but the default can be repair rather than teardown.
+
 Related: the cross-thread GL race that *caused* device removals on Windows
 is fixed separately by the single-context + raster-thread architecture (all
 GL on one thread; see angle-cross-context-impeller-textures.md - the

@@ -811,6 +811,23 @@ Filed separately because they are breaking and want their own decision: the
 `createPipeline` / `createRenderPipeline` collision and `createShader`
 returning a texture (see naming).
 
+Everything above was filed into the backlog on 2026-07-30, so this list is
+now a reading order rather than the tracker: (1)
+[gpu-branded-ids](../backlog/gpu-branded-ids.md), (2)
+[gpu-pixel-contract-docs](../backlog/gpu-pixel-contract-docs.md), (3)
+[gpu-purity-decision](../backlog/gpu-purity-decision.md), (4)
+[gpu-buffer-lifetime](../backlog/gpu-buffer-lifetime.md), (5)
+[gpu-callsite-validation](../backlog/gpu-callsite-validation.md), (6) the
+draw-range/instancing bullet in
+[gpu-pipeline-extensions](../backlog/gpu-pipeline-extensions.md), (7)
+[gpu-labels-limits](../backlog/gpu-labels-limits.md), (8)
+[gpu-file-reorg](../backlog/gpu-file-reorg.md); the naming decisions live in
+[gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md), and
+mipmaps, compressed textures and sampleable depth in
+[gpu-mipmaps](../backlog/gpu-mipmaps.md),
+[gpu-compressed-textures](../backlog/gpu-compressed-textures.md) and the
+extensions file respectively.
+
 Two workload notes sit outside the ranked list but shape the do-order. For
 the first-person class, relative mouse input outranks every GPU item and is
 an SDL capability away. And GPU simulation waits on the purity decision

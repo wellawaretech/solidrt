@@ -24,10 +24,30 @@ draw count. Deliberately deferred, in rough order of expected demand:
   params, gpu-resources JSON (scalar vs array), flux-types + core types +
   docs/core.md.
 - **Index buffers** (`glDrawElements`): unindexed triangles are fine at small
-  scale; indexing pays off once meshes get large or strip-heavy.
+  scale; indexing pays off once meshes get large or strip-heavy. API shape
+  decided in [gpu-review](../analysis/gpu-review.md) (lesson 13): reuse
+  `createBuffer` - one buffer kind, no separate index-buffer type (neither
+  standard has one) - and the target names `indexBuffer` + `indexFormat:
+  "uint16" | "uint32"`. Normalized vertex formats (`unorm8x4` etc.) are the
+  adjacent bandwidth item recorded there.
+- **Draw range and instancing** (from [gpu-review](../analysis/gpu-review.md)
+  lesson 6): `first` for sub-range draws from a shared buffer (the Doom
+  dynamic-tail case can draw the tail, not just the first N; trivial) and
+  `instanceCount` via `glDrawArraysInstanced` + `gl_InstanceID` (native ES
+  3.0), the standard answer to particles and repeated meshes. Both additive
+  under the pure-target model - they change what is drawn, not whether the
+  pass is idempotent.
 - **Float texture formats** (`R32F`/`RGBA32F`) for data textures sampled in
   the vertex stage (e.g. per-sector heights via texelFetch). Workaround:
   fixed-point encode into RGBA8 channels and decode in the shader.
+- **Sampleable depth** (from [gpu-review](../analysis/gpu-review.md) lesson
+  16): a pipeline's depth is a private renderbuffer, unsampleable by
+  construction; both standards make depth a texture (ES 3.0 has depth
+  textures and `sampler2DShadow` in core) - the entry ticket to shadow
+  maps, depth-of-field, SSAO. The storage swap is small; the open question
+  is currency, because a target's id names its colour - its depth needs a
+  name of its own to appear in another target's `textures`, after which the
+  dependency graph tracks the edge like any other.
 - **Blending toggle.** Additive half DONE 2026-07-29: `blend: "add"`
   (`glBlendFunc(ONE, ONE)`) plus the independent `depthWrite: boolean`
   (default true; requires `depth`) on createPipeline/createShaderTarget.
@@ -37,7 +57,10 @@ draw count. Deliberately deferred, in rough order of expected demand:
   honors depthWrite. Both reported by get_gpu_resources when off their
   defaults. Still open: true alpha translucency (sorted geometry plus the
   straight-vs-premultiplied question against Impeller's compositing of the
-  target).
+  target). First step regardless: document the target pixel contract
+  (premultiplied, non-linear RGBA8 - [gpu-review](../analysis/gpu-review.md)
+  lesson 12), which answers the straight-vs-premultiplied half by declaring
+  it.
 - **Raster state**: cull mode and depth func are fixed (depth WRITE is now an
   option, see blending above). Two-sided shading (`abs(dot(n, l))`) hides the
   missing cull for now, but a closed mesh pays double the fragment work.
@@ -49,7 +72,13 @@ draw count. Deliberately deferred, in rough order of expected demand:
   shape (a target that takes several pipelines, or targets sharing a depth
   attachment). Cull/depth-func likewise now have their home
   (`PipelineDesc`); each remaining item extends the desc or the target spec,
-  not a fused struct.
+  not a fused struct. But the blocker moved rather than vanished: pass
+  ORDER inside one target breaks the pure-target invariant ("rendering
+  twice is indistinguishable from rendering once") that the dirty flush
+  relies on, so this is gated on the purity decision in
+  [gpu-review](../analysis/gpu-review.md) (structural divergence section:
+  recommended shape is manual targets + one `renderTarget` verb + loadOp).
+  Do not build this, loadOp, or ping-pong feedback before that decision.
 
 Adjacent, filed separately because they are not createPipeline options:
 [anti-aliasing for pipeline targets](gpu-target-antialiasing.md),

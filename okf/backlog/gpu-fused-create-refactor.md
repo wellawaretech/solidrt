@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: Refactor createShader/createPipeline over the raw shading layer
-description: The fused conveniences predate compileShader/linkProgram/createShaderTarget and still compile+link internally with conditional preamble sniffing; decide whether they become thin compositions of the raw layer, and whether a mid-level program shorthand is wanted.
+description: The fused conveniences predate compileShader/linkProgram/createShaderTarget and still compile+link internally with conditional preamble sniffing; decide whether they become thin compositions of the raw layer, whether a mid-level program shorthand is wanted, and the gpu-review naming findings (createShader/createPipeline return textures; iTime declared but never filled).
 status: open
 timestamp: 2026-07-27T00:00:00Z
 ---
@@ -39,6 +39,22 @@ and carry the conditional preamble ("inject unless the source starts with
 - **`createShaderMemo`** composes over `createShader` today; if specs get a
   program handle field, the memo's rebuild rule ("new source = new id")
   changes shape.
+- **The names, now colliding harder** (2026-07-30, from
+  [gpu-review](../analysis/gpu-review.md) naming section). The pipeline
+  split put `createRenderPipeline` (WebGPU's pipeline exactly: inert state,
+  returns a pipeline id) one word from `createPipeline` (compiles, allocates
+  a target, renders, returns a texture id) - the most confusable pair in the
+  surface. Same shape: `createShader` returns a texture while
+  `compileShader` is the call that does what both standards mean by
+  creating a shader. Honest names say what comes back -
+  `createShaderTexture` / `createPipelineTexture` - and the engine already
+  uses exactly those internally (`Context::create_shader_texture`,
+  `create_pipeline_texture`). Breaking rename; decide here, not in passing.
+- **`iTime` is declared but never filled.** All three preambles declare
+  `iResolution` and `iTime`; `run_pass` fills only `iResolution`, so a
+  shader reading `iTime` without the app driving it silently animates at
+  t=0. Either fill it from the frame clock or stop declaring it - part of
+  the one-preamble-story cleanup above.
 
 The fragment-kind program (fullscreen triangle draw path, no mesh state) is
 currently only reachable through fused `createShader`; every raw-linked

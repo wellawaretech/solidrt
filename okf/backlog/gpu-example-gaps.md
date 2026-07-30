@@ -1,12 +1,12 @@
 ---
 type: backlog-item
-title: GPU example gaps blocked on runtime work
-description: A multi-pass shader chain example, deferred until target dependency propagation is decided. The points-topology particle field shipped 2026-07-29 once the blend toggle landed.
-status: deferred
+title: GPU example gaps
+description: A multi-pass shader chain example, formerly blocked on target dependency propagation - which landed 2026-07-29, so the example is now unblocked and simply unwritten. The points-topology particle field shipped 2026-07-29 once the blend toggle landed.
+status: open
 timestamp: 2026-07-29T00:00:00Z
 ---
 
-# GPU example gaps blocked on runtime work
+# GPU example gaps
 
 Both surfaced while acting on the 0.0.39 field reports
 (projects/shadertoy and projects/second-reality). Three examples came out of
@@ -20,13 +20,13 @@ rather than the examples.
 A worked example of one target sampling another: a plasma pass feeding a cube
 pipeline, the shape second-reality actually built.
 
-Blocked on [[gpu-target-dependency-propagation]]. Written today the example
-would have to teach the workaround - "drive one uniform per frame in every node
-of a live chain, or the consumer silently keeps a stale frame" - which bakes a
-bug into the example corpus and would then have to be un-taught. Write it once
-propagation is decided, in whichever direction: if consumers get marked dirty
-the example is simply a chain, and if the rule stays as-is the example becomes
-the place the rule is demonstrated rather than merely documented.
+Was blocked on [[gpu-target-dependency-propagation]]; that landed 2026-07-29
+in the consumers-get-marked-dirty direction (pull-based flush, chains render
+in topological order), so the example is now simply a chain - bind the plasma
+target as the cube pipeline's sampler input and drive only the plasma's
+uniforms. Unblocked and unwritten as of 2026-07-30 (no gpu-chain example in
+packages/core/examples). Worth writing as the demonstration that sampler
+bindings are live dependencies, the contract documented in docs/core.md.
 
 ## Points topology / particle field
 

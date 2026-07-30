@@ -43,7 +43,10 @@ Candidate answers, cheapest first:
   TextureSampling::Linear. So 2x supersample downsamples cleanly via
   bilinear; 4x undersamples (skips texels) for lack of mips. The technique
   works, but only document 2x as the known-good factor unless mip
-  generation is added.
+  generation is added ([gpu-review](../analysis/gpu-review.md) lesson 15 now
+  proposes the shape: `mipmap?: boolean` on SamplerOptions, auto-regen for
+  targets off the dirty flush - which would make 4x supersample minify
+  correctly too).
 - **A `samples` option on createPipeline** (2/4/8): allocate a multisampled
   renderbuffer for color and depth, draw into it, and resolve with
   `glBlitFramebuffer` into the texture the id already names. GLES 3.0 has
@@ -51,6 +54,17 @@ Candidate answers, cheapest first:
   without touching the texture-id contract. On mobile/ANGLE,
   `EXT_multisampled_render_to_texture` does the resolve implicitly and is
   the cheaper path where available.
+
+  Post-split home (2026-07-30): this bullet predates
+  [[gpu-pipeline-object-model]]. `samples` is draw state and belongs on
+  `PipelineDesc` (`createRenderPipeline`; the fused `createPipeline`
+  forwards), with each target allocating matching MSAA storage - the same
+  auto-provisioned pattern as `depth: true`, which
+  [gpu-review](../analysis/gpu-review.md) (lesson 7) singles out as the
+  mismatch-proof shape: WebGPU makes the app declare `multisample.count` on
+  the pipeline AND match it on the attachment, and validates; here the
+  target derives its storage from the pipeline, so the mismatch cannot be
+  written.
 - Interaction with in-place resize: the multisample attachments have to be
   reallocated alongside the target in setShaderSize, same as the depth
   buffer.

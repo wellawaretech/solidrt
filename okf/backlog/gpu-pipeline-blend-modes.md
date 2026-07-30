@@ -36,7 +36,10 @@ Order-dependent, the big one:
   pipeline API has no story for) and an answer to straight-vs-premultiplied
   against how Impeller composites the target. Tracked as the remaining
   blending piece in [gpu-pipeline-extensions](gpu-pipeline-extensions.md);
-  do not add the mode without deciding those two.
+  do not add the mode without deciding those two. The premultiplied half now
+  has a first step that costs nothing: document the target pixel contract
+  ([gpu-review](../analysis/gpu-review.md) lesson 12 - premultiplied,
+  non-linear RGBA8), which decides the factor pair by declaration.
 
 Out of scope on ES 3.0: the fancy end of the tree-level `<texture blendMode>`
 set (overlay, hue, color-dodge, ...). Those are Skia shader-level composites;
