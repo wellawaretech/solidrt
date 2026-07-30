@@ -7,39 +7,28 @@ timestamp: 2026-07-15T00:00:00Z
 
 # Analysis
 
-- [App structure and performance under QuickJS](app-structure-performance.md) -
-  execution-structure review 2026-07-15; JS-decides/Rust-executes split is
-  right; ranked costs: per-prop string-keyed FFI writes, per-frame JS
-  animation, future JS scroll physics, event-object garbage; verdict: keep
-  Solid in JS, move per-frame work native (batch/intern props, native
-  animators, native momentum).
-- [GPU stack maturity — readiness for 3D games](gpu-stack-maturity.md) -
-  vertex pipelines shipped 2026-07-15; retro-class 3D feasible now; gaps:
-  typed uniforms, index buffers, blending, multi-pass, sampling control,
-  mouse look.
-- [Forge crate review - completeness, quality, tests](forge-crate-review.md) -
-  full-crate review 2026-07-15; engine-free layering upheld, docs excellent,
-  clippy clean; gaps: subprocess/p2p/ffi untested, stale "destined for forge"
-  docs, implicit single-thread contract, IPv4-only skew.
-- [Alloy crate review - completeness, quality, tests](alloy-crate-review.md) -
-  full-crate review 2026-07-15; GL path complete and hardened, docs
-  excellent; gaps: unsafe Send/Sync unenforced, panics at tree boundary,
-  thin tests (damage + hit testing uncovered).
-- [Flux crate review - completeness, quality, tests](flux-crate-review.md) -
-  full-crate review 2026-07-15; marshalling contract upheld, error model
-  strong, 129 tests pass; gaps: gui prop-value panics, gui_hello breaks
-  cargo test, fetch drops Headers instances, 1ms idle poll, no URL global,
-  subprocess/p2p/wasm/ffi/gui untested; standards-conformance audit (SDL key
-  names not W3C, repeat dropped, console Error prints {}); flux-types near
-  complete (atob/btoa missing, 2 doc defects, no parity check); no teaching
-  examples (core has 20, flux has smoke scripts).
-- [Core package review - completeness, quality, tests](core-package-review.md) -
-  full-package review 2026-07-15; best docs and layering in the repo, createX
-  lifecycle pattern consistent; gaps: zero tests, docs/core.md teaches
-  nonexistent props, throwing onFrame kills sibling animations, KeyEvent has
-  no modifiers, invalid colors silently black.
-- [CLI package review - completeness, quality, tests](cli-package-review.md) -
-  full-package review 2026-07-15; architecture and comments strong, dogfoods
-  flux as dev server; gaps: zero tests, --help crashes with a stack trace,
-  stale README, repl reload/load are .tsx-only, watcher race + unguarded
-  rejections, LAN-open file PUT, dead bonjour-service dep.
+- [App structure and performance](app-structure-performance.md) -
+  Execution-structure review: the JS-decides/Rust-executes split is right;
+  ranked costs are per-prop string-keyed FFI writes, per-frame JS animation,
+  JS scroll physics, event garbage.
+- [GPU stack review](gpu-review.md) - Merged status and direction: retro-class
+  3D feasible, first-person still blocked on mouse look; the object model is
+  WebGPU-adjacent with one deep divergence - a retained pure-target model
+  whose purity question gates accumulation, feedback and multi-pass. Ranked
+  lessons from WebGL2/WebGPU, capability gaps by workload, and a file split
+  proposal.
+- [Forge crate review](forge-crate-review.md) - Engine-free layering upheld,
+  docs excellent, clippy clean; gaps are untested subprocess/p2p/ffi, stale
+  docs, an implicit single-thread contract and IPv4-only skew.
+- [Alloy crate review](alloy-crate-review.md) - The GL path is complete and
+  hardened; gaps are unenforced unsafe Send/Sync, panics at the tree boundary,
+  and thin tests with damage and hit testing uncovered.
+- [Flux crate review](flux-crate-review.md) - Marshalling contract upheld,
+  error model strong, 129 tests pass; gaps span gui prop panics, fetch
+  dropping Headers, standards conformance, and missing teaching examples.
+- [Core package review](core-package-review.md) - Best docs and layering in
+  the repo; gaps are zero tests, docs teaching nonexistent props, a throwing
+  onFrame killing sibling animations, and silently black invalid colors.
+- [CLI package review](cli-package-review.md) - Architecture strong and
+  dogfoods flux as the dev server; gaps are zero tests, a crashing --help,
+  stale README, tsx-only repl reload, watcher races and a LAN-open file PUT.

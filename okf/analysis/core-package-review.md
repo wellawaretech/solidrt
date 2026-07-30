@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: Core package review - completeness, quality, tests
+title: Core package review
+description: Best docs and layering in the repo; gaps are zero tests, docs teaching nonexistent props, a throwing onFrame killing sibling animations, and silently black invalid colors.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Core package review - completeness, quality, tests
+# Core package review
 
 Full review of `packages/core` (~2.2k lines of TypeScript: 18 src modules, two
 ambient .d.ts files, jsx-runtime.d.ts) as of 2026-07-15. Every source file

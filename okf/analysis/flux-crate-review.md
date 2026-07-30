@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: Flux crate review - completeness, quality, tests
+title: Flux crate review
+description: Marshalling contract upheld, error model strong, 129 tests pass; gaps span gui prop panics, fetch dropping Headers, standards conformance, and missing teaching examples.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Flux crate review - completeness, quality, tests
+# Flux crate review
 
 Full-crate review of `flux` (~9.7k lines of source: engine + 3 bins + 3 plugin
 layers; 51 plugin files) as of 2026-07-15: every layer read (all of the engine,

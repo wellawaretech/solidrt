@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: Alloy crate review - completeness, quality, tests
+title: Alloy crate review
+description: The GL path is complete and hardened; gaps are unenforced unsafe Send/Sync, panics at the tree boundary, and thin tests with damage and hit testing uncovered.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Alloy crate review - completeness, quality, tests
+# Alloy crate review
 
 Full-crate review of `alloy` (~9k lines, 40 files) as of 2026-07-15: every
 module read, unit + integration tests run (26 tests, all pass).

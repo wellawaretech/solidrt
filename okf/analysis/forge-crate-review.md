@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: Forge crate review - completeness, quality, tests
+title: Forge crate review
+description: Engine-free layering upheld, docs excellent, clippy clean; gaps are untested subprocess/p2p/ffi, stale docs, an implicit single-thread contract and IPv4-only skew.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# Forge crate review - completeness, quality, tests
+# Forge crate review
 
 Full-crate review of `forge` (~3.9k lines, 17 modules) as of 2026-07-15: every
 module read, unit tests run (20, all pass), clippy run (4 trivial lints), and

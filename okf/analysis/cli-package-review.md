@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: CLI package review - completeness, quality, tests
+title: CLI package review
+description: Architecture strong and dogfoods flux as the dev server; gaps are zero tests, a crashing --help, stale README, tsx-only repl reload, watcher races and a LAN-open file PUT.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# CLI package review - completeness, quality, tests
+# CLI package review
 
 Full review of `packages/cli` (~2.8k lines of TypeScript: 1.9k in the srt/Bun
 process incl. 8 commands, 0.9k in the spawned flux dev server, plus scaffold
@@ -52,7 +53,8 @@ playback, and an 11-tool MCP bridge. Boundaries and holes:
   README could largely defer to it.
 - **Hardcoded port.** `DEV_PORT = 0x8844` with no `--port`, so one dev server
   per machine; a second instance dies as "[cli] Dev server exited unexpectedly
-  (1)" rather than a clear port-in-use message.
+  (1)" rather than a clear port-in-use message. (Fixed 2026-07-28: `--port` on
+  run/server/mcp, plus a port-in-use preflight before the server is spawned.)
 - **`srt client` cannot be pointed at a server** - the `--dev-server`
   pass-through is a live TODO (commands/client.ts:18). Standalone clients rely
   on QR/recents only; manual entry is a known pending item.

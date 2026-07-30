@@ -1,10 +1,11 @@
 ---
 type: analysis
-title: App structure and performance under QuickJS
+title: App structure and performance
+description: "Execution-structure review: the JS-decides/Rust-executes split is right; ranked costs are per-prop string-keyed FFI writes, per-frame JS animation, JS scroll physics, event garbage."
 timestamp: 2026-07-15T00:00:00Z
 ---
 
-# App structure and performance under QuickJS
+# App structure and performance
 
 Structural review of how a SolidRT app executes, as of 2026-07-15: which layer
 does what, what crosses the JS/native boundary and when, where performance goes
