@@ -246,7 +246,15 @@ pub(super) fn run_pass(
           None => {}
         }
         gl.bind_vertex_array(Some(mesh.vao));
-        gl.draw_arrays(desc.topology.gl(), 0, mesh.draw_count.get());
+        // instance_count 1 keeps the plain draw - bit-identical to the
+        // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
+        // nothing. gl_VertexID includes first_vertex, as in WebGPU.
+        let range = mesh.draw.get();
+        if range.instance_count == 1 {
+          gl.draw_arrays(desc.topology.gl(), range.first_vertex, range.vertex_count);
+        } else {
+          gl.draw_arrays_instanced(desc.topology.gl(), range.first_vertex, range.vertex_count, range.instance_count);
+        }
 
         if let Some([src_rgb, dst_rgb, src_alpha, dst_alpha]) = prev_blend_func {
           gl.disable(glow::BLEND);

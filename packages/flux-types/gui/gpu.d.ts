@@ -249,11 +249,13 @@ declare module "flux:gpu" {
    * {@link setShaderSize}, destroy with {@link destroyTexture}). Many targets
    * may share one pipeline, and creating a target compiles nothing. `buffer`
    * supplies the concrete vertex buffer the pipeline's attribute layout
-   * describes (required when the pipeline declares attributes);
-   * `vertexCount` defaults to the whole buffer and an explicit count is
-   * bounds-checked - a count whose vertex fetch would run past the buffer's
-   * end throws here. A fullscreen pass over an attributeless pipeline is
-   * `vertexCount: 3` with a covering-triangle vertex stage. Draw-state keys
+   * describes (required when the pipeline declares attributes); the
+   * {@link DrawRange} keys pick what is drawn from it - `vertexCount`
+   * defaults to the rest of the buffer from `firstVertex` on,
+   * `instanceCount` repeats the range - and a vertex fetch past the
+   * buffer's end throws here. A fullscreen pass over an attributeless
+   * pipeline is `vertexCount: 3` with a covering-triangle vertex stage.
+   * Draw-state keys
    * (`attributes`, `topology`, `blend`, `depth`, `depthWrite`) belong to the
    * pipeline and throw here. `params` and `textures` are validated against
    * the pipeline's program (see {@link ShaderParams}).
@@ -283,11 +285,11 @@ declare module "flux:gpu" {
       params?: ShaderParams
       textures?: Record<string, TextureId>
       buffer?: BufferId
-      vertexCount?: number
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
-    } & SamplerOptions,
+    } & DrawRange &
+      SamplerOptions,
   ): TextureId
   /**
    * Destroy a linked program by id. Pipelines created from it are unaffected:
@@ -321,7 +323,7 @@ declare module "flux:gpu" {
   /**
    * Resize a shader or pipeline target texture in place and re-render it: the
    * id, compiled program, last-applied params, and sampler bindings all carry
-   * over; only the output size changes. The setDrawCount analog for output
+   * over; only the output size changes. The setDraw analog for output
    * size.
    */
   export function setShaderSize(id: TextureId, width: number, height: number): void
@@ -344,6 +346,19 @@ declare module "flux:gpu" {
    * vertex shader's `in` declarations.
    */
   export type VertexAttribute = { name: string; format: "f32" | "vec2" | "vec3" | "vec4" }
+  /**
+   * A pipeline target's draw as data, WebGPU-style: `firstVertex` +
+   * `vertexCount` pick the vertex range `[firstVertex, firstVertex +
+   * vertexCount)` of the buffer, `instanceCount` draws that range as N
+   * instances (`glDrawArraysInstanced`) told apart by `gl_InstanceID`. All
+   * keys optional: at create, `firstVertex` defaults to 0, `vertexCount` to
+   * the rest of the buffer and `instanceCount` to 1 (the plain draw); in
+   * {@link setDraw}, absent keys keep their current value. `instanceCount: 0`
+   * draws nothing - a cheap off switch. Two GL facts worth knowing:
+   * `gl_VertexID` includes `firstVertex` (as in WebGPU), and `gl_InstanceID`
+   * always counts from 0 - ES 3.0 has no base instance.
+   */
+  export type DrawRange = { firstVertex?: number; vertexCount?: number; instanceCount?: number }
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -353,9 +368,11 @@ declare module "flux:gpu" {
    * row of the target and +1 the bottom, so camera-up geometry must negate y
    * (or fold the flip into its projection) to display up. `attributes`
    * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
-   * omit both for attributeless rendering via gl_VertexID. `vertexCount`
-   * defaults to the whole buffer (buffer size / vertex stride); an explicit
-   * count past the buffer's end throws. With
+   * omit both for attributeless rendering via gl_VertexID. The
+   * {@link DrawRange} keys pick what is drawn: `vertexCount` defaults to the
+   * rest of the buffer from `firstVertex` on, `instanceCount` draws the
+   * range as N instances told apart by `gl_InstanceID`; a vertex fetch past
+   * the buffer's end throws. With
    * `depth: true` the pipeline gets a private depth buffer, cleared and tested
    * on every render; `depthWrite: false` (requires `depth: true`) keeps the
    * test but stops the draw from writing depth. `blend` sets the draw's own blending (see
@@ -381,14 +398,14 @@ declare module "flux:gpu" {
       attributes?: VertexAttribute[]
       buffer?: BufferId
       topology?: Topology
-      vertexCount?: number
       depth?: boolean
       depthWrite?: boolean
       blend?: BlendMode
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
-    } & SamplerOptions,
+    } & DrawRange &
+      SamplerOptions,
   ): TextureId
 
   /**
@@ -410,16 +427,19 @@ declare module "flux:gpu" {
    */
   export function destroyBuffer(id: BufferId): void
   /**
-   * Set how many vertices a pipeline texture draws and re-render it, e.g.
-   * after writing a variable amount of dynamic geometry into its buffer.
-   * Throws if `count` is negative or its vertex fetch would run past the end
-   * of the target's buffer (`count` x vertex stride > buffer size) - the
-   * out-of-bounds draw GL itself never checks; a target without vertex
-   * fetch (attributeless) accepts any non-negative count. (On a manual
-   * target nothing renders here; the count applies at its next
+   * Update a pipeline texture's draw range and re-render it: `vertexCount`
+   * after writing a variable amount of dynamic geometry into its buffer,
+   * `firstVertex` to draw a different window of a shared buffer,
+   * `instanceCount` to grow or shrink an instanced population. Keys absent
+   * from `draw` keep their current value, like params. Throws if a value is
+   * negative or the merged range's vertex fetch would run past the end of
+   * the target's buffer ((firstVertex + vertexCount) x vertex stride >
+   * buffer size) - the out-of-bounds draw GL itself never checks; a target
+   * without vertex fetch (attributeless) accepts any non-negative range.
+   * (On a manual target nothing renders here; the range applies at its next
    * {@link renderTarget}.)
    */
-  export function setDrawCount(id: TextureId, count: number): void
+  export function setDraw(id: TextureId, draw: DrawRange): void
   /**
    * Render a `render: "manual"` target once, now. Renders land in call order
    * relative to every other GPU call: a `setShaderParams`/`writeBuffer`

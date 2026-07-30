@@ -8,7 +8,8 @@ use std::sync::{mpsc, Arc};
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
-  validate_draw_bound, validate_params, validate_texture_bindings, vertex_stride, GpuResources, ParamValue,
+  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, vertex_stride, DrawRange,
+  DrawUpdate, GpuResources, ParamValue,
   PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -27,14 +28,16 @@ use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 // (fused paths, whose program is anonymous) or derived from the pipeline
 // mirror (the split path). What update-path validation reads.
 struct TargetMirror {
-  /// Vertex+fragment pipeline target (vs a fullscreen fragment pass).
-  pipeline: bool,
   /// The program's active uniforms; Rc-shared with the program and pipeline
   /// mirrors on the split path.
   uniforms: Rc<UniformTable>,
+  /// The target's current resolved draw range, what set_draw merges partial
+  /// updates against. None for a fullscreen fragment pass (no mesh draw),
+  /// which is also what makes it the pipeline-vs-fragment discriminant.
+  draw: Option<DrawRange>,
   /// (bytes per vertex, buffer byte size): the vertex-fetch bound for
-  /// set_draw_count. None when the target draws attributeless - gl_VertexID
-  /// fetches nothing, so any count is safe. Captured at create: buffer sizes
+  /// set_draw. None when the target draws attributeless - gl_VertexID
+  /// fetches nothing, so any range is safe. Captured at create: buffer sizes
   /// are fixed for their lifetime and the target holds the buffer alive, so
   /// the bound stays correct even after the buffer id itself is destroyed.
   draw_bound: Option<(usize, usize)>,
@@ -410,7 +413,7 @@ impl Context {
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { pipeline: false, uniforms: Rc::new(uniforms), draw_bound: None });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, draw_bound: None });
     self.shader_sources.borrow_mut().insert(id, textures.iter().cloned().collect());
     Ok(id)
   }
@@ -528,21 +531,23 @@ impl Context {
   /// `destroy_texture`, and `<texture src>` all apply). The fused convenience
   /// over `create_render_pipeline` + `create_shader_target`; the anonymous
   /// program and pipeline die with the target.
-  pub fn create_pipeline_texture(&self, spec: PipelineSpec) -> Result<u64, String> {
+  pub fn create_pipeline_texture(&self, mut spec: PipelineSpec) -> Result<u64, String> {
     validate_load(&spec.target)?;
+    let stride = vertex_stride(&spec.pipeline.attributes) as usize;
+    let size = self.buffer_size(spec.target.buffer)?;
+    spec.target.draw = resolve_draw_range(spec.target.draw, stride, size)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
-    let stride = vertex_stride(&spec.pipeline.attributes) as usize;
-    let buffer_id = spec.target.buffer;
+    let draw = spec.target.draw;
     let sources: HashMap<String, u64> = spec.target.textures.iter().cloned().collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
-    let draw_bound = self.draw_bound(stride, buffer_id);
+    let draw_bound = size.filter(|_| stride > 0).map(|size| (stride, size));
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { pipeline: true, uniforms: Rc::new(uniforms), draw_bound });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), draw_bound });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -550,15 +555,16 @@ impl Context {
     Ok(id)
   }
 
-  /// The set_draw_count bound a new pipeline target captures (see
-  /// `TargetMirror::draw_bound`): present only when the target actually
-  /// fetches vertices - a buffer bound through a nonzero-stride layout. Call
-  /// after the create RPC succeeded, which guarantees the buffer id resolves.
-  fn draw_bound(&self, stride: usize, buffer_id: u64) -> Option<(usize, usize)> {
-    if stride == 0 || buffer_id == 0 {
-      return None;
+  /// The byte size of vertex buffer `id` from the UI-side size mirror: None
+  /// for id 0 (no buffer bound), an error for an unknown id - caught here,
+  /// before the create RPC, so the mistake throws at the call site. What the
+  /// draw-range resolution and the captured draw bound (see
+  /// `TargetMirror::draw_bound`) both read.
+  fn buffer_size(&self, id: u64) -> Result<Option<usize>, String> {
+    if id == 0 {
+      return Ok(None);
     }
-    self.buffer_sizes.borrow().get(&buffer_id).map(|size| (stride, *size))
+    self.buffer_sizes.borrow().get(&id).copied().map(Some).ok_or_else(|| format!("buffer {id} not found"))
   }
 
   /// Compile a single raw shader stage, returning its stage id (its own id
@@ -643,21 +649,23 @@ impl Context {
   /// id space: params updates, `setShaderSize`, `<texture src>` and
   /// `destroy_texture` all apply). Many targets may share one pipeline, and
   /// creating a target compiles nothing.
-  pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec) -> Result<u64, String> {
+  pub fn create_shader_target(&self, pipeline: u64, mut spec: TargetSpec) -> Result<u64, String> {
     let (uniforms, stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
       Some(mirror) => (mirror.uniforms.clone(), mirror.stride),
       None => return Err(format!("pipeline {pipeline} not found")),
     };
     validate_load(&spec)?;
+    let size = self.buffer_size(spec.buffer)?;
+    spec.draw = resolve_draw_range(spec.draw, stride, size)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
-    let buffer_id = spec.buffer;
+    let draw = spec.draw;
     let sources: HashMap<String, u64> = spec.textures.iter().cloned().collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, pipeline, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
-    let draw_bound = self.draw_bound(stride, buffer_id);
-    self.targets.borrow_mut().insert(id, TargetMirror { pipeline: true, uniforms, draw_bound });
+    let draw_bound = size.filter(|_| stride > 0).map(|size| (stride, size));
+    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), draw_bound });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -741,24 +749,27 @@ impl Context {
     Ok(())
   }
 
-  /// Set a pipeline texture's vertex draw count and re-render it with its
-  /// last-applied params. The caller must request a frame. Errs on a
-  /// negative count, or one whose vertex fetch would run past the end of the
-  /// target's buffer (undefined behaviour in raw GLES; validated against the
-  /// bound captured at create, see `TargetMirror::draw_bound`).
-  pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
-    let targets = self.targets.borrow();
-    let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    if !mirror.pipeline {
+  /// Update a pipeline texture's draw range - which vertices are drawn
+  /// (`first_vertex`, `vertex_count`) and how many instances - and re-render
+  /// it with its last-applied params. Fields absent from `update` keep their
+  /// current value (the params merge rule), so the common case stays one
+  /// field. The caller must request a frame. Errs on a negative field, or a
+  /// vertex range whose fetch would run past the end of the target's buffer
+  /// (undefined behaviour in raw GLES; validated against the bound captured
+  /// at create, see `TargetMirror::draw_bound` - attributeless targets fetch
+  /// nothing, so any non-negative range is safe there).
+  pub fn set_draw(&self, id: u64, update: DrawUpdate) -> Result<(), String> {
+    let mut targets = self.targets.borrow_mut();
+    let mirror = targets.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    let Some(current) = mirror.draw else {
       return Err("not a pipeline texture".to_string());
-    }
-    match mirror.draw_bound {
-      Some((stride, size)) => validate_draw_bound(count, stride, size)?,
-      // Attributeless: no vertex fetch, any non-negative count is safe.
-      None => validate_draw_bound(count, 0, 0)?,
-    }
+    };
+    let range = current.merged(update);
+    let (stride, size) = mirror.draw_bound.unwrap_or((0, 0));
+    validate_draw_range(range, stride, size)?;
+    mirror.draw = Some(range);
     drop(targets);
-    self.send(RasterCmd::SetDrawCount { id, count });
+    self.send(RasterCmd::SetDraw { id, range });
     Ok(())
   }
 

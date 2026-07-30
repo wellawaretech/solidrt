@@ -71,7 +71,14 @@ pub struct GpuPipelineInfo {
   pub pipeline_id: Option<u64>,
   pub buffer_id: Option<u64>,
   pub topology: Option<&'static str>,
+  /// The vertex count of the target's draw range; None on a fragment-only
+  /// target, like the two range fields below.
   pub draw_count: Option<i32>,
+  /// First vertex of the draw range (0 = the buffer's start).
+  pub first_vertex: Option<i32>,
+  /// Instances the range is drawn as (1 = the plain non-instanced draw, 0 =
+  /// draws nothing).
+  pub instance_count: Option<i32>,
   pub depth: bool,
   /// Whether the draw writes depth; None on a fragment-only target.
   pub depth_write: Option<bool>,

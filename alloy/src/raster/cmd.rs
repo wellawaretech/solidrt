@@ -6,7 +6,9 @@
 use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
-use crate::gpu::{GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader};
+use crate::gpu::{
+  DrawRange, GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
+};
 use crate::texture::SamplerState;
 
 pub(crate) enum RasterCmd {
@@ -97,8 +99,9 @@ pub(crate) enum RasterCmd {
   /// next flush. Replies with the adopted handle so the UI side re-registers
   /// it under the same id.
   ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Set a pipeline's vertex draw count and mark it dirty.
-  SetDrawCount { id: u64, count: i32 },
+  /// Set a pipeline target's draw range (resolved and validated UI-side, see
+  /// `Context::set_draw`) and mark it dirty.
+  SetDraw { id: u64, range: DrawRange },
   /// Render a manual target once, now (see `TargetSpec::manual`): flush
   /// pending pure-target writes first so the pass samples fresh inputs, run
   /// the pass, and mark the target's output changed so targets sampling it

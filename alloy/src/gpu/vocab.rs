@@ -303,25 +303,116 @@ pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u
   Ok(())
 }
 
-/// Bounds-check an explicit vertex draw count against the buffer it fetches
-/// from: `count * stride` must stay within the buffer, or the draw is
-/// undefined-behaviour vertex fetch (raw GLES 3.0 has no draw-time bounds
-/// check; WebGL made the same case INVALID_OPERATION). Buffer sizes are fixed
-/// at creation, so a bound captured then stays correct for the target's
-/// lifetime. Shared by the create paths (raster-side, via
-/// `resolve_target_mesh`) and `Context::set_draw_count` (UI mirror side).
-pub fn validate_draw_bound(count: i32, stride: usize, size: usize) -> Result<(), String> {
-  if count < 0 {
-    return Err(format!("vertex count must be >= 0, got {count}"));
+/// The draw parameters of one pipeline target: which vertices are drawn
+/// (`[first_vertex, first_vertex + vertex_count)`, WebGPU's `firstVertex` /
+/// `vertexCount`) and how many instances the range is drawn as. One value
+/// because the three numbers describe one draw call; targets mutate it as a
+/// unit via `DrawUpdate`. `instance_count` 1 is the plain non-instanced draw;
+/// 0 draws nothing (a cheap off switch, as in WebGPU). Note `gl_VertexID`
+/// includes `first_vertex` (GL and WebGPU agree) and `gl_InstanceID` always
+/// starts at 0 - ES 3.0 has no base instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawRange {
+  pub first_vertex: i32,
+  /// Negative at the API boundary means "the rest of the buffer from
+  /// `first_vertex` on"; `resolve_draw_range` replaces it with the concrete
+  /// count before the range crosses to the raster thread.
+  pub vertex_count: i32,
+  pub instance_count: i32,
+}
+
+impl Default for DrawRange {
+  /// The create-time default: the whole buffer (see `vertex_count`), once,
+  /// from vertex 0.
+  fn default() -> Self {
+    DrawRange { first_vertex: 0, vertex_count: -1, instance_count: 1 }
   }
-  let need = count as usize * stride;
-  if need > size {
-    let capacity = size / stride.max(1);
-    return Err(format!(
-      "vertex count {count} needs {need} bytes at {stride} bytes/vertex, but the buffer holds {size} bytes ({capacity} vertices)"
-    ));
+}
+
+impl DrawRange {
+  /// This range with the update's present fields overwritten: the setDraw
+  /// merge - absent fields keep their current value, like params.
+  pub fn merged(self, update: DrawUpdate) -> DrawRange {
+    DrawRange {
+      first_vertex: update.first_vertex.unwrap_or(self.first_vertex),
+      vertex_count: update.vertex_count.unwrap_or(self.vertex_count),
+      instance_count: update.instance_count.unwrap_or(self.instance_count),
+    }
+  }
+}
+
+/// A partial update to a target's `DrawRange` (the setDraw payload); `None`
+/// fields keep their current value.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DrawUpdate {
+  pub first_vertex: Option<i32>,
+  pub vertex_count: Option<i32>,
+  pub instance_count: Option<i32>,
+}
+
+/// Check a resolved draw range against the buffer it fetches from: every
+/// field must be >= 0 and the vertex fetch `[first_vertex, first_vertex +
+/// vertex_count) * stride` must stay within the buffer, or the draw is
+/// undefined-behaviour vertex fetch (raw GLES 3.0 has no draw-time bounds
+/// check; WebGL made the same case INVALID_OPERATION). Stride 0
+/// (attributeless) skips the fetch bound - gl_VertexID fetches nothing - but
+/// the sign rules still apply. Buffer sizes are fixed at creation, so a bound
+/// captured then stays correct for the target's lifetime. Runs UI-side at the
+/// call-site boundary: the create paths via `resolve_draw_range` and
+/// `Context::set_draw` against the mirrored bound.
+pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize) -> Result<(), String> {
+  if range.first_vertex < 0 {
+    return Err(format!("first vertex must be >= 0, got {}", range.first_vertex));
+  }
+  if range.vertex_count < 0 {
+    return Err(format!("vertex count must be >= 0, got {}", range.vertex_count));
+  }
+  if range.instance_count < 0 {
+    return Err(format!("instance count must be >= 0, got {}", range.instance_count));
+  }
+  if stride > 0 {
+    let end = range.first_vertex as usize + range.vertex_count as usize;
+    let need = end * stride;
+    if need > size {
+      let capacity = size / stride;
+      return Err(format!(
+        "vertex range {}..{end} needs {need} bytes at {stride} bytes/vertex, but the buffer holds {size} bytes ({capacity} vertices)",
+        range.first_vertex
+      ));
+    }
   }
   Ok(())
+}
+
+/// Resolve a create-time draw range against the pipeline's vertex stride and
+/// the concrete buffer size (`None` = no buffer bound): a negative
+/// `vertex_count` becomes "the rest of the buffer from `first_vertex` on" (0
+/// when nothing is fetched), and the result is validated like any explicit
+/// range. A nonzero stride with no buffer is rejected here too, so both
+/// create paths fail at the call site with the real problem instead of a
+/// 0-byte bounds message. Runs UI-side (Context owns the size/stride
+/// mirrors); the raster thread only ever sees resolved ranges.
+pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usize>) -> Result<DrawRange, String> {
+  if stride > 0 && size.is_none() {
+    return Err("pipeline declares attributes but no vertex buffer".to_string());
+  }
+  if range.vertex_count < 0 {
+    range.vertex_count = match size {
+      Some(size) if stride > 0 => {
+        let capacity = (size / stride) as i32;
+        if range.first_vertex > capacity {
+          return Err(format!(
+            "first vertex {} is past the end of the buffer ({capacity} vertices)",
+            range.first_vertex
+          ));
+        }
+        capacity - range.first_vertex.max(0)
+      }
+      _ => 0,
+    };
+  }
+  validate_draw_range(range, stride, size.unwrap_or(0))?;
+  Ok(range)
 }
 
 /// A stage of the programmable pipeline, for the raw compile path.

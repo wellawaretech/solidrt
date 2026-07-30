@@ -175,9 +175,31 @@ fn collect_target_spec(
     Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
     None => 0,
   };
-  let draw_count = match opts {
-    Some(o) => o.get::<_, Option<i32>>("vertexCount")?.unwrap_or(-1),
-    None => -1,
+  // The draw range: firstVertex + vertexCount pick the vertices (WebGPU's
+  // spelling), instanceCount repeats them (gl_InstanceID; 1 = the plain
+  // draw, 0 draws nothing). vertexCount omitted means "the rest of the
+  // buffer" - alloy derives it - so an explicit negative must be rejected
+  // here, where "omit it" is still meaningful advice; the other fields'
+  // sign checks are alloy's.
+  let vertex_count = match opts {
+    Some(o) => o.get::<_, Option<i32>>("vertexCount")?,
+    None => None,
+  };
+  if let Some(v) = vertex_count {
+    if v < 0 {
+      return Err(throw_str(ctx, &format!("{api}: vertexCount must be >= 0, got {v} (omit it to draw the whole buffer)")));
+    }
+  }
+  let draw = alloy::DrawRange {
+    first_vertex: match opts {
+      Some(o) => o.get::<_, Option<i32>>("firstVertex")?.unwrap_or(0),
+      None => 0,
+    },
+    vertex_count: vertex_count.unwrap_or(-1),
+    instance_count: match opts {
+      Some(o) => o.get::<_, Option<i32>>("instanceCount")?.unwrap_or(1),
+      None => 1,
+    },
   };
   let mut clear_color = [0f32; 4];
   if let Some(opts) = opts {
@@ -204,7 +226,7 @@ fn collect_target_spec(
     None => false,
   };
   let sampler = collect_sampler(ctx, opts, api)?;
-  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw_count, clear_color, sampler, manual, load })
+  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw, clear_color, sampler, manual, load })
 }
 
 // Decode the draw-state options of createRenderPipeline and createPipeline -
@@ -316,7 +338,7 @@ impl ModuleDef for GpuModule {
     decl.declare("createBuffer")?;
     decl.declare("writeBuffer")?;
     decl.declare("destroyBuffer")?;
-    decl.declare("setDrawCount")?;
+    decl.declare("setDraw")?;
     decl.declare("renderTarget")?;
     decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
@@ -477,7 +499,7 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setShaderTextures");
 
-    // Resize a shader/pipeline target in place - the setDrawCount analog for
+    // Resize a shader/pipeline target in place - the setDraw analog for
     // output size: the id, compiled program, last-applied params, and sampler
     // bindings all carry over, and the output re-renders at the new size.
     let shader_size_atx = atx.clone();
@@ -651,15 +673,23 @@ impl ModuleDef for GpuModule {
     })
     .expect("create destroyBuffer");
 
-    let set_draw_count_atx = atx.clone();
-    let set_draw_count_platform = platform.clone();
-    let set_draw_count =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, count: i32| -> rquickjs::Result<()> {
-        set_draw_count_atx.set_draw_count(id, count).map_err(|e| throw_str(&ctx, &format!("setDrawCount: {e}")))?;
-        set_draw_count_platform.request_frame();
+    // Partial draw-range update: keys present overwrite, absent keys keep
+    // their current value (the params merge rule). Alloy validates the merged
+    // range against the mirrored vertex-fetch bound at this call site.
+    let set_draw_atx = atx.clone();
+    let set_draw_platform = platform.clone();
+    let set_draw =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, draw: Object<'_>| -> rquickjs::Result<()> {
+        let update = alloy::DrawUpdate {
+          first_vertex: draw.get::<_, Option<i32>>("firstVertex")?,
+          vertex_count: draw.get::<_, Option<i32>>("vertexCount")?,
+          instance_count: draw.get::<_, Option<i32>>("instanceCount")?,
+        };
+        set_draw_atx.set_draw(id, update).map_err(|e| throw_str(&ctx, &format!("setDraw: {e}")))?;
+        set_draw_platform.request_frame();
         Ok(())
       })
-      .expect("create setDrawCount");
+      .expect("create setDraw");
 
     // The explicit render verb for manual targets (render: "manual"); alloy
     // validates the mode and queues the pass in call order.
@@ -718,7 +748,7 @@ impl ModuleDef for GpuModule {
     exports.export("createBuffer", create_buffer)?;
     exports.export("writeBuffer", write_buffer)?;
     exports.export("destroyBuffer", destroy_buffer)?;
-    exports.export("setDrawCount", set_draw_count)?;
+    exports.export("setDraw", set_draw)?;
     exports.export("renderTarget", render_target)?;
     exports.export("copyTexture", copy_texture)?;
     // Named generic fns, not closures: `captureSnapshot` returns a Promise and

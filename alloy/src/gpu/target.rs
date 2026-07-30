@@ -11,13 +11,13 @@ use std::rc::Rc;
 use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, PassDraw, PassInput};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
-use super::vocab::{blend_name, vertex_stride, AttrFormat, ParamValue, PipelineDesc};
+use super::vocab::{blend_name, vertex_stride, AttrFormat, DrawRange, ParamValue, PipelineDesc};
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
 /// The per-target mesh half of a pipeline target: the pipeline it draws with
 /// (which owns the draw state), plus everything bound to THIS target - the
 /// VAO built against its concrete vertex buffer, that buffer's registry id,
-/// the draw count, the private depth storage, and the clear color.
+/// the draw range, the private depth storage, and the clear color.
 pub(super) struct MeshState {
   pub(super) pipeline: Rc<RenderPipeline>,
   /// Registry id of the shared pipeline this target was created from; None
@@ -32,7 +32,9 @@ pub(super) struct MeshState {
   /// Registry id of that buffer (Context resolves writes to re-renders
   /// through this). 0 when the pipeline is attributeless.
   buffer_id: u64,
-  pub(super) draw_count: Cell<i32>,
+  /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
+  /// it ever reaches this cell.
+  pub(super) draw: Cell<DrawRange>,
   /// Present when the pipeline carries depth state; the renderbuffer stays
   /// private to the FBO (never adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
@@ -245,7 +247,7 @@ impl ShaderTexture {
     desc: PipelineDesc,
     buffer: Option<Rc<GpuBuffer>>,
     buffer_id: u64,
-    draw_count: i32,
+    draw: DrawRange,
     clear_color: [f32; 4],
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_pipeline(gl, vertex_src, fragment_src)?);
@@ -256,7 +258,7 @@ impl ShaderTexture {
         return Err(e);
       }
     };
-    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffer, buffer_id, draw_count, clear_color)
+    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffer, buffer_id, draw, clear_color)
       .map_err(|(pipeline, e)| {
         release_pipeline(gl, pipeline);
         e
@@ -280,7 +282,7 @@ impl ShaderTexture {
     sampler_bindings: Vec<(String, u64)>,
     buffer: Option<Rc<GpuBuffer>>,
     buffer_id: u64,
-    draw_count: i32,
+    draw: DrawRange,
     clear_color: [f32; 4],
   ) -> Result<Self, (Rc<RenderPipeline>, String)> {
     if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
@@ -392,7 +394,7 @@ impl ShaderTexture {
           vao,
           buffer,
           buffer_id,
-          draw_count: Cell::new(draw_count),
+          draw: Cell::new(draw),
           depth: depth_rb,
           clear_color,
           load: false,
@@ -471,10 +473,10 @@ impl ShaderTexture {
     self.mesh.is_some()
   }
 
-  /// The number of vertices the next render draws; None on a fragment-only
-  /// shader.
-  pub fn draw_count(&self) -> Option<i32> {
-    self.mesh.as_ref().map(|m| m.draw_count.get())
+  /// The draw range (vertices and instances) the next render draws; None on
+  /// a fragment-only shader.
+  pub fn draw_range(&self) -> Option<DrawRange> {
+    self.mesh.as_ref().map(|m| m.draw.get())
   }
 
   /// The pipeline's topology as the string `Topology::parse` accepts; None on
@@ -505,11 +507,12 @@ impl ShaderTexture {
     self.mesh.as_ref().map(|m| blend_name(m.pipeline.desc.blend))
   }
 
-  /// Set the number of vertices the next render draws. Errors on a
-  /// fragment-only shader (its fullscreen triangle is fixed).
-  pub fn set_draw_count(&self, count: i32) -> Result<(), String> {
+  /// Set the draw range the next render draws (resolved and validated
+  /// UI-side, see `Context::set_draw`). Errors on a fragment-only shader
+  /// (its fullscreen triangle is fixed).
+  pub fn set_draw(&self, range: DrawRange) -> Result<(), String> {
     let mesh = self.mesh.as_ref().ok_or_else(|| "not a pipeline texture".to_string())?;
-    mesh.draw_count.set(count);
+    mesh.draw.set(range);
     Ok(())
   }
 

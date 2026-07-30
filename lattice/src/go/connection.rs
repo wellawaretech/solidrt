@@ -940,6 +940,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if let Some(draw_count) = p.draw_count {
         map.insert("drawCount".into(), draw_count.into());
       }
+      // Reported only off their defaults, like depthWrite below: absent
+      // means the plain draw from the buffer's start.
+      if let Some(first_vertex) = p.first_vertex.filter(|v| *v != 0) {
+        map.insert("firstVertex".into(), first_vertex.into());
+      }
+      if let Some(instance_count) = p.instance_count.filter(|v| *v != 1) {
+        map.insert("instanceCount".into(), instance_count.into());
+      }
       if p.depth {
         map.insert("depth".into(), true.into());
       }

@@ -151,7 +151,7 @@ let TOOLS: {
     name: "get_gpu_resources",
     readOnly: true,
     description:
-      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount, depth, attribute layout, bound sampler texture ids, current uniform values - the most recent writes, which the next frame or readback draws with - plus passes/passMs, cumulative per-target render count and raster-thread wall time in whole ms: when get_stats shows gpuPasses running hot, these attribute the cost to the specific target). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
+      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount plus firstVertex/instanceCount when off their 0/1 defaults, depth, attribute layout, bound sampler texture ids, current uniform values - the most recent writes, which the next frame or readback draws with - plus passes/passMs, cumulative per-target render count and raster-thread wall time in whole ms: when get_stats shows gpuPasses running hot, these attribute the cost to the specific target). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
     inputSchema: { client: CLIENT_ARG },
   },
   {

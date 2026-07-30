@@ -70,11 +70,16 @@ endif
 # Build both host binaries (client + runtime).
 all: client runtime
 
-$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx) $(wildcard $(CURDIR)/launcher/parts/*.tsx)
+# The monorepo packages both bundles bake in. Without these prerequisites a
+# core/components surface change leaves a stale bundle importing a runtime
+# export that no longer exists, failing at module link on engine start.
+BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*)
+
+$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx) $(wildcard $(CURDIR)/launcher/parts/*.tsx) $(BUNDLE_DEPS)
 	@echo "Bundling launcher (launcher.tsx -> launcher.srt.js)..."
 	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC)
 
-$(BSOD_JS): $(BSOD_SRC)
+$(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
 	@echo "Bundling BSOD screen (bsod.tsx -> bsod.srt.js)..."
 	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC)
 

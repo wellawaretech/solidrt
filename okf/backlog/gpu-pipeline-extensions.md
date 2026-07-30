@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: GPU pipeline extensions
-description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29; index buffers, float data textures, raster state, alpha translucency and multi-pass targets remain deferred.
+description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30; index buffers, per-instance attributes, float data textures, raster state, alpha translucency and multi-pass targets remain deferred.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -30,13 +30,31 @@ draw count. Deliberately deferred, in rough order of expected demand:
   standard has one) - and the target names `indexBuffer` + `indexFormat:
   "uint16" | "uint32"`. Normalized vertex formats (`unorm8x4` etc.) are the
   adjacent bandwidth item recorded there.
-- **Draw range and instancing** (from [gpu-review](../analysis/gpu-review.md)
-  lesson 6): `first` for sub-range draws from a shared buffer (the Doom
-  dynamic-tail case can draw the tail, not just the first N; trivial) and
-  `instanceCount` via `glDrawArraysInstanced` + `gl_InstanceID` (native ES
-  3.0), the standard answer to particles and repeated meshes. Both additive
-  under the pure-target model - they change what is drawn, not whether the
-  pass is idempotent.
+- **Draw range and instancing.** DONE 2026-07-30. The draw is one value,
+  WebGPU-shaped: `firstVertex` + `vertexCount` + `instanceCount` on the
+  target spec (`alloy::DrawRange`), drawn via `glDrawArraysInstanced` when
+  instanceCount != 1 (1 keeps the plain `glDrawArrays`, bit-identical to
+  before; 0 draws nothing). `setDrawCount` is REPLACED by `setDraw(id, {
+  firstVertex?, vertexCount?, instanceCount? })` with params-style partial
+  merge (`DrawUpdate`, merged against the `TargetMirror`). The
+  whole-buffer-derivation rule moved UI-side (`resolve_draw_range` in
+  vocab.rs, one copy for create + update); raster's `resolve_target_mesh`
+  shrank to a buffer lookup, so "buffer N not found" and range errors all
+  throw at the JS call site. gl_VertexID includes firstVertex; gl_InstanceID
+  counts from 0 (no base instance in ES 3.0 - `firstInstance` deliberately
+  not offered). get_gpu_resources reports firstVertex/instanceCount off
+  their 0/1 defaults. Example: packages/core/examples/gpu-instancing.tsx.
+- **Per-instance attributes** (vertex divisor), the follow-up instancing
+  deliberately excludes: without it, instances differ only via
+  `gl_InstanceID` arithmetic or a texelFetch into a data texture - fine for
+  grids and repeated meshes, thin for particles with per-instance state
+  (and data textures want float formats, below, first). The design is
+  additive to what landed: a second, divisor-1 buffer - `instanceBuffer` on
+  the target spec plus `instanceAttributes: [{name, format}]` on the
+  pipeline desc (WebGPU's `stepMode: "instance"` in GL clothing, VAO setup
+  gains `glVertexAttribDivisor`) - leaving `attributes`, `buffer`, and the
+  draw range untouched. `instanceCount` then also gains a fetch bound
+  against the instance buffer, mirroring the vertex one.
 - **Float texture formats** (`R32F`/`RGBA32F`) for data textures sampled in
   the vertex stage (e.g. per-sector heights via texelFetch). Workaround:
   fixed-point encode into RGBA8 channels and decode in the shader.

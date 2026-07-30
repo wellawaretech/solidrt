@@ -83,8 +83,11 @@ export {
   uploadTexture,
 } from "flux:gpu"
 
-// Pipeline plumbing re-exported raw: setDrawCount re-renders a pipeline after
-// its buffer gained or lost dynamic geometry; destroyBuffer is the manual
+// Pipeline plumbing re-exported raw: setDraw re-renders a pipeline with an
+// updated draw range (vertexCount after its buffer gained or lost dynamic
+// geometry, firstVertex for a different window of a shared buffer,
+// instanceCount for an instanced population; absent keys keep their current
+// value, like params); destroyBuffer is the manual
 // cleanup path for buffers created outside a reactive scope. renderTarget is
 // the explicit render verb for `render: "manual"` targets - targets whose
 // pass is state (accumulation, feedback) rather than a pure function of its
@@ -94,8 +97,8 @@ export {
 // copyTexture overwrites a manual target with another texture's pixels
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
-export { copyTexture, destroyBuffer, renderTarget, setDrawCount } from "flux:gpu"
-export type { BlendMode, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
+export type { BlendMode, DrawRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
 // owns these lifetimes. compileShader compiles one stage from complete GLSL
@@ -242,9 +245,11 @@ export function createShader(
  * uniforms with `<texture params>` or `setShaderParams`). Many targets may
  * share one pipeline, and creating a target compiles nothing. The target
  * brings the per-target half: size, the concrete vertex `buffer` the
- * pipeline's attribute layout describes, `vertexCount` (defaults to the
- * whole buffer; a fullscreen pass over an attributeless pipeline is
- * `{ vertexCount: 3 }` with a covering-triangle vertex stage), uniforms, and
+ * pipeline's attribute layout describes, the draw range (`vertexCount`
+ * defaults to the rest of the buffer from `firstVertex` on, `instanceCount`
+ * repeats it as instances told apart by `gl_InstanceID`; a fullscreen pass
+ * over an attributeless pipeline is `{ vertexCount: 3 }` with a
+ * covering-triangle vertex stage), uniforms, and
  * `clearColor`. Draw state (`attributes`, `topology`, `blend`, `depth`,
  * `depthWrite`) lives on the pipeline and throws here. Frees the target when
  * the reactive owner is disposed (opt out with `opts.manual`); the pipeline
@@ -268,11 +273,11 @@ export function createShaderTarget(
     params?: gpu.ShaderParams
     textures?: Record<string, gpu.TextureId>
     buffer?: gpu.BufferId
-    vertexCount?: number
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
-  } & CreateOptions &
+  } & gpu.DrawRange &
+    CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createShaderTarget(pipeline, width, height, opts)
@@ -405,8 +410,11 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * overlapping geometry additively (order-independent, no sorting) instead of
  * overwriting; a depth-tested additive pass is `{ depth: true, blend: "add",
  * depthWrite: false }` - each option only does what it says, neither implies
- * the other. `opts.vertexCount` defaults to the whole buffer and can be
- * changed later with `setDrawCount`. `opts.render: "manual"` and
+ * the other. The draw range (`firstVertex`, `vertexCount`, `instanceCount` -
+ * see DrawRange) defaults to the whole buffer drawn once and can be changed
+ * later with `setDraw`; `instanceCount` is the standard answer to particles
+ * and repeated meshes, N copies of the range told apart by `gl_InstanceID`
+ * in the vertex stage. `opts.render: "manual"` and
  * `opts.loadOp` behave exactly as on {@link createShaderTarget}: step the
  * target with `renderTarget(id)`, and `loadOp: "load"` (manual-only) keeps
  * the previous contents under each draw. Frees the texture and GL program when the reactive
@@ -424,14 +432,14 @@ export function createPipeline(
     attributes?: gpu.VertexAttribute[]
     buffer?: gpu.BufferId
     topology?: gpu.Topology
-    vertexCount?: number
     depth?: boolean
     depthWrite?: boolean
     blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
-  } & CreateOptions &
+  } & gpu.DrawRange &
+    CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, opts)

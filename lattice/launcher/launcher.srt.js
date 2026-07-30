@@ -5495,9 +5495,10 @@ var capabilities = {
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";
-import { destroyBuffer as destroyBuffer2, setDrawCount } from "flux:gpu";
-import { compileShader, destroyProgram, destroyShader, linkProgram } from "flux:gpu";
+import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
+import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
+var glsl = String.raw;
 // packages/core/src/image.ts
 var imageCache = new Map;
 // packages/core/src/scroll.ts

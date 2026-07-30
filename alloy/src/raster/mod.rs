@@ -33,10 +33,10 @@ use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_draw_bound, validate_params, validate_texture_bindings,
-  AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources,
-  GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline,
-  ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, GpuBuffer,
+  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
+  GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram,
+  ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
@@ -484,19 +484,19 @@ impl RasterState {
           RasterCmd::ResizeShaderTexture { id, width, height, reply: tx } => {
             reply(tx, self.resize_shader_texture(id, width, height));
           }
-          RasterCmd::SetDrawCount { id, count } => {
+          RasterCmd::SetDraw { id, range } => {
             let result = self
               .shaders
               .get(&id)
               .ok_or_else(|| format!("shader texture {id} not found"))
-              .and_then(|shader| shader.set_draw_count(count).map(|()| shader.manual()));
+              .and_then(|shader| shader.set_draw(range).map(|()| shader.manual()));
             match result {
               Ok(manual) => {
                 if !manual {
                   self.dirty.insert(id);
                 }
               }
-              Err(e) => log::warn!("[alloy] draw count update failed: {e}"),
+              Err(e) => log::warn!("[alloy] draw update failed: {e}"),
             }
           }
           RasterCmd::RenderTarget { id } => {
@@ -1071,7 +1071,7 @@ impl RasterState {
   }
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
-    let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &spec.pipeline.attributes, &spec.target)?;
+    let buffer = resolve_target_buffer(&self.buffers, spec.target.buffer)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
@@ -1082,7 +1082,7 @@ impl RasterState {
       spec.pipeline,
       buffer,
       spec.target.buffer,
-      draw_count,
+      spec.target.draw,
       spec.target.clear_color,
     )?;
     let shader = shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
@@ -1132,7 +1132,7 @@ impl RasterState {
     let uniforms = pipeline.uniform_table();
     validate_params(&uniforms, &spec.params)?;
     validate_texture_bindings(&uniforms, &spec.textures)?;
-    let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &pipeline.desc().attributes, &spec)?;
+    let buffer = resolve_target_buffer(&self.buffers, spec.buffer)?;
     let shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
@@ -1142,7 +1142,7 @@ impl RasterState {
       spec.textures.clone(),
       buffer,
       spec.buffer,
-      draw_count,
+      spec.draw,
       spec.clear_color,
     )
     .map_err(|(_, e)| e)?;
@@ -1253,6 +1253,7 @@ impl RasterState {
       .iter()
       .map(|(texture_id, shader)| {
         let (passes, pass_micros) = shader.pass_stats();
+        let draw = shader.draw_range();
         GpuPipelineInfo {
           texture_id: *texture_id,
           kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
@@ -1260,7 +1261,9 @@ impl RasterState {
           pipeline_id: shader.pipeline_id(),
           buffer_id: shader.buffer_id(),
           topology: shader.topology_name(),
-          draw_count: shader.draw_count(),
+          draw_count: draw.map(|d| d.vertex_count),
+          first_vertex: draw.map(|d| d.first_vertex),
+          instance_count: draw.map(|d| d.instance_count),
           depth: shader.has_depth(),
           depth_write: shader.depth_write(),
           blend: shader.blend_name(),
@@ -1309,38 +1312,16 @@ impl RasterState {
   }
 }
 
-/// Resolve a target's mesh bindings against the buffer registry: the source
-/// buffer (an Rc clone the target keeps for the VAO's lifetime) and the
-/// effective draw count (a negative request means "the whole buffer", derived
-/// from buffer size / the pipeline's vertex stride). An explicit count is
-/// bounds-checked against the buffer - a count past its end would be
-/// undefined-behaviour vertex fetch - and the error surfaces at the JS call
-/// site through the blocking create RPC.
-fn resolve_target_mesh(
-  buffers: &HashMap<u64, Rc<GpuBuffer>>,
-  attributes: &[(String, AttrFormat)],
-  spec: &TargetSpec,
-) -> Result<(Option<Rc<GpuBuffer>>, i32), String> {
-  let buffer = if spec.buffer != 0 {
-    Some(buffers.get(&spec.buffer).ok_or_else(|| format!("buffer {} not found", spec.buffer))?)
-  } else {
-    None
-  };
-  let stride = crate::gpu::vertex_stride(attributes);
-  let count = if spec.draw_count >= 0 {
-    if let Some(b) = buffer {
-      if stride > 0 {
-        validate_draw_bound(spec.draw_count, stride as usize, b.size)?;
-      }
-    }
-    spec.draw_count
-  } else {
-    match buffer {
-      Some(b) if stride > 0 => (b.size / stride as usize) as i32,
-      _ => 0,
-    }
-  };
-  Ok((buffer.cloned(), count))
+/// Resolve a target's vertex buffer against the buffer registry: the Rc
+/// clone the target keeps for its VAO's lifetime. The draw range itself
+/// arrives already resolved and bounds-checked from the UI thread
+/// (`resolve_draw_range`), which owns the stride/size mirrors; a miss here
+/// means those mirrors diverged.
+fn resolve_target_buffer(buffers: &HashMap<u64, Rc<GpuBuffer>>, buffer_id: u64) -> Result<Option<Rc<GpuBuffer>>, String> {
+  if buffer_id == 0 {
+    return Ok(None);
+  }
+  buffers.get(&buffer_id).cloned().map(Some).ok_or_else(|| format!("buffer {buffer_id} not found"))
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`

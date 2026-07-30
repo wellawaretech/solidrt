@@ -2,12 +2,12 @@
 //! to the raster thread in one owned value, serving both the public Context
 //! API and the RasterCmd payloads.
 
-use super::vocab::{ParamValue, PipelineDesc};
+use super::vocab::{DrawRange, ParamValue, PipelineDesc};
 use crate::texture::SamplerState;
 
 /// Everything `create_shader_target` needs to build one target over a render
 /// pipeline: the per-target half of the split (output size, uniform values,
-/// sampler inputs, the concrete vertex buffer, draw count, clear, sampling).
+/// sampler inputs, the concrete vertex buffer, draw range, clear, sampling).
 /// The draw-state half lives on the pipeline (`gpu::PipelineDesc`). Owned,
 /// so the one struct serves both the public API and the raster channel.
 pub struct TargetSpec {
@@ -18,9 +18,11 @@ pub struct TargetSpec {
   /// Registry id of the interleaved vertex buffer the pipeline's attributes
   /// describe; 0 = attributeless rendering via gl_VertexID.
   pub buffer: u64,
-  /// Number of vertices to draw; negative derives it from buffer size /
-  /// vertex stride.
-  pub draw_count: i32,
+  /// Which vertices to draw and how many instances (see `DrawRange`). A
+  /// negative `vertex_count` here means "the rest of the buffer"; Context
+  /// resolves it (`resolve_draw_range`) before the spec crosses to the
+  /// raster thread.
+  pub draw: DrawRange,
   pub clear_color: [f32; 4],
   /// How the target's output is sampled everywhere (shader inputs, display).
   pub sampler: SamplerState,
