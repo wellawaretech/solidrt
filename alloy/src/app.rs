@@ -96,13 +96,10 @@ impl App {
     let (tx, rx) = mpsc::channel::<FrameOutput>();
     let (event_tx, event_rx) = mpsc::channel::<AlloyEvent>();
     let (cmd_tx, cmd_rx) = mpsc::channel::<AlloyCommand>();
-    // Raster commands sent but not yet executed (see raster::RasterSender).
-    // The loop below reads it to gate the idle Tick; the Context exposes it
-    // for diagnostics.
-    let raster_queue = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    // Cumulative idle Ticks emitted below, exposed through the Context
-    // alongside the queue depth (see the Tick gate for why they pair).
-    let idle_ticks = Arc::new(AtomicU64::new(0));
+    // Live counters shared with the raster thread and the Context (see
+    // raster::RasterStats). The loop below reads the queue depth to gate the
+    // idle Tick and increments idle_ticks per emitted Tick.
+    let stats = Arc::new(crate::raster::RasterStats::new());
     // Frame wakeup for the interactive loop below: it sleeps on the SDL event
     // queue, so a presented frame must push an event to be noticed before the
     // wait's timeout. Playback mode blocks on the frame channel directly.
@@ -116,14 +113,7 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
-    platform.run_context(
-      move |ctx| dl_producer(ctx, cmd_tx, event_rx),
-      tx,
-      wake,
-      mode.is_playback(),
-      raster_queue.clone(),
-      idle_ticks.clone(),
-    );
+    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
 
     let initial = current_resize_event(&window);
     apply_main_thread_effects(&initial, &surface_size, &mode);
@@ -324,9 +314,9 @@ impl App {
       // through the backlog instead of sleeping; ticks resume within one
       // refresh period of the queue draining.
       if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
-        if raster_queue.load(Ordering::Acquire) == 0 {
+        if stats.queue_depth.load(Ordering::Acquire) == 0 {
           event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
-          idle_ticks.fetch_add(1, Ordering::Relaxed);
+          stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
         }
         last_frame_signal = Instant::now();
       }

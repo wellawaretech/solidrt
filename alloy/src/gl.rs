@@ -1023,17 +1023,13 @@ pub fn run_context(
   tx: mpsc::Sender<FrameOutput>,
   wake: Option<Box<dyn Fn() + Send + Sync>>,
   capture_frames: bool,
-  raster_queue: Arc<std::sync::atomic::AtomicUsize>,
-  idle_ticks: Arc<AtomicU64>,
+  stats: Arc<crate::raster::RasterStats>,
 ) {
   let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
   let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
-  let raster_tx = crate::raster::RasterSender::new(raster_tx, raster_queue.clone());
-  // Written by the raster thread (present-fence timeouts), read live through
-  // the Context for get_stats; the frame loop never needs it.
-  let fence_timeouts = Arc::new(AtomicU64::new(0));
-  let raster_fence_timeouts = fence_timeouts.clone();
+  let raster_tx = crate::raster::RasterSender::new(raster_tx, stats.clone());
+  let raster_stats = stats.clone();
 
   // The raster thread: sole owner of the process's single GL context and
   // Impeller context for the engine's lifetime. Impeller's GLES contract
@@ -1074,8 +1070,7 @@ pub fn run_context(
       window,
       surface_size,
       capture_frames,
-      raster_queue,
-      raster_fence_timeouts,
+      raster_stats,
       tx,
       wake,
     );
@@ -1089,7 +1084,7 @@ pub fn run_context(
     // Same display-priority rationale as the raster thread, one tier lower
     // (the raster thread owns the present deadline).
     crate::sdl_utils::frame_thread_priority(false);
-    closure(Arc::new(Context::new(raster_tx, idle_ticks, fence_timeouts)));
+    closure(Arc::new(Context::new(raster_tx, stats)));
   });
   spawn_ui.expect("failed to spawn UI thread");
 }

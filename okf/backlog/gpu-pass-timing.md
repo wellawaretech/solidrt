@@ -2,11 +2,37 @@
 type: backlog-item
 title: Time the GPU pass work
 description: Shader and pipeline passes execute in the raster command loop where nothing is timed, so a client can be tens of seconds per frame while the engine reports a healthy 40ms draw; per-pass duration is the one counter the 2026-07-27 GPU investigation still lacked.
-status: open
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Time the GPU pass work
+
+Stage 1 landed 2026-07-30: raster counters consolidated into one shared
+`RasterStats` (alloy/src/raster.rs), each `flush_dirty` target render counted
+and wall-timed, surfaced live in get_stats as `gpuPasses` / `gpuPassMs`
+(cumulative; diff two queries for a rate). The ms figure is raster-thread
+occupancy issuing the passes, not GPU-side duration (GL is async; true GPU
+time would need EXT_disjoint_timer_query).
+
+Stage 2 landed 2026-07-30: per-target attribution. Each ShaderTexture keeps
+cumulative pass count + micros (Cell fields, raster-thread only, survive
+resize, die with the target), reported through the Resources RPC as
+`passes` / `passMs` on every get_gpu_resources pipeline entry. Caveat: the
+RPC queues behind a wedged raster thread, so attribution is for
+normal-operation "which target is expensive" - the stage-1 aggregates are the
+wedge-proof signal.
+
+Stage 3 landed 2026-07-30: `rasterCmdMs` in get_stats, cumulative wall time
+executing non-Frame commands (uploads, readbacks, offscreen rasterizations,
+compiles, param writes, and the pass flushes those commands trigger). Frame
+commands are deliberately excluded: their phases are already timed (frameMs),
+and their present blocks on vsync by design, so including them would read as
+busy on a perfectly healthy app.
+
+All three counters are runtime-unverified as of 2026-07-30; the validation
+pass this note suggested (Mali TV vs Adreno tablet vs desktop) is still worth
+doing when a shader-target app is next on a device.
 
 Split out of idle-tick-gpu-backlog-runaway.md, where this was the costliest
 diagnostic gap: it is what turned a one-look diagnosis into an afternoon.

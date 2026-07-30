@@ -609,6 +609,12 @@ pub struct ShaderTexture {
   /// display draw sample it; the target's own inputs carry their own states).
   /// Survives resize; set via `with_sampler` after construction.
   sampler: crate::texture::SamplerState,
+  /// Cumulative passes rendered into this target and their wall time in
+  /// microseconds, recorded by the owner around each render (raster-thread
+  /// occupancy, not GPU-side duration; see raster::RasterStats). Survives
+  /// resize, dies with the target. Cell because renders take &self.
+  passes: Cell<u64>,
+  pass_micros: Cell<u64>,
 }
 
 /// Target texture + FBO shared by both shader kinds. Returns (target, fbo)
@@ -790,6 +796,8 @@ impl ShaderTexture {
         mesh: None,
         last_params: RefCell::new(Vec::new()),
         sampler: crate::texture::SamplerState::default(),
+        passes: Cell::new(0),
+        pass_micros: Cell::new(0),
       })
     }
   }
@@ -959,6 +967,8 @@ impl ShaderTexture {
         }),
         last_params: RefCell::new(Vec::new()),
         sampler: crate::texture::SamplerState::default(),
+        passes: Cell::new(0),
+        pass_micros: Cell::new(0),
       })
     }
   }
@@ -1047,6 +1057,18 @@ impl ShaderTexture {
   /// introspection (`render` reads the record directly).
   pub fn last_params(&self) -> Vec<(String, ParamValue)> {
     self.last_params.borrow().clone()
+  }
+
+  /// Record one executed pass into this target (see the `passes` field).
+  pub fn record_pass(&self, micros: u64) {
+    self.passes.set(self.passes.get() + 1);
+    self.pass_micros.set(self.pass_micros.get() + micros);
+  }
+
+  /// (cumulative passes, cumulative microseconds) rendered into this target,
+  /// for resource introspection.
+  pub fn pass_stats(&self) -> (u64, u64) {
+    (self.passes.get(), self.pass_micros.get())
   }
 
   /// Recreate the render target at a new size, keeping the compiled program,

@@ -2,13 +2,13 @@ use impellers::{DisplayList, ISize, Texture};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::microphone::MicrophoneRegistry;
-use crate::raster::{RasterCmd, RasterSender};
+use crate::raster::{RasterCmd, RasterSender, RasterStats};
 use crate::shader::{ParamValue, PipelineDesc};
 use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 
@@ -22,14 +22,10 @@ use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 
 pub struct Context {
   raster_tx: RasterSender,
-  // Cumulative idle Ticks emitted by the frame loop (app.rs increments).
-  // Exposed with the raster queue depth for diagnostics: ticks racing while
-  // the queue sits nonzero is the idle-tick-runaway signature.
-  idle_ticks: Arc<AtomicU64>,
-  // Cumulative present-fence timeouts (raster thread increments): frames
-  // whose previous present had not retired within the fence timeout, i.e.
-  // the GPU is over budget and pacing was lost.
-  fence_timeouts: Arc<AtomicU64>,
+  // Shared live counters (queue depth, idle ticks, fence timeouts, pass
+  // count/time), exposed through the accessors below for diagnostics. See
+  // RasterStats for what each one means.
+  stats: Arc<RasterStats>,
   pub textures: TextureRegistry,
   // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
   // Enough to validate params/draw-count updates without an RPC.
@@ -213,6 +209,11 @@ pub struct GpuPipelineInfo {
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render.
   pub params: Vec<(String, ParamValue)>,
+  /// Cumulative passes rendered into this target.
+  pub passes: u64,
+  /// Cumulative raster-thread wall time those passes took, in microseconds
+  /// (occupancy, not GPU-side duration; see raster::RasterStats).
+  pub pass_micros: u64,
 }
 
 /// The successful outcome of a node capture: the registry id of the texture the
@@ -237,11 +238,10 @@ unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
 
 impl Context {
-  pub(crate) fn new(raster_tx: RasterSender, idle_ticks: Arc<AtomicU64>, fence_timeouts: Arc<AtomicU64>) -> Self {
+  pub(crate) fn new(raster_tx: RasterSender, stats: Arc<RasterStats>) -> Self {
     Context {
       raster_tx,
-      idle_ticks,
-      fence_timeouts,
+      stats,
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
@@ -279,18 +279,38 @@ impl Context {
   /// Raster commands sent but not yet executed (queued plus the one in hand).
   /// 0 means the raster thread is genuinely idle.
   pub fn raster_queue_depth(&self) -> usize {
-    self.raster_tx.depth()
+    self.stats.queue_depth.load(Ordering::Acquire)
   }
 
   /// Cumulative idle Ticks the frame loop has emitted.
   pub fn idle_ticks(&self) -> u64 {
-    self.idle_ticks.load(Ordering::Relaxed)
+    self.stats.idle_ticks.load(Ordering::Relaxed)
   }
 
   /// Cumulative present-fence timeouts on the raster thread. Nonzero means
   /// the GPU has been over budget; climbing means it still is.
   pub fn fence_timeouts(&self) -> u64 {
-    self.fence_timeouts.load(Ordering::Relaxed)
+    self.stats.fence_timeouts.load(Ordering::Relaxed)
+  }
+
+  /// Cumulative shader/pipeline target passes executed on the raster thread.
+  /// Diffed against presented frames, this exposes redundant target
+  /// re-renders (passes-per-frame far above the target count).
+  pub fn passes(&self) -> u64 {
+    self.stats.passes.load(Ordering::Relaxed)
+  }
+
+  /// Cumulative raster-thread wall time spent executing those passes, in
+  /// microseconds. Occupancy, not GPU-side duration (see RasterStats).
+  pub fn pass_micros(&self) -> u64 {
+    self.stats.pass_micros.load(Ordering::Relaxed)
+  }
+
+  /// Cumulative raster-thread wall time spent executing non-Frame commands
+  /// (uploads, readbacks, rasterizations, compiles, param writes), in
+  /// microseconds - the work no frame-phase timing sees (see RasterStats).
+  pub fn cmd_micros(&self) -> u64 {
+    self.stats.cmd_micros.load(Ordering::Relaxed)
   }
 
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass

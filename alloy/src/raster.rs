@@ -36,37 +36,83 @@ use crate::shader::{
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
+/// Counters shared between the raster thread, the frame loop, and the UI
+/// thread's Context, one allocation for all of them. Diagnostics (get_stats)
+/// read these live through the Context rather than from any frame-latched
+/// snapshot, because a latch goes stale exactly when the raster thread wedges
+/// and these numbers matter most (see
+/// okf/backlog/idle-tick-gpu-backlog-runaway.md). All cumulative except
+/// `queue_depth`; consumers diff between queries.
+pub struct RasterStats {
+  /// Raster commands sent but not yet executed (queued plus the one in
+  /// hand): incremented by `RasterSender::send`, decremented by the command
+  /// loop as each command finishes. 0 means the raster thread has nothing to
+  /// do; the frame loop reads it to gate the idle Tick, since a backlogged
+  /// raster thread produces no presents and is otherwise indistinguishable
+  /// from a genuinely idle GPU.
+  pub(crate) queue_depth: AtomicUsize,
+  /// Idle Ticks emitted by the frame loop (app.rs increments). Ticks racing
+  /// while `queue_depth` sits nonzero is the idle-tick-runaway signature.
+  pub(crate) idle_ticks: AtomicU64,
+  /// Present-fence timeouts: frames whose previous present had not retired
+  /// within the fence timeout, i.e. the GPU is over budget and pacing was
+  /// lost for that frame.
+  pub(crate) fence_timeouts: AtomicU64,
+  /// Shader/pipeline target renders executed by `flush_dirty`. Passes
+  /// racing ahead of presented frames means redundant target re-renders
+  /// (the ~900-passes-per-frame failure this counter exists to catch).
+  pub(crate) passes: AtomicU64,
+  /// Wall time spent executing those passes, in microseconds. This is
+  /// raster-thread occupancy (command issue plus any driver backpressure),
+  /// not GPU-side duration - GL is asynchronous - but occupancy is the
+  /// wedge signal: it is what starves presents.
+  pub(crate) pass_micros: AtomicU64,
+  /// Wall time spent executing non-Frame raster commands, in microseconds:
+  /// texture uploads, readbacks, offscreen rasterizations, compiles, param
+  /// writes, and the pass flushes those commands trigger. This is the work
+  /// no frame-phase timing sees - the raster thread can be seconds-per-frame
+  /// busy here while frameMs reads healthy. Frame commands are excluded
+  /// twice over: their phases are already timed (FrameTiming, get_stats
+  /// frameMs), and their present blocks on vsync by design, which would read
+  /// as busy on a perfectly healthy app.
+  pub(crate) cmd_micros: AtomicU64,
+}
+
+impl RasterStats {
+  pub(crate) fn new() -> Self {
+    RasterStats {
+      queue_depth: AtomicUsize::new(0),
+      idle_ticks: AtomicU64::new(0),
+      fence_timeouts: AtomicU64::new(0),
+      passes: AtomicU64::new(0),
+      pass_micros: AtomicU64::new(0),
+      cmd_micros: AtomicU64::new(0),
+    }
+  }
+}
+
 /// The UI thread's half of the raster command channel, paired with the shared
-/// queue-depth counter: every send increments it, and the raster loop
-/// decrements it as each command finishes executing, so depth 0 means the
-/// raster thread has nothing queued and nothing in hand. The frame loop reads
-/// it to gate the idle Tick: a backlogged raster thread produces no presents,
-/// which is otherwise indistinguishable from a genuinely idle GPU there (see
-/// okf/backlog/idle-tick-gpu-backlog-runaway.md).
+/// counters for the queue-depth bookkeeping (see `RasterStats::queue_depth`).
 pub(crate) struct RasterSender {
   tx: mpsc::Sender<RasterCmd>,
-  depth: Arc<AtomicUsize>,
+  stats: Arc<RasterStats>,
 }
 
 impl RasterSender {
-  pub(crate) fn new(tx: mpsc::Sender<RasterCmd>, depth: Arc<AtomicUsize>) -> Self {
-    RasterSender { tx, depth }
+  pub(crate) fn new(tx: mpsc::Sender<RasterCmd>, stats: Arc<RasterStats>) -> Self {
+    RasterSender { tx, stats }
   }
 
   /// Increment-before-send so the counter never under-reports: the raster
   /// thread may consume and decrement the instant the command is in the
   /// channel.
   pub(crate) fn send(&self, cmd: RasterCmd) -> Result<(), mpsc::SendError<RasterCmd>> {
-    self.depth.fetch_add(1, Ordering::Release);
+    self.stats.queue_depth.fetch_add(1, Ordering::Release);
     let result = self.tx.send(cmd);
     if result.is_err() {
-      self.depth.fetch_sub(1, Ordering::Release);
+      self.stats.queue_depth.fetch_sub(1, Ordering::Release);
     }
     result
-  }
-
-  pub(crate) fn depth(&self) -> usize {
-    self.depth.load(Ordering::Acquire)
   }
 }
 
@@ -249,9 +295,10 @@ pub(crate) struct RasterState {
   slow_frame_log: Option<std::time::Instant>,
   // Instant of the last fence-timeout/-failure warning, same rate limit.
   fence_wait_log: Option<std::time::Instant>,
-  // Cumulative present-fence timeouts (GPU over budget), read live by
-  // get_stats through the Context.
-  fence_timeouts: Arc<AtomicU64>,
+  // Shared live counters (see RasterStats): this thread decrements the queue
+  // depth per executed command and accumulates fence timeouts and pass
+  // count/time; get_stats reads them through the Context.
+  stats: Arc<RasterStats>,
   // Once-per-second frame phase trace (see FrameTiming).
   timing: FrameTiming,
   // Fences signaled as each present's GPU work completes, awaited before a
@@ -301,9 +348,6 @@ pub(crate) struct RasterState {
   // the retained layer (the clean-tree fast path). Reported in
   // GpuWindowShaderInfo for verification.
   pass_only_frames: u64,
-  // Commands sent but not yet executed (see RasterSender); decremented here
-  // as each command completes.
-  queue_depth: Arc<AtomicUsize>,
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
@@ -387,8 +431,7 @@ impl RasterState {
     window: *mut sdl3::sys::video::SDL_Window,
     surface_size: Arc<AtomicU64>,
     capture_frames: bool,
-    queue_depth: Arc<AtomicUsize>,
-    fence_timeouts: Arc<AtomicU64>,
+    stats: Arc<RasterStats>,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
@@ -406,7 +449,7 @@ impl RasterState {
       present_failures: 0,
       slow_frame_log: None,
       fence_wait_log: None,
-      fence_timeouts,
+      stats,
       timing: FrameTiming::new(),
       present_fences: std::collections::VecDeque::new(),
       textures: HashMap::new(),
@@ -419,7 +462,6 @@ impl RasterState {
       window_shader: None,
       content_dirty: true,
       pass_only_frames: 0,
-      queue_depth,
       tx,
       wake,
     }
@@ -452,6 +494,10 @@ impl RasterState {
         if !matches!(cmd, RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. }) {
           self.content_dirty = true;
         }
+        // Frames are excluded from cmd_micros (see RasterStats); everything
+        // else the loop executes is otherwise invisible to timing.
+        let timed = !matches!(cmd, RasterCmd::Frame { .. });
+        let cmd_start = std::time::Instant::now();
         match cmd {
           RasterCmd::Frame { dl, tree_clean } => {
             // A load-shed frame that was not clean still changed the tree:
@@ -620,7 +666,10 @@ impl RasterState {
         // The command is done (a load-shed one counts: it was consumed); the
         // frame-error exit above skips this, but the thread is gone then
         // anyway.
-        self.queue_depth.fetch_sub(1, Ordering::Release);
+        if timed {
+          self.stats.cmd_micros.fetch_add(cmd_start.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
+        self.stats.queue_depth.fetch_sub(1, Ordering::Release);
       }
     }
   }
@@ -708,7 +757,7 @@ impl RasterState {
         glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {}
         status => {
           if status == glow::TIMEOUT_EXPIRED {
-            self.fence_timeouts.fetch_add(1, Ordering::Relaxed);
+            self.stats.fence_timeouts.fetch_add(1, Ordering::Relaxed);
           }
           if self.fence_wait_log.is_none_or(|t| t.elapsed().as_secs() >= 1) {
             self.fence_wait_log = Some(std::time::Instant::now());
@@ -1000,7 +1049,12 @@ impl RasterState {
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
         let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
+        let start = std::time::Instant::now();
         shader.render(&self.gl, &resolved);
+        let micros = start.elapsed().as_micros() as u64;
+        shader.record_pass(micros);
+        self.stats.passes.fetch_add(1, Ordering::Relaxed);
+        self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
       }
     }
     self.dirty.clear();
@@ -1242,20 +1296,25 @@ impl RasterState {
     let mut pipelines: Vec<GpuPipelineInfo> = self
       .shaders
       .iter()
-      .map(|(texture_id, shader)| GpuPipelineInfo {
-        texture_id: *texture_id,
-        kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
-        program_id: shader.program_id(),
-        pipeline_id: shader.pipeline_id(),
-        buffer_id: shader.buffer_id(),
-        topology: shader.topology_name(),
-        draw_count: shader.draw_count(),
-        depth: shader.has_depth(),
-        depth_write: shader.depth_write(),
-        blend: shader.blend_name(),
-        attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
-        textures: shader.sampler_bindings().to_vec(),
-        params: shader.last_params(),
+      .map(|(texture_id, shader)| {
+        let (passes, pass_micros) = shader.pass_stats();
+        GpuPipelineInfo {
+          texture_id: *texture_id,
+          kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
+          program_id: shader.program_id(),
+          pipeline_id: shader.pipeline_id(),
+          buffer_id: shader.buffer_id(),
+          topology: shader.topology_name(),
+          draw_count: shader.draw_count(),
+          depth: shader.has_depth(),
+          depth_write: shader.depth_write(),
+          blend: shader.blend_name(),
+          attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
+          textures: shader.sampler_bindings().to_vec(),
+          params: shader.last_params(),
+          passes,
+          pass_micros,
+        }
       })
       .collect();
     pipelines.sort_by_key(|p| p.texture_id);

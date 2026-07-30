@@ -530,9 +530,14 @@ async fn try_serve(
                       // Read live, not from the frame-latched snapshot: a
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
-                      let raster = ctx
-                        .userdata::<flux::gui::AlloyContext>()
-                        .map(|atx| (atx.raster_queue_depth(), atx.idle_ticks(), atx.fence_timeouts()));
+                      let raster = ctx.userdata::<flux::gui::AlloyContext>().map(|atx| RasterCounters {
+                        queue: atx.raster_queue_depth(),
+                        idle_ticks: atx.idle_ticks(),
+                        fence_timeouts: atx.fence_timeouts(),
+                        passes: atx.passes(),
+                        pass_micros: atx.pass_micros(),
+                        cmd_micros: atx.cmd_micros(),
+                      });
                       let _ = reply_tx.send(stats_reply(id, snap, counts, raster));
                     });
                   }
@@ -701,20 +706,33 @@ fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
 }
 
+/// GPU-side counters read live from the alloy context at query time (never
+/// from the frame-latched snapshot, which goes stale exactly when the raster
+/// thread wedges): a nonzero queue with idle ticks racing is the
+/// idle-tick-runaway signature, climbing fence timeouts mean the GPU is over
+/// budget, and passes racing ahead of presented frames means redundant
+/// shader/pipeline target re-renders (see
+/// okf/backlog/idle-tick-gpu-backlog-runaway.md). All cumulative except
+/// `queue`; consumers diff between queries.
+struct RasterCounters {
+  queue: usize,
+  idle_ticks: u64,
+  fence_timeouts: u64,
+  passes: u64,
+  pass_micros: u64,
+  cmd_micros: u64,
+}
+
 /// `counts` is (mounted, total) from the live tree when the query could run on
 /// the JS thread; the reply then carries mountedNodes and orphanNodes (total -
 /// mounted: nodes unreachable from the root, i.e. leaked or intentionally kept
-/// detached). `raster` is (queue depth, cumulative idle ticks, cumulative
-/// present-fence timeouts) read live from the alloy context: a nonzero
-/// rasterQueue with idleTicks racing is the idle-tick-runaway signature, and
-/// climbing fenceTimeouts means the GPU is over budget (see
-/// okf/backlog/idle-tick-gpu-backlog-runaway.md). Without an engine these
-/// fields are simply absent.
+/// detached). Without an engine the counts and raster fields are simply
+/// absent.
 fn stats_reply(
   id: u64,
   s: crate::overlay::StatsSnapshot,
   counts: Option<(usize, usize)>,
-  raster: Option<(usize, u64, u64)>,
+  raster: Option<RasterCounters>,
 ) -> String {
   let mut data = serde_json::json!({
       "fps": s.fps,
@@ -742,10 +760,15 @@ fn stats_reply(
     map.insert("mountedNodes".into(), mounted.into());
     map.insert("orphanNodes".into(), total.saturating_sub(mounted).into());
   }
-  if let Some((queue, ticks, fence_timeouts)) = raster {
-    map.insert("rasterQueue".into(), queue.into());
-    map.insert("idleTicks".into(), ticks.into());
-    map.insert("fenceTimeouts".into(), fence_timeouts.into());
+  if let Some(r) = raster {
+    map.insert("rasterQueue".into(), r.queue.into());
+    map.insert("idleTicks".into(), r.idle_ticks.into());
+    map.insert("fenceTimeouts".into(), r.fence_timeouts.into());
+    map.insert("gpuPasses".into(), r.passes.into());
+    // Integer ms: sub-ms increments accumulate in the microsecond counters
+    // before this division, so the cumulative rounding loss stays under 1ms.
+    map.insert("gpuPassMs".into(), (r.pass_micros / 1000).into());
+    map.insert("rasterCmdMs".into(), (r.cmd_micros / 1000).into());
   }
   serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
 }
@@ -885,6 +908,10 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       let mut obj = serde_json::json!({
         "textureId": p.texture_id,
         "kind": p.kind,
+        // Cumulative like the get_stats aggregates (diff two queries for a
+        // rate); passMs is raster-thread occupancy, not GPU-side duration.
+        "passes": p.passes,
+        "passMs": p.pass_micros / 1000,
         "textures": p.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
         "params": p.params.iter().map(|(name, v)| {
           let v = match v {
