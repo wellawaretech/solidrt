@@ -2,20 +2,24 @@
 
 A low-level toolkit for creating cross-platform applications.
 
-_SolidRT is in pre-alpha stage. Anything can and will be changed._
+_SolidRT is in alpha: useful today, but APIs are still stabilizing._
 
 ## Repository structure
 
 **Rust crates**
 
-- `alloy` - rendering layer combining SDL, Impeller, and wgpu
-- `flux` - embeds a JavaScript runtime (QuickJS) into a Rust application
+- `alloy` - rendering layer combining SDL, Impeller, and glow (GL)
+- `forge` - engine-independent capability cores (HTTP, sqlite, p2p, fs, events, ...) that Flux builds on
+- `flux` - JavaScript runtime (QuickJS) with `flux:*` capability modules; embeddable and standalone
 - `lattice` - ties Alloy and Flux together; exposes rendering to JavaScript via a command API
 
 **npm packages**
 
 - `@solidrt/core` - links SolidJS with Lattice; the main package for application developers
+- `@solidrt/components` - higher-level components built on core
 - `@solidrt/cli` - developer tooling
+- `@solidrt/flux-types` - TypeScript type definitions for the Flux runtime
+- `create-solidrt` - project scaffolding (`bun create solidrt@latest`)
 
 **Platform packages**
 
@@ -23,14 +27,16 @@ _SolidRT is in pre-alpha stage. Anything can and will be changed._
 - `@solidrt/linux-arm64-gnu` - Linux arm64 (glibc)
 - `@solidrt/darwin-arm64` - macOS arm64
 - `@solidrt/win32-x64-msvc` - Windows x64 (MSVC)
+- `@solidrt/android-arm64-v8a` - Android arm64
+- `@solidrt/android-armeabi-v7a` - Android arm 32-bit
 
 ## Usage
 
-Install from npm - see [@solidrt/core](packages/core/README.md) for getting started.
+Scaffold a project with `bun create solidrt@latest`, or see [@solidrt/core](packages/core/README.md) for getting started from scratch.
 
-## API
+## Documentation
 
-See [docs/api.md](docs/api.md) for the full API reference.
+See [docs](docs/index.md) for the full documentation.
 
 ## Development
 
@@ -55,14 +61,15 @@ export SRT_HOME=/path/to/solidrt
 
 With `SRT_HOME` set, `srt run` and similar commands will resolve binaries from `dist/<platform>/` - the output of the build steps below.
 
-### Building `solidrt-go`
+### Building
 
 Run from the repo root:
 
-| Command                         | Description                   |
-| ------------------------------- | ----------------------------- |
-| `make client`                   | Build the `solidrt-go` binary |
-| `make client PROFILE=debug`     | Build with debug symbols      |
+| Command                         | Description                          |
+| ------------------------------- | ------------------------------------ |
+| `make client`                   | Build the `solidrt-go` client binary |
+| `make client PROFILE=debug`     | Build with debug symbols             |
+| `make runtime`                  | Build the production runtime         |
 
 Binaries are staged into `dist/<platform>/` after a successful build.
 

@@ -2,7 +2,7 @@
 
 A low-level toolkit for building cross-platform applications with SolidJS.
 
-> SolidRT is in pre-alpha stage. Anything can and will be changed.
+> SolidRT is in alpha: useful today, but APIs are still stabilizing.
 
 Write your UI once with SolidJS. Preview it live on multiple devices simultaneously, controlled from your development machine. No simulators, no emulators, no platform-specific project setup.
 
