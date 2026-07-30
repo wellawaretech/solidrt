@@ -7,7 +7,10 @@ use std::sync::{mpsc, Arc};
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
-use crate::gpu::{GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, WindowShader};
+use crate::gpu::{
+  validate_draw_bound, validate_params, validate_texture_bindings, vertex_stride, GpuResources, ParamValue,
+  PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
+};
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterSender, RasterStats};
 use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
@@ -20,6 +23,31 @@ use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 // bookkeeping (texture dims, shader kinds, buffer sizes) to validate ids and
 // answer size queries without a round trip.
 
+// UI-side mirror of one shader/pipeline target, seeded by its create reply
+// (fused paths, whose program is anonymous) or derived from the pipeline
+// mirror (the split path). What update-path validation reads.
+struct TargetMirror {
+  /// Vertex+fragment pipeline target (vs a fullscreen fragment pass).
+  pipeline: bool,
+  /// The program's active uniforms; Rc-shared with the program and pipeline
+  /// mirrors on the split path.
+  uniforms: Rc<UniformTable>,
+  /// (bytes per vertex, buffer byte size): the vertex-fetch bound for
+  /// set_draw_count. None when the target draws attributeless - gl_VertexID
+  /// fetches nothing, so any count is safe. Captured at create: buffer sizes
+  /// are fixed for their lifetime and the target holds the buffer alive, so
+  /// the bound stays correct even after the buffer id itself is destroyed.
+  draw_bound: Option<(usize, usize)>,
+}
+
+// UI-side mirror of a registered render pipeline: its program's uniforms and
+// the vertex stride of its attribute layout, for deriving target mirrors and
+// draw bounds without an RPC.
+struct PipelineMirror {
+  uniforms: Rc<UniformTable>,
+  stride: usize,
+}
+
 pub struct Context {
   raster_tx: RasterSender,
   // Shared live counters (queue depth, idle ticks, fence timeouts, pass
@@ -27,30 +55,32 @@ pub struct Context {
   // RasterStats for what each one means.
   stats: Arc<RasterStats>,
   pub textures: TextureRegistry,
-  // UI-side mirror of the raster thread's shader map: id -> is_pipeline.
-  // Enough to validate params/draw-count updates without an RPC.
-  shader_kinds: RefCell<HashMap<u64, bool>>,
+  // UI-side mirror of the raster thread's shader map (see TargetMirror):
+  // enough to validate the fire-and-forget updates - params, sampler
+  // rebinds, draw counts - synchronously at the call site, without an RPC.
+  targets: RefCell<HashMap<u64, TargetMirror>>,
   // UI-side mirror of each shader target's sampler graph: target id ->
   // (uniform name -> source texture id). Lets update_shader_textures reject
   // sampling cycles synchronously; the raster thread walks the same edges to
   // propagate re-renders through target chains, and a cycle there would
-  // under-render, so it must never form. One divergence: a rebind naming an
-  // unknown uniform is warn-and-ignored raster-side but still recorded here
-  // (the name is only known to the compiled program), which can at worst
-  // falsely reject a later rebind - after the dev error was already warned.
+  // under-render, so it must never form. Recorded bindings are real: a
+  // rebind naming anything but an active sampler2D is rejected against the
+  // target mirror's uniform table before it is recorded or sent.
   shader_sources: RefCell<HashMap<u64, HashMap<String, u64>>>,
   // UI-side mirror of which shader targets are manual (TargetSpec::manual):
   // validates render_target synchronously, and relaxes the sampling-cycle
   // test - the flush never renders a manual target, so a cycle is only a
   // hazard when every member is flush-rendered (see update_shader_textures).
   manual_targets: RefCell<HashSet<u64>>,
-  // UI-side mirror of the raster thread's program registry. Programs are
-  // their own id space (like buffers), separate from texture ids.
-  program_ids: RefCell<HashSet<u64>>,
+  // UI-side mirror of the raster thread's program registry: program id ->
+  // active uniforms (from the LinkProgram reply). Programs are their own id
+  // space (like buffers), separate from texture ids.
+  program_uniforms: RefCell<HashMap<u64, Rc<UniformTable>>>,
   next_program_id: Cell<u64>,
-  // UI-side mirror of the raster thread's render pipeline registry, its own
-  // id space again.
-  pipeline_ids: RefCell<HashSet<u64>>,
+  // UI-side mirror of the raster thread's render pipeline registry (its own
+  // id space again): per pipeline, its program's uniforms and vertex stride,
+  // for deriving target mirrors without an RPC.
+  pipeline_mirrors: RefCell<HashMap<u64, PipelineMirror>>,
   next_pipeline_id: Cell<u64>,
   // UI-side mirror of the raster thread's raw stage registry: id -> stage,
   // for validating link_program's arguments without an RPC.
@@ -105,12 +135,12 @@ impl Context {
       raster_tx,
       stats,
       textures: TextureRegistry::new(),
-      shader_kinds: RefCell::new(HashMap::new()),
+      targets: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
       manual_targets: RefCell::new(HashSet::new()),
-      program_ids: RefCell::new(HashSet::new()),
+      program_uniforms: RefCell::new(HashMap::new()),
       next_program_id: Cell::new(1),
-      pipeline_ids: RefCell::new(HashSet::new()),
+      pipeline_mirrors: RefCell::new(HashMap::new()),
       next_pipeline_id: Cell::new(1),
       stage_kinds: RefCell::new(HashMap::new()),
       next_stage_id: Cell::new(1),
@@ -320,7 +350,7 @@ impl Context {
     if self.textures.get(id).is_none() {
       return Err(format!("texture {id} not found"));
     }
-    if self.shader_kinds.borrow().contains_key(&id) {
+    if self.targets.borrow().contains_key(&id) {
       return Err(format!("texture {id} is a shader target; use resize_shader_texture"));
     }
     let frame_size = (width as usize) * (height as usize) * 4;
@@ -340,7 +370,7 @@ impl Context {
   /// the old one keep it alive until released. The caller must request a
   /// frame.
   pub fn resize_shader_texture(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
-    if !self.shader_kinds.borrow().contains_key(&id) {
+    if !self.targets.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }
     let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
@@ -366,7 +396,7 @@ impl Context {
     sampler: SamplerState,
   ) -> Result<u64, String> {
     let id = self.textures.allocate_id();
-    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTexture {
+    let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreateShaderTexture {
       id,
       width,
       height,
@@ -377,7 +407,10 @@ impl Context {
       reply,
     })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
-    self.shader_kinds.borrow_mut().insert(id, false);
+    self
+      .targets
+      .borrow_mut()
+      .insert(id, TargetMirror { pipeline: false, uniforms: Rc::new(uniforms), draw_bound: None });
     self.shader_sources.borrow_mut().insert(id, textures.iter().cloned().collect());
     Ok(id)
   }
@@ -386,11 +419,16 @@ impl Context {
   /// inputs re-resolved) at the raster thread's next dirty flush, as do any
   /// targets sampling it, transitively. The output keeps its id and Impeller
   /// texture (no re-adoption); only the GL contents change, so the caller
-  /// must request a frame for the new pixels to reach the screen.
+  /// must request a frame for the new pixels to reach the screen. Every name
+  /// must be an active uniform with a matching component count (validated
+  /// here, against the mirror, so the error lands at the call site; note a
+  /// declared-but-optimized-out uniform reflects as absent and reports "no
+  /// active uniform").
   pub fn update_shader_params(&self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
-    if !self.shader_kinds.borrow().contains_key(&id) {
-      return Err(format!("shader texture {id} not found"));
-    }
+    let targets = self.targets.borrow();
+    let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    validate_params(&mirror.uniforms, params)?;
+    drop(targets);
     self.send(RasterCmd::UpdateShaderParams { id, params: params.to_vec() });
     Ok(())
   }
@@ -407,12 +445,14 @@ impl Context {
   /// by explicit renders - ping-pong feedback is two manual targets bound to
   /// each other. Self-binding stays rejected for every target, manual
   /// included: a pass sampling the very texture it writes is a same-pass GL
-  /// feedback loop (undefined pixels), not a scheduling problem. An unknown
-  /// uniform name is reported by the raster thread as a warning, leaving all
-  /// bindings unchanged.
+  /// feedback loop (undefined pixels), not a scheduling problem. A name that
+  /// is not an active sampler2D uniform errors here too, against the mirror,
+  /// leaving all bindings unchanged.
   pub fn update_shader_textures(&self, id: u64, textures: &[(String, u64)]) -> Result<(), String> {
-    if !self.shader_kinds.borrow().contains_key(&id) {
-      return Err(format!("shader texture {id} not found"));
+    {
+      let targets = self.targets.borrow();
+      let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+      validate_texture_bindings(&mirror.uniforms, textures)?;
     }
     {
       let sources = self.shader_sources.borrow();
@@ -493,15 +533,32 @@ impl Context {
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
+    let stride = vertex_stride(&spec.pipeline.attributes) as usize;
+    let buffer_id = spec.target.buffer;
     let sources: HashMap<String, u64> = spec.target.textures.iter().cloned().collect();
-    let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
+    let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
-    self.shader_kinds.borrow_mut().insert(id, true);
+    let draw_bound = self.draw_bound(stride, buffer_id);
+    self
+      .targets
+      .borrow_mut()
+      .insert(id, TargetMirror { pipeline: true, uniforms: Rc::new(uniforms), draw_bound });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
     }
     Ok(id)
+  }
+
+  /// The set_draw_count bound a new pipeline target captures (see
+  /// `TargetMirror::draw_bound`): present only when the target actually
+  /// fetches vertices - a buffer bound through a nonzero-stride layout. Call
+  /// after the create RPC succeeded, which guarantees the buffer id resolves.
+  fn draw_bound(&self, stride: usize, buffer_id: u64) -> Option<(usize, usize)> {
+    if stride == 0 || buffer_id == 0 {
+      return None;
+    }
+    self.buffer_sizes.borrow().get(&buffer_id).map(|size| (stride, *size))
   }
 
   /// Compile a single raw shader stage, returning its stage id (its own id
@@ -542,9 +599,9 @@ impl Context {
     }
     drop(kinds);
     let id = self.next_program_id.get();
-    self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, reply })??;
+    let uniforms = self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, reply })??;
     self.next_program_id.set(id + 1);
-    self.program_ids.borrow_mut().insert(id);
+    self.program_uniforms.borrow_mut().insert(id, Rc::new(uniforms));
     Ok(id)
   }
 
@@ -560,13 +617,15 @@ impl Context {
   /// is the draw-state object every target created from it shares; creating
   /// one compiles nothing. Free with `destroy_render_pipeline`.
   pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc) -> Result<u64, String> {
-    if !self.program_ids.borrow().contains(&program) {
-      return Err(format!("program {program} not found"));
-    }
+    let uniforms = match self.program_uniforms.borrow().get(&program) {
+      Some(uniforms) => uniforms.clone(),
+      None => return Err(format!("program {program} not found")),
+    };
+    let stride = vertex_stride(&desc.attributes) as usize;
     let id = self.next_pipeline_id.get();
     self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, reply })??;
     self.next_pipeline_id.set(id + 1);
-    self.pipeline_ids.borrow_mut().insert(id);
+    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride });
     Ok(id)
   }
 
@@ -575,7 +634,7 @@ impl Context {
   /// destroyed - so either destruction order is safe. The program it was
   /// created from is yours and unaffected.
   pub fn destroy_render_pipeline(&self, id: u64) {
-    self.pipeline_ids.borrow_mut().remove(&id);
+    self.pipeline_mirrors.borrow_mut().remove(&id);
     self.send(RasterCmd::DestroyRenderPipeline { id });
   }
 
@@ -585,17 +644,20 @@ impl Context {
   /// `destroy_texture` all apply). Many targets may share one pipeline, and
   /// creating a target compiles nothing.
   pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec) -> Result<u64, String> {
-    if !self.pipeline_ids.borrow().contains(&pipeline) {
-      return Err(format!("pipeline {pipeline} not found"));
-    }
+    let (uniforms, stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
+      Some(mirror) => (mirror.uniforms.clone(), mirror.stride),
+      None => return Err(format!("pipeline {pipeline} not found")),
+    };
     validate_load(&spec)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
+    let buffer_id = spec.buffer;
     let sources: HashMap<String, u64> = spec.textures.iter().cloned().collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, pipeline, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
-    self.shader_kinds.borrow_mut().insert(id, true);
+    let draw_bound = self.draw_bound(stride, buffer_id);
+    self.targets.borrow_mut().insert(id, TargetMirror { pipeline: true, uniforms, draw_bound });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -608,7 +670,7 @@ impl Context {
   /// destroyed - and the GL program is deleted once the last user is gone, so
   /// either destruction order is safe.
   pub fn destroy_shader_program(&self, id: u64) {
-    self.program_ids.borrow_mut().remove(&id);
+    self.program_uniforms.borrow_mut().remove(&id);
     self.send(RasterCmd::DestroyProgram { id });
   }
 
@@ -619,12 +681,16 @@ impl Context {
   /// two frames; the raster thread holds the program while declared, so
   /// destroying its handle keeps the effect running until it is re-declared
   /// or cleared. The caller must request a frame. Errs on an unknown program
-  /// handle.
+  /// handle, or on params/textures naming anything but the program's active
+  /// uniforms (same call-site validation as the target paths; `uSource`,
+  /// `uPrevious`, `iResolution` and `iTime` are runtime-filled and need no
+  /// entry here).
   pub fn set_window_shader(&self, shader: Option<WindowShader>) -> Result<(), String> {
     if let Some(ws) = &shader {
-      if !self.program_ids.borrow().contains(&ws.program) {
-        return Err(format!("program {} not found", ws.program));
-      }
+      let programs = self.program_uniforms.borrow();
+      let uniforms = programs.get(&ws.program).ok_or_else(|| format!("program {} not found", ws.program))?;
+      validate_params(uniforms, &ws.params)?;
+      validate_texture_bindings(uniforms, &ws.textures)?;
     }
     self.send(RasterCmd::SetWindowShader { shader });
     Ok(())
@@ -639,7 +705,7 @@ impl Context {
   /// for displayed output. Errs on an unknown id or a target the flush owns
   /// (a non-manual one, whose pass must stay a pure function of its inputs).
   pub fn render_target(&self, id: u64) -> Result<(), String> {
-    if !self.shader_kinds.borrow().contains_key(&id) {
+    if !self.targets.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }
     if !self.manual_targets.borrow().contains(&id) {
@@ -676,17 +742,24 @@ impl Context {
   }
 
   /// Set a pipeline texture's vertex draw count and re-render it with its
-  /// last-applied params. The caller must request a frame.
+  /// last-applied params. The caller must request a frame. Errs on a
+  /// negative count, or one whose vertex fetch would run past the end of the
+  /// target's buffer (undefined behaviour in raw GLES; validated against the
+  /// bound captured at create, see `TargetMirror::draw_bound`).
   pub fn set_draw_count(&self, id: u64, count: i32) -> Result<(), String> {
-    let kind = self.shader_kinds.borrow().get(&id).copied();
-    match kind {
-      None => Err(format!("shader texture {id} not found")),
-      Some(false) => Err("not a pipeline texture".to_string()),
-      Some(true) => {
-        self.send(RasterCmd::SetDrawCount { id, count });
-        Ok(())
-      }
+    let targets = self.targets.borrow();
+    let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    if !mirror.pipeline {
+      return Err("not a pipeline texture".to_string());
     }
+    match mirror.draw_bound {
+      Some((stride, size)) => validate_draw_bound(count, stride, size)?,
+      // Attributeless: no vertex fetch, any non-negative count is safe.
+      None => validate_draw_bound(count, 0, 0)?,
+    }
+    drop(targets);
+    self.send(RasterCmd::SetDrawCount { id, count });
+    Ok(())
   }
 
   /// Inventory the GPU resources the raster thread tracks: registered
@@ -815,7 +888,7 @@ impl Context {
         return true;
       }
       self.textures.remove(id);
-      self.shader_kinds.borrow_mut().remove(&id);
+      self.targets.borrow_mut().remove(&id);
       self.shader_sources.borrow_mut().remove(&id);
       self.manual_targets.borrow_mut().remove(&id);
       self.send(RasterCmd::DestroyTexture { id });

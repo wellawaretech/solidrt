@@ -33,9 +33,10 @@ use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo,
-  GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
-  PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, WindowShader,
+  release_buffer, release_pipeline, release_program, validate_draw_bound, validate_params, validate_texture_bindings,
+  AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources,
+  GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline,
+  ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
@@ -1052,13 +1053,24 @@ impl RasterState {
     params: &[(String, ParamValue)],
     textures: Vec<(String, u64)>,
     sampler: SamplerState,
-  ) -> Result<Texture, String> {
+  ) -> Result<(Texture, UniformTable), String> {
     let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?.with_sampler(sampler);
+    let uniforms = shader.uniform_table();
+    // Uniform names only exist after the compile, so create-time params and
+    // bindings validate here, inside the blocking RPC - the error still
+    // surfaces at the JS call site, and the half-built target rolls back.
+    if let Err(e) =
+      validate_params(&uniforms, params).and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
+    {
+      shader.destroy(&self.gl);
+      return Err(e);
+    }
     shader.merge_params(params);
-    self.register_shader_target(id, shader, width, height, "adopt shader texture failed")
+    let texture = self.register_shader_target(id, shader, width, height, "adopt shader texture failed")?;
+    Ok((texture, uniforms))
   }
 
-  fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<Texture, String> {
+  fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
     let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &spec.pipeline.attributes, &spec.target)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
@@ -1074,19 +1086,31 @@ impl RasterState {
       spec.target.clear_color,
     )?;
     let shader = shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
+    let uniforms = shader.uniform_table();
+    // Same post-compile validation and rollback as create_shader_texture.
+    if let Err(e) = validate_params(&uniforms, &spec.target.params)
+      .and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
+    {
+      shader.destroy(&self.gl);
+      return Err(e);
+    }
     shader.merge_params(&spec.target.params);
-    self.register_shader_target(id, shader, spec.target.width, spec.target.height, "adopt pipeline texture failed")
+    let texture =
+      self.register_shader_target(id, shader, spec.target.width, spec.target.height, "adopt pipeline texture failed")?;
+    Ok((texture, uniforms))
   }
 
   /// Link two compiled stages from the stage registry into a registered
-  /// program. The UI side validated the ids and stage kinds against its
-  /// mirror; a miss here means the mirrors diverged.
-  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64) -> Result<(), String> {
+  /// program, replying with the reflected uniform table for the UI-side
+  /// validation mirror. The UI side validated the ids and stage kinds against
+  /// its mirror; a miss here means the mirrors diverged.
+  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64) -> Result<UniformTable, String> {
     let vs = *self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
     let fs = *self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
     let program = ShaderProgram::from_stages(&self.gl, vs, fs)?;
+    let uniforms = program.uniform_table();
     self.programs.insert(id, Rc::new(program));
-    Ok(())
+    Ok(uniforms)
   }
 
   /// Pair a registered program with draw state under pipeline id `id`.
@@ -1103,6 +1127,11 @@ impl RasterState {
   fn create_shader_target(&mut self, id: u64, pipeline_id: u64, spec: TargetSpec) -> Result<Texture, String> {
     let pipeline =
       self.render_pipelines.get(&pipeline_id).ok_or_else(|| format!("pipeline {pipeline_id} not found"))?.clone();
+    // The program already exists, so params and bindings validate before
+    // anything is built - no rollback needed on this path.
+    let uniforms = pipeline.uniform_table();
+    validate_params(&uniforms, &spec.params)?;
+    validate_texture_bindings(&uniforms, &spec.textures)?;
     let (buffer, draw_count) = resolve_target_mesh(&self.buffers, &pipeline.desc().attributes, &spec)?;
     let shader = ShaderTexture::from_pipeline(
       &self.gl,
@@ -1283,7 +1312,10 @@ impl RasterState {
 /// Resolve a target's mesh bindings against the buffer registry: the source
 /// buffer (an Rc clone the target keeps for the VAO's lifetime) and the
 /// effective draw count (a negative request means "the whole buffer", derived
-/// from buffer size / the pipeline's vertex stride).
+/// from buffer size / the pipeline's vertex stride). An explicit count is
+/// bounds-checked against the buffer - a count past its end would be
+/// undefined-behaviour vertex fetch - and the error surfaces at the JS call
+/// site through the blocking create RPC.
 fn resolve_target_mesh(
   buffers: &HashMap<u64, Rc<GpuBuffer>>,
   attributes: &[(String, AttrFormat)],
@@ -1294,10 +1326,15 @@ fn resolve_target_mesh(
   } else {
     None
   };
+  let stride = crate::gpu::vertex_stride(attributes);
   let count = if spec.draw_count >= 0 {
+    if let Some(b) = buffer {
+      if stride > 0 {
+        validate_draw_bound(spec.draw_count, stride as usize, b.size)?;
+      }
+    }
     spec.draw_count
   } else {
-    let stride = crate::gpu::vertex_stride(attributes);
     match buffer {
       Some(b) if stride > 0 => (b.size / stride as usize) as i32,
       _ => 0,

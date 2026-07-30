@@ -6,7 +6,7 @@
 use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
-use crate::gpu::{GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, WindowShader};
+use crate::gpu::{GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader};
 use crate::texture::SamplerState;
 
 pub(crate) enum RasterCmd {
@@ -38,8 +38,10 @@ pub(crate) enum RasterCmd {
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
   /// Compile a fragment shader into a new target texture and adopt it; the
-  /// first render happens at the next dirty flush. Compile errors must reach
-  /// JS, hence the reply.
+  /// first render happens at the next dirty flush. Compile and validation
+  /// errors must reach JS, hence the reply, which also carries the program's
+  /// reflected uniform table for the UI-side validation mirror (the program
+  /// is anonymous, so only this reply can deliver it).
   CreateShaderTexture {
     id: u64,
     width: u32,
@@ -48,19 +50,21 @@ pub(crate) enum RasterCmd {
     params: Vec<(String, ParamValue)>,
     textures: Vec<(String, u64)>,
     sampler: SamplerState,
-    reply: mpsc::Sender<Result<Texture, String>>,
+    reply: mpsc::Sender<Result<(Texture, UniformTable), String>>,
   },
   /// Compile a vertex+fragment pipeline into a new target texture and adopt
-  /// it; first render at the next dirty flush.
-  CreatePipelineTexture { id: u64, spec: PipelineSpec, reply: mpsc::Sender<Result<Texture, String>> },
+  /// it; first render at the next dirty flush. Like CreateShaderTexture, the
+  /// reply carries the anonymous program's uniform table for the UI mirror.
+  CreatePipelineTexture { id: u64, spec: PipelineSpec, reply: mpsc::Sender<Result<(Texture, UniformTable), String>> },
   /// Compile a single raw stage into the stage registry: a complete GLSL ES
   /// source, or one that explicitly asked for the standard header. Compile
   /// errors must reach JS, hence the reply.
   CompileStage { id: u64, stage: ShaderStage, source: String, header: bool, reply: mpsc::Sender<Result<(), String>> },
   /// Link two compiled stages into a program in the program registry. The
   /// stages remain usable for further links. Link errors reach JS via the
-  /// reply.
-  LinkProgram { id: u64, vertex: u64, fragment: u64, reply: mpsc::Sender<Result<(), String>> },
+  /// reply; success carries the reflected uniform table for the UI-side
+  /// validation mirror.
+  LinkProgram { id: u64, vertex: u64, fragment: u64, reply: mpsc::Sender<Result<UniformTable, String>> },
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },

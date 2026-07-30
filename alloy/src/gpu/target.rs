@@ -627,6 +627,13 @@ impl ShaderTexture {
     }
   }
 
+  /// The active uniforms of this target's program (see
+  /// `ShaderProgram::uniform_table`), for the create replies that seed the
+  /// UI-side validation mirror.
+  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+    self.program.uniform_table()
+  }
+
   /// The sampler2D inputs this shader declared, as (uniform name, source texture
   /// id). The owner resolves each id to a live GL texture before rendering.
   pub fn sampler_bindings(&self) -> &[(String, u64)] {

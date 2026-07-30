@@ -32,7 +32,7 @@ pub use backend::{Backend, DisplayContext};
 pub use context::{CaptureDone, CaptureInfo, Context};
 pub use gpu::{
   parse_blend, AttrFormat, BlendMode, DepthState, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec,
-  Topology, WindowShader,
+  Topology, UniformKind, UniformTable, WindowShader,
 };
 pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
 pub use logging::install_logger;

@@ -204,6 +204,12 @@ impl ShaderProgram {
     self.pipeline
   }
 
+  /// The active uniforms as a plain-data table (name -> kind), for the
+  /// UI-side mirror and call-site validation (see `vocab::UniformTable`).
+  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+    self.uniforms.iter().map(|(name, (_, utype))| (name.clone(), super::vocab::UniformKind::from_gl(*utype))).collect()
+  }
+
   pub(crate) fn delete(self, gl: &glow::Context) {
     unsafe { gl.delete_program(self.program) };
   }
@@ -272,6 +278,11 @@ impl RenderPipeline {
 
   pub fn desc(&self) -> &PipelineDesc {
     &self.desc
+  }
+
+  /// The shared program's active uniforms (see `ShaderProgram::uniform_table`).
+  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+    self.program.uniform_table()
   }
 }
 

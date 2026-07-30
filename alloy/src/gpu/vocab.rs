@@ -1,8 +1,12 @@
 //! The draw-state vocabulary and its parsers: the typed words every GPU
-//! extension adds to (formats, topologies, blend modes, depth state, stages)
-//! and the value/descriptor types built from them. Callers parse strings at
-//! their own boundary, so an invalid word fails at the call site, not on the
-//! raster thread.
+//! extension adds to (formats, topologies, blend modes, depth state, stages,
+//! uniform kinds) and the value/descriptor types built from them. Callers
+//! parse strings at their own boundary, so an invalid word fails at the call
+//! site, not on the raster thread. The same boundary rule drives the
+//! validators at the bottom: params, sampler bindings, and draw counts are
+//! checked against reflected/mirrored state where the app made the mistake.
+
+use std::collections::HashMap;
 
 /// A shader uniform value as supplied from the app: a scalar or a flat
 /// component array. The shader's own declaration decides how components are
@@ -172,6 +176,152 @@ impl Default for PipelineDesc {
 /// Byte stride of one interleaved vertex for the given attribute list.
 pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
   attributes.iter().map(|(_, f)| f.components() * 4).sum()
+}
+
+/// The GLSL type of one active uniform, reflected once at link time and
+/// mirrored UI-side (see `UniformTable`) so uniform writes validate at the
+/// call site. The settable set matches the dispatch in `pass::apply_uniform`;
+/// everything else reflects as `Other` and errors when named.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UniformKind {
+  Float,
+  Int,
+  Bool,
+  Vec2,
+  Vec3,
+  Vec4,
+  Mat4,
+  /// Bound via texture bindings, never via params.
+  Sampler2D,
+  /// A reflected type outside the settable set (int vectors, matrices other
+  /// than mat4, other sampler dimensions, ...).
+  Other,
+}
+
+impl UniformKind {
+  pub fn from_gl(utype: u32) -> Self {
+    match utype {
+      glow::FLOAT => UniformKind::Float,
+      glow::INT => UniformKind::Int,
+      glow::BOOL => UniformKind::Bool,
+      glow::FLOAT_VEC2 => UniformKind::Vec2,
+      glow::FLOAT_VEC3 => UniformKind::Vec3,
+      glow::FLOAT_VEC4 => UniformKind::Vec4,
+      glow::FLOAT_MAT4 => UniformKind::Mat4,
+      glow::SAMPLER_2D => UniformKind::Sampler2D,
+      _ => UniformKind::Other,
+    }
+  }
+
+  /// Component count a param value must supply; None for kinds params cannot
+  /// set (samplers, unsupported types).
+  pub fn components(self) -> Option<usize> {
+    match self {
+      UniformKind::Float | UniformKind::Int | UniformKind::Bool => Some(1),
+      UniformKind::Vec2 => Some(2),
+      UniformKind::Vec3 => Some(3),
+      UniformKind::Vec4 => Some(4),
+      UniformKind::Mat4 => Some(16),
+      UniformKind::Sampler2D | UniformKind::Other => None,
+    }
+  }
+
+  /// The GLSL spelling, for error messages.
+  pub fn glsl_name(self) -> &'static str {
+    match self {
+      UniformKind::Float => "float",
+      UniformKind::Int => "int",
+      UniformKind::Bool => "bool",
+      UniformKind::Vec2 => "vec2",
+      UniformKind::Vec3 => "vec3",
+      UniformKind::Vec4 => "vec4",
+      UniformKind::Mat4 => "mat4",
+      UniformKind::Sampler2D => "sampler2D",
+      UniformKind::Other => "an unsupported type",
+    }
+  }
+}
+
+/// A program's active uniforms by name: the plain-data half of the reflection
+/// `ShaderProgram` holds, crossing to the UI thread in create/link replies so
+/// `Context` can validate uniform writes without an RPC. Note the caveat this
+/// inherits from GL reflection: a uniform that is declared but optimized out
+/// (inactive) is absent here, so setting it reports "no active uniform" -
+/// remove the write or use the uniform.
+pub type UniformTable = HashMap<String, UniformKind>;
+
+fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
+  let mut names: Vec<&str> = uniforms.keys().map(|s| s.as_str()).collect();
+  names.sort_unstable();
+  if names.is_empty() {
+    format!("no active uniform named '{name}' (the program has none)")
+  } else {
+    format!("no active uniform named '{name}' (active: {})", names.join(", "))
+  }
+}
+
+/// Check a params list against a program's active uniforms: every name must
+/// be active, settable (not a sampler - those bind via textures - and not an
+/// unsupported type), and carry exactly the component count its declared type
+/// dispatches on. Run at the call-site boundary (create RPCs raster-side,
+/// updates UI-side from the mirror), so a typo'd name or a wrong arity throws
+/// on the line that wrote it instead of warning on the raster thread.
+pub fn validate_params(uniforms: &UniformTable, params: &[(String, ParamValue)]) -> Result<(), String> {
+  for (name, value) in params {
+    let kind = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
+    match kind.components() {
+      Some(expected) => {
+        let got = value.components().len();
+        if got != expected {
+          return Err(format!(
+            "param '{name}' has {got} component(s), but uniform is {} (expects {expected})",
+            kind.glsl_name()
+          ));
+        }
+      }
+      None => {
+        return Err(match kind {
+          UniformKind::Sampler2D => format!("param '{name}' is a sampler2D; bind it via textures"),
+          _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4)"),
+        })
+      }
+    }
+  }
+  Ok(())
+}
+
+/// Check a sampler-binding list against a program's active uniforms: every
+/// name must be an active `sampler2D`. Same boundary rule as
+/// `validate_params`.
+pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u64)]) -> Result<(), String> {
+  for (name, _) in textures {
+    let kind = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
+    if *kind != UniformKind::Sampler2D {
+      return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
+    }
+  }
+  Ok(())
+}
+
+/// Bounds-check an explicit vertex draw count against the buffer it fetches
+/// from: `count * stride` must stay within the buffer, or the draw is
+/// undefined-behaviour vertex fetch (raw GLES 3.0 has no draw-time bounds
+/// check; WebGL made the same case INVALID_OPERATION). Buffer sizes are fixed
+/// at creation, so a bound captured then stays correct for the target's
+/// lifetime. Shared by the create paths (raster-side, via
+/// `resolve_target_mesh`) and `Context::set_draw_count` (UI mirror side).
+pub fn validate_draw_bound(count: i32, stride: usize, size: usize) -> Result<(), String> {
+  if count < 0 {
+    return Err(format!("vertex count must be >= 0, got {count}"));
+  }
+  let need = count as usize * stride;
+  if need > size {
+    let capacity = size / stride.max(1);
+    return Err(format!(
+      "vertex count {count} needs {need} bytes at {stride} bytes/vertex, but the buffer holds {size} bytes ({capacity} vertices)"
+    ));
+  }
+  Ok(())
 }
 
 /// A stage of the programmable pipeline, for the raw compile path.

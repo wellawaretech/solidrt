@@ -2,9 +2,23 @@
 type: backlog-item
 title: Call-site validation for uniforms and draw bounds
 description: A typo'd param name is silently dropped at render and an arity mismatch warns on the raster thread where no app can see it, while a draw count past the buffer end is undefined-behaviour vertex fetch; both are validatable synchronously at the JS call site from state the UI thread already mirrors.
-status: open
+status: done
 timestamp: 2026-07-30T00:00:00Z
 ---
+
+Done 2026-07-30. Creates validate raster-side inside their blocking RPCs
+(uniform names/arity after compile, draw bounds in `resolve_target_mesh`);
+fire-and-forget updates validate UI-side in `Context` against mirrors the
+create/link replies populate (`TargetMirror`, `PipelineMirror`,
+`program_uniforms`; validators in `gpu/vocab.rs`). Also covered:
+`set_window_shader` params/textures, `setShaderTextures` names must be active
+sampler2Ds, `setDrawCount` rejects negative and out-of-bounds counts, and the
+flux marshal layer throws on non-numeric param/texture values. Decision: an
+absent uniform name always throws (strict); the two-tier
+declared-but-inactive distinction was deliberately not built - see
+[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md). The
+`params` prop stays warn-at-build (deferred apply; a call-site throw would
+break prop-order independence).
 
 # Call-site validation for uniforms and draw bounds
 

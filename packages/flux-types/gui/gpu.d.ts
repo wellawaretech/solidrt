@@ -86,8 +86,13 @@ declare module "flux:gpu" {
    * or `int`/`bool`, truncated); a flat number array drives a typed uniform
    * whose declared GLSL type sets the expected length: 2/3/4 for
    * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. Dispatch follows the
-   * shader's own declaration; a value whose length does not fit it is skipped
-   * with a runtime warning, as is a name with no active uniform.
+   * shader's own declaration, and every write is validated against it at the
+   * call site: a name with no active uniform, a value whose length does not
+   * fit the declared type, a `sampler2D` named here (samplers bind via
+   * `textures`), or a value that is not a number / number array throws.
+   * Reflection only sees active uniforms, so a uniform that is declared but
+   * optimized out counts as unknown - remove the write (or use the uniform).
+   * An `undefined` value is skipped, so conditional spreads stay usable.
    */
   export type ShaderParams = Record<string, number | number[]>
   /** Magnification/minification filter; "linear" (default) or hard-pixel "nearest". */
@@ -139,8 +144,10 @@ declare module "flux:gpu" {
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
    * size. `params` sets uniforms by name (see {@link ShaderParams} for the
-   * value shapes); `textures` binds sampler2D uniforms to texture ids - any
-   * texture id, including another shader/pipeline target's output. Bound
+   * value shapes and the validation contract - a typo'd name throws here, at
+   * the create); `textures` binds sampler2D uniforms to texture ids - any
+   * texture id, including another shader/pipeline target's output, under a
+   * name that must be an active `sampler2D` uniform. Bound
    * targets are live dependencies: when a source re-renders (its params,
    * geometry, or data change), every target sampling it re-renders too,
    * transitively through chains, before the next frame or readback - no
@@ -243,10 +250,13 @@ declare module "flux:gpu" {
    * may share one pipeline, and creating a target compiles nothing. `buffer`
    * supplies the concrete vertex buffer the pipeline's attribute layout
    * describes (required when the pipeline declares attributes);
-   * `vertexCount` defaults to the whole buffer, and a fullscreen pass over an
-   * attributeless pipeline is `vertexCount: 3` with a covering-triangle
-   * vertex stage. Draw-state keys (`attributes`, `topology`, `blend`,
-   * `depth`, `depthWrite`) belong to the pipeline and throw here.
+   * `vertexCount` defaults to the whole buffer and an explicit count is
+   * bounds-checked - a count whose vertex fetch would run past the buffer's
+   * end throws here. A fullscreen pass over an attributeless pipeline is
+   * `vertexCount: 3` with a covering-triangle vertex stage. Draw-state keys
+   * (`attributes`, `topology`, `blend`, `depth`, `depthWrite`) belong to the
+   * pipeline and throw here. `params` and `textures` are validated against
+   * the pipeline's program (see {@link ShaderParams}).
    *
    * `render: "manual"` opts the target out of runtime-driven rendering (see
    * the render contract above): it starts cleared to `clearColor` and its
@@ -288,8 +298,10 @@ declare module "flux:gpu" {
   export function destroyProgram(id: ProgramId): void
   /**
    * Update a shader texture's uniforms by name and re-render it (see
-   * {@link ShaderParams} for the value shapes). On a manual target nothing
-   * renders here; the values apply at its next {@link renderTarget}.
+   * {@link ShaderParams} for the value shapes and the validation contract -
+   * an unknown name or a mismatched length throws here, on the line that
+   * wrote it). On a manual target nothing renders here; the values apply at
+   * its next {@link renderTarget}.
    */
   export function setShaderParams(id: TextureId, params: ShaderParams): void
   /**
@@ -298,9 +310,10 @@ declare module "flux:gpu" {
    * {@link setShaderParams}. Bindings not named keep their current source, so
    * a single input can be retargeted (post-process source swap, ping-pong
    * between two data textures) without recompiling the shader. Throws if the
-   * shader or a source texture id is unknown, if a binding names the
-   * shader's own target (same-pass feedback), or if it would close a
-   * sampling cycle among runtime-rendered targets. A cycle through a
+   * shader or a source texture id is unknown, if a binding names anything
+   * but an active `sampler2D` uniform, if it names the shader's own target
+   * (same-pass feedback), or if it would close a sampling cycle among
+   * runtime-rendered targets. A cycle through a
    * `render: "manual"` target is legal - the runtime never renders one, so
    * the loop only steps when the app calls {@link renderTarget}.
    */
@@ -341,7 +354,8 @@ declare module "flux:gpu" {
    * (or fold the flip into its projection) to display up. `attributes`
    * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
    * omit both for attributeless rendering via gl_VertexID. `vertexCount`
-   * defaults to the whole buffer (buffer size / vertex stride). With
+   * defaults to the whole buffer (buffer size / vertex stride); an explicit
+   * count past the buffer's end throws. With
    * `depth: true` the pipeline gets a private depth buffer, cleared and tested
    * on every render; `depthWrite: false` (requires `depth: true`) keeps the
    * test but stops the draw from writing depth. `blend` sets the draw's own blending (see
@@ -398,7 +412,11 @@ declare module "flux:gpu" {
   /**
    * Set how many vertices a pipeline texture draws and re-render it, e.g.
    * after writing a variable amount of dynamic geometry into its buffer.
-   * (On a manual target nothing renders here; the count applies at its next
+   * Throws if `count` is negative or its vertex fetch would run past the end
+   * of the target's buffer (`count` x vertex stride > buffer size) - the
+   * out-of-bounds draw GL itself never checks; a target without vertex
+   * fetch (attributeless) accepts any non-negative count. (On a manual
+   * target nothing renders here; the count applies at its next
    * {@link renderTarget}.)
    */
   export function setDrawCount(id: TextureId, count: number): void

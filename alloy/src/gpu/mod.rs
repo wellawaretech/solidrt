@@ -22,8 +22,8 @@ pub use resources::{
 pub use spec::{PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, ShaderTexture};
 pub use vocab::{
-  blend_name, parse_blend, vertex_stride, AttrFormat, BlendMode, DepthState, ParamValue, PipelineDesc, ShaderStage,
-  Topology,
+  blend_name, parse_blend, validate_draw_bound, validate_params, validate_texture_bindings, vertex_stride, AttrFormat,
+  BlendMode, DepthState, ParamValue, PipelineDesc, ShaderStage, Topology, UniformKind, UniformTable,
 };
 
 use std::num::NonZeroU32;

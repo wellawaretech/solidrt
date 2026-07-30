@@ -52,11 +52,16 @@ Sorted by status: open first, then partial, deferred, and closed
   propagation) landed 2026-07-29, so it is now simply unwritten. The
   points-topology particle field shipped 2026-07-29 (gpu-particles.tsx) once
   in-draw blending landed.
-- [Call-site validation for uniforms and draw bounds](gpu-callsite-validation.md) [open] -
-  Param typos drop silently at render and arity mismatches warn where no
-  app can see; a draw count past the buffer end is undefined-behaviour
-  vertex fetch; both checkable synchronously from state the UI thread
-  already mirrors.
+- [Two-tier handling for declared-but-inactive uniforms](gpu-inactive-uniform-two-tier.md) [open] -
+  Uniform validation throws on any name absent from the reflected table,
+  but reflection only sees active uniforms, so a declared-but-optimized-out
+  uniform counts as a typo; a compile-time declared-name scan would demote
+  that sub-case to a warning.
+- [Call-site validation for uniforms and draw bounds](gpu-callsite-validation.md) [done] -
+  Creates validate in their blocking RPCs, updates against UI-side mirrors:
+  unknown/mismatched uniform names, non-sampler rebinds, window-shader
+  params, and out-of-bounds draw counts all fail at the call site now;
+  strict on inactive uniforms (see the two-tier follow-up).
 - [Shader compile errors on .tsx lines via #line injection](glsl-line-injection.md) [open] -
   Compile errors report string-relative lines offset by the injected
   preamble; a bundler pass injecting #line into glsl-tagged literals makes

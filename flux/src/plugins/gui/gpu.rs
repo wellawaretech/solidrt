@@ -87,29 +87,50 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
 }
 
 // Flatten a JS { name: number | number[] } object into the (name, value) pairs
-// alloy matches against the shader's uniforms by name and dispatches by the
-// declared GLSL type (float/int scalar, vec2/3/4, mat4 as 16 numbers).
-// Non-numeric values (and arrays with non-numeric elements) are skipped.
-fn collect_params(obj: &Object<'_>) -> Vec<(String, alloy::ParamValue)> {
+// alloy validates against the program's reflected uniform table and dispatches
+// by the declared GLSL type (float/int scalar, vec2/3/4, mat4 as 16 numbers).
+// A value that is neither a number nor an array of numbers throws at the call
+// site; an `undefined` entry is skipped, so conditional spreads stay usable.
+// Name-level validation (unknown uniform, component count) is alloy's.
+fn collect_params(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<Vec<(String, alloy::ParamValue)>> {
   let mut out = Vec::new();
   for entry in obj.props::<String, rquickjs::Value>() {
-    let Ok((name, value)) = entry else { continue };
+    let (name, value) = entry?;
+    if value.is_undefined() {
+      continue;
+    }
     if let Some(n) = value.as_number() {
       out.push((name, alloy::ParamValue::Scalar(n as f32)));
-    } else if let Some(arr) = value.as_array() {
-      let nums: Result<Vec<f32>, _> = arr.iter::<f64>().map(|r| r.map(|n| n as f32)).collect();
-      if let Ok(nums) = nums {
-        out.push((name, alloy::ParamValue::Array(nums)));
-      }
+      continue;
+    }
+    let nums = value
+      .as_array()
+      .map(|arr| arr.iter::<f64>().map(|r| r.map(|n| n as f32)).collect::<Result<Vec<f32>, _>>());
+    match nums {
+      Some(Ok(nums)) => out.push((name, alloy::ParamValue::Array(nums))),
+      _ => return Err(throw_str(ctx, &format!("{api}: param '{name}' must be a number or an array of numbers"))),
     }
   }
-  out
+  Ok(out)
 }
 
 // Flatten a JS { samplerName: textureId } object into (name, id) pairs alloy
-// binds to the shader's sampler2D uniforms. Non-numeric values are skipped.
-fn collect_textures(obj: &Object<'_>) -> Vec<(String, u64)> {
-  obj.props::<String, u64>().filter_map(|r| r.ok()).collect()
+// validates against the program's sampler2D uniforms. A value that is not a
+// non-negative integral number throws at the call site; an `undefined` entry
+// is skipped, like params.
+fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<Vec<(String, u64)>> {
+  let mut out = Vec::new();
+  for entry in obj.props::<String, rquickjs::Value>() {
+    let (name, value) = entry?;
+    if value.is_undefined() {
+      continue;
+    }
+    match value.as_number() {
+      Some(n) if n >= 0.0 && n.fract() == 0.0 => out.push((name, n as u64)),
+      _ => return Err(throw_str(ctx, &format!("{api}: texture '{name}' must be a texture id (number)"))),
+    }
+  }
+  Ok(out)
 }
 
 // Decode the { filter?, wrap? } sampling options every create path accepts
@@ -142,8 +163,14 @@ fn collect_target_spec(
       None => Ok(None),
     }
   };
-  let params = get_obj("params")?.as_ref().map(collect_params).unwrap_or_default();
-  let textures = get_obj("textures")?.as_ref().map(collect_textures).unwrap_or_default();
+  let params = match get_obj("params")? {
+    Some(o) => collect_params(ctx, &o, api)?,
+    None => Vec::new(),
+  };
+  let textures = match get_obj("textures")? {
+    Some(o) => collect_textures(ctx, &o, api)?,
+    None => Vec::new(),
+  };
   let buffer = match opts {
     Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
     None => 0,
@@ -400,8 +427,14 @@ impl ModuleDef for GpuModule {
             textures: Option<Object<'_>>,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let params = params.as_ref().map(collect_params).unwrap_or_default();
-        let textures = textures.as_ref().map(collect_textures).unwrap_or_default();
+        let params = match &params {
+          Some(o) => collect_params(&ctx, o, "createShader")?,
+          None => Vec::new(),
+        };
+        let textures = match &textures {
+          Some(o) => collect_textures(&ctx, o, "createShader")?,
+          None => Vec::new(),
+        };
         let sampler = collect_sampler(&ctx, &opts.0, "createShader")?;
         let id = create_shader_atx
           .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler)
@@ -417,7 +450,7 @@ impl ModuleDef for GpuModule {
     let set_params_platform = platform.clone();
     let set_shader_params =
       Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, params: Object<'_>| -> rquickjs::Result<()> {
-        let params = collect_params(&params);
+        let params = collect_params(&ctx, &params, "setShaderParams")?;
         set_params_atx
           .update_shader_params(id, &params)
           .map_err(|e| throw_str(&ctx, &format!("setShaderParams: {e}")))?;
@@ -434,7 +467,7 @@ impl ModuleDef for GpuModule {
     let set_textures_platform = platform.clone();
     let set_shader_textures =
       Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, textures: Object<'_>| -> rquickjs::Result<()> {
-        let textures = collect_textures(&textures);
+        let textures = collect_textures(&ctx, &textures, "setShaderTextures")?;
         set_textures_atx
           .update_shader_textures(id, &textures)
           .map_err(|e| throw_str(&ctx, &format!("setShaderTextures: {e}")))?;
