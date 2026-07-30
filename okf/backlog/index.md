@@ -28,6 +28,11 @@ Sorted by status: open first, then partial, deferred, and closed
   shader warps the HUD too, and its once-per-second refresh forces full
   rebuilds that defeat clean-tree fast paths; draw it post-pass into FBO 0
   instead (mind the stage-1 orientation rules).
+- [parseSvg replaces the svg primitive](parse-svg.md) [open] -
+  Remove the `<svg>` element (the one primitive that swallows a resource and
+  returns no handle) for a parseSvg function returning plain draw data JS
+  maps to d-path subtrees; usvg moves alloy -> forge, one parse per document
+  instead of per node, per-path hit-testing/animation become possible.
 - [Node captures round-trip through a texture nobody wants](capture-pixels-round-trip.md) [open] -
   Every capture rasterizes, reads back, uploads a texture and is then read back
   again, because both consumers only ever wanted the pixels; a pixels-returning
