@@ -29,6 +29,25 @@
 
 declare module "flux:gpu" {
   /**
+   * A GPU texture handle: what every texture-producing call returns and every
+   * texture-consuming site takes (`<texture src>`, sampler bindings, the
+   * texture mutators and destroyTexture). At runtime it is a plain number;
+   * the brand exists so each id space is its own type and a cross-space slip
+   * - `destroyBuffer(textureId)`, `createShaderTarget(programId, ...)` - is a
+   * type error instead of an operation on an unrelated live resource (every
+   * space counts from 1, so a wrong id is usually a valid id in the wrong
+   * space). Ids widen to number freely; only number -> id is blocked.
+   */
+  export type TextureId = number & { readonly __texture: unique symbol }
+  /** The vertex-buffer id space ({@link createBuffer}); see {@link TextureId} for the brand model. */
+  export type BufferId = number & { readonly __buffer: unique symbol }
+  /** The compiled-stage id space ({@link compileShader}); see {@link TextureId} for the brand model. */
+  export type ShaderStageId = number & { readonly __shaderStage: unique symbol }
+  /** The linked-program id space ({@link linkProgram}); see {@link TextureId} for the brand model. */
+  export type ProgramId = number & { readonly __program: unique symbol }
+  /** The render-pipeline id space ({@link createRenderPipeline}); see {@link TextureId} for the brand model. */
+  export type RenderPipelineId = number & { readonly __renderPipeline: unique symbol }
+  /**
    * Shader uniform values by name. A number drives a scalar uniform (`float`,
    * or `int`/`bool`, truncated); a flat number array drives a typed uniform
    * whose declared GLSL type sets the expected length: 2/3/4 for
@@ -53,18 +72,18 @@ declare module "flux:gpu" {
    * Create an immutable texture from an RGBA8 pixel buffer (exactly
    * width*height*4 bytes). Returns the texture id.
    */
-  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): number
+  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame (width*height*4 bytes) and may hold
    * more (uploadTexture selects a frame by offset).
    */
-  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): number
+  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): TextureId
   /**
    * Replace a mutable texture's pixels. `data` may hold several frames; `offset`
    * (default 0) selects which frame to upload.
    */
-  export function uploadTexture(id: number, data: Uint8Array, offset?: number): void
+  export function uploadTexture(id: TextureId, data: Uint8Array, offset?: number): void
   /**
    * Replace a texture's storage with a new size at the same id (an id-stable
    * resize): `<texture src>` references and shader sampler bindings keep
@@ -73,7 +92,7 @@ declare module "flux:gpu" {
    * width*height*4 frame. Shader/pipeline target ids are rejected - resize
    * those with {@link setShaderSize}.
    */
-  export function resizeTexture(id: number, data: Uint8Array, width: number, height: number): void
+  export function resizeTexture(id: TextureId, data: Uint8Array, width: number, height: number): void
   /**
    * Destroy a texture (immutable, mutable, or shader). Frame-safe: the id is
    * reclaimed by the runtime once the render tree no longer references it, so
@@ -82,7 +101,7 @@ declare module "flux:gpu" {
    * in. A destroyed id that stays mounted keeps drawing (and stays allocated)
    * until it is unmounted or repointed.
    */
-  export function destroyTexture(id: number): void
+  export function destroyTexture(id: TextureId): void
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
    * size. `params` sets uniforms by name (see {@link ShaderParams} for the
@@ -113,9 +132,9 @@ declare module "flux:gpu" {
     width: number,
     height: number,
     params?: ShaderParams,
-    textures?: Record<string, number>,
+    textures?: Record<string, TextureId>,
     opts?: SamplerOptions,
-  ): number
+  ): TextureId
   /**
    * Compile a single shader stage from raw GLSL ES: the primitive under
    * {@link linkProgram}, GL's own model (a "shader" is one stage; linking
@@ -133,7 +152,7 @@ declare module "flux:gpu" {
     stage: "vertex" | "fragment",
     source: string,
     opts?: { header?: boolean },
-  ): number
+  ): ShaderStageId
   /**
    * Link a compiled vertex and fragment stage into a program, returning a
    * program id (its own id space, like buffers - not a texture id). Link
@@ -143,11 +162,11 @@ declare module "flux:gpu" {
    * Creating targets from the returned handle compiles nothing. Free with
    * {@link destroyProgram}.
    */
-  export function linkProgram(vertexShader: number, fragmentShader: number): number
+  export function linkProgram(vertexShader: ShaderStageId, fragmentShader: ShaderStageId): ProgramId
   /**
    * Destroy a compiled stage by id. Programs linked from it are unaffected.
    */
-  export function destroyShader(id: number): void
+  export function destroyShader(id: ShaderStageId): void
   /**
    * Pair a linked program with draw state, returning a render pipeline id
    * (its own id space, like programs and buffers - not a texture id): the
@@ -161,7 +180,7 @@ declare module "flux:gpu" {
    * {@link destroyRenderPipeline}; the program is yours and outlives it.
    */
   export function createRenderPipeline(
-    program: number,
+    program: ProgramId,
     opts?: {
       attributes?: VertexAttribute[]
       topology?: Topology
@@ -169,14 +188,14 @@ declare module "flux:gpu" {
       depth?: boolean
       depthWrite?: boolean
     },
-  ): number
+  ): RenderPipelineId
   /**
    * Destroy a render pipeline by id. Targets created from it are unaffected:
    * each holds the pipeline until it is itself destroyed, so either
    * destruction order is safe. The id stops being usable for new targets
    * immediately.
    */
-  export function destroyRenderPipeline(id: number): void
+  export function destroyRenderPipeline(id: RenderPipelineId): void
   /**
    * Create a render target over a {@link createRenderPipeline} pipeline and
    * render it once: the target half of {@link createPipeline}. Returns a
@@ -192,29 +211,29 @@ declare module "flux:gpu" {
    * `depth`, `depthWrite`) belong to the pipeline and throw here.
    */
   export function createShaderTarget(
-    pipeline: number,
+    pipeline: RenderPipelineId,
     width: number,
     height: number,
     opts?: {
       params?: ShaderParams
-      textures?: Record<string, number>
-      buffer?: number
+      textures?: Record<string, TextureId>
+      buffer?: BufferId
       vertexCount?: number
       clearColor?: [number, number, number, number]
     } & SamplerOptions,
-  ): number
+  ): TextureId
   /**
    * Destroy a linked program by id. Pipelines created from it are unaffected:
    * each holds the program until it is itself destroyed, so either
    * destruction order is safe. The id stops being usable for new pipelines
    * immediately.
    */
-  export function destroyProgram(id: number): void
+  export function destroyProgram(id: ProgramId): void
   /**
    * Update a shader texture's uniforms by name and re-render it (see
    * {@link ShaderParams} for the value shapes).
    */
-  export function setShaderParams(id: number, params: ShaderParams): void
+  export function setShaderParams(id: TextureId, params: ShaderParams): void
   /**
    * Rebind a shader texture's sampler2D inputs by uniform name and re-render
    * it with its last-applied params - the sampler analog of
@@ -225,14 +244,14 @@ declare module "flux:gpu" {
    * sampling cycle among targets (binding a shader's own target is the
    * shortest case).
    */
-  export function setShaderTextures(id: number, textures: Record<string, number>): void
+  export function setShaderTextures(id: TextureId, textures: Record<string, TextureId>): void
   /**
    * Resize a shader or pipeline target texture in place and re-render it: the
    * id, compiled program, last-applied params, and sampler bindings all carry
    * over; only the output size changes. The setDrawCount analog for output
    * size.
    */
-  export function setShaderSize(id: number, width: number, height: number): void
+  export function setShaderSize(id: TextureId, width: number, height: number): void
 
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**
@@ -279,9 +298,9 @@ declare module "flux:gpu" {
     height: number,
     opts?: {
       params?: ShaderParams
-      textures?: Record<string, number>
+      textures?: Record<string, TextureId>
       attributes?: VertexAttribute[]
-      buffer?: number
+      buffer?: BufferId
       topology?: Topology
       vertexCount?: number
       depth?: boolean
@@ -289,27 +308,27 @@ declare module "flux:gpu" {
       blend?: BlendMode
       clearColor?: [number, number, number, number]
     } & SamplerOptions,
-  ): number
+  ): TextureId
 
   /**
    * Create a vertex buffer from raw bytes (interleave attribute data to match
    * the pipeline's attribute list). Buffer ids are their own space, separate
    * from texture ids.
    */
-  export function createBuffer(data: Uint8Array): number
+  export function createBuffer(data: Uint8Array): BufferId
   /**
    * Overwrite part of a vertex buffer at `byteOffset` (default 0), within the
    * size it was created with. Pipelines drawing from the buffer re-render
    * with their last-applied params.
    */
-  export function writeBuffer(id: number, data: Uint8Array, byteOffset?: number): void
+  export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /** Destroy a vertex buffer. Destroy pipelines drawing from it first. */
-  export function destroyBuffer(id: number): void
+  export function destroyBuffer(id: BufferId): void
   /**
    * Set how many vertices a pipeline texture draws and re-render it, e.g.
    * after writing a variable amount of dynamic geometry into its buffer.
    */
-  export function setDrawCount(id: number, count: number): void
+  export function setDrawCount(id: TextureId, count: number): void
   /**
    * Capture a render-tree node's subtree into a new GPU texture, resolving once
    * it has been rendered on the next paint pass. The node must be attached to
@@ -342,11 +361,11 @@ declare module "flux:gpu" {
    * must stay current has to come from a source that updates in place: another
    * pipeline's render target, a camera texture, a mutable texture.
    */
-  export function captureSnapshot(nodeId: number): Promise<{ id: number; width: number; height: number }>
+  export function captureSnapshot(nodeId: number): Promise<{ id: TextureId; width: number; height: number }>
   /**
    * Read back a registered texture's current pixels as RGBA8 (tightly packed,
    * top-to-bottom rows), for any texture id whatever created it (createTexture,
    * createShader, captureSnapshot). Synchronous. Throws if the id is unknown.
    */
-  export function readTexture(id: number): { width: number; height: number; data: Uint8Array }
+  export function readTexture(id: TextureId): { width: number; height: number; data: Uint8Array }
 }

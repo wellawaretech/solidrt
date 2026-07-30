@@ -8,6 +8,7 @@
 
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { listCameras, open } from "flux:camera"
+import type { TextureId } from "flux:gpu"
 import { on } from "srt:events"
 
 export type CameraFacing = "front" | "back" | "unknown"
@@ -70,7 +71,7 @@ export function onDeviceChange(callback: (event: { added: boolean }) => void): (
 /** A live camera as reactive accessors. */
 export type CameraStream = {
   /** Texture id once the stream is up, undefined while opening; render with <texture src={...}>. */
-  texture(): number | undefined
+  texture(): TextureId | undefined
   /** Actual stream size, undefined while opening. */
   width(): number | undefined
   height(): number | undefined
@@ -87,7 +88,7 @@ export type CameraStream = {
  * call open() from "flux:camera" directly.
  */
 export function createCamera(options: CameraOptions = {}): CameraStream {
-  let [texture, setTexture] = createSignal<number | undefined>(undefined)
+  let [texture, setTexture] = createSignal<TextureId | undefined>(undefined)
   let [width, setWidth] = createSignal<number | undefined>(undefined)
   let [height, setHeight] = createSignal<number | undefined>(undefined)
   let [barcode, setBarcode] = createSignal<BarcodeResult | undefined>(undefined)

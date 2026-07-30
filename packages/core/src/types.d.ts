@@ -2,6 +2,7 @@
 /// <reference path="./runtime-modules.d.ts" />
 
 import type { Gradient } from "./color"
+import type { ProgramId, TextureId } from "flux:gpu"
 import type { Element } from "solid-js"
 
 // The "srt:*" lattice runner modules are declared in ./runtime-modules.d.ts
@@ -298,7 +299,7 @@ export interface WindowProps extends LayoutProps, PointerProps {
  */
 export interface WindowShaderProps {
   /** Linked program handle from linkProgram. */
-  program: number
+  program: ProgramId
   /**
    * Uniforms filled by name, paced to the next real repaint. A number drives
    * a scalar (`float`/`int`); a flat number array drives the declared GLSL
@@ -306,7 +307,7 @@ export interface WindowShaderProps {
    */
   params?: Record<string, number | number[]>
   /** Extra sampler2D inputs: uniform name to texture id. */
-  textures?: Record<string, number>
+  textures?: Record<string, TextureId>
   /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
   vertexCount?: number
   /**
@@ -421,7 +422,7 @@ export interface TextProps extends Position, PaintProps, PointerProps {
  * premultiplication.
  */
 export interface TextureProps extends Position, PaintProps, PointerProps {
-  src?: number
+  src?: TextureId
   /**
    * How the texture's pixels map to the element box (CSS object-fit).
    * "fill" (default) stretches; "cover" and "none" crop; "contain" and

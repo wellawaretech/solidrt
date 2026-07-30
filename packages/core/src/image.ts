@@ -4,7 +4,7 @@
 // changes - the same relationship createTexture/createShader have to flux:gpu.
 
 import { createMemo, onCleanup } from "@solidjs/signals"
-import { createTexture, destroyTexture } from "./gpu"
+import { createTexture, destroyTexture, type TextureId } from "./gpu"
 
 export type DecodedImage = {
   data: Uint8Array
@@ -32,13 +32,13 @@ export type ImageSource = string | Uint8Array
 // Uint8Array sources bypass all of this: no key, per-mount texture.
 type ImageEntry = {
   refs: number
-  texture: number
-  promise: Promise<number>
+  texture: TextureId | undefined
+  promise: Promise<TextureId>
 }
 
 let imageCache = new Map<string, ImageEntry>()
 
-async function loadImage(url: string): Promise<number> {
+async function loadImage(url: string): Promise<TextureId> {
   // Images are assets: cache to disk, no freshness. Use a versioned URL (or
   // fetch + decodeImage manually) when a URL's content must be re-checked.
   let res = await fetch(url, { cache: "force-cache" })
@@ -56,7 +56,7 @@ async function loadImage(url: string): Promise<number> {
 function acquireImage(url: string): ImageEntry {
   let entry = imageCache.get(url)
   if (!entry) {
-    let e: ImageEntry = { refs: 0, texture: -1, promise: undefined as never }
+    let e: ImageEntry = { refs: 0, texture: undefined, promise: undefined as never }
     e.promise = loadImage(url).then(
       id => {
         // Everyone released while the load was in flight: nothing owns the
@@ -91,7 +91,7 @@ function releaseImage(url: string): void {
   if (!entry) return
   entry.refs--
   if (entry.refs > 0) return
-  if (entry.texture >= 0) {
+  if (entry.texture !== undefined) {
     destroyTexture(entry.texture)
     imageCache.delete(url)
   }
@@ -122,10 +122,10 @@ function releaseImage(url: string): void {
  * `createImage` earns its async only for a fetched string URL or a reactive
  * source.
  */
-export function createImage(src: ImageSource | (() => ImageSource)): () => number {
+export function createImage(src: ImageSource | (() => ImageSource)): () => TextureId {
   let getSrc = typeof src === "function" ? src : () => src
 
-  return createMemo<number>(async () => {
+  return createMemo<TextureId>(async () => {
     let source = getSrc()
 
     if (typeof source === "string") {
@@ -138,9 +138,9 @@ export function createImage(src: ImageSource | (() => ImageSource)): () => numbe
     }
 
     // Byte sources decode and upload synchronously; this run owns the texture.
-    let holder = { id: -1 }
+    let holder: { id: TextureId | undefined } = { id: undefined }
     onCleanup(() => {
-      if (holder.id >= 0) destroyTexture(holder.id)
+      if (holder.id !== undefined) destroyTexture(holder.id)
     })
     let decoded: DecodedImage
     try {

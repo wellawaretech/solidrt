@@ -3,6 +3,8 @@
 // to a bound session object, so the raw handle never leaves the runtime.
 
 declare module "flux:camera" {
+  import type { TextureId } from "flux:gpu"
+
   /** A camera device from {@link listCameras}. */
   type CameraDevice = {
     /** Device id to pass as `open({ camera })`. */
@@ -38,7 +40,7 @@ declare module "flux:camera" {
   /** An opened camera session: the frame texture plus controls bound to it. */
   type CameraSession = {
     /** GPU texture id the latest frame is uploaded into (use as a texture source). */
-    texture: number
+    texture: TextureId
     /** Frame width in pixels. */
     width: number
     /** Frame height in pixels. */

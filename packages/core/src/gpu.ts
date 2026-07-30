@@ -37,6 +37,12 @@ export type CreateOptions = { manual?: boolean }
 export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode }
 export type { FilterMode, WrapMode } from "flux:gpu"
 
+// The branded id types, one per id space (see flux:gpu): plain numbers at
+// runtime, distinct types to the checker, so a cross-space slip like
+// destroyBuffer(textureId) fails to compile. Exported so apps can annotate
+// storage (`let ids: TextureId[]`).
+export type { BufferId, ProgramId, RenderPipelineId, ShaderStageId, TextureId } from "flux:gpu"
+
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
 // (textures made outside a reactive scope, e.g. after an await, are not
@@ -118,7 +124,7 @@ export function createTexture(
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions,
-): number {
+): gpu.TextureId {
   let id = gpu.createTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
@@ -138,7 +144,7 @@ export function createMutableTexture(
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions,
-): number {
+): gpu.TextureId {
   let id = gpu.createMutableTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
@@ -176,9 +182,9 @@ export function createShader(
   width: number,
   height: number,
   params?: gpu.ShaderParams,
-  textures?: Record<string, number>,
+  textures?: Record<string, gpu.TextureId>,
   opts?: CreateOptions & SamplerOptions,
-): number {
+): gpu.TextureId {
   let id = gpu.createShader(fragmentSrc, width, height, params, textures, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
@@ -200,18 +206,18 @@ export function createShader(
  * is yours and outlives it.
  */
 export function createShaderTarget(
-  pipeline: number,
+  pipeline: gpu.RenderPipelineId,
   width: number,
   height: number,
   opts?: {
     params?: gpu.ShaderParams
-    textures?: Record<string, number>
-    buffer?: number
+    textures?: Record<string, gpu.TextureId>
+    buffer?: gpu.BufferId
     vertexCount?: number
     clearColor?: [number, number, number, number]
   } & CreateOptions &
     SamplerOptions,
-): number {
+): gpu.TextureId {
   let id = gpu.createShaderTarget(pipeline, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
@@ -225,7 +231,7 @@ export type ShaderSpec = {
   width: number
   height: number
   params?: gpu.ShaderParams
-  textures?: Record<string, number>
+  textures?: Record<string, gpu.TextureId>
 } & SamplerOptions
 
 // Shallow name->value equality for params/textures records; treats undefined
@@ -273,7 +279,7 @@ function sameRecord(
 export function createShaderMemo(
   spec: () => ShaderSpec,
   opts?: { onError?: (error: unknown) => void },
-): () => number {
+): () => gpu.TextureId {
   let make = (s: ShaderSpec) =>
     gpu.createShader(s.fragmentSrc, s.width, s.height, s.params, s.textures, { filter: s.filter, wrap: s.wrap })
   let current = untrack(spec)
@@ -352,9 +358,9 @@ export function createPipeline(
   height: number,
   opts?: {
     params?: gpu.ShaderParams
-    textures?: Record<string, number>
+    textures?: Record<string, gpu.TextureId>
     attributes?: gpu.VertexAttribute[]
-    buffer?: number
+    buffer?: gpu.BufferId
     topology?: gpu.Topology
     vertexCount?: number
     depth?: boolean
@@ -363,7 +369,7 @@ export function createPipeline(
     clearColor?: [number, number, number, number]
   } & CreateOptions &
     SamplerOptions,
-): number {
+): gpu.TextureId {
   let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
@@ -378,7 +384,7 @@ export function createPipeline(
  * created outside a reactive scope you must call `destroyBuffer` yourself.
  * Destroy pipelines before their buffer.
  */
-export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): number {
+export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): gpu.BufferId {
   let id = gpu.createBuffer(toUint8(data))
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyBuffer(id))
   return id
@@ -389,6 +395,6 @@ export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateO
  * pipeline drawing from the buffer re-renders with its last-applied params,
  * so geometry-only changes reach the screen without a params update.
  */
-export function writeBuffer(id: number, data: ArrayBuffer | ArrayBufferView, byteOffset?: number): void {
+export function writeBuffer(id: gpu.BufferId, data: ArrayBuffer | ArrayBufferView, byteOffset?: number): void {
   gpu.writeBuffer(id, toUint8(data), byteOffset)
 }

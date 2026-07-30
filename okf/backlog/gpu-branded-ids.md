@@ -2,7 +2,7 @@
 type: backlog-item
 title: Branded GPU id types
 description: Every GPU handle is a plain number across five id spaces, so cross-space slips like destroyBuffer(textureId) typecheck and usually hit a valid id in the wrong space; branded types in flux-types close the class with no runtime cost.
-status: open
+status: done
 timestamp: 2026-07-30T00:00:00Z
 ---
 

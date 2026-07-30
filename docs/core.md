@@ -236,10 +236,12 @@ Decodes an image file (JPEG, PNG, etc.) from raw bytes. Returns an object with `
 ### createTexture
 
 ```ts
-createTexture(data: Uint8Array, width: number, height: number): number
+createTexture(data: Uint8Array, width: number, height: number): TextureId
 ```
 
 Uploads raw RGBA pixel data to the GPU and returns a texture ID. Pass the returned ID as the `src` prop on a `<texture>` element.
+
+Every GPU id space is a branded number type - `TextureId`, `BufferId`, `ShaderStageId`, `ProgramId`, `RenderPipelineId`, all exported from `@solidrt/core/gpu` - so a cross-space slip like `destroyBuffer(textureId)` is a compile-time error instead of an operation on an unrelated live resource. At runtime they are plain numbers and widen to `number` freely; use the exported types to annotate storage (`let ids: TextureId[]`).
 
 Sampling is a per-texture property declared at creation: every create helper (`createTexture`, `createMutableTexture`, `createShader`, `createPipeline`, `createShaderTarget`) accepts `filter` (`"linear"` default, or `"nearest"`) and `wrap` (`"clamp"` default, or `"repeat"`) in its options. The state belongs to the texture id and applies everywhere it is sampled - shader `sampler2D` inputs and `<texture src>` display alike - so a `"nearest"` texture upscales with hard pixels on screen: render at 320x200, display window-sized, and you have the pixel-art path. `wrap` only matters to shaders sampling outside `0..1` (the display draw never tiles). The state survives id-stable resizes and cannot be changed after creation; no mipmaps exist.
 
@@ -277,13 +279,13 @@ That injection is conditional. A source that starts with its own `#version` line
 Underneath sits the raw GPU model, exposed directly:
 
 ```ts
-compileShader(stage: "vertex" | "fragment", source: string, opts?: { header?: boolean }): number
-linkProgram(vertexShader: number, fragmentShader: number): number
-createRenderPipeline(program: number, opts?: { attributes?, topology?, blend?, depth?, depthWrite? }): number
-createShaderTarget(pipeline: number, width: number, height: number, opts?): number
-destroyShader(id: number): void          // stages; safe right after linking
-destroyProgram(id: number): void         // programs; live pipelines keep theirs alive
-destroyRenderPipeline(id: number): void  // pipelines; live targets keep theirs alive
+compileShader(stage: "vertex" | "fragment", source: string, opts?: { header?: boolean }): ShaderStageId
+linkProgram(vertexShader: ShaderStageId, fragmentShader: ShaderStageId): ProgramId
+createRenderPipeline(program: ProgramId, opts?: { attributes?, topology?, blend?, depth?, depthWrite? }): RenderPipelineId
+createShaderTarget(pipeline: RenderPipelineId, width: number, height: number, opts?): TextureId
+destroyShader(id: ShaderStageId): void                  // stages; safe right after linking
+destroyProgram(id: ProgramId): void                     // programs; live pipelines keep theirs alive
+destroyRenderPipeline(id: RenderPipelineId): void       // pipelines; live targets keep theirs alive
 ```
 
 `compileShader` compiles one stage from complete GLSL ES - the source declares its own `#version 300 es`, precision, varyings, and uniforms; nothing is injected. `{ header: true }` explicitly prepends the standard header (`#version 300 es`, highp precision, `iResolution`/`iTime`, and `out vec4 fragColor` for fragment stages - the same text `createPipeline` injects); do not combine it with your own `#version`. Compile and link errors throw at the call, so a bad shader fails where it was written, not later at a prop write.

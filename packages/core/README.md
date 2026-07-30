@@ -2,7 +2,7 @@
 
 A low-level toolkit for creating cross-platform applications.
 
-_SolidRT is in pre-alpha stage. Anything can and will be changed._
+_SolidRT is in alpha: useful today, but APIs are still stabilizing._
 
 > LLM agents: see [AGENTS.md](./AGENTS.md) for a dense, self-contained quickstart.
 

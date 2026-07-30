@@ -271,7 +271,7 @@ timestamp: 2026-07-13T00:00:00Z
   the whole accumulation/feedback/multi-pass/transform-feedback class breaks
   that; decide pure-vs-escape-hatch (recommended: manual targets + one
   renderTarget verb) before building any of them.
-- [Branded GPU id types](gpu-branded-ids.md) [open] - Every GPU handle is a
+- [Branded GPU id types](gpu-branded-ids.md) [done] - Every GPU handle is a
   plain number across five id spaces, so destroyBuffer(textureId)
   typechecks and usually hits a valid id in the wrong space; branded types
   in flux-types close the class with no runtime cost.
