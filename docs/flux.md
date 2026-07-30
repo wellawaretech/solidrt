@@ -103,6 +103,17 @@ let bytes = new TextEncoder().encode("hello")
 let str = new TextDecoder().decode(bytes)
 ```
 
+### atob / btoa
+
+Base64 over binary strings (each char code is one raw byte, no UTF-8 step).
+`btoa` throws on a code point above 255; `atob` ignores ASCII whitespace and
+throws on anything else that is not valid base64.
+
+```js
+let encoded = btoa("\x00\xff")   // "AP8="
+let bytes = atob(encoded)        // read back with charCodeAt
+```
+
 ---
 
 ## Flux global

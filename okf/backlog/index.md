@@ -266,11 +266,11 @@ timestamp: 2026-07-13T00:00:00Z
   the 2x2, invalid depth states unrepresentable, vocabulary parsed at the JS
   boundary, and headless assertion examples covering blend, typed uniforms,
   and the full JS surface.
-- [GPU target purity and an explicit render verb](gpu-purity-decision.md) [open] -
-  The retained target model silently relies on every pass being pure, and
-  the whole accumulation/feedback/multi-pass/transform-feedback class breaks
-  that; decide pure-vs-escape-hatch (recommended: manual targets + one
-  renderTarget verb) before building any of them.
+- [GPU target purity and an explicit render verb](gpu-purity-decision.md)
+  [decided 2026-07-30] - Option 2: the purity invariant is documented and
+  render: "manual" targets stepped by renderTarget(id) are the one
+  imperative escape hatch; implemented in okf/plans/gpu-render-verb.md,
+  which also carries the gated follow-ups (loadOp, copyTexture).
 - [Branded GPU id types](gpu-branded-ids.md) [done] - Every GPU handle is a
   plain number across five id spaces, so destroyBuffer(textureId)
   typechecks and usually hits a valid id in the wrong space; branded types

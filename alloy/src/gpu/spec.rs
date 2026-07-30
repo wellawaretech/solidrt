@@ -24,6 +24,21 @@ pub struct TargetSpec {
   pub clear_color: [f32; 4],
   /// How the target's output is sampled everywhere (shader inputs, display).
   pub sampler: SamplerState,
+  /// Render mode. False (the default): the dirty flush renders the target
+  /// whenever its inputs change, which requires the pass to be a pure
+  /// function of them. True: the flush never renders it - only an explicit
+  /// `render_target` does, in call order - which is what makes
+  /// non-idempotent passes (accumulation, feedback) legal. Creation and
+  /// resize clear a manual target instead of rendering it.
+  pub manual: bool,
+  /// Color load op. False (the default, loadOp "clear"): every render clears
+  /// to `clear_color` first. True (loadOp "load"): the draw lands over the
+  /// previous contents - single-target accumulation. Requires `manual`
+  /// (Context rejects the combination otherwise): on a flush-rendered target
+  /// the output would depend on how often the flush ran. Depth is per-render
+  /// scratch and always clears. Creation and resize still clear, so a load
+  /// target starts (and restarts) at `clear_color`.
+  pub load: bool,
 }
 
 /// Everything `create_pipeline_texture` (the fused convenience) needs:

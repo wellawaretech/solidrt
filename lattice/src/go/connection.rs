@@ -908,6 +908,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       let mut obj = serde_json::json!({
         "textureId": p.texture_id,
         "kind": p.kind,
+        // Manual targets render only on renderTarget, never by the flush.
+        "manual": p.manual,
+        "loadOp": if p.load { "load" } else { "clear" },
         // Cumulative like the get_stats aggregates (diff two queries for a
         // rate); passMs is raster-thread occupancy, not GPU-side duration.
         "passes": p.passes,

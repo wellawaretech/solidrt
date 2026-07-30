@@ -2,11 +2,18 @@
 type: backlog-item
 title: GPU target purity and an explicit render verb
 description: The retained target model silently relies on every pass being a pure function of its inputs, and every wanted extension in the accumulation/feedback/multi-pass class breaks that invariant; decide whether the model stays pure or gains one imperative escape hatch before building any of them.
-status: open
+status: decided 2026-07-30 - option 2, implemented; see okf/plans/gpu-render-verb.md
 timestamp: 2026-07-30T00:00:00Z
 ---
 
 # GPU target purity and an explicit render verb
+
+**Decided 2026-07-30: option 2.** The invariant is documented, and targets
+created `render: "manual"` are stepped by `renderTarget(id)` - the one
+imperative verb. Contract, surface, traps, and the stage-3 consumer list
+(loadOp, copyTexture, examples) live in [[gpu-render-verb]]
+(okf/plans/gpu-render-verb.md). The gates below are lifted for manual
+targets only; loadOp on a flush-rendered target still must not ship.
 
 The central finding of [gpu-review](../analysis/gpu-review.md) (structural
 divergence section). In WebGL and WebGPU the unit of work is an event (a

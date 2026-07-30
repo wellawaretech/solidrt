@@ -125,7 +125,10 @@ fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquic
 
 // Decode the per-target options shared by createPipeline and
 // createShaderTarget - { params, textures, buffer, vertexCount, clearColor,
-// filter, wrap }, everything optional - into the alloy target spec.
+// render, loadOp, filter, wrap }, everything optional - into the alloy
+// target spec. `render` ("auto" | "manual") and `loadOp` ("clear" | "load")
+// are vocabulary, validated here at the boundary like the pipeline words;
+// the load-requires-manual invariant is alloy's (Context rejects it).
 fn collect_target_spec(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -157,8 +160,24 @@ fn collect_target_spec(
       }
     }
   }
+  let manual = match opts {
+    Some(o) => match o.get::<_, Option<String>>("render")?.as_deref() {
+      None | Some("auto") => false,
+      Some("manual") => true,
+      Some(other) => return Err(throw_str(ctx, &format!("{api}: render must be \"auto\" or \"manual\", got \"{other}\""))),
+    },
+    None => false,
+  };
+  let load = match opts {
+    Some(o) => match o.get::<_, Option<String>>("loadOp")?.as_deref() {
+      None | Some("clear") => false,
+      Some("load") => true,
+      Some(other) => return Err(throw_str(ctx, &format!("{api}: loadOp must be \"clear\" or \"load\", got \"{other}\""))),
+    },
+    None => false,
+  };
   let sampler = collect_sampler(ctx, opts, api)?;
-  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw_count, clear_color, sampler })
+  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw_count, clear_color, sampler, manual, load })
 }
 
 // Decode the draw-state options of createRenderPipeline and createPipeline -
@@ -271,6 +290,8 @@ impl ModuleDef for GpuModule {
     decl.declare("writeBuffer")?;
     decl.declare("destroyBuffer")?;
     decl.declare("setDrawCount")?;
+    decl.declare("renderTarget")?;
+    decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
     decl.declare("readTexture")?;
     Ok(())
@@ -607,6 +628,30 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setDrawCount");
 
+    // The explicit render verb for manual targets (render: "manual"); alloy
+    // validates the mode and queues the pass in call order.
+    let render_target_atx = atx.clone();
+    let render_target_platform = platform.clone();
+    let render_target = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| -> rquickjs::Result<()> {
+      render_target_atx.render_target(id).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
+      // New target output changes the screen without any tree mutation.
+      render_target_platform.request_frame();
+      Ok(())
+    })
+    .expect("create renderTarget");
+
+    // The GPU-side seed/history write into a manual target; alloy validates
+    // ids, sizes, and the mode, and queues the copy in call order.
+    let copy_texture_atx = atx.clone();
+    let copy_texture_platform = platform.clone();
+    let copy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, src: u64, dst: u64| -> rquickjs::Result<()> {
+      copy_texture_atx.copy_texture(src, dst).map_err(|e| throw_str(&ctx, &format!("copyTexture: {e}")))?;
+      // New target output changes the screen without any tree mutation.
+      copy_texture_platform.request_frame();
+      Ok(())
+    })
+    .expect("create copyTexture");
+
     let destroy_atx = atx.clone();
     let destroy_platform = platform.clone();
     let destroy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
@@ -641,6 +686,8 @@ impl ModuleDef for GpuModule {
     exports.export("writeBuffer", write_buffer)?;
     exports.export("destroyBuffer", destroy_buffer)?;
     exports.export("setDrawCount", set_draw_count)?;
+    exports.export("renderTarget", render_target)?;
+    exports.export("copyTexture", copy_texture)?;
     // Named generic fns, not closures: `captureSnapshot` returns a Promise and
     // `readTexture` an Object, whose 'js lifetime must unify with the Ctx arg -
     // a closure gives them independent invariant lifetimes and will not compile

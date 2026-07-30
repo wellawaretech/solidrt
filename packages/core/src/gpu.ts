@@ -85,8 +85,16 @@ export {
 
 // Pipeline plumbing re-exported raw: setDrawCount re-renders a pipeline after
 // its buffer gained or lost dynamic geometry; destroyBuffer is the manual
-// cleanup path for buffers created outside a reactive scope.
-export { destroyBuffer, setDrawCount } from "flux:gpu"
+// cleanup path for buffers created outside a reactive scope. renderTarget is
+// the explicit render verb for `render: "manual"` targets - targets whose
+// pass is state (accumulation, feedback) rather than a pure function of its
+// inputs, which the runtime therefore never renders on its own; the app
+// steps them, usually from onFrame. (`render: "manual"` is the render mode;
+// the unrelated `manual: true` create option is the lifetime opt-out above.)
+// copyTexture overwrites a manual target with another texture's pixels
+// GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
+// ping-pong buffer, reset state to a known image.
+export { copyTexture, destroyBuffer, renderTarget, setDrawCount } from "flux:gpu"
 export type { BlendMode, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
@@ -224,6 +232,16 @@ export function createShader(
  * `depthWrite`) lives on the pipeline and throws here. Frees the target when
  * the reactive owner is disposed (opt out with `opts.manual`); the pipeline
  * is yours and outlives it.
+ *
+ * `render: "manual"` makes it a manual target: the runtime never renders it
+ * (it starts cleared to `clearColor`), only an explicit `renderTarget(id)`
+ * does, in call order - which is what legalizes feedback state stepped by
+ * the app. `loadOp: "load"` (manual-only, throws otherwise) keeps the
+ * previous contents under each draw - single-target accumulation - while
+ * the default `"clear"` clears to `clearColor` per render; state that must
+ * read its own pixels (decay, blur, simulation) still ping-pongs across two
+ * manual targets, and `copyTexture` seeds either shape. Distinct from the
+ * `manual` lifetime option: `render` is who renders, `manual` is who frees.
  */
 export function createShaderTarget(
   pipeline: gpu.RenderPipelineId,
@@ -235,6 +253,8 @@ export function createShaderTarget(
     buffer?: gpu.BufferId
     vertexCount?: number
     clearColor?: [number, number, number, number]
+    render?: "auto" | "manual"
+    loadOp?: "clear" | "load"
   } & CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
@@ -369,7 +389,10 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * overwriting; a depth-tested additive pass is `{ depth: true, blend: "add",
  * depthWrite: false }` - each option only does what it says, neither implies
  * the other. `opts.vertexCount` defaults to the whole buffer and can be
- * changed later with `setDrawCount`. Frees the texture and GL program when the reactive
+ * changed later with `setDrawCount`. `opts.render: "manual"` and
+ * `opts.loadOp` behave exactly as on {@link createShaderTarget}: step the
+ * target with `renderTarget(id)`, and `loadOp: "load"` (manual-only) keeps
+ * the previous contents under each draw. Frees the texture and GL program when the reactive
  * owner is disposed (opt out with `opts.manual`); create outside any reactive
  * scope for app-lifetime pipelines.
  */
@@ -389,6 +412,8 @@ export function createPipeline(
     depthWrite?: boolean
     blend?: gpu.BlendMode
     clearColor?: [number, number, number, number]
+    render?: "auto" | "manual"
+    loadOp?: "clear" | "load"
   } & CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {

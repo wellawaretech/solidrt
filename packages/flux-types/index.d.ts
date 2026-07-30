@@ -16,6 +16,7 @@
 /// <reference path="./standards/console.d.ts" />
 /// <reference path="./standards/time.d.ts" />
 /// <reference path="./standards/text.d.ts" />
+/// <reference path="./standards/base64.d.ts" />
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />
 

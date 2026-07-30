@@ -211,6 +211,10 @@ pub(crate) struct RasterState {
   // The declared window shader, with its retained layer texture. None = the
   // frame resolves straight to FBO 0 (the free path).
   window_shader: Option<WindowShaderState>,
+  // The shared fullscreen copy program behind CopyTexture (fragColor =
+  // texture(uSrc, vUV)), compiled on first use and kept for the thread's
+  // life. Rc because ShaderProgram release goes through release_program.
+  copy_program: Option<Rc<ShaderProgram>>,
   // Texture ids whose content changed (or, for shader targets, whose own
   // params/bindings/geometry changed) since the last dirty flush. Writes only
   // mark; flush_dirty renders the affected shader targets in dependency order
@@ -340,6 +344,7 @@ impl RasterState {
       buffers: HashMap::new(),
       dirty: HashSet::new(),
       window_shader: None,
+      copy_program: None,
       content_dirty: true,
       pass_only_frames: 0,
       tx,
@@ -446,22 +451,28 @@ impl RasterState {
             self.set_window_shader(shader);
           }
           RasterCmd::UpdateShaderParams { id, params } => {
+            // A manual target only folds the values (its pixels change on its
+            // next explicit render, not here), so it is not marked dirty.
             match self.shaders.get(&id) {
               Some(shader) => {
                 shader.merge_params(&params);
-                self.dirty.insert(id);
+                if !shader.manual() {
+                  self.dirty.insert(id);
+                }
               }
               None => log::warn!("[alloy] shader params update failed: shader texture {id} not found"),
             }
           }
           RasterCmd::UpdateShaderTextures { id, textures } => {
             let rebound = match self.shaders.get_mut(&id) {
-              Some(shader) => shader.set_sampler_bindings(&textures),
+              Some(shader) => shader.set_sampler_bindings(&textures).map(|()| shader.manual()),
               None => Err(format!("shader texture {id} not found")),
             };
             match rebound {
-              Ok(()) => {
-                self.dirty.insert(id);
+              Ok(manual) => {
+                if !manual {
+                  self.dirty.insert(id);
+                }
               }
               Err(e) => log::warn!("[alloy] shader texture rebind failed: {e}"),
             }
@@ -474,12 +485,43 @@ impl RasterState {
               .shaders
               .get(&id)
               .ok_or_else(|| format!("shader texture {id} not found"))
-              .and_then(|shader| shader.set_draw_count(count));
+              .and_then(|shader| shader.set_draw_count(count).map(|()| shader.manual()));
             match result {
-              Ok(()) => {
-                self.dirty.insert(id);
+              Ok(manual) => {
+                if !manual {
+                  self.dirty.insert(id);
+                }
               }
               Err(e) => log::warn!("[alloy] draw count update failed: {e}"),
+            }
+          }
+          RasterCmd::RenderTarget { id } => {
+            // Fresh inputs first (the pixel-observer rule: this pass samples
+            // its sources), then the one pass, then seed the dirty set so
+            // targets sampling this one re-render at the next flush - the
+            // same shape as an uploadTexture content change.
+            self.flush_dirty();
+            match self.shaders.get(&id) {
+              Some(shader) => {
+                let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
+                let start = std::time::Instant::now();
+                shader.render(&self.gl, &resolved);
+                let micros = start.elapsed().as_micros() as u64;
+                shader.record_pass(micros);
+                self.stats.passes.fetch_add(1, Ordering::Relaxed);
+                self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
+                self.dirty.insert(id);
+              }
+              None => log::warn!("[alloy] render target failed: shader texture {id} not found"),
+            }
+          }
+          RasterCmd::CopyTexture { src, dst } => {
+            // Observes src's pixels, so flush first (the same rule as
+            // RenderTarget); the copy itself then seeds dst into the dirty
+            // set inside the helper.
+            self.flush_dirty();
+            if let Err(e) = self.copy_texture(src, dst) {
+              log::warn!("[alloy] texture copy failed: {e}");
             }
           }
           RasterCmd::DestroyTexture { id } => {
@@ -906,10 +948,15 @@ impl RasterState {
   /// Resolve every pending target write: render each shader/pipeline target
   /// whose own state changed, or whose sampled content (transitively) did,
   /// in dependency order - sources before the targets sampling them - then
-  /// clear the dirty set. The only place target renders happen; called at
-  /// the points target pixels become observable (a drawn frame, an offscreen
-  /// rasterization, a readback), so a chain of targets propagates end to end
-  /// with each target rendered at most once per flush.
+  /// clear the dirty set. Called at the points target pixels become
+  /// observable (a drawn frame, an offscreen rasterization, a readback), so
+  /// a chain of targets propagates end to end with each target rendered at
+  /// most once per flush. Manual targets are excluded from the graph: the
+  /// flush never renders one (only RenderTarget does) and never propagates
+  /// through one - a dirty manual id acts as a plain content source, exactly
+  /// like an uploaded texture. That exclusion is what keeps the purity
+  /// invariant honest: everything ordered here is a pure function of its
+  /// inputs, so rendering it zero, one, or many times is indistinguishable.
   fn flush_dirty(&mut self) {
     if self.dirty.is_empty() {
       return;
@@ -917,6 +964,7 @@ impl RasterState {
     let edges: HashMap<u64, Vec<u64>> = self
       .shaders
       .iter()
+      .filter(|(_, shader)| !shader.manual())
       .map(|(id, shader)| (*id, shader.sampler_bindings().iter().map(|(_, src)| *src).collect()))
       .collect();
     let (order, cyclic) = propagation_order(&self.dirty, &edges);
@@ -942,7 +990,8 @@ impl RasterState {
 
   /// Resize an existing shader/pipeline target in place: a new target texture
   /// on the same FBO and program, re-rendered at the new size with the
-  /// last-applied params, then adopted into Impeller. Replies with the new
+  /// last-applied params (a manual target is cleared instead - the pass only
+  /// runs on RenderTarget), then adopted into Impeller. Replies with the new
   /// handle so the UI side re-registers it under the same id; the old handle
   /// keeps the old GL name alive until in-flight display lists drop it.
   fn resize_shader_texture(&mut self, id: u64, width: u32, height: u32) -> Result<Texture, String> {
@@ -955,8 +1004,17 @@ impl RasterState {
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
+        if let Some(shader) = self.shaders.get(&id) {
+          if shader.manual() {
+            // A resize cannot preserve accumulated history (new storage);
+            // clear it so the app re-seeds from defined pixels. The flush
+            // will not render it, so the clear must happen here.
+            shader.clear(&self.gl);
+          }
+        }
         // The new storage renders (and its samplers re-resolve) at the next
-        // flush, before anything observes it.
+        // flush, before anything observes it; for a manual target the dirty
+        // seed only re-renders its samplers against the new (cleared) name.
         self.dirty.insert(id);
         Ok(impeller)
       }
@@ -1012,7 +1070,7 @@ impl RasterState {
       draw_count,
       spec.target.clear_color,
     )?;
-    let shader = shader.with_sampler(spec.target.sampler);
+    let shader = shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
     shader.merge_params(&spec.target.params);
     self.register_shader_target(id, shader, spec.target.width, spec.target.height, "adopt pipeline texture failed")
   }
@@ -1056,7 +1114,7 @@ impl RasterState {
       spec.clear_color,
     )
     .map_err(|(_, e)| e)?;
-    let shader = shader.with_sampler(spec.sampler);
+    let shader = shader.with_sampler(spec.sampler).with_manual(spec.manual).with_load(spec.load);
     shader.merge_params(&spec.params);
     self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
   }
@@ -1064,7 +1122,9 @@ impl RasterState {
   /// Adopt a new shader/pipeline target into Impeller and record it under
   /// `id` in both the texture and shader maps. The target starts dirty: its
   /// first render happens at the next flush, before anything observes its
-  /// pixels, so the blocking create RPC never pays for a draw.
+  /// pixels, so the blocking create RPC never pays for a draw. A manual
+  /// target is cleared instead: its pass runs only on RenderTarget, and the
+  /// clear is what keeps undefined storage from ever being observable.
   fn register_shader_target(
     &mut self,
     id: u64,
@@ -1079,8 +1139,12 @@ impl RasterState {
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
+        if shader.manual() {
+          shader.clear(&self.gl);
+        } else {
+          self.dirty.insert(id);
+        }
         self.shaders.insert(id, shader);
-        self.dirty.insert(id);
         Ok(impeller)
       }
       None => {
@@ -1091,14 +1155,43 @@ impl RasterState {
     }
   }
 
+  /// Overwrite manual target `dst` with texture `src`'s current pixels via
+  /// the shared copy program - a fullscreen sampling draw into dst's FBO,
+  /// never a blit. The UI side validated ids, sizes, and dst's manual mode;
+  /// a miss here means the mirrors diverged. Counts as a pass into dst (it
+  /// occupies the thread like one) and seeds dst into the dirty set so
+  /// targets sampling it re-render at the next flush.
+  fn copy_texture(&mut self, src: u64, dst: u64) -> Result<(), String> {
+    if self.copy_program.is_none() {
+      let program = ShaderProgram::new_fragment(
+        &self.gl,
+        "uniform sampler2D uSrc;\nvoid main() { fragColor = texture(uSrc, vUV); }",
+      )?;
+      self.copy_program = Some(Rc::new(program));
+    }
+    let program = self.copy_program.as_ref().expect("copy program just ensured").clone();
+    let gpu = self.textures.get(&src).ok_or_else(|| format!("texture {src} not found"))?;
+    let shader = self.shaders.get(&dst).ok_or_else(|| format!("shader texture {dst} not found"))?;
+    let input: PassInput = ("uSrc".to_string(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));
+    let start = std::time::Instant::now();
+    shader.overwrite_with(&self.gl, &program, &[input]);
+    let micros = start.elapsed().as_micros() as u64;
+    shader.record_pass(micros);
+    self.stats.passes.fetch_add(1, Ordering::Relaxed);
+    self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
+    self.dirty.insert(dst);
+    Ok(())
+  }
+
   fn write_buffer(&mut self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let buffer = self.buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
     buffer.write(&self.gl, data, byte_offset)?;
     // Every pipeline drawing from this buffer re-renders at the next flush,
     // so geometry-only changes reach the screen even when no new params
-    // arrive. (Marked by target id: buffer ids are their own space.)
+    // arrive. (Marked by target id: buffer ids are their own space.) Manual
+    // targets pick the new geometry up at their next explicit render.
     let drawing: Vec<u64> =
-      self.shaders.iter().filter(|(_, s)| s.buffer_id() == Some(id)).map(|(tid, _)| *tid).collect();
+      self.shaders.iter().filter(|(_, s)| !s.manual() && s.buffer_id() == Some(id)).map(|(tid, _)| *tid).collect();
     self.dirty.extend(drawing);
     Ok(())
   }
@@ -1142,6 +1235,8 @@ impl RasterState {
           attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
           textures: shader.sampler_bindings().to_vec(),
           params: shader.last_params(),
+          manual: shader.manual(),
+          load: shader.load(),
           passes,
           pass_micros,
         }

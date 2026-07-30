@@ -32,6 +32,9 @@ pub(super) struct MeshState {
   /// private to the FBO (never adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
   pub(super) clear_color: [f32; 4],
+  /// Color load op (see `TargetSpec::load`): true = draw over the previous
+  /// contents instead of clearing. Only ever true on manual targets.
+  pub(super) load: bool,
 }
 
 /// An FBO-backed RGBA8 target texture rendered by a ShaderProgram: either a
@@ -64,6 +67,10 @@ pub struct ShaderTexture {
   /// display draw sample it; the target's own inputs carry their own states).
   /// Survives resize; set via `with_sampler` after construction.
   sampler: crate::texture::SamplerState,
+  /// Manual render mode (see `TargetSpec::manual`): the dirty flush never
+  /// renders this target, only an explicit RenderTarget command does. Set via
+  /// `with_manual` after construction.
+  manual: bool,
   /// Cumulative passes rendered into this target and their wall time in
   /// microseconds, recorded by the owner around each render (raster-thread
   /// occupancy, not GPU-side duration; see raster::RasterStats). Survives
@@ -213,6 +220,7 @@ impl ShaderTexture {
         mesh: None,
         last_params: RefCell::new(Vec::new()),
         sampler: crate::texture::SamplerState::default(),
+        manual: false,
         passes: Cell::new(0),
         pass_micros: Cell::new(0),
       })
@@ -381,9 +389,11 @@ impl ShaderTexture {
           draw_count: Cell::new(draw_count),
           depth: depth_rb,
           clear_color,
+          load: false,
         }),
         last_params: RefCell::new(Vec::new()),
         sampler: crate::texture::SamplerState::default(),
+        manual: false,
         passes: Cell::new(0),
         pass_micros: Cell::new(0),
       })
@@ -397,8 +407,35 @@ impl ShaderTexture {
     self
   }
 
+  /// Set the render mode (builder-style, right after construction); see the
+  /// `manual` field.
+  pub fn with_manual(mut self, manual: bool) -> Self {
+    self.manual = manual;
+    self
+  }
+
+  /// Set the color load op (builder-style, right after construction); see
+  /// `TargetSpec::load`. A no-op on fragment targets, which have no mesh
+  /// state (and cannot be manual anyway).
+  pub fn with_load(mut self, load: bool) -> Self {
+    if let Some(mesh) = &mut self.mesh {
+      mesh.load = load;
+    }
+    self
+  }
+
+  /// Whether the target draws over its previous contents (loadOp "load").
+  pub fn load(&self) -> bool {
+    self.mesh.as_ref().is_some_and(|m| m.load)
+  }
+
   pub fn sampler(&self) -> crate::texture::SamplerState {
     self.sampler
+  }
+
+  /// Whether the target renders only on an explicit RenderTarget command.
+  pub fn manual(&self) -> bool {
+    self.manual
   }
 
   pub fn gl_texture(&self) -> glow::Texture {
@@ -636,5 +673,57 @@ impl ShaderTexture {
       Some(mesh) => PassDraw::Mesh(mesh),
     };
     run_pass(gl, &self.program, Some(self.fbo), self.width, self.height, &params, textures, draw);
+  }
+
+  /// Draw the resolved inputs over this target's full contents via `program`
+  /// (the shared copy program), no clear - the covering triangle writes every
+  /// pixel: the copyTexture write. A sampling draw, never a blit (see
+  /// `gl::draw_and_resolve` for why blits are not an option on this stack).
+  pub fn overwrite_with(&self, gl: &glow::Context, program: &ShaderProgram, textures: &[PassInput]) {
+    super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, textures);
+  }
+
+  /// Clear the target to its clear color (and its depth buffer, when
+  /// attached) without running the program: the defined initial contents of a
+  /// manual target, whose pass may be non-idempotent and therefore must not
+  /// run outside an explicit render. Creation and resize would otherwise
+  /// leave undefined storage. Scissor, color/depth masks, clear values and
+  /// the FBO binding are Impeller-cached state on this shared context: force,
+  /// clear, and put everything back (same contract as `run_pass`).
+  pub fn clear(&self, gl: &glow::Context) {
+    let [r, g, b, a] = self.mesh.as_ref().map(|m| m.clear_color).unwrap_or([0.0; 4]);
+    unsafe {
+      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+      let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+      let mut prev_mask = [0i32; 4];
+      gl.get_parameter_i32_slice(glow::COLOR_WRITEMASK, &mut prev_mask);
+      let mut prev_clear = [0f32; 4];
+      gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
+
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+      gl.disable(glow::SCISSOR_TEST);
+      gl.color_mask(true, true, true, true);
+      gl.clear_color(r, g, b, a);
+      if self.mesh.as_ref().is_some_and(|m| m.depth.is_some()) {
+        let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
+        let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
+        gl.depth_mask(true);
+        // Always the far plane; Impeller's clip passes leave 0.0 behind (see
+        // run_pass).
+        gl.clear_depth_f32(1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+        gl.depth_mask(prev_depth_mask);
+        gl.clear_depth_f32(prev_clear_depth);
+      } else {
+        gl.clear(glow::COLOR_BUFFER_BIT);
+      }
+
+      gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
+      gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
+      if scissor {
+        gl.enable(glow::SCISSOR_TEST);
+      }
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+    }
   }
 }

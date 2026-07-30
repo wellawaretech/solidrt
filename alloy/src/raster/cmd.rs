@@ -95,6 +95,19 @@ pub(crate) enum RasterCmd {
   ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
   /// Set a pipeline's vertex draw count and mark it dirty.
   SetDrawCount { id: u64, count: i32 },
+  /// Render a manual target once, now (see `TargetSpec::manual`): flush
+  /// pending pure-target writes first so the pass samples fresh inputs, run
+  /// the pass, and mark the target's output changed so targets sampling it
+  /// re-render at the next flush. Fire-and-forget on this ordered channel, so
+  /// renders land in call order and a readback issued after one observes it.
+  RenderTarget { id: u64 },
+  /// Overwrite manual target `dst` with the current pixels of texture `src`
+  /// (same size, validated UI-side): the GPU-side seed/history write, the
+  /// copyTexture analog of uploadTexture. Flushes first (it observes src),
+  /// draws src over dst via the shared copy program (a sampling draw, never
+  /// a blit), and marks dst's output changed. Fire-and-forget, so copies
+  /// land in call order like renders.
+  CopyTexture { src: u64, dst: u64 },
   /// Drop raster-side bookkeeping for a texture id (and destroy its shader
   /// program/FBO when the id is a shader target). The GL name itself is owned
   /// by the adopted Impeller Texture and dies with the UI side's last handle.

@@ -39,6 +39,11 @@ pub struct Context {
   // (the name is only known to the compiled program), which can at worst
   // falsely reject a later rebind - after the dev error was already warned.
   shader_sources: RefCell<HashMap<u64, HashMap<String, u64>>>,
+  // UI-side mirror of which shader targets are manual (TargetSpec::manual):
+  // validates render_target synchronously, and relaxes the sampling-cycle
+  // test - the flush never renders a manual target, so a cycle is only a
+  // hazard when every member is flush-rendered (see update_shader_textures).
+  manual_targets: RefCell<HashSet<u64>>,
   // UI-side mirror of the raster thread's program registry. Programs are
   // their own id space (like buffers), separate from texture ids.
   program_ids: RefCell<HashSet<u64>>,
@@ -102,6 +107,7 @@ impl Context {
       textures: TextureRegistry::new(),
       shader_kinds: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
+      manual_targets: RefCell::new(HashSet::new()),
       program_ids: RefCell::new(HashSet::new()),
       next_program_id: Cell::new(1),
       pipeline_ids: RefCell::new(HashSet::new()),
@@ -395,8 +401,13 @@ impl Context {
   /// keeps its id and Impeller texture (no re-adoption), so the caller must
   /// request a frame, same as `update_shader_params`. Errors if the shader or
   /// any source texture id is unknown, or a binding would create a sampling
-  /// cycle among targets (self-binding is the length-1 case; a cycle is a GL
-  /// feedback loop and would break re-render propagation). An unknown
+  /// cycle whose members are all flush-rendered targets (such a cycle is a
+  /// feedback loop the flush cannot order). A cycle through a manual target
+  /// is legal: the flush never renders one, so the loop is only ever stepped
+  /// by explicit renders - ping-pong feedback is two manual targets bound to
+  /// each other. Self-binding stays rejected for every target, manual
+  /// included: a pass sampling the very texture it writes is a same-pass GL
+  /// feedback loop (undefined pixels), not a scheduling problem. An unknown
   /// uniform name is reported by the raster thread as a warning, leaving all
   /// bindings unchanged.
   pub fn update_shader_textures(&self, id: u64, textures: &[(String, u64)]) -> Result<(), String> {
@@ -405,16 +416,23 @@ impl Context {
     }
     {
       let sources = self.shader_sources.borrow();
+      let manual = self.manual_targets.borrow();
       for (name, src_id) in textures {
         if self.textures.get(*src_id).is_none() {
           return Err(format!("texture {src_id} (sampler '{name}') not found"));
         }
-        // The current graph is acyclic, and this call only changes `id`'s own
-        // outgoing edges, so any new cycle runs through one of the updated
-        // bindings: per binding, reject if the target can already be reached
-        // from the new source. The walk never needs `id`'s own edges (it
-        // stops on reaching `id`), so the pre-update graph is the right one.
-        if samples_transitively(&sources, *src_id, id) {
+        if *src_id == id {
+          return Err(format!("sampler '{name}' binds shader texture {id} to its own target (same-pass feedback)"));
+        }
+        // The flush-rendered subgraph is acyclic, and this call only changes
+        // `id`'s own outgoing edges, so any new all-pure cycle runs through
+        // one of the updated bindings: per binding, reject if the target can
+        // already be reached from the new source without passing through a
+        // manual target. A manual `id` needs no walk at all - every cycle
+        // through it has a manual member (its direct self-bind was rejected
+        // above). The walk never needs `id`'s own edges (it stops on reaching
+        // `id`), so the pre-update graph is the right one.
+        if !manual.contains(&id) && samples_transitively(&sources, &manual, *src_id, id) {
           return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
         }
       }
@@ -470,13 +488,18 @@ impl Context {
   /// over `create_render_pipeline` + `create_shader_target`; the anonymous
   /// program and pipeline die with the target.
   pub fn create_pipeline_texture(&self, spec: PipelineSpec) -> Result<u64, String> {
+    validate_load(&spec.target)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
+    let manual = spec.target.manual;
     let sources: HashMap<String, u64> = spec.target.textures.iter().cloned().collect();
     let impeller = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     self.shader_kinds.borrow_mut().insert(id, true);
     self.shader_sources.borrow_mut().insert(id, sources);
+    if manual {
+      self.manual_targets.borrow_mut().insert(id);
+    }
     Ok(id)
   }
 
@@ -564,13 +587,18 @@ impl Context {
     if !self.pipeline_ids.borrow().contains(&pipeline) {
       return Err(format!("pipeline {pipeline} not found"));
     }
+    validate_load(&spec)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
+    let manual = spec.manual;
     let sources: HashMap<String, u64> = spec.textures.iter().cloned().collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, pipeline, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     self.shader_kinds.borrow_mut().insert(id, true);
     self.shader_sources.borrow_mut().insert(id, sources);
+    if manual {
+      self.manual_targets.borrow_mut().insert(id);
+    }
     Ok(id)
   }
 
@@ -598,6 +626,51 @@ impl Context {
       }
     }
     self.send(RasterCmd::SetWindowShader { shader });
+    Ok(())
+  }
+
+  /// Render a manual target (`TargetSpec::manual`) once, now. Fire-and-forget
+  /// on the ordered raster channel, so renders land in call order relative to
+  /// every other GPU command - two renders of one target run twice, in order,
+  /// and a readback issued after one observes its pass. Pending pure-target
+  /// writes flush first, so the pass samples fresh inputs; targets sampling
+  /// this one re-render at the next flush. The caller must request a frame
+  /// for displayed output. Errs on an unknown id or a target the flush owns
+  /// (a non-manual one, whose pass must stay a pure function of its inputs).
+  pub fn render_target(&self, id: u64) -> Result<(), String> {
+    if !self.shader_kinds.borrow().contains_key(&id) {
+      return Err(format!("shader texture {id} not found"));
+    }
+    if !self.manual_targets.borrow().contains(&id) {
+      return Err(format!("target {id} is not manual (the runtime renders it; create with render: \"manual\")"));
+    }
+    self.send(RasterCmd::RenderTarget { id });
+    Ok(())
+  }
+
+  /// Overwrite manual target `dst` with texture `src`'s current pixels: the
+  /// GPU-side seed/history write, the copy analog of `update_texture`.
+  /// Fire-and-forget on the ordered raster channel, so copies land in call
+  /// order with renders and readbacks; the caller must request a frame for
+  /// displayed output. Exact: sizes must match (an intentional tight
+  /// contract - a scaling copy is an ordinary pass). Errs on unknown ids, a
+  /// non-manual destination (the flush owns those contents), a size
+  /// mismatch, or src == dst.
+  pub fn copy_texture(&self, src: u64, dst: u64) -> Result<(), String> {
+    let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
+    let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
+    if !self.manual_targets.borrow().contains(&dst) {
+      return Err(format!("target {dst} is not manual (the runtime renders it; create with render: \"manual\")"));
+    }
+    if src == dst {
+      return Err(format!("cannot copy texture {src} into itself"));
+    }
+    let (sw, sh) = (src_entry.width(), src_entry.height());
+    let (dw, dh) = (dst_entry.width(), dst_entry.height());
+    if (sw, sh) != (dw, dh) {
+      return Err(format!("size mismatch: source is {sw}x{sh}, destination is {dw}x{dh}"));
+    }
+    self.send(RasterCmd::CopyTexture { src, dst });
     Ok(())
   }
 
@@ -743,24 +816,44 @@ impl Context {
       self.textures.remove(id);
       self.shader_kinds.borrow_mut().remove(&id);
       self.shader_sources.borrow_mut().remove(&id);
+      self.manual_targets.borrow_mut().remove(&id);
       self.send(RasterCmd::DestroyTexture { id });
       false
     });
   }
 }
 
+/// The loadOp invariant behind both target create paths: loading the
+/// previous contents makes render count observable, which only the app may
+/// count - on a flush-rendered target the output would silently depend on
+/// how often the flush happened to run.
+fn validate_load(spec: &TargetSpec) -> Result<(), String> {
+  if spec.load && !spec.manual {
+    return Err("loadOp \"load\" requires render: \"manual\" (a runtime-rendered target must stay a pure function of its inputs)".to_string());
+  }
+  Ok(())
+}
+
 /// Whether `to` is reachable from `from` (inclusive: `from == to` is a hit)
 /// by following sampler edges in `sources` (target id -> its source id per
-/// uniform name): the sampling-cycle test behind `update_shader_textures`.
-/// Pure over the id graph, so it unit-tests without a Context.
-pub(crate) fn samples_transitively(sources: &HashMap<u64, HashMap<String, u64>>, from: u64, to: u64) -> bool {
+/// uniform name) without passing through a node in `barriers`: the
+/// sampling-cycle test behind `update_shader_textures`. Barriers are the
+/// manual targets - the flush never renders one, so a path through one can
+/// never be part of a flush-ordered feedback loop and does not count. Pure
+/// over the id graph, so it unit-tests without a Context.
+pub(crate) fn samples_transitively(
+  sources: &HashMap<u64, HashMap<String, u64>>,
+  barriers: &HashSet<u64>,
+  from: u64,
+  to: u64,
+) -> bool {
   let mut stack = vec![from];
   let mut visited: HashSet<u64> = HashSet::new();
   while let Some(node) = stack.pop() {
     if node == to {
       return true;
     }
-    if visited.insert(node) {
+    if visited.insert(node) && !barriers.contains(&node) {
       if let Some(srcs) = sources.get(&node) {
         stack.extend(srcs.values().copied());
       }

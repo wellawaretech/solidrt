@@ -18,6 +18,10 @@ fn sources(list: &[(u64, &[u64])]) -> HashMap<u64, HashMap<String, u64>> {
     .collect()
 }
 
+fn barriers(ids: &[u64]) -> HashSet<u64> {
+  ids.iter().copied().collect()
+}
+
 #[test]
 fn chain_propagates_in_order() {
   // a -> b -> c: dirtying the head re-renders the whole chain, head first.
@@ -85,20 +89,54 @@ fn self_loop_is_cyclic() {
 #[test]
 fn reaches_direct_and_transitive() {
   let s = sources(&[(2, &[1]), (3, &[2])]);
-  assert!(samples_transitively(&s, 3, 1));
-  assert!(samples_transitively(&s, 2, 1));
-  assert!(!samples_transitively(&s, 1, 3));
+  assert!(samples_transitively(&s, &barriers(&[]), 3, 1));
+  assert!(samples_transitively(&s, &barriers(&[]), 2, 1));
+  assert!(!samples_transitively(&s, &barriers(&[]), 1, 3));
 }
 
 #[test]
 fn reaches_is_inclusive() {
   // from == to is the self-binding rejection.
   let s = sources(&[]);
-  assert!(samples_transitively(&s, 7, 7));
+  assert!(samples_transitively(&s, &barriers(&[]), 7, 7));
 }
 
 #[test]
 fn unrelated_ids_do_not_reach() {
   let s = sources(&[(2, &[1]), (4, &[3])]);
-  assert!(!samples_transitively(&s, 2, 3));
+  assert!(!samples_transitively(&s, &barriers(&[]), 2, 3));
+}
+
+#[test]
+fn barrier_breaks_the_path() {
+  // 3 samples 2 samples 1; with 2 manual, 3 no longer reaches 1 for cycle
+  // purposes (the flush never renders 2, so no flush loop can close there).
+  let s = sources(&[(2, &[1]), (3, &[2])]);
+  assert!(samples_transitively(&s, &barriers(&[]), 3, 1));
+  assert!(!samples_transitively(&s, &barriers(&[2]), 3, 1));
+}
+
+#[test]
+fn barrier_at_the_start_blocks_expansion() {
+  // The new source itself being manual already breaks any cycle it would
+  // close: its own edges are never flush-ordered.
+  let s = sources(&[(2, &[1])]);
+  assert!(!samples_transitively(&s, &barriers(&[2]), 2, 1));
+}
+
+#[test]
+fn barrier_endpoint_still_hits() {
+  // Reaching `to` is a hit even when `to` is a barrier: the check is "is
+  // there a path", barriers only stop paths from continuing THROUGH a node.
+  // (In update_shader_textures a manual `to` skips the walk entirely.)
+  let s = sources(&[(2, &[1])]);
+  assert!(samples_transitively(&s, &barriers(&[1]), 2, 1));
+}
+
+#[test]
+fn pingpong_via_barriers_is_legal() {
+  // The ping-pong shape: A(10) and B(11) sample each other, both manual.
+  // Binding either direction must not count as a flush cycle.
+  let s = sources(&[(10, &[11])]);
+  assert!(!samples_transitively(&s, &barriers(&[10, 11]), 10, 11));
 }

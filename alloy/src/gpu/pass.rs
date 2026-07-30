@@ -195,7 +195,10 @@ pub(super) fn run_pass(
         // Mesh pass: geometry does not cover the target, so clear first, and
         // depth-test the draw when a depth buffer is attached. Clear color,
         // depth mask, and depth func are Impeller-cached state too: save and
-        // restore them around the pass.
+        // restore them around the pass. With loadOp "load" (manual targets
+        // only) the color buffer keeps its previous contents - the
+        // accumulation unlock - while depth stays per-render scratch and
+        // always clears.
         let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
         let mut prev_clear = [0f32; 4];
         gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
@@ -204,8 +207,11 @@ pub(super) fn run_pass(
         let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
 
         let desc = &mesh.pipeline.desc;
-        let [r, g, b, a] = mesh.clear_color;
-        gl.clear_color(r, g, b, a);
+        if !mesh.load {
+          let [r, g, b, a] = mesh.clear_color;
+          gl.clear_color(r, g, b, a);
+        }
+        let color_bit = if mesh.load { 0 } else { glow::COLOR_BUFFER_BIT };
         if let Some(depth) = desc.depth {
           gl.enable(glow::DEPTH_TEST);
           // The clear always writes depth (glClear honors the write mask);
@@ -216,10 +222,10 @@ pub(super) fn run_pass(
           // (0.0) on this context; clearing with that inverts the test and
           // silently discards every fragment. Always clear to the far plane.
           gl.clear_depth_f32(1.0);
-          gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+          gl.clear(color_bit | glow::DEPTH_BUFFER_BIT);
           gl.depth_mask(depth.write);
-        } else {
-          gl.clear(glow::COLOR_BUFFER_BIT);
+        } else if color_bit != 0 {
+          gl.clear(color_bit);
         }
         // Blend func is Impeller-cached state like the rest: save and restore
         // around the draw, and re-disable BLEND after it (the outer restore

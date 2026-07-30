@@ -83,6 +83,12 @@ pub struct GpuPipelineInfo {
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render.
   pub params: Vec<(String, ParamValue)>,
+  /// Manual render mode: rendered only by an explicit render, never by the
+  /// dirty flush (see `TargetSpec::manual`).
+  pub manual: bool,
+  /// Color load op (see `TargetSpec::load`): true = loadOp "load", the draw
+  /// lands over the previous contents instead of a clear.
+  pub load: bool,
   /// Cumulative passes rendered into this target.
   pub passes: u64,
   /// Cumulative raster-thread wall time those passes took, in microseconds

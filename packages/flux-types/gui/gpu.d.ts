@@ -27,6 +27,20 @@
 // overlapping geometry additively; anything else (a fragment target, or a
 // pipeline without the option) draws with GL blending disabled and overwrites.
 //
+// The render contract. A target's contents are a pure function of its inputs
+// (params, bound textures, geometry): the runtime renders it whenever inputs
+// change - zero, one, or many times per frame, at its discretion - so a pass
+// must not depend on its own previous output or on how often it runs. When a
+// pass IS state (accumulation, feedback, simulation), create the target with
+// `render: "manual"`: the runtime then never renders it, only an explicit
+// renderTarget(id) does, in call order - the app owns the stepping. Targets
+// sampling a manual target update after each explicit render; a manual
+// target's own params/geometry writes take effect at its next render.
+// `loadOp: "load"` (manual-only) keeps the previous contents under each
+// draw - single-target accumulation - and copyTexture(src, dst) seeds or
+// snapshots a manual target GPU-side. Both compose with renderTarget in
+// call order.
+//
 // The pixel contract. Three facts hold for every texture and target:
 //
 // - Clip space is y-down. `gl_Position` y = -1 is the top of the target, +1
@@ -233,6 +247,23 @@ declare module "flux:gpu" {
    * attributeless pipeline is `vertexCount: 3` with a covering-triangle
    * vertex stage. Draw-state keys (`attributes`, `topology`, `blend`,
    * `depth`, `depthWrite`) belong to the pipeline and throw here.
+   *
+   * `render: "manual"` opts the target out of runtime-driven rendering (see
+   * the render contract above): it starts cleared to `clearColor` and its
+   * pass runs only when {@link renderTarget} is called.
+   *
+   * `loadOp` chooses what each render finds in the target: `"clear"` (the
+   * default) clears to `clearColor` first, `"load"` keeps the previous
+   * contents and draws over them - single-target accumulation (with the
+   * pipeline's `blend: "add"`, an additive trail; without blending, draws
+   * simply land over old pixels). `"load"` requires `render: "manual"` and
+   * throws otherwise: on a runtime-rendered target the output would depend
+   * on how often the runtime happened to render. Depth (when the pipeline
+   * has it) is per-render scratch and always clears; creation, resize, and
+   * nothing else reset the color to `clearColor`. State that needs a
+   * read-modify-write of its own pixels (decay, blur, simulation) still
+   * ping-pongs across two manual targets - a pass can never sample the
+   * texture it writes.
    */
   export function createShaderTarget(
     pipeline: RenderPipelineId,
@@ -244,6 +275,8 @@ declare module "flux:gpu" {
       buffer?: BufferId
       vertexCount?: number
       clearColor?: [number, number, number, number]
+      render?: "auto" | "manual"
+      loadOp?: "clear" | "load"
     } & SamplerOptions,
   ): TextureId
   /**
@@ -255,7 +288,8 @@ declare module "flux:gpu" {
   export function destroyProgram(id: ProgramId): void
   /**
    * Update a shader texture's uniforms by name and re-render it (see
-   * {@link ShaderParams} for the value shapes).
+   * {@link ShaderParams} for the value shapes). On a manual target nothing
+   * renders here; the values apply at its next {@link renderTarget}.
    */
   export function setShaderParams(id: TextureId, params: ShaderParams): void
   /**
@@ -264,9 +298,11 @@ declare module "flux:gpu" {
    * {@link setShaderParams}. Bindings not named keep their current source, so
    * a single input can be retargeted (post-process source swap, ping-pong
    * between two data textures) without recompiling the shader. Throws if the
-   * shader or a source texture id is unknown, or a binding would create a
-   * sampling cycle among targets (binding a shader's own target is the
-   * shortest case).
+   * shader or a source texture id is unknown, if a binding names the
+   * shader's own target (same-pass feedback), or if it would close a
+   * sampling cycle among runtime-rendered targets. A cycle through a
+   * `render: "manual"` target is legal - the runtime never renders one, so
+   * the loop only steps when the app calls {@link renderTarget}.
    */
   export function setShaderTextures(id: TextureId, textures: Record<string, TextureId>): void
   /**
@@ -312,7 +348,10 @@ declare module "flux:gpu" {
    * {@link BlendMode}); an additive pass over a depth buffer is
    * `{ depth: true, blend: "add", depthWrite: false }`, stated explicitly.
    * The target is cleared to `clearColor` (default transparent black) before
-   * each draw.
+   * each draw. `render: "manual"` and `loadOp` behave exactly as on
+   * {@link createShaderTarget}: no runtime-driven renders, step with
+   * {@link renderTarget}, and `loadOp: "load"` (manual-only) keeps the
+   * previous contents under each draw.
    * Returns a texture id: display it with `<texture src>`, drive uniforms via
    * the `params` prop or {@link setShaderParams}, destroy with
    * {@link destroyTexture}.
@@ -333,6 +372,8 @@ declare module "flux:gpu" {
       depthWrite?: boolean
       blend?: BlendMode
       clearColor?: [number, number, number, number]
+      render?: "auto" | "manual"
+      loadOp?: "clear" | "load"
     } & SamplerOptions,
   ): TextureId
 
@@ -353,8 +394,39 @@ declare module "flux:gpu" {
   /**
    * Set how many vertices a pipeline texture draws and re-render it, e.g.
    * after writing a variable amount of dynamic geometry into its buffer.
+   * (On a manual target nothing renders here; the count applies at its next
+   * {@link renderTarget}.)
    */
   export function setDrawCount(id: TextureId, count: number): void
+  /**
+   * Render a `render: "manual"` target once, now. Renders land in call order
+   * relative to every other GPU call: a `setShaderParams`/`writeBuffer`
+   * issued before is visible to the pass, a {@link readTexture} issued after
+   * observes it, and two renders run the pass twice in order. Inputs are
+   * fresh: pending runtime-driven renders of sampled targets resolve first.
+   * Targets sampling this one update after the render. Throws if the id is
+   * not a manual target - the runtime owns rendering the others, and a pass
+   * that depends on how often it runs is only well-defined when the app is
+   * the one counting. Ping-pong feedback is two manual targets sampling
+   * each other, stepped alternately from `onFrame`; binding a target to
+   * ITSELF still throws (same-pass GL feedback, undefined pixels regardless
+   * of who schedules it).
+   */
+  export function renderTarget(id: TextureId): void
+  /**
+   * Overwrite a `render: "manual"` target with another texture's current
+   * pixels, GPU-side: the seed/history analog of {@link uploadTexture}
+   * (seed a `loadOp: "load"` accumulator, snapshot one ping-pong buffer
+   * into another, reset state to a known image). Exact and same-size only -
+   * content and row order are preserved, and a size mismatch throws (a
+   * scaling copy is an ordinary pass). Copies land in call order like
+   * renders: a copy after a render sees that render, a readback after a
+   * copy sees the copy, and targets sampling `dst` update afterwards.
+   * Throws if either id is unknown, `dst` is not a manual target (the
+   * runtime owns those contents), or `src === dst`. `src` may be any
+   * texture: uploaded, mutable, a camera frame, or another target's output.
+   */
+  export function copyTexture(src: TextureId, dst: TextureId): void
   /**
    * Capture a render-tree node's subtree into a new GPU texture, resolving once
    * it has been rendered on the next paint pass. The node must be attached to
