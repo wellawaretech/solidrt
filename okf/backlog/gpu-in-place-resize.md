@@ -35,7 +35,7 @@ change or be re-registered:
 Touched: alloy shader.rs (`ShaderTexture::resize`), raster.rs
 (`ResizeShaderTexture` cmd, `resize_shader_texture`, dependent re-render on
 replace-at-id via `rerender_samplers_of`), context.rs (`resize_texture`,
-`resize_shader_texture`), flux gui/texture.rs bindings, flux-types gpu.d.ts,
+`resize_shader_texture`), flux gui/gpu.rs bindings, flux-types gpu.d.ts,
 core gpu.ts re-exports, docs/core.md.
 
 Verified 2026-07-23 against a locally built client: the linux-terminal

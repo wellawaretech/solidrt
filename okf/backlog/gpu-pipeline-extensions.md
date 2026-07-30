@@ -105,7 +105,7 @@ building real apps rather than reviewing the API.
   `int iFrame` - none settable - so an entire compat block exists purely to
   work around this. Landing it lets unmodified Shadertoy, GLSL Sandbox and Book
   of Shaders code run as-is. The marshalling site is
-  `collect_params` in flux/src/plugins/gui/texture.rs, hard-wired to
+  `collect_params` in flux/src/plugins/gui/gpu.rs, hard-wired to
   `Vec<(String, f32)>` end to end.
 
 - **Blending toggle** now has three independent requesters: projects/organism

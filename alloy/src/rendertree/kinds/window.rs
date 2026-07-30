@@ -1,4 +1,4 @@
-use crate::context::WindowShader;
+use crate::gpu::WindowShader;
 use crate::impellers::DisplayListBuilder;
 use crate::rendertree::Damage;
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind};

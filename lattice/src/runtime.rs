@@ -325,7 +325,7 @@ impl UiRuntime for FluxRuntime {
       }
       // Settle any captureSnapshot promises whose captures alloy rendered on the
       // previous paint pass.
-      flux::gui::texture::tick(&ctx);
+      flux::gui::gpu::tick(&ctx);
       #[cfg(feature = "speech")]
       crate::plugins::speech::tick(&ctx);
       flux::gui::raf::flush(&ctx, ts);

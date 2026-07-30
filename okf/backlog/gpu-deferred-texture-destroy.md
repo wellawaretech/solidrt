@@ -41,7 +41,7 @@ silent leak.
 
 Touched: alloy context.rs (pending queue, reclaim_destroyed), rendertree
 tree.rs (referenced_texture_ids + unit test), composite.rs (sweep), lattice
-draw.rs (reuse-path sweep), flux gui/texture.rs (request_frame on destroy),
+draw.rs (reuse-path sweep), flux gui/gpu.rs (request_frame on destroy),
 flux-types gpu.d.ts (destroyTexture doc), docs/core.md.
 
 This is what makes [[gpu-reactive-resource-helpers]]' createShaderMemo

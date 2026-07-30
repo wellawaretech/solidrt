@@ -93,7 +93,7 @@ pub struct OffscreenRig {
   ext: Option<ExtStorage>,
   // Fullscreen 1:1 copy program consuming ext.color into the destination;
   // lazily compiled on the first in-tile resolve.
-  copy: Option<crate::shader::ShaderProgram>,
+  copy: Option<crate::gpu::ShaderProgram>,
   // Depth-stencil for the single-sample path, where the resolve texture
   // attaches directly as color.
   ss_depth: Option<SizedRenderbuffer>,
@@ -687,7 +687,7 @@ fn window_samples(gl: &glow::Context) -> i32 {
 
 /// Rasterize a display list into the retained rig at the window's physical
 /// size and resolve it 1:1 into `layer` (a window-sized single-sample FBO,
-/// see `shader::create_layer_target`): the effect-active variant of
+/// see `gpu::create_layer_target`): the effect-active variant of
 /// `render_display_list_to_window`. The caller hands a display list already
 /// flipped for sampling - the layer is read as a texture, so it must be
 /// top-left origin (see `flip_for_fbo`) - and the window shader pass's
@@ -861,7 +861,7 @@ fn draw_and_resolve(
       // full-frame read plus one write). The fragment maps the window rect
       // out of the aligned allocation via textureSize.
       if rig.copy.is_none() {
-        match crate::shader::ShaderProgram::new_fragment(gl, EXT_RESOLVE_COPY_SRC) {
+        match crate::gpu::ShaderProgram::new_fragment(gl, EXT_RESOLVE_COPY_SRC) {
           Ok(program) => rig.copy = Some(program),
           Err(e) => {
             log::warn!("[alloy] in-tile resolve copy program failed ({e}); using explicit resolve");
@@ -872,7 +872,7 @@ fn draw_and_resolve(
       }
       if let Some(program) = &rig.copy {
         let ext_color = rig.ext.as_ref().expect("ext_attached implies ext storage").color;
-        crate::shader::render_program_to_fbo(
+        crate::gpu::render_program_to_fbo(
           gl,
           program,
           dst,

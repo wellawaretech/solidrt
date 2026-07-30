@@ -11,7 +11,7 @@ timestamp: 2026-07-27T00:00:00Z
 
 Both capture entry points are serviced only during a paint pass:
 
-- JS `captureSnapshot(nodeId)` (`flux/src/plugins/gui/texture.rs`) calls
+- JS `captureSnapshot(nodeId)` (`flux/src/plugins/gui/gpu.rs`) calls
   `request_capture` then `platform.request_frame()`.
 - MCP `get_snapshot` (`lattice/src/go/connection.rs` `request_snapshot`)
   calls `request_capture` then latches `frame_requested`.

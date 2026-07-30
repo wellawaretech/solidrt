@@ -9,6 +9,7 @@ pub mod camera;
 mod context;
 mod event;
 mod gamepad;
+mod gpu;
 mod keymap;
 mod logging;
 pub mod microphone;
@@ -17,7 +18,6 @@ mod playback;
 mod raster;
 pub mod rendertree;
 mod script;
-mod shader;
 mod texture;
 mod vsync;
 
@@ -29,8 +29,11 @@ pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::{Backend, DisplayContext};
-pub use context::{CaptureDone, CaptureInfo, Context, PipelineSpec, TargetSpec, WindowShader};
-pub use shader::{parse_blend, AttrFormat, BlendMode, DepthState, ParamValue, PipelineDesc, ShaderStage, Topology};
+pub use context::{CaptureDone, CaptureInfo, Context};
+pub use gpu::{
+  parse_blend, AttrFormat, BlendMode, DepthState, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec,
+  Topology, WindowShader,
+};
 pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
 pub use logging::install_logger;
 pub use mode::Mode;

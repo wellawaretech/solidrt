@@ -298,7 +298,7 @@ timestamp: 2026-07-13T00:00:00Z
   ES 3.0 mandates ETC2 in core (4-8x texture memory), uploadTexture is
   RGBA8-only; demand-gated with the ANGLE-may-software-expand caveat
   recorded.
-- [GPU file reorganization](gpu-file-reorg.md) [open] - Split shader.rs
+- [GPU file reorganization](gpu-file-reorg.md) [done] - Split shader.rs
   (1466 lines, six concerns) into an alloy gpu/ folder, rename flux
   plugins/gui/texture.rs to gpu.rs, lift the RasterCmd enum, capture path
   and context DTOs.

@@ -7,9 +7,9 @@ use std::sync::{mpsc, Arc};
 
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
+use crate::gpu::{GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, WindowShader};
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterSender, RasterStats};
-use crate::shader::{ParamValue, PipelineDesc};
 use crate::texture::{SamplerState, TextureEntry, TextureRegistry};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -49,7 +49,7 @@ pub struct Context {
   next_pipeline_id: Cell<u64>,
   // UI-side mirror of the raster thread's raw stage registry: id -> stage,
   // for validating link_program's arguments without an RPC.
-  stage_kinds: RefCell<HashMap<u64, crate::shader::ShaderStage>>,
+  stage_kinds: RefCell<HashMap<u64, ShaderStage>>,
   next_stage_id: Cell<u64>,
   // UI-side mirror of the raster thread's buffer sizes, for bounds validation
   // and gpu_buffer_len.
@@ -71,149 +71,6 @@ pub struct Context {
   // happens in reclaim_destroyed, once the live render tree no longer
   // references the id (see destroy_texture for why deferral is the contract).
   pending_destroys: RefCell<Vec<u64>>,
-}
-
-/// Everything `create_shader_target` needs to build one target over a render
-/// pipeline: the per-target half of the split (output size, uniform values,
-/// sampler inputs, the concrete vertex buffer, draw count, clear, sampling).
-/// The draw-state half lives on the pipeline (`shader::PipelineDesc`). Owned,
-/// so the one struct serves both the public API and the raster channel.
-pub struct TargetSpec {
-  pub width: u32,
-  pub height: u32,
-  pub params: Vec<(String, ParamValue)>,
-  pub textures: Vec<(String, u64)>,
-  /// Registry id of the interleaved vertex buffer the pipeline's attributes
-  /// describe; 0 = attributeless rendering via gl_VertexID.
-  pub buffer: u64,
-  /// Number of vertices to draw; negative derives it from buffer size /
-  /// vertex stride.
-  pub draw_count: i32,
-  pub clear_color: [f32; 4],
-  /// How the target's output is sampled everywhere (shader inputs, display).
-  pub sampler: SamplerState,
-}
-
-/// Everything `create_pipeline_texture` (the fused convenience) needs:
-/// sources to compile, the draw state they run with, and the target to
-/// render into - the same two halves the split API takes separately.
-pub struct PipelineSpec {
-  pub vertex_src: String,
-  pub fragment_src: String,
-  pub pipeline: PipelineDesc,
-  pub target: TargetSpec,
-}
-
-/// The window shader declaration: a linked program drawn over the window's
-/// finished frame as the last step before present. The frame resolves into a
-/// runtime-owned layer texture the program samples as `uniform sampler2D
-/// uSource` (top-left origin, like every sampled texture); `iResolution` is
-/// the window in physical pixels. Drawn attributeless as triangles at
-/// `vertex_count` vertices (3 = the covering triangle).
-#[derive(Clone, Debug, PartialEq)]
-pub struct WindowShader {
-  /// Registered program handle (see `link_shader_program`).
-  pub program: u64,
-  /// Float uniforms filled by name.
-  pub params: Vec<(String, ParamValue)>,
-  /// Extra sampler2D inputs: uniform name -> texture registry id.
-  pub textures: Vec<(String, u64)>,
-  pub vertex_count: i32,
-  /// Retain a second layer holding the last resolved frame, exposed to the
-  /// program as `uniform sampler2D uPrevious` (one-frame history: motion
-  /// echo, frame differencing). Costs one extra window-sized texture while
-  /// declared. A fresh history layer samples opaque black until the second
-  /// shaded frame.
-  pub previous: bool,
-}
-
-/// A point-in-time inventory of the GPU bookkeeping, for resource
-/// introspection (the dev server's gpu query). Plain data only, so consumers
-/// stay free of GL types.
-pub struct GpuResources {
-  pub textures: Vec<GpuTextureInfo>,
-  pub buffers: Vec<GpuBufferInfo>,
-  pub pipelines: Vec<GpuPipelineInfo>,
-  pub render_pipelines: Vec<GpuRenderPipelineInfo>,
-  pub programs: Vec<GpuProgramInfo>,
-  pub window_shader: Option<GpuWindowShaderInfo>,
-}
-
-/// The active window shader: its program and the retained layer's pixel size
-/// (0x0 until the first shaded frame allocates it).
-pub struct GpuWindowShaderInfo {
-  pub program_id: u64,
-  pub width: u32,
-  pub height: u32,
-  /// The `uPrevious` history layer is declared AND allocated.
-  pub previous: bool,
-  /// Shaded frames that skipped the tree raster and ran only the pass over
-  /// the retained layer (the clean-tree fast path), cumulative for this
-  /// raster thread.
-  pub pass_only_frames: u64,
-}
-
-pub struct GpuTextureInfo {
-  pub id: u64,
-  pub width: u32,
-  pub height: u32,
-  /// A shader or pipeline renders into this texture (vs a sampled upload).
-  pub target: bool,
-}
-
-pub struct GpuBufferInfo {
-  pub id: u64,
-  pub byte_length: usize,
-}
-
-pub struct GpuProgramInfo {
-  pub id: u64,
-}
-
-/// A registered render pipeline: a program paired with the draw state its
-/// targets share.
-pub struct GpuRenderPipelineInfo {
-  pub id: u64,
-  pub program_id: u64,
-  pub topology: &'static str,
-  /// "none" or "add".
-  pub blend: &'static str,
-  pub depth: bool,
-  pub depth_write: bool,
-  /// (name, format string) of the declared interleaved vertex layout.
-  pub attributes: Vec<(String, String)>,
-}
-
-pub struct GpuPipelineInfo {
-  /// The registry id its output texture is sampleable under.
-  pub texture_id: u64,
-  /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
-  pub kind: &'static str,
-  /// The shared program behind this target's pipeline; None when it was
-  /// created through the fused path and owns its program alone.
-  pub program_id: Option<u64>,
-  /// The registered pipeline this target was created from; None for fragment
-  /// targets and the fused path.
-  pub pipeline_id: Option<u64>,
-  pub buffer_id: Option<u64>,
-  pub topology: Option<&'static str>,
-  pub draw_count: Option<i32>,
-  pub depth: bool,
-  /// Whether the draw writes depth; None on a fragment-only target.
-  pub depth_write: Option<bool>,
-  /// "none" or "add"; None on a fragment-only target.
-  pub blend: Option<&'static str>,
-  /// (name, format string) of the declared interleaved vertex layout.
-  pub attributes: Vec<(String, String)>,
-  /// sampler2D uniform name -> source texture id.
-  pub textures: Vec<(String, u64)>,
-  /// The float uniforms applied on the most recent render.
-  pub params: Vec<(String, ParamValue)>,
-  /// Cumulative passes rendered into this target.
-  pub passes: u64,
-  /// Cumulative raster-thread wall time those passes took, in microseconds
-  /// (occupancy, not GPU-side duration; see raster::RasterStats).
-  pub pass_micros: u64,
 }
 
 /// The successful outcome of a node capture: the registry id of the texture the
@@ -625,12 +482,12 @@ impl Context {
 
   /// Compile a single raw shader stage, returning its stage id (its own id
   /// space). The source is complete GLSL ES unless `header` explicitly asks
-  /// for the standard header (see `shader::compile_stage`). Compile errors
+  /// for the standard header (see `gpu::compile_stage`). Compile errors
   /// surface here, synchronously, at a call site the app chose. Free with
   /// `destroy_shader_stage` - safe right after linking.
   pub fn compile_shader_stage(
     &self,
-    stage: crate::shader::ShaderStage,
+    stage: ShaderStage,
     source: &str,
     header: bool,
   ) -> Result<u64, String> {
@@ -651,12 +508,12 @@ impl Context {
     let kinds = self.stage_kinds.borrow();
     match kinds.get(&vertex) {
       None => return Err(format!("shader {vertex} not found")),
-      Some(crate::shader::ShaderStage::Vertex) => {}
+      Some(ShaderStage::Vertex) => {}
       Some(s) => return Err(format!("shader {vertex} is a {} stage, expected vertex", s.name())),
     }
     match kinds.get(&fragment) {
       None => return Err(format!("shader {fragment} not found")),
-      Some(crate::shader::ShaderStage::Fragment) => {}
+      Some(ShaderStage::Fragment) => {}
       Some(s) => return Err(format!("shader {fragment} is a {} stage, expected fragment", s.name())),
     }
     drop(kinds);

@@ -18,21 +18,24 @@
 //! deletion to this context's reactor, which flushes on the next frame here
 //! (verified by examples/xthread_release.rs).
 
+mod capture;
+mod cmd;
+
+pub(crate) use cmd::RasterCmd;
+
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
+use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
-use crate::context::{
-  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
-  GpuWindowShaderInfo, PipelineSpec, TargetSpec, WindowShader,
-};
 use crate::gl;
-use crate::shader::{
-  release_pipeline, release_program, AttrFormat, GpuBuffer, ParamValue, PassInput, PipelineDesc, RenderPipeline,
-  ShaderProgram, ShaderStage, ShaderTexture,
+use crate::gpu::{
+  release_pipeline, release_program, AttrFormat, GpuBuffer, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo,
+  GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc,
+  PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState};
 
@@ -116,129 +119,6 @@ impl RasterSender {
   }
 }
 
-pub(crate) enum RasterCmd {
-  /// Draw and present (interactive) or read back (playback) a frame. In
-  /// interactive mode, when several frames are queued only the newest is
-  /// drawn (load shedding); in capture mode every frame draws, because
-  /// playback's contract is exactly one Captured per submit. `tree_clean`
-  /// marks a present-only resubmit of the previous frame's unchanged display
-  /// list (see `Context::submit_clean`).
-  Frame { dl: DisplayList, tree_clean: bool },
-  /// Re-run make-current so the context binds the window's current EGL
-  /// surface. Android destroys the surface on background and SDL creates a
-  /// fresh one on resume, but this thread's binding still points at the dead
-  /// one, so every swap would fail with EGL_BAD_SURFACE. Sent on
-  /// return-to-visible, ahead of the resume repaint's Frame on this ordered
-  /// channel.
-  RebindWindowSurface,
-  /// Create (or replace, same id) a sampleable RGBA8 texture and adopt it
-  /// into Impeller. Replies with the adopted handle for UI-side registration.
-  CreateTexture {
-    id: u64,
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
-    sampler: SamplerState,
-    reply: mpsc::Sender<Result<Texture, String>>,
-  },
-  /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
-  /// (the UI side slices multi-frame buffers before sending).
-  UpdateTexture { id: u64, pixels: Vec<u8> },
-  /// Compile a fragment shader into a new target texture and adopt it; the
-  /// first render happens at the next dirty flush. Compile errors must reach
-  /// JS, hence the reply.
-  CreateShaderTexture {
-    id: u64,
-    width: u32,
-    height: u32,
-    fragment_src: String,
-    params: Vec<(String, ParamValue)>,
-    textures: Vec<(String, u64)>,
-    sampler: SamplerState,
-    reply: mpsc::Sender<Result<Texture, String>>,
-  },
-  /// Compile a vertex+fragment pipeline into a new target texture and adopt
-  /// it; first render at the next dirty flush.
-  CreatePipelineTexture { id: u64, spec: PipelineSpec, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Compile a single raw stage into the stage registry: a complete GLSL ES
-  /// source, or one that explicitly asked for the standard header. Compile
-  /// errors must reach JS, hence the reply.
-  CompileStage { id: u64, stage: ShaderStage, source: String, header: bool, reply: mpsc::Sender<Result<(), String>> },
-  /// Link two compiled stages into a program in the program registry. The
-  /// stages remain usable for further links. Link errors reach JS via the
-  /// reply.
-  LinkProgram { id: u64, vertex: u64, fragment: u64, reply: mpsc::Sender<Result<(), String>> },
-  /// Delete a compiled stage. Programs linked from it are unaffected (a
-  /// linked program keeps its own compiled copies).
-  DestroyStage { id: u64 },
-  /// Pair a registered program with draw state in the pipeline registry.
-  /// Kind errors ("program is a fragment shader") reach JS via the reply.
-  CreateRenderPipeline { id: u64, program: u64, desc: PipelineDesc, reply: mpsc::Sender<Result<(), String>> },
-  /// Drop a pipeline from the registry. Targets created from it keep it alive
-  /// (and keep rendering); GL resources are freed when the last user goes.
-  DestroyRenderPipeline { id: u64 },
-  /// Create a target over a registered pipeline and adopt it (first render at
-  /// the next dirty flush). Many targets may share one pipeline.
-  CreateShaderTarget { id: u64, pipeline: u64, spec: TargetSpec, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Drop a program from the registry. Pipelines created from it keep it
-  /// alive (and keep rendering); the GL program is deleted when the last user
-  /// goes.
-  DestroyProgram { id: u64 },
-  /// Declare (Some) or clear (None) the window shader. Fire-and-forget on
-  /// this ordered channel, so it applies exactly between two frames. The
-  /// declared program is held by Rc while active; the layer texture is
-  /// allocated lazily by the first shaded frame and freed on clear.
-  SetWindowShader { shader: Option<WindowShader> },
-  /// Fold new params into an existing shader/pipeline target's record and
-  /// mark it dirty; it re-renders at the next flush.
-  UpdateShaderParams { id: u64, params: Vec<(String, ParamValue)> },
-  /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
-  /// name and mark it dirty. Unnamed bindings keep their current source.
-  UpdateShaderTextures { id: u64, textures: Vec<(String, u64)> },
-  /// Recreate a shader/pipeline target at a new size (same compiled program,
-  /// params, and bindings) and adopt the new target; it re-renders at the
-  /// next flush. Replies with the adopted handle so the UI side re-registers
-  /// it under the same id.
-  ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Set a pipeline's vertex draw count and mark it dirty.
-  SetDrawCount { id: u64, count: i32 },
-  /// Drop raster-side bookkeeping for a texture id (and destroy its shader
-  /// program/FBO when the id is a shader target). The GL name itself is owned
-  /// by the adopted Impeller Texture and dies with the UI side's last handle.
-  DestroyTexture { id: u64 },
-  /// Create an interleaved vertex buffer from raw bytes.
-  CreateBuffer { id: u64, data: Vec<u8>, reply: mpsc::Sender<Result<(), String>> },
-  /// Overwrite part of a vertex buffer and mark pipelines drawing from it
-  /// dirty.
-  WriteBuffer { id: u64, data: Vec<u8>, byte_offset: usize },
-  /// Read back part of a vertex buffer.
-  ReadBuffer { id: u64, byte_offset: usize, len: usize, reply: mpsc::Sender<Result<Vec<u8>, String>> },
-  /// Free a vertex buffer.
-  DestroyBuffer { id: u64 },
-  /// Rasterize a display list into a new adopted texture (snapshot repaint
-  /// boundaries). The handle goes back to the UI thread, which draws it.
-  /// `aa: false` skips the multisampled rig (a "snapshot-no-aa" boundary).
-  RasterizeDl { dl: DisplayList, width: u32, height: u32, aa: bool, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Re-rasterize into an existing adopted texture, reusing its storage
-  /// (snapshot boundary whose retained allocation still fits). The texture's
-  /// aligned backing must fit `width` x `height`; the UI thread checks this.
-  RasterizeDlInto {
-    dl: DisplayList,
-    texture: Texture,
-    width: u32,
-    height: u32,
-    aa: bool,
-    reply: mpsc::Sender<Result<(), String>>,
-  },
-  /// Rasterize + read back `width` x `height` pixels in one trip (node
-  /// captures). The intermediate padded texture never crosses threads.
-  RasterizeReadback { dl: DisplayList, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
-  /// Read back a texture's RGBA8 pixels by handle.
-  ReadTexture { texture: Texture, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
-  /// Inventory textures, buffers, and shader/pipeline targets.
-  Resources { reply: mpsc::Sender<GpuResources> },
-}
-
 // Consecutive failed presents that confirm the GL context is gone for good.
 // Two, not more: a demand-driven app may attempt very few presents after the
 // loss (observed frozen-window traces stopped at two), so a higher threshold
@@ -318,7 +198,7 @@ pub(crate) struct RasterState {
   shaders: HashMap<u64, ShaderTexture>,
   // Shared shader/pipeline programs in their own id space. Pipelines and
   // targets hold their program by Rc, so removal here only deletes the GL
-  // program once no user is left (see shader::release_program).
+  // program once no user is left (see gpu::release_program).
   programs: HashMap<u64, Rc<ShaderProgram>>,
   // Shared render pipelines (program + draw state) in their own id space.
   // Targets hold their pipeline by Rc, like programs.
@@ -533,7 +413,7 @@ impl RasterState {
             reply(tx, self.create_pipeline_texture(id, spec));
           }
           RasterCmd::CompileStage { id, stage, source, header, reply: tx } => {
-            let result = crate::shader::compile_stage(&self.gl, stage, &source, header).map(|shader| {
+            let result = crate::gpu::compile_stage(&self.gl, stage, &source, header).map(|shader| {
               self.stages.insert(id, shader);
             });
             reply(tx, result);
@@ -543,7 +423,7 @@ impl RasterState {
           }
           RasterCmd::DestroyStage { id } => {
             if let Some(shader) = self.stages.remove(&id) {
-              crate::shader::delete_stage(&self.gl, shader);
+              crate::gpu::delete_stage(&self.gl, shader);
             }
           }
           RasterCmd::CreateRenderPipeline { id, program, desc, reply: tx } => {
@@ -841,7 +721,7 @@ impl RasterState {
         // creation clear).
         std::mem::swap(&mut state.layer, &mut state.prev_layer);
         if state.prev_layer.is_none() {
-          let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+          let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height)?;
           state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
         }
       } else if let Some(old) = state.prev_layer.take() {
@@ -863,7 +743,7 @@ impl RasterState {
             glow::HasContext::delete_texture(&self.gl, old.tex);
           }
         }
-        let (tex, fbo) = crate::shader::create_layer_target(&self.gl, width, height)?;
+        let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height)?;
         state.layer = Some(LayerTarget { tex, fbo, width, height });
       }
       let layer = state.layer.as_ref().expect("layer allocated above");
@@ -891,7 +771,7 @@ impl RasterState {
         None => log::warn!("[alloy] window shader input '{name}': texture {id} not found"),
       }
     }
-    crate::shader::render_program_to_window(
+    crate::gpu::render_program_to_window(
       &self.gl,
       &state.program,
       width,
@@ -1223,56 +1103,6 @@ impl RasterState {
     Ok(())
   }
 
-  /// Rasterize a display list into a new adopted texture of the given pixel
-  /// size, ready for sampling.
-  fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32, aa: bool) -> Result<Texture, String> {
-    let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => {
-        let flipped = flip_for_fbo(dl, height)?;
-        gl::render_display_list_to_texture(
-          &self.gl,
-          &mut self.impeller_ctx,
-          &mut self.offscreen_rig,
-          &flipped,
-          size,
-          aa,
-        )
-      }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
-  }
-
-  /// Re-rasterize a display list into an existing adopted texture whose
-  /// aligned backing fits `width` x `height` (the UI thread checks the fit).
-  fn rasterize_into(
-    &mut self,
-    dl: &DisplayList,
-    texture: &Texture,
-    width: u32,
-    height: u32,
-    aa: bool,
-  ) -> Result<(), String> {
-    let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => {
-        let flipped = flip_for_fbo(dl, height)?;
-        gl::render_display_list_into_texture(
-          &self.gl,
-          &mut self.impeller_ctx,
-          &mut self.offscreen_rig,
-          &flipped,
-          texture,
-          size,
-          aa,
-        )
-      }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
-  }
-
   /// Inventory the GPU resources this thread tracks: registered textures,
   /// vertex buffers, and shader/pipeline targets with their bookkeeping.
   /// Sorted by id for stable output.
@@ -1328,7 +1158,7 @@ impl RasterState {
           id: *id,
           program_id: pipeline.program_id().unwrap_or(0),
           topology: desc.topology.name(),
-          blend: crate::shader::blend_name(desc.blend),
+          blend: crate::gpu::blend_name(desc.blend),
           depth: desc.depth.is_some(),
           depth_write: desc.depth.map_or(true, |d| d.write),
           attributes: desc.attributes.iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
@@ -1369,25 +1199,13 @@ fn resolve_target_mesh(
   let count = if spec.draw_count >= 0 {
     spec.draw_count
   } else {
-    let stride = crate::shader::vertex_stride(attributes);
+    let stride = crate::gpu::vertex_stride(attributes);
     match buffer {
       Some(b) if stride > 0 => (b.size / stride as usize) as i32,
       _ => 0,
     }
   };
   Ok((buffer.map(|b| b.vbo), count))
-}
-
-/// Map a shader's (name -> source texture id) bindings to live GL textures,
-/// dropping any id no longer registered (it samples as unbound/black).
-/// A wrapped FBO is treated like a window backbuffer, which GL stores
-/// bottom-up; pre-flip the content so the texture ends up upright.
-fn flip_for_fbo(dl: &DisplayList, height: u32) -> Result<DisplayList, String> {
-  let mut flipped = impellers::DisplayListBuilder::new(None);
-  flipped.translate(0.0, height as f32);
-  flipped.scale(1.0, -1.0);
-  flipped.draw_display_list(dl, 1.0);
-  flipped.build().ok_or_else(|| "failed to build flipped display list".to_string())
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`
@@ -1434,6 +1252,8 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
   (order, remaining.into_iter().collect())
 }
 
+/// Map a shader's (name -> source texture id) bindings to live GL textures,
+/// dropping any id no longer registered (it samples as unbound/black).
 fn resolve_sampler_bindings(
   textures: &HashMap<u64, GpuTexture>,
   samplers: &SamplerCache,

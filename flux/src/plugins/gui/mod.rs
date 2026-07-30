@@ -11,7 +11,7 @@ pub mod input;
 pub mod microphone;
 mod properties;
 pub mod raf;
-pub mod texture;
+pub mod gpu;
 pub mod tree;
 pub mod value;
 
@@ -61,9 +61,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
   let tree_platform = platform.clone();
   let raf_platform = platform.clone();
-  let texture_platform = platform;
+  let gpu_platform = platform;
   let tree_atx = AlloyContext(alloy.clone());
-  let texture_atx = AlloyContext(alloy.clone());
+  let gpu_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy.clone());
   // Stored as standalone userdata (below) so the runner can reach the alloy
@@ -82,7 +82,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     })
     .plugin(|ctx| input::store_state(&ctx))
     .plugin(move |ctx| raf::init(&ctx, raf_platform))
-    .plugin(move |ctx| texture::store_state(&ctx, texture_atx, texture_platform))
+    .plugin(move |ctx| gpu::store_state(&ctx, gpu_atx, gpu_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
     .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
@@ -91,7 +91,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:camera", camera::CameraModule)
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:audio", audio::AudioModule)
-    .module_override("flux:gpu", texture::GpuModule)
+    .module_override("flux:gpu", gpu::GpuModule)
 }
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.

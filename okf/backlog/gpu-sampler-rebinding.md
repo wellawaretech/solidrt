@@ -28,7 +28,7 @@ last-applied params and re-resolved bindings.
 - context.rs `update_shader_textures`: UI-side validation that throws to JS -
   unknown shader id, unknown source texture id, and self-binding (a sampler
   sourcing the shader's own target: a GL feedback loop) are all rejected.
-- flux gui/texture.rs binding + request_frame, flux-types gpu.d.ts, core
+- flux gui/gpu.rs binding + request_frame, flux-types gpu.d.ts, core
   gpu.ts re-export, docs/core.md.
 
 Not live-verified: no app uses it yet (it shipped ahead of a real use case);

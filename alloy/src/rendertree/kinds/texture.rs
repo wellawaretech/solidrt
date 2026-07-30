@@ -4,7 +4,7 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, Point, Rect, Size as ISize, TextureSampling};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::shader::ParamValue;
+use crate::gpu::ParamValue;
 use crate::rendertree::{
   Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
 };

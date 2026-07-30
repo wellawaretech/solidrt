@@ -218,7 +218,7 @@ impl RenderTree {
   /// present-only reuse path (which skips the walk) calls this before
   /// resubmitting the cached display list, keeping the raster channel's
   /// declaration-before-frame ordering.
-  pub fn take_pending_window_shader(&mut self) -> Option<Option<crate::context::WindowShader>> {
+  pub fn take_pending_window_shader(&mut self) -> Option<Option<crate::gpu::WindowShader>> {
     let root = self.root?;
     match &mut self.nodes.get_mut(&root)?.kind {
       ElementKind::Window(w) => w.take_pending_shader(),
