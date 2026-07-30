@@ -116,6 +116,23 @@ export {
   linkProgram,
 } from "flux:gpu"
 
+/**
+ * Tags an inline GLSL source, returning it unchanged. Shaders small enough to
+ * belong beside the code that uses them stay in the file; the tag is what makes
+ * them legible there, because editors highlight GLSL inside a template literal
+ * only when a known tag marks it (the name matters - `glsl` is the one the
+ * grammars look for).
+ *
+ * Interpolated values are stringified verbatim, with no GLSL-aware formatting:
+ * `${2}` splices in the int literal `2`, which will not assign to a float. Pass
+ * anything that varies as a uniform instead of building it into the source.
+ *
+ * Raw semantics, so backslashes reach the compiler as written: the GLSL
+ * preprocessor continues a line with a trailing `\`, which a cooked template
+ * would reject as an invalid escape and silently pass through as `undefined`.
+ */
+export let glsl = String.raw
+
 // captureSnapshot renders a node to a texture and readTexture reads any
 // texture's bytes back. A laid-out node captures its layout box; a `d-*` node
 // captures its painted box - its own w/h when set, else the nearest laid-out

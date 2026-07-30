@@ -57,6 +57,12 @@ Sorted by status: open first, then partial, deferred, and closed
   app can see; a draw count past the buffer end is undefined-behaviour
   vertex fetch; both checkable synchronously from state the UI thread
   already mirrors.
+- [Shader compile errors on .tsx lines via #line injection](glsl-line-injection.md) [open] -
+  Compile errors report string-relative lines offset by the injected
+  preamble; a bundler pass injecting #line into glsl-tagged literals makes
+  the driver report .tsx lines. Mesa calibration probe first (honored at
+  all? off-by-one convention?); no platform gate, ignoring drivers degrade
+  to today.
 - [GPU object labels and device limits](gpu-labels-limits.md) [open] -
   label? on every create surfaced in get_gpu_resources and error strings,
   plus a queryable gpu.limits with named-limit errors at create instead of

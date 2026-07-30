@@ -6,38 +6,38 @@
 // are driven exactly like createShader: declaratively via the <texture> params
 // prop, applied at the next repaint.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createBuffer, createPipeline } from "@solidrt/core/gpu"
+import { createBuffer, createPipeline, glsl } from "@solidrt/core/gpu"
 
-let VERTEX = `
-in vec3 aPos;
-in vec3 aColor;
-out vec3 vColor;
-uniform float uTime;
+let VERTEX = glsl`
+  in vec3 aPos;
+  in vec3 aColor;
+  out vec3 vColor;
+  uniform float uTime;
 
-void main() {
-  float cy = cos(uTime), sy = sin(uTime);
-  float cx = cos(uTime * 0.7), sx = sin(uTime * 0.7);
-  mat3 rotY = mat3(cy, 0.0, -sy, 0.0, 1.0, 0.0, sy, 0.0, cy);
-  mat3 rotX = mat3(1.0, 0.0, 0.0, 0.0, cx, sx, 0.0, -sx, cx);
-  vec3 p = rotX * (rotY * aPos);
-  p.z += 2.5;
+  void main() {
+    float cy = cos(uTime), sy = sin(uTime);
+    float cx = cos(uTime * 0.7), sx = sin(uTime * 0.7);
+    mat3 rotY = mat3(cy, 0.0, -sy, 0.0, 1.0, 0.0, sy, 0.0, cy);
+    mat3 rotX = mat3(1.0, 0.0, 0.0, 0.0, cx, sx, 0.0, -sx, cx);
+    vec3 p = rotX * (rotY * aPos);
+    p.z += 2.5;
 
-  // Perspective projection (near 1, far 10). Clip y is negated: the target's
-  // memory row 0 is clip y = -1, and Impeller samples row 0 as the top, so
-  // camera-up needs the flip to be displayed up.
-  float f = 2.0;
-  float a = 11.0 / 9.0;
-  float b = -20.0 / 9.0;
-  gl_Position = vec4(p.x * f, -p.y * f, p.z * a + b, p.z);
-  vColor = aColor;
-}
+    // Perspective projection (near 1, far 10). Clip y is negated: the target's
+    // memory row 0 is clip y = -1, and Impeller samples row 0 as the top, so
+    // camera-up needs the flip to be displayed up.
+    float f = 2.0;
+    float a = 11.0 / 9.0;
+    float b = -20.0 / 9.0;
+    gl_Position = vec4(p.x * f, -p.y * f, p.z * a + b, p.z);
+    vColor = aColor;
+  }
 `
 
-let FRAGMENT = `
-in vec3 vColor;
-void main() {
-  fragColor = vec4(vColor, 1.0);
-}
+let FRAGMENT = glsl`
+  in vec3 vColor;
+  void main() {
+    fragColor = vec4(vColor, 1.0);
+  }
 `
 
 // Interleaved [pos vec3, color vec3], 6 faces x 2 triangles, one color per face.

@@ -16,43 +16,43 @@
 //
 // The tints are typed (vec3) uniforms driven from 3-number array params.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createBuffer, createPipeline } from "@solidrt/core/gpu"
+import { createBuffer, createPipeline, glsl } from "@solidrt/core/gpu"
 
-let VERTEX = `
-in vec3 aPos;
-in float aSeed;
-out float vSeed;
-uniform float uTime;
+let VERTEX = glsl`
+  in vec3 aPos;
+  in float aSeed;
+  out float vSeed;
+  uniform float uTime;
 
-void main() {
-  float cy = cos(uTime * 0.4), sy = sin(uTime * 0.4);
-  vec3 p = vec3(cy * aPos.x - sy * aPos.z, aPos.y, sy * aPos.x + cy * aPos.z);
-  // Each particle breathes on its own phase.
-  p *= 1.0 + 0.15 * sin(uTime * 1.7 + aSeed * 40.0);
-  p.z += 2.2;
+  void main() {
+    float cy = cos(uTime * 0.4), sy = sin(uTime * 0.4);
+    vec3 p = vec3(cy * aPos.x - sy * aPos.z, aPos.y, sy * aPos.x + cy * aPos.z);
+    // Each particle breathes on its own phase.
+    p *= 1.0 + 0.15 * sin(uTime * 1.7 + aSeed * 40.0);
+    p.z += 2.2;
 
-  // Same perspective mapping as gpu-pipeline.tsx (near 1, far 10), clip y
-  // negated so camera-up displays up.
-  float f = 2.0;
-  gl_Position = vec4(p.x * f, -p.y * f, p.z * (11.0 / 9.0) - 20.0 / 9.0, p.z);
-  gl_PointSize = mix(10.0, 26.0, aSeed) / p.z;
-  vSeed = aSeed;
-}
+    // Same perspective mapping as gpu-pipeline.tsx (near 1, far 10), clip y
+    // negated so camera-up displays up.
+    float f = 2.0;
+    gl_Position = vec4(p.x * f, -p.y * f, p.z * (11.0 / 9.0) - 20.0 / 9.0, p.z);
+    gl_PointSize = mix(10.0, 26.0, aSeed) / p.z;
+    vSeed = aSeed;
+  }
 `
 
-let FRAGMENT = `
-in float vSeed;
-uniform vec3 uTintA;
-uniform vec3 uTintB;
+let FRAGMENT = glsl`
+  in float vSeed;
+  uniform vec3 uTintA;
+  uniform vec3 uTintB;
 
-void main() {
-  // Soft gaussian falloff over the point sprite; gl_PointCoord is 0..1
-  // across the splat.
-  vec2 d = gl_PointCoord - 0.5;
-  float a = exp(-dot(d, d) * 14.0) * 0.35;
-  vec3 tint = mix(uTintA, uTintB, vSeed);
-  fragColor = vec4(tint * a, a);
-}
+  void main() {
+    // Soft gaussian falloff over the point sprite; gl_PointCoord is 0..1
+    // across the splat.
+    vec2 d = gl_PointCoord - 0.5;
+    float a = exp(-dot(d, d) * 14.0) * 0.35;
+    vec3 tint = mix(uTintA, uTintB, vSeed);
+    fragColor = vec4(tint * a, a);
+  }
 `
 
 // Interleaved [pos vec3, seed f32]: points on a fibonacci sphere, so the

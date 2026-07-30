@@ -310,6 +310,26 @@ destroyRenderPipeline(id: RenderPipelineId): void       // pipelines; live targe
 
 `compileShader`, `linkProgram`, `createRenderPipeline`, and their destroyers are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
 
+### Inline shader sources
+
+Shader sources are strings, and a shader small enough to read at a glance belongs in the file beside the code that uses it. Tag it with `glsl` so an editor can highlight it:
+
+```ts
+import { glsl } from "@solidrt/core/gpu"
+
+let RINGS = glsl`
+  in vec2 vUV;
+  void main() {
+    float d = length(vUV - 0.5);
+    fragColor = vec4(vec3(0.5 + 0.5 * sin(d * 40.0 - iTime * 3.0)), 1.0);
+  }
+`
+```
+
+`glsl` returns the source unchanged - it is a marker, not a preprocessor, and every source stays exactly as valid without it. The name is the marker, so it has to be spelled `glsl`: that is what editor grammars key on. Highlighting needs an editor extension for it (in VS Code, one that injects into tagged templates, such as glsl-literal, plus one that supplies the GLSL grammar itself, such as WebGL GLSL Editor). Indentation is free - GLSL ignores it - so a source can sit at the indent level of the code around it.
+
+Interpolation is verbatim, with no GLSL-aware formatting: `${2}` splices in the int literal `2`, which will not assign to a float. Pass anything that varies as a uniform rather than building it into the source, which also keeps the source constant - a source that changes is a recompile.
+
 ### Window shader
 
 The `shader` prop on `<window>` draws the finished frame through a linked program before present - a whole-app effect (warp, dissolve, color grade) for the cost of one extra fullscreen pass:

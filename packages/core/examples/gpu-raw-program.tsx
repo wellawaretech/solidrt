@@ -19,43 +19,44 @@ import {
   createRenderPipeline,
   createShaderTarget,
   destroyShader,
+  glsl,
   linkProgram,
 } from "@solidrt/core/gpu"
 
-let VERTEX = `#version 300 es
-precision highp float;
-out vec2 vUV;
-void main() {
-  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-  vUV = p;
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}
+let VERTEX = glsl`#version 300 es
+  precision highp float;
+  out vec2 vUV;
+  void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    vUV = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  }
 `
 
 // Two fragment stages linked against the same vertex stage: two programs,
 // one shared compile of the vertex half.
-let WAVES = `#version 300 es
-precision highp float;
-in vec2 vUV;
-out vec4 fragColor;
-uniform float iTime;
-void main() {
-  float t = iTime * 2.0;
-  float a = 0.5 + 0.5 * sin(vUV.x * 10.0 + t);
-  float b = 0.5 + 0.5 * sin(vUV.y * 10.0 - t * 1.3);
-  fragColor = vec4(a, b, 1.0 - a * b, 1.0);
-}
+let WAVES = glsl`#version 300 es
+  precision highp float;
+  in vec2 vUV;
+  out vec4 fragColor;
+  uniform float iTime;
+  void main() {
+    float t = iTime * 2.0;
+    float a = 0.5 + 0.5 * sin(vUV.x * 10.0 + t);
+    float b = 0.5 + 0.5 * sin(vUV.y * 10.0 - t * 1.3);
+    fragColor = vec4(a, b, 1.0 - a * b, 1.0);
+  }
 `
 
 // The standard header ({ header: true }) declares #version, precision,
 // iResolution/iTime and fragColor, so this source only adds its own inputs.
-let RINGS = `
-in vec2 vUV;
-void main() {
-  float d = length(vUV - 0.5);
-  float r = 0.5 + 0.5 * sin(d * 40.0 - iTime * 3.0);
-  fragColor = vec4(r, r * 0.6, 1.0 - r, 1.0);
-}
+let RINGS = glsl`
+  in vec2 vUV;
+  void main() {
+    float d = length(vUV - 0.5);
+    float r = 0.5 + 0.5 * sin(d * 40.0 - iTime * 3.0);
+    fragColor = vec4(r, r * 0.6, 1.0 - r, 1.0);
+  }
 `
 
 function App() {

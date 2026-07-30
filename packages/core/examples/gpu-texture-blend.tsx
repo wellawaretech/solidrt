@@ -14,30 +14,30 @@
 // pass paints opaque black outside its ring, so source-over hides the base
 // entirely while plus adds only the lit pixels - black contributes nothing.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createShader } from "@solidrt/core/gpu"
+import { createShader, glsl } from "@solidrt/core/gpu"
 
 let SIZE = 360
 
 // Base pass: a static gradient with a soft vignette. Nothing drives it, so it
 // renders once at creation and then holds - shaders re-render on params writes.
-let BASE = `
-void main() {
-  vec2 uv = vUV;
-  float v = 1.0 - length(uv - 0.5) * 1.1;
-  vec3 col = mix(vec3(0.04, 0.05, 0.14), vec3(0.15, 0.10, 0.42), uv.y);
-  fragColor = vec4(col * v, 1.0);
-}
+let BASE = glsl`
+  void main() {
+    vec2 uv = vUV;
+    float v = 1.0 - length(uv - 0.5) * 1.1;
+    vec3 col = mix(vec3(0.04, 0.05, 0.14), vec3(0.15, 0.10, 0.42), uv.y);
+    fragColor = vec4(col * v, 1.0);
+  }
 `
 
 // Additive pass: a breathing ring, black everywhere else.
-let GLOW = `
-void main() {
-  vec2 uv = vUV;
-  float r = length(uv - 0.5);
-  float radius = 0.28 + 0.04 * sin(iTime * 2.0);
-  float ring = smoothstep(0.06, 0.0, abs(r - radius));
-  fragColor = vec4(vec3(1.0, 0.55, 0.15) * ring, 1.0);
-}
+let GLOW = glsl`
+  void main() {
+    vec2 uv = vUV;
+    float r = length(uv - 0.5);
+    float radius = 0.28 + 0.04 * sin(iTime * 2.0);
+    float ring = smoothstep(0.06, 0.0, abs(r - radius));
+    fragColor = vec4(vec3(1.0, 0.55, 0.15) * ring, 1.0);
+  }
 `
 
 function App() {

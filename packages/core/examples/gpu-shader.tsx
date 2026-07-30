@@ -24,36 +24,36 @@
 // dispatched by the shader's own declaration - uTint below is a vec3 driven
 // from one array value. The shader's size is baked in at creation.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createShader } from "@solidrt/core/gpu"
+import { createShader, glsl } from "@solidrt/core/gpu"
 
 // Injected-preamble dialect: no #version, no declarations, no main() plumbing.
-let FRAGMENT = `
-void main() {
-  vec2 uv = vUV;
-  float t = iTime * 2.0;
-  float a = 0.5 + 0.5 * sin(uv.x * 10.0 + t);
-  float b = 0.5 + 0.5 * sin(uv.y * 10.0 - t * 1.3);
-  float c = 0.5 + 0.5 * sin((uv.x + uv.y) * 8.0 + t * 0.7);
-  fragColor = vec4(a, b, c, 1.0);
-}
+let FRAGMENT = glsl`
+  void main() {
+    vec2 uv = vUV;
+    float t = iTime * 2.0;
+    float a = 0.5 + 0.5 * sin(uv.x * 10.0 + t);
+    float b = 0.5 + 0.5 * sin(uv.y * 10.0 - t * 1.3);
+    float c = 0.5 + 0.5 * sin((uv.x + uv.y) * 8.0 + t * 0.7);
+    fragColor = vec4(a, b, c, 1.0);
+  }
 `
 
 // Complete-source dialect: declares its own version, precision, varying and
 // output, and calls its time uniform uSpin rather than iTime. uTint is a
 // typed (vec3) uniform, filled from a 3-number array param.
-let RAW_FRAGMENT = `#version 300 es
-precision highp float;
-in vec2 vUV;
-out vec4 fragColor;
-uniform float uSpin;
-uniform vec3 uTint;
-void main() {
-  vec2 p = vUV - 0.5;
-  float a = atan(p.y, p.x) + uSpin;
-  float r = length(p);
-  float band = 0.5 + 0.5 * sin(a * 6.0 + r * 18.0);
-  fragColor = vec4(band * uTint.r, band * uTint.g, 1.0 - band * uTint.b, 1.0);
-}
+let RAW_FRAGMENT = glsl`#version 300 es
+  precision highp float;
+  in vec2 vUV;
+  out vec4 fragColor;
+  uniform float uSpin;
+  uniform vec3 uTint;
+  void main() {
+    vec2 p = vUV - 0.5;
+    float a = atan(p.y, p.x) + uSpin;
+    float r = length(p);
+    float band = 0.5 + 0.5 * sin(a * 6.0 + r * 18.0);
+    fragColor = vec4(band * uTint.r, band * uTint.g, 1.0 - band * uTint.b, 1.0);
+  }
 `
 
 function App() {

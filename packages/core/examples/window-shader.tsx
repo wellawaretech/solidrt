@@ -9,32 +9,32 @@
 // is an identity pass, which must be indistinguishable from no shader at all
 // (the orientation/half-pixel regression check from the plan).
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { compileShader, destroyShader, linkProgram } from "@solidrt/core/gpu"
+import { compileShader, destroyShader, glsl, linkProgram } from "@solidrt/core/gpu"
 
-let VERTEX = `#version 300 es
-precision highp float;
-out vec2 vUV;
-void main() {
-  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-  // uSource is top-left origin; flip v so the frame lands upright on the
-  // window (the one flip of the frame path, done here in the vertex stage).
-  vUV = vec2(p.x, 1.0 - p.y);
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}
+let VERTEX = glsl`#version 300 es
+  precision highp float;
+  out vec2 vUV;
+  void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    // uSource is top-left origin; flip v so the frame lands upright on the
+    // window (the one flip of the frame path, done here in the vertex stage).
+    vUV = vec2(p.x, 1.0 - p.y);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  }
 `
 
 // { header: true } declares #version, precision, iResolution/iTime and
 // fragColor; uSource, vUV, and the app's own uniforms are declared here.
-let WARP = `
-uniform sampler2D uSource;
-uniform float uAmount;
-in vec2 vUV;
-void main() {
-  vec2 uv = vUV;
-  uv.x += sin(uv.y * 24.0 + iTime * 3.0) * 0.012 * uAmount;
-  uv.y += sin(uv.x * 18.0 - iTime * 2.0) * 0.012 * uAmount;
-  fragColor = texture(uSource, uv);
-}
+let WARP = glsl`
+  uniform sampler2D uSource;
+  uniform float uAmount;
+  in vec2 vUV;
+  void main() {
+    vec2 uv = vUV;
+    uv.x += sin(uv.y * 24.0 + iTime * 3.0) * 0.012 * uAmount;
+    uv.y += sin(uv.x * 18.0 - iTime * 2.0) * 0.012 * uAmount;
+    fragColor = texture(uSource, uv);
+  }
 `
 
 function App() {
