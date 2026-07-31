@@ -100,6 +100,12 @@ export {
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
 export type { BlendMode, DrawRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
+// The device ceilings (max texture/target size, sampler inputs per pass,
+// vertex attributes per pipeline), queried once at startup. Creates and binds
+// validate against them and throw naming the limit; read these to size within
+// the device instead (e.g. clamp a supersampled target to maxTextureSize).
+export { limits } from "flux:gpu"
+
 // The raw shading layer, re-exported as-is - no reactive wrapper, the app
 // owns these lifetimes. compileShader compiles one stage from complete GLSL
 // ES (or with the standard header via { header: true }); linkProgram links a

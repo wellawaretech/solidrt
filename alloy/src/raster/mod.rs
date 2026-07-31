@@ -34,7 +34,7 @@ use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, GpuBuffer,
-  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
+  GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
   GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram,
   ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
@@ -159,6 +159,9 @@ pub(crate) struct RasterState {
   // The four shared GL sampler objects alloy's passes bind per sampled input
   // (see SamplerCache for why texture-object state cannot carry this).
   samplers: SamplerCache,
+  // The device ceilings, queried once at startup and served to the UI thread
+  // over the Limits RPC (Context caches the reply for call-site validation).
+  limits: GpuLimits,
   // Retained FBOs and scratch storage for every rig rasterization: the
   // window frame itself plus offscreen rasters (snapshot boundaries, node
   // captures), grown to the largest allocation requested. Retained because
@@ -324,6 +327,7 @@ impl RasterState {
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
     let samplers = SamplerCache::new(&gl);
+    let limits = GpuLimits::query(&gl);
     RasterState {
       backend,
       gl,
@@ -331,6 +335,7 @@ impl RasterState {
       window,
       surface_size,
       samplers,
+      limits,
       offscreen_rig: gl::OffscreenRig::new(),
       last_size: ISize::new(0, 0),
       capture_frames,
@@ -587,6 +592,9 @@ impl RasterState {
           }
           RasterCmd::Resources { reply: tx } => {
             reply(tx, self.resources());
+          }
+          RasterCmd::Limits { reply: tx } => {
+            reply(tx, self.limits);
           }
         }
         // The command is done (a load-shed one counts: it was consumed); the

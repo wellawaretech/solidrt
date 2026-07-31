@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, DrawRange, DrawUpdate,
-  ParamValue, UniformKind, UniformTable,
+  GpuLimits, ParamValue, UniformKind, UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -150,4 +150,32 @@ fn draw_update_merges_present_fields() {
   assert_eq!(current.merged(DrawUpdate::default()), current);
   let all = DrawUpdate { first_vertex: Some(1), vertex_count: Some(2), instance_count: Some(3) };
   assert_eq!(current.merged(all), range(1, 2, 3));
+}
+
+#[test]
+fn limits_texture_size_names_the_limit() {
+  let l = GpuLimits { max_texture_size: 8192, ..GpuLimits::FLOOR };
+  assert_eq!(l.check_texture_size(8192, 8192), Ok(()));
+  assert_eq!(l.check_texture_size(1, 1), Ok(()));
+  let err = l.check_texture_size(8193, 16).expect_err("oversize width must error");
+  assert!(err.contains("8193x16") && err.contains("max texture size (8192)"), "{err}");
+  let err = l.check_texture_size(16, 9000).expect_err("oversize height must error");
+  assert!(err.contains("16x9000") && err.contains("8192"), "{err}");
+}
+
+#[test]
+fn limits_texture_units_names_the_limit() {
+  let l = GpuLimits::FLOOR;
+  assert_eq!(l.check_texture_units(0), Ok(()));
+  assert_eq!(l.check_texture_units(16), Ok(()));
+  let err = l.check_texture_units(17).expect_err("over the unit cap must error");
+  assert!(err.contains("17 sampler inputs") && err.contains("(16 per pass)"), "{err}");
+}
+
+#[test]
+fn limits_vertex_attribs_names_the_limit() {
+  let l = GpuLimits::FLOOR;
+  assert_eq!(l.check_vertex_attribs(16), Ok(()));
+  let err = l.check_vertex_attribs(17).expect_err("over the attribute cap must error");
+  assert!(err.contains("17 vertex attributes") && err.contains("(16)"), "{err}");
 }

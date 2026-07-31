@@ -134,8 +134,17 @@ pub(super) fn run_pass(
     // at the unit. Save the prior texture and sampler binding per unit so
     // Impeller (which assumes its own units) is not left looking at our
     // textures or sampling through our state.
+    // Unit-cap backstop: the UI side validates binding counts against the
+    // mirrored device limits at the call site, so reaching the cap here means
+    // the mirrors diverged. Past the limit the bind itself errors and the
+    // draw samples garbage, so drop the input and say which.
+    let max_units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS).max(1) as usize;
     let mut prev_unit_bindings: Vec<(u32, i32, i32)> = Vec::new();
     for (unit, (name, tex, sampler)) in textures.iter().enumerate() {
+      if unit >= max_units {
+        log::warn!("[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped");
+        continue;
+      }
       let Some((loc, _)) = program.uniforms.get(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);

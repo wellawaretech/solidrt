@@ -108,6 +108,27 @@ declare module "flux:gpu" {
    */
   export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode }
   /**
+   * This device's hard ceilings, queried once at startup: process constants.
+   * Every create and bind validates against them at the call site, so an
+   * oversize target throws naming the limit instead of failing later as a
+   * driver error, and a binding list past the unit cap throws instead of
+   * silently sampling garbage. Values at or below these are safe on this
+   * device; the GLES 3.0 floors (2048 / 16 / 16) are the portable baseline
+   * every device guarantees.
+   */
+  export let limits: {
+    /** Largest width/height of any texture or render target, in pixels (>= 2048). */
+    maxTextureSize: number
+    /**
+     * Sampler inputs one pass may bind (>= 16): a target's `textures`
+     * entries; on a window shader the runtime-filled `uSource` (and
+     * `uPrevious` when declared) count toward it too.
+     */
+    maxTextureUnits: number
+    /** Vertex attributes one pipeline may declare (>= 16). */
+    maxVertexAttribs: number
+  }
+  /**
    * Create an immutable texture from an RGBA8 pixel buffer (exactly
    * width*height*4 bytes). Returns the texture id.
    */

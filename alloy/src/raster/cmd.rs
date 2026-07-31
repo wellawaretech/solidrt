@@ -7,7 +7,8 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  DrawRange, GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
+  DrawRange, GpuLimits, GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable,
+  WindowShader,
 };
 use crate::texture::SamplerState;
 
@@ -150,4 +151,7 @@ pub(crate) enum RasterCmd {
   ReadTexture { texture: Texture, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
   /// Inventory textures, buffers, and shader/pipeline targets.
   Resources { reply: mpsc::Sender<GpuResources> },
+  /// The device ceilings, queried once at thread startup (see `GpuLimits`).
+  /// The Context caches the reply, so this crosses once per process.
+  Limits { reply: mpsc::Sender<GpuLimits> },
 }

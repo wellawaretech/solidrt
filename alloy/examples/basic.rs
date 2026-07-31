@@ -16,7 +16,7 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
   let src_rect = Rect::new(Point::new(0.0, 0.0), size.cast());
 
   const BLUE_TEX: u64 = 1;
-  let tex = ctx.get_or_create_texture(BLUE_TEX, size, || make_pixels(size, 0x334D80FF));
+  let tex = ctx.get_or_create_texture(BLUE_TEX, size, || make_pixels(size, 0x334D80FF)).expect("create blue texture");
   let dst_rect = Rect::new(Point::new(10.0, 10.0), size.cast());
   builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, None);
 
@@ -27,7 +27,9 @@ fn draw(mut builder: DisplayListBuilder, ctx: &Context, t: f32) -> DisplayList {
 
   const GREEN_TEX: u64 = 2;
   let alpha = ((t.sin() * 0.5 + 0.5) * 255.0) as u8;
-  let tex = ctx.get_or_update_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033_00 | alpha as u32));
+  let tex = ctx
+    .get_or_update_texture(GREEN_TEX, size, || make_pixels(size, 0x4D8033_00 | alpha as u32))
+    .expect("create green texture");
   let dst_rect = Rect::new(Point::new(280.0, 10.0), size.cast());
   builder.draw_texture_rect(&tex, &src_rect, &dst_rect, TextureSampling::Linear, None);
 

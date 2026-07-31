@@ -2,9 +2,16 @@
 type: backlog-item
 title: GPU object labels and device limits
 description: Debug labels on every GPU create (surfaced in get_gpu_resources and error strings) and a queryable gpu.limits with bounds checks at create, so oversize targets fail as "exceeds this device's limit 8192" instead of "framebuffer incomplete 0x8cd6".
-status: open
+status: in-progress
 timestamp: 2026-07-30T00:00:00Z
 ---
+
+Status 2026-07-31: the limits half is DONE (typecheck-verified, runtime
+unverified): `GpuLimits` queried at raster startup, cached UI-side via a
+one-time Limits RPC, checked at every create/bind/resize site with the limit
+named, `run_pass` unit-cap backstop, `limits` exported from flux:gpu and
+@solidrt/core. Texture creates became fallible (they panicked on adopt
+failure before). The labels half is still open.
 
 # GPU object labels and device limits
 

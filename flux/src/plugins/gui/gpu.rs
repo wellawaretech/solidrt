@@ -343,6 +343,7 @@ impl ModuleDef for GpuModule {
     decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
     decl.declare("readTexture")?;
+    decl.declare("limits")?;
     Ok(())
   }
 
@@ -362,7 +363,9 @@ impl ModuleDef for GpuModule {
         }
         let sampler = collect_sampler(&ctx, &opts.0, "createTexture")?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-        let id = create_atx.create_texture_from_pixels(width, height, pixels, sampler);
+        let id = create_atx
+          .create_texture_from_pixels(width, height, pixels, sampler)
+          .map_err(|e| throw_str(&ctx, &format!("createTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
@@ -388,7 +391,9 @@ impl ModuleDef for GpuModule {
         }
         let sampler = collect_sampler(&ctx, &opts.0, "createMutableTexture")?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
-        let id = mutable_atx.create_texture_from_pixels(width, height, pixels, sampler);
+        let id = mutable_atx
+          .create_texture_from_pixels(width, height, pixels, sampler)
+          .map_err(|e| throw_str(&ctx, &format!("createMutableTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
@@ -757,6 +762,17 @@ impl ModuleDef for GpuModule {
     // (same reason camera::open is a named fn). They read state from userdata.
     exports.export("captureSnapshot", Function::new(ctx.clone(), capture_snapshot_impl)?)?;
     exports.export("readTexture", Function::new(ctx.clone(), read_texture_impl)?)?;
+
+    // The device ceilings, process constants queried once at raster startup
+    // (module evaluate runs at import time, warming alloy's UI-side cache
+    // before any app code validates against it). Exported as a plain object:
+    // there is nothing to call, the values never change.
+    let limits = atx.gpu_limits();
+    let limits_obj = Object::new(ctx.clone())?;
+    limits_obj.set("maxTextureSize", limits.max_texture_size)?;
+    limits_obj.set("maxTextureUnits", limits.max_texture_units)?;
+    limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
+    exports.export("limits", limits_obj)?;
     Ok(())
   }
 }

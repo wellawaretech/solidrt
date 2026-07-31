@@ -284,6 +284,20 @@ Three facts hold for every texture and target. None of them is configurable, and
 - **Color is premultiplied alpha.** A target's RGB is expected already multiplied by its A: write `vec4(rgb * a, a)`, not `vec4(rgb, a)`, which composites as opaque. That is what Impeller composites and what [`blendMode`](#texture) blends. `clearColor` is premultiplied too, so the default transparent black needs no thought.
 - **Values are non-linear RGBA8, with no color-space concept.** Every texture and target holds 8-bit RGBA UNORM exactly as the shader wrote it; nothing converts to or from linear light. So `filter: "linear"` averages and `blend: "add"` accumulates non-linear values - the usual approximation, stated here so shaders written today stay correct if a format vocabulary ever arrives.
 
+### Device limits
+
+Every limit a driver imposes is a hard cliff, and GL's native failure modes for crossing one are famously unhelpful (an oversize target fails as `framebuffer incomplete 0x8cd6`; a binding past the sampler unit cap silently draws garbage). SolidRT queries the ceilings once at startup and exposes them:
+
+```ts
+import { limits } from "@solidrt/core"
+
+limits.maxTextureSize    // largest width/height of any texture or target, in pixels (>= 2048)
+limits.maxTextureUnits   // sampler inputs one pass may bind (>= 16)
+limits.maxVertexAttribs  // vertex attributes one pipeline may declare (>= 16)
+```
+
+Every create and bind is validated against them at the call site, naming the limit in the thrown error: texture and target sizes (creates, `resizeTexture`, `setShaderSize`) against `maxTextureSize`, a target's `textures` count (creation and the merged result of `setShaderTextures`; on a window shader the runtime-filled `uSource`/`uPrevious` count too) against `maxTextureUnits`, and a pipeline's `attributes` length against `maxVertexAttribs`. Read `limits` to size within the device - clamp a supersampled target to `maxTextureSize` - and treat the GLES 3.0 floors (2048 / 16 / 16) as the portable baseline every device guarantees.
+
 ### Raw shading layer
 
 `createShader` and `createPipeline` are fused conveniences: one call compiles, links, and creates a render target, with a curated preamble injected into the sources.
