@@ -140,9 +140,11 @@ nearly free. That holds on desktop and on current mobile hardware; "Where GPU
 work stops being free" below is where it does not. Rules, in order of leverage:
 
 1. Continuous effects (snow, particles, animated backgrounds) belong in a
-   fragment shader: createShader (from @solidrt/core/gpu) + `<texture
-   params={{ iTime }}>`. The whole effect then costs one setProperty per
-   frame - the iTime write - regardless of visual complexity. Shader output
+   fragment shader: createShaderTexture (from @solidrt/core/gpu) + `<texture
+   params={{ uTime }}>` (the shader declares `uniform float uTime;` itself -
+   the preamble declares only what the runtime fills). The whole effect then
+   costs one setProperty per frame - the uTime write - regardless of visual
+   complexity. Shader output
    must be premultiplied alpha (white flakes are `vec4(vec3(a), a)`);
    straight alpha (`vec4(1,1,1,a)`) composites as opaque white. A source that
    starts with `#version 300 es` is compiled exactly as written - no preamble
@@ -155,7 +157,7 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    `vec3 iResolution` needs no splitting into scalars. To combine several
    GPU passes, stack `<texture>` elements and set `blendMode` (e.g. a base
    pass plus an additive `blendMode="plus"` pass) rather than writing a
-   compositing shader. Within one pipeline draw, createPipeline's
+   compositing shader. Within one pipeline draw, createPipelineTexture's
    `blend: "add"` accumulates overlapping geometry additively (soft point
    splats, glow) - pair it with `depthWrite: false` when depth-tested;
    neither option implies the other. A pipeline's own vertex stage writes

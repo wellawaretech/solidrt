@@ -129,18 +129,16 @@ rather than an opts-bag key.
 
 So the do-order is spent, and what remains sorts into four groups.
 
-- **Verification debt.** Sampler state, dependency propagation, the
-  pass-timing counters, labels and limits, and `gpu-particles.tsx` all landed
-  typecheck-verified but runtime-unverified. The verdict above rests on
-  "verified on real clients", and this is currently the largest gap between
-  that claim and the state.
-- **The naming decision**, filed separately below because it is breaking and
-  wants its own call: `createShader`/`createPipeline` ->
-  `createShaderTexture`/`createPipelineTexture`, plus the `iTime` trap and
-  the one-preamble story
-  ([gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md)). It
-  is the only remaining item that is purely a decision, and its cost grows
-  with every example, doc and app written against the current names.
+- ~~**Verification debt.**~~ **Cleared 2026-07-31** on five clients at once
+  (Linux, Windows/ANGLE, three Android including the 2017 TV). See the
+  verification section below.
+- ~~**The naming decision**~~ **Decided and landed 2026-07-31**: the hard
+  rename (`createShaderTexture`/`createPipelineTexture`/
+  `createShaderTextureMemo`, no aliases) and `iTime` dropped from every
+  preamble - the preamble now declares exactly what the runtime fills, and a
+  time uniform is the app's own declaration. Rationale and touched files in
+  [gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md); its
+  composition questions stay open there.
 - **Capability**, in rough order: multi-pass into one target (unblocked twice
   over - the object-model split gave draw state a home, the purity decision
   gave it a legal shape), the multi-pass chain example
@@ -159,6 +157,68 @@ filed on 07-31: lesson 8 as
 [gpu-per-binding-sampler](../backlog/gpu-per-binding-sampler.md) and lesson
 11 as
 [gpu-async-compile-readback](../backlog/gpu-async-compile-readback.md).
+
+### Runtime verification, 2026-07-31
+
+Everything that had landed typecheck-verified was exercised on five connected
+clients simultaneously - Linux (this machine), Windows/ANGLE-D3D11, and three
+Android devices including the 2017 MediaTek TV, all on the same release build.
+Probes: `sandbox/gpu-verify.tsx` and `sandbox/gpu-manual-verify.tsx`
+(throwaway), plus `gpu-particles.tsx` and the trails example.
+
+- **Limits** - every device reported its own ceilings, not a floor:
+  16384/32/16 (Linux), 16384/16/16 (Windows), 16383/**128**/32, 16384/16/16,
+  and 8192/16/16 (TV). Oversize creates threw naming the limit
+  ("16385x16 exceeds this device's max texture size (16384)"), as did an
+  over-limit sampler binding ("33 sampler inputs exceed this device's texture
+  unit limit (32 per pass)"). The 16383 device is the argument for the check
+  being dynamic.
+- **Labels** - present on every texture, buffer, program, render pipeline and
+  target in `get_gpu_resources`, and inherited by a target's output texture.
+- **Sampler state** - all four cases identical on Linux, Windows and the TV:
+  a 4x4 source upscaled to 96px displays hard-edged under `filter: "nearest"`
+  and smooth under `"linear"` (the display path), and a shader sampling at
+  `vUV * 3` tiles 3x3 under `wrap: "repeat"` and smears the edge under
+  `"clamp"` (the sampling path). Impeller does not clobber it.
+- **Dependency propagation** - a two-stage chain where stage B samples A and
+  has no params of its own: B's pass count tracked A's *exactly* (2609/2609
+  Linux, 3550/3550 then 7194/7194 TV, 10177/10177 Windows) and B's pixels
+  moved with A's phase, while two targets sampling only static data textures
+  stayed at **1 pass** for the app's whole life. Live edges propagate, dead
+  edges cost nothing.
+- **Pass timing** - the counters are real and 1:1 with frames: 2604 passes
+  over 43.55 s of frame clock on Linux (59.8/s at 60 fps) and 3644 over
+  74.42 s on the TV (48.96/s on a ~50 Hz panel). No redundant re-renders.
+- **The manual render verb** - manual targets, `renderTarget` call-order
+  stepping, and mutual ping-pong feedback (a cycle the pure graph rejects)
+  all work on every device including the TV. `loadOp: "load"` was proven by
+  A/B: two targets sharing one pipeline and one draw, differing only in
+  loadOp, gave an accumulated arc ("load") against a single dot ("clear").
+  That is the first client-side exercise of load-op, and it holds on a
+  tile-based mobile GPU, which was the open risk.
+- **Additive blend / points topology** - `gpu-particles.tsx` renders
+  correctly on Linux and the TV.
+
+No GL errors, shader errors or pass errors on any client.
+
+The one number worth carrying forward is the TV's per-pass cost. A *trivial*
+128x128 fragment pass costs 0.5-0.7 ms there against 0.10 ms on Linux and
+0.02 ms on the Windows box - so the manual probe's four small passes per
+frame spend ~2.2 ms of a 20 ms budget before the app draws anything. The
+~8x TV factor in [device-perf-model-docs](../backlog/device-perf-model-docs.md)
+holds for GPU passes too, and pass *count* is the budget on that class of
+device, not pass size.
+
+Those TV figures were measured twice, the second time from a freshly loaded
+app after the device had been restarted mid-session, and reproduced: 0.714
+and 0.463 ms/pass for the two chain stages against 0.105 and 0.044 on Linux
+(a 6.8x ratio on the same shader), with the pass rate at 49.3/s on a 48 fps
+panel. Method note for anyone repeating this: measure the DELTA between two
+per-target `passes`/`passMs` readings within one app run. The `gpuPasses`/
+`gpuPassMs` counters in get_stats are client-lifetime - they survive app
+reloads and span every app the client has run - so a cumulative ratio taken
+from them attributes other apps' work to the one in front of you, and a
+single per-target average still folds in the cold first passes.
 
 ## Summary
 

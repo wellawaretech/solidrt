@@ -249,7 +249,8 @@ fn collect_target_spec(
   Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw, clear_color, sampler, manual, load, label })
 }
 
-// Decode the draw-state options of createRenderPipeline and createPipeline -
+// Decode the draw-state options of createRenderPipeline and
+// createPipelineTexture -
 // { attributes: [{name, format}], topology, blend, depth, depthWrite },
 // everything optional - into the typed alloy desc. The vocabulary parses
 // here, at the boundary, so `blend: "addd"` (or an invalid depth/depthWrite
@@ -343,7 +344,7 @@ impl ModuleDef for GpuModule {
     decl.declare("uploadTexture")?;
     decl.declare("resizeTexture")?;
     decl.declare("destroyTexture")?;
-    decl.declare("createShader")?;
+    decl.declare("createShaderTexture")?;
     decl.declare("compileShader")?;
     decl.declare("linkProgram")?;
     decl.declare("destroyShader")?;
@@ -354,7 +355,7 @@ impl ModuleDef for GpuModule {
     decl.declare("setShaderParams")?;
     decl.declare("setShaderTextures")?;
     decl.declare("setShaderSize")?;
-    decl.declare("createPipeline")?;
+    decl.declare("createPipelineTexture")?;
     decl.declare("createBuffer")?;
     decl.declare("writeBuffer")?;
     decl.declare("destroyBuffer")?;
@@ -466,7 +467,7 @@ impl ModuleDef for GpuModule {
     .expect("create resizeTexture");
 
     let create_shader_atx = atx.clone();
-    let create_shader = Function::new(
+    let create_shader_texture = Function::new(
       ctx.clone(),
       move |ctx: Ctx<'_>,
             fragment_src: String,
@@ -476,27 +477,27 @@ impl ModuleDef for GpuModule {
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let params = match &params {
-          Some(o) => collect_params(&ctx, o, "createShader")?,
+          Some(o) => collect_params(&ctx, o, "createShaderTexture")?,
           None => Vec::new(),
         };
         let textures = match &opts.0 {
           Some(o) => match o.get::<_, Option<Object>>("textures")? {
-            Some(t) => collect_textures(&ctx, &t, "createShader")?,
+            Some(t) => collect_textures(&ctx, &t, "createShaderTexture")?,
             None => Vec::new(),
           },
           None => Vec::new(),
         };
-        let sampler = collect_sampler(&ctx, &opts.0, "createShader")?;
+        let sampler = collect_sampler(&ctx, &opts.0, "createShaderTexture")?;
         let label = collect_label(&opts.0)?;
         let id = create_shader_atx
           .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler, label)
-          .map_err(|e| throw_str(&ctx, &format!("createShader: {e}")))?;
+          .map_err(|e| throw_str(&ctx, &format!("createShaderTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
       },
     )
-    .expect("create createShader");
+    .expect("create createShaderTexture");
 
     let set_params_atx = atx.clone();
     let set_params_platform = platform.clone();
@@ -545,12 +546,12 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setShaderSize");
 
-    // createPipeline(vertexSrc, fragmentSrc, width, height, params?, opts?)
-    // -> texture id: the fused convenience, taking the draw-state options AND
-    // the target options in one bag (params is its own argument). Vocabulary
-    // parses here; alloy validates the rest.
+    // createPipelineTexture(vertexSrc, fragmentSrc, width, height, params?,
+    // opts?) -> texture id: the fused convenience, taking the draw-state
+    // options AND the target options in one bag (params is its own argument).
+    // Vocabulary parses here; alloy validates the rest.
     let create_pipeline_atx = atx.clone();
-    let create_pipeline = Function::new(
+    let create_pipeline_texture = Function::new(
       ctx.clone(),
       move |ctx: Ctx<'_>,
             vertex_src: String,
@@ -560,17 +561,17 @@ impl ModuleDef for GpuModule {
             params: Option<Object<'_>>,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipeline")?;
-        let target = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipeline")?;
+        let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipelineTexture")?;
+        let target = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
         let id = create_pipeline_atx
           .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target })
-          .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
+          .map_err(|e| throw_str(&ctx, &format!("createPipelineTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
       },
     )
-    .expect("create createPipeline");
+    .expect("create createPipelineTexture");
 
     // createRenderPipeline(program, opts?) -> pipeline id: pair a linked
     // program with draw state. Its own id space (like programs and buffers);
@@ -779,7 +780,7 @@ impl ModuleDef for GpuModule {
     exports.export("uploadTexture", upload_texture)?;
     exports.export("resizeTexture", resize_texture)?;
     exports.export("destroyTexture", destroy_texture)?;
-    exports.export("createShader", create_shader)?;
+    exports.export("createShaderTexture", create_shader_texture)?;
     exports.export("compileShader", compile_shader)?;
     exports.export("linkProgram", link_program)?;
     exports.export("destroyShader", destroy_shader)?;
@@ -790,7 +791,7 @@ impl ModuleDef for GpuModule {
     exports.export("setShaderParams", set_shader_params)?;
     exports.export("setShaderTextures", set_shader_textures)?;
     exports.export("setShaderSize", set_shader_size)?;
-    exports.export("createPipeline", create_pipeline)?;
+    exports.export("createPipelineTexture", create_pipeline_texture)?;
     exports.export("createBuffer", create_buffer)?;
     exports.export("writeBuffer", write_buffer)?;
     exports.export("destroyBuffer", destroy_buffer)?;

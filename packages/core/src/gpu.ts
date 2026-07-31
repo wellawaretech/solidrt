@@ -117,8 +117,8 @@ export { limits } from "flux:gpu"
 // how it draws) into a pipeline handle that backs any number of
 // createShaderTarget calls (and compiles nothing per pipeline or target);
 // destroyShader / destroyProgram / destroyRenderPipeline free by id space,
-// any order safe against live users. createShader/createPipeline remain the
-// fused conveniences on top.
+// any order safe against live users. createShaderTexture/createPipelineTexture
+// remain the fused conveniences on top.
 export {
   compileShader,
   createRenderPipeline,
@@ -210,14 +210,16 @@ export function createMutableTexture(
 /**
  * Compiles a GLSL ES 3.00 fragment shader and renders it into a texture,
  * returning the texture id (usable anywhere a normal texture id is, e.g.
- * `<texture src>`). The fragment body may reference `vUV` (0..1, top-left
- * origin), `iResolution`, `iTime`, and any uniform it declares (`float`/`int`
+ * `<texture src>`) - hence the name: what comes back is a texture, not a
+ * shader object. The fragment body may reference `vUV` (0..1, top-left
+ * origin), `iResolution`, and any uniform it declares (`float`/`int`
  * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
  * array); drive their values with `<texture src={id} params={{...}} />`
  * (preferred) or, when there is no `<texture>` element for it, imperatively
  * with `setShaderParams`. `params` is its own argument - it seeds the same
  * live channel those two drive - and takes `null` (or nothing) for a shader
- * without uniforms.
+ * without uniforms. A time-driven shader declares its own time uniform
+ * (`uniform float uTime;`) and the app drives it like any other value.
  * `opts.textures` binds each declared `uniform sampler2D` to an existing texture id
  * (e.g. a camera or decoded image, or another shader/pipeline target) so the
  * shader can read it; bound inputs are live dependencies, so the shader
@@ -226,24 +228,25 @@ export function createMutableTexture(
  * texture and shader program when the reactive owner is disposed (opt out
  * with `{ manual: true }`); create outside any reactive scope for
  * app-lifetime shaders. For a shader whose source or inputs change
- * reactively, use {@link createShaderMemo} instead.
+ * reactively, use {@link createShaderTextureMemo} instead.
  *
- * That preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
+ * That preamble (`#version 300 es`, precision, `vUV`, `iResolution`,
  * `fragColor`) is injected only into sources that do not declare their own
- * `#version` line. A source starting with `#version 300 es` compiles exactly
+ * `#version` line, and declares exactly what the runtime provides - nothing
+ * app-driven. A source starting with `#version 300 es` compiles exactly
  * as written, so a shader carrying its own uniform names - one ported from
  * elsewhere - runs unchanged here without dropping to compileShader /
  * linkProgram. The built-in vertex stage still supplies `vUV`; declare
  * `in vec2 vUV;` yourself to read it.
  */
-export function createShader(
+export function createShaderTexture(
   fragmentSrc: string,
   width: number,
   height: number,
   params?: gpu.ShaderParams | null,
   opts?: CreateOptions & SamplerOptions & { textures?: Record<string, gpu.TextureId> },
 ): gpu.TextureId {
-  let id = gpu.createShader(fragmentSrc, width, height, params, opts)
+  let id = gpu.createShaderTexture(fragmentSrc, width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -295,9 +298,9 @@ export function createShaderTarget(
   return id
 }
 
-/** The reactive shader description `createShaderMemo` builds from. Sampling
- * (`filter`/`wrap`) is creation-time state, so changing it rebuilds at a
- * fresh id, like a fragment-source or sampler-binding change. */
+/** The reactive shader description `createShaderTextureMemo` builds from.
+ * Sampling (`filter`/`wrap`) is creation-time state, so changing it rebuilds
+ * at a fresh id, like a fragment-source or sampler-binding change. */
 export type ShaderSpec = {
   fragmentSrc: string
   width: number
@@ -348,12 +351,12 @@ function sameRecord(
  * covered: it throws at the call site, where an ordinary try/catch works and
  * there is no previous shader to fall back to.
  */
-export function createShaderMemo(
+export function createShaderTextureMemo(
   spec: () => ShaderSpec,
   opts?: { onError?: (error: unknown) => void },
 ): () => gpu.TextureId {
   let make = (s: ShaderSpec) =>
-    gpu.createShader(s.fragmentSrc, s.width, s.height, s.params, { textures: s.textures, filter: s.filter, wrap: s.wrap })
+    gpu.createShaderTexture(s.fragmentSrc, s.width, s.height, s.params, { textures: s.textures, filter: s.filter, wrap: s.wrap })
   let current = untrack(spec)
   let currentId = make(current)
   let [id, setId] = createSignal(currentId)
@@ -404,13 +407,14 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
 /**
  * Compiles a GLSL ES 3.00 vertex+fragment pipeline and renders it into a
  * texture, returning the texture id (usable anywhere a normal texture id is,
- * e.g. `<texture src>`). Unlike `createShader` the vertex stage is yours:
+ * e.g. `<texture src>`) - named, like `createShaderTexture`, for what comes
+ * back. Unlike `createShaderTexture` the vertex stage is yours:
  * declare `in` attributes matching `opts.attributes` (one interleaved vertex
  * in `opts.buffer`, a {@link createBuffer} id) and your own varyings toward
  * the fragment stage. Clip space is y-down: `gl_Position` y = -1 is the top
  * row of the target and +1 the bottom, so camera-up geometry must negate y
  * (or fold the flip into its projection) to display up. Both sources may
- * reference `iResolution`/`iTime` and any uniform they declare (`float`/`int`
+ * reference `iResolution` and any uniform they declare (`float`/`int`
  * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
  * array); drive values with `<texture src={id} params={{...}} />` or
  * `setShaderParams`, exactly like a fragment shader.
@@ -431,7 +435,7 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * owner is disposed (opt out with `opts.manual`); create outside any reactive
  * scope for app-lifetime pipelines.
  */
-export function createPipeline(
+export function createPipelineTexture(
   vertexSrc: string,
   fragmentSrc: string,
   width: number,
@@ -452,7 +456,7 @@ export function createPipeline(
     CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
-  let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, params, opts)
+  let id = gpu.createPipelineTexture(vertexSrc, fragmentSrc, width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

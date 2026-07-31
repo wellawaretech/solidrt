@@ -158,7 +158,7 @@ let TOOLS: {
     name: "get_texture",
     readOnly: true,
     description:
-      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShader/createPipeline in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame: a render target reads as its current output, with any pending params, geometry or sampled-input changes resolved first. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
+      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShaderTexture/createPipelineTexture in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame: a render target reads as its current output, with any pending params, geometry or sampled-input changes resolved first. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
     inputSchema: {
       id: z.number().int().describe("Texture id, from get_gpu_resources"),
       x: z.number().int().describe("Crop rect left edge in texture pixels (requires y, width, height)").optional(),

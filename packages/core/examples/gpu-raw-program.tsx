@@ -11,8 +11,8 @@
 //
 // A raw program carries its own vertex stage, so a fullscreen pass is a
 // covering triangle from gl_VertexID with vertexCount: 3. Compare
-// gpu-shader.tsx, where the fused createShader does all of this in one call
-// with an injected preamble.
+// gpu-shader.tsx, where the fused createShaderTexture does all of this in
+// one call with an injected preamble.
 import { render, onFrame, createSignal } from "@solidrt/core"
 import {
   compileShader,
@@ -39,9 +39,9 @@ let WAVES = glsl`#version 300 es
   precision highp float;
   in vec2 vUV;
   out vec4 fragColor;
-  uniform float iTime;
+  uniform float uTime;
   void main() {
-    float t = iTime * 2.0;
+    float t = uTime * 2.0;
     float a = 0.5 + 0.5 * sin(vUV.x * 10.0 + t);
     float b = 0.5 + 0.5 * sin(vUV.y * 10.0 - t * 1.3);
     fragColor = vec4(a, b, 1.0 - a * b, 1.0);
@@ -49,12 +49,14 @@ let WAVES = glsl`#version 300 es
 `
 
 // The standard header ({ header: true }) declares #version, precision,
-// iResolution/iTime and fragColor, so this source only adds its own inputs.
+// iResolution and fragColor, so this source only adds its own inputs -
+// including the app-driven time uniform.
 let RINGS = glsl`
   in vec2 vUV;
+  uniform float uTime;
   void main() {
     float d = length(vUV - 0.5);
-    float r = 0.5 + 0.5 * sin(d * 40.0 - iTime * 3.0);
+    float r = 0.5 + 0.5 * sin(d * 40.0 - uTime * 3.0);
     fragColor = vec4(r, r * 0.6, 1.0 - r, 1.0);
   }
 `
@@ -76,16 +78,16 @@ function App() {
   let wavesPipeline = createRenderPipeline(waves, { label: "waves" })
   let ringsPipeline = createRenderPipeline(rings, { label: "rings" })
 
-  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { iTime: 0 }, { vertexCount: 3, label: "waves" })
-  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { iTime: 0 }, { vertexCount: 3, label: "rings" })
+  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { uTime: 0 }, { vertexCount: 3, label: "waves" })
+  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { uTime: 0 }, { vertexCount: 3, label: "rings" })
 
   let [time, setTime] = createSignal(0)
   onFrame(tick => setTime(tick / 1000))
 
   return (
     <window flexDirection="row" gap={16} alignItems="center" justifyContent="center">
-      <texture src={wavesId} params={{ iTime: time() }} width={360} height={360} />
-      <texture src={ringsId} params={{ iTime: time() }} width={360} height={360} />
+      <texture src={wavesId} params={{ uTime: time() }} width={360} height={360} />
+      <texture src={ringsId} params={{ uTime: time() }} width={360} height={360} />
     </window>
   )
 }

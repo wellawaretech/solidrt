@@ -11,7 +11,7 @@
 // petal and could go dark the same way. gl_InstanceID always counts from 0
 // (ES 3.0 has no base instance).
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createBuffer, createPipeline, glsl, setDraw } from "@solidrt/core/gpu"
+import { createBuffer, createPipelineTexture, glsl, setDraw } from "@solidrt/core/gpu"
 
 let MAX_PETALS = 324
 
@@ -46,7 +46,7 @@ let FRAGMENT = glsl`
 function App() {
   // The whole mesh: one triangle, reused by every instance.
   let bufferId = createBuffer(new Float32Array([0, 1.3, -1, -0.75, 1, -0.75]), { label: "petal-tri" })
-  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
+  let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "petals",
     attributes: [{ name: "aPos", format: "vec2" }],
     buffer: bufferId,

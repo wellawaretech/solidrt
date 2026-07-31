@@ -6,7 +6,17 @@ status: done
 timestamp: 2026-07-30T00:00:00Z
 ---
 
-Status 2026-07-31: both halves DONE (typecheck-verified, runtime unverified).
+Status 2026-07-31: both halves DONE and runtime-verified on five clients
+(Linux, Windows/ANGLE, three Android including the 2017 TV). Every device
+reported its own ceilings rather than the GLES floor - 16384/32/16,
+16384/16/16, 16383/128/32, 16384/16/16, 8192/16/16 - and both bounds checks
+threw naming the limit ("16385x16 exceeds this device's max texture size
+(16384)"; "33 sampler inputs exceed this device's texture unit limit (32 per
+pass)"). Labels appeared on every texture, buffer, program, pipeline and
+target in get_gpu_resources, and were inherited by target output textures.
+The device reporting maxTextureSize 16383 is the case that justifies querying
+rather than assuming. Details in the verification section of
+[gpu-review](../analysis/gpu-review.md).
 Limits: `GpuLimits` queried at raster startup, cached UI-side via a one-time
 Limits RPC, checked at every create/bind/resize site with the limit named,
 `run_pass` unit-cap backstop, `limits` exported from flux:gpu and

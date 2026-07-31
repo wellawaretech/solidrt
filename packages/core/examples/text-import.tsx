@@ -7,8 +7,8 @@
 //
 // This example shows only the text import itself: it reports the imported
 // file's size and first line. Shader sources are the motivating case - the
-// string is exactly what gpu-shader.tsx passes to createShader, moved out of
-// the .tsx so it can be edited as GLSL. Inlining trades update granularity for
+// string is exactly what gpu-shader.tsx passes to createShaderTexture, moved
+// out of the .tsx so it can be edited as GLSL. Inlining trades update granularity for
 // zero I/O, so keep big or streamable files in assets/ and read them at
 // runtime instead.
 import { render } from "@solidrt/core"

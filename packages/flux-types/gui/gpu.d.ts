@@ -9,9 +9,9 @@
 // sources, explicit header opt-in); createRenderPipeline pairs a program with
 // draw state (topology, blend, depth, vertex layout - how it draws);
 // createShaderTarget builds a texture-backed target over a pipeline (size,
-// buffer, uniforms, clear - where it draws). createShader/createPipeline are
-// fused conveniences (compile + link + pipeline + target in one call, curated
-// preamble).
+// buffer, uniforms, clear - where it draws). createShaderTexture/
+// createPipelineTexture are fused conveniences (compile + link + pipeline +
+// target in one call, curated preamble) - named for what they return.
 //
 // Sampling is a per-texture property declared at creation: every create path
 // accepts `{ filter?, wrap? }` ("linear"/"nearest", "clamp"/"repeat";
@@ -192,17 +192,20 @@ declare module "flux:gpu" {
    * {@link linkProgram} + {@link createRenderPipeline} +
    * {@link createShaderTarget}.
    *
-   * The preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
+   * The preamble (`#version 300 es`, precision, `vUV`, `iResolution`,
    * `fragColor`) is injected only into sources that do not declare their own
-   * `#version` line. A source that starts with `#version 300 es` is compiled
-   * exactly as written, so a shader with its own uniform names (a port from
-   * elsewhere) needs no rewriting and no drop to the raw layer. The built-in
-   * vertex stage still supplies `vUV` to a complete source; declare
-   * `in vec2 vUV;` yourself to read it. Same rule on {@link createPipeline}.
-   * A complete source may also declare `iResolution` as vec3 (the Shadertoy
-   * shape); it is then filled as `(w, h, 1.0)`.
+   * `#version` line, and declares exactly what the runtime provides - an
+   * app-driven uniform (a time value, say) is the source's own declaration,
+   * driven through params like any other. A source that starts with
+   * `#version 300 es` is compiled exactly as written, so a shader with its
+   * own uniform names (a port from elsewhere) needs no rewriting and no drop
+   * to the raw layer. The built-in vertex stage still supplies `vUV` to a
+   * complete source; declare `in vec2 vUV;` yourself to read it. Same rule on
+   * {@link createPipelineTexture}. A complete source may also declare
+   * `iResolution` as vec3 (the Shadertoy shape); it is then filled as
+   * `(w, h, 1.0)`.
    */
-  export function createShader(
+  export function createShaderTexture(
     fragmentSrc: string,
     width: number,
     height: number,
@@ -215,9 +218,9 @@ declare module "flux:gpu" {
    * stages yields a program). The source is complete - it declares its own
    * `#version 300 es`, precision, varyings and uniforms; nothing is injected.
    * With `header: true` the standard header is prepended explicitly: `#version
-   * 300 es`, `precision highp float;`, `uniform vec2 iResolution;`, `uniform
-   * float iTime;`, plus `out vec4 fragColor;` for a fragment stage (the same
-   * text {@link createPipeline} injects). Do not combine `header` with your
+   * 300 es`, `precision highp float;`, `uniform vec2 iResolution;`, plus
+   * `out vec4 fragColor;` for a fragment stage (the same text
+   * {@link createPipelineTexture} injects). Do not combine `header` with your
    * own `#version` line. Returns a shader (stage) id in its own id space;
    * compile errors throw here, synchronously, at a call site the app chose.
    * Free with {@link destroyShader}.
@@ -276,8 +279,8 @@ declare module "flux:gpu" {
   export function destroyRenderPipeline(id: RenderPipelineId): void
   /**
    * Create a render target over a {@link createRenderPipeline} pipeline and
-   * render it once: the target half of {@link createPipeline}. Returns a
-   * texture id exactly like createShader/createPipeline do (drive uniforms
+   * render it once: the target half of {@link createPipelineTexture}. Returns
+   * a texture id exactly like the fused creates do (drive uniforms
    * via the `params` prop or {@link setShaderParams}, resize with
    * {@link setShaderSize}, destroy with {@link destroyTexture}). Many targets
    * may share one pipeline, and creating a target compiles nothing. `buffer`
@@ -397,8 +400,9 @@ declare module "flux:gpu" {
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
    * the given size and render it once. Sources without a `#version` line get
-   * a 300 es preamble declaring `iResolution`/`iTime` (no vUV: varyings are
-   * the pipeline's own). Clip space is y-down: `gl_Position` y = -1 is the top
+   * a 300 es preamble declaring `iResolution` (no vUV: varyings are the
+   * pipeline's own; app-driven uniforms are the source's own declarations).
+   * Clip space is y-down: `gl_Position` y = -1 is the top
    * row of the target and +1 the bottom, so camera-up geometry must negate y
    * (or fold the flip into its projection) to display up. `attributes`
    * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
@@ -421,7 +425,7 @@ declare module "flux:gpu" {
    * the `params` prop or {@link setShaderParams}, destroy with
    * {@link destroyTexture}.
    */
-  export function createPipeline(
+  export function createPipelineTexture(
     vertexSrc: string,
     fragmentSrc: string,
     width: number,
@@ -540,7 +544,8 @@ declare module "flux:gpu" {
   /**
    * Read back a registered texture's current pixels as RGBA8 (tightly packed,
    * top-to-bottom rows), for any texture id whatever created it (createTexture,
-   * createShader, captureSnapshot). Synchronous. Throws if the id is unknown.
+   * createShaderTexture, captureSnapshot). Synchronous. Throws if the id is
+   * unknown.
    */
   export function readTexture(id: TextureId): { width: number; height: number; data: Uint8Array }
 }

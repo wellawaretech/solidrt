@@ -80,7 +80,14 @@ Depends on [[gpu-target-dependency-propagation]]: consumer re-renders after
 resizes and any future sampler mutation ride the dirty-flush propagation.
 
 Docs: docs/core.md, flux-types gui/gpu.d.ts (`SamplerOptions`), core gpu.ts
-(`createShaderMemo` rebuilds on filter/wrap change). Runtime-unverified as of
-writing; the decisive check is a nearest low-res target upscaled by
-`<texture>` showing hard pixels, and a repeat-wrap shader sampling outside
-0..1.
+(`createShaderMemo` rebuilds on filter/wrap change).
+
+Runtime-verified 2026-07-31 on Linux, Windows/ANGLE and the 2017 Android TV,
+with pixel-identical results on all three - both decisive checks this note
+named. A 4x4 checkerboard upscaled to 96px by `<texture>` displays hard-edged
+under `filter: "nearest"` and smoothly interpolated under `"linear"` (the
+Impeller display path), and a shader sampling the same source at `vUV * 3`
+tiles it 3x3 under `wrap: "repeat"` while `"clamp"` smears the edge texels
+(the GL sampler-object path). Impeller's cached state does not clobber the
+shared sampler objects, which was the risk the SamplerCache design was
+chosen to avoid.

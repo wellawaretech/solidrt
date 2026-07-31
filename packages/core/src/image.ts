@@ -1,7 +1,8 @@
 // CPU image codec plus the reactive load-and-upload convenience. decodeImage is
 // the raw primitive (no GPU involved); createImage is the owner-aware layer on
 // top that fetches/decodes/uploads for you and swaps the texture when the source
-// changes - the same relationship createTexture/createShader have to flux:gpu.
+// changes - the same relationship createTexture/createShaderTexture have to
+// flux:gpu.
 
 import { createMemo, onCleanup } from "@solidjs/signals"
 import { createTexture, destroyTexture, type TextureId } from "./gpu"

@@ -87,3 +87,13 @@ Contract documented in `docs/core.md` (sampler bindings are live
 dependencies), `packages/flux-types/gui/gpu.d.ts`, and
 `packages/core/src/gpu.ts`. Graph logic unit-tested GL-free in
 `alloy/src/tests/gpu_graph.rs`.
+
+Runtime-verified 2026-07-31 on five clients (Linux, Windows/ANGLE, three
+Android including the 2017 TV). A two-stage chain whose second stage samples
+the first and carries no params of its own re-rendered exactly as often as
+its source - 2609/2609 on Linux, 3550/3550 then 7194/7194 on the TV,
+10177/10177 on Windows - and its pixels tracked the source's animated phase.
+In the same app, two targets sampling only static data textures stayed at
+**1 pass** for the app's whole life: the pull model neither drops a live edge
+nor re-renders a dead one. See the verification section of
+[gpu-review](../analysis/gpu-review.md).

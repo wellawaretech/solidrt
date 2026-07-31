@@ -30,9 +30,27 @@ commands are deliberately excluded: their phases are already timed (frameMs),
 and their present blocks on vsync by design, so including them would read as
 busy on a perfectly healthy app.
 
-All three counters are runtime-unverified as of 2026-07-30; the validation
-pass this note suggested (Mali TV vs Adreno tablet vs desktop) is still worth
-doing when a shader-target app is next on a device.
+Runtime-verified 2026-07-31 across five clients at once (Linux,
+Windows/ANGLE, three Android including the 2017 TV) - the cross-device
+validation pass this note asked for. The counters are real and exactly 1:1
+with frames: 2604 passes over 43.55 s of frame clock on Linux (59.8/s at
+60 fps), 3644 over 74.42 s on the TV (48.96/s on a ~50 Hz panel), and
+per-target `passes`/`passMs` attributed the cost correctly in a two-stage
+chain. Targets whose inputs never change stayed at 1 pass for the app's
+lifetime, so the counters also show the absence of redundant re-renders.
+
+The device spread they measured is the useful part: a trivial 128x128
+fragment pass costs 0.5-0.7 ms on the TV, 0.10 ms on Linux and 0.02 ms on a
+desktop RTX box. On TV-class hardware the frame budget is pass COUNT, not
+pass size. Measured twice on the TV, once after a device restart, and
+reproduced within 7%. See the verification section of
+[gpu-review](../analysis/gpu-review.md).
+
+Reading them correctly matters: `gpuPasses`/`gpuPassMs` in get_stats are
+CLIENT-lifetime and survive app reloads, so they span every app the client
+has run. To attribute cost to the app in front of you, diff two per-target
+`passes`/`passMs` readings from get_gpu_resources within one app run; a
+single cumulative average also folds in the cold first passes.
 
 Split out of idle-tick-gpu-backlog-runaway.md, where this was the costliest
 diagnostic gap: it is what turned a one-look diagnosis into an afternoon.

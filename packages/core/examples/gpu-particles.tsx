@@ -1,4 +1,4 @@
-// An additive particle field: createPipeline with topology "points" and
+// An additive particle field: createPipelineTexture with topology "points" and
 // blend "add". Each vertex is one particle; the vertex stage sets
 // gl_PointSize (honored across 4..64px) and the fragment stage shapes the
 // splat from gl_PointCoord. With blend: "add" overlapping splats accumulate
@@ -16,7 +16,7 @@
 //
 // The tints are typed (vec3) uniforms driven from 3-number array params.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createBuffer, createPipeline, glsl } from "@solidrt/core/gpu"
+import { createBuffer, createPipelineTexture, glsl } from "@solidrt/core/gpu"
 
 let VERTEX = glsl`
   in vec3 aPos;
@@ -72,7 +72,7 @@ function particles(count: number): Float32Array {
 
 function App() {
   let bufferId = createBuffer(particles(1500), { label: "particle-verts" })
-  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, { uTime: 0, uTintA: [1.0, 0.45, 0.15], uTintB: [0.25, 0.5, 1.0] }, {
+  let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0, uTintA: [1.0, 0.45, 0.15], uTintB: [0.25, 0.5, 1.0] }, {
     label: "particles",
     attributes: [
       { name: "aPos", format: "vec3" },

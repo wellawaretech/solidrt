@@ -1,12 +1,13 @@
-// createPipeline compiles a custom GLSL ES 3.00 vertex+fragment pair that draws
-// an interleaved vertex buffer into a texture, here a spinning cube with depth
-// testing. The vertex shader declares `in` attributes matching the pipeline's
-// attribute list (locations are resolved by name) and its own varyings; the
-// fragment preamble provides fragColor/iResolution/iTime but no vUV. Uniforms
-// are driven exactly like createShader: declaratively via the <texture> params
-// prop, applied at the next repaint.
+// createPipelineTexture compiles a custom GLSL ES 3.00 vertex+fragment pair
+// that draws an interleaved vertex buffer into a texture, here a spinning
+// cube with depth testing. The vertex shader declares `in` attributes
+// matching the pipeline's attribute list (locations are resolved by name)
+// and its own varyings; the fragment preamble provides fragColor/iResolution
+// but no vUV, and app-driven uniforms (uTime below) are the source's own
+// declarations. Uniforms are driven exactly like createShaderTexture:
+// declaratively via the <texture> params prop, applied at the next repaint.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createBuffer, createPipeline, glsl } from "@solidrt/core/gpu"
+import { createBuffer, createPipelineTexture, glsl } from "@solidrt/core/gpu"
 
 let VERTEX = glsl`
   in vec3 aPos;
@@ -61,7 +62,7 @@ function App() {
   // Labels name the buffer and target in the dev tooling's GPU inventory
   // (and in engine log messages) - free-form, purely diagnostic.
   let bufferId = createBuffer(cube(), { label: "cube-verts" })
-  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
+  let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "cube",
     attributes: [
       { name: "aPos", format: "vec3" },

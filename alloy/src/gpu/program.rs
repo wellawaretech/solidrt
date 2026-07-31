@@ -23,14 +23,17 @@ void main() {
 ";
 
 // Injected ahead of a user fragment body that omits its own #version line, so
-// the body can reference vUV/fragColor/iResolution/iTime directly. A source that
+// the body can reference vUV/fragColor/iResolution directly. A source that
 // provides its own #version is treated as complete and gets no preamble.
+// The preamble declares exactly what the runtime provides: anything the app
+// drives (a time uniform, say) is the app's own declaration, like any other
+// uniform, so forgetting to drive it is a compile error rather than a value
+// silently stuck at 0.
 const FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 in vec2 vUV;
 out vec4 fragColor;
 uniform vec2 iResolution;
-uniform float iTime;
 ";
 
 // Pipeline preambles. A pipeline's varyings are the user's own (the vertex
@@ -41,14 +44,12 @@ uniform float iTime;
 const PIPELINE_VERTEX_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 uniform vec2 iResolution;
-uniform float iTime;
 ";
 
 const PIPELINE_FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
 out vec4 fragColor;
 uniform vec2 iResolution;
-uniform float iTime;
 ";
 
 fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shader, String> {
@@ -70,9 +71,9 @@ fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shad
 /// `#version`, precision, varyings and uniforms (a missing `#version` line is
 /// the most common mistake, so the error hints at it). With `header` the
 /// stage-appropriate standard header is prepended - explicitly, on request:
-/// `#version 300 es`, highp float precision, the `iResolution`/`iTime`
-/// uniforms, and for a fragment stage `out vec4 fragColor`. A source
-/// carrying its own `#version` must not also ask for the header.
+/// `#version 300 es`, highp float precision, the `iResolution` uniform, and
+/// for a fragment stage `out vec4 fragColor`. A source carrying its own
+/// `#version` must not also ask for the header.
 pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: bool) -> Result<glow::Shader, String> {
   let full;
   let src = if header {
@@ -142,8 +143,8 @@ fn link_program(gl: &glow::Context, vertex_full: &str, fragment_full: &str) -> R
 /// back many targets (the ordinary GL shape); targets hold it by Rc, so it
 /// stays alive - and its GL name stays valid - until the last user is gone,
 /// whichever destruction order the app picks. Owned by the raster thread:
-/// registered programs live in its registry, a fused createShader's program is
-/// held only by its target.
+/// registered programs live in its registry, a fused createShaderTexture's
+/// program is held only by its target.
 pub struct ShaderProgram {
   pub(super) program: glow::Program,
   /// Active uniform name -> (location, GL type), reflected once at link time.

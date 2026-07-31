@@ -36,7 +36,10 @@ sphere splat field: `topology: "points"` + `blend: "add"`, gl_PointSize from
 the vertex stage, gaussian gl_PointCoord splats, premultiplied additive
 output, typed vec3 tint uniforms. Deliberately no depth buffer (nothing
 occludes in a pure additive pass); the header comment states when a scene
-adds `depth: true` with `depthWrite: false`. Runtime-unverified as of filing.
+adds `depth: true` with `depthWrite: false`. Runtime-verified 2026-07-31 on
+Linux and the 2017 Android TV: the field renders as intended (point sprites
+sized from the vertex stage, gaussian splats, additive accumulation), at
+0.62 ms per pass on the TV for 1500 points into a 512x512 target.
 
 The multi-pass gap above is not urgent. Filed so it is picked up with the
 runtime change that unblocks it rather than rediscovered later.

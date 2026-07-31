@@ -14,7 +14,7 @@
 // pass paints opaque black outside its ring, so source-over hides the base
 // entirely while plus adds only the lit pixels - black contributes nothing.
 import { render, onFrame, createSignal } from "@solidrt/core"
-import { createShader, glsl } from "@solidrt/core/gpu"
+import { createShaderTexture, glsl } from "@solidrt/core/gpu"
 
 let SIZE = 360
 
@@ -31,18 +31,19 @@ let BASE = glsl`
 
 // Additive pass: a breathing ring, black everywhere else.
 let GLOW = glsl`
+  uniform float uTime;
   void main() {
     vec2 uv = vUV;
     float r = length(uv - 0.5);
-    float radius = 0.28 + 0.04 * sin(iTime * 2.0);
+    float radius = 0.28 + 0.04 * sin(uTime * 2.0);
     float ring = smoothstep(0.06, 0.0, abs(r - radius));
     fragColor = vec4(vec3(1.0, 0.55, 0.15) * ring, 1.0);
   }
 `
 
 function App() {
-  let baseId = createShader(BASE, SIZE, SIZE, null, { label: "base" })
-  let glowId = createShader(GLOW, SIZE, SIZE, { iTime: 0 }, { label: "glow" })
+  let baseId = createShaderTexture(BASE, SIZE, SIZE, null, { label: "base" })
+  let glowId = createShaderTexture(GLOW, SIZE, SIZE, { uTime: 0 }, { label: "glow" })
   let [time, setTime] = createSignal(0)
   let [mode, setMode] = createSignal<"plus" | "source-over">("plus")
   onFrame((tick) => setTime(tick / 1000))
@@ -67,7 +68,7 @@ function App() {
           width={SIZE}
           height={SIZE}
           blendMode={mode()}
-          params={{ iTime: time() }}
+          params={{ uTime: time() }}
         />
       </view>
       <text fontSize={14} color="#888">blendMode "{mode()}" - click to toggle</text>

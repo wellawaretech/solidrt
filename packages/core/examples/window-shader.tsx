@@ -23,16 +23,18 @@ let VERTEX = glsl`#version 300 es
   }
 `
 
-// { header: true } declares #version, precision, iResolution/iTime and
-// fragColor; uSource, vUV, and the app's own uniforms are declared here.
+// { header: true } declares #version, precision, iResolution and fragColor;
+// uSource, vUV, and the app's own uniforms - the time included - are
+// declared here.
 let WARP = glsl`
   uniform sampler2D uSource;
   uniform float uAmount;
+  uniform float uTime;
   in vec2 vUV;
   void main() {
     vec2 uv = vUV;
-    uv.x += sin(uv.y * 24.0 + iTime * 3.0) * 0.012 * uAmount;
-    uv.y += sin(uv.x * 18.0 - iTime * 2.0) * 0.012 * uAmount;
+    uv.x += sin(uv.y * 24.0 + uTime * 3.0) * 0.012 * uAmount;
+    uv.y += sin(uv.x * 18.0 - uTime * 2.0) * 0.012 * uAmount;
     fragColor = texture(uSource, uv);
   }
 `
@@ -50,7 +52,7 @@ function App() {
 
   return (
     <window
-      shader={{ program: warp, params: { iTime: time(), uAmount: amount() } }}
+      shader={{ program: warp, params: { uTime: time(), uAmount: amount() } }}
       onPointerDown={() => setAmount(a => (a > 0 ? 0 : 1))}
       flexDirection="column"
       gap={12}

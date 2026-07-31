@@ -41,13 +41,13 @@ Sorted by status: open first, then partial, deferred, and closed
   Every capture rasterizes, reads back, uploads a texture and is then read back
   again, because both consumers only ever wanted the pixels; a pixels-returning
   variant halves the sync points.
-- [Refactor createShader/createPipeline over the raw shading layer](gpu-fused-create-refactor.md) [open] -
-  The fused conveniences predate compileShader/linkProgram/createShaderTarget
-  and still compile+link internally with conditional preamble sniffing; decide
-  whether they become thin compositions of the raw layer, whether a
-  mid-level program shorthand (wanted by the window effect) is added, and the
-  gpu-review naming findings (createShader/createPipeline return textures;
-  iTime declared but never filled).
+- [Refactor the fused creates over the raw shading layer](gpu-fused-create-refactor.md) [partial] -
+  The gpu-review naming findings landed 2026-07-31 as a hard rename
+  (createShaderTexture/createPipelineTexture/createShaderTextureMemo) and
+  iTime was dropped from all preambles - the preamble now declares exactly
+  what the runtime fills. Still open: whether the fused paths become thin
+  compositions of the raw layer, a mid-level program shorthand (wanted by
+  the window effect), and the two-dialect preamble story.
 - [Anti-aliasing for GPU pipeline targets](gpu-target-antialiasing.md) [open] -
   createPipeline targets are single-sample, so any filled geometry has hard
   jaggies; wanted a sample count (MSAA + resolve) or a documented supersample
@@ -256,7 +256,9 @@ Sorted by status: open first, then partial, deferred, and closed
   passes ran in the raster command loop where nothing was timed, so a client at
   50 s per frame reported a healthy `draw 40.3ms`; landed 2026-07-30 as
   `gpuPasses`/`gpuPassMs` and `rasterCmdMs` in get_stats plus per-target
-  `passes`/`passMs` in get_gpu_resources, all still runtime-unverified.
+  `passes`/`passMs` in get_gpu_resources; runtime-verified 2026-07-31 across
+  five clients, exactly 1:1 with frames, and they measured the TV's per-pass
+  cost at 0.5-0.7 ms against 0.10 ms on Linux.
 - [The documented perf model is desktop-shaped](device-perf-model-docs.md) [done] -
   "GPU work is nearly free" holds on desktop and on a mid-range 2020 tablet but
   is wrong by ~8x on TV-class hardware, where the compositor can set the frame
@@ -337,4 +339,6 @@ Sorted by status: open first, then partial, deferred, and closed
   raster-side error strings, plus GpuLimits queried at raster startup and
   checked at every create/bind/resize site with the limit named, so an
   oversize target fails as "exceeds this device's limit" instead of
-  framebuffer-incomplete hex. Runtime-unverified.
+  framebuffer-incomplete hex. Runtime-verified 2026-07-31 on five clients,
+  each reporting its own ceilings (one device caps at 16383, which is why
+  the check queries rather than assumes).
