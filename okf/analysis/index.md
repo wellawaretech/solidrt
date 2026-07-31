@@ -16,7 +16,9 @@ timestamp: 2026-07-15T00:00:00Z
   WebGPU-adjacent with one deep divergence - a retained pure-target model
   whose purity question gates accumulation, feedback and multi-pass. Ranked
   lessons from WebGL2/WebGPU, capability gaps by workload, and a file split
-  proposal.
+  proposal. Its eight-item shortlist closed 2026-07-31 (the purity question
+  answered with one manual render verb); the status section carries what
+  shipped and what the do-order is now.
 - [Forge crate review](forge-crate-review.md) - Engine-free layering upheld,
   docs excellent, clippy clean; gaps are untested subprocess/p2p/ffi, stale
   docs, an implicit single-thread contract and IPv4-only skew.

@@ -1,7 +1,7 @@
 ---
 type: analysis
 title: GPU stack review
-description: Merged review of the GPU stack: where it stands (retro-class 3D feasible, statuses refreshed), how its shape compares to WebGL2 and WebGPU (a retained pure target vs a recorded pass; deliberate divergences are the improvements, path-of-least-resistance ones the regressions), ranked lessons, capability gaps by workload, and a file split proposal.
+description: "Merged review of the GPU stack: where it stands (retro-class 3D feasible, statuses refreshed), how its shape compares to WebGL2 and WebGPU (a retained pure target vs a recorded pass; deliberate divergences are the improvements, path-of-least-resistance ones the regressions), ranked lessons, capability gaps by workload, and a file split proposal. Its shortlist closed 2026-07-31, all eight items; see the status section for what shipped and what the do-order is now."
 timestamp: 2026-07-30T00:00:00Z
 ---
 
@@ -31,6 +31,9 @@ Scope: `alloy/src/shader.rs`, `alloy/src/texture.rs`, `alloy/src/context.rs`,
 `packages/core/src/gpu.ts`, `packages/flux-types/gui/gpu.d.ts`.
 
 ## Where the stack stands (2026-07-30)
+
+Snapshot as this document was written; the next section records what landed
+after it.
 
 Crossed from "shader toy" to a minimal but genuinely usable 3D pipeline on
 2026-07-15 - the Doom port retired its fragment-only raycaster for a real
@@ -81,6 +84,81 @@ implemented surface is small, correct, and verified on real clients; the
 unimplemented surface is catalogued in the backlog rather than half-built.
 The rest of this document is about whether the shape is right and what to do
 next.
+
+## Status 2026-07-31
+
+The shortlist at the end of this document is closed: all eight items landed
+between 2026-07-29 and 07-31, and ranked lesson 1 (load-op) arrived with item
+3 rather than after it. What shipped, in shortlist order:
+
+1. **Branded ids** - five brands in `flux:gpu`, re-exported through
+   `@solidrt/core/gpu`.
+   [gpu-branded-ids](../backlog/gpu-branded-ids.md)
+2. **The pixel contract, written down** - one named contract in
+   `gui/gpu.d.ts`, core `gpu.ts`, `docs/core.md` and scaffold AGENTS.md.
+   [gpu-pixel-contract-docs](../backlog/gpu-pixel-contract-docs.md)
+3. **The purity question: decided, option 2.** The invariant is documented,
+   and targets created `render: "manual"` are excluded from the flush graph
+   and stepped by `renderTarget(id)`, with `loadOp: "load"` (manual-only) and
+   `copyTexture` alongside. Linux-verified: the trails example runs at 60 fps
+   with exactly one pass per frame.
+   [gpu-purity-decision](../backlog/gpu-purity-decision.md), plan
+   okf/plans/gpu-render-verb.md
+4. **Buffers held by `Rc`** - the ordered-destroy rule and its doc sentence
+   deleted together.
+   [gpu-buffer-lifetime](../backlog/gpu-buffer-lifetime.md)
+5. **Call-site validation** - creates validate inside their blocking RPCs,
+   fire-and-forget updates against UI-side mirrors; the
+   strict-on-inactive-uniforms sub-case split out as
+   [gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md).
+   [gpu-callsite-validation](../backlog/gpu-callsite-validation.md)
+6. **Draw range and instancing** - `setDrawCount` replaced by
+   `setDraw({ firstVertex, vertexCount, instanceCount })`, drawn via
+   `glDrawArraysInstanced`.
+   [gpu-pipeline-extensions](../backlog/gpu-pipeline-extensions.md)
+7. **Labels and limits** - a label on every create, surfaced in
+   `get_gpu_resources` and raster-side error strings; `GpuLimits` queried at
+   raster startup and checked at every create/bind/resize site with the limit
+   named. [gpu-labels-limits](../backlog/gpu-labels-limits.md)
+8. **The file split** - `shader.rs` into an alloy `gpu/` folder, flux
+   `gui/texture.rs` renamed to `gpu.rs`, the RasterCmd enum, capture path and
+   context DTOs lifted. [gpu-file-reorg](../backlog/gpu-file-reorg.md)
+
+Also since, outside the list: target params became a positional argument
+rather than an opts-bag key.
+
+So the do-order is spent, and what remains sorts into four groups.
+
+- **Verification debt.** Sampler state, dependency propagation, the
+  pass-timing counters, labels and limits, and `gpu-particles.tsx` all landed
+  typecheck-verified but runtime-unverified. The verdict above rests on
+  "verified on real clients", and this is currently the largest gap between
+  that claim and the state.
+- **The naming decision**, filed separately below because it is breaking and
+  wants its own call: `createShader`/`createPipeline` ->
+  `createShaderTexture`/`createPipelineTexture`, plus the `iTime` trap and
+  the one-preamble story
+  ([gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md)). It
+  is the only remaining item that is purely a decision, and its cost grows
+  with every example, doc and app written against the current names.
+- **Capability**, in rough order: multi-pass into one target (unblocked twice
+  over - the object-model split gave draw state a home, the purity decision
+  gave it a legal shape), the multi-pass chain example
+  ([gpu-example-gaps](../backlog/gpu-example-gaps.md), unblocked since 07-29
+  and still unwritten), float texture formats and sampleable depth, then MSAA
+  ([gpu-target-antialiasing](../backlog/gpu-target-antialiasing.md)). Lesson
+  7's pipeline-side format validation lands with whichever of the last two
+  arrives first: that is the moment a pipeline and a target can first
+  disagree invisibly.
+- **Outside the GPU stack**, relative mouse input still outranks all of it
+  for the first-person class
+  ([relative-mouse-input](../backlog/relative-mouse-input.md)).
+
+Two ranked lessons had no backlog home when the shortlist closed, and were
+filed on 07-31: lesson 8 as
+[gpu-per-binding-sampler](../backlog/gpu-per-binding-sampler.md) and lesson
+11 as
+[gpu-async-compile-readback](../backlog/gpu-async-compile-readback.md).
 
 ## Summary
 
@@ -685,7 +763,8 @@ name their blockers:
   any GPU gap - no pointer-lock / relative-motion API exists anywhere in the
   surface (re-verified 2026-07-30), and it is an SDL capability away.
   Unchanged since 07-15 and still arguably the biggest gap in the stack for
-  this class.
+  this class. Filed 2026-07-31 as
+  [relative-mouse-input](../backlog/relative-mouse-input.md).
 - **GPU simulation** (particles, fluids, flocking): no path today except CPU
   round trips or encoding state into textures. The ES 3.0 answer, transform
   feedback, is non-pure by construction and lands on the purity fault line -
@@ -785,6 +864,10 @@ generation or parity-check problem rather than a splitting one.
 
 ## Shortlist
 
+**All eight closed as of 2026-07-31** (see the status section near the top
+for what each one shipped as). Kept as written, because the ordering argument
+is the part worth re-reading before proposing the next batch.
+
 If only a few things are done, in this order:
 
 1. **Branded ids** - a `.d.ts` edit, no engine change, closes a whole class of
@@ -811,8 +894,8 @@ Filed separately because they are breaking and want their own decision: the
 `createPipeline` / `createRenderPipeline` collision and `createShader`
 returning a texture (see naming).
 
-Everything above was filed into the backlog on 2026-07-30, so this list is
-now a reading order rather than the tracker: (1)
+Everything above was filed into the backlog on 2026-07-30 and closed by
+07-31, so this list is a reading order rather than the tracker: (1)
 [gpu-branded-ids](../backlog/gpu-branded-ids.md), (2)
 [gpu-pixel-contract-docs](../backlog/gpu-pixel-contract-docs.md), (3)
 [gpu-purity-decision](../backlog/gpu-purity-decision.md), (4)
@@ -830,6 +913,7 @@ extensions file respectively.
 
 Two workload notes sit outside the ranked list but shape the do-order. For
 the first-person class, relative mouse input outranks every GPU item and is
-an SDL capability away. And GPU simulation waits on the purity decision
+an SDL capability away ([relative-mouse-input](
+../backlog/relative-mouse-input.md), filed 2026-07-31). And GPU simulation waits on the purity decision
 (item 3), not on any feature - transform feedback, instanced particles and
 ping-pong state all land on that fault line.

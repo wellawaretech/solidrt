@@ -10,6 +10,10 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Relative mouse input (mouse look)](relative-mouse-input.md) [open] - No
+  pointer-lock / relative-motion path exists anywhere in the surface, so
+  first-person control is impossible however good the GPU gets; SDL already
+  has the capability and alloy already discards the deltas.
 - [AVIF decoding in decodeImage](avif-decode.md) [open] - The one practical
   web image format decodeImage lacks; pure-Rust decode does not exist in the
   image crate, so it needs the dav1d C system dependency.
@@ -73,10 +77,6 @@ Sorted by status: open first, then partial, deferred, and closed
   the driver report .tsx lines. Mesa calibration probe first (honored at
   all? off-by-one convention?); no platform gate, ignoring drivers degrade
   to today.
-- [GPU object labels and device limits](gpu-labels-limits.md) [open] -
-  label? on every create surfaced in get_gpu_resources and error strings,
-  plus a queryable gpu.limits with named-limit errors at create instead of
-  framebuffer-incomplete hex.
 - [Buffers held like programs](gpu-buffer-lifetime.md) [done] - The one id
   space with an ordered-destroy rule whose violation silently freezes
   geometry; Rc from targets deletes the rule and the failure mode together.
@@ -106,10 +106,11 @@ Sorted by status: open first, then partial, deferred, and closed
   variables carry a wdth axis the text API cannot reach; whether to expose a
   CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
-  uniforms and the additive blend/depthWrite toggles landed 2026-07-29; still
-  deferred: index buffers (shape decided), draw range/instancing, float data
-  textures, cull/depth-func raster state, alpha translucency, multi-pass
-  targets (gated on the gpu-review purity decision).
+  uniforms and the additive blend/depthWrite toggles landed 2026-07-29, draw
+  range and instancing (setDraw) 2026-07-30; still deferred: index buffers
+  (shape decided), per-instance attributes, float data textures, sampleable
+  depth, cull/depth-func raster state, alpha translucency, and multi-pass
+  targets - the last unblocked as of the 2026-07-30 purity decision.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI
@@ -202,6 +203,15 @@ Sorted by status: open first, then partial, deferred, and closed
   ES 3.0 mandates ETC2 in core (4-8x texture memory), uploadTexture is
   RGBA8-only; demand-gated with the ANGLE-may-software-expand caveat
   recorded.
+- [Per-binding sampler override](gpu-per-binding-sampler.md) [deferred] -
+  filter/wrap fused into the texture id is the right default but leaves no
+  escape hatch (a nearest atlas cannot be blurred, a clamped target cannot be
+  tiled); an id-or-object binding value is cheap because the sampler cache is
+  already keyed by state.
+- [Async shader compile and readback](gpu-async-compile-readback.md) [deferred] -
+  The two calls whose cost class differs from the rest of the surface, both
+  blocking the frame loop; invisible while compiles happen at startup, real
+  for live-coding, and the async precedent (captureSnapshot) already exists.
 - [GPU target purity and an explicit render verb](gpu-purity-decision.md)
   [decided 2026-07-30] - Option 2: the purity invariant is documented and
   render: "manual" targets stepped by renderTarget(id) are the one
@@ -322,3 +332,9 @@ Sorted by status: open first, then partial, deferred, and closed
   (1466 lines, six concerns) into an alloy gpu/ folder, rename flux
   plugins/gui/texture.rs to gpu.rs, lift the RasterCmd enum, capture path
   and context DTOs.
+- [GPU object labels and device limits](gpu-labels-limits.md) [done] - Landed
+  2026-07-31: a label on every create, surfaced in get_gpu_resources and in
+  raster-side error strings, plus GpuLimits queried at raster startup and
+  checked at every create/bind/resize site with the limit named, so an
+  oversize target fails as "exceeds this device's limit" instead of
+  framebuffer-incomplete hex. Runtime-unverified.

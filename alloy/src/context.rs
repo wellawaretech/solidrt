@@ -759,8 +759,10 @@ impl Context {
   /// or cleared. The caller must request a frame. Errs on an unknown program
   /// handle, or on params/textures naming anything but the program's active
   /// uniforms (same call-site validation as the target paths; `uSource`,
-  /// `uPrevious`, `iResolution` and `iTime` are runtime-filled and need no
-  /// entry here).
+  /// `uPrevious` and `iResolution` are runtime-filled and need no entry here.
+  /// `iTime` is NOT: the preamble declares it, nothing fills it, so a shader
+  /// reading it needs it passed as an ordinary param or it stays at 0 - see
+  /// okf/backlog/gpu-fused-create-refactor.md).
   pub fn set_window_shader(&self, shader: Option<WindowShader>) -> Result<(), String> {
     if let Some(ws) = &shader {
       // The runtime-filled layers occupy units ahead of the declared inputs:
