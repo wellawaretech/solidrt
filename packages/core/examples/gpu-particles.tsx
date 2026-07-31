@@ -71,8 +71,9 @@ function particles(count: number): Float32Array {
 }
 
 function App() {
-  let bufferId = createBuffer(particles(1500))
+  let bufferId = createBuffer(particles(1500), { label: "particle-verts" })
   let id = createPipeline(VERTEX, FRAGMENT, 512, 512, {
+    label: "particles",
     params: { uTime: 0, uTintA: [1.0, 0.45, 0.15], uTintB: [0.25, 0.5, 1.0] },
     attributes: [
       { name: "aPos", format: "vec3" },

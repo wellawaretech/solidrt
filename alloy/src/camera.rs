@@ -303,7 +303,7 @@ impl crate::context::Context {
       _ => true,
     };
     if recreate {
-      if let Err(e) = self.create_texture_at(session.texture_id, width, height, pixels, Default::default()) {
+      if let Err(e) = self.create_texture_at(session.texture_id, width, height, pixels, Default::default(), None) {
         log::warn!("[camera] frame texture create failed: {e}");
         sdl_utils::camera_release_frame(session.camera, frame);
         return false;

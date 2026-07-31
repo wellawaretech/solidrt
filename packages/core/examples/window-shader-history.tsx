@@ -33,7 +33,7 @@ let ECHO = glsl`
 function App() {
   let vs = compileShader("vertex", VERTEX)
   let fs = compileShader("fragment", ECHO, { header: true })
-  let echoProgram = linkProgram(vs, fs)
+  let echoProgram = linkProgram(vs, fs, { label: "echo" })
   destroyShader(vs)
   destroyShader(fs)
 

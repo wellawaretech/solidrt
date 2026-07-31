@@ -886,6 +886,14 @@ fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
   .to_string()
 }
 
+/// Add the create's debug label to a resource object, when one was given
+/// (absent otherwise, like the other off-default keys).
+fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
+  if let Some(label) = label {
+    obj.as_object_mut().expect("resource json is an object").insert("label".into(), label.clone().into());
+  }
+}
+
 /// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs)
 /// and encode it. Runs on the JS thread (see the query handling above).
 fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
@@ -897,10 +905,21 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   let textures: Vec<serde_json::Value> = res
     .textures
     .iter()
-    .map(|t| serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target}))
+    .map(|t| {
+      let mut obj = serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target});
+      insert_label(&mut obj, &t.label);
+      obj
+    })
     .collect();
-  let buffers: Vec<serde_json::Value> =
-    res.buffers.iter().map(|b| serde_json::json!({"id": b.id, "byteLength": b.byte_length})).collect();
+  let buffers: Vec<serde_json::Value> = res
+    .buffers
+    .iter()
+    .map(|b| {
+      let mut obj = serde_json::json!({"id": b.id, "byteLength": b.byte_length});
+      insert_label(&mut obj, &b.label);
+      obj
+    })
+    .collect();
   let pipelines: Vec<serde_json::Value> = res
     .pipelines
     .iter()
@@ -924,6 +943,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
           (name.clone(), v)
         }).collect::<serde_json::Map<_, _>>(),
       });
+      insert_label(&mut obj, &p.label);
       let map = obj.as_object_mut().expect("pipeline json is an object");
       if let Some(program_id) = p.program_id {
         map.insert("programId".into(), program_id.into());
@@ -973,6 +993,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     .iter()
     .map(|p| {
       let mut obj = serde_json::json!({"id": p.id, "programId": p.program_id});
+      insert_label(&mut obj, &p.label);
       let map = obj.as_object_mut().expect("render pipeline json is an object");
       // Draw state reported only off its defaults, like the per-target infos.
       if p.topology != "triangles" {
@@ -996,7 +1017,15 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     })
     .collect();
 
-  let programs: Vec<serde_json::Value> = res.programs.iter().map(|p| serde_json::json!({"id": p.id})).collect();
+  let programs: Vec<serde_json::Value> = res
+    .programs
+    .iter()
+    .map(|p| {
+      let mut obj = serde_json::json!({"id": p.id});
+      insert_label(&mut obj, &p.label);
+      obj
+    })
+    .collect();
 
   let mut data = serde_json::json!({
     "textures": textures, "buffers": buffers, "pipelines": pipelines,

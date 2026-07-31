@@ -15,7 +15,7 @@ import bytes from "./logo.png" with { type: "binary" }
 
 function App() {
   let { data, width, height } = decodeImage(bytes)
-  let id = createTexture(data, width, height)
+  let id = createTexture(data, width, height, { label: "logo" })
 
   return (
     <window alignItems="center" justifyContent="center">

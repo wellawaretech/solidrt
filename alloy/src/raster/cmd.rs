@@ -35,6 +35,9 @@ pub(crate) enum RasterCmd {
     height: u32,
     pixels: Vec<u8>,
     sampler: SamplerState,
+    /// Debug label; None on a replace-at-id (an id-stable resize) keeps the
+    /// existing entry's label.
+    label: Option<String>,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
@@ -53,6 +56,7 @@ pub(crate) enum RasterCmd {
     params: Vec<(String, ParamValue)>,
     textures: Vec<(String, u64)>,
     sampler: SamplerState,
+    label: Option<String>,
     reply: mpsc::Sender<Result<(Texture, UniformTable), String>>,
   },
   /// Compile a vertex+fragment pipeline into a new target texture and adopt
@@ -67,13 +71,19 @@ pub(crate) enum RasterCmd {
   /// stages remain usable for further links. Link errors reach JS via the
   /// reply; success carries the reflected uniform table for the UI-side
   /// validation mirror.
-  LinkProgram { id: u64, vertex: u64, fragment: u64, reply: mpsc::Sender<Result<UniformTable, String>> },
+  LinkProgram { id: u64, vertex: u64, fragment: u64, label: Option<String>, reply: mpsc::Sender<Result<UniformTable, String>> },
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },
   /// Pair a registered program with draw state in the pipeline registry.
   /// Kind errors ("program is a fragment shader") reach JS via the reply.
-  CreateRenderPipeline { id: u64, program: u64, desc: PipelineDesc, reply: mpsc::Sender<Result<(), String>> },
+  CreateRenderPipeline {
+    id: u64,
+    program: u64,
+    desc: PipelineDesc,
+    label: Option<String>,
+    reply: mpsc::Sender<Result<(), String>>,
+  },
   /// Drop a pipeline from the registry. Targets created from it keep it alive
   /// (and keep rendering); GL resources are freed when the last user goes.
   DestroyRenderPipeline { id: u64 },
@@ -121,7 +131,7 @@ pub(crate) enum RasterCmd {
   /// by the adopted Impeller Texture and dies with the UI side's last handle.
   DestroyTexture { id: u64 },
   /// Create an interleaved vertex buffer from raw bytes.
-  CreateBuffer { id: u64, data: Vec<u8>, reply: mpsc::Sender<Result<(), String>> },
+  CreateBuffer { id: u64, data: Vec<u8>, label: Option<String>, reply: mpsc::Sender<Result<(), String>> },
   /// Overwrite part of a vertex buffer and mark pipelines drawing from it
   /// dirty.
   WriteBuffer { id: u64, data: Vec<u8>, byte_offset: usize },

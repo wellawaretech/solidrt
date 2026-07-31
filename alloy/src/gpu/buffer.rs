@@ -12,10 +12,13 @@ use super::prev_buffer;
 pub struct GpuBuffer {
   pub vbo: glow::Buffer,
   pub size: usize,
+  /// Free-form debug name from the create (WebGPU's label), surfaced in the
+  /// resource inventory and raster-side messages. Not unique.
+  pub label: Option<String>,
 }
 
 impl GpuBuffer {
-  pub fn new(gl: &glow::Context, data: &[u8]) -> Result<Self, String> {
+  pub fn new(gl: &glow::Context, data: &[u8], label: Option<String>) -> Result<Self, String> {
     unsafe {
       let prev = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
       let vbo = gl.create_buffer().map_err(|e| format!("glGenBuffers failed: {e}"))?;
@@ -24,7 +27,7 @@ impl GpuBuffer {
       // often as static meshes, and the hint costs static users nothing.
       gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, data, glow::DYNAMIC_DRAW);
       gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev));
-      Ok(GpuBuffer { vbo, size: data.len() })
+      Ok(GpuBuffer { vbo, size: data.len(), label })
     }
   }
 

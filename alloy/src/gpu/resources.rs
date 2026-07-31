@@ -33,15 +33,21 @@ pub struct GpuTextureInfo {
   pub height: u32,
   /// A shader or pipeline renders into this texture (vs a sampled upload).
   pub target: bool,
+  /// The create's debug label, when one was given.
+  pub label: Option<String>,
 }
 
 pub struct GpuBufferInfo {
   pub id: u64,
   pub byte_length: usize,
+  /// The create's debug label, when one was given.
+  pub label: Option<String>,
 }
 
 pub struct GpuProgramInfo {
   pub id: u64,
+  /// The create's debug label, when one was given.
+  pub label: Option<String>,
 }
 
 /// A registered render pipeline: a program paired with the draw state its
@@ -49,6 +55,8 @@ pub struct GpuProgramInfo {
 pub struct GpuRenderPipelineInfo {
   pub id: u64,
   pub program_id: u64,
+  /// The create's debug label, when one was given.
+  pub label: Option<String>,
   pub topology: &'static str,
   /// "none" or "add".
   pub blend: &'static str,
@@ -61,6 +69,9 @@ pub struct GpuRenderPipelineInfo {
 pub struct GpuPipelineInfo {
   /// The registry id its output texture is sampleable under.
   pub texture_id: u64,
+  /// The create's debug label, when one was given (held by the target's
+  /// texture entry, same id).
+  pub label: Option<String>,
   /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
   pub kind: &'static str,
   /// The shared program behind this target's pipeline; None when it was

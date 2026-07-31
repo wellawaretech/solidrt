@@ -309,7 +309,7 @@ impl Context {
   ) -> Result<Rc<TextureEntry>, String> {
     if self.textures.get(id).is_none() {
       let pixels = make_pixels();
-      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default())?;
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default(), None)?;
     }
     Ok(self.textures.get(id).expect("texture must exist after insert"))
   }
@@ -322,7 +322,7 @@ impl Context {
   ) -> Result<Rc<TextureEntry>, String> {
     let pixels = make_pixels();
     if self.textures.get(id).is_none() {
-      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default())?;
+      self.create_texture_at(id, size.width as u32, size.height as u32, &pixels, SamplerState::default(), None)?;
     } else if let Err(e) = self.update_texture(id, &pixels, 0) {
       log::warn!("[alloy] texture {id} update failed: {e}");
     }
@@ -331,23 +331,41 @@ impl Context {
 
   /// Create a sampleable texture from RGBA8 pixels and adopt into Impeller,
   /// with the given sampling (how every consumer - shader passes and
-  /// `<texture>` display - samples it). Returns the registry id assigned to
-  /// the new texture; errs on a size over the device limit (named in the
-  /// message), checked here so the mistake throws at the call site.
-  pub fn create_texture_from_pixels(&self, width: u32, height: u32, pixels: &[u8], sampler: SamplerState) -> Result<u64, String> {
+  /// `<texture>` display - samples it) and an optional debug label. Returns
+  /// the registry id assigned to the new texture; errs on a size over the
+  /// device limit (named in the message), checked here so the mistake throws
+  /// at the call site.
+  pub fn create_texture_from_pixels(
+    &self,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+    label: Option<String>,
+  ) -> Result<u64, String> {
     let id = self.textures.allocate_id();
-    self.create_texture_at(id, width, height, pixels, sampler)?;
+    self.create_texture_at(id, width, height, pixels, sampler, label)?;
     Ok(id)
   }
 
   /// Create (or replace) the texture stored at `id`, e.g. to resize a stream
   /// texture without invalidating the id handed out to consumers. Lookups pick
   /// up the new texture immediately; in-flight users of the old entry keep it
-  /// alive until released. Errs on a size over the device limit (checked
-  /// here, before the RPC) or a failed adoption.
-  pub fn create_texture_at(&self, id: u64, width: u32, height: u32, pixels: &[u8], sampler: SamplerState) -> Result<(), String> {
+  /// alive until released. A `label` of None on a replace keeps the existing
+  /// entry's label (the id-stable resize contract). Errs on a size over the
+  /// device limit (checked here, before the RPC) or a failed adoption.
+  pub fn create_texture_at(
+    &self,
+    id: u64,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    sampler: SamplerState,
+    label: Option<String>,
+  ) -> Result<(), String> {
     self.gpu_limits().check_texture_size(width, height)?;
-    let impeller = self.rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), sampler, reply })??;
+    let impeller =
+      self.rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), sampler, label, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
     Ok(())
   }
@@ -389,9 +407,10 @@ impl Context {
     if pixels.len() < frame_size {
       return Err(format!("need {frame_size} bytes for {width}x{height}, buffer has {}", pixels.len()));
     }
-    // Sampling is a property of the id and survives the id-stable resize.
+    // Sampling is a property of the id and survives the id-stable resize, as
+    // does the label (None here = keep, applied raster-side).
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
-    self.create_texture_at(id, width, height, &pixels[..frame_size], sampler)
+    self.create_texture_at(id, width, height, &pixels[..frame_size], sampler, None)
   }
 
   /// Recreate a shader/pipeline target at a new size under the same id: the
@@ -418,6 +437,7 @@ impl Context {
   /// observes the pixels. The compiled program is retained so
   /// update_shader_params can re-render the same texture without recompiling
   /// or re-adopting.
+  #[allow(clippy::too_many_arguments)]
   pub fn create_shader_texture(
     &self,
     width: u32,
@@ -426,6 +446,7 @@ impl Context {
     params: &[(String, ParamValue)],
     textures: &[(String, u64)],
     sampler: SamplerState,
+    label: Option<String>,
   ) -> Result<u64, String> {
     let limits = self.gpu_limits();
     limits.check_texture_size(width, height)?;
@@ -439,6 +460,7 @@ impl Context {
       params: params.to_vec(),
       textures: textures.to_vec(),
       sampler,
+      label,
       reply,
     })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler });
@@ -531,9 +553,9 @@ impl Context {
   /// Create an interleaved vertex buffer from raw bytes, returning its id.
   /// Buffer ids are their own space (not texture ids); pipelines reference the
   /// buffer via `PipelineSpec::buffer_id`.
-  pub fn create_gpu_buffer(&self, data: &[u8]) -> Result<u64, String> {
+  pub fn create_gpu_buffer(&self, data: &[u8], label: Option<String>) -> Result<u64, String> {
     let id = self.next_buffer_id.get();
-    self.rpc(|reply| RasterCmd::CreateBuffer { id, data: data.to_vec(), reply })??;
+    self.rpc(|reply| RasterCmd::CreateBuffer { id, data: data.to_vec(), label, reply })??;
     self.next_buffer_id.set(id + 1);
     self.buffer_sizes.borrow_mut().insert(id, data.len());
     Ok(id)
@@ -633,7 +655,7 @@ impl Context {
   /// `create_shader_target`, is freed with `destroy_shader_program`, and link
   /// errors surface here, synchronously. The stages remain usable for further
   /// links.
-  pub fn link_shader_program(&self, vertex: u64, fragment: u64) -> Result<u64, String> {
+  pub fn link_shader_program(&self, vertex: u64, fragment: u64, label: Option<String>) -> Result<u64, String> {
     let kinds = self.stage_kinds.borrow();
     match kinds.get(&vertex) {
       None => return Err(format!("shader {vertex} not found")),
@@ -647,7 +669,7 @@ impl Context {
     }
     drop(kinds);
     let id = self.next_program_id.get();
-    let uniforms = self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, reply })??;
+    let uniforms = self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, label, reply })??;
     self.next_program_id.set(id + 1);
     self.program_uniforms.borrow_mut().insert(id, Rc::new(uniforms));
     Ok(id)
@@ -664,7 +686,7 @@ impl Context {
   /// pipeline id (its own id space, like programs and buffers). The pipeline
   /// is the draw-state object every target created from it shares; creating
   /// one compiles nothing. Free with `destroy_render_pipeline`.
-  pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc) -> Result<u64, String> {
+  pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc, label: Option<String>) -> Result<u64, String> {
     self.gpu_limits().check_vertex_attribs(desc.attributes.len())?;
     let uniforms = match self.program_uniforms.borrow().get(&program) {
       Some(uniforms) => uniforms.clone(),
@@ -672,7 +694,7 @@ impl Context {
     };
     let stride = vertex_stride(&desc.attributes) as usize;
     let id = self.next_pipeline_id.get();
-    self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, reply })??;
+    self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, label, reply })??;
     self.next_pipeline_id.set(id + 1);
     self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride });
     Ok(id)
@@ -894,7 +916,7 @@ impl Context {
   /// texture never leaves the raster thread.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
     let pixels = self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })??;
-    self.create_texture_from_pixels(width, height, &pixels, SamplerState::default())
+    self.create_texture_from_pixels(width, height, &pixels, SamplerState::default(), None)
   }
 
   /// Read back a registered texture's RGBA8 pixels by id, using the entry's

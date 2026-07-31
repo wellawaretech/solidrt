@@ -144,6 +144,15 @@ fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquic
   alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref()).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
+// Decode the { label? } debug name every create path accepts: free-form, not
+// unique, surfaced in the resource inventory and engine log messages.
+fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> {
+  match opts {
+    Some(o) => o.get::<_, Option<String>>("label"),
+    None => Ok(None),
+  }
+}
+
 // Decode the per-target options shared by createPipeline and
 // createShaderTarget - { params, textures, buffer, vertexCount, clearColor,
 // render, loadOp, filter, wrap }, everything optional - into the alloy
@@ -226,7 +235,8 @@ fn collect_target_spec(
     None => false,
   };
   let sampler = collect_sampler(ctx, opts, api)?;
-  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw, clear_color, sampler, manual, load })
+  let label = collect_label(opts)?;
+  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw, clear_color, sampler, manual, load, label })
 }
 
 // Decode the draw-state options of createRenderPipeline and createPipeline -
@@ -362,9 +372,10 @@ impl ModuleDef for GpuModule {
           return Err(throw_str(&ctx, &format!("createTexture: expected {expected} RGBA8 bytes, got {}", raw.len)));
         }
         let sampler = collect_sampler(&ctx, &opts.0, "createTexture")?;
+        let label = collect_label(&opts.0)?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
         let id = create_atx
-          .create_texture_from_pixels(width, height, pixels, sampler)
+          .create_texture_from_pixels(width, height, pixels, sampler, label)
           .map_err(|e| throw_str(&ctx, &format!("createTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -390,9 +401,10 @@ impl ModuleDef for GpuModule {
           ));
         }
         let sampler = collect_sampler(&ctx, &opts.0, "createMutableTexture")?;
+        let label = collect_label(&opts.0)?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
         let id = mutable_atx
-          .create_texture_from_pixels(width, height, pixels, sampler)
+          .create_texture_from_pixels(width, height, pixels, sampler, label)
           .map_err(|e| throw_str(&ctx, &format!("createMutableTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -463,8 +475,9 @@ impl ModuleDef for GpuModule {
           None => Vec::new(),
         };
         let sampler = collect_sampler(&ctx, &opts.0, "createShader")?;
+        let label = collect_label(&opts.0)?;
         let id = create_shader_atx
-          .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler)
+          .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler, label)
           .map_err(|e| throw_str(&ctx, &format!("createShader: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -552,8 +565,9 @@ impl ModuleDef for GpuModule {
     let create_render_pipeline =
       Function::new(ctx.clone(), move |ctx: Ctx<'_>, program: u64, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
         let desc = collect_pipeline_desc(&ctx, &opts.0, "createRenderPipeline")?;
+        let label = collect_label(&opts.0)?;
         let id = create_render_pipeline_atx
-          .create_render_pipeline(program, desc)
+          .create_render_pipeline(program, desc, label)
           .map_err(|e| throw_str(&ctx, &format!("createRenderPipeline: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created_pipelines.borrow_mut().insert(id);
@@ -594,16 +608,19 @@ impl ModuleDef for GpuModule {
     // Link two compiled stages into a program: the handle targets (and later
     // the window effect) are created from. Link errors throw here.
     let link_program_atx = atx.clone();
-    let link_program =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, vertex: u64, fragment: u64| -> rquickjs::Result<u64> {
+    let link_program = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, vertex: u64, fragment: u64, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        let label = collect_label(&opts.0)?;
         let id = link_program_atx
-          .link_shader_program(vertex, fragment)
+          .link_shader_program(vertex, fragment, label)
           .map_err(|e| throw_str(&ctx, &format!("linkProgram: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created_programs.borrow_mut().insert(id);
         Ok(id)
-      })
-      .expect("create linkProgram");
+      },
+    )
+    .expect("create linkProgram");
 
     let destroy_shader_atx = atx.clone();
     let destroy_shader = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
@@ -641,16 +658,20 @@ impl ModuleDef for GpuModule {
     .expect("create destroyProgram");
 
     let create_buffer_atx = atx.clone();
-    let create_buffer =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, data: TypedArray<'_, u8>| -> rquickjs::Result<u64> {
+    let create_buffer = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
+        let label = collect_label(&opts.0)?;
         let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-        let id = create_buffer_atx.create_gpu_buffer(bytes).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?;
+        let id =
+          create_buffer_atx.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created_buffers.borrow_mut().insert(id);
         Ok(id)
-      })
-      .expect("create createBuffer");
+      },
+    )
+    .expect("create createBuffer");
 
     // A write re-renders the pipelines drawing from the buffer (alloy does
     // that), so the screen changes without any tree mutation: request a frame.

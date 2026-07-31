@@ -50,7 +50,10 @@ import * as gpu from "flux:gpu"
 // signal changes inside a long-lived component, handed across owners, ...).
 // Without it, each rebuild would stack another onCleanup on the component
 // owner: a leak until unmount, then a double-free against manual destroys.
-export type CreateOptions = { manual?: boolean }
+// `label` is a free-form debug name (WebGPU's label): surfaced by the dev
+// tooling's GPU inventory and engine log messages, never interpreted, kept
+// across id-stable resizes.
+export type CreateOptions = { manual?: boolean; label?: string }
 
 // Sampling options every texture-producing create* helper accepts, applied at
 // creation as a property of the texture id (there is no set-sampler-later).
@@ -463,7 +466,7 @@ export function createPipeline(
  * (Destruction order relative to pipelines does not matter.)
  */
 export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): gpu.BufferId {
-  let id = gpu.createBuffer(toUint8(data))
+  let id = gpu.createBuffer(toUint8(data), opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyBuffer(id))
   return id
 }

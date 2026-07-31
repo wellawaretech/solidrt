@@ -412,16 +412,16 @@ impl RasterState {
               self.present_failures = 0;
             }
           }
-          RasterCmd::CreateTexture { id, width, height, pixels, sampler, reply: tx } => {
-            reply(tx, self.create_texture(id, width, height, &pixels, sampler));
+          RasterCmd::CreateTexture { id, width, height, pixels, sampler, label, reply: tx } => {
+            reply(tx, self.create_texture(id, width, height, &pixels, sampler, label));
           }
           RasterCmd::UpdateTexture { id, pixels } => {
             if let Err(e) = self.update_texture(id, &pixels) {
               log::warn!("[alloy] texture update failed: {e}");
             }
           }
-          RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, sampler, reply: tx } => {
-            reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler));
+          RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, sampler, label, reply: tx } => {
+            reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler, label));
           }
           RasterCmd::CreatePipelineTexture { id, spec, reply: tx } => {
             reply(tx, self.create_pipeline_texture(id, spec));
@@ -432,16 +432,16 @@ impl RasterState {
             });
             reply(tx, result);
           }
-          RasterCmd::LinkProgram { id, vertex, fragment, reply: tx } => {
-            reply(tx, self.link_program(id, vertex, fragment));
+          RasterCmd::LinkProgram { id, vertex, fragment, label, reply: tx } => {
+            reply(tx, self.link_program(id, vertex, fragment, label));
           }
           RasterCmd::DestroyStage { id } => {
             if let Some(shader) = self.stages.remove(&id) {
               crate::gpu::delete_stage(&self.gl, shader);
             }
           }
-          RasterCmd::CreateRenderPipeline { id, program, desc, reply: tx } => {
-            reply(tx, self.create_render_pipeline(id, program, desc));
+          RasterCmd::CreateRenderPipeline { id, program, desc, label, reply: tx } => {
+            reply(tx, self.create_render_pipeline(id, program, desc, label));
           }
           RasterCmd::DestroyRenderPipeline { id } => {
             if let Some(pipeline) = self.render_pipelines.remove(&id) {
@@ -540,10 +540,10 @@ impl RasterState {
               shader.destroy(&self.gl);
             }
           }
-          RasterCmd::CreateBuffer { id, data, reply: tx } => {
+          RasterCmd::CreateBuffer { id, data, label, reply: tx } => {
             reply(
               tx,
-              GpuBuffer::new(&self.gl, &data).map(|buffer| {
+              GpuBuffer::new(&self.gl, &data, label).map(|buffer| {
                 self.buffers.insert(id, Rc::new(buffer));
               }),
             );
@@ -934,9 +934,13 @@ impl RasterState {
     height: u32,
     pixels: &[u8],
     sampler: SamplerState,
+    label: Option<String>,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let gpu = GpuTexture::new(&self.gl, self.backend, size, sampler);
+    let mut gpu = GpuTexture::new(&self.gl, self.backend, size, sampler);
+    // A replace-at-id with no new label is an id-stable resize: labels are
+    // create-time state and follow the id through it.
+    gpu.label = label.or_else(|| self.textures.get(&id).and_then(|old| old.label.clone()));
     gpu.upload(&self.gl, pixels, size);
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
@@ -984,7 +988,8 @@ impl RasterState {
       // The UI side rejects sampling cycles at bind time, so reaching this
       // means the mirrors diverged. Render each member once anyway: stale
       // inputs, but forward progress and no hang.
-      log::warn!("[alloy] sampling cycle between shader targets {cyclic:?}; rendering each once");
+      let members: Vec<String> = cyclic.iter().map(|id| self.texture_desc(*id)).collect();
+      log::warn!("[alloy] sampling cycle between shader targets [{}]; rendering each once", members.join(", "));
     }
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
@@ -1011,8 +1016,16 @@ impl RasterState {
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
     let size = ISize::new(width as i64, height as i64);
-    let gpu =
-      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height, sampler: shader.sampler() };
+    let gpu = GpuTexture {
+      gl_texture: shader.gl_texture(),
+      backend: self.backend,
+      width,
+      height,
+      sampler: shader.sampler(),
+      // The id-stable resize keeps the create's label, like create_texture's
+      // replace-at-id path.
+      label: self.textures.get(&id).and_then(|old| old.label.clone()),
+    };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
@@ -1042,7 +1055,7 @@ impl RasterState {
     let gpu = self.textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
     let expected = (gpu.width as usize) * (gpu.height as usize) * 4;
     if pixels.len() != expected {
-      return Err(format!("texture {id} update is {} bytes, expected {expected}", pixels.len()));
+      return Err(format!("texture {} update is {} bytes, expected {expected}", describe(id, &gpu.label), pixels.len()));
     }
     let size = ISize::new(gpu.width as i64, gpu.height as i64);
     gpu.upload(&self.gl, pixels, size);
@@ -1052,6 +1065,7 @@ impl RasterState {
     Ok(())
   }
 
+  #[allow(clippy::too_many_arguments)]
   fn create_shader_texture(
     &mut self,
     id: u64,
@@ -1061,6 +1075,7 @@ impl RasterState {
     params: &[(String, ParamValue)],
     textures: Vec<(String, u64)>,
     sampler: SamplerState,
+    label: Option<String>,
   ) -> Result<(Texture, UniformTable), String> {
     let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?.with_sampler(sampler);
     let uniforms = shader.uniform_table();
@@ -1074,11 +1089,12 @@ impl RasterState {
       return Err(e);
     }
     shader.merge_params(params);
-    let texture = self.register_shader_target(id, shader, width, height, "adopt shader texture failed")?;
+    let texture = self.register_shader_target(id, shader, width, height, label, "adopt shader texture failed")?;
     Ok((texture, uniforms))
   }
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
+    let label = spec.target.label.clone();
     let buffer = resolve_target_buffer(&self.buffers, spec.target.buffer)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
@@ -1103,8 +1119,14 @@ impl RasterState {
       return Err(e);
     }
     shader.merge_params(&spec.target.params);
-    let texture =
-      self.register_shader_target(id, shader, spec.target.width, spec.target.height, "adopt pipeline texture failed")?;
+    let texture = self.register_shader_target(
+      id,
+      shader,
+      spec.target.width,
+      spec.target.height,
+      label,
+      "adopt pipeline texture failed",
+    )?;
     Ok((texture, uniforms))
   }
 
@@ -1112,19 +1134,25 @@ impl RasterState {
   /// program, replying with the reflected uniform table for the UI-side
   /// validation mirror. The UI side validated the ids and stage kinds against
   /// its mirror; a miss here means the mirrors diverged.
-  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64) -> Result<UniformTable, String> {
+  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64, label: Option<String>) -> Result<UniformTable, String> {
     let vs = *self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
     let fs = *self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
-    let program = ShaderProgram::from_stages(&self.gl, vs, fs)?;
+    let program = ShaderProgram::from_stages(&self.gl, vs, fs)?.with_label(label);
     let uniforms = program.uniform_table();
     self.programs.insert(id, Rc::new(program));
     Ok(uniforms)
   }
 
   /// Pair a registered program with draw state under pipeline id `id`.
-  fn create_render_pipeline(&mut self, id: u64, program_id: u64, desc: PipelineDesc) -> Result<(), String> {
+  fn create_render_pipeline(
+    &mut self,
+    id: u64,
+    program_id: u64,
+    desc: PipelineDesc,
+    label: Option<String>,
+  ) -> Result<(), String> {
     let program = self.programs.get(&program_id).ok_or_else(|| format!("program {program_id} not found"))?.clone();
-    let pipeline = RenderPipeline::new(program, Some(program_id), desc).map_err(|(_, e)| e)?;
+    let pipeline = RenderPipeline::new(program, Some(program_id), desc).map_err(|(_, e)| e)?.with_label(label);
     self.render_pipelines.insert(id, Rc::new(pipeline));
     Ok(())
   }
@@ -1156,7 +1184,7 @@ impl RasterState {
     .map_err(|(_, e)| e)?;
     let shader = shader.with_sampler(spec.sampler).with_manual(spec.manual).with_load(spec.load);
     shader.merge_params(&spec.params);
-    self.register_shader_target(id, shader, spec.width, spec.height, "adopt shader target failed")
+    self.register_shader_target(id, shader, spec.width, spec.height, spec.label, "adopt shader target failed")
   }
 
   /// Adopt a new shader/pipeline target into Impeller and record it under
@@ -1171,11 +1199,18 @@ impl RasterState {
     shader: ShaderTexture,
     width: u32,
     height: u32,
+    label: Option<String>,
     adopt_err: &str,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let gpu =
-      GpuTexture { gl_texture: shader.gl_texture(), backend: self.backend, width, height, sampler: shader.sampler() };
+    let gpu = GpuTexture {
+      gl_texture: shader.gl_texture(),
+      backend: self.backend,
+      width,
+      height,
+      sampler: shader.sampler(),
+      label,
+    };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
@@ -1225,7 +1260,7 @@ impl RasterState {
 
   fn write_buffer(&mut self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let buffer = self.buffers.get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
-    buffer.write(&self.gl, data, byte_offset)?;
+    buffer.write(&self.gl, data, byte_offset).map_err(|e| format!("buffer {}: {e}", describe(id, &buffer.label)))?;
     // Every pipeline drawing from this buffer re-renders at the next flush,
     // so geometry-only changes reach the screen even when no new params
     // arrive. (Marked by target id: buffer ids are their own space.) Manual
@@ -1234,6 +1269,13 @@ impl RasterState {
       self.shaders.iter().filter(|(_, s)| !s.manual() && s.buffer_id() == Some(id)).map(|(tid, _)| *tid).collect();
     self.dirty.extend(drawing);
     Ok(())
+  }
+
+  /// `7 (bloom-h)` when texture id 7 carries a label, else `7`: how raster
+  /// messages name a texture - the id stays the cross-reference key, the
+  /// label the human name.
+  fn texture_desc(&self, id: u64) -> String {
+    describe(id, &self.textures.get(&id).and_then(|t| t.label.clone()))
   }
 
   /// Inventory the GPU resources this thread tracks: registered textures,
@@ -1248,12 +1290,16 @@ impl RasterState {
         width: gpu.width,
         height: gpu.height,
         target: self.shaders.contains_key(id),
+        label: gpu.label.clone(),
       })
       .collect();
     textures.sort_by_key(|t| t.id);
 
-    let mut buffers: Vec<GpuBufferInfo> =
-      self.buffers.iter().map(|(id, b)| GpuBufferInfo { id: *id, byte_length: b.size }).collect();
+    let mut buffers: Vec<GpuBufferInfo> = self
+      .buffers
+      .iter()
+      .map(|(id, b)| GpuBufferInfo { id: *id, byte_length: b.size, label: b.label.clone() })
+      .collect();
     buffers.sort_by_key(|b| b.id);
 
     let mut pipelines: Vec<GpuPipelineInfo> = self
@@ -1264,6 +1310,7 @@ impl RasterState {
         let draw = shader.draw_range();
         GpuPipelineInfo {
           texture_id: *texture_id,
+          label: self.textures.get(texture_id).and_then(|t| t.label.clone()),
           kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
           program_id: shader.program_id(),
           pipeline_id: shader.pipeline_id(),
@@ -1295,6 +1342,7 @@ impl RasterState {
         GpuRenderPipelineInfo {
           id: *id,
           program_id: pipeline.program_id().unwrap_or(0),
+          label: pipeline.label().map(str::to_string),
           topology: desc.topology.name(),
           blend: crate::gpu::blend_name(desc.blend),
           depth: desc.depth.is_some(),
@@ -1305,7 +1353,11 @@ impl RasterState {
       .collect();
     render_pipelines.sort_by_key(|p| p.id);
 
-    let mut programs: Vec<GpuProgramInfo> = self.programs.keys().map(|id| GpuProgramInfo { id: *id }).collect();
+    let mut programs: Vec<GpuProgramInfo> = self
+      .programs
+      .iter()
+      .map(|(id, p)| GpuProgramInfo { id: *id, label: p.label().map(str::to_string) })
+      .collect();
     programs.sort_by_key(|p| p.id);
 
     let window_shader = self.window_shader.as_ref().map(|state| GpuWindowShaderInfo {
@@ -1317,6 +1369,15 @@ impl RasterState {
     });
 
     GpuResources { textures, buffers, pipelines, render_pipelines, programs, window_shader }
+  }
+}
+
+/// `7 (bloom-h)` with a label, `7` without: the one spelling for a labeled id
+/// in raster-side messages.
+fn describe(id: u64, label: &Option<String>) -> String {
+  match label {
+    Some(label) => format!("{id} ({label})"),
+    None => id.to_string(),
   }
 }
 

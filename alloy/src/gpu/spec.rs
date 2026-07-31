@@ -41,6 +41,9 @@ pub struct TargetSpec {
   /// scratch and always clears. Creation and resize still clear, so a load
   /// target starts (and restarts) at `clear_color`.
   pub load: bool,
+  /// Free-form debug name for the target's texture (WebGPU's label),
+  /// surfaced in the resource inventory and raster-side messages.
+  pub label: Option<String>,
 }
 
 /// Everything `create_pipeline_texture` (the fused convenience) needs:

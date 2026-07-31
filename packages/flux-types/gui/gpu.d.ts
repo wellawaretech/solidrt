@@ -108,6 +108,15 @@ declare module "flux:gpu" {
    */
   export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode }
   /**
+   * A free-form debug name every create accepts (WebGPU's label): surfaced by
+   * the dev server's GPU inventory (get_gpu_resources) and in engine log
+   * messages, so a chain of targets reads as "bloom-h samples particle-verts"
+   * instead of anonymous ids. Not unique, never interpreted; set at create,
+   * kept across id-stable resizes ({@link resizeTexture},
+   * {@link setShaderSize}).
+   */
+  export type LabelOption = { label?: string }
+  /**
    * This device's hard ceilings, queried once at startup: process constants.
    * Every create and bind validates against them at the call site, so an
    * oversize target throws naming the limit instead of failing later as a
@@ -132,13 +141,13 @@ declare module "flux:gpu" {
    * Create an immutable texture from an RGBA8 pixel buffer (exactly
    * width*height*4 bytes). Returns the texture id.
    */
-  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): TextureId
+  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame (width*height*4 bytes) and may hold
    * more (uploadTexture selects a frame by offset).
    */
-  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions): TextureId
+  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & LabelOption): TextureId
   /**
    * Replace a mutable texture's pixels. `data` may hold several frames; `offset`
    * (default 0) selects which frame to upload.
@@ -195,7 +204,7 @@ declare module "flux:gpu" {
     height: number,
     params?: ShaderParams,
     textures?: Record<string, TextureId>,
-    opts?: SamplerOptions,
+    opts?: SamplerOptions & LabelOption,
   ): TextureId
   /**
    * Compile a single shader stage from raw GLSL ES: the primitive under
@@ -228,7 +237,7 @@ declare module "flux:gpu" {
    * Creating targets from the returned handle compiles nothing. Free with
    * {@link destroyProgram}.
    */
-  export function linkProgram(vertexShader: ShaderStageId, fragmentShader: ShaderStageId): ProgramId
+  export function linkProgram(vertexShader: ShaderStageId, fragmentShader: ShaderStageId, opts?: LabelOption): ProgramId
   /**
    * Destroy a compiled stage by id. Programs linked from it are unaffected.
    */
@@ -253,7 +262,7 @@ declare module "flux:gpu" {
       blend?: BlendMode
       depth?: boolean
       depthWrite?: boolean
-    },
+    } & LabelOption,
   ): RenderPipelineId
   /**
    * Destroy a render pipeline by id. Targets created from it are unaffected:
@@ -310,7 +319,8 @@ declare module "flux:gpu" {
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
     } & DrawRange &
-      SamplerOptions,
+      SamplerOptions &
+      LabelOption,
   ): TextureId
   /**
    * Destroy a linked program by id. Pipelines created from it are unaffected:
@@ -426,7 +436,8 @@ declare module "flux:gpu" {
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
     } & DrawRange &
-      SamplerOptions,
+      SamplerOptions &
+      LabelOption,
   ): TextureId
 
   /**
@@ -434,7 +445,7 @@ declare module "flux:gpu" {
    * the pipeline's attribute list). Buffer ids are their own space, separate
    * from texture ids.
    */
-  export function createBuffer(data: Uint8Array): BufferId
+  export function createBuffer(data: Uint8Array, opts?: LabelOption): BufferId
   /**
    * Overwrite part of a vertex buffer at `byteOffset` (default 0), within the
    * size it was created with. Pipelines drawing from the buffer re-render

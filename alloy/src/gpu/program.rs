@@ -153,6 +153,10 @@ pub struct ShaderProgram {
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
+  /// Free-form debug name from the create (WebGPU's label), for the resource
+  /// inventory. None on the fused paths, whose anonymous program is covered
+  /// by its target's label.
+  label: Option<String>,
 }
 
 impl ShaderProgram {
@@ -163,7 +167,7 @@ impl ShaderProgram {
     let fragment_full = with_preamble(fragment_src, FRAGMENT_PREAMBLE);
     let program = link_program(gl, VERTEX_SRC, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
-    Ok(ShaderProgram { program, uniforms, pipeline: false })
+    Ok(ShaderProgram { program, uniforms, pipeline: false, label: None })
   }
 
   /// Compile a vertex+fragment pipeline program. Attribute locations are
@@ -174,7 +178,7 @@ impl ShaderProgram {
     let fragment_full = with_preamble(fragment_src, PIPELINE_FRAGMENT_PREAMBLE);
     let program = link_program(gl, &vertex_full, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
-    Ok(ShaderProgram { program, uniforms, pipeline: true })
+    Ok(ShaderProgram { program, uniforms, pipeline: true, label: None })
   }
 
   /// Link two already-compiled stages into a program: the raw path, no
@@ -196,8 +200,18 @@ impl ShaderProgram {
         return Err(format!("program link failed: {log}"));
       }
       let uniforms = reflect_uniforms(gl, program);
-      Ok(ShaderProgram { program, uniforms, pipeline: true })
+      Ok(ShaderProgram { program, uniforms, pipeline: true, label: None })
     }
+  }
+
+  /// Set the debug label (builder-style, right after construction).
+  pub fn with_label(mut self, label: Option<String>) -> Self {
+    self.label = label;
+    self
+  }
+
+  pub fn label(&self) -> Option<&str> {
+    self.label.as_deref()
   }
 
   pub fn is_pipeline(&self) -> bool {
@@ -254,6 +268,9 @@ pub struct RenderPipeline {
   /// pipeline.
   pub(super) program_id: Option<u64>,
   pub(super) desc: PipelineDesc,
+  /// Free-form debug name from the create (WebGPU's label), for the resource
+  /// inventory. None on the fused path.
+  label: Option<String>,
 }
 
 impl RenderPipeline {
@@ -269,7 +286,17 @@ impl RenderPipeline {
     if !program.is_pipeline() {
       return Err((program, "program is a fragment shader, not a pipeline".to_string()));
     }
-    Ok(RenderPipeline { program, program_id, desc })
+    Ok(RenderPipeline { program, program_id, desc, label: None })
+  }
+
+  /// Set the debug label (builder-style, right after construction).
+  pub fn with_label(mut self, label: Option<String>) -> Self {
+    self.label = label;
+    self
+  }
+
+  pub fn label(&self) -> Option<&str> {
+    self.label.as_deref()
   }
 
   pub fn program_id(&self) -> Option<u64> {

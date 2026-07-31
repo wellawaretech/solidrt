@@ -199,6 +199,10 @@ pub struct GpuTexture {
   /// object at bind time. The texture-object parameters set below are only a
   /// completeness fallback, not this state's storage.
   pub sampler: SamplerState,
+  /// Free-form debug name from the create (WebGPU's label), surfaced in the
+  /// resource inventory and raster-side messages. Not unique; survives
+  /// id-stable resizes (the raster side inherits it on replace-at-id).
+  pub label: Option<String>,
 }
 
 impl GpuTexture {
@@ -228,7 +232,7 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      GpuTexture { gl_texture, backend, width, height, sampler }
+      GpuTexture { gl_texture, backend, width, height, sampler, label: None }
     }
   }
 

@@ -57,8 +57,10 @@ let RAW_FRAGMENT = glsl`#version 300 es
 `
 
 function App() {
-  let id = createShader(FRAGMENT, 512, 512, { iTime: 0 })
-  let rawId = createShader(RAW_FRAGMENT, 512, 512, { uSpin: 0, uTint: [0.9, 0.4, 0.6] })
+  // The label names the target in the dev tooling's GPU inventory and in
+  // engine log messages - free-form, purely diagnostic, worth the habit.
+  let id = createShader(FRAGMENT, 512, 512, { iTime: 0 }, undefined, { label: "waves" })
+  let rawId = createShader(RAW_FRAGMENT, 512, 512, { uSpin: 0, uTint: [0.9, 0.4, 0.6] }, undefined, { label: "spiral" })
   let [time, setTime] = createSignal(0)
   onFrame((tick) => setTime(tick / 1000))
 

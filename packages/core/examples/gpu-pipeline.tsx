@@ -58,8 +58,11 @@ function cube(): Float32Array {
 }
 
 function App() {
-  let bufferId = createBuffer(cube())
+  // Labels name the buffer and target in the dev tooling's GPU inventory
+  // (and in engine log messages) - free-form, purely diagnostic.
+  let bufferId = createBuffer(cube(), { label: "cube-verts" })
   let id = createPipeline(VERTEX, FRAGMENT, 512, 512, {
+    label: "cube",
     params: { uTime: 0 },
     attributes: [
       { name: "aPos", format: "vec3" },

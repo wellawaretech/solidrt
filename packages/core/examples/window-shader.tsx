@@ -40,7 +40,7 @@ let WARP = glsl`
 function App() {
   let vs = compileShader("vertex", VERTEX)
   let fs = compileShader("fragment", WARP, { header: true })
-  let warp = linkProgram(vs, fs)
+  let warp = linkProgram(vs, fs, { label: "warp" })
   destroyShader(vs)
   destroyShader(fs)
 

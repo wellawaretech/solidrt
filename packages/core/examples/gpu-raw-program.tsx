@@ -63,17 +63,21 @@ function App() {
   let vs = compileShader("vertex", VERTEX)
   let wavesFs = compileShader("fragment", WAVES)
   let ringsFs = compileShader("fragment", RINGS, { header: true })
-  let waves = linkProgram(vs, wavesFs)
-  let rings = linkProgram(vs, ringsFs)
+  // Labels name each object in the dev tooling's GPU inventory, which is
+  // what keeps a chain of programs, pipelines, and targets readable. They
+  // are free-form and need not be unique - one name per chain works, since
+  // the inventory already groups by kind.
+  let waves = linkProgram(vs, wavesFs, { label: "waves" })
+  let rings = linkProgram(vs, ringsFs, { label: "rings" })
   destroyShader(vs)
   destroyShader(wavesFs)
   destroyShader(ringsFs)
 
-  let wavesPipeline = createRenderPipeline(waves)
-  let ringsPipeline = createRenderPipeline(rings)
+  let wavesPipeline = createRenderPipeline(waves, { label: "waves" })
+  let ringsPipeline = createRenderPipeline(rings, { label: "rings" })
 
-  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
-  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 } })
+  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 }, label: "waves" })
+  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 }, label: "rings" })
 
   let [time, setTime] = createSignal(0)
   onFrame(tick => setTime(tick / 1000))
