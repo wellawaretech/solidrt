@@ -61,7 +61,8 @@ sha2 = { version = "0.10", optional = true }
 # Window icon rasterization (src/go/icon.rs): SVG source -> RGBA pixels for
 # SDL_SetWindowIcon. Deliberately go-only so the production runtime stays
 # raster-free (packed apps get icons from platform packaging, stage 3); same
-# usvg underneath as alloy's geometry-only dep, so no second SVG parser.
+# usvg underneath as forge's geometry-only dep (forge::svg), so no second SVG
+# parser.
 resvg = { version = "0.47", default-features = false, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }

@@ -27,6 +27,11 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
     "scrollX" => view.set_scroll_x(f32_of(value, "scrollX")),
     "scrollY" => view.set_scroll_y(f32_of(value, "scrollY")),
     "clipRadius" => view.set_clip_radius(decode_radius(value)),
+    "viewBox" => {
+      let list = value.as_list().expect("viewBox must be a [w, h] list");
+      assert!(list.len() == 2, "viewBox must have exactly [w, h]");
+      view.set_view_box(f32_of(&list[0], "viewBox w"), f32_of(&list[1], "viewBox h"))
+    }
     _ => return None,
   })
 }

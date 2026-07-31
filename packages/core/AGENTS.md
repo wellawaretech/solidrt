@@ -55,8 +55,9 @@ you need the raw fact (e.g. `env.displayScale` for asset sizing below).
 Because the drawn size is fluid and the display DPI varies, asset format is a
 real design decision, not an afterthought:
 
-- Prefer VECTORS (`<svg>`, `<d-path>`) whenever the render size is fluid or DPI
-  varies - they stay crisp at any size x `displayScale()`.
+- Prefer VECTORS (`parseSvg` draws mapped to `<d-path>` in a `viewBox` view)
+  whenever the render size is fluid or DPI varies - they stay crisp at any
+  size x `displayScale()`.
 - RASTER (`<texture>` / `createImage`) needs source resolution >= displayed size
   x `env.displayScale`, or it softens on hi-DPI. Author raster at 2-3x the
   largest size you will ever draw it. A 256px PNG blown up large on a hi-DPI

@@ -16,6 +16,8 @@ export { createTexture } from "./gpu"
 export type { TextureId } from "./gpu"
 export { createImage, decodeImage } from "./image"
 export type { DecodedImage, ImageSource } from "./image"
+export { parseSvg, svg } from "./svg"
+export type { SvgDocument, SvgDraw } from "./svg"
 export { createScroll } from "./scroll"
 export type { Scroll, ScrollAxis, ScrollOffset, ScrollOptions } from "./scroll"
 export type {

@@ -2,9 +2,34 @@
 type: backlog-item
 title: parseSvg replaces the svg primitive
 description: Remove the <svg>/<d-svg> element in favor of a parseSvg function (forge core, flux:svg module) returning plain draw data that JS maps to d-path subtrees; vector currency becomes path data, matching the texture-id rule that rejected <image>.
-status: open
+status: done
 timestamp: 2026-07-30T00:00:00Z
+completed: 2026-07-31T00:00:00Z
 ---
+
+DONE 2026-07-31, as a single sweep rather than the stages below (no
+backwards-compatibility requirement, so no coexistence period). Decisions
+made at pickup:
+
+- Fluid boxes: option (a) - a `viewBox={[w, h]}` prop on view/d-view, the
+  innermost step of the memoized View matrix (paint + hit share it, so
+  per-path hit-testing works in design coordinates under fluid scaling).
+  Pure fit only, NO intrinsic measure: the box comes from layout props.
+- Gradients shipped in the same change (stage 2 folded in): the branded
+  gradient wire format gained optional `units: "absolute"`, `spread`, and
+  `transform` (SVG matrix sextet) fields, emitted by parseSvg and decoded in
+  gui/properties/paint.rs; the JS factories are unchanged.
+- The old element's stroke-width bug (group scale baked into geometry but
+  not stroke width) is fixed in forge::svg: width scales by sqrt|det|.
+- flux:svg takes `color` as a packed u32 (no CSS parsing in Rust); the core
+  `parseSvg` re-export accepts any CSS color string via parseColor. Solid
+  draw colors come out as `#rrggbbaa` strings, ready for the path color prop.
+- An `svg` template tag (String.raw, mirroring `glsl`) ships from core for
+  editor highlighting of inline documents.
+- No cross-instance parse cache: a memo per call site, revisit if an icon
+  grid shows up hot.
+
+Original design below, kept for the rationale and the accepted ceiling.
 
 # parseSvg replaces the svg primitive
 

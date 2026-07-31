@@ -127,7 +127,10 @@ enum Hoist {
 // transform-free content in build(), so there is nothing to hoist.
 fn hoisted_matrix(element: &Element, size: WH) -> Option<Matrix> {
   match &element.kind {
-    ElementKind::View(v) => Some(v.paint_matrix(size)),
+    // The user chain only: a viewBox fit is content, recorded into the cache
+    // by record_node, so the composited quad/recording is box-sized and the
+    // fit is never applied twice.
+    ElementKind::View(v) => Some(v.box_matrix(size)),
     _ => None,
   }
 }
@@ -504,14 +507,26 @@ fn record_node<'a>(
 
   // A save is only needed for ops this recording itself carries: a recorded
   // clip, or a View's matrix/scroll (child translates below are undone
-  // explicitly). Under Hoist::Full there is nothing to restore.
-  let needs_save = record_clip || (matches!(&element.kind, ElementKind::View(_)) && hoist != Hoist::Full);
+  // explicitly). Under Hoist::Full there is normally nothing to restore - a
+  // viewBox fit is the exception, recorded below even when hoisted.
+  let view_fit = match &element.kind {
+    ElementKind::View(v) => v.fit_matrix(ctx.size),
+    _ => None,
+  };
+  let needs_save =
+    record_clip || (matches!(&element.kind, ElementKind::View(_)) && (hoist != Hoist::Full || view_fit.is_some()));
   if needs_save {
     builder.save();
   }
 
   if hoist == Hoist::None {
     element.build(ctx, builder);
+  } else if let Some(fit) = &view_fit {
+    // The hoisted matrix is only the user chain (box_matrix); the viewBox fit
+    // belongs to the content, so boundary caches, snapshot textures, and
+    // captures hold fitted content. set_view_box reports Paint damage to
+    // match.
+    builder.transform(fit);
   }
 
   // A non-boundary View's group opacity is baked here as a save_layer (the
@@ -564,6 +579,14 @@ fn record_node<'a>(
       if let Some(layout) = &element.layout {
         ctx.size.w = layout.computed.size.width;
         ctx.size.h = layout.computed.size.height;
+      }
+      // Children of a viewBox view draw in the design space: the box they
+      // inherit is the design size (the fit maps it onto the layout box), so
+      // a d-text wraps and a d-rect fills in design units.
+      if let ElementKind::View(v) = &element.kind {
+        if let Some(vb) = v.view_box {
+          ctx.size = WH::new(vb.w, vb.h);
+        }
       }
       build_recursive(scene, child_id, ctx, builder);
     }

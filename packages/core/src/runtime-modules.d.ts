@@ -105,8 +105,8 @@ declare module "srt:apps" {
    * installs nothing and leaves it alone. `size` is the version's
    * manifest-declared size (bundle plus assets) - claimed rather than walked,
    * so that listing stays cheap; `info()` reports what is actually on disk.
-   * `icon` is the manifest-declared icon's SVG source, ready for an `<svg>`
-   * src; absent when the app declares none (or the file is unreadable).
+   * `icon` is the manifest-declared icon's SVG source, ready for `parseSvg`;
+   * absent when the app declares none (or the file is unreadable).
    */
   export type InstalledApp = {
     id: string

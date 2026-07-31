@@ -8,7 +8,7 @@ mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
 pub use kinds::{
-  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span, Svg,
+  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
   Text, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
@@ -117,7 +117,6 @@ pub enum ElementKind {
   Oval(Oval),
   Line(Line),
   Path(Path),
-  Svg(Svg),
   Text(Text),
   Span(Span),
   Texture(Texture),
@@ -136,7 +135,6 @@ impl ElementKind {
       ElementKind::Oval(_) => "oval",
       ElementKind::Line(_) => "line",
       ElementKind::Path(_) => "path",
-      ElementKind::Svg(_) => "svg",
       ElementKind::Text(_) => "text",
       ElementKind::Span(_) => "span",
       ElementKind::Texture(_) => "texture",
@@ -166,7 +164,6 @@ impl ElementKind {
         | ElementKind::Oval(_)
         | ElementKind::Line(_)
         | ElementKind::Path(_)
-        | ElementKind::Svg(_)
         | ElementKind::Texture(_)
     )
   }
@@ -195,7 +192,6 @@ impl Buildable for ElementKind {
       ElementKind::Oval(n) => n.build(ctx, builder),
       ElementKind::Line(n) => n.build(ctx, builder),
       ElementKind::Path(n) => n.build(ctx, builder),
-      ElementKind::Svg(n) => n.build(ctx, builder),
       ElementKind::Text(n) => n.build(ctx, builder),
       ElementKind::Texture(n) => n.build(ctx, builder),
       ElementKind::Span(_) => {} // ElementKind::Audio(_) => {}
@@ -209,7 +205,6 @@ impl Measurable for ElementKind {
       ElementKind::Text(n) => n.measure(ctx),
       ElementKind::Texture(n) => n.measure(ctx),
       ElementKind::Path(n) => n.measure(ctx),
-      ElementKind::Svg(n) => n.measure(ctx),
       ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Line(n) => n.measure(ctx),
       ElementKind::Rectangle(n) => n.measure(ctx),
@@ -331,8 +326,6 @@ impl Element {
       "d-line" => Line::default().no_layout(),
       "path" => Path::default().with_layout(),
       "d-path" => Path::default().no_layout(),
-      "svg" => Svg::default().with_layout(),
-      "d-svg" => Svg::default().no_layout(),
       "text" => Text::default().with_layout(),
       "d-text" => Text::default().no_layout(),
       "d-span" => Span::default().no_layout(),

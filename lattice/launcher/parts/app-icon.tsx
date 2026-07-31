@@ -1,17 +1,29 @@
 // An installed app's icon: the manifest-declared SVG source carried by
-// srt:apps, rendered with its own colors (unlike the currentColor-recolored
-// Icon component). Apps without one fall back to a
-// monogram: a muted rounded square showing the display name's first letter,
-// drawn with the core <text> primitive so it never outgrows the box under
-// policy.textScale.
-import { Show } from "solid-js"
+// srt:apps, parsed with parseSvg and rendered with its own colors (unlike the
+// currentColor-recolored Icon component). Apps without one - or with a source
+// that fails to parse - fall back to a monogram: a muted rounded square
+// showing the display name's first letter, drawn with the core <text>
+// primitive so it never outgrows the box under policy.textScale.
+import { Show, createMemo, For } from "solid-js"
+import { parseSvg, type SvgDocument } from "@solidrt/core"
 import { View, theme } from "@solidrt/components"
 import type { InstalledApp } from "srt:apps"
 
 export function AppIcon(props: { app: InstalledApp; size: number }) {
+  let doc = createMemo<SvgDocument | undefined>(() => {
+    let src = props.app.icon
+    if (!src) return undefined
+    try {
+      return parseSvg(src)
+    } catch (err) {
+      console.warn(`App icon for ${props.app.name} failed to parse: ${err}`)
+      return undefined
+    }
+  })
+
   return (
     <Show
-      when={props.app.icon}
+      when={doc()}
       fallback={
         <View
           layout={{
@@ -37,9 +49,16 @@ export function AppIcon(props: { app: InstalledApp; size: number }) {
         </View>
       }
     >
-      {(src) => (
-        <view width={props.size} height={props.size} flexShrink={0}>
-          <svg width={props.size} height={props.size} src={src()} />
+      {(d) => (
+        <view
+          repaintBoundary
+          pointerEvents="all"
+          width={props.size}
+          height={props.size}
+          flexShrink={0}
+          viewBox={[d().width, d().height]}
+        >
+          <For each={d().draws}>{(draw) => <d-path {...draw} />}</For>
         </view>
       )}
     </Show>

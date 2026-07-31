@@ -296,10 +296,12 @@ impl RenderTree {
     // A View's own paint matrix already contains its translate (which is what
     // local_bounds reports as x/y), so the matrix path starts from the plain
     // layout box and applies the matrix instead; every other case keeps the
-    // kind's local offset.
+    // kind's local offset. The view's OWN box transforms by the user chain
+    // only (box_matrix): a viewBox fit maps children into the box, it never
+    // moves the box itself.
     let mut corners = match &node.kind {
       ElementKind::View(v) if v.needs_matrix() => {
-        let m = v.paint_matrix(WH::new(local.width, local.height));
+        let m = v.box_matrix(WH::new(local.width, local.height));
         rect_corners(0.0, 0.0, local.width, local.height).map(|p| transform_point(&m, p))
       }
       _ => rect_corners(local.x, local.y, local.width, local.height),
@@ -384,6 +386,17 @@ impl RenderTree {
     let mut cur = id;
     loop {
       let node = self.try_node(cur)?;
+      // A viewBox ANCESTOR redefines the space its children draw in: the box
+      // they inherit is the design size, which the fit matrix maps onto the
+      // layout box during the ancestor walk. The node's own view_box does not
+      // apply to itself (its own box is its layout box).
+      if cur != id {
+        if let ElementKind::View(v) = &node.kind {
+          if let Some(vb) = v.view_box {
+            return Some(Size { width: vb.w, height: vb.h });
+          }
+        }
+      }
       if let Some(layout) = node.layout.as_ref() {
         if layout.cache.is_empty() {
           return None;

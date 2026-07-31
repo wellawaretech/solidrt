@@ -5502,6 +5502,16 @@ import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
 // packages/core/src/image.ts
 var imageCache = new Map;
+// packages/core/src/svg.ts
+import { parseSvg as fluxParseSvg } from "flux:svg";
+var svg = String.raw;
+function parseSvg(src, opts) {
+  if (opts?.color != null)
+    return fluxParseSvg(src, {
+      color: parseColor(opts.color)
+    });
+  return fluxParseSvg(src);
+}
 // packages/core/src/scroll.ts
 function createScroll(viewport, content, options = {}) {
   let axis = options.axis ?? "vertical";
@@ -8967,24 +8977,32 @@ var stringToBytes = qrcode.stringToBytes;
 var SIZE2 = 24;
 function Icon(props) {
   let size = () => props.size ?? SIZE2;
-  var _el$ = createElement("view", {
-    repaintBoundary: true
-  }), _el$2 = createElement("svg");
-  insertNode2(_el$, _el$2);
-  spread(_el$2, mergeProps({
+  let doc = createMemo(() => parseSvg(props.src, {
+    color: props.color ?? theme.color.text
+  }));
+  var _el$ = createElement("view");
+  setProp(_el$, "repaintBoundary", true);
+  spread(_el$, mergeProps({
     get width() {
       return size();
     },
     get height() {
       return size();
     },
-    get src() {
-      return props.src;
-    },
-    get color() {
-      return props.color ?? theme.color.text;
+    get viewBox() {
+      return [doc().width, doc().height];
     }
-  }, () => props.layout), false);
+  }, () => props.layout), true);
+  insert(_el$, createComponent2(For, {
+    get each() {
+      return doc().draws;
+    },
+    children: (draw) => (() => {
+      var _el$2 = createElement("d-path");
+      spread(_el$2, draw, false);
+      return _el$2;
+    })()
+  }));
   return _el$;
 }
 // lattice/launcher/parts/nav.tsx
@@ -9279,9 +9297,20 @@ function PuzzleMark(props) {
 
 // lattice/launcher/parts/app-icon.tsx
 function AppIcon(props) {
+  let doc = createMemo2(() => {
+    let src = props.app.icon;
+    if (!src)
+      return;
+    try {
+      return parseSvg(src);
+    } catch (err) {
+      console.warn(`App icon for ${props.app.name} failed to parse: ${err}`);
+      return;
+    }
+  });
   return createComponent2(Show, {
     get when() {
-      return props.app.icon;
+      return doc();
     },
     get fallback() {
       return createComponent2(View, {
@@ -9322,29 +9351,33 @@ function AppIcon(props) {
         }
       });
     },
-    children: (src) => (() => {
+    children: (d2) => (() => {
       var _el$2 = createElement("view", {
+        repaintBoundary: true,
         flexShrink: 0
-      }), _el$3 = createElement("svg");
-      insertNode2(_el$2, _el$3);
+      });
+      insert(_el$2, createComponent2(For, {
+        get each() {
+          return d2().draws;
+        },
+        children: (draw) => (() => {
+          var _el$3 = createElement("d-path");
+          spread(_el$3, draw, false);
+          return _el$3;
+        })()
+      }));
       effect3(() => ({
         e: props.size,
         t: props.size,
-        a: props.size,
-        o: props.size,
-        i: src()
+        a: [d2().width, d2().height]
       }), ({
         e: e3,
         t: t3,
-        a: a3,
-        o: o3,
-        i: i3
+        a: a3
       }, _p$) => {
         e3 !== _p$?.e && setProp(_el$2, "width", e3, _p$?.e);
         t3 !== _p$?.t && setProp(_el$2, "height", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$3, "width", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$3, "height", o3, _p$?.o);
-        i3 !== _p$?.i && setProp(_el$3, "src", i3, _p$?.i);
+        a3 !== _p$?.a && setProp(_el$2, "viewBox", a3, _p$?.a);
       });
       return _el$2;
     })()

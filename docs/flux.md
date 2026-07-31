@@ -202,3 +202,22 @@ let row  = await stmt.first(42)
 await stmt.run(42)
 db.close()
 ```
+
+### flux:svg
+
+Parses an SVG document string into plain draw data (sandboxed: no network,
+file, or data-URI access). Geometry comes out as absolute path data with all
+transforms baked in; paints resolve to `#rrggbbaa` strings or absolute-space
+gradient objects. Draw keys match the path element props, so a draw spreads
+onto a `<d-path>` unchanged. `opts.color` drives `currentColor` as a packed
+`0xRRGGBBAA` number; the `@solidrt/core` re-export `parseSvg` accepts any CSS
+color string instead. Unsupported and skipped: clipPath, masks, filters,
+patterns, embedded images, SVG text.
+
+```js
+import { parseSvg } from "flux:svg"
+
+let doc = parseSvg(src, { color: 0x336699ff })
+doc.width           // intrinsic (viewBox) size
+doc.draws           // [{ d, color, drawStyle, fillRule?, strokeWidth?, ... }]
+```

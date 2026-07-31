@@ -325,6 +325,17 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   children?: Children
   trace?: boolean
   /**
+   * Design-space size `[w, h]` for the children: content drawn in that
+   * coordinate space is uniformly scaled to fit and centered in the element's
+   * box (SVG's default preserveAspectRatio, generalized). A pure fit
+   * transform - it never sizes the element, so give the box its size with
+   * layout props. Composed innermost: the transform props still operate in
+   * box space, and pointer events on children arrive in design coordinates.
+   * The natural wrapper for parseSvg draws, or any d-* subtree authored in
+   * fixed design units.
+   */
+  viewBox?: [number, number]
+  /**
    * Corner radii for the clip applied when overflow is non-visible (hidden,
    * clip, scroll on both axes). A single number rounds all four corners; an
    * array is [top-left, top-right, bottom-right, bottom-left]. Without overflow
@@ -381,14 +392,6 @@ export interface LineProps extends PaintProps, PointerProps {
 export interface PathProps extends Position, PaintProps, PointerProps {
   d?: string
   fillRule?: "nonzero" | "evenodd"
-}
-
-export interface SvgProps extends Position, PointerProps {
-  // A whole SVG document as a string (an imported asset, a fetched string, or a
-  // template literal). Parsed and rendered as one unit; takes no JSX children.
-  src?: string
-  // Drives currentColor in the document. Explicit fills/strokes still win.
-  color?: Color
 }
 
 export interface TextProps extends Position, PaintProps, PointerProps {

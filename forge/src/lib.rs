@@ -23,6 +23,7 @@ pub mod seek;
 pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
+pub mod svg;
 pub mod wasm;
 pub mod websocket;
 

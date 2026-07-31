@@ -17,7 +17,6 @@ mod oval;
 mod paint;
 mod path;
 mod rectangle;
-mod svg;
 mod text;
 mod texture;
 mod view;
@@ -94,7 +93,6 @@ pub fn apply_jsx(
     ElementKind::Oval(oval) => oval::apply(oval, name, value),
     ElementKind::Line(line) => line::apply(line, name, value),
     ElementKind::Path(path) => path::apply(path, name, value),
-    ElementKind::Svg(svg) => svg::apply(svg, name, value),
     ElementKind::Text(text) => text::apply(text, name, value),
     ElementKind::Span(span) => text::apply_span(span, name, value),
     ElementKind::Texture(tex) => texture::apply(tex, name, value),

@@ -90,7 +90,6 @@ dependencies = [
  "sdl3-mixer-sys",
  "svgtypes",
  "taffy",
- "usvg",
  "windows-sys 0.61.2",
 ]
 
@@ -1222,6 +1221,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-util",
+ "usvg",
  "wasmi",
  "which",
 ]

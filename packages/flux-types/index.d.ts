@@ -4,6 +4,7 @@
 /// <reference path="./modules/fs.d.ts" />
 /// <reference path="./modules/sqlite.d.ts" />
 /// <reference path="./modules/subprocess.d.ts" />
+/// <reference path="./modules/svg.d.ts" />
 /// <reference path="./modules/p2p.d.ts" />
 /// <reference path="./modules/net.d.ts" />
 /// <reference path="./modules/mdns.d.ts" />

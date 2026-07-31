@@ -110,7 +110,12 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: XY) -> Vec<XY>
     let local = element.kind.transform_to_local(point, &HitContext { size });
     locals.push(local);
     point = local;
-    parent_size = size;
+    // A viewBox view hands its children the design-space size, matching
+    // hit_recursive and the paint-time walk.
+    parent_size = match &element.kind {
+      ElementKind::View(v) => v.view_box.unwrap_or(size),
+      _ => size,
+    };
     parent_scroll = match &element.kind {
       ElementKind::View(v) => v.scroll.unwrap_or_default(),
       _ => XY::default(),
@@ -192,10 +197,18 @@ fn hit_recursive(
     _ => XY::default(),
   };
 
+  // Children of a viewBox view live in the design space; the local point is
+  // already there (the inverse matrix includes the fit), so their inherited
+  // box is the design size, matching the paint-time walk in composite.rs.
+  let inherited_size = match &element.kind {
+    ElementKind::View(v) => v.view_box.unwrap_or(size),
+    _ => size,
+  };
+
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
     let child_size =
-      child.layout.as_ref().map(|l| WH::new(l.computed.size.width, l.computed.size.height)).unwrap_or(size);
+      child.layout.as_ref().map(|l| WH::new(l.computed.size.width, l.computed.size.height)).unwrap_or(inherited_size);
     let child_pos =
       child.layout.as_ref().map(|l| XY::new(l.computed.location.x, l.computed.location.y)).unwrap_or_default();
     let child_point = XY::new(local.x - child_pos.x + scroll.x, local.y - child_pos.y + scroll.y);

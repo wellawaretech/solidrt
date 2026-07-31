@@ -48,7 +48,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. Points to `createSoundStream` for long tracks streamed from a path.
 
 ## Vector graphics
-- `svg.tsx` - `<svg src={...}>` draws a whole SVG *document string* (not HTML/JSX children); multi-color fills vs a `currentColor` icon recolored by the `color` prop. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `src`.
+- `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `viewBox`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
 
 ## Bundling assets
 - `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path).

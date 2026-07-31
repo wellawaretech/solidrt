@@ -58,6 +58,12 @@ wasmi = "2.0.0-beta.7"
 # switch to the "system" feature: Android NDK and Windows have no system libffi.
 libffi = "5"
 libloading = "0.9"
+# Full SVG document parsing/normalization for forge::svg / parseSvg (resolves
+# CSS, transforms, use/defs, gradients into a flat path tree). default-features
+# off drops the text/font stack (fontdb, rustybuzz, unicode-*); we only emit
+# the normalized geometry as plain data, never rasterize, so resvg/tiny-skia
+# are not pulled.
+usvg = { version = "0.47", default-features = false }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the

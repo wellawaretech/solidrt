@@ -70,6 +70,12 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
+  // Design-space size for the children: content drawn in this w x h coordinate
+  // space is uniformly scaled to fit and centered in the element's box (SVG's
+  // default preserveAspectRatio, generalized). A pure fit transform - it never
+  // sizes the element - composed innermost, so the user transform props still
+  // operate in box space.
+  pub view_box: Option<WH>,
   // Memoized transform; invalidated by the setters when a transform prop
   // changes, and recomputed by `transform` when the layout size differs.
   cache: Cell<Option<TransformCache>>,
@@ -101,14 +107,41 @@ impl View {
     entry
   }
 
-  // Composes the full paint transform around the rotation center. The same
-  // matrix drives both painting and (inverted) hit testing, so the forward and
-  // inverse can never drift apart. euclid's `then` applies the left transform
-  // first, so the chain reads in point-application order.
+  // The viewBox fit: design space scaled-to-fit and centered in `size`. None
+  // without a (non-degenerate) view_box. Kept separate from the user chain
+  // because the two hoist differently: the fit belongs to the CONTENT (it is
+  // recorded into boundary caches and captures), the user chain to the box
+  // (hoisted to composite time). See composite::hoisted_matrix.
+  pub(crate) fn fit_matrix(&self, size: WH) -> Option<Matrix> {
+    let vb = self.view_box?;
+    if vb.w <= 0.0 || vb.h <= 0.0 {
+      return None;
+    }
+    let s = (size.w / vb.w).min(size.h / vb.h);
+    let tx = (size.w - vb.w * s) / 2.0;
+    let ty = (size.h - vb.h * s) / 2.0;
+    Some(Matrix::new_2d(s, 0.0, 0.0, s, tx, ty))
+  }
+
+  // The full paint transform: the viewBox fit (design -> box space), then the
+  // user chain. Points apply left-first under euclid's `then`.
+  fn compose(&self, size: WH) -> Matrix {
+    let user = self.compose_user(size);
+    match self.fit_matrix(size) {
+      Some(fit) => fit.then(&user),
+      None => user,
+    }
+  }
+
+  // Composes the user transform chain around the rotation center - everything
+  // except the viewBox fit. The same (fit-composed) matrix drives both painting
+  // and (inverted) hit testing, so the forward and inverse can never drift
+  // apart. euclid's `then` applies the left transform first, so the chain reads
+  // in point-application order.
   //
   // For the pure-2D case (no rotate_x/rotate_y/perspective) this reduces exactly
   // to the previous translate/scale/rotate op sequence.
-  fn compose(&self, size: WH) -> Matrix {
+  fn compose_user(&self, size: WH) -> Matrix {
     let p = self.resolve_translate();
     let c = self.resolve_center(size);
 
@@ -167,10 +200,20 @@ impl View {
     self.cache.set(None);
   }
 
-  // Current paint matrix for `size`. Composite uses this to hoist a boundary
-  // View's transform out of its cached content (see composite::hoisted_matrix).
+  // Current full paint matrix for `size` (fit + user chain). The bounding-box
+  // ancestor walk uses this to map child corners (which live in design space
+  // under a viewBox) up into the parent frame.
   pub(crate) fn paint_matrix(&self, size: WH) -> Matrix {
     self.transform(size).matrix
+  }
+
+  // The matrix the view's own BOX transforms by: the user chain without the
+  // viewBox fit (the fit maps children into the box; it never moves the box
+  // itself). Composite hoists this around cached content, and bounding-box
+  // composition applies it to the view's own corners. Uncached: callers are
+  // per-event or per-composite, not per-node-per-frame.
+  pub(crate) fn box_matrix(&self, size: WH) -> Matrix {
+    self.compose_user(size)
   }
 
   // True when the paint matrix does more than translate: bounding-box
@@ -183,6 +226,7 @@ impl View {
       || self.rotate_x.is_some()
       || self.rotate_y.is_some()
       || self.perspective.is_some()
+      || self.view_box.is_some()
   }
 }
 
@@ -299,6 +343,14 @@ impl View {
   }
   pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> Damage {
     self.clip_radius = Some(radius);
+    Damage::Paint
+  }
+  // Paint, not Transform: the fit is recorded into boundary caches and
+  // snapshot textures (unlike the hoisted user chain), so changing it must
+  // re-record the content.
+  pub fn set_view_box(&mut self, w: f32, h: f32) -> Damage {
+    self.view_box = Some(WH::new(w, h));
+    self.invalidate();
     Damage::Paint
   }
 

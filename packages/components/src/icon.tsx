@@ -1,3 +1,4 @@
+import { createMemo, parseSvg, For } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 
@@ -16,22 +17,28 @@ export interface IconProps {
 
 const SIZE = 24
 
-// A themed wrapper over the core <svg> document primitive: a square box sized to
-// `size` and colored from the theme by default. This is the only value it adds
-// over `<svg src>` directly, so reach for the primitive when you need a
-// non-square box or want no theme coupling.
+// A themed wrapper over parseSvg: the document parsed once per src/color (a
+// memo), its draws mapped to <d-path> in a square viewBox-fitted box colored
+// from the theme by default. That is the only value it adds, so reach for
+// parseSvg plus your own <view viewBox> when you need a non-square box or
+// want no theme coupling. The plain repaintBoundary keeps the static subtree
+// from re-recording alongside animating siblings; pointerEvents="all" makes
+// the box one hit unit (and skips per-path outline tests) - an icon's shapes
+// are never individual targets.
 export function Icon(props: IconProps) {
   let size = () => props.size ?? SIZE
+  let doc = createMemo(() => parseSvg(props.src, { color: props.color ?? theme.color.text }))
 
   return (
-    <view repaintBoundary>
-      <svg
-        width={size()}
-        height={size()}
-        src={props.src}
-        color={props.color ?? theme.color.text}
-        {...props.layout}
-      />
+    <view
+      repaintBoundary
+      pointerEvents="all"
+      width={size()}
+      height={size()}
+      viewBox={[doc().width, doc().height]}
+      {...props.layout}
+    >
+      <For each={doc().draws}>{(draw) => <d-path {...draw} />}</For>
     </view>
   )
 }

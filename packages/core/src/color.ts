@@ -48,9 +48,21 @@ type Stop = { offset: number; color: number }
 // `pct()` length vocabulary used by layout and transformOrigin: a gradient's
 // position is naturally a fraction (like a stop offset), so 0..1 reads cleaner
 // than pct(0)..pct(100). Do not "unify" them onto pct().
+//
+// The optional absolute-space fields are produced by parseSvg, never by the
+// factories: `units: "absolute"` switches the coordinates to the document's
+// drawing space, `spread` is the SVG spreadMethod (default pad), and
+// `transform` an SVG matrix(a b c d e f) sextet mapping the gradient's
+// coordinates into that space (default identity).
+type AbsoluteSpace = {
+  units?: "absolute"
+  spread?: "pad" | "reflect" | "repeat"
+  transform?: [number, number, number, number, number, number]
+}
+
 export type Gradient =
-  | { readonly __gradient: "linear"; x0: number; y0: number; x1: number; y1: number; stops: Stop[] }
-  | { readonly __gradient: "radial"; cx: number; cy: number; r: number; circle: boolean; stops: Stop[] }
+  | ({ readonly __gradient: "linear"; x0: number; y0: number; x1: number; y1: number; stops: Stop[] } & AbsoluteSpace)
+  | ({ readonly __gradient: "radial"; cx: number; cy: number; r: number; circle?: boolean; stops: Stop[] } & AbsoluteSpace)
 
 /**
  * A linear gradient between two points, each given in 0..1 of the element's box
