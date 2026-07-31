@@ -173,20 +173,24 @@ declare module "flux:gpu" {
   export function destroyTexture(id: TextureId): void
   /**
    * Compile a GLSL ES fragment shader into an offscreen texture of the given
-   * size. `params` sets uniforms by name (see {@link ShaderParams} for the
-   * value shapes and the validation contract - a typo'd name throws here, at
-   * the create); `textures` binds sampler2D uniforms to texture ids - any
-   * texture id, including another shader/pipeline target's output, under a
-   * name that must be an active `sampler2D` uniform. Bound
-   * targets are live dependencies: when a source re-renders (its params,
-   * geometry, or data change), every target sampling it re-renders too,
-   * transitively through chains, before the next frame or readback - no
-   * per-frame uniform write is needed to keep a chain current. Returns the resulting texture id. The fused
-   * convenience: one call compiles a program and creates a target over it,
-   * and the program lives and dies with the target. To share one compile
-   * across targets (or hold a program with no target yet), use the raw layer:
-   * {@link compileShader} + {@link linkProgram} + {@link createRenderPipeline}
-   * + {@link createShaderTarget}.
+   * size. `params` sets initial uniforms by name (see {@link ShaderParams}
+   * for the value shapes and the validation contract - a typo'd name throws
+   * here, at the create). It is its own argument, not an option, because it
+   * is the initial value of a live channel - the same values the `<texture
+   * params>` prop and {@link setShaderParams} drive later; pass `null` (or
+   * omit it) for a shader with none. `opts.textures` binds sampler2D
+   * uniforms to texture ids - any texture id, including another
+   * shader/pipeline target's output, under a name that must be an active
+   * `sampler2D` uniform. Bound targets are live dependencies: when a source
+   * re-renders (its params, geometry, or data change), every target sampling
+   * it re-renders too, transitively through chains, before the next frame or
+   * readback - no per-frame uniform write is needed to keep a chain current.
+   * Returns the resulting texture id. The fused convenience: one call
+   * compiles a program and creates a target over it, and the program lives
+   * and dies with the target. To share one compile across targets (or hold a
+   * program with no target yet), use the raw layer: {@link compileShader} +
+   * {@link linkProgram} + {@link createRenderPipeline} +
+   * {@link createShaderTarget}.
    *
    * The preamble (`#version 300 es`, precision, `vUV`, `iResolution`, `iTime`,
    * `fragColor`) is injected only into sources that do not declare their own
@@ -202,9 +206,8 @@ declare module "flux:gpu" {
     fragmentSrc: string,
     width: number,
     height: number,
-    params?: ShaderParams,
-    textures?: Record<string, TextureId>,
-    opts?: SamplerOptions & LabelOption,
+    params?: ShaderParams | null,
+    opts?: { textures?: Record<string, TextureId> } & SamplerOptions & LabelOption,
   ): TextureId
   /**
    * Compile a single shader stage from raw GLSL ES: the primitive under
@@ -311,8 +314,8 @@ declare module "flux:gpu" {
     pipeline: RenderPipelineId,
     width: number,
     height: number,
+    params?: ShaderParams | null,
     opts?: {
-      params?: ShaderParams
       textures?: Record<string, TextureId>
       buffer?: BufferId
       clearColor?: [number, number, number, number]
@@ -423,8 +426,8 @@ declare module "flux:gpu" {
     fragmentSrc: string,
     width: number,
     height: number,
+    params?: ShaderParams | null,
     opts?: {
-      params?: ShaderParams
       textures?: Record<string, TextureId>
       attributes?: VertexAttribute[]
       buffer?: BufferId

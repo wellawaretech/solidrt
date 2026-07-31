@@ -215,8 +215,10 @@ export function createMutableTexture(
  * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
  * array); drive their values with `<texture src={id} params={{...}} />`
  * (preferred) or, when there is no `<texture>` element for it, imperatively
- * with `setShaderParams`.
- * `textures` binds each declared `uniform sampler2D` to an existing texture id
+ * with `setShaderParams`. `params` is its own argument - it seeds the same
+ * live channel those two drive - and takes `null` (or nothing) for a shader
+ * without uniforms.
+ * `opts.textures` binds each declared `uniform sampler2D` to an existing texture id
  * (e.g. a camera or decoded image, or another shader/pipeline target) so the
  * shader can read it; bound inputs are live dependencies, so the shader
  * re-renders whenever a source changes - including a sampled target
@@ -238,11 +240,10 @@ export function createShader(
   fragmentSrc: string,
   width: number,
   height: number,
-  params?: gpu.ShaderParams,
-  textures?: Record<string, gpu.TextureId>,
-  opts?: CreateOptions & SamplerOptions,
+  params?: gpu.ShaderParams | null,
+  opts?: CreateOptions & SamplerOptions & { textures?: Record<string, gpu.TextureId> },
 ): gpu.TextureId {
-  let id = gpu.createShader(fragmentSrc, width, height, params, textures, opts)
+  let id = gpu.createShader(fragmentSrc, width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -278,8 +279,8 @@ export function createShaderTarget(
   pipeline: gpu.RenderPipelineId,
   width: number,
   height: number,
+  params?: gpu.ShaderParams | null,
   opts?: {
-    params?: gpu.ShaderParams
     textures?: Record<string, gpu.TextureId>
     buffer?: gpu.BufferId
     clearColor?: [number, number, number, number]
@@ -289,7 +290,7 @@ export function createShaderTarget(
     CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
-  let id = gpu.createShaderTarget(pipeline, width, height, opts)
+  let id = gpu.createShaderTarget(pipeline, width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
@@ -352,7 +353,7 @@ export function createShaderMemo(
   opts?: { onError?: (error: unknown) => void },
 ): () => gpu.TextureId {
   let make = (s: ShaderSpec) =>
-    gpu.createShader(s.fragmentSrc, s.width, s.height, s.params, s.textures, { filter: s.filter, wrap: s.wrap })
+    gpu.createShader(s.fragmentSrc, s.width, s.height, s.params, { textures: s.textures, filter: s.filter, wrap: s.wrap })
   let current = untrack(spec)
   let currentId = make(current)
   let [id, setId] = createSignal(currentId)
@@ -435,8 +436,8 @@ export function createPipeline(
   fragmentSrc: string,
   width: number,
   height: number,
+  params?: gpu.ShaderParams | null,
   opts?: {
-    params?: gpu.ShaderParams
     textures?: Record<string, gpu.TextureId>
     attributes?: gpu.VertexAttribute[]
     buffer?: gpu.BufferId
@@ -451,7 +452,7 @@ export function createPipeline(
     CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
-  let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, opts)
+  let id = gpu.createPipeline(vertexSrc, fragmentSrc, width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

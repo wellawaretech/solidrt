@@ -153,27 +153,37 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
   }
 }
 
-// Decode the per-target options shared by createPipeline and
-// createShaderTarget - { params, textures, buffer, vertexCount, clearColor,
-// render, loadOp, filter, wrap }, everything optional - into the alloy
-// target spec. `render` ("auto" | "manual") and `loadOp` ("clear" | "load")
-// are vocabulary, validated here at the boundary like the pipeline words;
-// the load-requires-manual invariant is alloy's (Context rejects it).
+// Decode a target create's positional params argument (the live-data half;
+// null and undefined both mean none) and its per-target options -
+// { textures, buffer, vertexCount, clearColor, render, loadOp, filter,
+// wrap, label }, everything optional - into the alloy target spec. `render`
+// ("auto" | "manual") and `loadOp` ("clear" | "load") are vocabulary,
+// validated here at the boundary like the pipeline words; the
+// load-requires-manual invariant is alloy's (Context rejects it).
 fn collect_target_spec(
   ctx: &Ctx<'_>,
+  params: &Option<Object<'_>>,
   opts: &Option<Object<'_>>,
   width: u32,
   height: u32,
   api: &str,
 ) -> rquickjs::Result<alloy::TargetSpec> {
+  // Params is its own argument (before opts): a params key left in the bag
+  // would be silently ignored - the shader renders with defaults - so its
+  // presence throws.
+  if let Some(o) = opts {
+    if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
+      return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
+    }
+  }
   let get_obj = |name: &str| -> rquickjs::Result<Option<Object<'_>>> {
     match opts {
       Some(o) => o.get::<_, Option<Object>>(name),
       None => Ok(None),
     }
   };
-  let params = match get_obj("params")? {
-    Some(o) => collect_params(ctx, &o, api)?,
+  let params = match params {
+    Some(o) => collect_params(ctx, o, api)?,
     None => Vec::new(),
   };
   let textures = match get_obj("textures")? {
@@ -463,15 +473,17 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            textures: Option<Object<'_>>,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let params = match &params {
           Some(o) => collect_params(&ctx, o, "createShader")?,
           None => Vec::new(),
         };
-        let textures = match &textures {
-          Some(o) => collect_textures(&ctx, o, "createShader")?,
+        let textures = match &opts.0 {
+          Some(o) => match o.get::<_, Option<Object>>("textures")? {
+            Some(t) => collect_textures(&ctx, &t, "createShader")?,
+            None => Vec::new(),
+          },
           None => Vec::new(),
         };
         let sampler = collect_sampler(&ctx, &opts.0, "createShader")?;
@@ -533,9 +545,10 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setShaderSize");
 
-    // createPipeline(vertexSrc, fragmentSrc, width, height, opts?) -> texture
-    // id: the fused convenience, taking the draw-state options AND the target
-    // options in one bag. Vocabulary parses here; alloy validates the rest.
+    // createPipeline(vertexSrc, fragmentSrc, width, height, params?, opts?)
+    // -> texture id: the fused convenience, taking the draw-state options AND
+    // the target options in one bag (params is its own argument). Vocabulary
+    // parses here; alloy validates the rest.
     let create_pipeline_atx = atx.clone();
     let create_pipeline = Function::new(
       ctx.clone(),
@@ -544,10 +557,11 @@ impl ModuleDef for GpuModule {
             fragment_src: String,
             width: u32,
             height: u32,
+            params: Option<Object<'_>>,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipeline")?;
-        let target = collect_target_spec(&ctx, &opts.0, width, height, "createPipeline")?;
+        let target = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipeline")?;
         let id = create_pipeline_atx
           .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target })
           .map_err(|e| throw_str(&ctx, &format!("createPipeline: {e}")))?;
@@ -630,15 +644,21 @@ impl ModuleDef for GpuModule {
     })
     .expect("create destroyShader");
 
-    // createShaderTarget(pipeline, width, height, opts?) -> texture id: the
-    // per-target half over a render pipeline. Draw-state keys in opts throw
-    // (they belong to createRenderPipeline).
+    // createShaderTarget(pipeline, width, height, params?, opts?) -> texture
+    // id: the per-target half over a render pipeline. Draw-state keys in opts
+    // throw (they belong to createRenderPipeline).
     let create_target_atx = atx.clone();
     let create_shader_target = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, pipeline: u64, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>,
+            pipeline: u64,
+            width: u32,
+            height: u32,
+            params: Option<Object<'_>>,
+            opts: Opt<Object<'_>>|
+            -> rquickjs::Result<u64> {
         reject_pipeline_keys(&ctx, &opts.0, "createShaderTarget")?;
-        let spec = collect_target_spec(&ctx, &opts.0, width, height, "createShaderTarget")?;
+        let spec = collect_target_spec(&ctx, &params, &opts.0, width, height, "createShaderTarget")?;
         let id = create_target_atx
           .create_shader_target(pipeline, spec)
           .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;

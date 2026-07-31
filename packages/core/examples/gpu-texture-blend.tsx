@@ -41,8 +41,8 @@ let GLOW = glsl`
 `
 
 function App() {
-  let baseId = createShader(BASE, SIZE, SIZE, undefined, undefined, { label: "base" })
-  let glowId = createShader(GLOW, SIZE, SIZE, { iTime: 0 }, undefined, { label: "glow" })
+  let baseId = createShader(BASE, SIZE, SIZE, null, { label: "base" })
+  let glowId = createShader(GLOW, SIZE, SIZE, { iTime: 0 }, { label: "glow" })
   let [time, setTime] = createSignal(0)
   let [mode, setMode] = createSignal<"plus" | "source-over">("plus")
   onFrame((tick) => setTime(tick / 1000))

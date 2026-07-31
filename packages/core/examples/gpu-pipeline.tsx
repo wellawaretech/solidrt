@@ -61,9 +61,8 @@ function App() {
   // Labels name the buffer and target in the dev tooling's GPU inventory
   // (and in engine log messages) - free-form, purely diagnostic.
   let bufferId = createBuffer(cube(), { label: "cube-verts" })
-  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, {
+  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "cube",
-    params: { uTime: 0 },
     attributes: [
       { name: "aPos", format: "vec3" },
       { name: "aColor", format: "vec3" },

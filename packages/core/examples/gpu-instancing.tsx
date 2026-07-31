@@ -46,9 +46,8 @@ let FRAGMENT = glsl`
 function App() {
   // The whole mesh: one triangle, reused by every instance.
   let bufferId = createBuffer(new Float32Array([0, 1.3, -1, -0.75, 1, -0.75]), { label: "petal-tri" })
-  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, {
+  let id = createPipeline(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "petals",
-    params: { uTime: 0 },
     attributes: [{ name: "aPos", format: "vec2" }],
     buffer: bufferId,
     instanceCount: 1,

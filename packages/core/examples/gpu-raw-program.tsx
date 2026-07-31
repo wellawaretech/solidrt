@@ -76,8 +76,8 @@ function App() {
   let wavesPipeline = createRenderPipeline(waves, { label: "waves" })
   let ringsPipeline = createRenderPipeline(rings, { label: "rings" })
 
-  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 }, label: "waves" })
-  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { vertexCount: 3, params: { iTime: 0 }, label: "rings" })
+  let wavesId = createShaderTarget(wavesPipeline, 512, 512, { iTime: 0 }, { vertexCount: 3, label: "waves" })
+  let ringsId = createShaderTarget(ringsPipeline, 512, 512, { iTime: 0 }, { vertexCount: 3, label: "rings" })
 
   let [time, setTime] = createSignal(0)
   onFrame(tick => setTime(tick / 1000))
