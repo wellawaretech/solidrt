@@ -61,9 +61,9 @@ function App() {
     >
       <text fontSize={28} color="#222">Window shader</text>
       <view flexDirection="row" gap={12}>
-        <rect w={90} h={90} radius={12} color="#0077ff" />
-        <rect w={90} h={90} radius={12} color="#ff6a00" />
-        <rect w={90} h={90} radius={12} color="#00c46a" />
+        <rect width={90} height={90} radius={12} color="#0077ff" />
+        <rect width={90} height={90} radius={12} color="#ff6a00" />
+        <rect width={90} height={90} radius={12} color="#00c46a" />
       </view>
       <text fontSize={14} color="#666">Click to toggle warp (identity at 0)</text>
     </window>

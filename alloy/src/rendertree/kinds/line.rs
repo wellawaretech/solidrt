@@ -5,21 +5,31 @@ use crate::rendertree::Damage;
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
 use taffy::Size as TaffySize;
 
+// Endpoints default to spanning the box: (0,0) to (box.w, box.h), matching how
+// a rect with unset w/h fills its box. Explicit endpoints are detached-only.
 #[derive(Clone, Debug, Default)]
 pub struct Line {
-  pub x1: f32,
-  pub y1: f32,
-  pub x2: f32,
-  pub y2: f32,
+  pub x1: Option<f32>,
+  pub y1: Option<f32>,
+  pub x2: Option<f32>,
+  pub y2: Option<f32>,
   pub on_length: Option<f32>,
   pub off_length: Option<f32>,
   pub paint: PaintState,
 }
 
+impl Line {
+  fn endpoints(&self, box_w: f32, box_h: f32) -> (Point, Point) {
+    (
+      Point::new(self.x1.unwrap_or(0.0), self.y1.unwrap_or(0.0)),
+      Point::new(self.x2.unwrap_or(box_w), self.y2.unwrap_or(box_h)),
+    )
+  }
+}
+
 impl Buildable for Line {
-  fn build<'a>(&'a self, _ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let from = Point::new(self.x1, self.y1);
-    let to = Point::new(self.x2, self.y2);
+  fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
+    let (from, to) = self.endpoints(ctx.size.w, ctx.size.h);
     let paint = self.paint.to_paint();
     match (self.on_length, self.off_length) {
       (Some(on), Some(off)) => {
@@ -32,30 +42,29 @@ impl Buildable for Line {
   }
 }
 
+// A line has no intrinsic size: a layout line is sized by the width/height
+// layout props (endpoints are detached-only geometry and never reach taffy).
 impl Measurable for Line {
   fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
-    TaffySize {
-      width: ctx.known.width.unwrap_or((self.x2 - self.x1).abs()),
-      height: ctx.known.height.unwrap_or((self.y2 - self.y1).abs()),
-    }
+    TaffySize { width: ctx.known.width.unwrap_or(0.0), height: ctx.known.height.unwrap_or(0.0) }
   }
 }
 
 impl Line {
   pub fn set_x1(&mut self, v: f32) -> Damage {
-    self.x1 = v;
+    self.x1 = Some(v);
     Damage::Paint
   }
   pub fn set_y1(&mut self, v: f32) -> Damage {
-    self.y1 = v;
+    self.y1 = Some(v);
     Damage::Paint
   }
   pub fn set_x2(&mut self, v: f32) -> Damage {
-    self.x2 = v;
+    self.x2 = Some(v);
     Damage::Paint
   }
   pub fn set_y2(&mut self, v: f32) -> Damage {
-    self.y2 = v;
+    self.y2 = Some(v);
     Damage::Paint
   }
   pub fn set_on_length(&mut self, v: f32) -> Damage {
@@ -77,20 +86,21 @@ impl Line {
 }
 
 impl Hittable for Line {
-  fn is_in_bounds(&self, pt: XY, _ctx: &HitContext) -> bool {
+  fn is_in_bounds(&self, pt: XY, ctx: &HitContext) -> bool {
+    let (from, to) = self.endpoints(ctx.size.w, ctx.size.h);
     let half_sw = (self.paint.stroke_width / 2.0).max(2.0);
-    let dx = self.x2 - self.x1;
-    let dy = self.y2 - self.y1;
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
     let len_sq = dx * dx + dy * dy;
     let dist_sq = if len_sq == 0.0 {
-      let ex = pt.x - self.x1;
-      let ey = pt.y - self.y1;
+      let ex = pt.x - from.x;
+      let ey = pt.y - from.y;
       ex * ex + ey * ey
     } else {
-      let t = ((pt.x - self.x1) * dx + (pt.y - self.y1) * dy) / len_sq;
+      let t = ((pt.x - from.x) * dx + (pt.y - from.y) * dy) / len_sq;
       let t = t.clamp(0.0, 1.0);
-      let proj_x = self.x1 + t * dx;
-      let proj_y = self.y1 + t * dy;
+      let proj_x = from.x + t * dx;
+      let proj_y = from.y + t * dy;
       let ex = pt.x - proj_x;
       let ey = pt.y - proj_y;
       ex * ex + ey * ey

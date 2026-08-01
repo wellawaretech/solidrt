@@ -187,7 +187,8 @@ impl Texture {
     Damage::Paint
   }
 
-  // Source id and crop rect feed measurement, so all affect layout. None clears
+  // Source id and crop size feed measurement (intrinsic size), so they affect
+  // layout; the crop position only moves which pixels are sampled. None clears
   // the texture; the null-vs-number decoding happens in the binding layer.
   pub fn set_src(&mut self, id: Option<u64>) -> Damage {
     self.texture_id = id;
@@ -195,11 +196,11 @@ impl Texture {
   }
   pub fn set_src_x(&mut self, v: f32) -> Damage {
     self.src_x = Some(v);
-    Damage::Layout
+    Damage::Paint
   }
   pub fn set_src_y(&mut self, v: f32) -> Damage {
     self.src_y = Some(v);
-    Damage::Layout
+    Damage::Paint
   }
   pub fn set_src_w(&mut self, v: f32) -> Damage {
     self.src_w = Some(v);

@@ -3348,19 +3348,20 @@ function scanForOrphans(now) {
   let list = fresh.map(([type, n3]) => `<${type}> x${n3}`).join(", ");
   console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. Element types already reported are not reported again.`);
 }
-var warnedUnknownProps = new Set;
+var warnedRejectedProps = new Set;
 function setTreeProperty(node, name, value) {
   try {
     tree2.setProperty(node.id, name, value);
   } catch (e3) {
-    if (!String(e3).includes("unknown property"))
+    let message = String(e3);
+    if (!message.includes("unknown property") && !message.includes("detached-only"))
       throw e3;
     let key = node.elementType + "." + name;
-    if (warnedUnknownProps.has(key))
+    if (warnedRejectedProps.has(key))
       return;
-    warnedUnknownProps.add(key);
+    warnedRejectedProps.add(key);
     let stack = new Error().stack ?? "";
-    console.warn(`Ignoring unknown property '${name}' on <${node.elementType}>
+    console.warn(`Ignoring property '${name}' on <${node.elementType}>: ${message}
 ${stack}`);
   }
 }

@@ -148,6 +148,8 @@ The transition is delivered at background time (not on return), so the handler r
 
 Elements are the building blocks of a SolidRT UI. They map directly to native rendering commands via Lattice.
 
+Every painting element comes in two forms. The layout form (`<rect>`, `<text>`, ...) participates in flexbox: its geometry is its layout box, sized with the layout props (`width`, `height`, flex). The detached form (`<d-rect>`, `<d-text>`, ...) is invisible to layout and owns its geometry through paint-space props (`x`, `y`, `w`, `h`; endpoints on `<d-line>`) that never cause reflow - use it for anything that moves at animation frequency. The two vocabularies do not mix: geometry props are rejected on layout forms, layout props on detached forms.
+
 ### `<window>`
 
 The root element. Maps to a native OS window. Every application must have exactly one `<window>` as the root, passed to `render()`. Supports layout props, plus `title`, `fullscreen`, and `shader`.
@@ -174,40 +176,41 @@ Renders text. Children are the text content.
 
 ### `<rect>`
 
-Draws a rectangle. Supports paint and pointer event props. `w` and `h` set the size; `x` and `y` offset the origin. `radius` sets the corner radius - a single number applies to all corners, or pass `[top-left, top-right, bottom-right, bottom-left]`.
+Draws a rectangle filling its layout box; size it with the layout props (`width`, `height`, flex). Supports paint and pointer event props. `radius` sets the corner radius - a single number applies to all corners, or pass `[top-left, top-right, bottom-right, bottom-left]`. On the detached form `<d-rect>`, `w` and `h` set the size and `x` and `y` offset the origin, in the parent's coordinates.
 
 ```jsx
-<rect w={80} h={80} radius={8} fill="#0077ff" />
+<rect width={80} height={80} radius={8} color="#0077ff" />
+<d-rect x={10} y={10} w={80} h={80} radius={8} color="#0077ff" />
 ```
 
 ### `<oval>`
 
-Draws an oval (ellipse) inscribed in the given bounds. Supports paint and pointer event props. `w` and `h` set the bounds; `x` and `y` offset the origin.
+Draws an oval (ellipse) inscribed in its layout box; size it with the layout props. Supports paint and pointer event props. On `<d-oval>`, `w` and `h` set the bounding box (not radii) and `x` and `y` offset the origin.
 
 ```jsx
-<oval w={80} h={80} fill="#0077ff" />
+<oval width={80} height={80} color="#0077ff" />
 ```
 
 ### `<line>`
 
-Draws a straight line between two points. Supports paint and pointer event props. Set `onLength` and `offLength` together to draw a dashed line.
+Draws a straight line spanning its layout box, from the top-left to the bottom-right corner; a box with `height={0}` gives a horizontal rule. Supports paint and pointer event props. Set `onLength` and `offLength` together to draw a dashed line. On `<d-line>`, the endpoints are set explicitly with `x1`, `y1`, `x2`, `y2`.
 
 ```jsx
-<line x1={0} y1={0} x2={100} y2={100} stroke="#0077ff" strokeWidth={2} />
-<line x1={0} y1={0} x2={100} y2={0} onLength={8} offLength={4} stroke="#0077ff" strokeWidth={2} />
+<line width={100} height={0} color="#0077ff" strokeWidth={2} />
+<d-line x1={0} y1={0} x2={100} y2={100} color="#0077ff" strokeWidth={2} />
 ```
 
 ### `<path>`
 
-Draws an SVG path. `d` is the SVG path data string. `x` and `y` offset the entire path. `fillRule` controls how overlapping subpaths are filled (`"nonZero"` by default, or `"evenOdd"`). Supports paint and pointer event props.
+Draws an SVG path. `d` is the SVG path data string; its bounds give the element its intrinsic size. `fillRule` controls how overlapping subpaths are filled (`"nonzero"` by default, or `"evenodd"`). Supports paint and pointer event props. On `<d-path>`, `x` and `y` offset the entire path.
 
 ```jsx
-<path d="M 10 10 L 90 10 L 50 80 Z" fill="#0077ff" />
+<path d="M 10 10 L 90 10 L 50 80 Z" color="#0077ff" />
 ```
 
 ### `<texture>`
 
-Draws a GPU texture. `src` is a texture ID returned by `createTexture`. Supports `x`, `y`, `w`, `h`, source crop props (`srcX`, `srcY`, `srcW`, `srcH`), and `params` for shader parameters. A param value is a number for a scalar uniform (`float`, or `int`/`bool`, truncated) or a flat number array for a typed one - the shader's own declaration decides the dispatch, so `vec2`/`vec3`/`vec4` take 2/3/4 numbers and `mat4` takes 16 in column-major order. Every params write is validated against the program's active uniforms: an unknown name or a value whose length does not fit the declared type throws at the imperative call sites (`createShaderTexture`, `createPipelineTexture`, `setShaderParams`, ...); the `params` prop applies deferred at build, so there the same mistake surfaces as a runtime warning. A uniform that is declared but optimized out reflects as inactive and counts as unknown. The same value shapes and validation apply everywhere params appear, the window shader included.
+Draws a GPU texture. `src` is a texture ID returned by `createTexture`. The texture's pixel size (or the source crop, when set) is the element's intrinsic size, with HTML `<img>` sizing rules; the layout props override it. Supports source crop props (`srcX`, `srcY`, `srcW`, `srcH`; on `<d-texture>` also `x`, `y`, `w`, `h` for the destination box) and `params` for shader parameters. A param value is a number for a scalar uniform (`float`, or `int`/`bool`, truncated) or a flat number array for a typed one - the shader's own declaration decides the dispatch, so `vec2`/`vec3`/`vec4` take 2/3/4 numbers and `mat4` takes 16 in column-major order. Every params write is validated against the program's active uniforms: an unknown name or a value whose length does not fit the declared type throws at the imperative call sites (`createShaderTexture`, `createPipelineTexture`, `setShaderParams`, ...); the `params` prop applies deferred at build, so there the same mistake surfaces as a runtime warning. A uniform that is declared but optimized out reflects as inactive and counts as unknown. The same value shapes and validation apply everywhere params appear, the window shader included.
 
 `fit` maps the pixels into the element box with CSS object-fit semantics: `"fill"` (default) stretches, `"cover"`/`"none"` crop, `"contain"`/`"scale-down"` letterbox, everything centered. Paint-only: the box (and hit testing) is unchanged.
 

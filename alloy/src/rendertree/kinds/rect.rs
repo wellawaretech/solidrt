@@ -43,12 +43,11 @@ impl Buildable for Rectangle {
   }
 }
 
+// A rectangle has no intrinsic size: a layout rect is sized by the width/height
+// layout props (w/h are detached-only geometry and never reach taffy).
 impl Measurable for Rectangle {
   fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
-    TaffySize {
-      width: ctx.known.width.unwrap_or(self.w.unwrap_or(0.0)),
-      height: ctx.known.height.unwrap_or(self.h.unwrap_or(0.0)),
-    }
+    TaffySize { width: ctx.known.width.unwrap_or(0.0), height: ctx.known.height.unwrap_or(0.0) }
   }
 }
 

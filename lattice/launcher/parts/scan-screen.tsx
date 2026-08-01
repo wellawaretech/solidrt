@@ -85,8 +85,8 @@ export function ScanScreen(props: {
           <texture
             position="absolute"
             src={cam.texture()}
-            w={c().w}
-            h={c().h}
+            width={c().w}
+            height={c().h}
             srcX={c().srcX}
             srcY={c().srcY}
             srcW={c().srcW}

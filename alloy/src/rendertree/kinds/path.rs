@@ -66,18 +66,15 @@ impl Path {
       return;
     }
 
-    let offset_x = self.x.unwrap_or(0.0);
-    let offset_y = self.y.unwrap_or(0.0);
-
     let mut path_builder = PathBuilder::default();
     let mut lyon_builder = lyon_path::Path::builder();
-    let mut cursor = (offset_x, offset_y);
+    let mut cursor = (0.0f32, 0.0f32);
     let mut subpath_start = cursor;
     let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
 
     let resolve = |abs: bool, x: f64, y: f64, cursor: &(f32, f32)| -> Point {
       if abs {
-        Point::new(offset_x + x as f32, offset_y + y as f32)
+        Point::new(x as f32, y as f32)
       } else {
         Point::new(cursor.0 + x as f32, cursor.1 + y as f32)
       }
@@ -279,8 +276,10 @@ impl Path {
     *self.lyon_path.borrow_mut() = None;
   }
 
-  // The path's geometry is cached, so any change here invalidates that cache.
-  // d/x/y also affect the measured size (layout); fill rule does not.
+  // The path's geometry is cached, so shape changes invalidate that cache; `d`
+  // also determines the measured size (layout). x/y are a draw-time translate:
+  // the cached geometry (and thus measure) is offset-independent, so they cost
+  // a repaint only.
   pub fn set_d(&mut self, d: String) -> Damage {
     self.d = d;
     self.invalidate();
@@ -288,13 +287,11 @@ impl Path {
   }
   pub fn set_x(&mut self, v: f32) -> Damage {
     self.x = Some(v);
-    self.invalidate();
-    Damage::Layout
+    Damage::Paint
   }
   pub fn set_y(&mut self, v: f32) -> Damage {
     self.y = Some(v);
-    self.invalidate();
-    Damage::Layout
+    Damage::Paint
   }
   pub fn set_fill_rule(&mut self, rule: FillType) -> Damage {
     self.fill_rule = rule;
@@ -321,7 +318,15 @@ impl Buildable for Path {
       Some(rect) => self.paint.to_paint_in(&rect),
       None => self.paint.to_paint(),
     };
-    builder.draw_path(path, &paint);
+    let (dx, dy) = (self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
+    if dx != 0.0 || dy != 0.0 {
+      builder.save();
+      builder.translate(dx, dy);
+      builder.draw_path(path, &paint);
+      builder.restore();
+    } else {
+      builder.draw_path(path, &paint);
+    }
   }
 }
 
@@ -344,6 +349,8 @@ impl Measurable for Path {
 
 impl Hittable for Path {
   fn is_in_bounds(&self, pt: XY, _ctx: &HitContext) -> bool {
+    // The cached geometry is offset-independent; undo the draw-time translate.
+    let pt = XY { x: pt.x - self.x.unwrap_or(0.0), y: pt.y - self.y.unwrap_or(0.0) };
     self.ensure_built();
     let bounds = self.bounds.borrow();
     let Some(rect) = *bounds else {

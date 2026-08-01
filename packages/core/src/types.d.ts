@@ -174,6 +174,9 @@ export interface TransformProps {
   // Perspective viewing distance in pixels (CSS `perspective`). Enables the 3D
   // depth for rotateY; larger values give a shallower effect.
   perspective?: number
+  // Subtree translation in pixels, composited post-layout (no re-record, no
+  // layout). Unlike the draw primitives' detached-only x/y, these exist on
+  // layout views too - the drag/thumb idiom animates them freely.
   x?: number
   y?: number
   originX?: OriginX
@@ -265,9 +268,51 @@ export interface PointerProps {
   pointerEvents?: "auto" | "none" | "all"
 }
 
-interface Position {
+/**
+ * Detached-only geometry, in paint-space pixels. Never affects layout: these
+ * props exist only on the d-* forms, where there is no layout box and the
+ * element owns its geometry. The layout forms of the draw primitives derive
+ * their geometry from the layout box instead (size it with width/height).
+ */
+export interface PositionProps {
+  /** Horizontal offset of the drawn geometry; defaults to 0. */
   x?: number
+  /** Vertical offset of the drawn geometry; defaults to 0. */
   y?: number
+}
+
+/** See {@link PositionProps}: detached-only, never affects layout. */
+export interface GeometryProps extends PositionProps {
+  /** Drawn width; defaults to the inherited box width. */
+  w?: number
+  /** Drawn height; defaults to the inherited box height. */
+  h?: number
+}
+
+/** See {@link PositionProps}: detached-only, never affects layout. */
+export interface OvalGeometryProps extends PositionProps {
+  /** Bounding box width of the ellipse (not a radius); defaults to the inherited box. */
+  w?: number
+  /** Bounding box height of the ellipse (not a radius); defaults to the inherited box. */
+  h?: number
+}
+
+/** See {@link PositionProps}: detached-only, never affects layout. */
+export interface TextGeometryProps extends PositionProps {
+  // Shaping (wrap) width. Detached text wraps at the inherited ancestor size
+  // by default; set w for an unwrapped natural line or an explicit wrap width.
+  w?: number
+  // Reported-bounds height only; paragraph height always falls out of the text.
+  h?: number
+}
+
+/** See {@link PositionProps}: detached-only, never affects layout. */
+export interface LineGeometryProps {
+  /** Endpoints default to spanning the box: (0,0) to (box width, box height). */
+  x1?: number
+  y1?: number
+  x2?: number
+  y2?: number
 }
 
 // Primitives
@@ -321,7 +366,10 @@ export interface WindowShaderProps {
   previous?: boolean
 }
 
-export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
+// Everything a view offers besides layout: d-view uses this directly (a
+// detached view has no taffy presence, so layout props would be rejected at
+// runtime); the layout `view` adds LayoutProps below.
+export interface ViewOwnProps extends TransformProps, PointerProps {
   children?: Children
   trace?: boolean
   /**
@@ -361,46 +409,32 @@ export interface ViewProps extends LayoutProps, TransformProps, PointerProps {
   repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
 }
 
+export interface ViewProps extends ViewOwnProps, LayoutProps {}
+
 // draw primitives
 
-export interface RectProps extends Position, PaintProps, PointerProps {
-  w?: number
-  h?: number
+export interface RectProps extends PaintProps, PointerProps {
   // Corner radius. A single number applies to all four corners; an array is
   // [top-left, top-right, bottom-right, bottom-left] (CSS border-radius order).
   radius?: number | [number, number, number, number]
 }
 
-export interface OvalProps extends Position, PaintProps, PointerProps {
-  /** Bounding box width of the ellipse (not a radius); defaults to the layout box. */
-  w?: number
-  /** Bounding box height of the ellipse (not a radius); defaults to the layout box. */
-  h?: number
-}
+export interface OvalProps extends PaintProps, PointerProps {}
 
 export interface LineProps extends PaintProps, PointerProps {
-  x1?: number
-  y1?: number
-  x2?: number
-  y2?: number
   /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   onLength?: number
   /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   offLength?: number
 }
 
-export interface PathProps extends Position, PaintProps, PointerProps {
+export interface PathProps extends PaintProps, PointerProps {
   d?: string
   fillRule?: "nonzero" | "evenodd"
 }
 
-export interface TextProps extends Position, PaintProps, PointerProps {
+export interface TextProps extends PaintProps, PointerProps {
   children?: Children
-  // Shaping (wrap) width. Detached text wraps at the inherited ancestor size
-  // by default; set w for an unwrapped natural line or an explicit wrap width.
-  w?: number
-  // Reported-bounds height only; paragraph height always falls out of the text.
-  h?: number
   fontFamily?: "sans" | "serif" | "mono" | (string & {})
   fontSize?: number
   /**
@@ -424,7 +458,7 @@ export interface TextProps extends Position, PaintProps, PointerProps {
  * Texture alpha is premultiplied, so additive modes need no manual
  * premultiplication.
  */
-export interface TextureProps extends Position, PaintProps, PointerProps {
+export interface TextureProps extends PaintProps, PointerProps {
   src?: TextureId
   /**
    * How the texture's pixels map to the element box (CSS object-fit).
@@ -434,8 +468,6 @@ export interface TextureProps extends Position, PaintProps, PointerProps {
    * bars and "cover" cropped edges still hit-test as part of the element.
    */
   fit?: "fill" | "cover" | "contain" | "none" | "scale-down"
-  w?: number
-  h?: number
   srcX?: number
   srcY?: number
   srcW?: number

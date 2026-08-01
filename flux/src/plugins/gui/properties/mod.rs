@@ -86,6 +86,15 @@ pub fn apply_jsx(
     return Ok(Damage::None);
   }
 
+  // Box-geometry vocabulary is detached-only: a layout element's geometry IS
+  // its layout box (sized via the width/height layout props), so on a layout
+  // element these names are rejected like unknown properties (the renderer
+  // warns and continues) instead of silently painting geometry that diverges
+  // from the box. View x/y are transforms, not box geometry, and stay.
+  if el.has_layout() && detached_only_geometry(&el.kind, name) {
+    return Err(format!("detached-only property '{name}': a layout element's geometry is its layout box (size it with width/height), so this is available on the d-* form only"));
+  }
+
   let handled = match &mut el.kind {
     ElementKind::Window(win) => window::apply(win, name, value, cmd_tx),
     ElementKind::View(view) => view::apply(view, name, value),
@@ -114,6 +123,17 @@ pub fn apply_jsx(
   }
 
   Err(format!("unknown property '{name}'"))
+}
+
+fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {
+  match kind {
+    ElementKind::Rectangle(_) | ElementKind::Oval(_) | ElementKind::Text(_) | ElementKind::Texture(_) => {
+      matches!(name, "x" | "y" | "w" | "h")
+    }
+    ElementKind::Path(_) => matches!(name, "x" | "y"),
+    ElementKind::Line(_) => matches!(name, "x1" | "y1" | "x2" | "y2"),
+    _ => false,
+  }
 }
 
 // Shared value decoders, kept here so every per-element module reads the same.

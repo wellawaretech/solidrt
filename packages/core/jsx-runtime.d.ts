@@ -2,11 +2,18 @@ import type {
   WindowProps,
   RectProps,
   OvalProps,
+  LineProps,
   PathProps,
   ViewProps,
+  ViewOwnProps,
   TextProps,
   TextureProps,
   LayoutProps,
+  PositionProps,
+  GeometryProps,
+  OvalGeometryProps,
+  TextGeometryProps,
+  LineGeometryProps,
   Element as CoreElement,
   ElementChildrenAttribute as CoreElementChildrenAttribute
 } from "./src/types"
@@ -29,19 +36,23 @@ export namespace JSX {
     ref?: Ref<{ id: number }> | undefined
   }
 
+  // Layout forms compose LayoutProps and derive their geometry from the
+  // layout box; d-* forms compose the paint-space geometry props instead.
   interface IntrinsicElements {
     window: WindowProps & ElementRef
     view: ViewProps & ElementRef
     text: TextProps & LayoutProps & ElementRef
     rect: RectProps & LayoutProps & ElementRef
     oval: OvalProps & LayoutProps & ElementRef
+    line: LineProps & LayoutProps & ElementRef
     path: PathProps & LayoutProps & ElementRef
     texture: TextureProps & LayoutProps & ElementRef
-    "d-view": ViewProps & ElementRef
-    "d-rect": RectProps & ElementRef
-    "d-oval": OvalProps & ElementRef
-    "d-path": PathProps & ElementRef
-    "d-texture": TextureProps & ElementRef
-    "d-text": TextProps & ElementRef
+    "d-view": ViewOwnProps & ElementRef
+    "d-rect": RectProps & GeometryProps & ElementRef
+    "d-oval": OvalProps & OvalGeometryProps & ElementRef
+    "d-line": LineProps & LineGeometryProps & ElementRef
+    "d-path": PathProps & PositionProps & ElementRef
+    "d-texture": TextureProps & GeometryProps & ElementRef
+    "d-text": TextProps & TextGeometryProps & ElementRef
   }
 }

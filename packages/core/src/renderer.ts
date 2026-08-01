@@ -129,21 +129,22 @@ export function scanForOrphans(now: number): void {
 }
 
 // A property the native tree rejected must not take down the reactive system:
-// a typo'd or not-yet-implemented prop poisons only itself. Warn once per
-// element kind + property with a stack (the dev server remaps its frames to
-// the .tsx source), then ignore further writes of the same pair.
-let warnedUnknownProps = new Set<string>()
+// a typo'd, not-yet-implemented, or detached-only prop poisons only itself.
+// Warn once per element kind + property with a stack (the dev server remaps
+// its frames to the .tsx source), then ignore further writes of the same pair.
+let warnedRejectedProps = new Set<string>()
 
 function setTreeProperty(node: ProxyNode, name: string, value: unknown): void {
   try {
     tree.setProperty(node.id, name, value)
   } catch (e) {
-    if (!String(e).includes("unknown property")) throw e
+    let message = String(e)
+    if (!message.includes("unknown property") && !message.includes("detached-only")) throw e
     let key = node.elementType + "." + name
-    if (warnedUnknownProps.has(key)) return
-    warnedUnknownProps.add(key)
+    if (warnedRejectedProps.has(key)) return
+    warnedRejectedProps.add(key)
     let stack = new Error().stack ?? ""
-    console.warn(`Ignoring unknown property '${name}' on <${node.elementType}>\n${stack}`)
+    console.warn(`Ignoring property '${name}' on <${node.elementType}>: ${message}\n${stack}`)
   }
 }
 
