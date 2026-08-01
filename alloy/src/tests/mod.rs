@@ -4,6 +4,7 @@ mod gpu_validate;
 mod hit;
 mod layout_cache;
 mod paint;
+mod router;
 mod texture;
 mod tree;
 mod view;

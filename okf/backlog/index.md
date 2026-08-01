@@ -10,11 +10,23 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Fix mDNS discovery (Discover finds nothing)](mdns-discovery.md) [open] -
+  The client's `_solidrt._tcp` browse is intact but the dev server stopped
+  advertising when it moved into flux (deliberate: the p2p ticket is the
+  connect story), so Discover searched forever and the launcher button is
+  commented out; restoring it means a forge::mdns responder as a flux
+  capability, and whether that works next to Avahi/Bonjour/Windows on port
+  5353 needs a spike before anything else.
 - [Focus navigation (spatial/D-pad, tab order)](focus-navigation.md) [partial] -
   createFocusNav landed in components (arrows/dpad spatial, Tab reading-order,
   gamepad edges, automatic Modal trapping; Button focusable + ring) and the
   launcher is folded onto it (nav.tsx deleted); remaining: TextInput
   focused-vs-editing states, TV device verification.
+- [Per-node event-interest mask for pointer dispatch](pointer-event-interest-mask.md) [open] -
+  Rust marshals the full hit path into JS per pointer event because only the
+  JS handler registry knows interest; a per-element event-kind bitmask prunes
+  delivery to listening nodes and (staged) skips empty emissions, making
+  input over handler-free regions free. Stage 1 is dispatch counters.
 - [Relative mouse input (mouse look)](relative-mouse-input.md) [open] - No
   pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

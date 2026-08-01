@@ -4,9 +4,11 @@ pub mod hit;
 pub(crate) mod kinds;
 pub mod layout;
 pub mod platform;
+pub mod router;
 mod tree;
 
 pub use hit::{HitConfig, PointerEvents};
+pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
   Text, Texture, TextureFit, View, Window,
