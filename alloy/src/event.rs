@@ -141,7 +141,7 @@ pub enum AlloyEvent {
   // that never moves still reports true. Emitted at init and on keyboard/mouse
   // hotplug; SDL has no touch hotplug events, so touch is re-queried on those
   // same occasions.
-  InputDevices { keyboard: bool, mouse: bool, touch: bool },
+  InputDevices { keyboard: bool, mouse: bool, touch: bool, screen_keyboard: bool },
   // Orientation of the display the window is on. Emitted at init and on
   // rotation.
   DisplayOrientation { orientation: sdl3::video::Orientation },
@@ -173,9 +173,10 @@ pub(crate) fn current_system_theme_event() -> AlloyEvent {
 
 pub(crate) fn current_input_devices_event() -> AlloyEvent {
   AlloyEvent::InputDevices {
-    keyboard: sdl_utils::has_keyboard(),
+    keyboard: sdl_utils::physical_keyboard(),
     mouse: sdl_utils::has_mouse(),
     touch: !sdl3::touch::num_touch_devices().is_empty(),
+    screen_keyboard: sdl_utils::has_screen_keyboard_support(),
   }
 }
 

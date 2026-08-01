@@ -201,6 +201,12 @@ impl App {
     let mut prev_keyboard_shown = false;
     let mut prev_keyboard_height = 0.0_f32;
 
+    // Android hardware-keyboard hotplug arrives via JNI (a Configuration
+    // change), not as an SDL keyboard event, so the loop watches the fact and
+    // re-emits InputDevices on change. Elsewhere SDL's own added/removed
+    // events cover hotplug and this never transitions.
+    let mut prev_physical_keyboard = crate::sdl_utils::physical_keyboard();
+
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
     // per-frame logic running while the GPU stays idle; presents reset the
@@ -440,6 +446,12 @@ impl App {
             if let Ok(video) = sdl_context.video() {
               let ti = video.text_input();
               if active {
+                // SDL's default policy ("auto": show the screen keyboard
+                // unless SDL_HasKeyboard) is blind on Android, which never
+                // registers keyboards; feed it the platform fact so an
+                // attached hardware keyboard suppresses the on-screen one.
+                let hint = if crate::sdl_utils::physical_keyboard() { "false" } else { "auto" };
+                sdl3::hint::set("SDL_ENABLE_SCREEN_KEYBOARD", hint);
                 ti.start(&window);
               } else {
                 ti.stop(&window);
@@ -463,6 +475,12 @@ impl App {
           prev_keyboard_height = height;
           event_tx.send(AlloyEvent::KeyboardVisibility { shown, height }).ok();
         }
+      }
+
+      let physical_keyboard = crate::sdl_utils::physical_keyboard();
+      if physical_keyboard != prev_physical_keyboard {
+        prev_physical_keyboard = physical_keyboard;
+        event_tx.send(current_input_devices_event()).ok();
       }
 
       //TODO how often do we check? configurable? send on AlloyCommand only?

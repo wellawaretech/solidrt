@@ -239,6 +239,10 @@ export interface WheelEvent extends PointerEvent {
 // layout-dependent value ("a", "!", "Enter", "ArrowLeft"); `code` is the
 // physical, layout-independent key position ("KeyA", "Digit1", "NumpadEnter").
 // Printable characters for text entry arrive via onTextInput, not here.
+// Routing: keydown/keyup dispatch along the focused node's ancestor chain,
+// leaf->root, always ending at the window root; with nothing focused they go
+// to the window root alone. <window onKeyDown> is therefore the app-global
+// shortcut point.
 export interface KeyEvent {
   key: string
   code: string
@@ -247,6 +251,16 @@ export interface KeyEvent {
   ctrlKey: boolean
   altKey: boolean
   metaKey: boolean
+  /** Node id whose handler is currently running (bubbling changes it per call). */
+  currentTarget: number
+  /** Node id the dispatch started at: the focused node, or the window root when nothing is focused. */
+  target: number
+  /**
+   * Stops the event from reaching ancestor handlers. A component that consumed
+   * the key calls this so enclosing handlers (and app-global shortcuts on the
+   * window) do not also act on it.
+   */
+  stopPropagation: () => void
 }
 
 export interface TextEvent {
@@ -265,6 +279,12 @@ export interface PointerProps {
   onKeyDown?: (event: KeyEvent) => void
   onKeyUp?: (event: KeyEvent) => void
   onTextInput?: (event: TextEvent) => void
+  /**
+   * Declares the element a candidate for focus navigation, enumerable via
+   * getFocusables(). Candidacy only - it changes no behavior by itself; focus
+   * still moves through setFocus.
+   */
+  focusable?: boolean
   pointerEvents?: "auto" | "none" | "all"
 }
 

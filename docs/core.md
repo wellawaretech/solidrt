@@ -409,7 +409,15 @@ Returns the window-relative bounding box of a node from the most recently comput
 setFocus(nodeId: number | null): void
 ```
 
-Programmatically moves focus to the given node, or clears focus when passed `null`. Triggers `onFocus` and `onBlur` handlers and activates the on-screen keyboard if the newly focused node has an `onTextInput` handler.
+Programmatically moves focus to the given node, or clears focus when passed `null`. Triggers `onFocus` and `onBlur` handlers. When the focused node has an `onTextInput` handler, focus also scopes its text-entry session - but focus alone never raises an on-screen keyboard: where one would appear (a screen-keyboard platform with no physical keyboard attached), the session waits for a tap on the focused node or an explicit `startTextInput()`. Everywhere else (desktop, or any device with a physical keyboard) the session starts invisibly at focus, so text arrives from the first keystroke.
+
+### startTextInput
+
+```ts
+startTextInput(): void
+```
+
+Begins text entry on the focused node, raising the on-screen keyboard where one is used. A tap on the focused node triggers this automatically; call it for any other interaction that should start typing - a remote's select on a focused field, a search button. Throws when the focused node has no `onTextInput` handler.
 
 ### getFocusedNodeId
 
@@ -418,3 +426,11 @@ getFocusedNodeId(): number | null
 ```
 
 Returns the id of the currently focused node, or `null` if nothing is focused.
+
+### getFocusables
+
+```ts
+getFocusables(): number[]
+```
+
+Node ids currently declaring the `focusable` prop, for building focus navigation (spatial/D-pad movement, tab order). A snapshot, not reactive; pair with `getBoundingBoxViewport` for their geometry. The prop declares candidacy only - navigation moves focus itself via `setFocus`.

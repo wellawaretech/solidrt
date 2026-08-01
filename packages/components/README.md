@@ -246,7 +246,7 @@ function NameField() {
 | `placeholder`  | `string`                  | -       | Shown when value is empty and the field is not focused.      |
 | `maxLength`    | `number`                  | -       | Truncates input to this length.                              |
 | `disabled`     | `boolean`                 | `false` | Ignores pointer and key events when true.                    |
-| `autoFocus`    | `boolean`                 | `false` | Focuses on mount.                                            |
+| `autoFocus`    | `boolean`                 | `false` | Focuses on mount (the on-screen keyboard waits for a tap).   |
 | `layout`       | `LayoutProps`             | -       | Layout properties (e.g. `width`).                            |
 | `style`        | `StyleProps`              | -       | Overrides theme colors, border, and radius.                  |
 

@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, measureText, setFocus } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
-import type { Color, Gradient, LayoutProps } from "@solidrt/core"
+import type { Color, Gradient, KeyEvent, LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -35,7 +35,8 @@ export interface TextInputProps {
 // Single-line. The caret moves through the text (Left/Right/Home/End), edits
 // happen at the caret, and the inner box scrolls to keep it in view. Printable
 // text arrives via onTextInput (post-IME commit). onKeyDown handles caret
-// movement, Backspace/Delete, Enter, Escape. Range selection (shift-movement,
+// movement, Backspace/Delete, Enter, Escape - and stops those keys from
+// bubbling further. Range selection (shift-movement,
 // highlight, click-to-position) is not wired yet. Outside-click-to-blur is the
 // caller's job.
 export function TextInput(props: TextInputProps) {
@@ -88,8 +89,12 @@ export function TextInput(props: TextInputProps) {
     props.onBlur?.()
   }
 
-  let handleKeyDown = (e: any) => {
+  // Keys the input consumes stop propagating: an ancestor (or an app-global
+  // shortcut on the window) must not also act on an ArrowLeft that moved the
+  // caret. Anything else (e.g. ctrl+s) bubbles on.
+  let handleKeyDown = (e: KeyEvent) => {
     if (props.disabled) return
+    let consumed = true
     if (e.key === "Backspace") {
       buffer.deleteBackward()
       setCaretOn(true)
@@ -113,7 +118,10 @@ export function TextInput(props: TextInputProps) {
       setFocus(null)
     } else if (e.key === "Escape") {
       if (node) setFocus(null)
+    } else {
+      consumed = false
     }
+    if (consumed) e.stopPropagation()
   }
 
   let handleTextInput = (e: any) => {
@@ -176,6 +184,7 @@ export function TextInput(props: TextInputProps) {
   return (
     <view
       ref={(n: { id: number }) => (node = n)}
+      focusable
       flexDirection="row"
       alignItems="center"
       paddingLeft={space("md")}

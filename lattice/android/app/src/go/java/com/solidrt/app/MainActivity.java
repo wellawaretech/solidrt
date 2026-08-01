@@ -2,6 +2,7 @@ package com.solidrt.app;
 
 import android.content.Intent;
 import android.content.res.AssetManager;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -46,10 +47,29 @@ public class MainActivity extends SDLActivity {
     // keyboard; the app lifts its own content using this value instead.
     private static native void nativeKeyboardInset(int px);
 
+    // Forwards hardware-keyboard presence to native. SDL's Android backend
+    // does not track keyboards, so native cannot see this itself; the runtime
+    // uses it to keep the on-screen keyboard down while one is attached.
+    private static native void nativeHardwareKeyboard(boolean present);
+
+    private static boolean hasHardwareKeyboard(Configuration config) {
+        return config.keyboard != Configuration.KEYBOARD_NOKEYS
+            && config.hardKeyboardHidden != Configuration.HARDKEYBOARDHIDDEN_YES;
+    }
+
+    // The manifest declares keyboard|keyboardHidden in configChanges, so
+    // attach/detach arrives here instead of restarting the activity.
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        nativeHardwareKeyboard(hasHardwareKeyboard(newConfig));
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         extractAssets();
         super.onCreate(savedInstanceState);
+        nativeHardwareKeyboard(hasHardwareKeyboard(getResources().getConfiguration()));
 
         // Report the IME inset to native whenever insets change (keyboard
         // show/hide). Listens on the content view so it sees the insets before

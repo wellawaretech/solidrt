@@ -2784,11 +2784,12 @@ import * as tree2 from "flux:rendertree";
 // packages/core/src/window.ts
 import { requestFrame } from "flux:rendertree";
 import { renderFrame } from "srt:render";
-import { on, once } from "srt:events";
+import { on as on2, once } from "srt:events";
 import { exit } from "srt:app";
 
 // packages/core/src/core.ts
 import * as tree from "flux:rendertree";
+import { on } from "srt:events";
 var handlers = new Map;
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
@@ -2805,11 +2806,39 @@ function setEventHandler(nodeId, name, fn) {
 function getEventHandler(nodeId, name) {
   return handlers.get(nodeId)?.get(name);
 }
-function cleanupNodeHandlers(nodeId) {
+function cleanupNode(nodeId) {
   handlers.delete(nodeId);
+  focusables.delete(nodeId);
 }
 var focusedNodeId = null;
 var textInputActive = false;
+tree.setTextInputActive(false);
+var screenKeyboard = true;
+var physicalKeyboard = false;
+on("inputDevices", (d) => {
+  physicalKeyboard = !!d.keyboard;
+  screenKeyboard = !!d.screenKeyboard;
+  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+});
+var focusables = new Set;
+function setFocusable(nodeId, focusable) {
+  if (focusable)
+    focusables.add(nodeId);
+  else
+    focusables.delete(nodeId);
+}
+function textInputEligible() {
+  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
+}
+function textInputInvisible() {
+  return !screenKeyboard || physicalKeyboard;
+}
+function syncTextInput(active) {
+  if (active === textInputActive)
+    return;
+  textInputActive = active;
+  tree.setTextInputActive(active);
+}
 function setFocus(nodeId) {
   if (nodeId === focusedNodeId)
     return;
@@ -2821,11 +2850,11 @@ function setFocus(nodeId) {
   if (nodeId != null) {
     getEventHandler(nodeId, "onFocus")?.();
   }
-  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
-  if (wantActive !== textInputActive) {
-    textInputActive = wantActive;
-    tree.setTextInputActive(wantActive);
-  }
+  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+}
+function activateTextInput() {
+  if (textInputEligible())
+    syncTextInput(true);
 }
 function getFocusedNodeId() {
   return focusedNodeId;
@@ -2835,7 +2864,7 @@ function getFocusedNodeId() {
 var animationFrames = new Map;
 var refreshRate = 60;
 var backHandlers = [];
-function attachWindow(_nodeId) {
+function attachWindow(nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -2862,13 +2891,13 @@ function attachWindow(_nodeId) {
     renderFrame();
   }
   onSettled(() => {
-    unsubRefreshRate = on("displayRefreshRate", ({
+    unsubRefreshRate = on2("displayRefreshRate", ({
       hz
     }) => {
       if (hz > 0)
         refreshRate = hz;
     });
-    unsubscribe = on("render", ({
+    unsubscribe = on2("render", ({
       time,
       frame
     }) => {
@@ -2902,41 +2931,51 @@ function attachWindow(_nodeId) {
     };
     let bubble = (raw, handler) => dispatchPath(raw, handler, true);
     let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
-    unsubDown = on("pointerDown", (raw) => {
+    unsubDown = on2("pointerDown", (raw) => {
       bubble(raw, "onPointerDown");
       let focused = getFocusedNodeId();
       if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
+      } else if (focused != null) {
+        activateTextInput();
       }
     });
-    unsubUp = on("pointerUp", (raw) => {
+    unsubUp = on2("pointerUp", (raw) => {
       bubble(raw, "onPointerUp");
     });
-    unsubMove = on("pointerMove", (raw) => {
+    unsubMove = on2("pointerMove", (raw) => {
       bubble(raw, "onPointerMove");
     });
-    unsubEnter = on("pointerEnter", (raw) => {
+    unsubEnter = on2("pointerEnter", (raw) => {
       dispatchOrdered(raw, "onPointerEnter");
     });
-    unsubLeave = on("pointerLeave", (raw) => {
+    unsubLeave = on2("pointerLeave", (raw) => {
       dispatchOrdered(raw, "onPointerLeave");
     });
-    unsubWheel = on("wheel", (raw) => {
+    unsubWheel = on2("wheel", (raw) => {
       bubble(raw, "onWheel");
     });
-    unsubKeyDown = on("keydown", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyDown")?.(e);
+    let dispatchKey = (raw, handler) => {
+      let target = getFocusedNodeId() ?? nodeId;
+      let stopped = false;
+      let e = {
+        ...raw,
+        target,
+        stopPropagation: () => stopped = true
+      };
+      let path = getNodePath(target);
+      if (path[path.length - 1] !== nodeId)
+        path.push(nodeId);
+      for (let id of path) {
+        e.currentTarget = id;
+        getEventHandler(id, handler)?.(e);
+        if (stopped)
+          break;
       }
-    });
-    unsubKeyUp = on("keyup", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyUp")?.(e);
-      }
-    });
-    unsubBack = on("back", () => {
+    };
+    unsubKeyDown = on2("keydown", (raw) => dispatchKey(raw, "onKeyDown"));
+    unsubKeyUp = on2("keyup", (raw) => dispatchKey(raw, "onKeyUp"));
+    unsubBack = on2("back", () => {
       let prevented = false;
       let e = {
         preventDefault: () => {
@@ -2949,13 +2988,13 @@ function attachWindow(_nodeId) {
       if (!prevented)
         exit();
     });
-    unsubTextInput = on("textInput", (e) => {
+    unsubTextInput = on2("textInput", (e) => {
       let id = getFocusedNodeId();
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e);
       }
     });
-    unsubKeyboardVisibility = on("keyboardVisibility", ({
+    unsubKeyboardVisibility = on2("keyboardVisibility", ({
       shown
     }) => {
       if (!shown)
@@ -3282,6 +3321,13 @@ function createProxyNode(elementType) {
   id += 1;
   return node;
 }
+function getNodePath(id2) {
+  let path = [];
+  let node = nodes.get(id2);
+  for (;node; node = node.parent)
+    path.push(node.id);
+  return path;
+}
 var pendingDestroy = new Map;
 var destroyScheduled = false;
 function destroyNode2(node) {
@@ -3293,7 +3339,7 @@ function destroyNode2(node) {
     if (n3.id === getFocusedNodeId())
       setFocus(null);
     nodes.delete(n3.id);
-    cleanupNodeHandlers(n3.id);
+    cleanupNode(n3.id);
   };
   cleanup2(node);
 }
@@ -3370,6 +3416,10 @@ function applyProp(node, name, value) {
     return;
   if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
     setEventHandler(node.id, name, value);
+    return;
+  }
+  if (name === "focusable") {
+    setFocusable(node.id, value === true);
     return;
   }
   if (name === "color" && isGradient(value)) {
@@ -3472,9 +3522,9 @@ function render(code) {
   });
 }
 // packages/core/src/environment.ts
-import { on as on2 } from "srt:events";
-// packages/core/src/gamepad.ts
 import { on as on3 } from "srt:events";
+// packages/core/src/gamepad.ts
+import { on as on4 } from "srt:events";
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";

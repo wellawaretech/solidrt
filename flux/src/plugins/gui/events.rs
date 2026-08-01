@@ -56,13 +56,14 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         emit_sticky(&ctx, "systemTheme", obj);
       });
     }
-    AlloyEvent::InputDevices { keyboard, mouse, touch } => {
-      let (keyboard, mouse, touch) = (*keyboard, *mouse, *touch);
+    AlloyEvent::InputDevices { keyboard, mouse, touch, screen_keyboard } => {
+      let (keyboard, mouse, touch, screen_keyboard) = (*keyboard, *mouse, *touch, *screen_keyboard);
       exec.exec(move |ctx| {
         let obj = Object::new(ctx.clone()).expect("create object");
         obj.set("keyboard", keyboard).expect("set keyboard");
         obj.set("mouse", mouse).expect("set mouse");
         obj.set("touch", touch).expect("set touch");
+        obj.set("screenKeyboard", screen_keyboard).expect("set screenKeyboard");
         emit_sticky(&ctx, "inputDevices", obj);
       });
     }

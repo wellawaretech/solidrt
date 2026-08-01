@@ -140,7 +140,14 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
   onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an
-  `onTextInput` handler (setFocus activates the on-screen keyboard).
+  `onTextInput` handler. Focus alone never raises the on-screen keyboard: a
+  tap on the focused node (or explicit startTextInput()) does, and never
+  while a physical keyboard is attached; on keyboard-equipped platforms the
+  session starts invisibly at focus so text flows immediately. Key
+  events start at the focused node and bubble leaf->root to the window (with
+  nothing focused, the window alone), so `<window onKeyDown>` is the
+  app-global shortcut point; `stopPropagation()` ends the walk. `focusable`
+  declares focus-navigation candidacy (enumerate via getFocusables()).
 
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
   is as you expect, but `createEffect` takes the 2.0 two-function shape: a

@@ -3,7 +3,7 @@ import { createRenderer } from "@solidjs/universal"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
-import { setEventHandler, cleanupNodeHandlers, getFocusedNodeId, setFocus } from "./core"
+import { setEventHandler, setFocusable, cleanupNode, getFocusedNodeId, setFocus } from "./core"
 import { parseColor, isGradient } from "./color"
 
 export { getEventHandler } from "./core"
@@ -31,6 +31,16 @@ function createProxyNode(elementType: ElementType): ProxyNode {
   return node
 }
 
+// Ancestor chain for event dispatch: node ids from `id` (inclusive) to the
+// root, following the mount tree (a portaled node reports its mount point's
+// chain, not its lexical one). Empty when the id is unknown.
+export function getNodePath(id: number): number[] {
+  let path: number[] = []
+  let node: ProxyNode | undefined = nodes.get(id)
+  for (; node; node = node.parent) path.push(node.id)
+  return path
+}
+
 // Nodes detached this tick and awaiting the destroy sweep, keyed by id so a
 // re-insert can cancel one. See removeNode / flushDestroy.
 let pendingDestroy = new Map<number, ProxyNode>()
@@ -45,7 +55,7 @@ function destroyNode(node: ProxyNode): void {
     for (let child of n.children) if (child.parent === n) cleanup(child)
     if (n.id === getFocusedNodeId()) setFocus(null)
     nodes.delete(n.id)
-    cleanupNodeHandlers(n.id)
+    cleanupNode(n.id)
   }
   cleanup(node)
 }
@@ -160,6 +170,11 @@ function applyProp<T>(node: ProxyNode, name: string, value: T): void {
 
   if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
     setEventHandler(node.id, name, value as Function | null | undefined)
+    return
+  }
+
+  if (name === "focusable") {
+    setFocusable(node.id, value === true)
     return
   }
 

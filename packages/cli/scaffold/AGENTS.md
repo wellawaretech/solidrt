@@ -350,8 +350,10 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
 - console.log + get_logs is your primary probe into runtime state. For state
   you will want repeatedly (a pose, a mode, a counter), bind a debug key that
   logs it and read it back via get_logs.
-- Key events are delivered ONLY to the focused node (no bubbling): call
-  setFocus(node.id) from the window's ref or onKeyDown never fires. `key` and
+- Key events start at the focused node and bubble to the window root; with
+  nothing focused they go to the window root alone. So a debug key bound via
+  `<window onKeyDown>` always fires (unless a focused component consumes the
+  key with stopPropagation, as TextInput does for editing keys). `key` and
   `code` are W3C KeyboardEvent values, so arrow keys arrive as "ArrowLeft"/
   "ArrowRight"/"ArrowUp"/"ArrowDown" (not "Left"), alongside "Enter",
   "Escape", "a".

@@ -3,8 +3,8 @@ import { requestFrame } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { exit } from "srt:app"
-import { getEventHandler, getFocusedNodeId, setFocus } from "./core"
-import { scanForOrphans } from "./renderer"
+import { getEventHandler, getFocusedNodeId, setFocus, activateTextInput } from "./core"
+import { scanForOrphans, getNodePath } from "./renderer"
 
 /**
  * Leaves the current app, unconditionally: back to the launcher in a dev
@@ -228,7 +228,7 @@ export function onBack(fn: (e: BackEvent) => void) {
 
 // ------ Window ----------------
 
-export function attachWindow(_nodeId: number) {
+export function attachWindow(nodeId: number) {
   let unsubscribe: () => void = null!
   let unsubDown: () => void = null!
   let unsubUp: () => void = null!
@@ -304,11 +304,16 @@ export function attachWindow(_nodeId: number) {
 
     unsubDown = on("pointerDown", (raw: RawPointer) => {
       bubble(raw, "onPointerDown")
-      // Outside-tap blur. Read focus AFTER per-node handlers so a tap that
-      // moves focus to a new node is not immediately blurred again.
+      // Read focus AFTER per-node handlers so a tap that moves focus to a new
+      // node is not immediately blurred again.
       let focused = getFocusedNodeId()
       if (focused != null && !raw.targets.includes(focused)) {
+        // Outside-tap blur.
         setFocus(null)
+      } else if (focused != null) {
+        // A tap on the focused node is the interaction that lets a pending
+        // text session raise the on-screen keyboard.
+        activateTextInput()
       }
     })
 
@@ -332,19 +337,31 @@ export function attachWindow(_nodeId: number) {
       bubble(raw, "onWheel")
     })
 
-    unsubKeyDown = on("keydown", (e: any) => {
-      let id = getFocusedNodeId()
-      if (id != null) {
-        getEventHandler(id, "onKeyDown")?.(e)
+    // Key events dispatch along the focused node's ancestor chain, leaf->root
+    // (the pointer bubbling contract), so a container hears keys from focused
+    // descendants and the window root hears everything: <window onKeyDown> is
+    // the app-global shortcut point. With nothing focused the path is the
+    // window root alone - key events are never dropped. The path is resolved
+    // at dispatch time from current focus (nothing to freeze: keyup follows
+    // focus, as in the DOM).
+    let dispatchKey = (raw: any, handler: string) => {
+      let target = getFocusedNodeId() ?? nodeId
+      let stopped = false
+      let e = { ...raw, target, stopPropagation: () => (stopped = true) }
+      let path = getNodePath(target)
+      // A focused node detached this tick has no chain to the root; the
+      // window root must still hear the key.
+      if (path[path.length - 1] !== nodeId) path.push(nodeId)
+      for (let id of path) {
+        e.currentTarget = id
+        getEventHandler(id, handler)?.(e)
+        if (stopped) break
       }
-    })
+    }
 
-    unsubKeyUp = on("keyup", (e: any) => {
-      let id = getFocusedNodeId()
-      if (id != null) {
-        getEventHandler(id, "onKeyUp")?.(e)
-      }
-    })
+    unsubKeyDown = on("keydown", (raw: any) => dispatchKey(raw, "onKeyDown"))
+
+    unsubKeyUp = on("keyup", (raw: any) => dispatchKey(raw, "onKeyUp"))
 
     unsubBack = on("back", () => {
       let prevented = false

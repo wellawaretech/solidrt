@@ -24,6 +24,8 @@ export interface InputDevices {
   keyboard: boolean
   mouse: boolean
   touch: boolean
+  /** Whether the platform can present an on-screen keyboard. */
+  screenKeyboard: boolean
 }
 
 export type SystemTheme = "dark" | "light" | "unknown"
@@ -40,7 +42,7 @@ function ensureDevicesState() {
   // Sticky: the current state replays on subscribe, so the first read already
   // sees it on runtimes that report devices.
   on("inputDevices", (d: InputDevices) => {
-    setDevices({ keyboard: !!d.keyboard, mouse: !!d.mouse, touch: !!d.touch })
+    setDevices({ keyboard: !!d.keyboard, mouse: !!d.mouse, touch: !!d.touch, screenKeyboard: !!d.screenKeyboard })
   })
   devicesAccessor = devices
 }

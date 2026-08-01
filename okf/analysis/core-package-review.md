@@ -49,6 +49,10 @@ asymmetries:
   focused node and dropped when nothing is focused, so app-global shortcuts
   are impossible - even though `onKeyDown` is typed on every element via
   PointerProps, on most elements it can never fire.
+  [Update 2026-08-01: both fixed. KeyEvent carries code/repeat/modifiers plus
+  target/currentTarget/stopPropagation, and keydown/keyup bubble from the
+  focused node leaf->root, falling back to the window root when nothing is
+  focused - `<window onKeyDown>` is the app-global shortcut point.]
 - **Type/intrinsic mismatches, both directions.** `LineProps` is exported but
   `<line>` is not a registered intrinsic (AGENTS.md documents this honestly);
   `svg`/`d-svg` ARE registered intrinsics but `SvgProps` is missing from the

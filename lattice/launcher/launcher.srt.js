@@ -4493,11 +4493,12 @@ import * as tree2 from "flux:rendertree";
 // packages/core/src/window.ts
 import { requestFrame } from "flux:rendertree";
 import { renderFrame } from "srt:render";
-import { on, once } from "srt:events";
+import { on as on2, once } from "srt:events";
 import { exit } from "srt:app";
 
 // packages/core/src/core.ts
 import * as tree from "flux:rendertree";
+import { on } from "srt:events";
 var handlers = new Map;
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
@@ -4514,11 +4515,39 @@ function setEventHandler(nodeId, name, fn) {
 function getEventHandler(nodeId, name) {
   return handlers.get(nodeId)?.get(name);
 }
-function cleanupNodeHandlers(nodeId) {
+function cleanupNode(nodeId) {
   handlers.delete(nodeId);
+  focusables.delete(nodeId);
 }
 var focusedNodeId = null;
 var textInputActive = false;
+tree.setTextInputActive(false);
+var screenKeyboard = true;
+var physicalKeyboard = false;
+on("inputDevices", (d) => {
+  physicalKeyboard = !!d.keyboard;
+  screenKeyboard = !!d.screenKeyboard;
+  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+});
+var focusables = new Set;
+function setFocusable(nodeId, focusable) {
+  if (focusable)
+    focusables.add(nodeId);
+  else
+    focusables.delete(nodeId);
+}
+function textInputEligible() {
+  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
+}
+function textInputInvisible() {
+  return !screenKeyboard || physicalKeyboard;
+}
+function syncTextInput(active) {
+  if (active === textInputActive)
+    return;
+  textInputActive = active;
+  tree.setTextInputActive(active);
+}
 function setFocus(nodeId) {
   if (nodeId === focusedNodeId)
     return;
@@ -4530,11 +4559,11 @@ function setFocus(nodeId) {
   if (nodeId != null) {
     getEventHandler(nodeId, "onFocus")?.();
   }
-  let wantActive = nodeId != null && getEventHandler(nodeId, "onTextInput") != null;
-  if (wantActive !== textInputActive) {
-    textInputActive = wantActive;
-    tree.setTextInputActive(wantActive);
-  }
+  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+}
+function activateTextInput() {
+  if (textInputEligible())
+    syncTextInput(true);
 }
 function getFocusedNodeId() {
   return focusedNodeId;
@@ -4591,7 +4620,7 @@ function ensureResizeState() {
   let [scale, setScale] = createSignal(1, {
     ownedWrite: true
   });
-  on("resize", (e) => {
+  on2("resize", (e) => {
     setSize({
       width: e.width,
       height: e.height
@@ -4619,8 +4648,8 @@ var focusedAccessor;
 function windowFocused() {
   if (!focusedAccessor) {
     let [focused, setFocused] = createSignal(true);
-    on("windowFocus", () => setFocused(true));
-    on("windowBlur", () => setFocused(false));
+    on2("windowFocus", () => setFocused(true));
+    on2("windowBlur", () => setFocused(false));
     focusedAccessor = focused;
   }
   return focusedAccessor();
@@ -4629,7 +4658,7 @@ var keyboardHeightAccessor;
 function keyboardHeight() {
   if (!keyboardHeightAccessor) {
     let [height, setHeight] = createSignal(0);
-    on("keyboardVisibility", ({
+    on2("keyboardVisibility", ({
       height: h
     }) => setHeight(h ?? 0));
     keyboardHeightAccessor = height;
@@ -4637,7 +4666,7 @@ function keyboardHeight() {
   return keyboardHeightAccessor();
 }
 function onLayout(fn) {
-  let unsubscribe = on("postLayout", fn);
+  let unsubscribe = on2("postLayout", fn);
   onCleanup(unsubscribe);
   return unsubscribe;
 }
@@ -4652,7 +4681,7 @@ function onBack(fn) {
   onCleanup(cleanup2);
   return cleanup2;
 }
-function attachWindow(_nodeId) {
+function attachWindow(nodeId) {
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -4679,13 +4708,13 @@ function attachWindow(_nodeId) {
     renderFrame();
   }
   onSettled(() => {
-    unsubRefreshRate = on("displayRefreshRate", ({
+    unsubRefreshRate = on2("displayRefreshRate", ({
       hz
     }) => {
       if (hz > 0)
         refreshRate = hz;
     });
-    unsubscribe = on("render", ({
+    unsubscribe = on2("render", ({
       time,
       frame
     }) => {
@@ -4719,41 +4748,51 @@ function attachWindow(_nodeId) {
     };
     let bubble = (raw, handler) => dispatchPath(raw, handler, true);
     let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
-    unsubDown = on("pointerDown", (raw) => {
+    unsubDown = on2("pointerDown", (raw) => {
       bubble(raw, "onPointerDown");
       let focused = getFocusedNodeId();
       if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
+      } else if (focused != null) {
+        activateTextInput();
       }
     });
-    unsubUp = on("pointerUp", (raw) => {
+    unsubUp = on2("pointerUp", (raw) => {
       bubble(raw, "onPointerUp");
     });
-    unsubMove = on("pointerMove", (raw) => {
+    unsubMove = on2("pointerMove", (raw) => {
       bubble(raw, "onPointerMove");
     });
-    unsubEnter = on("pointerEnter", (raw) => {
+    unsubEnter = on2("pointerEnter", (raw) => {
       dispatchOrdered(raw, "onPointerEnter");
     });
-    unsubLeave = on("pointerLeave", (raw) => {
+    unsubLeave = on2("pointerLeave", (raw) => {
       dispatchOrdered(raw, "onPointerLeave");
     });
-    unsubWheel = on("wheel", (raw) => {
+    unsubWheel = on2("wheel", (raw) => {
       bubble(raw, "onWheel");
     });
-    unsubKeyDown = on("keydown", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyDown")?.(e);
+    let dispatchKey = (raw, handler) => {
+      let target = getFocusedNodeId() ?? nodeId;
+      let stopped = false;
+      let e = {
+        ...raw,
+        target,
+        stopPropagation: () => stopped = true
+      };
+      let path = getNodePath(target);
+      if (path[path.length - 1] !== nodeId)
+        path.push(nodeId);
+      for (let id of path) {
+        e.currentTarget = id;
+        getEventHandler(id, handler)?.(e);
+        if (stopped)
+          break;
       }
-    });
-    unsubKeyUp = on("keyup", (e) => {
-      let id = getFocusedNodeId();
-      if (id != null) {
-        getEventHandler(id, "onKeyUp")?.(e);
-      }
-    });
-    unsubBack = on("back", () => {
+    };
+    unsubKeyDown = on2("keydown", (raw) => dispatchKey(raw, "onKeyDown"));
+    unsubKeyUp = on2("keyup", (raw) => dispatchKey(raw, "onKeyUp"));
+    unsubBack = on2("back", () => {
       let prevented = false;
       let e = {
         preventDefault: () => {
@@ -4766,13 +4805,13 @@ function attachWindow(_nodeId) {
       if (!prevented)
         exit();
     });
-    unsubTextInput = on("textInput", (e) => {
+    unsubTextInput = on2("textInput", (e) => {
       let id = getFocusedNodeId();
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e);
       }
     });
-    unsubKeyboardVisibility = on("keyboardVisibility", ({
+    unsubKeyboardVisibility = on2("keyboardVisibility", ({
       shown
     }) => {
       if (!shown)
@@ -5121,6 +5160,13 @@ function createProxyNode(elementType) {
   id += 1;
   return node;
 }
+function getNodePath(id2) {
+  let path = [];
+  let node = nodes.get(id2);
+  for (;node; node = node.parent)
+    path.push(node.id);
+  return path;
+}
 var pendingDestroy = new Map;
 var destroyScheduled = false;
 function destroyNode2(node) {
@@ -5132,7 +5178,7 @@ function destroyNode2(node) {
     if (n3.id === getFocusedNodeId())
       setFocus(null);
     nodes.delete(n3.id);
-    cleanupNodeHandlers(n3.id);
+    cleanupNode(n3.id);
   };
   cleanup2(node);
 }
@@ -5209,6 +5255,10 @@ function applyProp(node, name, value) {
     return;
   if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
     setEventHandler(node.id, name, value);
+    return;
+  }
+  if (name === "focusable") {
+    setFocusable(node.id, value === true);
     return;
   }
   if (name === "color" && isGradient(value)) {
@@ -5323,7 +5373,7 @@ function createPortal(node, mount) {
   return null;
 }
 // packages/core/src/environment.ts
-import { on as on2 } from "srt:events";
+import { on as on3 } from "srt:events";
 var devicesAccessor;
 function ensureDevicesState() {
   if (devicesAccessor)
@@ -5331,11 +5381,12 @@ function ensureDevicesState() {
   let [devices, setDevices] = createSignal(undefined, {
     ownedWrite: true
   });
-  on2("inputDevices", (d2) => {
+  on3("inputDevices", (d2) => {
     setDevices({
       keyboard: !!d2.keyboard,
       mouse: !!d2.mouse,
-      touch: !!d2.touch
+      touch: !!d2.touch,
+      screenKeyboard: !!d2.screenKeyboard
     });
   });
   devicesAccessor = devices;
@@ -5347,7 +5398,7 @@ function ensureSystemThemeState() {
   let [theme, setTheme] = createSignal("unknown", {
     ownedWrite: true
   });
-  on2("systemTheme", (e3) => setTheme(e3.theme ?? "unknown"));
+  on3("systemTheme", (e3) => setTheme(e3.theme ?? "unknown"));
   systemThemeAccessor = theme;
 }
 var visibilityAccessor;
@@ -5357,7 +5408,7 @@ function ensureVisibilityState() {
   let [visibility, setVisibility] = createSignal("visible", {
     ownedWrite: true
   });
-  on2("visibility", (e3) => setVisibility(e3.state === "hidden" ? "hidden" : "visible"));
+  on3("visibility", (e3) => setVisibility(e3.state === "hidden" ? "hidden" : "visible"));
   visibilityAccessor = visibility;
 }
 var orientationAccessor;
@@ -5367,7 +5418,7 @@ function ensureOrientationState() {
   let [orientation, setOrientation] = createSignal("unknown", {
     ownedWrite: true
   });
-  on2("displayOrientation", (e3) => {
+  on3("displayOrientation", (e3) => {
     setOrientation(e3.orientation ?? "unknown");
   });
   orientationAccessor = orientation;
@@ -5379,7 +5430,7 @@ function ensureTextScaleState() {
   let [scale, setScale] = createSignal(1, {
     ownedWrite: true
   });
-  on2("textScale", (e3) => {
+  on3("textScale", (e3) => {
     setScale(typeof e3.scale === "number" && e3.scale > 0 ? e3.scale : 1);
   });
   textScaleAccessor = scale;
@@ -5406,7 +5457,7 @@ function ensurePointerState() {
       for (let u3 of unsubs)
         u3();
   };
-  unsubs.push(on2("pointerMove", note), on2("pointerDown", note));
+  unsubs.push(on3("pointerMove", note), on3("pointerDown", note));
   mouseSeenAccessor = mouse;
   touchSeenAccessor = touch;
 }
@@ -5415,7 +5466,7 @@ function ensureKeyboardState() {
   if (keyboardSeenAccessor)
     return;
   let [keyboard, setKeyboard] = createSignal(false);
-  let unsub = on2("keydown", () => {
+  let unsub = on3("keydown", () => {
     setKeyboard(true);
     unsub();
   });
@@ -5471,7 +5522,7 @@ var env = {
   }
 };
 // packages/core/src/gamepad.ts
-import { on as on3 } from "srt:events";
+import { on as on4 } from "srt:events";
 // packages/core/src/capabilities.ts
 var MEDIUM_MIN_WIDTH = 600;
 var EXPANDED_MIN_WIDTH = 840;
@@ -6273,6 +6324,7 @@ function TextInput(props) {
   let handleKeyDown = (e3) => {
     if (props.disabled)
       return;
+    let consumed = true;
     if (e3.key === "Backspace") {
       buffer.deleteBackward();
       setCaretOn(true);
@@ -6297,7 +6349,11 @@ function TextInput(props) {
     } else if (e3.key === "Escape") {
       if (node)
         setFocus(null);
+    } else {
+      consumed = false;
     }
+    if (consumed)
+      e3.stopPropagation();
   };
   let handleTextInput = (e3) => {
     if (props.disabled)
@@ -6344,6 +6400,7 @@ function TextInput(props) {
   insertNode2(_el$, _el$3);
   insertNode2(_el$, _el$4);
   ref(() => (n3) => node = n3, _el$);
+  setProp(_el$, "focusable", true);
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
   spread(_el$, mergeProps({
@@ -9008,7 +9065,7 @@ function Icon(props) {
   return _el$;
 }
 // lattice/launcher/parts/nav.tsx
-import { on as on4 } from "srt:events";
+import { on as on5 } from "srt:events";
 var targets = [];
 var [focusedTarget, setFocusedTarget] = createSignal(null, {
   ownedWrite: true
@@ -9135,7 +9192,7 @@ function activate() {
     return focusFirst(placed);
   hit.target.action();
 }
-on4("keydown", (e3) => {
+on5("keydown", (e3) => {
   if (getFocusedNodeId() != null)
     return;
   if (e3.key === "ArrowUp")
@@ -9150,7 +9207,7 @@ on4("keydown", (e3) => {
     activate();
 });
 var prevButtons = new Set;
-on4("gamepads", (e3) => {
+on5("gamepads", (e3) => {
   let now = new Set;
   for (let pad of e3.pads ?? [])
     for (let b2 of pad?.buttons ?? [])
@@ -9595,12 +9652,12 @@ import { canDiscover, discover } from "srt:dev";
 
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on5 } from "srt:events";
+import { on as on6 } from "srt:events";
 var devicesAccessor2;
 function cameraDevices() {
   if (!devicesAccessor2) {
     let [devices, setDevices] = createSignal(listCameras());
-    on5("cameraDeviceChange", () => setDevices(listCameras()));
+    on6("cameraDeviceChange", () => setDevices(listCameras()));
     devicesAccessor2 = devices;
   }
   return devicesAccessor2();
@@ -9642,7 +9699,7 @@ function createCamera(options = {}) {
 }
 
 // lattice/launcher/parts/dev-connection.ts
-import { on as on6 } from "srt:events";
+import { on as on7 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
 var [state, setState] = createSignal("idle");
@@ -9650,7 +9707,7 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on6("dev", (e3) => {
+  on7("dev", (e3) => {
     setState(e3.state);
     setAddress(e3.address);
     setTunneled(e3.tunneled);

@@ -67,6 +67,19 @@ pub fn has_mouse() -> bool {
   unsafe { SDL_HasMouse() }
 }
 
+// The crate wraps this on KeyboardUtil, but the input-devices event snapshot
+// is built without an sdl handle in scope; the raw call takes no arguments.
+pub fn has_screen_keyboard_support() -> bool {
+  unsafe { sdl3::sys::keyboard::SDL_HasScreenKeyboardSupport() }
+}
+
+// Whether a physical keyboard is attached: SDL's device list where the
+// backend maintains one, OR the platform-reported fact (Android, where SDL
+// never registers keyboards).
+pub fn physical_keyboard() -> bool {
+  has_keyboard() || crate::hardware_keyboard()
+}
+
 // Window icon from straight-alpha RGBA8 pixels. The sdl3 crate does not wrap
 // SDL_SetWindowIcon, so this goes through sdl3-sys directly. SDL copies the
 // pixels into the surface's own representation on SetWindowIcon platforms and

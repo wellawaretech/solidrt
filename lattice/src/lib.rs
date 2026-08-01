@@ -125,6 +125,19 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
   alloy::set_keyboard_inset_px(px as i32);
 }
 
+// Receives hardware-keyboard presence from MainActivity (initial Configuration
+// plus onConfigurationChanged on attach/detach). SDL's Android backend never
+// registers keyboards, so this is the only source of the fact there.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeHardwareKeyboard(
+  _env: *mut core::ffi::c_void,
+  _class: *mut core::ffi::c_void,
+  present: u8,
+) {
+  alloy::set_hardware_keyboard(present != 0);
+}
+
 // --- End Android entry point ------------------------------
 
 // The launcher is the go client's home; the production runtime never
