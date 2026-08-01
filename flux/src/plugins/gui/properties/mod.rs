@@ -9,7 +9,7 @@
 //
 // apply_jsx returns the Damage the write caused (layout / paint / transform /
 // none); that decision is owned by rendertree (each setter reports it) and just
-// threaded back out here for the caller to hand to RenderTree::apply_damage.
+// threaded back out here for RenderTree::try_edit to apply.
 
 mod layout;
 mod line;

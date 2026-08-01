@@ -195,13 +195,12 @@ impl ModuleDef for RenderTreeModule {
       move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
         SETPROP_COUNT.with(|c| c.set(c.get() + 1));
         let value = to_prop_value(&value);
-        let mut tree = tree_ref.borrow_mut();
-        let damage =
-          super::properties::apply_jsx(tree.element_write(node_id), &property, &value, &cmd_tx).map_err(|msg| {
+        tree_ref
+          .borrow_mut()
+          .try_edit(node_id, |el| super::properties::apply_jsx(el, &property, &value, &cmd_tx))
+          .map_err(|msg| {
             ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into())
           })?;
-        tree.apply_damage(node_id, damage);
-        tree.sync_span_parent(node_id);
         platform_ref.request_frame();
         Ok(())
       },

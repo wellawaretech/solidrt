@@ -166,12 +166,25 @@ impl RenderTree {
     self.destroy_node(node_id);
   }
 
-  /// Mutable element access for a property write. Invalidates nothing and
-  /// does not touch the revision: the caller must follow up with
-  /// `apply_damage`, passing what the setter reported - that is where the
-  /// revision bumps for content-bearing damage.
-  pub fn element_write(&mut self, id: u64) -> &mut Element {
-    self.node_mut(id)
+  /// A scoped property write: hands `f` the element, then completes the write
+  /// with the Damage it reports - `apply_damage` (where the revision bumps for
+  /// content-bearing damage) plus the span parent-text resync. The closure
+  /// must produce a Damage to compile, so a mutation cannot forget the
+  /// invalidation half of the transaction.
+  pub fn edit(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Damage) {
+    let damage = f(self.node_mut(id));
+    self.apply_damage(id, damage);
+    self.sync_span_parent(id);
+  }
+
+  /// `edit` for writes decoded from untrusted input (the FFI property path):
+  /// on Err nothing is invalidated and the error returns to the caller to
+  /// surface as a script error instead of a process abort.
+  pub fn try_edit<E>(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Result<Damage, E>) -> Result<(), E> {
+    let damage = f(self.node_mut(id))?;
+    self.apply_damage(id, damage);
+    self.sync_span_parent(id);
+    Ok(())
   }
 
   /// Completes a property write by invalidating what the setter reported (see

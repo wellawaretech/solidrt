@@ -38,19 +38,24 @@ const YELLOW: u64 = 8;
 const MAGENTA: u64 = 9;
 const VIEW_D: u64 = 10;
 
-// A property write as the runtime performs it: mutate through element_write,
-// then hand the setter's reported damage to apply_damage.
+// A property write as the runtime performs it: mutate inside edit, which
+// applies the setter's reported damage.
 fn write_view(tree: &mut RenderTree, id: u64, f: impl FnOnce(&mut View) -> Damage) {
-  let damage = match &mut tree.element_write(id).kind {
+  tree.edit(id, |el| match &mut el.kind {
     ElementKind::View(v) => f(v),
     _ => panic!("node {id} is not a view"),
-  };
-  tree.apply_damage(id, damage);
+  });
 }
 
 fn write_color(tree: &mut RenderTree, id: u64, color: Color) {
-  let damage = tree.element_write(id).kind.paint_mut().expect("paintable kind").set_color(color);
-  tree.apply_damage(id, damage);
+  tree.edit(id, |el| el.kind.paint_mut().expect("paintable kind").set_color(color));
+}
+
+fn styled(tree: &mut RenderTree, id: u64, f: impl FnOnce(&mut Style)) {
+  tree.edit(id, |el| {
+    f(el.style_mut().expect("layout"));
+    Damage::Layout
+  });
 }
 
 fn sized(style: &mut Style, w: f32, h: f32) {
@@ -82,46 +87,47 @@ fn build_scene() -> RenderTree {
   tree.insert_node(VIEW_C, YELLOW, None);
   tree.insert_node(VIEW_C, MAGENTA, None);
 
-  sized(tree.element_write(VIEW_A).style_mut().expect("layout"), 100.0, 100.0);
-  sized(tree.element_write(GREEN).style_mut().expect("layout"), 100.0, 100.0);
-  sized(tree.element_write(VIEW_B).style_mut().expect("layout"), 100.0, 100.0);
-  sized(tree.element_write(BLUE).style_mut().expect("layout"), 100.0, 100.0);
-  {
-    let style = tree.element_write(VIEW_C).style_mut().expect("layout");
-    sized(style, 100.0, 100.0);
-    style.overflow.x = Overflow::Hidden;
-    style.overflow.y = Overflow::Hidden;
-  }
+  styled(&mut tree, VIEW_A, |s| sized(s, 100.0, 100.0));
+  styled(&mut tree, GREEN, |s| sized(s, 100.0, 100.0));
+  styled(&mut tree, VIEW_B, |s| sized(s, 100.0, 100.0));
+  styled(&mut tree, BLUE, |s| sized(s, 100.0, 100.0));
+  styled(&mut tree, VIEW_C, |s| {
+    sized(s, 100.0, 100.0);
+    s.overflow.x = Overflow::Hidden;
+    s.overflow.y = Overflow::Hidden;
+  });
   // 200 of stacked content in C's 100 box; flex_shrink 0 keeps the children
   // at full size so they overflow (and scroll) instead of shrinking to fit.
   for id in [YELLOW, MAGENTA] {
-    let style = tree.element_write(id).style_mut().expect("layout");
-    sized(style, 100.0, 100.0);
-    style.flex_shrink = 0.0;
+    styled(&mut tree, id, |s| {
+      sized(s, 100.0, 100.0);
+      s.flex_shrink = 0.0;
+    });
   }
 
   write_color(&mut tree, GREEN, Color::new_srgba(0.0, 1.0, 0.0, 1.0));
   write_color(&mut tree, BLUE, Color::new_srgba(0.0, 0.0, 1.0, 1.0));
   write_color(&mut tree, YELLOW, Color::new_srgba(1.0, 1.0, 0.0, 1.0));
   write_color(&mut tree, MAGENTA, Color::new_srgba(1.0, 0.0, 1.0, 1.0));
-  {
-    let marker = tree.element_write(MARKER);
-    match &mut marker.kind {
-      ElementKind::Rectangle(r) => {
-        r.set_w(20.0);
-        r.set_h(20.0);
-      }
-      _ => panic!("marker is not a rect"),
+  tree.edit(MARKER, |el| match &mut el.kind {
+    ElementKind::Rectangle(r) => {
+      r.set_w(20.0);
+      r.set_h(20.0)
     }
-  }
+    _ => panic!("marker is not a rect"),
+  });
   write_color(&mut tree, MARKER, Color::new_srgba(1.0, 0.0, 0.0, 1.0));
 
   write_view(&mut tree, VIEW_A, |v| v.set_rotate(std::f32::consts::FRAC_PI_2));
   write_view(&mut tree, VIEW_B, |v| v.set_x(30.0));
 
-  tree.element_write(VIEW_A).repaint_boundary = BoundaryMode::Recording;
-  tree.element_write(VIEW_B).repaint_boundary = BoundaryMode::Snapshot;
-  tree.element_write(VIEW_C).repaint_boundary = BoundaryMode::Recording;
+  for (id, mode) in [(VIEW_A, BoundaryMode::Recording), (VIEW_B, BoundaryMode::Snapshot), (VIEW_C, BoundaryMode::Recording)]
+  {
+    tree.edit(id, |el| {
+      el.repaint_boundary = mode;
+      Damage::Paint
+    });
+  }
   tree
 }
 
@@ -221,11 +227,17 @@ fn main() {
     expect_color(&f6, 50, 150, BLUE_PX, "scrolled-up yellow is clipped, B intact");
 
     // Frame 7: scroll view B. A Snapshot texture has no scrolled-out pixels,
-    // so Damage::Scroll must re-rasterize it (correctness over reuse): blue
-    // shifts up 20 inside B's box, the vacated bottom strip is empty.
+    // so Damage::Scroll must redraw it - as a re-render into the retained
+    // allocation (same size, so the backing texture is reused; see
+    // composite::snapshot_node), never a plain reuse: blue shifts up 20
+    // inside B's box, the vacated bottom strip is empty.
     write_view(&mut tree, VIEW_B, |v| v.set_scroll_y(20.0));
     let (f7, s7) = frame(&mut tree, &platform, &ctx);
-    assert_eq!((s7.snapshots_rasterized, s7.snapshots_reused), (1, 0), "scroll write must re-rasterize a snapshot");
+    assert_eq!(
+      (s7.snapshots_rerendered, s7.snapshots_rasterized, s7.snapshots_reused),
+      (1, 0, 0),
+      "scroll write must re-render a snapshot in place"
+    );
     assert_eq!(s7.boundaries_reused, 2, "frame 7 reuses A and C");
     expect_color(&f7, 10, 150, BLUE_PX, "scrolled snapshot content");
     expect_color(&f7, 10, 190, EMPTY_PX, "vacated strip below scrolled content is empty");
