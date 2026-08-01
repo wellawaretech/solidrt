@@ -4,8 +4,9 @@ import {
   gamepads,
   getBoundingBoxViewport,
   getFocusables,
-  getFocusedNodeId,
+  focusedNode,
   getNodePath,
+  onLayout,
   setFocus,
 } from "@solidrt/core"
 import type { KeyEvent } from "@solidrt/core"
@@ -132,7 +133,7 @@ export function createFocusNav(options?: FocusNavOptions) {
   let move = (dir: Direction) => {
     let placed = reachable()
     if (placed.length === 0) return
-    let focused = getFocusedNodeId()
+    let focused = focusedNode()
     let from = focused != null ? placed.find((p) => p.id === focused) : undefined
     if (!from) return focusEntry(placed)
     let best: Placed | null = null
@@ -163,7 +164,7 @@ export function createFocusNav(options?: FocusNavOptions) {
     let placed = reachable()
     if (placed.length === 0) return
     let row = ordered(placed)
-    let focused = getFocusedNodeId()
+    let focused = focusedNode()
     let i = focused != null ? row.findIndex((p) => p.id === focused) : -1
     if (i < 0) {
       if (lastPos) return focusEntry(placed)
@@ -178,7 +179,7 @@ export function createFocusNav(options?: FocusNavOptions) {
   let activate = () => {
     let placed = reachable()
     if (placed.length === 0) return
-    let focused = getFocusedNodeId()
+    let focused = focusedNode()
     let hit = focused != null ? placed.find((p) => p.id === focused) : undefined
     if (!hit) return focusEntry(placed)
     // Refresh the resume position before acting: the action may replace the
@@ -199,6 +200,33 @@ export function createFocusNav(options?: FocusNavOptions) {
     else if ((e.key === "Enter" || e.code === "Select") && !e.repeat) activate()
   }
 
+  // The focused control vanishing (replaced by its own action, a screen
+  // change) clears focus; hand it to the nearest successor so the ring
+  // never disappears mid-navigation. Only when the node actually died: a
+  // deliberate blur (outside tap, keyboard dismissal) leaves focus empty,
+  // and the two are told apart by whether the previous node still resolves
+  // (a destroyed node is gone from the tree by effect time - empty path).
+  // The landing waits for the next layout: the successor was mounted this
+  // very tick, so it has no box until the frame the swap itself scheduled.
+  let prevFocused: number | null = null
+  let refocusPending = false
+  createEffect(
+    () => focusedNode(),
+    (id) => {
+      let prev = prevFocused
+      prevFocused = id
+      if (id != null || prev == null) return
+      refocusPending = getNodePath(prev).length === 0
+    },
+  )
+  onLayout(() => {
+    if (!refocusPending) return
+    refocusPending = false
+    if (focusedNode() != null) return
+    let placed = reachable()
+    if (placed.length > 0) focusEntry(placed)
+  })
+
   // A scope arriving (modal opening) pulls focus inside it: focus left on an
   // outside control would still receive Enter directly (bubbling), bypassing
   // the trap. A scope mounted this very tick has no boxes yet - then focus
@@ -207,7 +235,7 @@ export function createFocusNav(options?: FocusNavOptions) {
     () => currentScope(),
     (scopeNode) => {
       if (!scopeNode) return
-      let focused = getFocusedNodeId()
+      let focused = focusedNode()
       if (focused != null && getNodePath(focused).includes(scopeNode.id)) return
       let placed = reachable()
       if (placed.length > 0) focusFirst(placed)

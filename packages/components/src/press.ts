@@ -1,4 +1,4 @@
-import { createSignal, onSettled, getBoundingBoxViewport } from "@solidrt/core"
+import { createSignal, createMemo, onSettled, focusedNode, getBoundingBoxViewport } from "@solidrt/core"
 import type { PointerEvent, KeyEvent } from "@solidrt/core"
 import { claim, release } from "./arena"
 import { registerNavAction } from "./focus-nav"
@@ -52,9 +52,19 @@ export interface PressOptions {
 export function createPress(options: PressOptions) {
   let [pressed, setPressed] = createSignal(false)
   let [hovered, setHovered] = createSignal(false)
-  let [focused, setFocused] = createSignal(false)
   let node: { id: number } | null = null
   let unregisterNav: (() => void) | null = null
+
+  // Focus is derived from core's reactive focus rather than tracked through
+  // the onFocus/onBlur handlers - one source of truth. Memoized so a focus
+  // move propagates into styling only for the two controls whose value flips.
+  // focusedNode() is read FIRST, unconditionally: the memo may first compute
+  // before the ref has set `node`, and short-circuiting past the read would
+  // leave the memo with no dependency, frozen false forever.
+  let focused = createMemo(() => {
+    let id = focusedNode()
+    return id != null && id === node?.id
+  })
   // The pointer this recognizer is tracking while a press is in flight, and
   // the retention state at the last move (read on up; the signal itself is
   // not readable same-dispatch because writes flush on the microtask).
@@ -156,11 +166,9 @@ export function createPress(options: PressOptions) {
       options.onKeyDown?.(e)
     },
     onFocus: () => {
-      setFocused(true)
       options.onFocus?.()
     },
     onBlur: () => {
-      setFocused(false)
       options.onBlur?.()
     },
   }

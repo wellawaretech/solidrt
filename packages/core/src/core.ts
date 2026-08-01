@@ -1,4 +1,5 @@
 import * as tree from "flux:rendertree"
+import { createSignal } from "@solidjs/signals"
 import { on } from "srt:events"
 
 let handlers = new Map<number, Map<string, Function>>()
@@ -27,10 +28,18 @@ export function cleanupNode(nodeId: number): void {
   focusables.delete(nodeId)
 }
 
-// Currently-focused node id. Reset to null automatically across engine
-// reloads because the JS environment is rebuilt from scratch.
-let focusedNodeId: number | null = null
+// Currently-focused node id, as a signal so focus is a reactive fact. Reset
+// to null automatically across engine reloads because the JS environment is
+// rebuilt from scratch.
+let [readFocusedNode, setFocusedNode] = createSignal<number | null>(null)
 let textInputActive = false
+
+/**
+ * The focused node id, or null - as a reactive accessor: read it inside a
+ * tracked scope (JSX, memo, effect) to re-run when focus moves; a read in an
+ * event handler just sees the current value. setFocus is the only writer.
+ */
+export let focusedNode = readFocusedNode
 
 // The native window outlives engine reloads, so a previous session may have
 // left its text input active; assert the known boot state.
@@ -70,7 +79,8 @@ export function getFocusables(): number[] {
 }
 
 function textInputEligible(): boolean {
-  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null
+  let id = focusedNode()
+  return id != null && getEventHandler(id, "onTextInput") != null
 }
 
 // Whether starting a text session shows nothing on screen: the platform has
@@ -104,9 +114,9 @@ function syncTextInput(active: boolean): void {
  * it (and hides the keyboard).
  */
 export function setFocus(nodeId: number | null): void {
-  if (nodeId === focusedNodeId) return
-  let oldId = focusedNodeId
-  focusedNodeId = nodeId
+  let oldId = focusedNode()
+  if (nodeId === oldId) return
+  setFocusedNode(nodeId)
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.()
   }
@@ -138,9 +148,6 @@ export function startTextInput(): void {
   syncTextInput(true)
 }
 
-export function getFocusedNodeId(): number | null {
-  return focusedNodeId
-}
 
 export interface BoundingBox {
   x: number

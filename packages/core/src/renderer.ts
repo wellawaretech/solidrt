@@ -3,7 +3,7 @@ import { createRenderer } from "@solidjs/universal"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
-import { setEventHandler, setFocusable, cleanupNode, getFocusedNodeId, setFocus } from "./core"
+import { setEventHandler, setFocusable, cleanupNode, focusedNode, setFocus } from "./core"
 import { parseColor, isGradient } from "./color"
 
 export { getEventHandler } from "./core"
@@ -53,7 +53,7 @@ function destroyNode(node: ProxyNode): void {
   tree.destroyNode(node.id)
   let cleanup = (n: ProxyNode) => {
     for (let child of n.children) if (child.parent === n) cleanup(child)
-    if (n.id === getFocusedNodeId()) setFocus(null)
+    if (n.id === focusedNode()) setFocus(null)
     nodes.delete(n.id)
     cleanupNode(n.id)
   }

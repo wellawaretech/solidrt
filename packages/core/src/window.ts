@@ -3,7 +3,7 @@ import { requestFrame } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { exit } from "srt:app"
-import { getEventHandler, getFocusedNodeId, setFocus, activateTextInput } from "./core"
+import { getEventHandler, focusedNode, setFocus, activateTextInput } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
 
 /**
@@ -306,7 +306,7 @@ export function attachWindow(nodeId: number) {
       bubble(raw, "onPointerDown")
       // Read focus AFTER per-node handlers so a tap that moves focus to a new
       // node is not immediately blurred again.
-      let focused = getFocusedNodeId()
+      let focused = focusedNode()
       if (focused != null && !raw.targets.includes(focused)) {
         // Outside-tap blur.
         setFocus(null)
@@ -345,7 +345,7 @@ export function attachWindow(nodeId: number) {
     // at dispatch time from current focus (nothing to freeze: keyup follows
     // focus, as in the DOM).
     let dispatchKey = (raw: any, handler: string) => {
-      let target = getFocusedNodeId() ?? nodeId
+      let target = focusedNode() ?? nodeId
       let stopped = false
       let e = { ...raw, target, stopPropagation: () => (stopped = true) }
       let path = getNodePath(target)
@@ -378,7 +378,7 @@ export function attachWindow(nodeId: number) {
     })
 
     unsubTextInput = on("textInput", (e: any) => {
-      let id = getFocusedNodeId()
+      let id = focusedNode()
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e)
       }

@@ -35,11 +35,18 @@ The work:
   (pushNavScope in focus-nav.ts) that is every nav's default scope, so the
   `modal` flag disappeared entirely. policy.focusRing now also counts
   gamepads (TV remotes register as gamepads; keyboard-free TVs were
-  ringless). Desktop-verified 2026-08-01 (keyboard + SNES pad); TV round
-  still open. Follow-up fix same day: navigation resumes at the nearest
-  candidate to where focus last sat when the focused control vanishes (a
-  button swapped by its own action, e.g. Disconnect -> Connect), instead of
-  restarting at the top-left; modals still enter at their first button.
+  ringless). Desktop-verified 2026-08-01 (keyboard + SNES pad), including
+  the reactive-focus auto-refocus after a fix for a frozen derivation memo
+  (short-circuit skipped the signal read); TV round still open. Follow-ups same day: core focus became a reactive accessor
+  (`focusedNode()`, replacing getFocusedNodeId; setFocus sole writer), and
+  nav now auto-refocuses the nearest successor when the focused control is
+  DESTROYED (button swapped by its own action, screen change) - the landing
+  waits for the next onLayout because the successor has no box until the
+  frame the swap scheduled. Deliberate blurs (outside tap, keyboard
+  dismissal) stay blurred: told apart by whether the old node still resolves
+  (getNodePath non-empty). createPress/TextInput now DERIVE focused from
+  focusedNode() (memoized) instead of tracking onFocus/onBlur; modals still
+  enter at their first button.
 
 Traps for whoever picks this up:
 

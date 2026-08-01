@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, measureText, setFocus } from "@solidrt/core"
+import { createEffect, createMemo, createSignal, onCleanup, focusedNode, measureText, setFocus } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { Color, Gradient, KeyEvent, LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
@@ -40,12 +40,22 @@ export interface TextInputProps {
 // highlight, click-to-position) is not wired yet. Outside-click-to-blur is the
 // caller's job.
 export function TextInput(props: TextInputProps) {
-  let [focused, setFocused] = createSignal(false)
   let [caretOn, setCaretOn] = createSignal(true)
 
   let node: { id: number } | undefined
   let viewport: { id: number } | undefined
   let blinkId: any = null
+
+  // Derived from core's reactive focus (setFocus is the only writer); the
+  // onFocus/onBlur handlers below keep only their side effects (blink timer,
+  // caller callbacks). focusedNode() is read FIRST, unconditionally: the
+  // memo may first compute before the ref has set `node`, and
+  // short-circuiting past the read would leave it dependency-free, frozen
+  // false forever.
+  let focused = createMemo(() => {
+    let id = focusedNode()
+    return id != null && id === node?.id
+  })
 
   let buffer = createTextBuffer({
     value: () => props.value,
@@ -72,7 +82,6 @@ export function TextInput(props: TextInputProps) {
   }
 
   let handleFocus = () => {
-    setFocused(true)
     setCaretOn(true)
     if (blinkId == null) {
       blinkId = setInterval(() => setCaretOn((v) => !v), 500)
@@ -81,7 +90,6 @@ export function TextInput(props: TextInputProps) {
   }
 
   let handleBlur = () => {
-    setFocused(false)
     if (blinkId != null) {
       clearInterval(blinkId)
       blinkId = null

@@ -4519,8 +4519,9 @@ function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
 }
-var focusedNodeId = null;
+var [readFocusedNode, setFocusedNode] = createSignal(null);
 var textInputActive = false;
+var focusedNode = readFocusedNode;
 tree.setTextInputActive(false);
 var screenKeyboard = true;
 var physicalKeyboard = false;
@@ -4540,7 +4541,8 @@ function getFocusables() {
   return [...focusables];
 }
 function textInputEligible() {
-  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
+  let id = focusedNode();
+  return id != null && getEventHandler(id, "onTextInput") != null;
 }
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
@@ -4552,10 +4554,10 @@ function syncTextInput(active) {
   tree.setTextInputActive(active);
 }
 function setFocus(nodeId) {
-  if (nodeId === focusedNodeId)
+  let oldId = focusedNode();
+  if (nodeId === oldId)
     return;
-  let oldId = focusedNodeId;
-  focusedNodeId = nodeId;
+  setFocusedNode(nodeId);
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.();
   }
@@ -4567,9 +4569,6 @@ function setFocus(nodeId) {
 function activateTextInput() {
   if (textInputEligible())
     syncTextInput(true);
-}
-function getFocusedNodeId() {
-  return focusedNodeId;
 }
 function getBoundingBox2(node) {
   return tree.getBoundingBox(node.id);
@@ -4753,7 +4752,7 @@ function attachWindow(nodeId) {
     let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
     unsubDown = on2("pointerDown", (raw) => {
       bubble(raw, "onPointerDown");
-      let focused = getFocusedNodeId();
+      let focused = focusedNode();
       if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
       } else if (focused != null) {
@@ -4776,7 +4775,7 @@ function attachWindow(nodeId) {
       bubble(raw, "onWheel");
     });
     let dispatchKey = (raw, handler) => {
-      let target = getFocusedNodeId() ?? nodeId;
+      let target = focusedNode() ?? nodeId;
       let stopped = false;
       let e = {
         ...raw,
@@ -4809,7 +4808,7 @@ function attachWindow(nodeId) {
         exit();
     });
     unsubTextInput = on2("textInput", (e) => {
-      let id = getFocusedNodeId();
+      let id = focusedNode();
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e);
       }
@@ -5178,7 +5177,7 @@ function destroyNode2(node) {
     for (let child of n3.children)
       if (child.parent === n3)
         cleanup2(child);
-    if (n3.id === getFocusedNodeId())
+    if (n3.id === focusedNode())
       setFocus(null);
     nodes.delete(n3.id);
     cleanupNode(n3.id);
@@ -6297,11 +6296,14 @@ function space(token) {
 var CARET_WIDTH = 1;
 var TEXT_SHAPE_WIDTH = 1e9;
 function TextInput(props) {
-  let [focused, setFocused] = createSignal(false);
   let [caretOn, setCaretOn] = createSignal(true);
   let node;
   let viewport;
   let blinkId = null;
+  let focused = createMemo(() => {
+    let id2 = focusedNode();
+    return id2 != null && id2 === node?.id;
+  });
   let buffer = createTextBuffer({
     value: () => props.value,
     defaultValue: props.defaultValue,
@@ -6320,7 +6322,6 @@ function TextInput(props) {
       setFocus(node.id);
   };
   let handleFocus = () => {
-    setFocused(true);
     setCaretOn(true);
     if (blinkId == null) {
       blinkId = setInterval(() => setCaretOn((v2) => !v2), 500);
@@ -6328,7 +6329,6 @@ function TextInput(props) {
     props.onFocus?.();
   };
   let handleBlur = () => {
-    setFocused(false);
     if (blinkId != null) {
       clearInterval(blinkId);
       blinkId = null;
@@ -6817,7 +6817,7 @@ function createFocusNav(options) {
     let placed = reachable();
     if (placed.length === 0)
       return;
-    let focused = getFocusedNodeId();
+    let focused = focusedNode();
     let from = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
     if (!from)
       return focusEntry(placed);
@@ -6846,7 +6846,7 @@ function createFocusNav(options) {
     if (placed.length === 0)
       return;
     let row = ordered(placed);
-    let focused = getFocusedNodeId();
+    let focused = focusedNode();
     let i3 = focused != null ? row.findIndex((p3) => p3.id === focused) : -1;
     if (i3 < 0) {
       if (lastPos)
@@ -6859,7 +6859,7 @@ function createFocusNav(options) {
     let placed = reachable();
     if (placed.length === 0)
       return;
-    let focused = getFocusedNodeId();
+    let focused = focusedNode();
     let hit = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
     if (!hit)
       return focusEntry(placed);
@@ -6883,10 +6883,29 @@ function createFocusNav(options) {
     else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
       activate();
   };
+  let prevFocused = null;
+  let refocusPending = false;
+  createEffect(() => focusedNode(), (id2) => {
+    let prev = prevFocused;
+    prevFocused = id2;
+    if (id2 != null || prev == null)
+      return;
+    refocusPending = getNodePath(prev).length === 0;
+  });
+  onLayout(() => {
+    if (!refocusPending)
+      return;
+    refocusPending = false;
+    if (focusedNode() != null)
+      return;
+    let placed = reachable();
+    if (placed.length > 0)
+      focusEntry(placed);
+  });
   createEffect(() => currentScope(), (scopeNode) => {
     if (!scopeNode)
       return;
-    let focused = getFocusedNodeId();
+    let focused = focusedNode();
     if (focused != null && getNodePath(focused).includes(scopeNode.id))
       return;
     let placed = reachable();
@@ -6929,9 +6948,12 @@ function createFocusNav(options) {
 function createPress(options) {
   let [pressed, setPressed] = createSignal(false);
   let [hovered, setHovered] = createSignal(false);
-  let [focused, setFocused] = createSignal(false);
   let node = null;
   let unregisterNav = null;
+  let focused = createMemo(() => {
+    let id2 = focusedNode();
+    return id2 != null && id2 === node?.id;
+  });
   let active = null;
   let inside = false;
   let live = {
@@ -7020,11 +7042,9 @@ function createPress(options) {
       options.onKeyDown?.(e3);
     },
     onFocus: () => {
-      setFocused(true);
       options.onFocus?.();
     },
     onBlur: () => {
-      setFocused(false);
       options.onBlur?.();
     }
   };

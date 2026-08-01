@@ -1838,6 +1838,19 @@ function setSignal(e, t) {
   schedule();
   return t;
 }
+function suppressComputedRecompute(e) {
+  deleteFromHeap(e, queueFor(e));
+  if (!(e.se & REACTIVE_MANUAL_WRITE) && e._e === NOT_PENDING) {
+    queuePendingNode(e);
+    schedule();
+  }
+  e.se = e.se & -4 | REACTIVE_MANUAL_WRITE;
+}
+function setMemo(e, t) {
+  const n = setSignal(e, t);
+  suppressComputedRecompute(e);
+  return n;
+}
 function runWithOwner(e, t) {
   const n = context;
   const i = tracking;
@@ -1974,6 +1987,15 @@ function accessor(e) {
   const t = read.bind(null, e);
   t[$REFRESH] = e;
   return t;
+}
+function createSignal(e, t) {
+  if (typeof e === "function") {
+    const n2 = computed(e, t);
+    n2.T &= ~CONFIG_AUTO_DISPOSE;
+    return [accessor(n2), setMemo.bind(null, n2)];
+  }
+  const n = signal(e, t);
+  return [accessor(n), setSignal.bind(null, n)];
 }
 function createMemo(e, t) {
   return accessor(computed(e, t));
@@ -2810,8 +2832,9 @@ function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
 }
-var focusedNodeId = null;
+var [readFocusedNode, setFocusedNode] = createSignal(null);
 var textInputActive = false;
+var focusedNode = readFocusedNode;
 tree.setTextInputActive(false);
 var screenKeyboard = true;
 var physicalKeyboard = false;
@@ -2828,7 +2851,8 @@ function setFocusable(nodeId, focusable) {
     focusables.delete(nodeId);
 }
 function textInputEligible() {
-  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
+  let id = focusedNode();
+  return id != null && getEventHandler(id, "onTextInput") != null;
 }
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
@@ -2840,10 +2864,10 @@ function syncTextInput(active) {
   tree.setTextInputActive(active);
 }
 function setFocus(nodeId) {
-  if (nodeId === focusedNodeId)
+  let oldId = focusedNode();
+  if (nodeId === oldId)
     return;
-  let oldId = focusedNodeId;
-  focusedNodeId = nodeId;
+  setFocusedNode(nodeId);
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.();
   }
@@ -2855,9 +2879,6 @@ function setFocus(nodeId) {
 function activateTextInput() {
   if (textInputEligible())
     syncTextInput(true);
-}
-function getFocusedNodeId() {
-  return focusedNodeId;
 }
 
 // packages/core/src/window.ts
@@ -2933,7 +2954,7 @@ function attachWindow(nodeId) {
     let dispatchOrdered = (raw, handler) => dispatchPath(raw, handler, false);
     unsubDown = on2("pointerDown", (raw) => {
       bubble(raw, "onPointerDown");
-      let focused = getFocusedNodeId();
+      let focused = focusedNode();
       if (focused != null && !raw.targets.includes(focused)) {
         setFocus(null);
       } else if (focused != null) {
@@ -2956,7 +2977,7 @@ function attachWindow(nodeId) {
       bubble(raw, "onWheel");
     });
     let dispatchKey = (raw, handler) => {
-      let target = getFocusedNodeId() ?? nodeId;
+      let target = focusedNode() ?? nodeId;
       let stopped = false;
       let e = {
         ...raw,
@@ -2989,7 +3010,7 @@ function attachWindow(nodeId) {
         exit();
     });
     unsubTextInput = on2("textInput", (e) => {
-      let id = getFocusedNodeId();
+      let id = focusedNode();
       if (id != null) {
         getEventHandler(id, "onTextInput")?.(e);
       }
@@ -3336,7 +3357,7 @@ function destroyNode2(node) {
     for (let child of n3.children)
       if (child.parent === n3)
         cleanup2(child);
-    if (n3.id === getFocusedNodeId())
+    if (n3.id === focusedNode())
       setFocus(null);
     nodes.delete(n3.id);
     cleanupNode(n3.id);
