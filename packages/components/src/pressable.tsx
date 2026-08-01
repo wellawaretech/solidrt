@@ -19,7 +19,10 @@ export interface PressableProps extends PointerProps {
 }
 
 // A pressable box: the createPress semantics (see press.ts) on a styled view.
-// When disabled, it takes no pointer events at all.
+// When disabled, it takes no pointer events at all. Focus navigation is
+// opt-in via `focusable` (Button turns it on by default): a focused Pressable
+// activates on Enter/Space/remote-select and exposes `focused` through the
+// press state for the caller's ring styling.
 export function Pressable(props: PressableProps) {
   let press = createPress(props)
 
@@ -63,11 +66,12 @@ export function Pressable(props: PressableProps) {
       onPointerUp={press.handlers.onPointerUp}
       onPointerMove={press.handlers.onPointerMove}
       onWheel={props.onWheel}
-      onFocus={props.onFocus}
-      onBlur={props.onBlur}
-      onKeyDown={props.onKeyDown}
+      onFocus={press.handlers.onFocus}
+      onBlur={press.handlers.onBlur}
+      onKeyDown={press.handlers.onKeyDown}
       onKeyUp={props.onKeyUp}
       onTextInput={props.onTextInput}
+      focusable={props.focusable === true && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : props.pointerEvents}
     >
       {hasBackground() ? (

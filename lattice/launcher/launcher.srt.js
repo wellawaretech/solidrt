@@ -4536,6 +4536,9 @@ function setFocusable(nodeId, focusable) {
   else
     focusables.delete(nodeId);
 }
+function getFocusables() {
+  return [...focusables];
+}
 function textInputEligible() {
   return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
 }
@@ -5523,6 +5526,17 @@ var env = {
 };
 // packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
+var gamepadsAccessor;
+function gamepads() {
+  if (!gamepadsAccessor) {
+    let [pads, setPads] = createSignal([], {
+      ownedWrite: true
+    });
+    on4("gamepads", (e3) => setPads(e3.pads ?? []));
+    gamepadsAccessor = pads;
+  }
+  return gamepadsAccessor();
+}
 // packages/core/src/capabilities.ts
 var MEDIUM_MIN_WIDTH = 600;
 var EXPANDED_MIN_WIDTH = 840;
@@ -5920,7 +5934,7 @@ function defaultPolicyResolver(caps) {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
-    focusRing: caps.keyboardNav,
+    focusRing: caps.keyboardNav || gamepads().some((p3) => p3 != null),
     textScale: env.textScale,
     textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     navigation: caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
@@ -6741,11 +6755,183 @@ function ScrollView(props) {
   });
   return _el$;
 }
+// packages/components/src/focus-nav.ts
+var navActions = new Map;
+function registerNavAction(nodeId, action2) {
+  navActions.set(nodeId, action2);
+  return () => {
+    if (navActions.get(nodeId) === action2)
+      navActions.delete(nodeId);
+  };
+}
+var [scopeStack, setScopeStack] = createSignal([], {
+  ownedWrite: true
+});
+function pushNavScope(node) {
+  setScopeStack((s2) => [...s2, node]);
+  return () => setScopeStack((s2) => s2.filter((n3) => n3 !== node));
+}
+function createFocusNav(options) {
+  let currentScope = () => options?.scope?.() ?? scopeStack()[scopeStack().length - 1];
+  let reachable = () => {
+    let scopeNode = currentScope();
+    let placed = [];
+    for (let id2 of getFocusables()) {
+      if (scopeNode && !getNodePath(id2).includes(scopeNode.id))
+        continue;
+      let b2 = getBoundingBoxViewport2({
+        id: id2
+      });
+      if (b2)
+        placed.push({
+          id: id2,
+          x: b2.x + b2.width / 2,
+          y: b2.y + b2.height / 2
+        });
+    }
+    return placed;
+  };
+  let ordered = (placed) => [...placed].sort((a3, b2) => Math.abs(a3.y - b2.y) <= 1 ? a3.x - b2.x : a3.y - b2.y);
+  let lastPos = null;
+  let focusCandidate = (p3) => {
+    lastPos = {
+      x: p3.x,
+      y: p3.y
+    };
+    setFocus(p3.id);
+  };
+  let focusFirst = (placed) => {
+    focusCandidate(ordered(placed)[0]);
+  };
+  let focusEntry = (placed) => {
+    if (!lastPos)
+      return focusFirst(placed);
+    let {
+      x: x2,
+      y: y2
+    } = lastPos;
+    let best = placed.reduce((a3, b2) => (b2.x - x2) ** 2 + (b2.y - y2) ** 2 < (a3.x - x2) ** 2 + (a3.y - y2) ** 2 ? b2 : a3);
+    focusCandidate(best);
+  };
+  let move = (dir) => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let focused = getFocusedNodeId();
+    let from = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    if (!from)
+      return focusEntry(placed);
+    let best = null;
+    let bestScore = Infinity;
+    for (let p3 of placed) {
+      if (p3 === from)
+        continue;
+      let dx = p3.x - from.x;
+      let dy = p3.y - from.y;
+      let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
+      if (ahead <= 1)
+        continue;
+      let across = Math.abs(dir === "up" || dir === "down" ? dx : dy);
+      let score = ahead + 2 * across;
+      if (score < bestScore) {
+        bestScore = score;
+        best = p3;
+      }
+    }
+    if (best)
+      focusCandidate(best);
+  };
+  let tab = (delta) => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let row = ordered(placed);
+    let focused = getFocusedNodeId();
+    let i3 = focused != null ? row.findIndex((p3) => p3.id === focused) : -1;
+    if (i3 < 0) {
+      if (lastPos)
+        return focusEntry(placed);
+      return focusCandidate(row[delta === 1 ? 0 : row.length - 1]);
+    }
+    focusCandidate(row[(i3 + delta + row.length) % row.length]);
+  };
+  let activate = () => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let focused = getFocusedNodeId();
+    let hit = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    if (!hit)
+      return focusEntry(placed);
+    lastPos = {
+      x: hit.x,
+      y: hit.y
+    };
+    navActions.get(hit.id)?.();
+  };
+  let onKeyDown = (e3) => {
+    if (e3.key === "ArrowUp")
+      move("up");
+    else if (e3.key === "ArrowDown")
+      move("down");
+    else if (e3.key === "ArrowLeft")
+      move("left");
+    else if (e3.key === "ArrowRight")
+      move("right");
+    else if (e3.key === "Tab")
+      tab(e3.shiftKey ? -1 : 1);
+    else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
+      activate();
+  };
+  createEffect(() => currentScope(), (scopeNode) => {
+    if (!scopeNode)
+      return;
+    let focused = getFocusedNodeId();
+    if (focused != null && getNodePath(focused).includes(scopeNode.id))
+      return;
+    let placed = reachable();
+    if (placed.length > 0)
+      focusFirst(placed);
+    else if (focused != null)
+      setFocus(null);
+  });
+  let prevButtons = new Set;
+  createEffect(() => gamepads(), (pads) => {
+    let now = new Set;
+    for (let pad of pads)
+      for (let b2 of pad?.buttons ?? [])
+        now.add(b2);
+    for (let b2 of now) {
+      if (prevButtons.has(b2))
+        continue;
+      if (b2 === "dpadUp")
+        move("up");
+      else if (b2 === "dpadDown")
+        move("down");
+      else if (b2 === "dpadLeft")
+        move("left");
+      else if (b2 === "dpadRight")
+        move("right");
+      else if (b2 === "south")
+        activate();
+    }
+    prevButtons = now;
+  });
+  return {
+    onKeyDown,
+    move,
+    tab,
+    activate
+  };
+}
+
 // packages/components/src/press.ts
 function createPress(options) {
   let [pressed, setPressed] = createSignal(false);
   let [hovered, setHovered] = createSignal(false);
+  let [focused, setFocused] = createSignal(false);
   let node = null;
+  let unregisterNav = null;
   let active = null;
   let inside = false;
   let live = {
@@ -6754,11 +6940,19 @@ function createPress(options) {
     },
     get hovered() {
       return hovered();
+    },
+    get focused() {
+      return focused();
     }
   };
   let state = () => live;
   let ref2 = (n3) => {
     node = n3;
+    unregisterNav?.();
+    unregisterNav = registerNavAction(n3.id, () => {
+      if (!options.disabled)
+        options.onPress?.();
+    });
   };
   let within = (e3) => {
     let b2 = node && getBoundingBoxViewport2(node);
@@ -6779,7 +6973,10 @@ function createPress(options) {
   let owner = {
     cancel
   };
-  onSettled(() => disengage);
+  onSettled(() => () => {
+    disengage();
+    unregisterNav?.();
+  });
   let handlers2 = {
     onPointerDown: (e3) => {
       if (e3.button != null && e3.button !== 0)
@@ -6814,11 +7011,27 @@ function createPress(options) {
     onPointerLeave: (e3) => {
       setHovered(false);
       options.onPointerLeave?.(e3);
+    },
+    onKeyDown: (e3) => {
+      if ((e3.key === "Enter" || e3.key === " " || e3.code === "Select") && !e3.repeat && !options.disabled) {
+        e3.stopPropagation();
+        options.onPress?.();
+      }
+      options.onKeyDown?.(e3);
+    },
+    onFocus: () => {
+      setFocused(true);
+      options.onFocus?.();
+    },
+    onBlur: () => {
+      setFocused(false);
+      options.onBlur?.();
     }
   };
   return {
     pressed,
     hovered,
+    focused,
     state,
     ref: ref2,
     handlers: handlers2,
@@ -6878,19 +7091,22 @@ function Pressable(props) {
       return props.onWheel;
     },
     get onFocus() {
-      return props.onFocus;
+      return press.handlers.onFocus;
     },
     get onBlur() {
-      return props.onBlur;
+      return press.handlers.onBlur;
     },
     get onKeyDown() {
-      return props.onKeyDown;
+      return press.handlers.onKeyDown;
     },
     get onKeyUp() {
       return props.onKeyUp;
     },
     get onTextInput() {
       return props.onTextInput;
+    },
+    get focusable() {
+      return memo2(() => props.focusable === true)() && props.disabled !== true;
     },
     get pointerEvents() {
       return memo2(() => !!props.disabled)() ? "none" : props.pointerEvents;
@@ -6984,6 +7200,10 @@ function Button(props) {
   let press = createPress(props);
   let style = () => ({
     ...props.style,
+    ...press.focused() && policy.focusRing ? {
+      borderWidth: 2,
+      borderColor: theme.color.text
+    } : {},
     backgroundColor: bg(press.state()),
     borderRadius: radius(),
     scale: (props.style?.scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
@@ -7032,6 +7252,9 @@ function Button(props) {
       return style().opacity;
     }
   }, () => press.handlers, {
+    get focusable() {
+      return memo2(() => !!(props.focusable ?? true))() ? props.disabled !== true : props.focusable ?? true;
+    },
     get pointerEvents() {
       return props.disabled ? "none" : undefined;
     }
@@ -7253,6 +7476,8 @@ function Modal(props) {
     if (props.dismissable !== false)
       props.onClose?.();
   };
+  let popNavScope = null;
+  onCleanup(() => popNavScope?.());
   return createPortal((() => {
     var _el$ = createElement("view", {
       position: "absolute",
@@ -7271,6 +7496,9 @@ function Modal(props) {
       onPointerDown: dismiss
     }), _el$3 = createElement("d-rect");
     insertNode2(_el$, _el$2);
+    ref(() => (n3) => {
+      popNavScope = pushNavScope(n3);
+    }, _el$);
     insertNode2(_el$2, _el$3);
     insert(_el$, () => props.children, null);
     effect3(() => props.backdropColor ?? theme.color.scrim, (_v$, _$p) => {
@@ -9064,171 +9292,6 @@ function Icon(props) {
   }));
   return _el$;
 }
-// lattice/launcher/parts/nav.tsx
-import { on as on5 } from "srt:events";
-var targets = [];
-var [focusedTarget, setFocusedTarget] = createSignal(null, {
-  ownedWrite: true
-});
-function navTarget(action2, opts) {
-  let target = {
-    node: null,
-    action: action2,
-    modal: opts?.modal ?? (() => false),
-    disabled: opts?.disabled ?? (() => false)
-  };
-  targets.push(target);
-  onSettled(() => () => {
-    targets.splice(targets.indexOf(target), 1);
-    if (untrack(focusedTarget) === target)
-      setFocusedTarget(null);
-  });
-  return {
-    ref: (n3) => {
-      target.node = n3;
-    },
-    focused: () => focusedTarget() === target
-  };
-}
-function navRing(focused, radius) {
-  if (!focused)
-    return {};
-  return {
-    borderWidth: 2,
-    borderColor: theme.color.text,
-    borderRadius: radius ?? theme.radius.md
-  };
-}
-function NavButton(props) {
-  let nav = navTarget(() => props.onPress?.(), {
-    modal: () => props.modal ?? false,
-    disabled: () => props.disabled ?? false
-  });
-  return createComponent2(Button, {
-    ref(r$) {
-      var _ref$ = nav.ref;
-      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
-    },
-    get variant() {
-      return props.variant;
-    },
-    get size() {
-      return props.size;
-    },
-    get onPress() {
-      return props.onPress;
-    },
-    get disabled() {
-      return props.disabled;
-    },
-    get layout() {
-      return props.layout;
-    },
-    get style() {
-      return {
-        ...props.style,
-        ...navRing(nav.focused())
-      };
-    },
-    get children() {
-      return props.children;
-    }
-  });
-}
-function reachable() {
-  let usable = targets.filter((t3) => !t3.disabled());
-  let modal = usable.filter((t3) => t3.modal());
-  let placed = [];
-  for (let t3 of modal.length > 0 ? modal : usable) {
-    let b2 = t3.node && getBoundingBoxViewport2(t3.node);
-    if (b2)
-      placed.push({
-        target: t3,
-        x: b2.x + b2.width / 2,
-        y: b2.y + b2.height / 2
-      });
-  }
-  return placed;
-}
-function focusFirst(placed) {
-  let first = placed.reduce((a3, b2) => b2.y < a3.y - 1 || Math.abs(b2.y - a3.y) <= 1 && b2.x < a3.x ? b2 : a3);
-  setFocusedTarget(first.target);
-}
-function move(dir) {
-  let placed = reachable();
-  if (placed.length === 0)
-    return;
-  let cur = untrack(focusedTarget);
-  let from = cur && placed.find((p3) => p3.target === cur);
-  if (!from)
-    return focusFirst(placed);
-  let best = null;
-  let bestScore = Infinity;
-  for (let p3 of placed) {
-    if (p3 === from)
-      continue;
-    let dx = p3.x - from.x;
-    let dy = p3.y - from.y;
-    let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
-    if (ahead <= 1)
-      continue;
-    let across = Math.abs(dir === "up" || dir === "down" ? dx : dy);
-    let score = ahead + 2 * across;
-    if (score < bestScore) {
-      bestScore = score;
-      best = p3;
-    }
-  }
-  if (best)
-    setFocusedTarget(best.target);
-}
-function activate() {
-  let placed = reachable();
-  if (placed.length === 0)
-    return;
-  let cur = untrack(focusedTarget);
-  let hit = cur && placed.find((p3) => p3.target === cur);
-  if (!hit)
-    return focusFirst(placed);
-  hit.target.action();
-}
-on5("keydown", (e3) => {
-  if (getFocusedNodeId() != null)
-    return;
-  if (e3.key === "ArrowUp")
-    move("up");
-  else if (e3.key === "ArrowDown")
-    move("down");
-  else if (e3.key === "ArrowLeft")
-    move("left");
-  else if (e3.key === "ArrowRight")
-    move("right");
-  else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
-    activate();
-});
-var prevButtons = new Set;
-on5("gamepads", (e3) => {
-  let now = new Set;
-  for (let pad of e3.pads ?? [])
-    for (let b2 of pad?.buttons ?? [])
-      now.add(b2);
-  for (let b2 of now) {
-    if (prevButtons.has(b2))
-      continue;
-    if (b2 === "dpadUp")
-      move("up");
-    else if (b2 === "dpadDown")
-      move("down");
-    else if (b2 === "dpadLeft")
-      move("left");
-    else if (b2 === "dpadRight")
-      move("right");
-    else if (b2 === "south")
-      activate();
-  }
-  prevButtons = now;
-});
-
 // lattice/launcher/parts/home-screen.tsx
 import { stop } from "srt:dev";
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
@@ -9446,6 +9509,15 @@ function DetailCard(props) {
 }
 
 // lattice/launcher/parts/types.ts
+function focusRing(focused, radius) {
+  if (!focused || !policy.focusRing)
+    return {};
+  return {
+    borderWidth: 2,
+    borderColor: theme.color.text,
+    borderRadius: radius ?? theme.radius.md
+  };
+}
 var COLUMN_MAX_WIDTH = 440;
 var DETAIL_MAX_WIDTH = 640;
 var TAP_TARGET = 44;
@@ -9462,12 +9534,8 @@ function normalizeAddress(raw) {
 // lattice/launcher/parts/back-button.tsx
 var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
 function BackButton(props) {
-  let nav = navTarget(() => props.onPress());
   return createComponent2(Pressable, {
-    ref(r$) {
-      var _ref$ = nav.ref;
-      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
-    },
+    focusable: true,
     get onPress() {
       return props.onPress;
     },
@@ -9480,7 +9548,7 @@ function BackButton(props) {
     style: (s2) => ({
       backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
       borderRadius: theme.radius.md,
-      ...navRing(nav.focused())
+      ...focusRing(s2.focused)
     }),
     get children() {
       return createComponent2(Icon, {
@@ -9522,7 +9590,7 @@ function CapabilityChip(props) {
 }
 var THEME_MODES = ["system", "light", "dark"];
 function SettingsPanel(props) {
-  let modeNav = navTarget(() => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]));
+  let cycleMode = () => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]);
   return createComponent2(ScrollView, {
     layout: {
       flexGrow: 1
@@ -9568,14 +9636,10 @@ function SettingsPanel(props) {
               }), createComponent2(DetailCard, {
                 title: "Appearance",
                 get children() {
-                  return createComponent2(View, {
-                    ref(r$) {
-                      var _ref$ = modeNav.ref;
-                      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : modeNav.ref = r$;
-                    },
-                    get style() {
-                      return navRing(modeNav.focused());
-                    },
+                  return createComponent2(Pressable, {
+                    focusable: true,
+                    onPress: cycleMode,
+                    style: (s2) => focusRing(s2.focused),
                     get children() {
                       return createComponent2(SegmentedControl, {
                         options: [{
@@ -9652,12 +9716,12 @@ import { canDiscover, discover } from "srt:dev";
 
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on6 } from "srt:events";
+import { on as on5 } from "srt:events";
 var devicesAccessor2;
 function cameraDevices() {
   if (!devicesAccessor2) {
     let [devices, setDevices] = createSignal(listCameras());
-    on6("cameraDeviceChange", () => setDevices(listCameras()));
+    on5("cameraDeviceChange", () => setDevices(listCameras()));
     devicesAccessor2 = devices;
   }
   return devicesAccessor2();
@@ -9699,7 +9763,7 @@ function createCamera(options = {}) {
 }
 
 // lattice/launcher/parts/dev-connection.ts
-import { on as on7 } from "srt:events";
+import { on as on6 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
 var [state, setState] = createSignal("idle");
@@ -9707,7 +9771,7 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on7("dev", (e3) => {
+  on6("dev", (e3) => {
     setState(e3.state);
     setAddress(e3.address);
     setTunneled(e3.tunneled);
@@ -9797,7 +9861,7 @@ function ConnectPanel(props) {
                   return [createComponent2(Show, {
                     when: canDiscover,
                     get children() {
-                      return createComponent2(NavButton, {
+                      return createComponent2(Button, {
                         variant: "secondary",
                         onPress: () => {
                           discover();
@@ -9811,7 +9875,7 @@ function ConnectPanel(props) {
                       return hasCamera();
                     },
                     get children() {
-                      return createComponent2(NavButton, {
+                      return createComponent2(Button, {
                         variant: "secondary",
                         get onPress() {
                           return props.onScan;
@@ -9859,7 +9923,7 @@ function ConnectPanel(props) {
                   };
                 },
                 get children() {
-                  return createComponent2(NavButton, {
+                  return createComponent2(Button, {
                     onPress: submit,
                     children: "Connect"
                   });
@@ -9886,7 +9950,7 @@ function ConnectPanel(props) {
                         get each() {
                           return recentAddresses();
                         },
-                        children: (entry) => createComponent2(NavButton, {
+                        children: (entry) => createComponent2(Button, {
                           variant: "secondary",
                           onPress: () => props.onDial(entry),
                           get children() {
@@ -9937,16 +10001,12 @@ function AppCard(props) {
     let details = [formatSize(props.app.size), formatStamp(props.app.updated)].filter(Boolean).join(", ");
     return props.app.name === props.app.id ? details : `${props.app.id} - ${details}`;
   };
-  let nav = navTarget(() => props.onPress());
   return createComponent2(Pressable, {
-    ref(r$) {
-      var _ref$ = nav.ref;
-      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : nav.ref = r$;
-    },
+    focusable: true,
     get onPress() {
       return props.onPress;
     },
-    style: () => navRing(nav.focused(), theme.radius.lg),
+    style: (s2) => focusRing(s2.focused, theme.radius.lg),
     children: (s2) => createComponent2(Card, {
       get layout() {
         return {
@@ -10123,10 +10183,10 @@ function AppDetail(props) {
                   };
                 },
                 get children() {
-                  return [createComponent2(NavButton, {
+                  return [createComponent2(Button, {
                     onPress: () => props.onLaunch(),
                     children: "Launch"
-                  }), createComponent2(NavButton, {
+                  }), createComponent2(Button, {
                     variant: "secondary",
                     onPress: () => setConfirming(true),
                     children: "Remove"
@@ -10183,13 +10243,11 @@ function AppDetail(props) {
                                   };
                                 },
                                 get children() {
-                                  return [createComponent2(NavButton, {
-                                    modal: true,
+                                  return [createComponent2(Button, {
                                     variant: "ghost",
                                     onPress: () => setConfirming(false),
                                     children: "Cancel"
-                                  }), createComponent2(NavButton, {
-                                    modal: true,
+                                  }), createComponent2(Button, {
                                     variant: "danger",
                                     onPress: () => props.onRemove(),
                                     children: "Remove"
@@ -10354,7 +10412,7 @@ function AppDetail(props) {
                     return d2().cache.length > 0;
                   },
                   get children() {
-                    return createComponent2(NavButton, {
+                    return createComponent2(Button, {
                       variant: "danger",
                       onPress: () => {
                         clearCache(props.app.id);
@@ -10493,7 +10551,7 @@ function DevCard(props) {
               return props.idle;
             },
             get children() {
-              return createComponent2(NavButton, {
+              return createComponent2(Button, {
                 variant: "secondary",
                 get onPress() {
                   return props.onConnect;
@@ -10506,7 +10564,7 @@ function DevCard(props) {
               return props.busy;
             },
             get children() {
-              return createComponent2(NavButton, {
+              return createComponent2(Button, {
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Cancel"
@@ -10517,7 +10575,7 @@ function DevCard(props) {
               return props.connected;
             },
             get children() {
-              return createComponent2(NavButton, {
+              return createComponent2(Button, {
                 variant: "secondary",
                 onPress: () => stop(),
                 children: "Disconnect"
@@ -10531,7 +10589,6 @@ function DevCard(props) {
 }
 function HomeScreen(props) {
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
-  let gearNav = navTarget(() => props.onSettings());
   let twoPane = () => policy.layout === "twoPane";
   let selectedApp = () => apps().find((a3) => a3.id === props.selectedId) ?? null;
   let status = () => isConnected() ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}` : props.notice ?? STATUS_TEXT[connectionState()];
@@ -10627,10 +10684,7 @@ function HomeScreen(props) {
                           })];
                         }
                       }), createComponent2(Pressable, {
-                        ref(r$) {
-                          var _ref$2 = gearNav.ref;
-                          typeof _ref$2 === "function" || Array.isArray(_ref$2) ? applyRef(_ref$2, r$) : gearNav.ref = r$;
-                        },
+                        focusable: true,
                         get onPress() {
                           return props.onSettings;
                         },
@@ -10643,7 +10697,7 @@ function HomeScreen(props) {
                         style: (s2) => ({
                           backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
                           borderRadius: theme.radius.md,
-                          ...navRing(gearNav.focused())
+                          ...focusRing(s2.focused)
                         }),
                         get children() {
                           return createComponent2(Icon, {
@@ -10773,7 +10827,6 @@ function ScanScreen(props) {
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
   })));
-  let closeNav = navTarget(() => props.onCancel());
   createEffect(() => cam.barcode(), (b2) => {
     if (b2)
       props.onScanned(b2.data);
@@ -10915,10 +10968,7 @@ function ScanScreen(props) {
                     },
                     get children() {
                       return createComponent2(Pressable, {
-                        ref(r$) {
-                          var _ref$ = closeNav.ref;
-                          typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : closeNav.ref = r$;
-                        },
+                        focusable: true,
                         get onPress() {
                           return props.onCancel;
                         },
@@ -10931,7 +10981,7 @@ function ScanScreen(props) {
                         style: (s2) => ({
                           backgroundColor: s2.hovered ? SCRIM_HOVER : SCRIM,
                           borderRadius: TAP_TARGET / 2,
-                          ...navRing(closeNav.focused(), TAP_TARGET / 2)
+                          ...focusRing(s2.focused, TAP_TARGET / 2)
                         }),
                         get children() {
                           return createComponent2(Icon, {
@@ -10986,6 +11036,7 @@ function App() {
       setConfirmExit(true);
     }
   });
+  let nav = createFocusNav();
   return createComponent2(Window, {
     title: "SolidRT",
     layout: {
@@ -10995,6 +11046,9 @@ function App() {
       return {
         backgroundColor: theme.color.background
       };
+    },
+    get onKeyDown() {
+      return nav.onKeyDown;
     },
     get children() {
       return createComponent2(SafeArea, {
@@ -11083,13 +11137,11 @@ function App() {
                               };
                             },
                             get children() {
-                              return [createComponent2(NavButton, {
-                                modal: true,
+                              return [createComponent2(Button, {
                                 variant: "ghost",
                                 onPress: () => setConfirmExit(false),
                                 children: "Cancel"
-                              }), createComponent2(NavButton, {
-                                modal: true,
+                              }), createComponent2(Button, {
                                 onPress: () => exit(),
                                 children: "Exit"
                               })];

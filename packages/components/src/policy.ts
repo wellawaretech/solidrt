@@ -1,4 +1,4 @@
-import { capabilities, env, createSignal } from "@solidrt/core"
+import { capabilities, env, createSignal, gamepads } from "@solidrt/core"
 import type { Capabilities } from "@solidrt/core"
 
 // Policies: how components should behave. Derived from capabilities by a
@@ -56,7 +56,10 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
-    focusRing: caps.keyboardNav,
+    // Any focus-driving input warrants the ring: a keyboard, or a gamepad -
+    // which includes TV remotes, which register as gamepads and would
+    // otherwise navigate ringless on keyboard-free TVs.
+    focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
     textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     navigation:

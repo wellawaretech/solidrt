@@ -1,6 +1,7 @@
-import { createPortal } from "@solidrt/core"
+import { createPortal, onCleanup } from "@solidrt/core"
 import type { Color, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
+import { pushNavScope } from "./focus-nav"
 
 export interface ModalProps {
   // Called when the backdrop (the area around the content) is pressed, unless
@@ -34,8 +35,16 @@ export function Modal(props: ModalProps) {
     if (props.dismissable !== false) props.onClose?.()
   }
 
+  // While mounted, the modal is a focus-navigation trap: its container tops
+  // the nav scope stack, so createFocusNav only reaches controls inside it.
+  let popNavScope: (() => void) | null = null
+  onCleanup(() => popNavScope?.())
+
   return createPortal(
     <view
+      ref={(n: { id: number }) => {
+        popNavScope = pushNavScope(n)
+      }}
       position="absolute"
       top={0}
       left={0}

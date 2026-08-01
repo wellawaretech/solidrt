@@ -10,10 +10,9 @@
 // dialing and for discovery; the QR route leaves for the camera screen instead
 // and comes back here if the user cancels it.
 import { Show, For } from "solid-js"
-import { View, Card, Text, TextInput, space } from "@solidrt/components"
+import { View, Card, Text, TextInput, Button, space } from "@solidrt/components"
 import { canDiscover, discover } from "srt:dev"
 import { cameraDevices } from "@solidrt/core/camera"
-import { NavButton } from "./nav"
 import { BackButton } from "./back-button"
 import { recentAddresses } from "./dev-connection"
 import { COLUMN_MAX_WIDTH } from "./types"
@@ -66,7 +65,7 @@ export function ConnectPanel(props: {
         <Show when={canDiscover || hasCamera()}>
           <View layout={{ flexDirection: "row", gap: space("sm") }}>
             <Show when={canDiscover}>
-              <NavButton
+              <Button
                 variant="secondary"
                 onPress={() => {
                   discover()
@@ -74,12 +73,12 @@ export function ConnectPanel(props: {
                 }}
               >
                 Discover
-              </NavButton>
+              </Button>
             </Show>
             <Show when={hasCamera()}>
-              <NavButton variant="secondary" onPress={props.onScan}>
+              <Button variant="secondary" onPress={props.onScan}>
                 Scan QR
-              </NavButton>
+              </Button>
             </Show>
           </View>
         </Show>
@@ -100,7 +99,7 @@ export function ConnectPanel(props: {
             />
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
-            <NavButton onPress={submit}>Connect</NavButton>
+            <Button onPress={submit}>Connect</Button>
           </View>
         </Card>
         <Show when={recentAddresses().length > 0}>
@@ -108,9 +107,9 @@ export function ConnectPanel(props: {
             <View layout={{ flexDirection: "column", gap: space("sm") }}>
               <For each={recentAddresses()}>
                 {(entry) => (
-                  <NavButton variant="secondary" onPress={() => props.onDial(entry)}>
+                  <Button variant="secondary" onPress={() => props.onDial(entry)}>
                     {recentLabel(entry)}
-                  </NavButton>
+                  </Button>
                 )}
               </For>
             </View>

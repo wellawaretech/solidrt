@@ -12,11 +12,12 @@ import {
   Text,
   ScrollView,
   SegmentedControl,
+  Pressable,
+  type PressState,
   theme,
   space,
   policy,
 } from "@solidrt/components"
-import { navTarget, navRing } from "./nav"
 import {
   version as buildVersion,
   profile as buildProfile,
@@ -24,7 +25,7 @@ import {
 } from "srt:apps"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
-import { DETAIL_MAX_WIDTH, type ThemeMode } from "./types"
+import { DETAIL_MAX_WIDTH, focusRing, type ThemeMode } from "./types"
 
 // One capability name as a filled chip, for the About block's list.
 function CapabilityChip(props: { name: string }) {
@@ -52,11 +53,12 @@ export function SettingsPanel(props: {
   onMode: (mode: ThemeMode) => void
   onBack: () => void
 }) {
-  // The whole segmented control is one nav target; activating it steps to the
-  // next mode (a remote has no way to aim at a single segment).
-  let modeNav = navTarget(() =>
-    props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]!),
-  )
+  // The whole segmented control is one focus target; activating it steps to
+  // the next mode (a remote has no way to aim at a single segment). Pointer
+  // taps on the segments hit their inner pressables first (innermost wins),
+  // so only a press on the row's padding cycles.
+  let cycleMode = () =>
+    props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]!)
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
       <View
@@ -76,7 +78,7 @@ export function SettingsPanel(props: {
             <Text variant="heading">Settings</Text>
           </View>
           <DetailCard title="Appearance">
-            <View ref={modeNav.ref} style={navRing(modeNav.focused())}>
+            <Pressable focusable onPress={cycleMode} style={(s: PressState) => focusRing(s.focused)}>
               <SegmentedControl
                 options={[
                   { value: "system", label: "System" },
@@ -86,7 +88,7 @@ export function SettingsPanel(props: {
                 value={props.mode}
                 onChange={(v) => props.onMode(v as ThemeMode)}
               />
-            </View>
+            </Pressable>
           </DetailCard>
           <DetailCard title="About">
             <DetailRow label="Build version" value={buildVersion} />

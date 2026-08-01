@@ -10,10 +10,11 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
-- [Focus navigation (spatial/D-pad, tab order)](focus-navigation.md) [open] -
-  Core primitives landed (key bubbling, focusable registry, startTextInput);
-  the policy tier remains: createSpatialNav, Pressable keyboard activation,
-  and folding the launcher's parallel spatial nav onto real focus.
+- [Focus navigation (spatial/D-pad, tab order)](focus-navigation.md) [partial] -
+  createFocusNav landed in components (arrows/dpad spatial, Tab reading-order,
+  gamepad edges, automatic Modal trapping; Button focusable + ring) and the
+  launcher is folded onto it (nav.tsx deleted); remaining: TextInput
+  focused-vs-editing states, TV device verification.
 - [Relative mouse input (mouse look)](relative-mouse-input.md) [open] - No
   pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

@@ -1,20 +1,25 @@
 import { createSignal, onSettled, getBoundingBoxViewport } from "@solidrt/core"
-import type { PointerEvent } from "@solidrt/core"
+import type { PointerEvent, KeyEvent } from "@solidrt/core"
 import { claim, release } from "./arena"
+import { registerNavAction } from "./focus-nav"
 
-// A live view of a recognizer's state, not a snapshot: both fields are getters,
+// A live view of a recognizer's state, not a snapshot: the fields are getters,
 // so a consumer that reads one inside a JSX prop or child expression tracks that
 // signal there and nothing else re-runs. Read them in those positions, not
 // eagerly into a local, or the read lands in whatever scope destructured it.
-export type PressState = { pressed: boolean; hovered: boolean }
+export type PressState = { pressed: boolean; hovered: boolean; focused: boolean }
 
 export interface PressOptions {
   onPress?: () => void
+  disabled?: boolean
   onPointerDown?: (e: PointerEvent) => void
   onPointerUp?: (e: PointerEvent) => void
   onPointerMove?: (e: PointerEvent) => void
   onPointerEnter?: (e: PointerEvent) => void
   onPointerLeave?: (e: PointerEvent) => void
+  onKeyDown?: (e: KeyEvent) => void
+  onFocus?: () => void
+  onBlur?: () => void
 }
 
 // The press state machine shared by the pressable components. onPress fires on
@@ -34,13 +39,22 @@ export interface PressOptions {
 // at event time, so passing a component's reactive props object keeps handler
 // changes live. The host view must attach `ref` for retention bounds; without
 // it every position counts as inside (the up always fires).
+//
+// Keyboard/remote activation: when the host node holds focus (spatial nav or
+// setFocus), Enter, Space, or the remote center key fires onPress and stops
+// propagating; `focused` mirrors the node's focus for styling (a ring). The
+// ref also registers onPress as the node's nav action, the path a
+// controller's south button activates through (see focus-nav.ts). Key
+// activation shows no pressed state - the focus ring is the feedback.
 // Deliberately framework-agnostic (no theme, no styling): a candidate for
 // promotion into core once the recognizer family grows
 // (okf/plans/component-gestures.md).
 export function createPress(options: PressOptions) {
   let [pressed, setPressed] = createSignal(false)
   let [hovered, setHovered] = createSignal(false)
+  let [focused, setFocused] = createSignal(false)
   let node: { id: number } | null = null
+  let unregisterNav: (() => void) | null = null
   // The pointer this recognizer is tracking while a press is in flight, and
   // the retention state at the last move (read on up; the signal itself is
   // not readable same-dispatch because writes flush on the microtask).
@@ -62,10 +76,17 @@ export function createPress(options: PressOptions) {
     get hovered() {
       return hovered()
     },
+    get focused() {
+      return focused()
+    },
   }
   let state = (): PressState => live
   let ref = (n: { id: number }) => {
     node = n
+    unregisterNav?.()
+    unregisterNav = registerNavAction(n.id, () => {
+      if (!options.disabled) options.onPress?.()
+    })
   }
 
   let within = (e: PointerEvent) => {
@@ -88,7 +109,10 @@ export function createPress(options: PressOptions) {
 
   // A press abandoned mid-flight (unmount during a drag) must not leave its
   // claim behind, or that pointer id could never press anything again.
-  onSettled(() => disengage)
+  onSettled(() => () => {
+    disengage()
+    unregisterNav?.()
+  })
 
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
@@ -123,7 +147,23 @@ export function createPress(options: PressOptions) {
       setHovered(false)
       options.onPointerLeave?.(e)
     },
+    onKeyDown: (e: KeyEvent) => {
+      // The remote center key's `key` is "Unidentified"; match its code.
+      if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
+        e.stopPropagation()
+        options.onPress?.()
+      }
+      options.onKeyDown?.(e)
+    },
+    onFocus: () => {
+      setFocused(true)
+      options.onFocus?.()
+    },
+    onBlur: () => {
+      setFocused(false)
+      options.onBlur?.()
+    },
   }
 
-  return { pressed, hovered, state, ref, handlers, cancel }
+  return { pressed, hovered, focused, state, ref, handlers, cancel }
 }

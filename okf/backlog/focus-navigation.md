@@ -17,18 +17,29 @@ in core is the navigation policy itself.
 
 The work:
 
-- A `createSpatialNav` (components tier, probably) that listens for arrow
-  keys at the window level, scores `getFocusables()` boxes directionally
-  from the currently focused node, and calls `setFocus` on the winner.
-  Select/Enter activates: press for pressables, `startTextInput()` for text
-  fields.
-- Pressable keyboard activation (Enter/Space -> press) plus `focusable` on
-  Pressable, so buttons participate. This is also the moment focus-visible
-  needs an origin signal (ring for key-driven focus, none for pointer);
-  `policy.focusRing` already exists on the components side.
-- Fold the launcher's hand-rolled spatial nav onto this, removing its
-  parallel selection state - the original motivation (TV navigation is a
-  requirement for the launcher).
+- DONE 2026-08-01: `createFocusNav` in components (focus-nav.ts) -
+  window-level arrow keys + gamepad dpad edges score `getFocusables()` boxes
+  (launcher's ahead + 2*across metric), Tab/Shift+Tab walk visual reading
+  order (rows top-to-bottom then x, wrapping), both moving real focus;
+  `scope` option traps navigation in a subtree (modals), pulling stale
+  outside focus in. createPress gained `focused` state,
+  Enter/Space/"Select" activation (consumed), and a package-internal
+  nav-action registry that gamepad south activates through. Button:
+  `focusable` by default, focus ring under `policy.focusRing`. Pressable:
+  `focusable` opt-in.
+- DONE 2026-08-01: launcher folded in. parts/nav.tsx DELETED; NavButton ->
+  Button, navTarget pressables -> `<Pressable focusable>` with a local
+  focusRing helper (parts/types.ts), the settings mode row a focusable
+  Pressable wrapping the SegmentedControl. Modal trapping moved into
+  components: Modal pushes its container onto a nav scope stack
+  (pushNavScope in focus-nav.ts) that is every nav's default scope, so the
+  `modal` flag disappeared entirely. policy.focusRing now also counts
+  gamepads (TV remotes register as gamepads; keyboard-free TVs were
+  ringless). Desktop-verified 2026-08-01 (keyboard + SNES pad); TV round
+  still open. Follow-up fix same day: navigation resumes at the nearest
+  candidate to where focus last sat when the focused control vanishes (a
+  button swapped by its own action, e.g. Disconnect -> Connect), instead of
+  restarting at the top-left; modals still enter at their first button.
 
 Traps for whoever picks this up:
 
@@ -37,7 +48,14 @@ Traps for whoever picks this up:
 - TV text fields have two states: focused (highlight) and editing (session
   started). Enter on a focused field must call `startTextInput()`, not
   submit; Enter while editing submits. TextInput does not distinguish these
-  yet.
+  yet (it is also not `focusable` yet, deliberately).
 - With a physical keyboard attached (Android TV + USB) the text session
   starts eagerly at focus and no on-screen keyboard may ever appear -
   do not "fix" typing-without-select on TV by forcing startTextInput.
+
+Deliberately deferred from the components stage (inherited from the
+launcher's own stage-1 gaps): scroll-into-view for a focused off-screen
+candidate, held-dpad auto-repeat on gamepads (keyboards repeat on their
+own), pressed-state visuals on key activation (the ring is the feedback),
+and `focusable` on the other press controls (Switch/Checkbox/Radio/...) -
+their keyboard activation already works via createPress once declared.

@@ -25,14 +25,15 @@ import {
   View,
   Card,
   Text,
+  Button,
   Modal,
+  createFocusNav,
   theme,
   setTheme,
   darkTheme,
   lightTheme,
   space,
 } from "@solidrt/components"
-import { NavButton } from "./parts/nav"
 import { HomeScreen } from "./parts/home-screen"
 import { ScanScreen } from "./parts/scan-screen"
 import { connect } from "./parts/dev-connection"
@@ -96,11 +97,17 @@ function App() {
     }
   })
 
+  // Focus navigation (TV remote, keyboard, gamepad) over the focusable
+  // controls. The window handler only sees keys nothing focused consumed;
+  // gamepad dpad/south and modal trapping come with it (see createFocusNav).
+  let nav = createFocusNav()
+
   return (
     <Window
       title="SolidRT"
       layout={{ flexDirection: "column" }}
       style={{ backgroundColor: theme.color.background }}
+      onKeyDown={nav.onKeyDown}
     >
       <SafeArea>
         <Switch>
@@ -145,12 +152,10 @@ function App() {
               <Card layout={{ gap: space("lg") }}>
                 <Text variant="title">Exit SolidRT?</Text>
                 <View layout={{ flexDirection: "row", gap: space("md") }}>
-                  <NavButton modal variant="ghost" onPress={() => setConfirmExit(false)}>
+                  <Button variant="ghost" onPress={() => setConfirmExit(false)}>
                     Cancel
-                  </NavButton>
-                  <NavButton modal onPress={() => exit()}>
-                    Exit
-                  </NavButton>
+                  </Button>
+                  <Button onPress={() => exit()}>Exit</Button>
                 </View>
               </Card>
             </View>

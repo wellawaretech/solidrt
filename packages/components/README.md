@@ -359,13 +359,31 @@ import { Button } from "@solidrt/components"
 
 **Props**
 
-| Prop       | Type          | Description                                    |
-| ---------- | ------------- | ---------------------------------------------- |
-| `onPress`  | `() => void`  | Fires on a completed press.                    |
-| `disabled` | `boolean`     | Mutes colors and ignores presses.              |
-| `layout`   | `LayoutProps` | Overrides padding/sizing.                      |
-| `style`    | `StyleProps`  | Overrides background, radius, etc.             |
-| `children` | `any`         | Label text, or custom content.                 |
+| Prop        | Type          | Description                                              |
+| ----------- | ------------- | -------------------------------------------------------- |
+| `onPress`   | `() => void`  | Fires on a completed press.                              |
+| `disabled`  | `boolean`     | Mutes colors and ignores presses.                        |
+| `focusable` | `boolean`     | Focus-navigation candidacy; defaults to `true`.          |
+| `layout`    | `LayoutProps` | Overrides padding/sizing.                                |
+| `style`     | `StyleProps`  | Overrides background, radius, etc.                       |
+| `children`  | `any`         | Label text, or custom content.                           |
+
+A focused Button (see `createFocusNav`) wears a focus ring under the `focusRing` policy and activates on Enter, Space, or a remote's center key.
+
+### createFocusNav
+
+Focus navigation for pointer-free control (TV remote, keyboard, gamepad), moving focus across the elements declaring `focusable`. Two movement types over the same candidates: spatial (arrow keys, dpad) picks the nearest candidate in the pressed direction by on-screen boxes, and sequential (Tab / Shift+Tab) walks visual reading order - rows top to bottom, left to right - wrapping at the ends. Enter / remote center / gamepad south activates the focused control. Nothing is focused until the first navigation press; pointer input works unchanged throughout. When the focused control disappears (an action replacing it, a screen change), the next press resumes at the nearest candidate to where focus last sat rather than restarting from the top.
+
+```jsx
+import { createFocusNav } from "@solidrt/components"
+
+function App() {
+  let nav = createFocusNav()
+  return <window onKeyDown={nav.onKeyDown}>...</window>
+}
+```
+
+Attaching `nav.onKeyDown` on the window is what keeps it cooperative: key events bubble from the focused node, so a focused TextInput keeps its arrow keys and navigation only sees what nothing else consumed. Gamepad dpad/south are wired automatically. An open `Modal` traps navigation inside itself with no extra wiring (topmost wins when stacked); pass `scope: () => nodeOrNull` to trap into some other subtree instead. `move`/`tab`/`activate` are exposed for custom triggers.
 
 ### Switch
 

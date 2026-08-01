@@ -24,6 +24,9 @@ export interface ButtonProps {
   size?: ButtonSize
   onPress?: () => void
   disabled?: boolean
+  // Focus-navigation candidacy (spatial nav, TV remotes); on by default.
+  // Disabled buttons are never candidates.
+  focusable?: boolean
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps
@@ -39,6 +42,9 @@ const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 // nodes are recreated. Override the box via style and the padding/sizing via
 // layout. A caller-set backgroundColor disables the hover tint: we cannot know
 // its hover variant. When disabled, it takes no pointer events at all.
+// Focus (spatial nav) draws a ring under the focusRing policy, text-colored
+// rather than primary so it stays visible on primary-filled buttons; Enter/
+// Space/remote-select activates (handled by createPress).
 export function Button(props: ButtonProps) {
   // Fill, hover fill, and label color per variant, read reactively from the
   // theme. No variant draws a border.
@@ -84,6 +90,7 @@ export function Button(props: ButtonProps) {
   let press = createPress(props)
   let style = () => ({
     ...props.style,
+    ...(press.focused() && policy.focusRing ? { borderWidth: 2, borderColor: theme.color.text } : {}),
     backgroundColor: bg(press.state()),
     borderRadius: radius(),
     // Always a number: a scale that flips from a number back to undefined
@@ -114,6 +121,7 @@ export function Button(props: ButtonProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />

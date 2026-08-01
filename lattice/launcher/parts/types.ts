@@ -1,6 +1,20 @@
 // Cross-screen types and small helpers shared by the launcher screens.
+import { theme, policy, type StyleProps } from "@solidrt/components"
 
 export type DevState = "idle" | "searching" | "connecting" | "connected"
+
+// The focus-navigation ring for the launcher's custom pressables (Button
+// draws its own), spread into a style. Present while focused under the
+// focusRing policy; empty otherwise. Text-colored rather than primary so it
+// stays visible on primary-filled surfaces.
+export function focusRing(focused: boolean, radius?: number): StyleProps {
+  if (!focused || !policy.focusRing) return {}
+  return {
+    borderWidth: 2,
+    borderColor: theme.color.text,
+    borderRadius: radius ?? theme.radius.md,
+  }
+}
 
 // The home screen's sub-panels: each takes over one pane rather than the whole
 // screen, so the other pane keeps its content. Settings replaces the detail

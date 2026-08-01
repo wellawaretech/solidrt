@@ -23,6 +23,14 @@ Most components group props into two objects, plus top-level event handlers:
   transform `x`/`y`/`rotate`/`scale`.
 - Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, NOT
   inside `layout`/`style`.
+- Focus navigation: `createFocusNav` moves real focus across `focusable`
+  elements (Button is focusable by default; Pressable opt-in) - spatially on
+  arrows/dpad, sequentially on Tab/Shift+Tab (reading order, wrapping).
+  Attach its onKeyDown to the window; gamepad dpad/south wire automatically.
+  A focused press control activates on Enter/Space/remote-select via
+  createPress and draws Button's ring under `policy.focusRing` (true when a
+  keyboard OR gamepad/remote is present). An open Modal traps navigation
+  inside itself automatically.
 
 ## Exports
 
