@@ -3,7 +3,8 @@
 // final transcripts through onResult. With wakeWord the session starts
 // asleep behind an efficient wake word detector (livekit-wakeword) and only
 // transcribes after the wake word. startRecognition resolves once the models
-// are loaded and listening has begun; it rejects when loading fails.
+// are loaded and listening has begun; it rejects when the microphone cannot be
+// opened or the models fail to load.
 // Models are passed as bytes so any source composes: flux:fs file(), fetch
 // (incl. the dev-server file proxy), or a download cache layered on top.
 // Requires a runtime built with speech support.

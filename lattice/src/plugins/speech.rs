@@ -115,11 +115,20 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
   let interim: Option<bool> = options.get("interimResults")?;
 
   let state = ctx.userdata::<SpeechPluginState>().expect("speech state");
-  let mic = state
-    .0
-    .atx
-    .open_microphone(microphone, SAMPLE_RATE)
-    .map_err(|e| throw_str(&ctx, &format!("startRecognition: {e}")))?;
+  // Option validation above throws (caller bug); a microphone that cannot be
+  // opened rejects the promise instead - the failure is environmental (no
+  // capture device, device busy, audio subsystem init). A sync throw here
+  // unwinds through the caller's reactive computation, which no .catch can
+  // intercept, so createSpeechRecognition's error signal would never be set.
+  let (promise, resolve, reject) = Promise::new(&ctx)?;
+  let mic = match state.0.atx.open_microphone(microphone, SAMPLE_RATE) {
+    Ok(mic) => mic,
+    Err(e) => {
+      let error = Exception::from_message(ctx.clone(), &format!("startRecognition: {e}"))?;
+      reject.call::<_, ()>((error,))?;
+      return Ok(promise);
+    }
+  };
   let single = !continuous.unwrap_or(true);
   let close_on_final = single && wake_model.is_none();
   let recognizer = Recognizer::start(RecognizerConfig {
@@ -151,7 +160,6 @@ fn start_impl<'js>(ctx: Ctx<'js>, options: Object<'js>) -> flux::rquickjs::Resul
     },
   );
 
-  let (promise, resolve, reject) = Promise::new(&ctx)?;
   state.0.pending.borrow_mut().push(PendingStart {
     session: sid,
     resolve: Persistent::save(&ctx, resolve),
