@@ -1,6 +1,7 @@
 // The connect panel: every way to reach a dev server in one place - type an
-// address, discover one on the network, scan its QR - plus the recents. Reached
-// from the dev card's Connect button and takes the home SplitView's list pane,
+// address, discover one on the network, scan its QR (the icon in the heading
+// row, mirroring the home header's) - plus the recents. Reached from the dev
+// card's Connect button and takes the home SplitView's list pane,
 // so a selected app's details stay up beside it in two-pane. Its column gets
 // the list's treatment (same max width, centered) so opening it does not shift
 // the content sideways.
@@ -14,6 +15,7 @@ import { View, Card, Text, TextInput, Button, space } from "@solidrt/components"
 import { canDiscover, discover } from "srt:dev"
 import { cameraDevices } from "@solidrt/core/camera"
 import { BackButton } from "./back-button"
+import { ScanButton } from "./scan-button"
 import { recentAddresses } from "./dev-connection"
 import { COLUMN_MAX_WIDTH } from "./types"
 
@@ -60,28 +62,30 @@ export function ConnectPanel(props: {
       >
         <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
           <BackButton onPress={props.onClose} />
-          <Text variant="heading">Connect</Text>
+          <Text variant="heading" layout={{ flexGrow: 1 }}>
+            Connect
+          </Text>
+          <Show when={hasCamera()}>
+            <ScanButton onPress={props.onScan} />
+          </Show>
         </View>
-        <Show when={canDiscover || hasCamera()}>
+        {/* Parked: the client-side mDNS browse works, but the CLI no longer
+        advertises _solidrt._tcp (dropped for the p2p ticket flow, see
+        dev-server.ts), so Discover would search forever.
+        <Show when={canDiscover}>
           <View layout={{ flexDirection: "row", gap: space("sm") }}>
-            <Show when={canDiscover}>
-              <Button
-                variant="secondary"
-                onPress={() => {
-                  discover()
-                  props.onClose()
-                }}
-              >
-                Discover
-              </Button>
-            </Show>
-            <Show when={hasCamera()}>
-              <Button variant="secondary" onPress={props.onScan}>
-                Scan QR
-              </Button>
-            </Show>
+            <Button
+              variant="secondary"
+              onPress={() => {
+                discover()
+                props.onClose()
+              }}
+            >
+              Discover
+            </Button>
           </View>
         </Show>
+        */}
         <Card title="Manual">
           <View layout={{ flexDirection: "row", gap: space("md") }}>
             <TextInput

@@ -1,5 +1,5 @@
-// The list-detail home screen: a header (brand mark + settings gear), the
-// installed-app list, the selected app's detail view, and the dev-server
+// The list-detail home screen: a header (brand mark, settings gear, QR scan),
+// the installed-app list, the selected app's detail view, and the dev-server
 // control surface. Wide windows show a WhatsApp-style split (list left,
 // details right); narrow ones navigate between the list and a detail screen.
 // All connection/selection state is owned by App and threaded in as props.
@@ -22,6 +22,7 @@ import {
   policy,
 } from "@solidrt/components"
 import { stop } from "srt:dev"
+import { cameraDevices } from "@solidrt/core/camera"
 import {
   available as appsAvailable,
   list,
@@ -36,6 +37,7 @@ import { PuzzleMark } from "./puzzle"
 import { AppIcon } from "./app-icon"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
+import { ScanButton } from "./scan-button"
 import { SettingsPanel } from "./settings-panel"
 import { ConnectPanel } from "./connect-panel"
 import {
@@ -566,23 +568,31 @@ export function HomeScreen(props: {
                   <PuzzleMark size={40} />
                   <Text variant="heading">SolidRT</Text>
                 </View>
-                <Pressable
-                  focusable
-                  onPress={props.onSettings}
-                  layout={{
-                    width: TAP_TARGET,
-                    height: TAP_TARGET,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                  style={(s: PressState) => ({
-                    backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
-                    borderRadius: theme.radius.md,
-                    ...focusRing(s.focused),
-                  })}
-                >
-                  <Icon src={GEAR_SVG} size={22} />
-                </Pressable>
+                <View layout={{ flexDirection: "row", alignItems: "center" }}>
+                  <Pressable
+                    focusable
+                    onPress={props.onSettings}
+                    layout={{
+                      width: TAP_TARGET,
+                      height: TAP_TARGET,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                    style={(s: PressState) => ({
+                      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+                      borderRadius: theme.radius.md,
+                      ...focusRing(s.focused),
+                    })}
+                  >
+                    <Icon src={GEAR_SVG} size={22} />
+                  </Pressable>
+                  {/* The scan icon is a connect shortcut, so it hides while
+                      connected; the dev card's Disconnect is the affordance
+                      then. */}
+                  <Show when={available && cameraDevices().length > 0 && !isConnected()}>
+                    <ScanButton onPress={props.onScan} />
+                  </Show>
+                </View>
               </View>
               <Show when={apps().length > 0} fallback={<NoApps />}>
                 <AppList

@@ -9367,6 +9367,56 @@ function Icon(props) {
 }
 // lattice/launcher/parts/home-screen.tsx
 import { stop } from "srt:dev";
+
+// packages/core/src/camera.ts
+import { listCameras, open } from "flux:camera";
+import { on as on5 } from "srt:events";
+var devicesAccessor2;
+function cameraDevices() {
+  if (!devicesAccessor2) {
+    let [devices, setDevices] = createSignal(listCameras());
+    on5("cameraDeviceChange", () => setDevices(listCameras()));
+    devicesAccessor2 = devices;
+  }
+  return devicesAccessor2();
+}
+function createCamera(options = {}) {
+  let [texture, setTexture] = createSignal(undefined);
+  let [width, setWidth] = createSignal(undefined);
+  let [height, setHeight] = createSignal(undefined);
+  let [barcode, setBarcode] = createSignal(undefined);
+  let [error, setError] = createSignal(undefined);
+  let session;
+  let disposed = false;
+  open(options).then((cam) => {
+    if (disposed) {
+      cam.close();
+      return;
+    }
+    session = cam;
+    if (options.scan)
+      cam.onBarcode((result) => setBarcode(result));
+    setTexture(cam.texture);
+    setWidth(cam.width);
+    setHeight(cam.height);
+  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
+  onCleanup(() => {
+    disposed = true;
+    if (session) {
+      session.close();
+      session = undefined;
+    }
+  });
+  return {
+    texture,
+    width,
+    height,
+    barcode,
+    error
+  };
+}
+
+// lattice/launcher/parts/home-screen.tsx
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
 // lattice/launcher/parts/puzzle.tsx
@@ -9633,6 +9683,34 @@ function BackButton(props) {
   });
 }
 
+// lattice/launcher/parts/scan-button.tsx
+var QR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>`;
+function ScanButton(props) {
+  return createComponent2(Pressable, {
+    focusable: true,
+    get onPress() {
+      return props.onPress;
+    },
+    layout: {
+      width: TAP_TARGET,
+      height: TAP_TARGET,
+      alignItems: "center",
+      justifyContent: "center"
+    },
+    style: (s2) => ({
+      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+      borderRadius: theme.radius.md,
+      ...focusRing(s2.focused)
+    }),
+    get children() {
+      return createComponent2(Icon, {
+        src: QR_SVG,
+        size: 22
+      });
+    }
+  });
+}
+
 // lattice/launcher/parts/settings-panel.tsx
 import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
 function CapabilityChip(props) {
@@ -9785,57 +9863,6 @@ function SettingsPanel(props) {
   });
 }
 
-// lattice/launcher/parts/connect-panel.tsx
-import { canDiscover, discover } from "srt:dev";
-
-// packages/core/src/camera.ts
-import { listCameras, open } from "flux:camera";
-import { on as on5 } from "srt:events";
-var devicesAccessor2;
-function cameraDevices() {
-  if (!devicesAccessor2) {
-    let [devices, setDevices] = createSignal(listCameras());
-    on5("cameraDeviceChange", () => setDevices(listCameras()));
-    devicesAccessor2 = devices;
-  }
-  return devicesAccessor2();
-}
-function createCamera(options = {}) {
-  let [texture, setTexture] = createSignal(undefined);
-  let [width, setWidth] = createSignal(undefined);
-  let [height, setHeight] = createSignal(undefined);
-  let [barcode, setBarcode] = createSignal(undefined);
-  let [error, setError] = createSignal(undefined);
-  let session;
-  let disposed = false;
-  open(options).then((cam) => {
-    if (disposed) {
-      cam.close();
-      return;
-    }
-    session = cam;
-    if (options.scan)
-      cam.onBarcode((result) => setBarcode(result));
-    setTexture(cam.texture);
-    setWidth(cam.width);
-    setHeight(cam.height);
-  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
-  onCleanup(() => {
-    disposed = true;
-    if (session) {
-      session.close();
-      session = undefined;
-    }
-  });
-  return {
-    texture,
-    width,
-    height,
-    barcode,
-    error
-  };
-}
-
 // lattice/launcher/parts/dev-connection.ts
 import { on as on6 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
@@ -9916,50 +9943,22 @@ function ConnectPanel(props) {
                 }
               }), createComponent2(Text, {
                 variant: "heading",
+                layout: {
+                  flexGrow: 1
+                },
                 children: "Connect"
-              })];
-            }
-          }), createComponent2(Show, {
-            get when() {
-              return canDiscover || hasCamera();
-            },
-            get children() {
-              return createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    gap: space("sm")
-                  };
+              }), createComponent2(Show, {
+                get when() {
+                  return hasCamera();
                 },
                 get children() {
-                  return [createComponent2(Show, {
-                    when: canDiscover,
-                    get children() {
-                      return createComponent2(Button, {
-                        variant: "secondary",
-                        onPress: () => {
-                          discover();
-                          props.onClose();
-                        },
-                        children: "Discover"
-                      });
+                  return createComponent2(ScanButton, {
+                    get onPress() {
+                      return props.onScan;
                     }
-                  }), createComponent2(Show, {
-                    get when() {
-                      return hasCamera();
-                    },
-                    get children() {
-                      return createComponent2(Button, {
-                        variant: "secondary",
-                        get onPress() {
-                          return props.onScan;
-                        },
-                        children: "Scan QR"
-                      });
-                    }
-                  })];
+                  });
                 }
-              });
+              })];
             }
           }), createComponent2(Card, {
             title: "Manual",
@@ -10765,27 +10764,46 @@ function HomeScreen(props) {
                             children: "SolidRT"
                           })];
                         }
-                      }), createComponent2(Pressable, {
-                        focusable: true,
-                        get onPress() {
-                          return props.onSettings;
-                        },
+                      }), createComponent2(View, {
                         layout: {
-                          width: TAP_TARGET,
-                          height: TAP_TARGET,
-                          alignItems: "center",
-                          justifyContent: "center"
+                          flexDirection: "row",
+                          alignItems: "center"
                         },
-                        style: (s2) => ({
-                          backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
-                          borderRadius: theme.radius.md,
-                          ...focusRing(s2.focused)
-                        }),
                         get children() {
-                          return createComponent2(Icon, {
-                            src: GEAR_SVG,
-                            size: 22
-                          });
+                          return [createComponent2(Pressable, {
+                            focusable: true,
+                            get onPress() {
+                              return props.onSettings;
+                            },
+                            layout: {
+                              width: TAP_TARGET,
+                              height: TAP_TARGET,
+                              alignItems: "center",
+                              justifyContent: "center"
+                            },
+                            style: (s2) => ({
+                              backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                              borderRadius: theme.radius.md,
+                              ...focusRing(s2.focused)
+                            }),
+                            get children() {
+                              return createComponent2(Icon, {
+                                src: GEAR_SVG,
+                                size: 22
+                              });
+                            }
+                          }), createComponent2(Show, {
+                            get when() {
+                              return memo2(() => !!(available && cameraDevices().length > 0))() ? !isConnected() : available && cameraDevices().length > 0;
+                            },
+                            get children() {
+                              return createComponent2(ScanButton, {
+                                get onPress() {
+                                  return props.onScan;
+                                }
+                              });
+                            }
+                          })];
                         }
                       })];
                     }

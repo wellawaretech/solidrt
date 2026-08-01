@@ -114,9 +114,11 @@ function App() {
           <Match when={screen() === "scan"}>
             <ScanScreen
               onScanned={(data) => dial(data)}
-              // Cancelling returns to the panel the scan was started from. A
-              // camera failure goes home instead: its notice shows in the dev
-              // card's status line, which the connect panel covers.
+              // Cancelling lands on the connect panel whether the scan was
+              // started there or from the home header: it holds the other ways
+              // to connect, and back from it goes home. A camera failure goes
+              // home instead: its notice shows in the dev card's status line,
+              // which the connect panel covers.
               onCancel={() => setScreen("connect")}
               onError={(m) => {
                 setNotice(`Camera: ${m}`)
