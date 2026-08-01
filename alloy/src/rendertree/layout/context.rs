@@ -31,6 +31,17 @@ impl LayoutData {
       positioning_context: false,
     }
   }
+
+  // The one seam where taffy's computed layout converts into the euclid paint
+  // vocabulary. Everything downstream of layout (hit testing, bounding boxes,
+  // compositing) reads the box through these instead of `computed` directly.
+  pub fn location(&self) -> crate::impellers::Point {
+    crate::impellers::Point::new(self.computed.location.x, self.computed.location.y)
+  }
+
+  pub fn size(&self) -> crate::impellers::Size {
+    crate::impellers::Size::new(self.computed.size.width, self.computed.size.height)
+  }
 }
 
 pub struct LayoutContext<'a> {
@@ -126,7 +137,10 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
           inputs,
           style,
           |_, _| 0.0,
-          |known, available| kind.measure(&MeasureContext { platform, alloy, known, available }),
+          |known, available| {
+            let size = kind.measure(&MeasureContext { platform, alloy, known, available });
+            Size { width: size.width, height: size.height }
+          },
         )
       } else {
         match element.layout_data().style.display {

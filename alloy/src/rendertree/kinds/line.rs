@@ -1,9 +1,8 @@
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, Point};
+use crate::impellers::{DisplayListBuilder, Point, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
-use taffy::Size as TaffySize;
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 
 // Endpoints default to spanning the box: (0,0) to (box.w, box.h), matching how
 // a rect with unset w/h fills its box. Explicit endpoints are detached-only.
@@ -29,7 +28,7 @@ impl Line {
 
 impl Buildable for Line {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let (from, to) = self.endpoints(ctx.size.w, ctx.size.h);
+    let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
     let paint = self.paint.to_paint();
     match (self.on_length, self.off_length) {
       (Some(on), Some(off)) => {
@@ -45,8 +44,8 @@ impl Buildable for Line {
 // A line has no intrinsic size: a layout line is sized by the width/height
 // layout props (endpoints are detached-only geometry and never reach taffy).
 impl Measurable for Line {
-  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
-    TaffySize { width: ctx.known.width.unwrap_or(0.0), height: ctx.known.height.unwrap_or(0.0) }
+  fn measure(&self, ctx: &MeasureContext) -> Size {
+    Size::new(ctx.known.width.unwrap_or(0.0), ctx.known.height.unwrap_or(0.0))
   }
 }
 
@@ -86,8 +85,8 @@ impl Line {
 }
 
 impl Hittable for Line {
-  fn is_in_bounds(&self, pt: XY, ctx: &HitContext) -> bool {
-    let (from, to) = self.endpoints(ctx.size.w, ctx.size.h);
+  fn is_in_bounds(&self, pt: Point, ctx: &HitContext) -> bool {
+    let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
     let half_sw = (self.paint.stroke_width / 2.0).max(2.0);
     let dx = to.x - from.x;
     let dy = to.y - from.y;

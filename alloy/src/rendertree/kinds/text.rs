@@ -1,14 +1,12 @@
 use super::PaintState;
 use crate::impellers::{
-  DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, TextAlignment,
-  TypographyContext,
+  DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, Rect, Size,
+  TextAlignment, TypographyContext,
 };
 use crate::rendertree::Damage;
-use crate::rendertree::{
-  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
-};
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use std::cell::RefCell;
-use taffy::prelude::*;
+use taffy::{AvailableSpace, Display, Style};
 
 // Shaping bound: at most this many widths cached per text node. A layout pass
 // probes the intrinsic width (f32::MAX) plus the resolved width, and paint
@@ -123,7 +121,7 @@ impl std::fmt::Debug for ParaCache {
 
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let Some(paragraph) = self.shaped(&ctx.platform.typography(), self.w.unwrap_or(ctx.size.w)) else {
+    let Some(paragraph) = self.shaped(&ctx.platform.typography(), self.w.unwrap_or(ctx.size.width)) else {
       return;
     };
     builder.draw_paragraph(&paragraph, Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)));
@@ -131,14 +129,14 @@ impl Buildable for Text {
 }
 
 impl Measurable for Text {
-  fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> Size {
     crate::rendertree::counters::note_measure_call();
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
-      return Size { width: w, height: h };
+      return Size::new(w, h);
     }
 
     let Some(intrinsic) = self.shaped(&ctx.platform.typography(), f32::MAX) else {
-      return Size::ZERO;
+      return Size::zero();
     };
 
     let max_intrinsic_width = intrinsic.get_max_intrinsic_width();
@@ -151,23 +149,21 @@ impl Measurable for Text {
     });
 
     let Some(paragraph) = self.shaped(&ctx.platform.typography(), width) else {
-      return Size::ZERO;
+      return Size::zero();
     };
 
     let height = ctx.known.height.unwrap_or_else(|| paragraph.get_height());
 
-    Size { width, height }
+    Size::new(width, height)
   }
 }
 
 impl Bounded for Text {
-  fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
-    BoundingBox {
-      x: self.x.unwrap_or(0.0),
-      y: self.y.unwrap_or(0.0),
-      width: self.w.unwrap_or(fallback.width),
-      height: self.h.unwrap_or(fallback.height),
-    }
+  fn local_bounds(&self, fallback: Size) -> Rect {
+    Rect::new(
+      Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(fallback.width), self.h.unwrap_or(fallback.height)),
+    )
   }
 }
 

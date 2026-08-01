@@ -2,10 +2,7 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, RoundingRadii, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{
-  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
-};
-use taffy::Size as TaffySize;
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 
 #[derive(Clone, Debug, Default)]
 pub struct Rectangle {
@@ -22,8 +19,8 @@ impl Buildable for Rectangle {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let x = self.x.unwrap_or(0.0);
     let y = self.y.unwrap_or(0.0);
-    let w = self.w.unwrap_or(ctx.size.w);
-    let h = self.h.unwrap_or(ctx.size.h);
+    let w = self.w.unwrap_or(ctx.size.width);
+    let h = self.h.unwrap_or(ctx.size.height);
 
     let rect = Rect::new(Point::new(x, y), Size::new(w, h));
 
@@ -46,19 +43,17 @@ impl Buildable for Rectangle {
 // A rectangle has no intrinsic size: a layout rect is sized by the width/height
 // layout props (w/h are detached-only geometry and never reach taffy).
 impl Measurable for Rectangle {
-  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
-    TaffySize { width: ctx.known.width.unwrap_or(0.0), height: ctx.known.height.unwrap_or(0.0) }
+  fn measure(&self, ctx: &MeasureContext) -> Size {
+    Size::new(ctx.known.width.unwrap_or(0.0), ctx.known.height.unwrap_or(0.0))
   }
 }
 
 impl Bounded for Rectangle {
-  fn local_bounds(&self, fallback: TaffySize<f32>) -> BoundingBox {
-    BoundingBox {
-      x: self.x.unwrap_or(0.0),
-      y: self.y.unwrap_or(0.0),
-      width: self.w.unwrap_or(fallback.width),
-      height: self.h.unwrap_or(fallback.height),
-    }
+  fn local_bounds(&self, fallback: Size) -> Rect {
+    Rect::new(
+      Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(fallback.width), self.h.unwrap_or(fallback.height)),
+    )
   }
 }
 
@@ -100,11 +95,11 @@ impl Rectangle {
 }
 
 impl Hittable for Rectangle {
-  fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
+  fn is_in_bounds(&self, point: Point, ctx: &HitContext) -> bool {
     let rx = self.x.unwrap_or(0.0);
     let ry = self.y.unwrap_or(0.0);
-    let rw = self.w.unwrap_or(ctx.size.w);
-    let rh = self.h.unwrap_or(ctx.size.h);
+    let rw = self.w.unwrap_or(ctx.size.width);
+    let rh = self.h.unwrap_or(ctx.size.height);
     let half_sw = self.paint.stroke_width / 2.0;
     let [tl, tr, br, bl] = self.radius.unwrap_or([0.0; 4]);
 
@@ -131,7 +126,7 @@ impl Hittable for Rectangle {
 /// Test if a point is inside a rounded rectangle with per-corner radii.
 /// Radii are [top-left, top-right, bottom-right, bottom-left].
 /// When all radii are 0 this reduces to a plain AABB check.
-fn in_rounded_rect(point: XY, rx: f32, ry: f32, rw: f32, rh: f32, radii: [f32; 4]) -> bool {
+fn in_rounded_rect(point: Point, rx: f32, ry: f32, rw: f32, rh: f32, radii: [f32; 4]) -> bool {
   if point.x < rx || point.x >= rx + rw || point.y < ry || point.y >= ry + rh {
     return false;
   }

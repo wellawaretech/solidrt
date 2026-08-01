@@ -13,7 +13,7 @@ fn place(tree: &mut RenderTree, id: u64, x: f32, y: f32, w: f32, h: f32) {
   l.computed.size = taffy::Size { width: w, height: h };
 }
 
-fn assert_xy(got: XY, x: f32, y: f32) {
+fn assert_xy(got: Point, x: f32, y: f32) {
   let eps = 1e-3;
   assert!((got.x - x).abs() < eps && (got.y - y).abs() < eps, "expected ({x}, {y}), got ({}, {})", got.x, got.y);
 }
@@ -31,7 +31,7 @@ fn locals_compose_translations() {
   place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);
   place(&mut tree, 3, 5.0, 5.0, 20.0, 20.0);
 
-  let locals = locals_along_path(&tree, &[1, 2, 3], XY::new(40.0, 50.0));
+  let locals = locals_along_path(&tree, &[1, 2, 3], Point::new(40.0, 50.0));
   assert_eq!(locals.len(), 3);
   assert_xy(locals[0], 40.0, 50.0);
   assert_xy(locals[1], 30.0, 30.0);
@@ -55,7 +55,7 @@ fn locals_exact_outside_bounds() {
   // Scale 0.5 around the child's center (50, 50): the inverse doubles the
   // offset from the center. (160, 160) window -> (110, 110) in the child's
   // parent slot -> (170, 170) local, well outside the 100x100 box.
-  let locals = locals_along_path(&tree, &[1, 2], XY::new(160.0, 160.0));
+  let locals = locals_along_path(&tree, &[1, 2], Point::new(160.0, 160.0));
   assert_eq!(locals.len(), 2);
   assert_xy(locals[1], 170.0, 170.0);
 }
@@ -81,7 +81,7 @@ fn locals_match_live_hit_test() {
 
   // Slightly off node 2's transform center (90, 90 in window space), so the
   // rotation and scale inversions are exercised but the whole chain stays hit.
-  let point = XY::new(94.0, 92.0);
+  let point = Point::new(94.0, 92.0);
   let path = DefaultHitTester.hit_test(&tree, point);
   assert_eq!(path.len(), 3, "point must be over the whole chain for this test");
   let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
@@ -103,7 +103,7 @@ fn locals_truncate_at_missing_node() {
   place(&mut tree, 2, 10.0, 10.0, 100.0, 100.0);
 
   // Node 99 died mid-drag; the frames below it are meaningless.
-  let locals = locals_along_path(&tree, &[1, 99, 2], XY::new(50.0, 50.0));
+  let locals = locals_along_path(&tree, &[1, 99, 2], Point::new(50.0, 50.0));
   assert_eq!(locals.len(), 1);
   assert_xy(locals[0], 50.0, 50.0);
 }

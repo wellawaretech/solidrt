@@ -1,6 +1,6 @@
 use taffy::style::Overflow;
 
-use super::{ElementKind, RenderTree, WH, XY};
+use super::{ElementKind, Point, RenderTree, Size, Vector};
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,41 +30,41 @@ impl Default for HitConfig {
 }
 
 pub struct HitContext {
-  pub size: WH,
+  pub size: Size,
 }
 
 pub trait Hittable {
-  fn transform_to_local(&self, point: XY, _ctx: &HitContext) -> XY {
+  fn transform_to_local(&self, point: Point, _ctx: &HitContext) -> Point {
     point
   }
 
-  fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
-    point.x >= 0.0 && point.x < ctx.size.w && point.y >= 0.0 && point.y < ctx.size.h
+  fn is_in_bounds(&self, point: Point, ctx: &HitContext) -> bool {
+    point.x >= 0.0 && point.x < ctx.size.width && point.y >= 0.0 && point.y < ctx.size.height
   }
 }
 
 impl Hittable for ElementKind {
-  fn transform_to_local(&self, point: XY, ctx: &HitContext) -> XY {
+  fn transform_to_local(&self, point: Point, ctx: &HitContext) -> Point {
     match self {
       ElementKind::View(n) => n.transform_to_local(point, ctx),
       _ => point,
     }
   }
 
-  fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
+  fn is_in_bounds(&self, point: Point, ctx: &HitContext) -> bool {
     match self {
       ElementKind::Rectangle(n) => n.is_in_bounds(point, ctx),
       // ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
       ElementKind::Path(n) => n.is_in_bounds(point, ctx),
       ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
       ElementKind::Span(_) => false,
-      _ => point.x >= 0.0 && point.x < ctx.size.w && point.y >= 0.0 && point.y < ctx.size.h,
+      _ => point.x >= 0.0 && point.x < ctx.size.width && point.y >= 0.0 && point.y < ctx.size.height,
     }
   }
 }
 
 /// (node_id, parent-space point, local point after element's transform)
-pub type HitEntry = (u64, XY, XY);
+pub type HitEntry = (u64, Point, Point);
 
 /// Diffs a previously-hovered hit path against a freshly computed one, both
 /// ordered root->leaf, relative to their longest shared prefix. Returns:
@@ -87,25 +87,17 @@ pub fn path_diff(old_ids: &[u64], new_ids: &[u64]) -> (Vec<u64>, Vec<u64>) {
 /// path (frozen-drag routing, hover diffs) still yields exact locals. A node
 /// missing from the tree truncates the result - the frames below a dead node
 /// are meaningless.
-pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: XY) -> Vec<XY> {
+pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<Point> {
   let mut locals = Vec::with_capacity(chain.len());
   let mut point = point;
-  let mut parent_size = WH::default();
-  let mut parent_scroll = XY::default();
+  let mut parent_size = Size::default();
+  let mut parent_scroll = Vector::default();
   for (i, &id) in chain.iter().enumerate() {
     let Some(element) = tree.try_node(id) else { break };
-    let size = element
-      .layout
-      .as_ref()
-      .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
-      .unwrap_or(parent_size);
+    let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(parent_size);
     if i > 0 {
-      let pos = element
-        .layout
-        .as_ref()
-        .map(|l| XY::new(l.computed.location.x, l.computed.location.y))
-        .unwrap_or_default();
-      point = XY::new(point.x - pos.x + parent_scroll.x, point.y - pos.y + parent_scroll.y);
+      let pos = element.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+      point = point - pos.to_vector() + parent_scroll;
     }
     let local = element.kind.transform_to_local(point, &HitContext { size });
     locals.push(local);
@@ -118,29 +110,24 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: XY) -> Vec<XY>
     };
     parent_scroll = match &element.kind {
       ElementKind::View(v) => v.scroll.unwrap_or_default(),
-      _ => XY::default(),
+      _ => Vector::default(),
     };
   }
   locals
 }
 
 pub trait HitTester {
-  fn hit_test(&self, tree: &RenderTree, point: XY) -> Vec<HitEntry>;
+  fn hit_test(&self, tree: &RenderTree, point: Point) -> Vec<HitEntry>;
 }
 
 pub struct DefaultHitTester;
 
 impl HitTester for DefaultHitTester {
-  fn hit_test(&self, tree: &RenderTree, point: XY) -> Vec<HitEntry> {
+  fn hit_test(&self, tree: &RenderTree, point: Point) -> Vec<HitEntry> {
     let Some(root_id) = tree.root else {
       return vec![];
     };
-    let size = tree
-      .node(root_id)
-      .layout
-      .as_ref()
-      .map(|l| WH::new(l.computed.size.width, l.computed.size.height))
-      .unwrap_or_default();
+    let size = tree.node(root_id).layout.as_ref().map(|l| l.size()).unwrap_or_default();
     let mut path = Vec::new();
     hit_recursive(tree, root_id, point, size, PointerEvents::Auto, &mut path);
     path
@@ -150,8 +137,8 @@ impl HitTester for DefaultHitTester {
 fn hit_recursive(
   tree: &RenderTree,
   node_id: u64,
-  point: XY,
-  size: WH,
+  point: Point,
+  size: Size,
   inherited: PointerEvents,
   path: &mut Vec<HitEntry>,
 ) -> bool {
@@ -172,8 +159,8 @@ fn hit_recursive(
     .as_ref()
     .map(|l| (l.style.overflow.x, l.style.overflow.y))
     .unwrap_or((Overflow::Visible, Overflow::Visible));
-  let clipped_out = (overflow_x != Overflow::Visible && (local.x < 0.0 || local.x >= size.w))
-    || (overflow_y != Overflow::Visible && (local.y < 0.0 || local.y >= size.h));
+  let clipped_out = (overflow_x != Overflow::Visible && (local.x < 0.0 || local.x >= size.width))
+    || (overflow_y != Overflow::Visible && (local.y < 0.0 || local.y >= size.height));
   if clipped_out {
     return false;
   }
@@ -194,7 +181,7 @@ fn hit_recursive(
   // add scroll back.
   let scroll = match &element.kind {
     ElementKind::View(v) => v.scroll.unwrap_or_default(),
-    _ => XY::default(),
+    _ => Vector::default(),
   };
 
   // Children of a viewBox view live in the design space; the local point is
@@ -207,11 +194,9 @@ fn hit_recursive(
 
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
-    let child_size =
-      child.layout.as_ref().map(|l| WH::new(l.computed.size.width, l.computed.size.height)).unwrap_or(inherited_size);
-    let child_pos =
-      child.layout.as_ref().map(|l| XY::new(l.computed.location.x, l.computed.location.y)).unwrap_or_default();
-    let child_point = XY::new(local.x - child_pos.x + scroll.x, local.y - child_pos.y + scroll.y);
+    let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(inherited_size);
+    let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+    let child_point = local - child_pos.to_vector() + scroll;
     if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {
       if pointer_events == PointerEvents::None {
         path.remove(my_index);

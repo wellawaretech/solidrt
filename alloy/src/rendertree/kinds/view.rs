@@ -1,9 +1,9 @@
 use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, WH, XY};
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Point, Rect, Size, Vector};
 use std::cell::Cell;
-use taffy::{FlexDirection, Size, Style};
+use taffy::{FlexDirection, Style};
 
 // Memoized transform for one layout size, holding both the paint matrix and its
 // (lazily fallible) inverse for hit testing. The pointer hit path is recomputed
@@ -11,7 +11,7 @@ use taffy::{FlexDirection, Size, Style};
 // and re-invert their matrix each frame for no reason.
 #[derive(Clone, Copy, Debug)]
 struct TransformCache {
-  size: WH,
+  size: Size,
   matrix: Matrix,
   inverse: Option<Matrix>,
 }
@@ -53,7 +53,7 @@ pub struct View {
   pub perspective: Option<f32>,
   // Transform-space translation (CSS `translate`), applied after the rotation
   // center is restored so it shifts in screen space. Not the layout position.
-  pub translate: Option<XY>,
+  pub translate: Option<Vector>,
   // Transform origin, one independent field per axis (CSS `transform-origin`).
   // None on an axis falls back to that axis's box center. See OriginCoord for
   // the Px/Fraction split.
@@ -62,7 +62,7 @@ pub struct View {
   // Scroll offset applied to children at build time, after the clip is set.
   // Positive values shift content leftward/upward (web convention: positive
   // scrollX means scrolled "into" the content from the left).
-  pub scroll: Option<XY>,
+  pub scroll: Option<Vector>,
   // Group opacity in 0..1 (None = opaque): children are composited together,
   // then faded as a whole. Not part of the matrix; applied at composite time
   // on boundaries, via a save_layer at record time otherwise.
@@ -75,29 +75,29 @@ pub struct View {
   // default preserveAspectRatio, generalized). A pure fit transform - it never
   // sizes the element - composed innermost, so the user transform props still
   // operate in box space.
-  pub view_box: Option<WH>,
+  pub view_box: Option<Size>,
   // Memoized transform; invalidated by the setters when a transform prop
   // changes, and recomputed by `transform` when the layout size differs.
   cache: Cell<Option<TransformCache>>,
 }
 
 impl View {
-  fn resolve_translate(&self) -> XY {
+  fn resolve_translate(&self) -> Vector {
     self.translate.unwrap_or_default()
   }
 
-  pub(crate) fn resolve_center(&self, size: WH) -> XY {
-    let x = self.origin_x.map_or(size.w / 2.0, |c| c.resolve(size.w));
-    let y = self.origin_y.map_or(size.h / 2.0, |c| c.resolve(size.h));
-    XY::new(x, y)
+  pub(crate) fn resolve_center(&self, size: Size) -> Point {
+    let x = self.origin_x.map_or(size.width / 2.0, |c| c.resolve(size.width));
+    let y = self.origin_y.map_or(size.height / 2.0, |c| c.resolve(size.height));
+    Point::new(x, y)
   }
 
   // Returns the memoized transform for `size`, recomposing (and re-inverting)
   // only on a cache miss: either the first call or a layout-size change. The
   // setters clear the cache when a transform prop changes.
-  fn transform(&self, size: WH) -> TransformCache {
+  fn transform(&self, size: Size) -> TransformCache {
     if let Some(c) = self.cache.get() {
-      if c.size.w == size.w && c.size.h == size.h {
+      if c.size == size {
         return c;
       }
     }
@@ -112,20 +112,20 @@ impl View {
   // because the two hoist differently: the fit belongs to the CONTENT (it is
   // recorded into boundary caches and captures), the user chain to the box
   // (hoisted to composite time). See composite::hoisted_matrix.
-  pub(crate) fn fit_matrix(&self, size: WH) -> Option<Matrix> {
+  pub(crate) fn fit_matrix(&self, size: Size) -> Option<Matrix> {
     let vb = self.view_box?;
-    if vb.w <= 0.0 || vb.h <= 0.0 {
+    if vb.width <= 0.0 || vb.height <= 0.0 {
       return None;
     }
-    let s = (size.w / vb.w).min(size.h / vb.h);
-    let tx = (size.w - vb.w * s) / 2.0;
-    let ty = (size.h - vb.h * s) / 2.0;
+    let s = (size.width / vb.width).min(size.height / vb.height);
+    let tx = (size.width - vb.width * s) / 2.0;
+    let ty = (size.height - vb.height * s) / 2.0;
     Some(Matrix::new_2d(s, 0.0, 0.0, s, tx, ty))
   }
 
   // The full paint transform: the viewBox fit (design -> box space), then the
   // user chain. Points apply left-first under euclid's `then`.
-  fn compose(&self, size: WH) -> Matrix {
+  fn compose(&self, size: Size) -> Matrix {
     let user = self.compose_user(size);
     match self.fit_matrix(size) {
       Some(fit) => fit.then(&user),
@@ -141,7 +141,7 @@ impl View {
   //
   // For the pure-2D case (no rotate_x/rotate_y/perspective) this reduces exactly
   // to the previous translate/scale/rotate op sequence.
-  fn compose_user(&self, size: WH) -> Matrix {
+  fn compose_user(&self, size: Size) -> Matrix {
     let p = self.resolve_translate();
     let c = self.resolve_center(size);
 
@@ -203,7 +203,7 @@ impl View {
   // Current full paint matrix for `size` (fit + user chain). The bounding-box
   // ancestor walk uses this to map child corners (which live in design space
   // under a viewBox) up into the parent frame.
-  pub(crate) fn paint_matrix(&self, size: WH) -> Matrix {
+  pub(crate) fn paint_matrix(&self, size: Size) -> Matrix {
     self.transform(size).matrix
   }
 
@@ -212,7 +212,7 @@ impl View {
   // itself). Composite hoists this around cached content, and bounding-box
   // composition applies it to the view's own corners. Uncached: callers are
   // per-event or per-composite, not per-node-per-frame.
-  pub(crate) fn box_matrix(&self, size: WH) -> Matrix {
+  pub(crate) fn box_matrix(&self, size: Size) -> Matrix {
     self.compose_user(size)
   }
 
@@ -237,33 +237,28 @@ impl Buildable for View {
 }
 
 impl Bounded for View {
-  fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
+  fn local_bounds(&self, fallback: Size) -> Rect {
     let p = self.translate.unwrap_or_default();
-    BoundingBox { x: p.x, y: p.y, width: fallback.width, height: fallback.height }
+    Rect::new(p.to_point(), fallback)
   }
 }
 
 impl Hittable for View {
-  fn transform_to_local(&self, point: XY, ctx: &HitContext) -> XY {
+  fn transform_to_local(&self, point: Point, ctx: &HitContext) -> Point {
     // A point guaranteed to fail the bounds/clip checks, used when the transform
     // collapses (e.g. scaleX = 0 mid-flip): the element is then a clean miss.
-    let miss = XY::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let miss = Point::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
     let Some(inv) = self.transform(ctx.size).inverse else {
       return miss;
     };
 
-    // Apply the inverse to the screen point assuming local z = 0 (the content
-    // plane), with the homogeneous divide. Exact for affine transforms; an
-    // approximation under perspective, which is acceptable here since a flipped
-    // face carries no tap target of its own.
-    let x = point.x * inv.m11 + point.y * inv.m21 + inv.m41;
-    let y = point.x * inv.m12 + point.y * inv.m22 + inv.m42;
-    let w = point.x * inv.m14 + point.y * inv.m24 + inv.m44;
-    if w == 0.0 {
-      return miss;
-    }
-    XY::new(x / w, y / w)
+    // Apply the inverse on the local z = 0 plane (the content plane) with the
+    // homogeneous divide. Exact for affine transforms; an approximation under
+    // perspective, which is acceptable here since a flipped face carries no tap
+    // target of its own. euclid returns None for w <= 0 (behind the eye), which
+    // is a clean miss too.
+    inv.transform_point2d(point).unwrap_or(miss)
   }
 }
 
@@ -305,12 +300,12 @@ impl View {
     Damage::Transform
   }
   pub fn set_x(&mut self, v: f32) -> Damage {
-    self.translate.get_or_insert_with(XY::default).x = v;
+    self.translate.get_or_insert_with(Vector::default).x = v;
     self.invalidate();
     Damage::Transform
   }
   pub fn set_y(&mut self, v: f32) -> Damage {
-    self.translate.get_or_insert_with(XY::default).y = v;
+    self.translate.get_or_insert_with(Vector::default).y = v;
     self.invalidate();
     Damage::Transform
   }
@@ -334,11 +329,11 @@ impl View {
     Damage::Transform
   }
   pub fn set_scroll_x(&mut self, v: f32) -> Damage {
-    self.scroll.get_or_insert_with(XY::default).x = v;
+    self.scroll.get_or_insert_with(Vector::default).x = v;
     Damage::Scroll
   }
   pub fn set_scroll_y(&mut self, v: f32) -> Damage {
-    self.scroll.get_or_insert_with(XY::default).y = v;
+    self.scroll.get_or_insert_with(Vector::default).y = v;
     Damage::Scroll
   }
   pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> Damage {
@@ -349,7 +344,7 @@ impl View {
   // snapshot textures (unlike the hoisted user chain), so changing it must
   // re-record the content.
   pub fn set_view_box(&mut self, w: f32, h: f32) -> Damage {
-    self.view_box = Some(WH::new(w, h));
+    self.view_box = Some(Size::new(w, h));
     self.invalidate();
     Damage::Paint
   }

@@ -9,7 +9,7 @@ use taffy::prelude::*;
 
 use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
-use alloy::rendertree::{BoundingBox, Element, Measurable, MeasureContext, PlatformContext, RenderTree, Text, Window};
+use alloy::rendertree::{Element, Measurable, MeasureContext, PlatformContext, Rect, RenderTree, Text, Window};
 
 thread_local! {
   // setProperty (FFI prop write) calls since the last frame. Bumped in the
@@ -71,17 +71,18 @@ impl<'js> IntoJs<'js> for TextSize {
   }
 }
 
-// BoundingBox lives in alloy (engine-free), so the rquickjs IntoJs conversion
-// cannot be a trait impl on it (orphan rule). Wrap it locally for marshalling.
-struct JsBoundingBox(BoundingBox);
+// Rect lives in alloy (engine-free), so the rquickjs IntoJs conversion cannot
+// be a trait impl on it (orphan rule). Wrap it locally for marshalling; the
+// nested origin/size flattens to the JS `{x, y, width, height}` shape here.
+struct JsBoundingBox(Rect);
 
 impl<'js> IntoJs<'js> for JsBoundingBox {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
     let obj = Object::new(ctx.clone())?;
-    obj.set("x", self.0.x)?;
-    obj.set("y", self.0.y)?;
-    obj.set("width", self.0.width)?;
-    obj.set("height", self.0.height)?;
+    obj.set("x", self.0.origin.x)?;
+    obj.set("y", self.0.origin.y)?;
+    obj.set("width", self.0.size.width)?;
+    obj.set("height", self.0.size.height)?;
     Ok(obj.into_value())
   }
 }

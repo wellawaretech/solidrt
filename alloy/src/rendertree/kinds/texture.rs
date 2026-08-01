@@ -1,14 +1,12 @@
 use std::cell::RefCell;
 
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, Point, Rect, Size as ISize, TextureSampling};
+use crate::impellers::{DisplayListBuilder, Point, Rect, Size, TextureSampling};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::gpu::ParamValue;
-use crate::rendertree::{
-  Bounded, BoundingBox, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY,
-};
-use taffy::{AlignSelf, Display, Size as TaffySize, Style};
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use taffy::{AlignSelf, Display, Style};
 
 // CSS object-fit semantics: how the source pixels map to the element box.
 // Fill stretches (the default, like CSS); Cover/None crop; Contain/ScaleDown
@@ -46,14 +44,14 @@ pub fn fit_rects(fit: TextureFit, src: Rect, dst: Rect) -> (Rect, Rect) {
   let vh = (dh / scale).min(sh);
   let src_out = Rect::new(
     Point::new(src.origin.x + (sw - vw) / 2.0, src.origin.y + (sh - vh) / 2.0),
-    ISize::new(vw, vh),
+    Size::new(vw, vh),
   );
   // Destination extent of that portion, centered; never larger than the box.
   let ow = (vw * scale).min(dw);
   let oh = (vh * scale).min(dh);
   let dst_out = Rect::new(
     Point::new(dst.origin.x + (dw - ow) / 2.0, dst.origin.y + (dh - oh) / 2.0),
-    ISize::new(ow, oh),
+    Size::new(ow, oh),
   );
   (src_out, dst_out)
 }
@@ -90,7 +88,7 @@ impl Texture {
   fn source_rect(&self, tex_w: u32, tex_h: u32) -> Rect {
     Rect::new(
       Point::new(self.src_x.unwrap_or(0.0), self.src_y.unwrap_or(0.0)),
-      ISize::new(self.src_w.unwrap_or(tex_w as f32), self.src_h.unwrap_or(tex_h as f32)),
+      Size::new(self.src_w.unwrap_or(tex_w as f32), self.src_h.unwrap_or(tex_h as f32)),
     )
   }
 }
@@ -113,9 +111,9 @@ impl Buildable for Texture {
     let src_rect = self.source_rect(entry.width(), entry.height());
     let x = self.x.unwrap_or(0.0);
     let y = self.y.unwrap_or(0.0);
-    let w = self.w.unwrap_or(ctx.size.w);
-    let h = self.h.unwrap_or(ctx.size.h);
-    let dst_rect = Rect::new(Point::new(x, y), ISize::new(w, h));
+    let w = self.w.unwrap_or(ctx.size.width);
+    let h = self.h.unwrap_or(ctx.size.height);
+    let dst_rect = Rect::new(Point::new(x, y), Size::new(w, h));
     let (src_rect, dst_rect) = fit_rects(self.fit, src_rect, dst_rect);
     // `to_paint`, not `to_paint_in`: the draw ignores color sources, so
     // resolving a box-relative gradient would build one per frame for nothing.
@@ -131,23 +129,21 @@ impl Buildable for Texture {
 }
 
 impl Hittable for Texture {
-  fn is_in_bounds(&self, point: XY, ctx: &HitContext) -> bool {
+  fn is_in_bounds(&self, point: Point, ctx: &HitContext) -> bool {
     let x = self.x.unwrap_or(0.0);
     let y = self.y.unwrap_or(0.0);
-    let w = self.w.unwrap_or(ctx.size.w);
-    let h = self.h.unwrap_or(ctx.size.h);
+    let w = self.w.unwrap_or(ctx.size.width);
+    let h = self.h.unwrap_or(ctx.size.height);
     point.x >= x && point.x < x + w && point.y >= y && point.y < y + h
   }
 }
 
 impl Bounded for Texture {
-  fn local_bounds(&self, fallback: TaffySize<f32>) -> BoundingBox {
-    BoundingBox {
-      x: self.x.unwrap_or(0.0),
-      y: self.y.unwrap_or(0.0),
-      width: self.w.unwrap_or(fallback.width),
-      height: self.h.unwrap_or(fallback.height),
-    }
+  fn local_bounds(&self, fallback: Size) -> Rect {
+    Rect::new(
+      Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(fallback.width), self.h.unwrap_or(fallback.height)),
+    )
   }
 }
 
@@ -158,7 +154,7 @@ impl Bounded for Texture {
 // Intrinsic size honors src_* crop when set, else falls back to texture dims.
 // `fit` is paint-only (see fit_rects) and never enters measurement.
 impl Measurable for Texture {
-  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> Size {
     let (tex_w, tex_h) = self
       .texture_id
       .and_then(|id| ctx.alloy.textures.get(id).map(|e| (e.width() as f32, e.height() as f32)))
@@ -166,16 +162,16 @@ impl Measurable for Texture {
     let iw = self.src_w.unwrap_or(tex_w);
     let ih = self.src_h.unwrap_or(tex_h);
     match (ctx.known.width, ctx.known.height) {
-      (Some(w), Some(h)) => TaffySize { width: w, height: h },
+      (Some(w), Some(h)) => Size::new(w, h),
       (Some(w), None) => {
         let h = if iw > 0.0 { w * ih / iw } else { ih };
-        TaffySize { width: w, height: h }
+        Size::new(w, h)
       }
       (None, Some(h)) => {
         let w = if ih > 0.0 { h * iw / ih } else { iw };
-        TaffySize { width: w, height: h }
+        Size::new(w, h)
       }
-      (None, None) => TaffySize { width: iw, height: ih },
+      (None, None) => Size::new(iw, ih),
     }
   }
 }

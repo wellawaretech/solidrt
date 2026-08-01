@@ -317,15 +317,18 @@ fn place(tree: &mut RenderTree, id: u64, x: f32, y: f32, w: f32, h: f32) {
   l.cache.store(&input, taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width: w, height: h }));
 }
 
-fn assert_box(b: BoundingBox, x: f32, y: f32, w: f32, h: f32) {
+fn assert_box(b: Rect, x: f32, y: f32, w: f32, h: f32) {
   let eps = 1e-3;
   assert!(
-    (b.x - x).abs() < eps && (b.y - y).abs() < eps && (b.width - w).abs() < eps && (b.height - h).abs() < eps,
+    (b.origin.x - x).abs() < eps
+      && (b.origin.y - y).abs() < eps
+      && (b.size.width - w).abs() < eps
+      && (b.size.height - h).abs() < eps,
     "expected ({x}, {y}, {w}, {h}), got ({}, {}, {}, {})",
-    b.x,
-    b.y,
-    b.width,
-    b.height
+    b.origin.x,
+    b.origin.y,
+    b.size.width,
+    b.size.height
   );
 }
 

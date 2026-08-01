@@ -2,13 +2,12 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext, XY};
+use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
 use std::cell::RefCell;
 use svgtypes::{PathParser, PathSegment};
-use taffy::Size as TaffySize;
 
 pub struct Path {
   pub d: String,
@@ -331,26 +330,23 @@ impl Buildable for Path {
 }
 
 impl Measurable for Path {
-  fn measure(&self, ctx: &MeasureContext) -> TaffySize<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> Size {
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
-      return TaffySize { width: w, height: h };
+      return Size::new(w, h);
     }
     self.ensure_built();
     let bounds = self.bounds.borrow();
     let Some(rect) = *bounds else {
-      return TaffySize::ZERO;
+      return Size::zero();
     };
-    TaffySize {
-      width: ctx.known.width.unwrap_or(rect.size.width),
-      height: ctx.known.height.unwrap_or(rect.size.height),
-    }
+    Size::new(ctx.known.width.unwrap_or(rect.size.width), ctx.known.height.unwrap_or(rect.size.height))
   }
 }
 
 impl Hittable for Path {
-  fn is_in_bounds(&self, pt: XY, _ctx: &HitContext) -> bool {
+  fn is_in_bounds(&self, pt: Point, _ctx: &HitContext) -> bool {
     // The cached geometry is offset-independent; undo the draw-time translate.
-    let pt = XY { x: pt.x - self.x.unwrap_or(0.0), y: pt.y - self.y.unwrap_or(0.0) };
+    let pt = Point::new(pt.x - self.x.unwrap_or(0.0), pt.y - self.y.unwrap_or(0.0));
     self.ensure_built();
     let bounds = self.bounds.borrow();
     let Some(rect) = *bounds else {

@@ -1,13 +1,12 @@
 use crate::impellers::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point as IPoint, Rect, RoundingRadii,
-  Size as ISize, TextureSampling,
+  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size,
+  TextureSampling,
 };
-use taffy::prelude::*;
 use taffy::style::Overflow;
-use taffy::Point;
+use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::{
-  BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree, WH,
+  BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -25,7 +24,8 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
     tree.invalidate_cache(root_id);
   }
 
-  let available_space = Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
+  let available_space =
+    taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
   let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
 }
@@ -56,7 +56,7 @@ pub fn paint_phase(
   layout_phase(tree, platform, alloy);
 
   let mut ctx = BuildContext::new(platform, alloy);
-  ctx.size = WH::new(width, height);
+  ctx.size = Size::new(width, height);
   build_recursive(tree, root_id, &mut ctx, builder);
   // Any capture request whose node the walk never visited targets a node that
   // is not in the live tree; fail it rather than leave its promise pending.
@@ -125,7 +125,7 @@ enum Hoist {
 // keeps the cache reusable under transform-only changes, and stops Snapshot
 // mode baking a rotation/scale into the layout-box crop. Non-View kinds paint
 // transform-free content in build(), so there is nothing to hoist.
-fn hoisted_matrix(element: &Element, size: WH) -> Option<Matrix> {
+fn hoisted_matrix(element: &Element, size: Size) -> Option<Matrix> {
   match &element.kind {
     // The user chain only: a viewBox fit is content, recorded into the cache
     // by record_node, so the composited quad/recording is box-sized and the
@@ -154,8 +154,8 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
     return;
   }
   let layout = element.layout.as_ref().expect("overflow clip requires layout");
-  let w = layout.computed.size.width;
-  let h = layout.computed.size.height;
+  let size = layout.size();
+  let (w, h) = (size.width, size.height);
   // Rounded clip only applies when the whole box is clipped (both axes);
   // a single-axis clip has no meaningful corners to round.
   let clip_radius = match &element.kind {
@@ -163,12 +163,12 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
     _ => None,
   };
   if let Some([tl, tr, br, bl]) = clip_radius {
-    let rect = Rect::new(IPoint::new(0.0, 0.0), ISize::new(w, h));
+    let rect = Rect::new(Point::new(0.0, 0.0), Size::new(w, h));
     let radii = RoundingRadii {
-      top_left: IPoint::new(tl, tl),
-      top_right: IPoint::new(tr, tr),
-      bottom_right: IPoint::new(br, br),
-      bottom_left: IPoint::new(bl, bl),
+      top_left: Point::new(tl, tl),
+      top_right: Point::new(tr, tr),
+      bottom_right: Point::new(br, br),
+      bottom_left: Point::new(bl, bl),
     };
     builder.clip_rounded_rect(&rect, &radii, ClipOperation::Intersect);
   } else {
@@ -176,7 +176,7 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
     let y_min = if clip_y { 0.0 } else { -CLIP_INF };
     let x_max = if clip_x { w } else { CLIP_INF };
     let y_max = if clip_y { h } else { CLIP_INF };
-    let rect = Rect::new(IPoint::new(x_min, y_min), ISize::new(x_max - x_min, y_max - y_min));
+    let rect = Rect::new(Point::new(x_min, y_min), Size::new(x_max - x_min, y_max - y_min));
     builder.clip_rect(&rect, ClipOperation::Intersect);
   }
 }
@@ -307,7 +307,7 @@ fn snapshot_node<'a>(
   aa: bool,
 ) {
   let element = scene.node(node_id);
-  let size = element.layout.as_ref().map(|l| l.computed.size).unwrap_or(Size::ZERO);
+  let size = element.layout.as_ref().map(|l| l.size()).unwrap_or_default();
   let (width, height) = (size.width, size.height);
   let scale = ctx.platform.display_scale();
   let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
@@ -335,8 +335,8 @@ fn snapshot_node<'a>(
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
   // quad keeps the composite pixel-exact under the root scale transform.
-  let src = Rect::new(IPoint::new(0.0, 0.0), ISize::new(width * scale, height * scale));
-  let dst = Rect::new(IPoint::new(0.0, 0.0), ISize::new(width, height));
+  let src = Rect::new(Point::new(0.0, 0.0), Size::new(width * scale, height * scale));
+  let dst = Rect::new(Point::new(0.0, 0.0), Size::new(width, height));
 
   {
     let cache = element.paint_cache.borrow();
@@ -431,14 +431,14 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   // at the texture origin - except for a View, whose offset (translate) lives
   // in the matrix that Hoist::Transform keeps out of the recording anyway.
   let (width, height, offset) = match element.layout.as_ref() {
-    Some(l) => (l.computed.size.width, l.computed.size.height, (0.0, 0.0)),
+    Some(l) => (l.size().width, l.size().height, (0.0, 0.0)),
     None => {
-      let local = element.kind.local_bounds(Size { width: ctx.size.w, height: ctx.size.h });
+      let local = element.kind.local_bounds(ctx.size);
       let offset = match &element.kind {
         ElementKind::View(_) => (0.0, 0.0),
-        _ => (local.x, local.y),
+        _ => (local.origin.x, local.origin.y),
       };
-      (local.width, local.height, offset)
+      (local.size.width, local.size.height, offset)
     }
   };
   let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
@@ -538,7 +538,7 @@ fn record_node<'a>(
   if opacity_layer {
     let mut paint = Paint::default();
     paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, opacity));
-    let bounds = Rect::new(IPoint::new(-CLIP_INF, -CLIP_INF), ISize::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
+    let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     builder.save_layer(&bounds, Some(&paint), None);
   }
 
@@ -560,7 +560,7 @@ fn record_node<'a>(
   for &child_id in &element.children {
     let child = scene.node(child_id);
 
-    let pos = child.layout.as_ref().map(|l| l.computed.location).unwrap_or(Point::ZERO);
+    let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
 
     builder.translate(pos.x, pos.y);
 
@@ -571,21 +571,20 @@ fn record_node<'a>(
       let pad_right = layout.padding.right;
       let pad_bottom = layout.padding.bottom;
 
-      ctx.size.w = layout.size.width - pad_left - pad_right;
-      ctx.size.h = layout.size.height - pad_top - pad_bottom;
+      ctx.size.width = layout.size.width - pad_left - pad_right;
+      ctx.size.height = layout.size.height - pad_top - pad_bottom;
 
       build_recursive(scene, child_id, ctx, builder);
     } else {
       if let Some(layout) = &element.layout {
-        ctx.size.w = layout.computed.size.width;
-        ctx.size.h = layout.computed.size.height;
+        ctx.size = layout.size();
       }
       // Children of a viewBox view draw in the design space: the box they
       // inherit is the design size (the fit maps it onto the layout box), so
       // a d-text wraps and a d-rect fills in design units.
       if let ElementKind::View(v) = &element.kind {
         if let Some(vb) = v.view_box {
-          ctx.size = WH::new(vb.w, vb.h);
+          ctx.size = vb;
         }
       }
       build_recursive(scene, child_id, ctx, builder);

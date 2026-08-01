@@ -77,6 +77,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rxing = { version = "0.9.1", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
+# euclid must track the requirement impellers declares: impellers' Point/Size/
+# Rect/Matrix are euclid aliases, and the Vector alias in rendertree only
+# unifies with them while both resolve to the same euclid version.
+euclid = "0.22"
 taffy = "0.12.1"
 svgtypes = "0.16"
 lyon_path = "1"

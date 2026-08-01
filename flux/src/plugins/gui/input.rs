@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use alloy::rendertree::{
   hit::{locals_along_path, path_diff, DefaultHitTester, HitEntry, HitTester},
-  RenderTree, XY,
+  Point, RenderTree,
 };
 use alloy::{Modifiers, PointerType};
 use rquickjs::{Array, Ctx, JsLifetime, Object};
@@ -83,8 +83,8 @@ fn build_pointer_obj<'js>(
   y: f32,
   modifiers: Modifiers,
   target_ids: &[u64],
-  locals: &[XY],
-  parents: &[XY],
+  locals: &[Point],
+  parents: &[Point],
   target: u64,
 ) -> Object<'js> {
   debug_assert_eq!(target_ids.len(), locals.len(), "targets and locals must stay parallel");
@@ -119,20 +119,20 @@ fn build_pointer_obj<'js>(
   obj
 }
 
-fn split_path(path: Vec<HitEntry>) -> (Vec<u64>, Vec<XY>) {
+fn split_path(path: Vec<HitEntry>) -> (Vec<u64>, Vec<Point>) {
   path.into_iter().map(|(id, _, local)| (id, local)).unzip()
 }
 
 // Parent-frame points for a full root->leaf chain: the window point for the
 // root, each node's local for its child.
-fn parent_locals(point: XY, locals: &[XY]) -> Vec<XY> {
+fn parent_locals(point: Point, locals: &[Point]) -> Vec<Point> {
   std::iter::once(point).chain(locals.iter().copied()).take(locals.len()).collect()
 }
 
 // Targets + exact locals for an event routed along a stored chain: project the
 // point along it; ids past a truncated projection (their nodes were removed
 // mid-gesture) are dropped so the arrays stay parallel.
-fn routed(tree: &RenderTree, chain: Vec<u64>, point: XY) -> (Vec<u64>, Vec<XY>) {
+fn routed(tree: &RenderTree, chain: Vec<u64>, point: Point) -> (Vec<u64>, Vec<Point>) {
   let locals = locals_along_path(tree, &chain, point);
   let mut ids = chain;
   ids.truncate(locals.len());
@@ -144,7 +144,7 @@ fn routed(tree: &RenderTree, chain: Vec<u64>, point: XY) -> (Vec<u64>, Vec<XY>) 
 // entries out. An id the projection could not reach (its node was removed)
 // keeps the window point; nothing can observe it - a removed node has no
 // handlers.
-fn pick_locals(tree: &RenderTree, chain: &[u64], subset: &[u64], point: XY) -> (Vec<XY>, Vec<XY>) {
+fn pick_locals(tree: &RenderTree, chain: &[u64], subset: &[u64], point: Point) -> (Vec<Point>, Vec<Point>) {
   let chain_locals = locals_along_path(tree, chain, point);
   subset
     .iter()
@@ -169,7 +169,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
   match event {
     InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
       let key = (pointer_type, pointer_id);
-      let point = XY::new(x, y);
+      let point = Point::new(x, y);
       let (live_ids, live_locals) = split_path(DefaultHitTester.hit_test(&tree.0.borrow(), point));
       let (ids, locals) = match state.down_path(key) {
         Some(frozen) => routed(&tree.0.borrow(), frozen, point),
@@ -182,7 +182,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
       update_hover(ctx, &tree, &state, key, x, y, modifiers, live_ids);
     }
     InputEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
-      let point = XY::new(x, y);
+      let point = Point::new(x, y);
       let (ids, locals) = split_path(DefaultHitTester.hit_test(&tree.0.borrow(), point));
       if ids.is_empty() {
         return;
@@ -196,7 +196,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
     }
     InputEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
       let key = (pointer_type, pointer_id);
-      let point = XY::new(x, y);
+      let point = Point::new(x, y);
       let (ids, locals) = match state.take_down_path(key) {
         Some(frozen) => routed(&tree.0.borrow(), frozen, point),
         None => split_path(DefaultHitTester.hit_test(&tree.0.borrow(), point)),
@@ -224,7 +224,7 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
       }
     }
     InputEvent::Wheel { pointer_id, pointer_type, x, y, delta_x, delta_y, modifiers } => {
-      let point = XY::new(x, y);
+      let point = Point::new(x, y);
       let (ids, locals) = split_path(DefaultHitTester.hit_test(&tree.0.borrow(), point));
       let parents = parent_locals(point, &locals);
       let target = ids.last().copied().unwrap_or(0);
@@ -245,7 +245,7 @@ pub fn refresh_hover(ctx: &Ctx<'_>, pointers: Vec<(PointerKey, (f32, f32))>, mod
   let tree = ctx.userdata::<super::tree::SharedRenderTree>().expect("render tree userdata");
   let state = ctx.userdata::<EngineState>().expect("input state userdata");
   for ((pointer_type, pointer_id), (px, py)) in pointers {
-    let path = DefaultHitTester.hit_test(&tree.0.borrow(), XY::new(px, py));
+    let path = DefaultHitTester.hit_test(&tree.0.borrow(), Point::new(px, py));
     let new_ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
     update_hover(ctx, &tree, &state, (pointer_type, pointer_id), px, py, modifiers, new_ids);
   }
@@ -267,7 +267,7 @@ fn update_hover(
   let old_ids = state.hovered_path(key);
   if new_ids != old_ids {
     let (left, entered) = path_diff(&old_ids, &new_ids);
-    let point = XY::new(x, y);
+    let point = Point::new(x, y);
     // Both projections resolve before either event fires, against the same
     // tree state the diff was computed from.
     let ((left_locals, left_parents), (entered_locals, entered_parents)) = {

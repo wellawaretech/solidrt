@@ -17,50 +17,22 @@ pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
 use std::cell::RefCell;
-use taffy::prelude::*;
+use taffy::{AvailableSpace, Position, Style};
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct XY {
-  pub x: f32,
-  pub y: f32,
-}
-
-impl XY {
-  pub fn new(x: f32, y: f32) -> Self {
-    Self { x, y }
-  }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct WH {
-  pub w: f32,
-  pub h: f32,
-}
-
-impl WH {
-  pub fn new(w: f32, h: f32) -> Self {
-    Self { w, h }
-  }
-}
-
-/// Axis-aligned bounding box of a node. RenderTree::bounding_box reports it
-/// relative to the node's nearest positioning context (an ancestor with an
-/// explicit `position="relative"`), falling back to the window when there is
-/// none. RenderTree::bounding_box_viewport reports it window-relative instead.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BoundingBox {
-  pub x: f32,
-  pub y: f32,
-  pub width: f32,
-  pub height: f32,
-}
+// The rendertree's geometry vocabulary is euclid, spelled through the
+// impellers aliases so the types unify with every draw call. taffy geometry
+// appears only as layout input (MeasureContext) and is always written
+// taffy-qualified. Vector completes the euclid set (impellers does not alias
+// it): offsets like translate and scroll, and what point arithmetic yields.
+pub use crate::impellers::{Point, Rect, Size};
+pub type Vector = euclid::Vector2D<f32, euclid::UnknownUnit>;
 
 /// Build context passed during display list tree traversal. Engine state
 /// (platform, alloy) comes first; paint-time geometry follows.
 pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
-  pub size: WH,
+  pub size: Size,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
@@ -74,7 +46,7 @@ impl<'a> BuildContext<'a> {
     Self {
       platform,
       alloy,
-      size: WH::default(),
+      size: Size::default(),
       boundaries_reused: 0,
       boundaries_recorded: 0,
       snapshots_reused: 0,
@@ -85,12 +57,15 @@ impl<'a> BuildContext<'a> {
 }
 
 /// Measure context passed during layout. Engine state (platform, alloy) comes
-/// first; the taffy-supplied size constraints for this call follow.
+/// first; the taffy-supplied size constraints for this call follow. The
+/// constraints stay taffy types on purpose: measure is called BY taffy with
+/// taffy's constraint semantics (AvailableSpace has no euclid equivalent);
+/// only the answer is euclid.
 pub struct MeasureContext<'a> {
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
-  pub known: Size<Option<f32>>,
-  pub available: Size<AvailableSpace>,
+  pub known: taffy::Size<Option<f32>>,
+  pub available: taffy::Size<AvailableSpace>,
 }
 
 /// Trait for element type build behavior
@@ -100,14 +75,14 @@ pub trait Buildable {
 
 /// Trait for content-based sizing (text, images, etc.)
 pub trait Measurable {
-  fn measure(&self, ctx: &MeasureContext) -> Size<f32>;
+  fn measure(&self, ctx: &MeasureContext) -> Size;
 }
 
-/// A kind's painted box relative to its own origin: `x`/`y` are the paint
-/// offset, `width`/`height` the painted size. `fallback` supplies the size when
+/// A kind's painted box relative to its own origin: the rect's origin is the
+/// paint offset, its size the painted size. `fallback` supplies the size when
 /// the kind carries no explicit `w`/`h`.
 pub trait Bounded {
-  fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox;
+  fn local_bounds(&self, fallback: Size) -> Rect;
 }
 
 pub enum ElementKind {
@@ -171,14 +146,14 @@ impl ElementKind {
   /// Dispatches to each kind's `Bounded` impl; kinds without one default to
   /// `fallback`. For Line and Path that is a known approximation, since they
   /// paint in their own coordinate space.
-  pub fn local_bounds(&self, fallback: Size<f32>) -> BoundingBox {
+  pub fn local_bounds(&self, fallback: Size) -> Rect {
     match self {
       ElementKind::Rectangle(n) => n.local_bounds(fallback),
       ElementKind::Oval(n) => n.local_bounds(fallback),
       ElementKind::View(n) => n.local_bounds(fallback),
       ElementKind::Text(n) => n.local_bounds(fallback),
       ElementKind::Texture(n) => n.local_bounds(fallback),
-      _ => BoundingBox { x: 0.0, y: 0.0, width: fallback.width, height: fallback.height },
+      _ => Rect::new(Point::zero(), fallback),
     }
   }
 }
@@ -200,7 +175,7 @@ impl Buildable for ElementKind {
 }
 
 impl Measurable for ElementKind {
-  fn measure(&self, ctx: &MeasureContext) -> Size<f32> {
+  fn measure(&self, ctx: &MeasureContext) -> Size {
     match self {
       ElementKind::Text(n) => n.measure(ctx),
       ElementKind::Texture(n) => n.measure(ctx),
@@ -208,7 +183,7 @@ impl Measurable for ElementKind {
       ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Line(n) => n.measure(ctx),
       ElementKind::Rectangle(n) => n.measure(ctx),
-      _ => Size::ZERO,
+      _ => Size::zero(),
     }
   }
 }
