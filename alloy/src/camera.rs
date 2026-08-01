@@ -5,13 +5,14 @@
 //! them through a registry texture (see `Context::pump_cameras`), so a camera
 //! view is just a texture draw for whatever sits on top. Opening triggers the
 //! OS permission prompt; sessions start `Pending` and become `Ready` (texture
-//! created at the delivered format) or `Denied`. The pump is driven once per
-//! frame from the UI thread; `SDL_AcquireCameraFrame` is non-blocking, so no
-//! camera thread is needed.
+//! created at the delivered format), `Denied`, or `Failed` (Linux deadline,
+//! see `PENDING_DEADLINE`). The pump is driven once per frame from the UI
+//! thread; `SDL_AcquireCameraFrame` is non-blocking, so no camera thread is
+//! needed.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 
 use sdl3::sys::camera::{SDL_Camera, SDL_CameraPosition, SDL_CameraSpec};
 use sdl3::sys::pixels::{SDL_COLORSPACE_SRGB, SDL_PIXELFORMAT_MJPG, SDL_PIXELFORMAT_RGBA32};
@@ -42,11 +43,17 @@ pub enum CameraStatus {
     height: u32,
   },
   Denied,
+  /// The backend never started the stream (see `PENDING_DEADLINE`); the
+  /// device is released and the message explains what happened.
+  Failed(String),
 }
 
 struct Session {
   camera: *mut SDL_Camera,
   status: CameraStatus,
+  /// When the session was opened; drives the Linux `PENDING_DEADLINE`.
+  #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+  opened_at: std::time::Instant,
   /// Permission granted; streaming starts and the texture is created on the
   /// first frame, since the upright size depends on the per-frame rotation.
   approved: bool,
@@ -74,20 +81,83 @@ struct Session {
 /// on the UI thread.
 const SCAN_INTERVAL_FRAMES: u32 = 10;
 
+/// How long a session may sit `Pending` before it is failed and the device
+/// released. Linux only: neither Linux backend ever shows a consent prompt, so
+/// Pending this long is always a wedged backend, not a user deciding - SDL's
+/// pipewire backend reports permission only when the pw stream starts
+/// streaming and silently swallows the stream ERROR state, so a failed
+/// negotiation stays PENDING forever (observed with a working webcam,
+/// 2026-08-01). Without the deadline the open() promise never settles, the JS
+/// side has no handle to close, and the device stays held until the engine
+/// exits ("Camera already opened" on every retry). On Android/macOS/Windows
+/// Pending legitimately means the OS permission dialog is up, so no deadline
+/// there.
+#[cfg(target_os = "linux")]
+const PENDING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
 #[derive(Default)]
 pub struct CameraRegistry {
   sessions: RefCell<HashMap<u64, Session>>,
   next_id: RefCell<u64>,
 }
 
-/// Lazy one-time SDL camera subsystem init (first list/open call).
+enum InitState {
+  NotStarted,
+  Starting,
+  Done(Result<(), String>),
+}
+
+static INIT_STATE: Mutex<InitState> = Mutex::new(InitState::NotStarted);
+
+/// Lazy one-time SDL camera subsystem init (first list/open call). Never
+/// blocks: the first call spawns a worker and reports "starting"; callers
+/// treat that as "no cameras yet". When the worker finishes, the devices it
+/// found arrive as SDL CAMERA_DEVICE_ADDED events through the normal hotplug
+/// path (translate_event -> CameraDeviceChange), so listeners re-enumerate
+/// without polling.
+///
+/// The worker exists because SDL_INIT_CAMERA probes devices synchronously and
+/// can wedge outright - on a Raspberry Pi 4 the v4l2 backend never returns
+/// from the bcm2835 codec/isp/rpivid /dev/videoN nodes - and this used to run
+/// on the UI thread inside the app's first render, where a wedge meant the
+/// first frame was never built and (on Wayland) no window ever appeared. A
+/// wedged worker leaks one parked thread and cameras simply stay absent.
+///
+/// No other SDL_InitSubSystem call may race this one (SDL's init refcounting
+/// is not thread-safe): the video/gamepad subsystems are initialized at
+/// startup, before any script runs, so by the time a camera call can happen
+/// they are long done.
 fn ensure_init() -> Result<(), String> {
-  static INIT: OnceLock<bool> = OnceLock::new();
-  let ok = *INIT.get_or_init(sdl_utils::camera_subsystem_init);
-  if ok {
-    Ok(())
-  } else {
-    Err(format!("camera subsystem init failed: {}", sdl_utils::sdl_error()))
+  let mut state = INIT_STATE.lock().expect("camera init state poisoned");
+  match &*state {
+    InitState::NotStarted => {
+      let spawned = std::thread::Builder::new().name("srt-camera-init".into()).spawn(|| {
+        let result = if sdl_utils::camera_subsystem_init() {
+          Ok(())
+        } else {
+          // SDL's error string is thread-local: capture it here, on the
+          // thread the init actually ran on.
+          Err(format!("camera subsystem init failed: {}", sdl_utils::sdl_error()))
+        };
+        if let Err(e) = &result {
+          log::warn!("[camera] {e}");
+        }
+        *INIT_STATE.lock().expect("camera init state poisoned") = InitState::Done(result);
+      });
+      match spawned {
+        Ok(_) => {
+          *state = InitState::Starting;
+          Err("camera subsystem is starting".to_string())
+        }
+        Err(e) => {
+          let msg = format!("camera init thread failed to spawn: {e}");
+          *state = InitState::Done(Err(msg.clone()));
+          Err(msg)
+        }
+      }
+    }
+    InitState::Starting => Err("camera subsystem is starting".to_string()),
+    InitState::Done(result) => result.clone(),
   }
 }
 
@@ -115,8 +185,11 @@ fn facing_of(position: SDL_CameraPosition) -> CameraFacing {
 }
 
 pub fn list_cameras() -> Vec<CameraInfo> {
-  if ensure_init().is_err() {
-    log::warn!("[camera] {}", sdl_utils::sdl_error());
+  // "Starting" is the normal first-call state (a real failure already warned
+  // from the init worker); the list refreshes via CameraDeviceChange when the
+  // subsystem comes up.
+  if let Err(e) = ensure_init() {
+    log::debug!("[camera] list unavailable: {e}");
     return Vec::new();
   }
   sdl_utils::camera_ids()
@@ -180,6 +253,7 @@ impl crate::context::Context {
       Session {
         camera,
         status: CameraStatus::Pending,
+        opened_at: std::time::Instant::now(),
         approved: false,
         texture_id: self.textures.allocate_id(),
         scratch: Vec::new(),
@@ -239,9 +313,20 @@ impl crate::context::Context {
           if session.approved {
             uploaded |= self.pump_frame(session);
           }
+          // Still Pending covers both "no permission" and "approved but no
+          // first frame": either way the backend never delivered.
+          #[cfg(target_os = "linux")]
+          if matches!(session.status, CameraStatus::Pending) && session.opened_at.elapsed() >= PENDING_DEADLINE {
+            log::warn!(
+              "[camera] start timed out after {}s (backend delivered neither permission nor a frame); closing",
+              PENDING_DEADLINE.as_secs()
+            );
+            sdl_utils::camera_close(session.camera);
+            session.status = CameraStatus::Failed("camera start timed out".to_string());
+          }
         }
         CameraStatus::Ready { .. } => uploaded |= self.pump_frame(session),
-        CameraStatus::Denied => {}
+        CameraStatus::Denied | CameraStatus::Failed(_) => {}
       }
     }
     uploaded

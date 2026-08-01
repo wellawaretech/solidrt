@@ -3478,11 +3478,15 @@ import { on as on3 } from "srt:events";
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, resizeTexture, setShaderParams as setShaderParams2, setShaderSize as setShaderSize2, setShaderTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
+import { limits } from "flux:gpu";
 import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
 // packages/core/src/image.ts
 var imageCache = new Map;
+// packages/core/src/svg.ts
+import { parseSvg as fluxParseSvg } from "flux:svg";
+var svg = String.raw;
 // lattice/launcher/bsod.tsx
 function Bsod() {
   var _el$ = createElement("window", {

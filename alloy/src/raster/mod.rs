@@ -878,6 +878,37 @@ impl RasterState {
     }
   }
 
+  /// Clear the window backbuffer and swap it once, before any frame exists.
+  /// Purely so the window becomes visible: on Wayland a surface is not mapped
+  /// until its first buffer commit, so an app whose first render blocks (a
+  /// synchronous device probe, say) puts nothing on screen at all - no title
+  /// bar, nothing for the compositor to show, no way to close it but the pid.
+  /// A black window that never fills in is a diagnosable failure; no window is
+  /// not.
+  ///
+  /// Deliberately not a frame: no FrameOutput::Presented, no wake, no present
+  /// fence. The main loop's bookkeeping (frame counter, FrameRendered to JS,
+  /// vsync arming, pacing samples) must only ever see presents the UI thread
+  /// actually built.
+  pub(crate) fn prime_window(&self) {
+    // Playback keeps the window hidden and never swaps.
+    if self.capture_frames {
+      return;
+    }
+    unsafe {
+      glow::HasContext::bind_framebuffer(&self.gl, glow::FRAMEBUFFER, None);
+      glow::HasContext::disable(&self.gl, glow::SCISSOR_TEST);
+      glow::HasContext::clear_color(&self.gl, 0.0, 0.0, 0.0, 1.0);
+      glow::HasContext::clear(&self.gl, glow::COLOR_BUFFER_BIT);
+    }
+    // Debug, not warn: the first real frame's present judges the surface for
+    // real (failure counter, rebind-and-redraw recovery). This one is a
+    // courtesy, and a platform that refuses it loses only the empty window.
+    if !crate::sdl_utils::gl_swap_window_checked(self.window) {
+      log::debug!("[alloy] priming swap failed: {}", crate::sdl_utils::sdl_error());
+    }
+  }
+
   /// Swap the window's backbuffer; true on success. Without the failure
   /// check a lost context / removed device leaves the app running normally
   /// while nothing reaches the screen (a frozen window with no message). A

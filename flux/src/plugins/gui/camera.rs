@@ -125,15 +125,26 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<
   };
 
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
-  let session =
-    state.0.atx.open_camera(device, facing, size, scan_qr).map_err(|e| throw_str(&ctx, &format!("openCamera: {e}")))?;
-
+  // Option validation above throws (caller bug); a device that cannot be
+  // opened rejects the promise instead - the documented contract, and the
+  // failure can be environmental (a stale hotplug entry whose /dev node is
+  // gone: SDL still lists unplugged Linux cameras, see AlloyEvent doc). A
+  // sync throw here unwinds through the caller's reactive computation, which
+  // no .catch can intercept (observed as REACTIVITY_HALTED in the launcher).
   let (promise, resolve, reject) = Promise::new(&ctx)?;
-  state.0.pending.borrow_mut().push(PendingOpen {
-    session,
-    resolve: Persistent::save(&ctx, resolve),
-    reject: Persistent::save(&ctx, reject),
-  });
+  match state.0.atx.open_camera(device, facing, size, scan_qr) {
+    Ok(session) => {
+      state.0.pending.borrow_mut().push(PendingOpen {
+        session,
+        resolve: Persistent::save(&ctx, resolve),
+        reject: Persistent::save(&ctx, reject),
+      });
+    }
+    Err(e) => {
+      let error = Exception::from_message(ctx.clone(), &format!("openCamera: {e}"))?;
+      reject.call::<_, ()>((error,))?;
+    }
+  }
   Ok(promise)
 }
 
@@ -227,6 +238,7 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
         }
       }
       Some(CameraStatus::Denied) => reject_with(ctx, entry.reject, "camera permission denied"),
+      Some(CameraStatus::Failed(message)) => reject_with(ctx, entry.reject, &message),
       None => reject_with(ctx, entry.reject, "camera closed"),
     }
   }

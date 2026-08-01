@@ -151,20 +151,29 @@ use sdl3::sys::stdinc::SDL_free;
 use sdl3::sys::surface::{SDL_ConvertPixels, SDL_Surface};
 
 pub fn camera_subsystem_init() -> bool {
-  // Force the v4l2 camera backend on desktop Linux. Device removal is broken in
-  // both SDL 3.4.8 Linux backends, but for different reasons: pipewire (the
-  // Wayland default) never calls SDL_CameraDisconnected at all (empty
-  // global_remove), while v4l2 only mis-gates it (its udev callback drops
-  // removals because device_event reports class 0 on remove). The v4l2 bug is a
-  // one-liner we filed upstream, so we sit on v4l2 to pick up the fix the moment
-  // it ships; until then add works and removal is silently missed on both.
-  // Normal priority, so an explicit SDL_CAMERA_DRIVER env var still overrides.
-  // Must run before SDL_INIT_CAMERA. Not Android (own backend) or other OSes.
-  #[cfg(target_os = "linux")]
-  unsafe {
-    use sdl3::sys::hints::{SDL_SetHint, SDL_HINT_CAMERA_DRIVER};
-    SDL_SetHint(SDL_HINT_CAMERA_DRIVER, c"v4l2".as_ptr());
-  }
+  // No driver hint: SDL's own Linux order is v4l2 first, pipewire second, and
+  // that is what we want. v4l2 is the proven backend (the MJPG format
+  // workaround and hotplug-add were verified against it, and the one-line
+  // device-removal fix we filed upstream targets it, so the default
+  // preference picks that fix up when SDL ships it). SDL's pipewire camera
+  // backend is not trustworthy today: it targets nodes by node.description
+  // (target.object matches node.name/object.serial, so the target never
+  // resolves), it ignores the stream ERROR state so a failed start reports
+  // permission PENDING forever, and upstream has an open never-acquires-a-
+  // frame issue (libsdl-org/SDL#11473) - all observed here on desktop,
+  // 2026-08-01. It stays as SDL's fallback for v4l2-less systems, nothing
+  // more.
+  //
+  // On a Raspberry Pi 4 (fresh Raspberry Pi OS, no camera attached) v4l2's
+  // init never returns - it wedges probing the Pi's bcm2835 codec/isp/rpivid
+  // /dev/videoN nodes - so THIS CALL CAN BLOCK FOREVER. That is why it runs
+  // on the dedicated init worker (see camera::ensure_init), never on the UI
+  // thread: a wedged init costs one parked thread and cameras stay absent,
+  // not the window. Until upstream fixes a backend, the Pi simply has no
+  // SDL-visible camera (CSI ribbon cameras are not plain V4L2 capture
+  // devices anyway; only USB UVC ones would appear).
+  //
+  // SDL_CAMERA_DRIVER in the environment still selects a backend explicitly.
   unsafe { SDL_InitSubSystem(SDL_INIT_CAMERA) }
 }
 

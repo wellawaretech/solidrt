@@ -54,11 +54,20 @@ declare module "flux:camera" {
     close(): void
   }
 
-  /** List the available camera devices. */
+  /**
+   * List the available camera devices. The first call also starts the camera
+   * subsystem, which comes up asynchronously: expect an empty list until the
+   * initial cameraDeviceChange events arrive.
+   */
   export function listCameras(): CameraDevice[]
   /**
    * Open a camera. Opening is also the permission request: the promise rejects
-   * if permission is denied, and resolves once the first frame is ready.
+   * if permission is denied, and resolves once the first frame is ready. On
+   * Linux a session that delivers neither within 10 seconds rejects with a
+   * timeout error and releases the device (a wedged capture backend would
+   * otherwise hold it and never settle). Rejects with "camera subsystem is
+   * starting" while the subsystem is still coming up - wait for listCameras
+   * to report a device before opening.
    */
   export function open(options?: CameraOpenOptions): Promise<CameraSession>
   /**

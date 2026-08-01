@@ -1074,6 +1074,9 @@ pub fn run_context(
       tx,
       wake,
     );
+    // Map the window now rather than at the first frame, so a UI thread that
+    // never submits one is still visible on Wayland (see prime_window).
+    state.prime_window();
     state.run(raster_rx);
   });
   spawn_raster.expect("failed to spawn raster thread");

@@ -42,8 +42,11 @@ let devicesAccessor: (() => CameraInfo[]) | undefined
 
 /**
  * Current camera list as a reactive accessor: re-enumerates on hotplug. Also
- * initializes the camera subsystem (required before hotplug events fire).
- * App-lifetime: there is one camera subsystem, so no cleanup is needed.
+ * kicks off the camera subsystem (required before hotplug events fire), which
+ * starts asynchronously: the list is empty until the initial device events
+ * arrive - moments later normally, never if the platform's capture backend is
+ * wedged. App-lifetime: there is one camera subsystem, so no cleanup is
+ * needed.
  *
  * Coverage caveat (SDL 3.4.8): only Android delivers both add and remove. On
  * Linux you get add events but not remove (removal is broken upstream); on

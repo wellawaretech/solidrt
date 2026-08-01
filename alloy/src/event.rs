@@ -159,8 +159,9 @@ pub enum AlloyEvent {
   //   - Android: add + remove both work.
   //   - Linux: add works; remove is broken in both backends -- pipewire never
   //     calls SDL_CameraDisconnected, v4l2 mis-gates removals on a device class
-  //     that is 0 on remove (a filed one-line upstream fix; we force v4l2 in
-  //     camera_subsystem_init to pick it up automatically once SDL ships it).
+  //     that is 0 on remove (a filed one-line upstream fix). We prefer pipewire
+  //     with a v4l2 fallback: see camera_subsystem_init (v4l2 init wedges on a
+  //     Raspberry Pi 4).
   //   - macOS/Windows: no camera hotplug at all (upstream FIXMEs, not wired),
   //     so neither add nor remove arrives.
   CameraDeviceChange { added: bool },

@@ -8982,6 +8982,7 @@ function Icon(props) {
   }));
   var _el$ = createElement("view");
   setProp(_el$, "repaintBoundary", true);
+  setProp(_el$, "pointerEvents", "all");
   spread(_el$, mergeProps({
     get width() {
       return size();
@@ -9354,6 +9355,7 @@ function AppIcon(props) {
     children: (d2) => (() => {
       var _el$2 = createElement("view", {
         repaintBoundary: true,
+        pointerEvents: "all",
         flexShrink: 0
       });
       insert(_el$2, createComponent2(For, {
