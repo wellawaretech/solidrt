@@ -9173,56 +9173,8 @@ on4("gamepads", (e3) => {
 });
 
 // lattice/launcher/parts/home-screen.tsx
-import { canDiscover, discover, stop } from "srt:dev";
+import { stop } from "srt:dev";
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
-
-// packages/core/src/camera.ts
-import { listCameras, open } from "flux:camera";
-import { on as on5 } from "srt:events";
-var devicesAccessor2;
-function cameraDevices() {
-  if (!devicesAccessor2) {
-    let [devices, setDevices] = createSignal(listCameras());
-    on5("cameraDeviceChange", () => setDevices(listCameras()));
-    devicesAccessor2 = devices;
-  }
-  return devicesAccessor2();
-}
-function createCamera(options = {}) {
-  let [texture, setTexture] = createSignal(undefined);
-  let [width, setWidth] = createSignal(undefined);
-  let [height, setHeight] = createSignal(undefined);
-  let [barcode, setBarcode] = createSignal(undefined);
-  let [error, setError] = createSignal(undefined);
-  let session;
-  let disposed = false;
-  open(options).then((cam) => {
-    if (disposed) {
-      cam.close();
-      return;
-    }
-    session = cam;
-    if (options.scan)
-      cam.onBarcode((result) => setBarcode(result));
-    setTexture(cam.texture);
-    setWidth(cam.width);
-    setHeight(cam.height);
-  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
-  onCleanup(() => {
-    disposed = true;
-    if (session) {
-      session.close();
-      session = undefined;
-    }
-  });
-  return {
-    texture,
-    width,
-    height,
-    barcode,
-    error
-  };
-}
 
 // lattice/launcher/parts/puzzle.tsx
 var PUZZLE_SEGMENTS = [{
@@ -9482,6 +9434,213 @@ function BackButton(props) {
   });
 }
 
+// lattice/launcher/parts/settings-panel.tsx
+import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
+function CapabilityChip(props) {
+  return createComponent2(View, {
+    get layout() {
+      return {
+        paddingLeft: space("md"),
+        paddingRight: space("md"),
+        paddingTop: space("sm"),
+        paddingBottom: space("sm")
+      };
+    },
+    get style() {
+      return {
+        backgroundColor: theme.color.surfaceAlt,
+        borderRadius: theme.radius.sm
+      };
+    },
+    get children() {
+      return createComponent2(Text, {
+        variant: "body",
+        muted: true,
+        get children() {
+          return props.name;
+        }
+      });
+    }
+  });
+}
+var THEME_MODES = ["system", "light", "dark"];
+function SettingsPanel(props) {
+  let modeNav = navTarget(() => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]));
+  return createComponent2(ScrollView, {
+    layout: {
+      flexGrow: 1
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexGrow: 1,
+            alignItems: policy.layout === "twoPane" ? "flex-start" : "center"
+          };
+        },
+        get children() {
+          return createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "column",
+                gap: space("lg"),
+                width: "100%",
+                maxWidth: DETAIL_MAX_WIDTH,
+                padding: space("xl")
+              };
+            },
+            get children() {
+              return [createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: space("md")
+                  };
+                },
+                get children() {
+                  return [createComponent2(BackButton, {
+                    get onPress() {
+                      return props.onBack;
+                    }
+                  }), createComponent2(Text, {
+                    variant: "heading",
+                    children: "Settings"
+                  })];
+                }
+              }), createComponent2(DetailCard, {
+                title: "Appearance",
+                get children() {
+                  return createComponent2(View, {
+                    ref(r$) {
+                      var _ref$ = modeNav.ref;
+                      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : modeNav.ref = r$;
+                    },
+                    get style() {
+                      return navRing(modeNav.focused());
+                    },
+                    get children() {
+                      return createComponent2(SegmentedControl, {
+                        options: [{
+                          value: "system",
+                          label: "System"
+                        }, {
+                          value: "light",
+                          label: "Light"
+                        }, {
+                          value: "dark",
+                          label: "Dark"
+                        }],
+                        get value() {
+                          return props.mode;
+                        },
+                        onChange: (v2) => props.onMode(v2)
+                      });
+                    }
+                  });
+                }
+              }), createComponent2(DetailCard, {
+                title: "About",
+                get children() {
+                  return [createComponent2(DetailRow, {
+                    label: "Build version",
+                    value: buildVersion
+                  }), createComponent2(DetailRow, {
+                    label: "Profile",
+                    value: buildProfile
+                  }), createComponent2(DetailRow, {
+                    label: "Flux version",
+                    get value() {
+                      return Flux.version;
+                    }
+                  }), createComponent2(DetailRow, {
+                    label: "Platform",
+                    value: buildPlatform
+                  })];
+                }
+              }), createComponent2(DetailCard, {
+                title: "Capabilities",
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: space("sm")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(For, {
+                        get each() {
+                          return Flux.capabilities;
+                        },
+                        children: (name) => createComponent2(CapabilityChip, {
+                          name
+                        })
+                      });
+                    }
+                  });
+                }
+              })];
+            }
+          });
+        }
+      });
+    }
+  });
+}
+
+// lattice/launcher/parts/connect-panel.tsx
+import { canDiscover, discover } from "srt:dev";
+
+// packages/core/src/camera.ts
+import { listCameras, open } from "flux:camera";
+import { on as on5 } from "srt:events";
+var devicesAccessor2;
+function cameraDevices() {
+  if (!devicesAccessor2) {
+    let [devices, setDevices] = createSignal(listCameras());
+    on5("cameraDeviceChange", () => setDevices(listCameras()));
+    devicesAccessor2 = devices;
+  }
+  return devicesAccessor2();
+}
+function createCamera(options = {}) {
+  let [texture, setTexture] = createSignal(undefined);
+  let [width, setWidth] = createSignal(undefined);
+  let [height, setHeight] = createSignal(undefined);
+  let [barcode, setBarcode] = createSignal(undefined);
+  let [error, setError] = createSignal(undefined);
+  let session;
+  let disposed = false;
+  open(options).then((cam) => {
+    if (disposed) {
+      cam.close();
+      return;
+    }
+    session = cam;
+    if (options.scan)
+      cam.onBarcode((result) => setBarcode(result));
+    setTexture(cam.texture);
+    setWidth(cam.width);
+    setHeight(cam.height);
+  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
+  onCleanup(() => {
+    disposed = true;
+    if (session) {
+      session.close();
+      session = undefined;
+    }
+  });
+  return {
+    texture,
+    width,
+    height,
+    barcode,
+    error
+  };
+}
+
 // lattice/launcher/parts/dev-connection.ts
 import { on as on6 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
@@ -9510,6 +9669,184 @@ var isBusy = () => state() === "searching" || state() === "connecting";
 var isIdle = () => state() === "idle";
 function connect(addr) {
   devConnect(normalizeAddress(addr));
+}
+
+// lattice/launcher/parts/connect-panel.tsx
+var DEFAULT_PORT = "34884";
+function recentLabel(entry) {
+  if (!entry.includes("|"))
+    return entry;
+  return "ticket " + entry.split("|")[0].slice(0, 8);
+}
+function ConnectPanel(props) {
+  let hostDraft = "";
+  let portDraft = DEFAULT_PORT;
+  let hasCamera = () => cameraDevices().length > 0;
+  let submit = () => {
+    let host = hostDraft.trim();
+    if (!host)
+      return;
+    let port = portDraft.trim();
+    props.onDial(port ? `${host}:${port}` : host);
+  };
+  return createComponent2(View, {
+    layout: {
+      flexGrow: 1,
+      alignItems: "center"
+    },
+    get children() {
+      return createComponent2(View, {
+        get layout() {
+          return {
+            flexDirection: "column",
+            gap: space("lg"),
+            width: "100%",
+            maxWidth: COLUMN_MAX_WIDTH,
+            padding: space("xl")
+          };
+        },
+        get children() {
+          return [createComponent2(View, {
+            get layout() {
+              return {
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space("md")
+              };
+            },
+            get children() {
+              return [createComponent2(BackButton, {
+                get onPress() {
+                  return props.onClose;
+                }
+              }), createComponent2(Text, {
+                variant: "heading",
+                children: "Connect"
+              })];
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return canDiscover || hasCamera();
+            },
+            get children() {
+              return createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    gap: space("sm")
+                  };
+                },
+                get children() {
+                  return [createComponent2(Show, {
+                    when: canDiscover,
+                    get children() {
+                      return createComponent2(NavButton, {
+                        variant: "secondary",
+                        onPress: () => {
+                          discover();
+                          props.onClose();
+                        },
+                        children: "Discover"
+                      });
+                    }
+                  }), createComponent2(Show, {
+                    get when() {
+                      return hasCamera();
+                    },
+                    get children() {
+                      return createComponent2(NavButton, {
+                        variant: "secondary",
+                        get onPress() {
+                          return props.onScan;
+                        },
+                        children: "Scan QR"
+                      });
+                    }
+                  })];
+                }
+              });
+            }
+          }), createComponent2(Card, {
+            title: "Manual",
+            get children() {
+              return [createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    gap: space("md")
+                  };
+                },
+                get children() {
+                  return [createComponent2(TextInput, {
+                    layout: {
+                      flexGrow: 1
+                    },
+                    placeholder: "IP address",
+                    onInput: (v2) => hostDraft = v2,
+                    onSubmit: submit
+                  }), createComponent2(TextInput, {
+                    layout: {
+                      width: 96
+                    },
+                    placeholder: "port",
+                    defaultValue: DEFAULT_PORT,
+                    onInput: (v2) => portDraft = v2,
+                    onSubmit: submit
+                  })];
+                }
+              }), createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "row",
+                    gap: space("md")
+                  };
+                },
+                get children() {
+                  return createComponent2(NavButton, {
+                    onPress: submit,
+                    children: "Connect"
+                  });
+                }
+              })];
+            }
+          }), createComponent2(Show, {
+            get when() {
+              return recentAddresses().length > 0;
+            },
+            get children() {
+              return createComponent2(Card, {
+                title: "Recent connections",
+                get children() {
+                  return createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "column",
+                        gap: space("sm")
+                      };
+                    },
+                    get children() {
+                      return createComponent2(For, {
+                        get each() {
+                          return recentAddresses();
+                        },
+                        children: (entry) => createComponent2(NavButton, {
+                          variant: "secondary",
+                          onPress: () => props.onDial(entry),
+                          get children() {
+                            return recentLabel(entry);
+                          }
+                        })
+                      });
+                    }
+                  });
+                }
+              });
+            }
+          })];
+        }
+      });
+    }
+  });
 }
 
 // lattice/launcher/parts/home-screen.tsx
@@ -9690,14 +10027,9 @@ function AppDetail(props) {
                   };
                 },
                 get children() {
-                  return [createComponent2(Show, {
-                    get when() {
+                  return [createComponent2(BackButton, {
+                    get onPress() {
                       return props.onBack;
-                    },
-                    get children() {
-                      return createComponent2(BackButton, {
-                        onPress: () => props.onBack?.()
-                      });
                     }
                   }), createComponent2(AppIcon, {
                     get app() {
@@ -10038,7 +10370,6 @@ function NoApps() {
   });
 }
 function DevCard(props) {
-  let hasCamera = () => cameraDevices().length > 0;
   return createComponent2(Card, {
     get layout() {
       return {
@@ -10105,35 +10436,13 @@ function DevCard(props) {
               return props.idle;
             },
             get children() {
-              return [createComponent2(Show, {
-                when: canDiscover,
-                get children() {
-                  return createComponent2(NavButton, {
-                    variant: "secondary",
-                    onPress: () => discover(),
-                    children: "Discover"
-                  });
-                }
-              }), createComponent2(Show, {
-                get when() {
-                  return hasCamera();
-                },
-                get children() {
-                  return createComponent2(NavButton, {
-                    variant: "secondary",
-                    get onPress() {
-                      return props.onScan;
-                    },
-                    children: "Scan QR"
-                  });
-                }
-              }), createComponent2(NavButton, {
+              return createComponent2(NavButton, {
                 variant: "secondary",
                 get onPress() {
-                  return props.onManual;
+                  return props.onConnect;
                 },
-                children: "Address"
-              })];
+                children: "Connect"
+              });
             }
           }), createComponent2(Show, {
             get when() {
@@ -10186,7 +10495,7 @@ function HomeScreen(props) {
     setApps(appsAvailable ? list() : []);
   };
   onBack((e3) => {
-    if (!twoPane() && selectedApp() != null) {
+    if (!twoPane() && props.panel == null && selectedApp() != null) {
       e3.preventDefault();
       props.setSelectedId(null);
     }
@@ -10197,125 +10506,146 @@ function HomeScreen(props) {
     },
     listWidth: 380,
     get showDetail() {
-      return selectedApp() != null;
+      return props.panel === "settings" || props.panel == null && selectedApp() != null;
     },
     get list() {
-      return createComponent2(View, {
-        layout: {
-          flexGrow: 1,
-          flexDirection: "column",
-          alignItems: "center"
+      return createComponent2(Show, {
+        get when() {
+          return props.panel !== "connect";
+        },
+        get fallback() {
+          return createComponent2(ConnectPanel, {
+            get onDial() {
+              return props.onDial;
+            },
+            get onScan() {
+              return props.onScan;
+            },
+            get onClose() {
+              return props.onPanelClose;
+            }
+          });
         },
         get children() {
           return createComponent2(View, {
-            get layout() {
-              return {
-                flexDirection: "column",
-                flexGrow: 1,
-                width: "100%",
-                maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
-                padding: space("xl"),
-                gap: space("xl")
-              };
+            layout: {
+              flexGrow: 1,
+              flexDirection: "column",
+              alignItems: "center"
             },
             get children() {
-              return [createComponent2(View, {
-                layout: {
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center"
+              return createComponent2(View, {
+                get layout() {
+                  return {
+                    flexDirection: "column",
+                    flexGrow: 1,
+                    width: "100%",
+                    maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
+                    padding: space("xl"),
+                    gap: space("xl")
+                  };
                 },
                 get children() {
                   return [createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: space("md")
-                      };
+                    layout: {
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center"
                     },
                     get children() {
-                      return [createComponent2(PuzzleMark, {
-                        size: 40
-                      }), createComponent2(Text, {
-                        variant: "heading",
-                        children: "SolidRT"
+                      return [createComponent2(View, {
+                        get layout() {
+                          return {
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: space("md")
+                          };
+                        },
+                        get children() {
+                          return [createComponent2(PuzzleMark, {
+                            size: 40
+                          }), createComponent2(Text, {
+                            variant: "heading",
+                            children: "SolidRT"
+                          })];
+                        }
+                      }), createComponent2(Pressable, {
+                        ref(r$) {
+                          var _ref$2 = gearNav.ref;
+                          typeof _ref$2 === "function" || Array.isArray(_ref$2) ? applyRef(_ref$2, r$) : gearNav.ref = r$;
+                        },
+                        get onPress() {
+                          return props.onSettings;
+                        },
+                        layout: {
+                          width: TAP_TARGET,
+                          height: TAP_TARGET,
+                          alignItems: "center",
+                          justifyContent: "center"
+                        },
+                        style: (s2) => ({
+                          backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                          borderRadius: theme.radius.md,
+                          ...navRing(gearNav.focused())
+                        }),
+                        get children() {
+                          return createComponent2(Icon, {
+                            src: GEAR_SVG,
+                            size: 22
+                          });
+                        }
                       })];
                     }
-                  }), createComponent2(Pressable, {
-                    ref(r$) {
-                      var _ref$2 = gearNav.ref;
-                      typeof _ref$2 === "function" || Array.isArray(_ref$2) ? applyRef(_ref$2, r$) : gearNav.ref = r$;
+                  }), createComponent2(Show, {
+                    get when() {
+                      return apps().length > 0;
                     },
-                    get onPress() {
-                      return props.onSettings;
+                    get fallback() {
+                      return createComponent2(NoApps, {});
                     },
-                    layout: {
-                      width: TAP_TARGET,
-                      height: TAP_TARGET,
-                      alignItems: "center",
-                      justifyContent: "center"
-                    },
-                    style: (s2) => ({
-                      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
-                      borderRadius: theme.radius.md,
-                      ...navRing(gearNav.focused())
-                    }),
                     get children() {
-                      return createComponent2(Icon, {
-                        src: GEAR_SVG,
-                        size: 22
+                      return createComponent2(AppList, {
+                        get apps() {
+                          return apps();
+                        },
+                        get selectedId() {
+                          return props.selectedId;
+                        },
+                        get twoPane() {
+                          return twoPane();
+                        },
+                        onSelect: (id2) => {
+                          if (props.panel === "settings")
+                            props.onPanelClose();
+                          props.setSelectedId(id2);
+                        },
+                        onLaunch: (id2) => doLaunch(id2)
+                      });
+                    }
+                  }), createComponent2(Show, {
+                    when: available,
+                    get children() {
+                      return createComponent2(DevCard, {
+                        get status() {
+                          return status();
+                        },
+                        get idle() {
+                          return isIdle();
+                        },
+                        get busy() {
+                          return isBusy();
+                        },
+                        get connected() {
+                          return isConnected();
+                        },
+                        get onConnect() {
+                          return props.onConnect;
+                        }
                       });
                     }
                   })];
                 }
-              }), createComponent2(Show, {
-                get when() {
-                  return apps().length > 0;
-                },
-                get fallback() {
-                  return createComponent2(NoApps, {});
-                },
-                get children() {
-                  return createComponent2(AppList, {
-                    get apps() {
-                      return apps();
-                    },
-                    get selectedId() {
-                      return props.selectedId;
-                    },
-                    get twoPane() {
-                      return twoPane();
-                    },
-                    onSelect: (id2) => props.setSelectedId(id2),
-                    onLaunch: (id2) => doLaunch(id2)
-                  });
-                }
-              }), createComponent2(Show, {
-                when: available,
-                get children() {
-                  return createComponent2(DevCard, {
-                    get status() {
-                      return status();
-                    },
-                    get idle() {
-                      return isIdle();
-                    },
-                    get busy() {
-                      return isBusy();
-                    },
-                    get connected() {
-                      return isConnected();
-                    },
-                    get onScan() {
-                      return props.onScan;
-                    },
-                    get onManual() {
-                      return props.onManual;
-                    }
-                  });
-                }
-              })];
+              });
             }
           });
         }
@@ -10324,187 +10654,51 @@ function HomeScreen(props) {
     get detail() {
       return createComponent2(Show, {
         get when() {
-          return selectedApp();
+          return props.panel !== "settings";
         },
         get fallback() {
-          return createComponent2(View, {
-            get layout() {
-              return {
-                flexGrow: 1,
-                justifyContent: "center",
-                alignItems: "center",
-                gap: space("lg")
-              };
+          return createComponent2(SettingsPanel, {
+            get mode() {
+              return props.themeMode;
             },
-            get children() {
-              return createComponent2(PuzzleMark, {
-                size: 360
-              });
+            get onMode() {
+              return props.onThemeMode;
+            },
+            get onBack() {
+              return props.onPanelClose;
             }
           });
         },
-        children: (app) => createComponent2(AppDetail, {
-          get app() {
-            return app();
-          },
-          onLaunch: () => doLaunch(app().id),
-          onRemove: () => doRemove(app().id),
-          get onBack() {
-            return twoPane() ? undefined : () => props.setSelectedId(null);
-          }
-        })
-      });
-    }
-  });
-}
-
-// lattice/launcher/parts/settings-screen.tsx
-import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
-function CapabilityChip(props) {
-  return createComponent2(View, {
-    get layout() {
-      return {
-        paddingLeft: space("md"),
-        paddingRight: space("md"),
-        paddingTop: space("sm"),
-        paddingBottom: space("sm")
-      };
-    },
-    get style() {
-      return {
-        backgroundColor: theme.color.surfaceAlt,
-        borderRadius: theme.radius.sm
-      };
-    },
-    get children() {
-      return createComponent2(Text, {
-        variant: "body",
-        muted: true,
         get children() {
-          return props.name;
-        }
-      });
-    }
-  });
-}
-var THEME_MODES = ["system", "light", "dark"];
-function SettingsScreen(props) {
-  let modeNav = navTarget(() => props.onMode(THEME_MODES[(THEME_MODES.indexOf(props.mode) + 1) % THEME_MODES.length]));
-  return createComponent2(ScrollView, {
-    layout: {
-      flexGrow: 1
-    },
-    get children() {
-      return createComponent2(View, {
-        layout: {
-          flexGrow: 1,
-          alignItems: "center"
-        },
-        get children() {
-          return createComponent2(View, {
-            get layout() {
-              return {
-                flexDirection: "column",
-                gap: space("lg"),
-                width: "100%",
-                maxWidth: COLUMN_MAX_WIDTH,
-                padding: space("xl")
-              };
+          return createComponent2(Show, {
+            get when() {
+              return selectedApp();
             },
-            get children() {
-              return [createComponent2(View, {
+            get fallback() {
+              return createComponent2(View, {
                 get layout() {
                   return {
-                    flexDirection: "row",
+                    flexGrow: 1,
+                    justifyContent: "center",
                     alignItems: "center",
-                    gap: space("md")
+                    gap: space("lg")
                   };
                 },
                 get children() {
-                  return [createComponent2(BackButton, {
-                    get onPress() {
-                      return props.onBack;
-                    }
-                  }), createComponent2(Text, {
-                    variant: "heading",
-                    children: "Settings"
-                  })];
-                }
-              }), createComponent2(DetailCard, {
-                title: "Appearance",
-                get children() {
-                  return createComponent2(View, {
-                    ref(r$) {
-                      var _ref$ = modeNav.ref;
-                      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : modeNav.ref = r$;
-                    },
-                    get style() {
-                      return navRing(modeNav.focused());
-                    },
-                    get children() {
-                      return createComponent2(SegmentedControl, {
-                        options: [{
-                          value: "system",
-                          label: "System"
-                        }, {
-                          value: "light",
-                          label: "Light"
-                        }, {
-                          value: "dark",
-                          label: "Dark"
-                        }],
-                        get value() {
-                          return props.mode;
-                        },
-                        onChange: (v2) => props.onMode(v2)
-                      });
-                    }
+                  return createComponent2(PuzzleMark, {
+                    size: 360
                   });
                 }
-              }), createComponent2(DetailCard, {
-                title: "About",
-                get children() {
-                  return [createComponent2(DetailRow, {
-                    label: "Build version",
-                    value: buildVersion
-                  }), createComponent2(DetailRow, {
-                    label: "Profile",
-                    value: buildProfile
-                  }), createComponent2(DetailRow, {
-                    label: "Flux version",
-                    get value() {
-                      return Flux.version;
-                    }
-                  }), createComponent2(DetailRow, {
-                    label: "Platform",
-                    value: buildPlatform
-                  })];
-                }
-              }), createComponent2(DetailCard, {
-                title: "Capabilities",
-                get children() {
-                  return createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "row",
-                        flexWrap: "wrap",
-                        gap: space("sm")
-                      };
-                    },
-                    get children() {
-                      return createComponent2(For, {
-                        get each() {
-                          return Flux.capabilities;
-                        },
-                        children: (name) => createComponent2(CapabilityChip, {
-                          name
-                        })
-                      });
-                    }
-                  });
-                }
-              })];
-            }
+              });
+            },
+            children: (app) => createComponent2(AppDetail, {
+              get app() {
+                return app();
+              },
+              onLaunch: () => doLaunch(app().id),
+              onRemove: () => doRemove(app().id),
+              onBack: () => props.setSelectedId(null)
+            })
           });
         }
       });
@@ -10702,141 +10896,6 @@ function ScanScreen(props) {
   });
 }
 
-// lattice/launcher/parts/connect-screen.tsx
-var DEFAULT_PORT = "34884";
-function recentLabel(entry) {
-  if (!entry.includes("|"))
-    return entry;
-  return "ticket " + entry.split("|")[0].slice(0, 8);
-}
-function ConnectScreen(props) {
-  let hostDraft = "";
-  let portDraft = DEFAULT_PORT;
-  let submit = () => {
-    let host = hostDraft.trim();
-    if (!host)
-      return;
-    let port = portDraft.trim();
-    props.onDial(port ? `${host}:${port}` : host);
-  };
-  return createComponent2(View, {
-    layout: {
-      flexGrow: 1,
-      alignItems: "center"
-    },
-    get children() {
-      return createComponent2(View, {
-        get layout() {
-          return {
-            flexDirection: "column",
-            gap: space("lg"),
-            width: "100%",
-            maxWidth: COLUMN_MAX_WIDTH,
-            padding: space("xl"),
-            paddingTop: 72
-          };
-        },
-        get children() {
-          return [createComponent2(Card, {
-            get children() {
-              return [createComponent2(Text, {
-                variant: "title",
-                children: "Connect to a dev server"
-              }), createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    gap: space("md")
-                  };
-                },
-                get children() {
-                  return [createComponent2(TextInput, {
-                    layout: {
-                      flexGrow: 1
-                    },
-                    placeholder: "IP address",
-                    onInput: (v2) => hostDraft = v2,
-                    onSubmit: submit
-                  }), createComponent2(TextInput, {
-                    layout: {
-                      width: 96
-                    },
-                    placeholder: "port",
-                    defaultValue: DEFAULT_PORT,
-                    onInput: (v2) => portDraft = v2,
-                    onSubmit: submit
-                  })];
-                }
-              }), createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    gap: space("md")
-                  };
-                },
-                get children() {
-                  return [createComponent2(NavButton, {
-                    onPress: submit,
-                    children: "Connect"
-                  }), createComponent2(NavButton, {
-                    variant: "ghost",
-                    get onPress() {
-                      return props.onCancel;
-                    },
-                    children: "Cancel"
-                  })];
-                }
-              })];
-            }
-          }), createComponent2(Show, {
-            get when() {
-              return recentAddresses().length > 0;
-            },
-            get children() {
-              return createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "column",
-                    gap: space("sm")
-                  };
-                },
-                get children() {
-                  return [createComponent2(Text, {
-                    variant: "body",
-                    muted: true,
-                    children: "Recent"
-                  }), createComponent2(View, {
-                    get layout() {
-                      return {
-                        flexDirection: "column",
-                        gap: space("sm")
-                      };
-                    },
-                    get children() {
-                      return createComponent2(For, {
-                        get each() {
-                          return recentAddresses();
-                        },
-                        children: (entry) => createComponent2(NavButton, {
-                          variant: "secondary",
-                          onPress: () => props.onDial(entry),
-                          get children() {
-                            return recentLabel(entry);
-                          }
-                        })
-                      });
-                    }
-                  })];
-                }
-              });
-            }
-          })];
-        }
-      });
-    }
-  });
-}
-
 // lattice/launcher/launcher.tsx
 function App() {
   let [themeMode, setThemeMode] = createSignal("system");
@@ -10848,6 +10907,10 @@ function App() {
   };
   createEffect(() => dark(), (d2) => setTheme(d2 ? darkTheme : lightTheme));
   let [screen, setScreen] = createSignal("home");
+  let panel = () => {
+    let s2 = screen();
+    return s2 === "settings" || s2 === "connect" ? s2 : null;
+  };
   let [selectedId, setSelectedId] = createSignal(null);
   let [notice, setNotice] = createSignal(null);
   let [confirmExit, setConfirmExit] = createSignal(false);
@@ -10888,7 +10951,7 @@ function App() {
                 get children() {
                   return createComponent2(ScanScreen, {
                     onScanned: (data) => dial(data),
-                    onCancel: () => setScreen("home"),
+                    onCancel: () => setScreen("connect"),
                     onError: (m2) => {
                       setNotice(`Camera: ${m2}`);
                       setScreen("home");
@@ -10897,30 +10960,7 @@ function App() {
                 }
               }), createComponent2(Match, {
                 get when() {
-                  return screen() === "manual";
-                },
-                get children() {
-                  return createComponent2(ConnectScreen, {
-                    onDial: (addr) => dial(addr),
-                    onCancel: () => setScreen("home")
-                  });
-                }
-              }), createComponent2(Match, {
-                get when() {
-                  return screen() === "settings";
-                },
-                get children() {
-                  return createComponent2(SettingsScreen, {
-                    get mode() {
-                      return themeMode();
-                    },
-                    onMode: setThemeMode,
-                    onBack: () => setScreen("home")
-                  });
-                }
-              }), createComponent2(Match, {
-                get when() {
-                  return screen() === "home";
+                  return screen() === "home" || panel() != null;
                 },
                 get children() {
                   return createComponent2(HomeScreen, {
@@ -10932,12 +10972,21 @@ function App() {
                       return notice();
                     },
                     setNotice,
+                    get panel() {
+                      return panel();
+                    },
+                    get themeMode() {
+                      return themeMode();
+                    },
+                    onThemeMode: setThemeMode,
                     onScan: () => {
                       setNotice(null);
                       setScreen("scan");
                     },
-                    onManual: () => setScreen("manual"),
-                    onSettings: () => setScreen("settings")
+                    onConnect: () => setScreen("connect"),
+                    onSettings: () => setScreen("settings"),
+                    onPanelClose: () => setScreen("home"),
+                    onDial: (addr) => dial(addr)
                   });
                 }
               })];

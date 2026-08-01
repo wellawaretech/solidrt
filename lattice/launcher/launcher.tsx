@@ -1,8 +1,8 @@
 // The go client's launcher: the compiled-in home screen. Lists the apps
 // installed in the version store (tap a row for its details and remove, or the
 // row's play button to launch straight away) and manages the dev-server
-// connection (discover, QR scan on a full-screen camera view, manual address
-// entry, recents). Built from
+// connection (address entry, discovery, QR scan on a full-screen camera view,
+// recents - all gathered in the connect panel). Built from
 // @solidrt/components; follows the OS dark/light preference and the layout
 // policy: wide windows show a WhatsApp-style split (list left, selected app's
 // details right), narrow ones navigate between two screens. Bundled by
@@ -11,8 +11,11 @@
 //
 // This module owns the theme, the screen routing, the back stack (every level of
 // it, including the leave-the-launcher confirmation), and the app selection and
-// status notice (lifted so they survive sub-screen visits). The dev-server
-// connection is app-wide module state in parts/dev-connection; the screens
+// status notice (lifted so they survive a scan). Routing is two screens deep
+// only: the home screen and the full-bleed camera scan. Settings and connect are
+// panels of the home screen, each replacing one of its panes, and HomeScreen
+// renders them (see HomePanel in parts/types). The dev-server connection is
+// app-wide module state in parts/dev-connection; the screens and panels
 // themselves live in parts/.
 import { render, env, exit, createSignal, createEffect, onBack } from "@solidrt/core"
 import { Switch, Match, Show } from "solid-js"
@@ -31,11 +34,9 @@ import {
 } from "@solidrt/components"
 import { NavButton } from "./parts/nav"
 import { HomeScreen } from "./parts/home-screen"
-import { SettingsScreen } from "./parts/settings-screen"
 import { ScanScreen } from "./parts/scan-screen"
-import { ConnectScreen } from "./parts/connect-screen"
 import { connect } from "./parts/dev-connection"
-import { type Screen, type ThemeMode } from "./parts/types"
+import { type HomePanel, type Screen, type ThemeMode } from "./parts/types"
 
 function App() {
   // Theme mode: "system" follows the OS preference (settable back to, unlike a
@@ -53,10 +54,17 @@ function App() {
   )
 
   let [screen, setScreen] = createSignal<Screen>("home")
+  // Settings and connect are panels of the home screen rather than screens of
+  // their own: HomeScreen stays mounted and swaps one of its two panes, so the
+  // other keeps its content (see HomePanel).
+  let panel = (): HomePanel | null => {
+    let s = screen()
+    return s === "settings" || s === "connect" ? s : null
+  }
   // Selection and the status-line notice are lifted here (rather than owned by
   // HomeScreen) so they survive the Switch unmounting the home screen during a
-  // Settings/Scan/Connect visit - and the notice is cross-screen (a camera
-  // scan error on the scan screen surfaces in the home status line).
+  // scan - and the notice is cross-screen (a camera scan error on the scan
+  // screen surfaces in the home status line).
   let [selectedId, setSelectedId] = createSignal<string | null>(null)
   let [notice, setNotice] = createSignal<string | null>(null)
   // Whether the leave-the-launcher confirmation is up. Starts false, as every
@@ -72,11 +80,11 @@ function App() {
   // The root of the back stack, so this handler registers first and runs last:
   // everything mounted above it (the home screen's detail selection, a dialog
   // inside it) gets the event first and takes it if it is theirs. What is left
-  // over is App's own: dismiss the exit dialog, pop a sub-screen, or ask about
-  // leaving. The one thing never left to core is its default action - it exits
-  // on the spot, and the last back press should ask first, so exit() runs only
-  // from the dialog (it quits the client, backgrounding it on Android, the stock
-  // back-at-root feel).
+  // over is App's own: dismiss the exit dialog, close a panel or leave the scan,
+  // or ask about leaving. The one thing never left to core is its default action
+  // - it exits on the spot, and the last back press should ask first, so exit()
+  // runs only from the dialog (it quits the client, backgrounding it on Android,
+  // the stock back-at-root feel).
   onBack((e) => {
     e.preventDefault()
     if (confirmExit()) {
@@ -99,7 +107,10 @@ function App() {
           <Match when={screen() === "scan"}>
             <ScanScreen
               onScanned={(data) => dial(data)}
-              onCancel={() => setScreen("home")}
+              // Cancelling returns to the panel the scan was started from. A
+              // camera failure goes home instead: its notice shows in the dev
+              // card's status line, which the connect panel covers.
+              onCancel={() => setScreen("connect")}
               onError={(m) => {
                 setNotice(`Camera: ${m}`)
                 setScreen("home")
@@ -107,30 +118,23 @@ function App() {
             />
           </Match>
 
-          <Match when={screen() === "manual"}>
-            <ConnectScreen onDial={(addr) => dial(addr)} onCancel={() => setScreen("home")} />
-          </Match>
-
-          <Match when={screen() === "settings"}>
-            <SettingsScreen
-              mode={themeMode()}
-              onMode={setThemeMode}
-              onBack={() => setScreen("home")}
-            />
-          </Match>
-
-          <Match when={screen() === "home"}>
+          <Match when={screen() === "home" || panel() != null}>
             <HomeScreen
               selectedId={selectedId()}
               setSelectedId={setSelectedId}
               notice={notice()}
               setNotice={setNotice}
+              panel={panel()}
+              themeMode={themeMode()}
+              onThemeMode={setThemeMode}
               onScan={() => {
                 setNotice(null)
                 setScreen("scan")
               }}
-              onManual={() => setScreen("manual")}
+              onConnect={() => setScreen("connect")}
               onSettings={() => setScreen("settings")}
+              onPanelClose={() => setScreen("home")}
+              onDial={(addr) => dial(addr)}
             />
           </Match>
         </Switch>

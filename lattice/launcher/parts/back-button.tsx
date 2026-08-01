@@ -1,8 +1,10 @@
 // The launcher's back affordance: an arrow, no label, meant to sit at the left
 // of a screen's heading row rather than on a row of its own (a lone labelled
 // button above the title reads as a stray form control, and duplicates what the
-// title already says). Only the single-pane screens need one; two-pane reaches
-// the same views without navigating.
+// title already says). Every view that fills a pane carries one, in both
+// layouts: two-pane can reach the others without it, but a pane with no way
+// back out of it reads as stuck, and the arrow always means the same thing
+// (leave this view, keep the rest of the screen).
 import { Pressable, Icon, theme, type PressState } from "@solidrt/components"
 import { navTarget, navRing } from "./nav"
 import { TAP_TARGET } from "./types"

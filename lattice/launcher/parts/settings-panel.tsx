@@ -1,8 +1,21 @@
-// The settings screen: theme mode and the runtime's build identity. Reached
-// from the home header gear; the heading row's back arrow returns home, in both
-// layouts (settings is a whole screen, never a pane).
+// The settings panel: theme mode and the runtime's build identity. Reached
+// from the home header gear. Lives in the home SplitView's detail pane: beside
+// the list in two-pane, the whole screen in single-pane. The heading row's
+// back arrow closes it in both layouts (unlike the app detail, the list offers
+// no other affordance to dismiss it). Single-pane centers the column, two-pane
+// leaves it against the split's hairline, per the SplitView contract. Its
+// column is the detail pane's width, not the list's, so switching between an
+// app's details and settings does not resize the pane's content.
 import { For } from "solid-js"
-import { View, Text, ScrollView, SegmentedControl, theme, space } from "@solidrt/components"
+import {
+  View,
+  Text,
+  ScrollView,
+  SegmentedControl,
+  theme,
+  space,
+  policy,
+} from "@solidrt/components"
 import { navTarget, navRing } from "./nav"
 import {
   version as buildVersion,
@@ -11,7 +24,7 @@ import {
 } from "srt:apps"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
-import { COLUMN_MAX_WIDTH, type ThemeMode } from "./types"
+import { DETAIL_MAX_WIDTH, type ThemeMode } from "./types"
 
 // One capability name as a filled chip, for the About block's list.
 function CapabilityChip(props: { name: string }) {
@@ -34,7 +47,7 @@ function CapabilityChip(props: { name: string }) {
 
 const THEME_MODES: ThemeMode[] = ["system", "light", "dark"]
 
-export function SettingsScreen(props: {
+export function SettingsPanel(props: {
   mode: ThemeMode
   onMode: (mode: ThemeMode) => void
   onBack: () => void
@@ -46,13 +59,15 @@ export function SettingsScreen(props: {
   )
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
-      <View layout={{ flexGrow: 1, alignItems: "center" }}>
+      <View
+        layout={{ flexGrow: 1, alignItems: policy.layout === "twoPane" ? "flex-start" : "center" }}
+      >
         <View
           layout={{
             flexDirection: "column",
             gap: space("lg"),
             width: "100%",
-            maxWidth: COLUMN_MAX_WIDTH,
+            maxWidth: DETAIL_MAX_WIDTH,
             padding: space("xl"),
           }}
         >

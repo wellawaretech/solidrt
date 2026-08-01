@@ -20,7 +20,7 @@ import {
   space,
   policy,
 } from "@solidrt/components"
-import { canDiscover, discover, stop } from "srt:dev"
+import { stop } from "srt:dev"
 import {
   available as appsAvailable,
   list,
@@ -31,13 +31,21 @@ import {
   type AppCacheEntry,
   type InstalledApp,
 } from "srt:apps"
-import { cameraDevices } from "@solidrt/core/camera"
 import { PuzzleMark } from "./puzzle"
 import { AppIcon } from "./app-icon"
 import { navTarget, navRing, NavButton } from "./nav"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
-import { COLUMN_MAX_WIDTH, DETAIL_MAX_WIDTH, STATUS_TEXT, TAP_TARGET } from "./types"
+import { SettingsPanel } from "./settings-panel"
+import { ConnectPanel } from "./connect-panel"
+import {
+  COLUMN_MAX_WIDTH,
+  DETAIL_MAX_WIDTH,
+  STATUS_TEXT,
+  TAP_TARGET,
+  type HomePanel,
+  type ThemeMode,
+} from "./types"
 import {
   available,
   connectionState,
@@ -174,16 +182,17 @@ function amount(count: number, size: number): string {
 }
 
 // The selected app's detail view: identity, storage usage, stored versions and
-// the data sandbox's files, with launch and remove. Shared between the split
-// view's right pane (no onBack) and the narrow layout's detail screen (with
-// onBack). Single-pane centers the max-width column the way the list and the
-// settings screen do, so crossing the breakpoint does not shift the content
-// sideways; two-pane leaves it against the split's hairline.
+// the data sandbox's files, with launch and remove. Its back arrow clears the
+// selection in both layouts - single-pane returns to the list, two-pane empties
+// the detail pane back to the placeholder. Single-pane centers the max-width
+// column the way the list and the settings panel do, so crossing the breakpoint
+// does not shift the content sideways; two-pane leaves it against the split's
+// hairline.
 function AppDetail(props: {
   app: InstalledApp
   onLaunch: () => void
   onRemove: () => void
-  onBack?: () => void
+  onBack: () => void
 }) {
   let [confirming, setConfirming] = createSignal(false)
   // Selecting another app in the split view reuses this component; reset the
@@ -232,9 +241,7 @@ function AppDetail(props: {
           }}
         >
           <View layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}>
-            <Show when={props.onBack}>
-              <BackButton onPress={() => props.onBack?.()} />
-            </Show>
+            <BackButton onPress={props.onBack} />
             <AppIcon app={props.app} size={56} />
             <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
               <Text variant="heading">{props.app.name}</Text>
@@ -401,17 +408,18 @@ function NoApps() {
 }
 
 // The dev-server control surface: a status line (dot, or spinner while working)
-// and the connect actions for the current state. Connection state is owned by
-// App; scan/manual navigation come back as callbacks.
+// and the one action the current state affords. Idle offers Connect, which opens
+// the connect panel - the ways to connect (address, discovery, QR) live there
+// rather than on this card, which sits under the app list and should read as a
+// status strip, not a toolbar. Connection state is owned by App; opening the
+// panel comes back as a callback.
 function DevCard(props: {
   status: string
   idle: boolean
   busy: boolean
   connected: boolean
-  onScan: () => void
-  onManual: () => void
+  onConnect: () => void
 }) {
-  let hasCamera = () => cameraDevices().length > 0
   return (
     <Card layout={{ gap: space("md"), padding: space("lg") }}>
       <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
@@ -431,18 +439,8 @@ function DevCard(props: {
       </View>
       <View layout={{ flexDirection: "row", gap: space("sm") }}>
         <Show when={props.idle}>
-          <Show when={canDiscover}>
-            <NavButton variant="secondary" onPress={() => discover()}>
-              Discover
-            </NavButton>
-          </Show>
-          <Show when={hasCamera()}>
-            <NavButton variant="secondary" onPress={props.onScan}>
-              Scan QR
-            </NavButton>
-          </Show>
-          <NavButton variant="secondary" onPress={props.onManual}>
-            Address
+          <NavButton variant="secondary" onPress={props.onConnect}>
+            Connect
           </NavButton>
         </Show>
         <Show when={props.busy}>
@@ -463,19 +461,28 @@ function DevCard(props: {
 // List-detail home: SplitView shows the app list beside the selected app's
 // details when the layout policy is two-pane, and navigates between the list
 // and a detail screen when single-pane. The list chrome (mark size, centering)
-// and the detail's Back affordance fork on the layout, per the SplitView
-// contract. Owns the app list and the launch/remove notice; the selection and
-// notice are lifted to App (passed as values) so they survive visits to the
-// other screens. The dev-server connection is app-wide module state, read
-// directly from ./dev-connection, and drives the status line.
+// forks on the layout, per the SplitView contract. Also hosts the two home
+// panels, each replacing one pane so the other keeps its content: settings
+// takes the detail (over any app selection), connect takes the list. Single-pane
+// has one pane to give, so a panel reads as a screen there - which is why the
+// connect panel forces the list pane forward while it is up. Owns the app list
+// and the launch/remove notice; the selection and notice are lifted to App
+// (passed as values) so they survive a scan. The dev-server connection is
+// app-wide module state, read directly from ./dev-connection, and drives the
+// status line.
 export function HomeScreen(props: {
   selectedId: string | null
   setSelectedId: (id: string | null) => void
   notice: string | null
   setNotice: (message: string | null) => void
+  panel: HomePanel | null
+  themeMode: ThemeMode
+  onThemeMode: (mode: ThemeMode) => void
   onScan: () => void
-  onManual: () => void
+  onConnect: () => void
   onSettings: () => void
+  onPanelClose: () => void
+  onDial: (addr: string) => void
 }) {
   let [apps, setApps] = createSignal(appsAvailable ? list() : [])
   let gearNav = navTarget(() => props.onSettings())
@@ -510,9 +517,10 @@ export function HomeScreen(props: {
   // The home screen's own step of the back stack: in a narrow layout the
   // selected app is a screen of its own, so back returns to the list. Registered
   // while this screen is mounted, above App's root handler, which takes over
-  // when there is no selection to clear.
+  // when there is no selection to clear. Not while a panel is up: that back
+  // press is App's (it closes the panel), and the selection must survive it.
   onBack((e) => {
-    if (!twoPane() && selectedApp() != null) {
+    if (!twoPane() && props.panel == null && selectedApp() != null) {
       e.preventDefault()
       props.setSelectedId(null)
     }
@@ -522,94 +530,124 @@ export function HomeScreen(props: {
     <SplitView
       layout={{ flexGrow: 1 }}
       listWidth={380}
-      showDetail={selectedApp() != null}
+      // Single-pane shows whichever pane this picks, and a panel the user just
+      // opened has to be the one on screen: settings pulls the detail forward,
+      // the connect panel pulls the list forward over any selection.
+      showDetail={props.panel === "settings" || (props.panel == null && selectedApp() != null)}
       list={
-        <View layout={{ flexGrow: 1, flexDirection: "column", alignItems: "center" }}>
-          <View
-            layout={{
-              flexDirection: "column",
-              flexGrow: 1,
-              width: "100%",
-              maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
-              padding: space("xl"),
-              gap: space("xl"),
-            }}
-          >
+        <Show
+          when={props.panel !== "connect"}
+          fallback={
+            <ConnectPanel
+              onDial={props.onDial}
+              onScan={props.onScan}
+              onClose={props.onPanelClose}
+            />
+          }
+        >
+          <View layout={{ flexGrow: 1, flexDirection: "column", alignItems: "center" }}>
             <View
               layout={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
+                flexDirection: "column",
+                flexGrow: 1,
+                width: "100%",
+                maxWidth: twoPane() ? undefined : COLUMN_MAX_WIDTH,
+                padding: space("xl"),
+                gap: space("xl"),
               }}
             >
-              <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
-                <PuzzleMark size={40} />
-                <Text variant="heading">SolidRT</Text>
-              </View>
-              <Pressable
-                ref={gearNav.ref}
-                onPress={props.onSettings}
+              <View
                 layout={{
-                  width: TAP_TARGET,
-                  height: TAP_TARGET,
+                  flexDirection: "row",
+                  justifyContent: "space-between",
                   alignItems: "center",
-                  justifyContent: "center",
                 }}
-                style={(s: PressState) => ({
-                  backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
-                  borderRadius: theme.radius.md,
-                  ...navRing(gearNav.focused()),
-                })}
               >
-                <Icon src={GEAR_SVG} size={22} />
-              </Pressable>
+                <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+                  <PuzzleMark size={40} />
+                  <Text variant="heading">SolidRT</Text>
+                </View>
+                <Pressable
+                  ref={gearNav.ref}
+                  onPress={props.onSettings}
+                  layout={{
+                    width: TAP_TARGET,
+                    height: TAP_TARGET,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  style={(s: PressState) => ({
+                    backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+                    borderRadius: theme.radius.md,
+                    ...navRing(gearNav.focused()),
+                  })}
+                >
+                  <Icon src={GEAR_SVG} size={22} />
+                </Pressable>
+              </View>
+              <Show when={apps().length > 0} fallback={<NoApps />}>
+                <AppList
+                  apps={apps()}
+                  selectedId={props.selectedId}
+                  twoPane={twoPane()}
+                  onSelect={(id) => {
+                    // Two-pane keeps the list interactive while settings holds
+                    // the detail pane; picking an app dismisses settings so the
+                    // selection is not made invisibly behind it.
+                    if (props.panel === "settings") props.onPanelClose()
+                    props.setSelectedId(id)
+                  }}
+                  onLaunch={(id) => doLaunch(id)}
+                />
+              </Show>
+              <Show when={available}>
+                <DevCard
+                  status={status()}
+                  idle={isIdle()}
+                  busy={isBusy()}
+                  connected={isConnected()}
+                  onConnect={props.onConnect}
+                />
+              </Show>
             </View>
-            <Show when={apps().length > 0} fallback={<NoApps />}>
-              <AppList
-                apps={apps()}
-                selectedId={props.selectedId}
-                twoPane={twoPane()}
-                onSelect={(id) => props.setSelectedId(id)}
-                onLaunch={(id) => doLaunch(id)}
-              />
-            </Show>
-            <Show when={available}>
-              <DevCard
-                status={status()}
-                idle={isIdle()}
-                busy={isBusy()}
-                connected={isConnected()}
-                onScan={props.onScan}
-                onManual={props.onManual}
-              />
-            </Show>
           </View>
-        </View>
+        </Show>
       }
       detail={
         <Show
-          when={selectedApp()}
+          when={props.panel !== "settings"}
           fallback={
-            <View
-              layout={{
-                flexGrow: 1,
-                justifyContent: "center",
-                alignItems: "center",
-                gap: space("lg"),
-              }}
-            >
-              <PuzzleMark size={360} />
-            </View>
+            <SettingsPanel
+              mode={props.themeMode}
+              onMode={props.onThemeMode}
+              onBack={props.onPanelClose}
+            />
           }
         >
-          {(app) => (
-            <AppDetail
-              app={app()}
-              onLaunch={() => doLaunch(app().id)}
-              onRemove={() => doRemove(app().id)}
-              onBack={twoPane() ? undefined : () => props.setSelectedId(null)}
-            />
-          )}
+          <Show
+            when={selectedApp()}
+            fallback={
+              <View
+                layout={{
+                  flexGrow: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  gap: space("lg"),
+                }}
+              >
+                <PuzzleMark size={360} />
+              </View>
+            }
+          >
+            {(app) => (
+              <AppDetail
+                app={app()}
+                onLaunch={() => doLaunch(app().id)}
+                onRemove={() => doRemove(app().id)}
+                onBack={() => props.setSelectedId(null)}
+              />
+            )}
+          </Show>
         </Show>
       }
     />

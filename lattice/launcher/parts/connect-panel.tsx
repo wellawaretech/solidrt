@@ -1,8 +1,20 @@
-// The manual connect screen: a host + port entry form plus recent addresses.
-// Scanning a QR feeds the same dial path; this is the type-it-in alternative.
+// The connect panel: every way to reach a dev server in one place - type an
+// address, discover one on the network, scan its QR - plus the recents. Reached
+// from the dev card's Connect button and takes the home SplitView's list pane,
+// so a selected app's details stay up beside it in two-pane. Its column gets
+// the list's treatment (same max width, centered) so opening it does not shift
+// the content sideways.
+//
+// Starting an attempt closes the panel, because what reports on it - the dev
+// card's status line - lives in the pane this one covers. That holds for
+// dialing and for discovery; the QR route leaves for the camera screen instead
+// and comes back here if the user cancels it.
 import { Show, For } from "solid-js"
 import { View, Card, Text, TextInput, space } from "@solidrt/components"
+import { canDiscover, discover } from "srt:dev"
+import { cameraDevices } from "@solidrt/core/camera"
 import { NavButton } from "./nav"
+import { BackButton } from "./back-button"
 import { recentAddresses } from "./dev-connection"
 import { COLUMN_MAX_WIDTH } from "./types"
 
@@ -18,12 +30,14 @@ function recentLabel(entry: string): string {
   return "ticket " + entry.split("|")[0]!.slice(0, 8)
 }
 
-export function ConnectScreen(props: {
+export function ConnectPanel(props: {
   onDial: (addr: string) => void
-  onCancel: () => void
+  onScan: () => void
+  onClose: () => void
 }) {
   let hostDraft = ""
   let portDraft = DEFAULT_PORT
+  let hasCamera = () => cameraDevices().length > 0
 
   // Dial host:port; a blank port falls back to whatever the host holds (so a
   // pasted host:port still works). Host is required.
@@ -43,11 +57,33 @@ export function ConnectScreen(props: {
           width: "100%",
           maxWidth: COLUMN_MAX_WIDTH,
           padding: space("xl"),
-          paddingTop: 72,
         }}
       >
-        <Card>
-          <Text variant="title">Connect to a dev server</Text>
+        <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+          <BackButton onPress={props.onClose} />
+          <Text variant="heading">Connect</Text>
+        </View>
+        <Show when={canDiscover || hasCamera()}>
+          <View layout={{ flexDirection: "row", gap: space("sm") }}>
+            <Show when={canDiscover}>
+              <NavButton
+                variant="secondary"
+                onPress={() => {
+                  discover()
+                  props.onClose()
+                }}
+              >
+                Discover
+              </NavButton>
+            </Show>
+            <Show when={hasCamera()}>
+              <NavButton variant="secondary" onPress={props.onScan}>
+                Scan QR
+              </NavButton>
+            </Show>
+          </View>
+        </Show>
+        <Card title="Manual">
           <View layout={{ flexDirection: "row", gap: space("md") }}>
             <TextInput
               layout={{ flexGrow: 1 }}
@@ -65,16 +101,10 @@ export function ConnectScreen(props: {
           </View>
           <View layout={{ flexDirection: "row", gap: space("md") }}>
             <NavButton onPress={submit}>Connect</NavButton>
-            <NavButton variant="ghost" onPress={props.onCancel}>
-              Cancel
-            </NavButton>
           </View>
         </Card>
         <Show when={recentAddresses().length > 0}>
-          <View layout={{ flexDirection: "column", gap: space("sm") }}>
-            <Text variant="body" muted>
-              Recent
-            </Text>
+          <Card title="Recent connections">
             <View layout={{ flexDirection: "column", gap: space("sm") }}>
               <For each={recentAddresses()}>
                 {(entry) => (
@@ -84,7 +114,7 @@ export function ConnectScreen(props: {
                 )}
               </For>
             </View>
-          </View>
+          </Card>
         </Show>
       </View>
     </View>

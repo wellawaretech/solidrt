@@ -1,20 +1,30 @@
 // Cross-screen types and small helpers shared by the launcher screens.
 
 export type DevState = "idle" | "searching" | "connecting" | "connected"
-export type Screen = "home" | "scan" | "manual" | "settings"
+
+// The home screen's sub-panels: each takes over one pane rather than the whole
+// screen, so the other pane keeps its content. Settings replaces the detail
+// (the app list stays), connect replaces the list (a selected app's details
+// stay). Both are branches of the screen state, so at most one is up.
+export type HomePanel = "settings" | "connect"
+// Whole screens. "home" covers the list-detail screen and its panels; "scan"
+// is the only one that takes the window for itself (a full-bleed camera view).
+export type Screen = "home" | "scan" | HomePanel
 export type ThemeMode = "system" | "light" | "dark"
 
 // Reading width of a content column, in logical pixels. Single-pane runs up to
 // the expanded breakpoint (840), so past this width the column is centered
 // rather than stretched. Shared by the screens that are one column of prose and
-// controls (app list, settings, connect), so navigating between them does not
-// shift the content sideways.
+// controls (app list, connect), so navigating between them does not shift the
+// content sideways.
 export const COLUMN_MAX_WIDTH = 440
 
-// The app detail view's column. Wider than a prose column on purpose: it is
-// mostly label-and-value rows, and those read better with the pair pushed apart
-// than wrapped into a narrow column. The step in width when opening an app from
-// the list is the cost of that.
+// The detail pane's column, shared by everything that fills it (app details,
+// settings) so switching between them leaves the pane's content the same width.
+// Wider than a prose column on purpose: it is mostly label-and-value rows, and
+// those read better with the pair pushed apart than wrapped into a narrow
+// column. The step in width when opening an app from the list is the cost of
+// that.
 export const DETAIL_MAX_WIDTH = 640
 
 // Edge of an icon button's press box, in logical pixels: the glyphs are small,
