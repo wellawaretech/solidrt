@@ -247,6 +247,7 @@ function NameField() {
 | `maxLength`    | `number`                  | -       | Truncates input to this length.                              |
 | `disabled`     | `boolean`                 | `false` | Ignores pointer and key events when true.                    |
 | `autoFocus`    | `boolean`                 | `false` | Focuses on mount (the on-screen keyboard waits for a tap).   |
+| `hints`        | `TextInputHints`          | -       | IME behavior: keyboard type, capitalization, autocorrect.    |
 | `layout`       | `LayoutProps`             | -       | Layout properties (e.g. `width`).                            |
 | `style`        | `StyleProps`              | -       | Overrides theme colors, border, and radius.                  |
 

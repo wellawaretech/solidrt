@@ -3,7 +3,10 @@
 
 import type { Gradient } from "./color"
 import type { ProgramId, TextureId } from "flux:gpu"
+import type { TextInputHints } from "flux:rendertree"
 import type { Element } from "solid-js"
+
+export type { TextInputHints }
 
 // The "srt:*" lattice runner modules are declared in ./runtime-modules.d.ts
 // (referenced above) - ambient `declare module` only reaches consumers from a
@@ -279,6 +282,14 @@ export interface PointerProps {
   onKeyDown?: (event: KeyEvent) => void
   onKeyUp?: (event: KeyEvent) => void
   onTextInput?: (event: TextEvent) => void
+  /**
+   * IME behavior for this node's text-entry sessions (keyboard type,
+   * capitalization, autocorrect); read when a session starts. Without it the
+   * OS defaults apply - notably sentence auto-capitalization, which
+   * identifier fields and terminals want off:
+   * `textInputHints={{ capitalize: "none", autocorrect: false }}`.
+   */
+  textInputHints?: TextInputHints
   /**
    * Declares the element a candidate for focus navigation, enumerable via
    * getFocusables(). Candidacy only - it changes no behavior by itself; focus

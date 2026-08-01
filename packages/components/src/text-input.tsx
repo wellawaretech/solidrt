@@ -10,7 +10,7 @@ import {
   textInputActive,
 } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
-import type { Color, Gradient, KeyEvent, LayoutProps } from "@solidrt/core"
+import type { Color, Gradient, KeyEvent, LayoutProps, TextInputHints } from "@solidrt/core"
 import { registerNavAction } from "./focus-nav"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
@@ -38,6 +38,12 @@ export interface TextInputProps {
   maxLength?: number
   disabled?: boolean
   autoFocus?: boolean
+  /**
+   * IME behavior for the field's text sessions (keyboard type,
+   * capitalization, autocorrect). Identifier-like fields want
+   * `{ capitalize: "none", autocorrect: false }`.
+   */
+  hints?: TextInputHints
 
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
@@ -231,6 +237,7 @@ export function TextInput(props: TextInputProps) {
         unregisterNav = registerNavAction(n.id, activateField)
         props.ref?.(n)
       }}
+      textInputHints={props.hints}
       focusable
       flexDirection="row"
       alignItems="center"

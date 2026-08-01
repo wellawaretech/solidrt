@@ -3,7 +3,7 @@ import { createRenderer } from "@solidjs/universal"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
-import { setEventHandler, setFocusable, cleanupNode, focusedNode, setFocus } from "./core"
+import { setEventHandler, setFocusable, setTextInputHints, cleanupNode, focusedNode, setFocus } from "./core"
 import { parseColor, isGradient } from "./color"
 
 export { getEventHandler } from "./core"
@@ -175,6 +175,11 @@ function applyProp<T>(node: ProxyNode, name: string, value: T): void {
 
   if (name === "focusable") {
     setFocusable(node.id, value === true)
+    return
+  }
+
+  if (name === "textInputHints") {
+    setTextInputHints(node.id, value as any)
     return
   }
 

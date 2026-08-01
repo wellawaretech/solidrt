@@ -34,7 +34,9 @@ pub use gpu::{
   parse_blend, AttrFormat, BlendMode, DepthState, DrawRange, DrawUpdate, GpuLimits, ParamValue, PipelineDesc,
   PipelineSpec, ShaderStage, TargetSpec, Topology, UniformKind, UniformTable, WindowShader,
 };
-pub use event::{AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType};
+pub use event::{
+  AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
+};
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;

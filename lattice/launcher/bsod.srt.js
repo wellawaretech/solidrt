@@ -2831,6 +2831,14 @@ function getEventHandler(nodeId, name) {
 function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
+  textHints.delete(nodeId);
+}
+var textHints = new Map;
+function setTextInputHints(nodeId, hints) {
+  if (hints == null)
+    textHints.delete(nodeId);
+  else
+    textHints.set(nodeId, hints);
 }
 var focusedNodeId = null;
 var [trackFocusedNode, setFocusedNodeSignal] = createSignal(null);
@@ -2865,12 +2873,18 @@ function textInputEligible() {
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
 }
+var sessionNodeId = null;
 function syncTextInput(active) {
-  if (active === textInputActiveNow)
+  let target = active ? focusedNodeId : null;
+  if (active === textInputActiveNow && target === sessionNodeId)
     return;
   textInputActiveNow = active;
+  sessionNodeId = target;
   setTextInputActiveSignal(active);
-  tree.setTextInputActive(active);
+  if (active)
+    tree.setTextInputActive(true, textHints.get(target));
+  else
+    tree.setTextInputActive(false);
 }
 function setFocus(nodeId) {
   if (nodeId === focusedNodeId)
@@ -3451,6 +3465,10 @@ function applyProp(node, name, value) {
   }
   if (name === "focusable") {
     setFocusable(node.id, value === true);
+    return;
+  }
+  if (name === "textInputHints") {
+    setTextInputHints(node.id, value);
     return;
   }
   if (name === "color" && isGradient(value)) {

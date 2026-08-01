@@ -80,6 +80,52 @@ pub fn physical_keyboard() -> bool {
   has_keyboard() || crate::hardware_keyboard()
 }
 
+// Session start with IME configuration. The crate wraps only the plain
+// SDL_StartTextInput, so the typed variant goes through the raw properties
+// API; unset options keep SDL's defaults (notably capitalization defaults to
+// Sentences for plain text).
+pub fn start_text_input_with_options(window: &sdl3::video::Window, opts: &crate::TextInputOptions) {
+  use crate::{TextCapitalization, TextInputType};
+  use sdl3::sys::keyboard::*;
+  use sdl3::sys::properties::*;
+
+  let input_type = opts.input_type.map(|t| match t {
+    TextInputType::Text => SDL_TEXTINPUT_TYPE_TEXT,
+    TextInputType::Name => SDL_TEXTINPUT_TYPE_TEXT_NAME,
+    TextInputType::Email => SDL_TEXTINPUT_TYPE_TEXT_EMAIL,
+    TextInputType::Username => SDL_TEXTINPUT_TYPE_TEXT_USERNAME,
+    TextInputType::PasswordHidden => SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN,
+    TextInputType::PasswordVisible => SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_VISIBLE,
+    TextInputType::Number => SDL_TEXTINPUT_TYPE_NUMBER,
+    TextInputType::NumberPasswordHidden => SDL_TEXTINPUT_TYPE_NUMBER_PASSWORD_HIDDEN,
+    TextInputType::NumberPasswordVisible => SDL_TEXTINPUT_TYPE_NUMBER_PASSWORD_VISIBLE,
+  });
+  let capitalize = opts.capitalize.map(|c| match c {
+    TextCapitalization::None => SDL_CAPITALIZE_NONE,
+    TextCapitalization::Sentences => SDL_CAPITALIZE_SENTENCES,
+    TextCapitalization::Words => SDL_CAPITALIZE_WORDS,
+    TextCapitalization::Letters => SDL_CAPITALIZE_LETTERS,
+  });
+
+  unsafe {
+    let props = SDL_CreateProperties();
+    if let Some(t) = input_type {
+      SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, t.0 as i64);
+    }
+    if let Some(c) = capitalize {
+      SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, c.0 as i64);
+    }
+    if let Some(a) = opts.autocorrect {
+      SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, a);
+    }
+    if let Some(m) = opts.multiline {
+      SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, m);
+    }
+    SDL_StartTextInputWithProperties(window.raw(), props);
+    SDL_DestroyProperties(props);
+  }
+}
+
 // Window icon from straight-alpha RGBA8 pixels. The sdl3 crate does not wrap
 // SDL_SetWindowIcon, so this goes through sdl3-sys directly. SDL copies the
 // pixels into the surface's own representation on SetWindowIcon platforms and

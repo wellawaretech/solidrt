@@ -21,11 +21,21 @@ export function getEventHandler(nodeId: number, name: string): Function | undefi
   return handlers.get(nodeId)?.get(name)
 }
 
-// Cleans up every per-node registry entry (handlers, focus candidacy) when a
-// node is destroyed.
+// Cleans up every per-node registry entry (handlers, focus candidacy, text
+// hints) when a node is destroyed.
 export function cleanupNode(nodeId: number): void {
   handlers.delete(nodeId)
   focusables.delete(nodeId)
+  textHints.delete(nodeId)
+}
+
+// Per-node IME hints, declared by the `textInputHints` prop (renderer.ts)
+// and read when the node's text session starts.
+let textHints = new Map<number, tree.TextInputHints>()
+
+export function setTextInputHints(nodeId: number, hints: tree.TextInputHints | null | undefined): void {
+  if (hints == null) textHints.delete(nodeId)
+  else textHints.set(nodeId, hints)
 }
 
 // Currently-focused node id and text-session state. Each is a plain field
@@ -116,11 +126,19 @@ function textInputInvisible(): boolean {
   return !screenKeyboard || physicalKeyboard
 }
 
+// The node whose session is running: a session that stays active while focus
+// hops between text fields must restart on the new node so its IME hints
+// (keyboard type, capitalization) take effect.
+let sessionNodeId: number | null = null
+
 function syncTextInput(active: boolean): void {
-  if (active === textInputActiveNow) return
+  let target = active ? focusedNodeId : null
+  if (active === textInputActiveNow && target === sessionNodeId) return
   textInputActiveNow = active
+  sessionNodeId = target
   setTextInputActiveSignal(active)
-  tree.setTextInputActive(active)
+  if (active) tree.setTextInputActive(true, textHints.get(target!))
+  else tree.setTextInputActive(false)
 }
 
 /**

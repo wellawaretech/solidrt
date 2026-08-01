@@ -143,7 +143,10 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `onTextInput` handler. Focus alone never raises the on-screen keyboard: a
   tap on the focused node (or explicit startTextInput()) does, and never
   while a physical keyboard is attached; on keyboard-equipped platforms the
-  session starts invisibly at focus so text flows immediately. Key
+  session starts invisibly at focus so text flows immediately.
+  `textInputHints` on the node configures the IME (type/capitalize/
+  autocorrect) - identifier fields and terminals want
+  `{ capitalize: "none", autocorrect: false }` (OS default auto-capitalizes). Key
   events start at the focused node and bubble leaf->root to the window (with
   nothing focused, the window alone), so `<window onKeyDown>` is the
   app-global shortcut point; `stopPropagation()` ends the walk. `focusable`

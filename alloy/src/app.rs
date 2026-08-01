@@ -442,9 +442,8 @@ impl App {
           AlloyCommand::SetCursorVisible(visible) => {
             sdl_context.mouse().show_cursor(visible);
           }
-          AlloyCommand::SetTextInputActive(active) => {
+          AlloyCommand::SetTextInputActive(active, options) => {
             if let Ok(video) = sdl_context.video() {
-              let ti = video.text_input();
               if active {
                 // SDL's default policy ("auto": show the screen keyboard
                 // unless SDL_HasKeyboard) is blind on Android, which never
@@ -452,9 +451,9 @@ impl App {
                 // attached hardware keyboard suppresses the on-screen one.
                 let hint = if crate::sdl_utils::physical_keyboard() { "false" } else { "auto" };
                 sdl3::hint::set("SDL_ENABLE_SCREEN_KEYBOARD", hint);
-                ti.start(&window);
+                crate::sdl_utils::start_text_input_with_options(&window, &options);
               } else {
-                ti.stop(&window);
+                video.text_input().stop(&window);
               }
             }
           }

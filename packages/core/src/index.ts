@@ -28,6 +28,7 @@ export type {
   WheelEvent,
   KeyEvent,
   TextEvent,
+  TextInputHints,
   PaintProps,
   WindowProps,
   WindowShaderProps,

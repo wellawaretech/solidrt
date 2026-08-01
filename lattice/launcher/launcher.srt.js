@@ -4518,6 +4518,14 @@ function getEventHandler(nodeId, name) {
 function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
+  textHints.delete(nodeId);
+}
+var textHints = new Map;
+function setTextInputHints(nodeId, hints) {
+  if (hints == null)
+    textHints.delete(nodeId);
+  else
+    textHints.set(nodeId, hints);
 }
 var focusedNodeId = null;
 var [trackFocusedNode, setFocusedNodeSignal] = createSignal(null);
@@ -4555,12 +4563,18 @@ function textInputEligible() {
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
 }
+var sessionNodeId = null;
 function syncTextInput(active) {
-  if (active === textInputActiveNow)
+  let target = active ? focusedNodeId : null;
+  if (active === textInputActiveNow && target === sessionNodeId)
     return;
   textInputActiveNow = active;
+  sessionNodeId = target;
   setTextInputActiveSignal(active);
-  tree.setTextInputActive(active);
+  if (active)
+    tree.setTextInputActive(true, textHints.get(target));
+  else
+    tree.setTextInputActive(false);
 }
 function setFocus(nodeId) {
   if (nodeId === focusedNodeId)
@@ -5277,6 +5291,10 @@ function applyProp(node, name, value) {
   }
   if (name === "focusable") {
     setFocusable(node.id, value === true);
+    return;
+  }
+  if (name === "textInputHints") {
+    setTextInputHints(node.id, value);
     return;
   }
   if (name === "color" && isGradient(value)) {
@@ -6639,6 +6657,9 @@ function TextInput(props) {
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
   spread(_el$, mergeProps({
+    get textInputHints() {
+      return props.hints;
+    },
     get paddingLeft() {
       return space("md");
     },
@@ -9955,6 +9976,10 @@ function ConnectPanel(props) {
                       flexGrow: 1
                     },
                     placeholder: "IP address",
+                    hints: {
+                      capitalize: "none",
+                      autocorrect: false
+                    },
                     onInput: (v2) => hostDraft = v2,
                     onSubmit: submit
                   }), createComponent2(TextInput, {
@@ -9963,6 +9988,9 @@ function ConnectPanel(props) {
                     },
                     placeholder: "port",
                     defaultValue: DEFAULT_PORT,
+                    hints: {
+                      type: "number"
+                    },
                     onInput: (v2) => portDraft = v2,
                     onSubmit: submit
                   })];

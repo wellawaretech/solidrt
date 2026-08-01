@@ -13,11 +13,47 @@ pub enum AlloyCommand {
   SetFullscreen(bool),
   SetCursor(sdl3::mouse::SystemCursor),
   SetCursorVisible(bool),
-  SetTextInputActive(bool),
+  SetTextInputActive(bool, TextInputOptions),
   // Leave the app at the OS level without dying: on Android SDL's minimize
   // routes to Activity.moveTaskToBack, the platform's back-at-root
   // convention. Desktop quits by process exit instead and never sends this.
   Background,
+}
+
+// IME/session configuration for SetTextInputActive(true), mirroring SDL's
+// text-input properties; a None knob keeps SDL's default. Only meaningful
+// when activating - deactivation ignores it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextInputOptions {
+  pub input_type: Option<TextInputType>,
+  pub capitalize: Option<TextCapitalization>,
+  pub autocorrect: Option<bool>,
+  pub multiline: Option<bool>,
+}
+
+// SDL_TextInputType, minus nothing: the OS keyboard's semantic layout and
+// masking for the session.
+#[derive(Clone, Copy, Debug)]
+pub enum TextInputType {
+  Text,
+  Name,
+  Email,
+  Username,
+  PasswordHidden,
+  PasswordVisible,
+  Number,
+  NumberPasswordHidden,
+  NumberPasswordVisible,
+}
+
+// SDL_Capitalization: what the IME auto-capitalizes. SDL's default for plain
+// text is Sentences, which is exactly wrong for identifiers and terminals.
+#[derive(Clone, Copy, Debug)]
+pub enum TextCapitalization {
+  None,
+  Sentences,
+  Words,
+  Letters,
 }
 
 // Pointer kind. Combined with a u64 pointer_id, uniquely identifies an

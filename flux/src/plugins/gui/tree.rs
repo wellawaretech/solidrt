@@ -230,8 +230,38 @@ impl ModuleDef for RenderTreeModule {
     })?;
 
     let cmd_tx = alloy_cmd_tx.clone();
-    let set_text_input_active = Function::new(ctx.clone(), move |active: bool| {
-      cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active)).ok();
+    let set_text_input_active = Function::new(ctx.clone(), move |active: bool, hints: Opt<Object<'_>>| {
+      let mut options = alloy::TextInputOptions::default();
+      if let Some(h) = hints.0 {
+        if let Ok(v) = h.get::<_, String>("type") {
+          options.input_type = match v.as_str() {
+            "text" => Some(alloy::TextInputType::Text),
+            "name" => Some(alloy::TextInputType::Name),
+            "email" => Some(alloy::TextInputType::Email),
+            "username" => Some(alloy::TextInputType::Username),
+            "password" => Some(alloy::TextInputType::PasswordHidden),
+            "number" => Some(alloy::TextInputType::Number),
+            "pin" => Some(alloy::TextInputType::NumberPasswordHidden),
+            _ => None,
+          };
+        }
+        if let Ok(v) = h.get::<_, String>("capitalize") {
+          options.capitalize = match v.as_str() {
+            "none" => Some(alloy::TextCapitalization::None),
+            "sentences" => Some(alloy::TextCapitalization::Sentences),
+            "words" => Some(alloy::TextCapitalization::Words),
+            "letters" => Some(alloy::TextCapitalization::Letters),
+            _ => None,
+          };
+        }
+        if let Ok(v) = h.get::<_, bool>("autocorrect") {
+          options.autocorrect = Some(v);
+        }
+        if let Ok(v) = h.get::<_, bool>("multiline") {
+          options.multiline = Some(v);
+        }
+      }
+      cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active, options)).ok();
     })?;
 
     let measure_platform = platform.clone();

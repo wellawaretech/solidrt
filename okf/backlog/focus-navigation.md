@@ -72,9 +72,15 @@ Traps for whoever picks this up:
   Hotplug via InputDeviceListener (config change does not fire when config
   already claims QWERTY). TV-verified 2026-08-01 via focus-test.tsx (repo
   root; MCP-driven test bed - keep it): session start raises the TV IME,
-  typed text flows. IME auto-capitalized the first letter - a future nicety
-  is passing SDL text-input types (numeric/URI/no-autocap) through
-  startTextInput for fields like an address input.
+  typed text flows. IME auto-capitalization: DONE 2026-08-01 - the
+  `textInputHints` node prop (type/capitalize/autocorrect/multiline) flows
+  core registry -> setTextInputActive(active, hints) -> AlloyCommand ->
+  SDL_StartTextInputWithProperties (sdl_utils wrapper; crate lacks it). A
+  session hopping between fields restarts on the new node so its hints
+  apply. TextInput exposes it as `hints`; the launcher address field is
+  capitalize-none/no-autocorrect and the port field type "number". Old
+  runtimes ignore the extra argument; effect needs a client rebuild.
+  Device-unverified until then.
 
 Deliberately deferred from the components stage (inherited from the
 launcher's own stage-1 gaps): scroll-into-view for a focused off-screen

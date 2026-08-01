@@ -30,8 +30,21 @@ declare module "flux:rendertree" {
   export function destroyNode(nodeId: number): void
   /** Write a single property on a node; `value` is marshalled per property. */
   export function setProperty(nodeId: number, name: string, value: unknown): void
+  /**
+   * IME behavior for a text session, mirroring SDL's text-input properties.
+   * An unset knob keeps the OS default - notably capitalization defaults to
+   * "sentences" for plain text, which identifier fields and terminals want
+   * off. Read when the session starts.
+   */
+  export interface TextInputHints {
+    /** Semantic input type, steering the keyboard layout and masking. */
+    type?: "text" | "name" | "email" | "username" | "password" | "number" | "pin"
+    capitalize?: "none" | "sentences" | "words" | "letters"
+    autocorrect?: boolean
+    multiline?: boolean
+  }
   /** Enable or disable text-input capture / the on-screen keyboard. */
-  export function setTextInputActive(active: boolean): void
+  export function setTextInputActive(active: boolean, hints?: TextInputHints): void
   /** Request that a frame be rendered soon (coalesced by the demand-driven loop). */
   export function requestFrame(): void
   /**

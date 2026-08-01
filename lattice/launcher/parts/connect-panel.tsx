@@ -87,6 +87,7 @@ export function ConnectPanel(props: {
             <TextInput
               layout={{ flexGrow: 1 }}
               placeholder="IP address"
+              hints={{ capitalize: "none", autocorrect: false }}
               onInput={(v) => (hostDraft = v)}
               onSubmit={submit}
             />
@@ -94,6 +95,7 @@ export function ConnectPanel(props: {
               layout={{ width: 96 }}
               placeholder="port"
               defaultValue={DEFAULT_PORT}
+              hints={{ type: "number" }}
               onInput={(v) => (portDraft = v)}
               onSubmit={submit}
             />
