@@ -13,6 +13,30 @@ pub enum PointerEvents {
   All,
 }
 
+/// Which routed pointer deliveries an element wants, as a bitmask: the
+/// consumer's per-node handler registry mirrored into the tree, so the router
+/// can skip building deliveries that would reach nobody (see router.rs).
+/// Per-node presence, not inherited - a handler either exists on a node or it
+/// does not. Down and Up are recorded but never gated (focus and gesture side
+/// effects hang off them regardless of handlers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EventInterest(pub u32);
+
+impl EventInterest {
+  pub const MOVE: u32 = 1 << 0;
+  pub const DOWN: u32 = 1 << 1;
+  pub const UP: u32 = 1 << 2;
+  pub const ENTER: u32 = 1 << 3;
+  pub const LEAVE: u32 = 1 << 4;
+  pub const WHEEL: u32 = 1 << 5;
+  /// Every bit with a defined meaning; decode sites reject anything outside.
+  pub const KNOWN: u32 = Self::MOVE | Self::DOWN | Self::UP | Self::ENTER | Self::LEAVE | Self::WHEEL;
+
+  pub fn has(self, bit: u32) -> bool {
+    self.0 & bit != 0
+  }
+}
+
 pub struct HitConfig {
   // `None` means "not explicitly set" - the element inherits its effective
   // value from the nearest ancestor that does set one (root default: Auto).
@@ -21,11 +45,12 @@ pub struct HitConfig {
   // a descendant opts back in explicitly, so a caller doesn't have to repeat
   // the same value on every leaf under a "click-through" overlay.
   pub pointer_events: Option<PointerEvents>,
+  pub listens: EventInterest,
 }
 
 impl Default for HitConfig {
   fn default() -> Self {
-    Self { pointer_events: None }
+    Self { pointer_events: None, listens: EventInterest::default() }
   }
 }
 

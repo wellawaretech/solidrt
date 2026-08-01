@@ -3,7 +3,7 @@ import { requestFrame } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { exit } from "srt:app"
-import { getEventHandler, focusedNode, setFocus, activateTextInput } from "./core"
+import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
 
 /**
@@ -229,6 +229,9 @@ export function onBack(fn: (e: BackEvent) => void) {
 // ------ Window ----------------
 
 export function attachWindow(nodeId: number) {
+  // The root carries the ambient move-interest bit for global onPointerMove
+  // subscribers (it is on every hit path); see core.setInterestRoot.
+  setInterestRoot(nodeId)
   let unsubscribe: () => void = null!
   let unsubDown: () => void = null!
   let unsubUp: () => void = null!
@@ -403,6 +406,7 @@ export function attachWindow(nodeId: number) {
   })
 
   onCleanup(() => {
+    setInterestRoot(null)
     if (unsubscribe) unsubscribe()
     if (unsubDown) unsubDown()
     if (unsubUp) unsubUp()

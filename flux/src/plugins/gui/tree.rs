@@ -9,7 +9,9 @@ use taffy::prelude::*;
 
 use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
-use alloy::rendertree::{Element, Measurable, MeasureContext, PlatformContext, Rect, RenderTree, Text, Window};
+use alloy::rendertree::{
+  Damage, Element, EventInterest, Measurable, MeasureContext, PlatformContext, Rect, RenderTree, Text, Window,
+};
 
 thread_local! {
   // setProperty (FFI prop write) calls since the last frame. Bumped in the
@@ -134,6 +136,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("destroyNode")?;
     decl.declare("insertNode")?;
     decl.declare("setProperty")?;
+    decl.declare("setEventInterest")?;
     decl.declare("requestFrame")?;
     decl.declare("render")?;
     decl.declare("setTextInputActive")?;
@@ -205,6 +208,23 @@ impl ModuleDef for RenderTreeModule {
         Ok(())
       },
     )?;
+
+    // Pure dispatch metadata (which pointer deliveries the node's handlers
+    // want; see alloy's EventInterest): no visual change, so no frame request.
+    let tree_ref = tree.clone();
+    let set_event_interest = Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, bits: u32| {
+      if bits & !EventInterest::KNOWN != 0 {
+        return Err(rquickjs::Exception::throw_message(
+          &ctx,
+          &format!("setEventInterest: unknown bits 0x{:x}", bits & !EventInterest::KNOWN),
+        ));
+      }
+      tree_ref.borrow_mut().edit(node_id, |el| {
+        el.set_event_interest(EventInterest(bits));
+        Damage::None
+      });
+      Ok(())
+    })?;
 
     let platform_ref = platform.clone();
     let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame())?;
@@ -315,6 +335,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("destroyNode", destroy_node)?;
     exports.export("insertNode", insert_node)?;
     exports.export("setProperty", set_property)?;
+    exports.export("setEventInterest", set_event_interest)?;
     exports.export("requestFrame", request_frame)?;
     exports.export("render", render)?;
     exports.export("setTextInputActive", set_text_input_active)?;

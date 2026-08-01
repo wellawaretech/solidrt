@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::hit::{locals_along_path, path_diff, DefaultHitTester, HitEntry, HitTester};
+use super::hit::{locals_along_path, path_diff, DefaultHitTester, EventInterest, HitEntry, HitTester};
 use super::{Point, RenderTree};
 use crate::{Modifiers, PointerType};
 
@@ -80,6 +80,17 @@ fn routed(tree: &RenderTree, chain: Vec<u64>, point: Point) -> (Vec<u64>, Vec<Po
   (ids, locals)
 }
 
+// True when any node along `ids` wants `bit` deliveries (see
+// EventInterest): bubbling delivers to every node on the path, so one
+// listener anywhere keeps the delivery alive. Gating never changes who a
+// delivery goes to - only whether one that would reach nobody is built at
+// all. During a drag this runs over the frozen down-path, so a container
+// listening for moves keeps a gesture flowing while the pointer is over
+// nothing (the titlebar-drag case).
+fn wants(tree: &RenderTree, ids: &[u64], bit: u32) -> bool {
+  ids.iter().any(|&id| tree.try_node(id).is_some_and(|el| el.interaction.as_ref().is_some_and(|i| i.listens.has(bit))))
+}
+
 // Locals and parent-frame points for `subset` of `chain` (a path_diff result
 // or a reversed leave list), by projecting along the full chain and picking
 // entries out. An id the projection could not reach (its node was removed)
@@ -121,6 +132,12 @@ impl PointerRouter {
   /// the deliveries to dispatch, in order. Every projection resolves here,
   /// against the one tree state the hit test saw; handlers a consumer runs
   /// between deliveries cannot skew the geometry of later ones.
+  ///
+  /// Move, Wheel, Enter and Leave deliveries that would reach no listener
+  /// (per the path's EventInterest bits) are not built. Down and Up always
+  /// deliver - consumer side effects (focus, gestures) hang off them
+  /// regardless of handlers - and hover state updates whether or not its
+  /// enter/leave deliveries are gated.
   pub fn dispatch(&mut self, tree: &RenderTree, event: InputEvent) -> Vec<RoutedPointer> {
     match event {
       InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
@@ -131,9 +148,12 @@ impl PointerRouter {
           Some(frozen) => routed(tree, frozen.clone(), point),
           None => (live_ids.clone(), live_locals),
         };
-        let parents = parent_locals(point, &locals);
-        let target = ids.last().copied().unwrap_or(0);
-        let mut events = vec![delivery(RoutedKind::Move, key, point, modifiers, ids, locals, parents, target)];
+        let mut events = Vec::new();
+        if wants(tree, &ids, EventInterest::MOVE) {
+          let parents = parent_locals(point, &locals);
+          let target = ids.last().copied().unwrap_or(0);
+          events.push(delivery(RoutedKind::Move, key, point, modifiers, ids, locals, parents, target));
+        }
         events.extend(self.update_hover(tree, key, point, modifiers, live_ids));
         events
       }
@@ -166,7 +186,7 @@ impl PointerRouter {
         // touches.
         if pointer_type == PointerType::Touch {
           let old_ids = self.hovered.remove(&key).unwrap_or_default();
-          if !old_ids.is_empty() {
+          if wants(tree, &old_ids, EventInterest::LEAVE) {
             let leave: Vec<u64> = old_ids.iter().rev().copied().collect();
             let (leave_locals, leave_parents) = pick_locals(tree, &old_ids, &leave, point);
             let target = old_ids.last().copied().unwrap_or(0);
@@ -179,6 +199,9 @@ impl PointerRouter {
         let key = (pointer_type, pointer_id);
         let point = Point::new(x, y);
         let (ids, locals) = split_path(DefaultHitTester.hit_test(tree, point));
+        if !wants(tree, &ids, EventInterest::WHEEL) {
+          return vec![];
+        }
         let parents = parent_locals(point, &locals);
         let target = ids.last().copied().unwrap_or(0);
         vec![delivery(RoutedKind::Wheel { delta_x, delta_y }, key, point, modifiers, ids, locals, parents, target)]
@@ -223,11 +246,11 @@ impl PointerRouter {
       // same tree state the diff was computed from.
       let (left_locals, left_parents) = pick_locals(tree, &old_ids, &left, point);
       let (entered_locals, entered_parents) = pick_locals(tree, &new_ids, &entered, point);
-      if !left.is_empty() {
+      if wants(tree, &left, EventInterest::LEAVE) {
         let target = old_ids.last().copied().unwrap_or(0);
         events.push(delivery(RoutedKind::Leave, key, point, modifiers, left, left_locals, left_parents, target));
       }
-      if !entered.is_empty() {
+      if wants(tree, &entered, EventInterest::ENTER) {
         let target = new_ids.last().copied().unwrap_or(0);
         events.push(delivery(
           RoutedKind::Enter,

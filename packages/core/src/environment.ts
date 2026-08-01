@@ -1,5 +1,6 @@
-import { createSignal } from "@solidjs/signals"
+import { createRoot, createSignal } from "@solidjs/signals"
 import { on } from "srt:events"
+import { onPointerMove } from "./core"
 import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
 
 // Environment State: reactive facts about the current execution environment.
@@ -102,10 +103,15 @@ function ensurePointerState() {
   let sawMouse = false
   let sawTouch = false
   let unsubs: (() => void)[] = []
+  let unsubMove: () => void = null!
   let note = (e: { pointerType?: string }) => {
     if (e.pointerType === "mouse" && !sawMouse) {
       sawMouse = true
       setMouse(true)
+      // Moves have nothing left to teach: touch is learned from downs (a
+      // touch never moves without one), so drop the move subscription and
+      // with it the ambient interest bit that forces move deliveries.
+      unsubMove()
     } else if (e.pointerType === "touch" && !sawTouch) {
       sawTouch = true
       setTouch(true)
@@ -113,7 +119,12 @@ function ensurePointerState() {
     // Both types observed: nothing left to learn, stop listening.
     if (sawMouse && sawTouch) for (let u of unsubs) u()
   }
-  unsubs.push(on("pointerMove", note), on("pointerDown", note))
+  // Downs always deliver, so the raw bus tap suffices; moves are gated when
+  // nobody listens, so they go through onPointerMove, whose subscription
+  // keeps them flowing. The probe is app-lifetime: createRoot detaches its
+  // scope cleanup from whatever computation first read the accessor.
+  unsubMove = createRoot(() => onPointerMove(note))
+  unsubs.push(unsubMove, on("pointerDown", note))
   mouseSeenAccessor = mouse
   touchSeenAccessor = touch
 }

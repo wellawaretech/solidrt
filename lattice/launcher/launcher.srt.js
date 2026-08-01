@@ -4500,9 +4500,34 @@ import { exit } from "srt:app";
 import * as tree from "flux:rendertree";
 import { on } from "srt:events";
 var handlers = new Map;
+var POINTER_INTEREST = {
+  onPointerMove: 1,
+  onPointerDown: 2,
+  onPointerUp: 4,
+  onPointerEnter: 8,
+  onPointerLeave: 16,
+  onWheel: 32
+};
+var interests = new Map;
+function syncInterest(nodeId) {
+  let mask = 0;
+  let nodeHandlers = handlers.get(nodeId);
+  if (nodeHandlers)
+    for (let name of nodeHandlers.keys())
+      mask |= POINTER_INTEREST[name] ?? 0;
+  if ((interests.get(nodeId) ?? 0) === mask)
+    return;
+  if (mask === 0)
+    interests.delete(nodeId);
+  else
+    interests.set(nodeId, mask);
+  tree.setEventInterest(nodeId, mask);
+}
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
     handlers.get(nodeId)?.delete(name);
+    if (name in POINTER_INTEREST)
+      syncInterest(nodeId);
     return;
   }
   let nodeHandlers = handlers.get(nodeId);
@@ -4511,12 +4536,15 @@ function setEventHandler(nodeId, name, fn) {
     handlers.set(nodeId, nodeHandlers);
   }
   nodeHandlers.set(name, fn);
+  if (name in POINTER_INTEREST)
+    syncInterest(nodeId);
 }
 function getEventHandler(nodeId, name) {
   return handlers.get(nodeId)?.get(name);
 }
 function cleanupNode(nodeId) {
   handlers.delete(nodeId);
+  interests.delete(nodeId);
   focusables.delete(nodeId);
   textHints.delete(nodeId);
 }

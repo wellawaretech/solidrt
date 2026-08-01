@@ -7,7 +7,7 @@ pub mod platform;
 pub mod router;
 mod tree;
 
-pub use hit::{HitConfig, PointerEvents};
+pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
@@ -344,6 +344,13 @@ impl Element {
   /// sets one (see HitConfig::pointer_events).
   pub fn set_pointer_events(&mut self, pointer_events: Option<PointerEvents>) {
     self.interaction.get_or_insert_with(HitConfig::default).pointer_events = pointer_events;
+  }
+
+  /// Sets which routed pointer deliveries this element wants (see
+  /// HitConfig::listens and router.rs gating). Pure dispatch metadata: never
+  /// affects layout, paint, or hit testing.
+  pub fn set_event_interest(&mut self, listens: EventInterest) {
+    self.interaction.get_or_insert_with(HitConfig::default).listens = listens;
   }
 
   pub fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {

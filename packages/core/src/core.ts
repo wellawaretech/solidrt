@@ -1,12 +1,113 @@
 import * as tree from "flux:rendertree"
-import { createSignal } from "@solidjs/signals"
+import { createSignal, onCleanup } from "@solidjs/signals"
 import { on } from "srt:events"
 
 let handlers = new Map<number, Map<string, Function>>()
 
+// Pointer-handler presence mirrored into the render tree, so the runtime can
+// skip building deliveries that would reach nobody (moves over static content
+// are the flood case). Bits match alloy's EventInterest (rendertree/hit.rs);
+// keep the two in sync. Down/up are recorded but the runtime never gates
+// them: focus and gesture side effects hang off them regardless of handlers.
+const MOVE_BIT = 1
+const POINTER_INTEREST: Record<string, number> = {
+  onPointerMove: MOVE_BIT,
+  onPointerDown: 2,
+  onPointerUp: 4,
+  onPointerEnter: 8,
+  onPointerLeave: 16,
+  onWheel: 32,
+}
+
+let interests = new Map<number, number>()
+
+function syncInterest(nodeId: number): void {
+  let mask = 0
+  let nodeHandlers = handlers.get(nodeId)
+  if (nodeHandlers) for (let name of nodeHandlers.keys()) mask |= POINTER_INTEREST[name] ?? 0
+  // Ambient onPointerMove subscribers park a move bit on the window root: it
+  // sits on every hit path, so moves keep emitting wherever the pointer is.
+  if (nodeId === interestRoot && globalMoveSubs.size > 0) mask |= MOVE_BIT
+  if ((interests.get(nodeId) ?? 0) === mask) return
+  if (mask === 0) interests.delete(nodeId)
+  else interests.set(nodeId, mask)
+  tree.setEventInterest(nodeId, mask)
+}
+
+/**
+ * A pointer fact with no per-node fields: window coordinates plus pointer
+ * identity and modifiers. `target` is the deepest node under the pointer
+ * (0 when nothing is hit).
+ */
+export interface GlobalPointerEvent {
+  clientX: number
+  clientY: number
+  target: number
+  pointerId: number
+  pointerType: "mouse" | "touch" | "pen" | (string & {})
+  shiftKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  metaKey: boolean
+}
+
+let globalMoveSubs = new Set<(e: GlobalPointerEvent) => void>()
+let globalMoveUnsub: (() => void) | null = null
+// The window root's node id while a window is attached (see attachWindow):
+// where the ambient move-interest bit lands.
+let interestRoot: number | null = null
+
+/**
+ * Observe every pointer move, unattached to any node - for ambient tracking
+ * (cursor followers, idle detection, overlays). Element interaction belongs
+ * in per-node handlers: they carry exact local coordinates, and during a drag
+ * moves already follow the frozen down-path off-element. Cleans up with the
+ * owning scope; also returns its unsubscribe.
+ */
+export function onPointerMove(fn: (e: GlobalPointerEvent) => void): () => void {
+  globalMoveSubs.add(fn)
+  if (globalMoveSubs.size === 1) {
+    globalMoveUnsub = on("pointerMove", (raw: any) => {
+      let e: GlobalPointerEvent = {
+        clientX: raw.clientX,
+        clientY: raw.clientY,
+        target: raw.target,
+        pointerId: raw.pointerId,
+        pointerType: raw.pointerType,
+        shiftKey: raw.shiftKey,
+        ctrlKey: raw.ctrlKey,
+        altKey: raw.altKey,
+        metaKey: raw.metaKey,
+      }
+      // Copy first: a subscriber may unsubscribe (itself or others) mid-dispatch.
+      for (let sub of [...globalMoveSubs]) sub(e)
+    })
+    if (interestRoot != null) syncInterest(interestRoot)
+  }
+  let cleanup = () => {
+    if (!globalMoveSubs.delete(fn)) return
+    if (globalMoveSubs.size === 0) {
+      globalMoveUnsub?.()
+      globalMoveUnsub = null
+      if (interestRoot != null) syncInterest(interestRoot)
+    }
+  }
+  onCleanup(cleanup)
+  return cleanup
+}
+
+// Called by attachWindow with the window root's id (null on teardown). No
+// interest write on clear: the root node is being destroyed with its window,
+// and cleanupNode drops the cached mask.
+export function setInterestRoot(nodeId: number | null): void {
+  interestRoot = nodeId
+  if (nodeId != null) syncInterest(nodeId)
+}
+
 export function setEventHandler(nodeId: number, name: string, fn: Function | null | undefined): void {
   if (fn == null) {
     handlers.get(nodeId)?.delete(name)
+    if (name in POINTER_INTEREST) syncInterest(nodeId)
     return
   }
   let nodeHandlers = handlers.get(nodeId)
@@ -15,6 +116,7 @@ export function setEventHandler(nodeId: number, name: string, fn: Function | nul
     handlers.set(nodeId, nodeHandlers)
   }
   nodeHandlers.set(name, fn)
+  if (name in POINTER_INTEREST) syncInterest(nodeId)
 }
 
 export function getEventHandler(nodeId: number, name: string): Function | undefined {
@@ -25,6 +127,8 @@ export function getEventHandler(nodeId: number, name: string): Function | undefi
 // hints) when a node is destroyed.
 export function cleanupNode(nodeId: number): void {
   handlers.delete(nodeId)
+  // No setEventInterest call: the tree node is being destroyed with us.
+  interests.delete(nodeId)
   focusables.delete(nodeId)
   textHints.delete(nodeId)
 }

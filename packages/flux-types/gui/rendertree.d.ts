@@ -31,6 +31,13 @@ declare module "flux:rendertree" {
   /** Write a single property on a node; `value` is marshalled per property. */
   export function setProperty(nodeId: number, name: string, value: unknown): void
   /**
+   * Declare which pointer deliveries the node's handlers want, as a bitmask
+   * (move 1, down 2, up 4, enter 8, leave 16, wheel 32): the runtime skips
+   * building events that would reach no listener. Maintained by core's
+   * handler registry; apps do not call this directly.
+   */
+  export function setEventInterest(nodeId: number, bits: number): void
+  /**
    * IME behavior for a text session, mirroring SDL's text-input properties.
    * An unset knob keeps the OS default - notably capitalization defaults to
    * "sentences" for plain text, which identifier fields and terminals want

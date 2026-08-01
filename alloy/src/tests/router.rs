@@ -3,6 +3,7 @@ use crate::{Modifiers, PointerType};
 
 // Scene for every test: root 1 (200x200) with child 2 at (10,20) 100x100 and
 // child 3 at (120,20) 60x60. (50,50) hits [1,2]; (150,50) hits [1,3].
+// Nodes start with no event interest; tests grant what they exercise.
 fn scene() -> RenderTree {
   let mut tree = RenderTree::new();
   tree.create_node(1, View::default().with_layout());
@@ -15,6 +16,19 @@ fn scene() -> RenderTree {
   place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);
   place(&mut tree, 3, 120.0, 20.0, 60.0, 60.0);
   tree
+}
+
+fn listen(tree: &mut RenderTree, id: u64, bits: u32) {
+  tree.edit(id, |el| {
+    el.set_event_interest(EventInterest(bits));
+    Damage::None
+  });
+}
+
+fn listen_all(tree: &mut RenderTree) {
+  for id in [1, 2, 3] {
+    listen(tree, id, EventInterest::KNOWN);
+  }
 }
 
 // Writes a computed layout directly: unit tests have no GPU/platform context,
@@ -36,7 +50,8 @@ fn assert_xy(got: Point, x: f32, y: f32) {
 
 #[test]
 fn down_freezes_routing_until_up() {
-  let tree = scene();
+  let mut tree = scene();
+  listen_all(&mut tree);
   let mut router = PointerRouter::default();
   let m = Modifiers::default();
 
@@ -77,7 +92,8 @@ fn down_freezes_routing_until_up() {
 
 #[test]
 fn hover_diff_leaves_deepest_first() {
-  let tree = scene();
+  let mut tree = scene();
+  listen_all(&mut tree);
   let mut router = PointerRouter::default();
   let key = (PointerType::Mouse, 0);
   let m = Modifiers::default();
@@ -104,7 +120,8 @@ fn hover_diff_leaves_deepest_first() {
 
 #[test]
 fn touch_up_synthesizes_leave_and_clears_hover() {
-  let tree = scene();
+  let mut tree = scene();
+  listen_all(&mut tree);
   let mut router = PointerRouter::default();
   let m = Modifiers::default();
   let touch_move = |x, y| InputEvent::PointerMove {
@@ -134,4 +151,75 @@ fn touch_up_synthesizes_leave_and_clears_hover() {
   assert_eq!(events.len(), 2);
   assert!(matches!(events[1].kind, RoutedKind::Enter));
   assert_eq!(events[1].targets, vec![1, 2]);
+}
+
+#[test]
+fn gated_deliveries_still_update_hover() {
+  let mut tree = scene();
+  let mut router = PointerRouter::default();
+
+  // No node listens for anything: a move builds no deliveries at all.
+  let events = router.dispatch(&tree, mouse_move(50.0, 50.0));
+  assert!(events.is_empty(), "no listeners must mean no deliveries");
+
+  // But the hovered path was stored: with Leave interest granted on node 2,
+  // moving away delivers the leave for a path that was entered silently.
+  listen(&mut tree, 2, EventInterest::LEAVE);
+  let events = router.dispatch(&tree, mouse_move(150.0, 50.0));
+  assert_eq!(events.len(), 1);
+  assert!(matches!(events[0].kind, RoutedKind::Leave));
+  assert_eq!(events[0].targets, vec![2]);
+}
+
+#[test]
+fn ancestor_interest_keeps_gesture_moves_flowing() {
+  // The titlebar-drag case: down on a child, moves observed by an ancestor.
+  let mut tree = scene();
+  listen(&mut tree, 1, EventInterest::MOVE);
+  let mut router = PointerRouter::default();
+  let m = Modifiers::default();
+
+  let events = router.dispatch(
+    &tree,
+    InputEvent::PointerDown { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 50.0, y: 50.0, modifiers: m },
+  );
+  assert_eq!(events.len(), 1, "down always delivers, even with no interest bits");
+
+  // Off every element entirely: the frozen path [1, 2] carries node 1's move
+  // interest, so the gesture's moves keep delivering along it.
+  let events = router.dispatch(&tree, mouse_move(300.0, 300.0));
+  assert_eq!(events.len(), 1);
+  assert!(matches!(events[0].kind, RoutedKind::Move));
+  assert_eq!(events[0].targets, vec![1, 2]);
+}
+
+#[test]
+fn wheel_and_up_gating() {
+  let mut tree = scene();
+  let mut router = PointerRouter::default();
+  let m = Modifiers::default();
+  let wheel = |x, y| InputEvent::Wheel {
+    pointer_id: 0,
+    pointer_type: PointerType::Mouse,
+    x,
+    y,
+    delta_x: 0.0,
+    delta_y: 1.0,
+    modifiers: m,
+  };
+
+  assert!(router.dispatch(&tree, wheel(50.0, 50.0)).is_empty(), "wheel with no listener is gated");
+  listen(&mut tree, 1, EventInterest::WHEEL);
+  let events = router.dispatch(&tree, wheel(50.0, 50.0));
+  assert_eq!(events.len(), 1);
+  assert!(matches!(events[0].kind, RoutedKind::Wheel { .. }));
+  assert_eq!(events[0].targets, vec![1, 2]);
+
+  // Up always delivers, like down.
+  let events = router.dispatch(
+    &tree,
+    InputEvent::PointerUp { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 50.0, y: 50.0, modifiers: m },
+  );
+  assert_eq!(events.len(), 1);
+  assert!(matches!(events[0].kind, RoutedKind::Up { .. }));
 }
