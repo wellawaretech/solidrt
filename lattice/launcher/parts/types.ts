@@ -16,6 +16,13 @@ export function focusRing(focused: boolean, radius?: number): StyleProps {
   }
 }
 
+// Breathing room between a scrolling list's items and the viewport's clip
+// edge, in logical pixels. A focus ring is drawn on the item's own box edge,
+// so an item that fills the viewport exactly leaves the ring flush against the
+// clip, with nothing to spare for rounding. The other scrollers get this for
+// free from their content padding; only the app list runs edge to edge.
+export const LIST_GUTTER = 2
+
 // The home screen's sub-panels: each takes over one pane rather than the whole
 // screen, so the other pane keeps its content. Settings replaces the detail
 // (the app list stays), connect replaces the list (a selected app's details

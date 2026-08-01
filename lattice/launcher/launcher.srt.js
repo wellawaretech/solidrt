@@ -9591,6 +9591,7 @@ function focusRing(focused, radius) {
     borderRadius: radius ?? theme.radius.md
   };
 }
+var LIST_GUTTER = 2;
 var COLUMN_MAX_WIDTH = 440;
 var DETAIL_MAX_WIDTH = 640;
 var TAP_TARGET = 44;
@@ -10520,7 +10521,8 @@ function AppList(props) {
         get layout() {
           return {
             flexDirection: "column",
-            gap: space("md")
+            gap: space("md"),
+            padding: LIST_GUTTER
           };
         },
         get children() {

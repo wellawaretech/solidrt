@@ -444,12 +444,18 @@ export interface ViewProps extends ViewOwnProps, LayoutProps {}
 
 // draw primitives
 
+// A stroked rect paints inside its box, like a CSS border: the stroke's outer
+// edge sits on the box edge rather than straddling it, so nothing bleeds past
+// the box for a clip to cut. `path` and `line` strokes stay centered on their
+// geometry - there the geometry is the stroke, not a box.
 export interface RectProps extends PaintProps, PointerProps {
-  // Corner radius. A single number applies to all four corners; an array is
-  // [top-left, top-right, bottom-right, bottom-left] (CSS border-radius order).
+  // Corner radius, measured on the box (the stroke's outer edge). A single
+  // number applies to all four corners; an array is [top-left, top-right,
+  // bottom-right, bottom-left] (CSS border-radius order).
   radius?: number | [number, number, number, number]
 }
 
+// Strokes paint inside the box, same as `RectProps`.
 export interface OvalProps extends PaintProps, PointerProps {}
 
 export interface LineProps extends PaintProps, PointerProps {

@@ -16,6 +16,14 @@ pub struct Rectangle {
 }
 
 impl Buildable for Rectangle {
+  // A stroke paints inside the box, like a CSS border: the drawn path is the
+  // box inset by half the stroke width, so the stroke's outer edge lands on
+  // the box edge instead of straddling it, and the radii shrink by the same
+  // inset to keep the stroke parallel to the box corner. A centered stroke
+  // bleeds half its width past the box, which any clip (a scroll viewport, a
+  // repaint boundary) then cuts to a hairline on the sides it bounds, and
+  // which makes `local_bounds` understate the painted area. Path and line
+  // strokes stay centered - there the geometry is the stroke, not a box.
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let x = self.x.unwrap_or(0.0);
     let y = self.y.unwrap_or(0.0);
@@ -23,19 +31,24 @@ impl Buildable for Rectangle {
     let h = self.h.unwrap_or(ctx.size.height);
 
     let rect = Rect::new(Point::new(x, y), Size::new(w, h));
+    // Built from the authored box, so a box-relative gradient stays anchored
+    // to the element rather than to the inset stroke path.
+    let paint = self.paint.to_paint_in(&rect);
+
+    let d = self.paint.stroke_inset(w, h);
+    let path = Rect::new(Point::new(x + d, y + d), Size::new(w - d * 2.0, h - d * 2.0));
 
     if let Some([tl, tr, br, bl]) = self.radius {
+      let inner = |r: f32| Point::new((r - d).max(0.0), (r - d).max(0.0));
       let radii = RoundingRadii {
-        top_left: Point::new(tl, tl),
-        top_right: Point::new(tr, tr),
-        bottom_right: Point::new(br, br),
-        bottom_left: Point::new(bl, bl),
+        top_left: inner(tl),
+        top_right: inner(tr),
+        bottom_right: inner(br),
+        bottom_left: inner(bl),
       };
-      let paint = self.paint.to_paint_in(&rect);
-      builder.draw_rounded_rect(&rect, &radii, &paint);
+      builder.draw_rounded_rect(&path, &radii, &paint);
     } else {
-      let paint = self.paint.to_paint_in(&rect);
-      builder.draw_rect(&rect, &paint);
+      builder.draw_rect(&path, &paint);
     }
   }
 }
@@ -100,24 +113,19 @@ impl Hittable for Rectangle {
     let ry = self.y.unwrap_or(0.0);
     let rw = self.w.unwrap_or(ctx.size.width);
     let rh = self.h.unwrap_or(ctx.size.height);
-    let half_sw = self.paint.stroke_width / 2.0;
     let [tl, tr, br, bl] = self.radius.unwrap_or([0.0; 4]);
 
+    // Strokes paint inside the box (see `build`), so the box is the outer edge
+    // for every draw style; only a plain stroke has a hole, one stroke width in.
     match self.paint.draw_style {
-      DrawStyle::Fill => in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]),
+      DrawStyle::Fill | DrawStyle::StrokeAndFill => in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]),
       DrawStyle::Stroke => {
-        let outer = [tl + half_sw, tr + half_sw, br + half_sw, bl + half_sw];
-        let inner =
-          [(tl - half_sw).max(0.0), (tr - half_sw).max(0.0), (br - half_sw).max(0.0), (bl - half_sw).max(0.0)];
-        let in_outer =
-          in_rounded_rect(point, rx - half_sw, ry - half_sw, rw + half_sw * 2.0, rh + half_sw * 2.0, outer);
+        let sw = self.paint.stroke_width.max(0.0);
+        let inner = [(tl - sw).max(0.0), (tr - sw).max(0.0), (br - sw).max(0.0), (bl - sw).max(0.0)];
+        let in_outer = in_rounded_rect(point, rx, ry, rw, rh, [tl, tr, br, bl]);
         let in_inner =
-          in_rounded_rect(point, rx + half_sw, ry + half_sw, rw - half_sw * 2.0, rh - half_sw * 2.0, inner);
+          in_rounded_rect(point, rx + sw, ry + sw, (rw - sw * 2.0).max(0.0), (rh - sw * 2.0).max(0.0), inner);
         in_outer && !in_inner
-      }
-      DrawStyle::StrokeAndFill => {
-        let outer = [tl + half_sw, tr + half_sw, br + half_sw, bl + half_sw];
-        in_rounded_rect(point, rx - half_sw, ry - half_sw, rw + half_sw * 2.0, rh + half_sw * 2.0, outer)
       }
     }
   }

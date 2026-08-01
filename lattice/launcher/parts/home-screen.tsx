@@ -41,6 +41,7 @@ import { ConnectPanel } from "./connect-panel"
 import {
   COLUMN_MAX_WIDTH,
   DETAIL_MAX_WIDTH,
+  LIST_GUTTER,
   STATUS_TEXT,
   TAP_TARGET,
   focusRing,
@@ -372,7 +373,7 @@ function AppList(props: {
 }) {
   return (
     <ScrollView layout={{ flexGrow: 1 }}>
-      <View layout={{ flexDirection: "column", gap: space("md") }}>
+      <View layout={{ flexDirection: "column", gap: space("md"), padding: LIST_GUTTER }}>
         <For each={props.apps}>
           {(app) => (
             <AppCard

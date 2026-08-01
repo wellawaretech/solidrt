@@ -103,7 +103,7 @@ export function Radio(props: RadioProps) {
         <d-rect color={props.style?.backgroundColor ?? "transparent"} radius={props.style?.borderRadius} />
       </Show>
       <view width={ring()} height={ring()}>
-        <d-oval x={1} y={1} w={ring() - 2} h={ring() - 2} drawStyle="stroke" color={ringColor()} strokeWidth={2} />
+        <d-oval drawStyle="stroke" color={ringColor()} strokeWidth={2} />
         <Show when={selected()}>
           <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} color={theme.color.primary} />
         </Show>

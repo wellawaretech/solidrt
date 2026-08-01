@@ -218,6 +218,21 @@ impl PaintState {
     self.build_paint(Some((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)))
   }
 
+  // Half the stroke width for the stroked draw styles, 0 for a plain fill.
+  // Rect and oval inset their geometry by this so a stroke paints inside its
+  // bounds (CSS border semantics) instead of straddling them; see
+  // `Rectangle::build`. Clamped to half the shorter side so a stroke wider
+  // than the shape collapses onto the shape's center rather than inverting it.
+  pub fn stroke_inset(&self, w: f32, h: f32) -> f32 {
+    match self.draw_style {
+      DrawStyle::Fill => 0.0,
+      DrawStyle::Stroke | DrawStyle::StrokeAndFill => {
+        let limit = (w / 2.0).min(h / 2.0).max(0.0);
+        (self.stroke_width / 2.0).clamp(0.0, limit)
+      }
+    }
+  }
+
   fn build_paint(&self, bounds: Option<(f32, f32, f32, f32)>) -> Paint {
     let mut paint = Paint::default();
     paint.set_color(self.color);
