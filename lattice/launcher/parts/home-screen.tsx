@@ -480,6 +480,8 @@ export function HomeScreen(props: {
   panel: HomePanel | null
   themeMode: ThemeMode
   onThemeMode: (mode: ThemeMode) => void
+  fullscreen: boolean
+  onFullscreen: (on: boolean) => void
   onScan: () => void
   onConnect: () => void
   onSettings: () => void
@@ -629,6 +631,8 @@ export function HomeScreen(props: {
             <SettingsPanel
               mode={props.themeMode}
               onMode={props.onThemeMode}
+              fullscreen={props.fullscreen}
+              onFullscreen={props.onFullscreen}
               onBack={props.onPanelClose}
             />
           }

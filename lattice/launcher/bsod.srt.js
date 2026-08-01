@@ -2813,9 +2813,44 @@ import { exit } from "srt:app";
 import * as tree from "flux:rendertree";
 import { on } from "srt:events";
 var handlers = new Map;
+var MOVE_BIT = 1;
+var POINTER_INTEREST = {
+  onPointerMove: MOVE_BIT,
+  onPointerDown: 2,
+  onPointerUp: 4,
+  onPointerEnter: 8,
+  onPointerLeave: 16,
+  onWheel: 32
+};
+var interests = new Map;
+function syncInterest(nodeId) {
+  let mask = 0;
+  let nodeHandlers = handlers.get(nodeId);
+  if (nodeHandlers)
+    for (let name of nodeHandlers.keys())
+      mask |= POINTER_INTEREST[name] ?? 0;
+  if (nodeId === interestRoot && globalMoveSubs.size > 0)
+    mask |= MOVE_BIT;
+  if ((interests.get(nodeId) ?? 0) === mask)
+    return;
+  if (mask === 0)
+    interests.delete(nodeId);
+  else
+    interests.set(nodeId, mask);
+  tree.setEventInterest(nodeId, mask);
+}
+var globalMoveSubs = new Set;
+var interestRoot = null;
+function setInterestRoot(nodeId) {
+  interestRoot = nodeId;
+  if (nodeId != null)
+    syncInterest(nodeId);
+}
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
     handlers.get(nodeId)?.delete(name);
+    if (name in POINTER_INTEREST)
+      syncInterest(nodeId);
     return;
   }
   let nodeHandlers = handlers.get(nodeId);
@@ -2824,12 +2859,15 @@ function setEventHandler(nodeId, name, fn) {
     handlers.set(nodeId, nodeHandlers);
   }
   nodeHandlers.set(name, fn);
+  if (name in POINTER_INTEREST)
+    syncInterest(nodeId);
 }
 function getEventHandler(nodeId, name) {
   return handlers.get(nodeId)?.get(name);
 }
 function cleanupNode(nodeId) {
   handlers.delete(nodeId);
+  interests.delete(nodeId);
   focusables.delete(nodeId);
   textHints.delete(nodeId);
 }
@@ -2910,6 +2948,7 @@ var animationFrames = new Map;
 var refreshRate = 60;
 var backHandlers = [];
 function attachWindow(nodeId) {
+  setInterestRoot(nodeId);
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -3050,6 +3089,7 @@ function attachWindow(nodeId) {
     });
   });
   onCleanup(() => {
+    setInterestRoot(null);
     if (unsubscribe)
       unsubscribe();
     if (unsubDown)

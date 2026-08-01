@@ -4500,8 +4500,9 @@ import { exit } from "srt:app";
 import * as tree from "flux:rendertree";
 import { on } from "srt:events";
 var handlers = new Map;
+var MOVE_BIT = 1;
 var POINTER_INTEREST = {
-  onPointerMove: 1,
+  onPointerMove: MOVE_BIT,
   onPointerDown: 2,
   onPointerUp: 4,
   onPointerEnter: 8,
@@ -4515,6 +4516,8 @@ function syncInterest(nodeId) {
   if (nodeHandlers)
     for (let name of nodeHandlers.keys())
       mask |= POINTER_INTEREST[name] ?? 0;
+  if (nodeId === interestRoot && globalMoveSubs.size > 0)
+    mask |= MOVE_BIT;
   if ((interests.get(nodeId) ?? 0) === mask)
     return;
   if (mask === 0)
@@ -4522,6 +4525,48 @@ function syncInterest(nodeId) {
   else
     interests.set(nodeId, mask);
   tree.setEventInterest(nodeId, mask);
+}
+var globalMoveSubs = new Set;
+var globalMoveUnsub = null;
+var interestRoot = null;
+function onPointerMove(fn) {
+  globalMoveSubs.add(fn);
+  if (globalMoveSubs.size === 1) {
+    globalMoveUnsub = on("pointerMove", (raw) => {
+      let e = {
+        clientX: raw.clientX,
+        clientY: raw.clientY,
+        target: raw.target,
+        pointerId: raw.pointerId,
+        pointerType: raw.pointerType,
+        shiftKey: raw.shiftKey,
+        ctrlKey: raw.ctrlKey,
+        altKey: raw.altKey,
+        metaKey: raw.metaKey
+      };
+      for (let sub of [...globalMoveSubs])
+        sub(e);
+    });
+    if (interestRoot != null)
+      syncInterest(interestRoot);
+  }
+  let cleanup2 = () => {
+    if (!globalMoveSubs.delete(fn))
+      return;
+    if (globalMoveSubs.size === 0) {
+      globalMoveUnsub?.();
+      globalMoveUnsub = null;
+      if (interestRoot != null)
+        syncInterest(interestRoot);
+    }
+  };
+  onCleanup(cleanup2);
+  return cleanup2;
+}
+function setInterestRoot(nodeId) {
+  interestRoot = nodeId;
+  if (nodeId != null)
+    syncInterest(nodeId);
 }
 function setEventHandler(nodeId, name, fn) {
   if (fn == null) {
@@ -4742,6 +4787,7 @@ function onBack(fn) {
   return cleanup2;
 }
 function attachWindow(nodeId) {
+  setInterestRoot(nodeId);
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -4882,6 +4928,7 @@ function attachWindow(nodeId) {
     });
   });
   onCleanup(() => {
+    setInterestRoot(null);
     if (unsubscribe)
       unsubscribe();
     if (unsubDown)
@@ -5509,10 +5556,12 @@ function ensurePointerState() {
   let sawMouse = false;
   let sawTouch = false;
   let unsubs = [];
+  let unsubMove = null;
   let note = (e3) => {
     if (e3.pointerType === "mouse" && !sawMouse) {
       sawMouse = true;
       setMouse(true);
+      unsubMove();
     } else if (e3.pointerType === "touch" && !sawTouch) {
       sawTouch = true;
       setTouch(true);
@@ -5521,7 +5570,8 @@ function ensurePointerState() {
       for (let u3 of unsubs)
         u3();
   };
-  unsubs.push(on3("pointerMove", note), on3("pointerDown", note));
+  unsubMove = createRoot(() => onPointerMove(note));
+  unsubs.push(unsubMove, on3("pointerDown", note));
   mouseSeenAccessor = mouse;
   touchSeenAccessor = touch;
 }
@@ -9741,6 +9791,8 @@ function ScanButton(props) {
 
 // lattice/launcher/parts/settings-panel.tsx
 import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
+var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
+var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
 function CapabilityChip(props) {
   return createComponent2(View, {
     get layout() {
@@ -9796,21 +9848,52 @@ function SettingsPanel(props) {
             },
             get children() {
               return [createComponent2(View, {
-                get layout() {
-                  return {
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: space("md")
-                  };
+                layout: {
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between"
                 },
                 get children() {
-                  return [createComponent2(BackButton, {
-                    get onPress() {
-                      return props.onBack;
+                  return [createComponent2(View, {
+                    get layout() {
+                      return {
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: space("md")
+                      };
+                    },
+                    get children() {
+                      return [createComponent2(BackButton, {
+                        get onPress() {
+                          return props.onBack;
+                        }
+                      }), createComponent2(Text, {
+                        variant: "heading",
+                        children: "Settings"
+                      })];
                     }
-                  }), createComponent2(Text, {
-                    variant: "heading",
-                    children: "Settings"
+                  }), createComponent2(Pressable, {
+                    focusable: true,
+                    onPress: () => props.onFullscreen(!props.fullscreen),
+                    layout: {
+                      width: TAP_TARGET,
+                      height: TAP_TARGET,
+                      alignItems: "center",
+                      justifyContent: "center"
+                    },
+                    style: (s2) => ({
+                      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                      borderRadius: theme.radius.md,
+                      ...focusRing(s2.focused)
+                    }),
+                    get children() {
+                      return createComponent2(Icon, {
+                        get src() {
+                          return props.fullscreen ? MINIMIZE_SVG : MAXIMIZE_SVG;
+                        },
+                        size: 22
+                      });
+                    }
                   })];
                 }
               }), createComponent2(DetailCard, {
@@ -10903,6 +10986,12 @@ function HomeScreen(props) {
             get onMode() {
               return props.onThemeMode;
             },
+            get fullscreen() {
+              return props.fullscreen;
+            },
+            get onFullscreen() {
+              return props.onFullscreen;
+            },
             get onBack() {
               return props.onPanelClose;
             }
@@ -11141,6 +11230,7 @@ function App() {
     return mode === "dark";
   };
   createEffect(() => dark(), (d2) => setTheme(d2 ? darkTheme : lightTheme));
+  let [fullscreen, setFullscreen] = createSignal(false);
   let [screen, setScreen] = createSignal("home");
   let panel = () => {
     let s2 = screen();
@@ -11167,6 +11257,9 @@ function App() {
   let nav = createFocusNav();
   return createComponent2(Window, {
     title: "SolidRT",
+    get fullscreen() {
+      return fullscreen();
+    },
     layout: {
       flexDirection: "column"
     },
@@ -11218,6 +11311,10 @@ function App() {
                       return themeMode();
                     },
                     onThemeMode: setThemeMode,
+                    get fullscreen() {
+                      return fullscreen();
+                    },
+                    onFullscreen: setFullscreen,
                     onScan: () => {
                       setNotice(null);
                       setScreen("scan");

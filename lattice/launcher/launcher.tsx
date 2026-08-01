@@ -54,6 +54,10 @@ function App() {
     (d) => setTheme(d ? darkTheme : lightTheme),
   )
 
+  // Fullscreen is window state, so it lives here beside the Window it drives;
+  // the settings panel only renders the toggle.
+  let [fullscreen, setFullscreen] = createSignal(false)
+
   let [screen, setScreen] = createSignal<Screen>("home")
   // Settings and connect are panels of the home screen rather than screens of
   // their own: HomeScreen stays mounted and swaps one of its two panes, so the
@@ -105,6 +109,7 @@ function App() {
   return (
     <Window
       title="SolidRT"
+      fullscreen={fullscreen()}
       layout={{ flexDirection: "column" }}
       style={{ backgroundColor: theme.color.background }}
       onKeyDown={nav.onKeyDown}
@@ -136,6 +141,8 @@ function App() {
               panel={panel()}
               themeMode={themeMode()}
               onThemeMode={setThemeMode}
+              fullscreen={fullscreen()}
+              onFullscreen={setFullscreen}
               onScan={() => {
                 setNotice(null)
                 setScreen("scan")
