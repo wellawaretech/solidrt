@@ -28,18 +28,41 @@ export function cleanupNode(nodeId: number): void {
   focusables.delete(nodeId)
 }
 
-// Currently-focused node id, as a signal so focus is a reactive fact. Reset
-// to null automatically across engine reloads because the JS environment is
-// rebuilt from scratch.
-let [readFocusedNode, setFocusedNode] = createSignal<number | null>(null)
-let textInputActive = false
+// Currently-focused node id and text-session state. Each is a plain field
+// paired with a signal: signal writes flush on the microtask, so a read
+// through the signal alone is stale within the very dispatch that wrote it -
+// and focus logic reads what it just moved (a tap handler focusing a field,
+// then the dispatcher deciding on that focus). The plain field is the
+// always-current truth; the signal exists only to make tracked scopes re-run.
+// Reset across engine reloads for free: the JS environment is rebuilt.
+let focusedNodeId: number | null = null
+let [trackFocusedNode, setFocusedNodeSignal] = createSignal<number | null>(null)
+let textInputActiveNow = false
+let [trackTextInputActive, setTextInputActiveSignal] = createSignal(false)
 
 /**
  * The focused node id, or null - as a reactive accessor: read it inside a
- * tracked scope (JSX, memo, effect) to re-run when focus moves; a read in an
- * event handler just sees the current value. setFocus is the only writer.
+ * tracked scope (JSX, memo, effect) to re-run when focus moves; any read
+ * (including in the same dispatch as a setFocus) sees the current value.
+ * setFocus is the only writer.
  */
-export let focusedNode = readFocusedNode
+export function focusedNode(): number | null {
+  trackFocusedNode()
+  return focusedNodeId
+}
+
+/**
+ * Whether a text-entry session is active on the focused node (text events
+ * flowing; the on-screen keyboard up, where one is used), as a reactive
+ * accessor. Distinct from focus: a field focused by navigation is not
+ * editing until a tap or startTextInput() begins the session. Lets a text
+ * field tell its focused and editing states apart (Enter starts editing in
+ * the former, submits in the latter).
+ */
+export function textInputActive(): boolean {
+  trackTextInputActive()
+  return textInputActiveNow
+}
 
 // The native window outlives engine reloads, so a previous session may have
 // left its text input active; assert the known boot state.
@@ -56,7 +79,7 @@ on("inputDevices", (d: { keyboard?: boolean; screenKeyboard?: boolean }) => {
   // Facts can arrive after a node was focused (boot ordering) or change under
   // it (keyboard hotplug): re-evaluate the eager session so e.g. a
   // mount-focused terminal starts receiving text without a tap.
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()))
+  syncTextInput(textInputEligible() && (textInputActive() || textInputInvisible()))
 })
 
 // Focus candidacy, declared by the `focusable` prop (routed in renderer.ts).
@@ -79,8 +102,7 @@ export function getFocusables(): number[] {
 }
 
 function textInputEligible(): boolean {
-  let id = focusedNode()
-  return id != null && getEventHandler(id, "onTextInput") != null
+  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null
 }
 
 // Whether starting a text session shows nothing on screen: the platform has
@@ -95,8 +117,9 @@ function textInputInvisible(): boolean {
 }
 
 function syncTextInput(active: boolean): void {
-  if (active === textInputActive) return
-  textInputActive = active
+  if (active === textInputActiveNow) return
+  textInputActiveNow = active
+  setTextInputActiveSignal(active)
   tree.setTextInputActive(active)
 }
 
@@ -114,16 +137,17 @@ function syncTextInput(active: boolean): void {
  * it (and hides the keyboard).
  */
 export function setFocus(nodeId: number | null): void {
-  let oldId = focusedNode()
-  if (nodeId === oldId) return
-  setFocusedNode(nodeId)
+  if (nodeId === focusedNodeId) return
+  let oldId = focusedNodeId
+  focusedNodeId = nodeId
+  setFocusedNodeSignal(nodeId)
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.()
   }
   if (nodeId != null) {
     getEventHandler(nodeId, "onFocus")?.()
   }
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()))
+  syncTextInput(textInputEligible() && (textInputActiveNow || textInputInvisible()))
 }
 
 // Interactive trigger: pointer dispatch calls this when a tap lands on the

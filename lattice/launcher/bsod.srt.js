@@ -2832,16 +2832,25 @@ function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
 }
-var [readFocusedNode, setFocusedNode] = createSignal(null);
-var textInputActive = false;
-var focusedNode = readFocusedNode;
+var focusedNodeId = null;
+var [trackFocusedNode, setFocusedNodeSignal] = createSignal(null);
+var textInputActiveNow = false;
+var [trackTextInputActive, setTextInputActiveSignal] = createSignal(false);
+function focusedNode() {
+  trackFocusedNode();
+  return focusedNodeId;
+}
+function textInputActive() {
+  trackTextInputActive();
+  return textInputActiveNow;
+}
 tree.setTextInputActive(false);
 var screenKeyboard = true;
 var physicalKeyboard = false;
 on("inputDevices", (d) => {
   physicalKeyboard = !!d.keyboard;
   screenKeyboard = !!d.screenKeyboard;
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+  syncTextInput(textInputEligible() && (textInputActive() || textInputInvisible()));
 });
 var focusables = new Set;
 function setFocusable(nodeId, focusable) {
@@ -2851,30 +2860,31 @@ function setFocusable(nodeId, focusable) {
     focusables.delete(nodeId);
 }
 function textInputEligible() {
-  let id = focusedNode();
-  return id != null && getEventHandler(id, "onTextInput") != null;
+  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
 }
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
 }
 function syncTextInput(active) {
-  if (active === textInputActive)
+  if (active === textInputActiveNow)
     return;
-  textInputActive = active;
+  textInputActiveNow = active;
+  setTextInputActiveSignal(active);
   tree.setTextInputActive(active);
 }
 function setFocus(nodeId) {
-  let oldId = focusedNode();
-  if (nodeId === oldId)
+  if (nodeId === focusedNodeId)
     return;
-  setFocusedNode(nodeId);
+  let oldId = focusedNodeId;
+  focusedNodeId = nodeId;
+  setFocusedNodeSignal(nodeId);
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.();
   }
   if (nodeId != null) {
     getEventHandler(nodeId, "onFocus")?.();
   }
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+  syncTextInput(textInputEligible() && (textInputActiveNow || textInputInvisible()));
 }
 function activateTextInput() {
   if (textInputEligible())

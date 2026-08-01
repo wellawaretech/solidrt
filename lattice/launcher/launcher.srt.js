@@ -4519,16 +4519,25 @@ function cleanupNode(nodeId) {
   handlers.delete(nodeId);
   focusables.delete(nodeId);
 }
-var [readFocusedNode, setFocusedNode] = createSignal(null);
-var textInputActive = false;
-var focusedNode = readFocusedNode;
+var focusedNodeId = null;
+var [trackFocusedNode, setFocusedNodeSignal] = createSignal(null);
+var textInputActiveNow = false;
+var [trackTextInputActive, setTextInputActiveSignal] = createSignal(false);
+function focusedNode() {
+  trackFocusedNode();
+  return focusedNodeId;
+}
+function textInputActive() {
+  trackTextInputActive();
+  return textInputActiveNow;
+}
 tree.setTextInputActive(false);
 var screenKeyboard = true;
 var physicalKeyboard = false;
 on("inputDevices", (d) => {
   physicalKeyboard = !!d.keyboard;
   screenKeyboard = !!d.screenKeyboard;
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+  syncTextInput(textInputEligible() && (textInputActive() || textInputInvisible()));
 });
 var focusables = new Set;
 function setFocusable(nodeId, focusable) {
@@ -4541,34 +4550,41 @@ function getFocusables() {
   return [...focusables];
 }
 function textInputEligible() {
-  let id = focusedNode();
-  return id != null && getEventHandler(id, "onTextInput") != null;
+  return focusedNodeId != null && getEventHandler(focusedNodeId, "onTextInput") != null;
 }
 function textInputInvisible() {
   return !screenKeyboard || physicalKeyboard;
 }
 function syncTextInput(active) {
-  if (active === textInputActive)
+  if (active === textInputActiveNow)
     return;
-  textInputActive = active;
+  textInputActiveNow = active;
+  setTextInputActiveSignal(active);
   tree.setTextInputActive(active);
 }
 function setFocus(nodeId) {
-  let oldId = focusedNode();
-  if (nodeId === oldId)
+  if (nodeId === focusedNodeId)
     return;
-  setFocusedNode(nodeId);
+  let oldId = focusedNodeId;
+  focusedNodeId = nodeId;
+  setFocusedNodeSignal(nodeId);
   if (oldId != null) {
     getEventHandler(oldId, "onBlur")?.();
   }
   if (nodeId != null) {
     getEventHandler(nodeId, "onFocus")?.();
   }
-  syncTextInput(textInputEligible() && (textInputActive || textInputInvisible()));
+  syncTextInput(textInputEligible() && (textInputActiveNow || textInputInvisible()));
 }
 function activateTextInput() {
   if (textInputEligible())
     syncTextInput(true);
+}
+function startTextInput() {
+  if (!textInputEligible()) {
+    throw new Error("startTextInput: no focused node with an onTextInput handler");
+  }
+  syncTextInput(true);
 }
 function getBoundingBox2(node) {
   return tree.getBoundingBox(node.id);
@@ -6287,6 +6303,195 @@ function createCaretScroll(viewport, input) {
   return scrollX;
 }
 
+// packages/components/src/focus-nav.ts
+var navActions = new Map;
+function registerNavAction(nodeId, action2) {
+  navActions.set(nodeId, action2);
+  return () => {
+    if (navActions.get(nodeId) === action2)
+      navActions.delete(nodeId);
+  };
+}
+var [scopeStack, setScopeStack] = createSignal([], {
+  ownedWrite: true
+});
+function pushNavScope(node) {
+  setScopeStack((s2) => [...s2, node]);
+  return () => setScopeStack((s2) => s2.filter((n3) => n3 !== node));
+}
+function createFocusNav(options) {
+  let currentScope = () => options?.scope?.() ?? scopeStack()[scopeStack().length - 1];
+  let reachable = () => {
+    let scopeNode = currentScope();
+    let placed = [];
+    for (let id2 of getFocusables()) {
+      if (scopeNode && !getNodePath(id2).includes(scopeNode.id))
+        continue;
+      let b2 = getBoundingBoxViewport2({
+        id: id2
+      });
+      if (b2)
+        placed.push({
+          id: id2,
+          x: b2.x + b2.width / 2,
+          y: b2.y + b2.height / 2
+        });
+    }
+    return placed;
+  };
+  let ordered = (placed) => [...placed].sort((a3, b2) => Math.abs(a3.y - b2.y) <= 1 ? a3.x - b2.x : a3.y - b2.y);
+  let lastPos = null;
+  let focusCandidate = (p3) => {
+    lastPos = {
+      x: p3.x,
+      y: p3.y
+    };
+    setFocus(p3.id);
+  };
+  let focusFirst = (placed) => {
+    focusCandidate(ordered(placed)[0]);
+  };
+  let focusEntry = (placed) => {
+    if (!lastPos)
+      return focusFirst(placed);
+    let {
+      x: x2,
+      y: y2
+    } = lastPos;
+    let best = placed.reduce((a3, b2) => (b2.x - x2) ** 2 + (b2.y - y2) ** 2 < (a3.x - x2) ** 2 + (a3.y - y2) ** 2 ? b2 : a3);
+    focusCandidate(best);
+  };
+  let move = (dir) => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let focused = focusedNode();
+    let from = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    if (!from)
+      return focusEntry(placed);
+    let best = null;
+    let bestScore = Infinity;
+    for (let p3 of placed) {
+      if (p3 === from)
+        continue;
+      let dx = p3.x - from.x;
+      let dy = p3.y - from.y;
+      let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
+      if (ahead <= 1)
+        continue;
+      let across = Math.abs(dir === "up" || dir === "down" ? dx : dy);
+      let score = ahead + 2 * across;
+      if (score < bestScore) {
+        bestScore = score;
+        best = p3;
+      }
+    }
+    if (best)
+      focusCandidate(best);
+  };
+  let tab = (delta) => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let row = ordered(placed);
+    let focused = focusedNode();
+    let i3 = focused != null ? row.findIndex((p3) => p3.id === focused) : -1;
+    if (i3 < 0) {
+      if (lastPos)
+        return focusEntry(placed);
+      return focusCandidate(row[delta === 1 ? 0 : row.length - 1]);
+    }
+    focusCandidate(row[(i3 + delta + row.length) % row.length]);
+  };
+  let activate = () => {
+    let placed = reachable();
+    if (placed.length === 0)
+      return;
+    let focused = focusedNode();
+    let hit = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    if (!hit)
+      return focusEntry(placed);
+    lastPos = {
+      x: hit.x,
+      y: hit.y
+    };
+    navActions.get(hit.id)?.();
+  };
+  let onKeyDown = (e3) => {
+    if (e3.key === "ArrowUp")
+      move("up");
+    else if (e3.key === "ArrowDown")
+      move("down");
+    else if (e3.key === "ArrowLeft")
+      move("left");
+    else if (e3.key === "ArrowRight")
+      move("right");
+    else if (e3.key === "Tab")
+      tab(e3.shiftKey ? -1 : 1);
+    else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
+      activate();
+  };
+  let prevFocused = null;
+  let refocusPending = false;
+  createEffect(() => focusedNode(), (id2) => {
+    let prev = prevFocused;
+    prevFocused = id2;
+    if (id2 != null || prev == null)
+      return;
+    refocusPending = getNodePath(prev).length === 0;
+  });
+  onLayout(() => {
+    if (!refocusPending)
+      return;
+    refocusPending = false;
+    if (focusedNode() != null)
+      return;
+    let placed = reachable();
+    if (placed.length > 0)
+      focusEntry(placed);
+  });
+  createEffect(() => currentScope(), (scopeNode) => {
+    if (!scopeNode)
+      return;
+    let focused = focusedNode();
+    if (focused != null && getNodePath(focused).includes(scopeNode.id))
+      return;
+    let placed = reachable();
+    if (placed.length > 0)
+      focusFirst(placed);
+    else if (focused != null)
+      setFocus(null);
+  });
+  let prevButtons = new Set;
+  createEffect(() => gamepads(), (pads) => {
+    let now = new Set;
+    for (let pad of pads)
+      for (let b2 of pad?.buttons ?? [])
+        now.add(b2);
+    for (let b2 of now) {
+      if (prevButtons.has(b2))
+        continue;
+      if (b2 === "dpadUp")
+        move("up");
+      else if (b2 === "dpadDown")
+        move("down");
+      else if (b2 === "dpadLeft")
+        move("left");
+      else if (b2 === "dpadRight")
+        move("right");
+      else if (b2 === "south")
+        activate();
+    }
+    prevButtons = now;
+  });
+  return {
+    onKeyDown,
+    move,
+    tab,
+    activate
+  };
+}
+
 // packages/components/src/spacing.ts
 function space(token) {
   return Math.round(theme.spacing[token] * densityScale());
@@ -6357,9 +6562,8 @@ function TextInput(props) {
     } else if (e3.key === "End") {
       buffer.move("end");
       setCaretOn(true);
-    } else if (e3.key === "Enter") {
-      props.onSubmit?.(value());
-      setFocus(null);
+    } else if (e3.key === "Enter" || e3.code === "Select") {
+      activateField();
     } else if (e3.key === "Escape") {
       if (node)
         setFocus(null);
@@ -6375,9 +6579,21 @@ function TextInput(props) {
     buffer.insertText(e3.text ?? "");
     setCaretOn(true);
   };
+  let activateField = () => {
+    if (props.disabled)
+      return;
+    if (!textInputActive()) {
+      startTextInput();
+    } else {
+      props.onSubmit?.(value());
+      setFocus(null);
+    }
+  };
+  let unregisterNav = null;
   onCleanup(() => {
     if (blinkId != null)
       clearInterval(blinkId);
+    unregisterNav?.();
   });
   let textColor = () => props.style?.color ?? theme.color.text;
   let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface;
@@ -6413,7 +6629,12 @@ function TextInput(props) {
   insertNode2(_el$, _el$2);
   insertNode2(_el$, _el$3);
   insertNode2(_el$, _el$4);
-  ref(() => (n3) => node = n3, _el$);
+  ref(() => (n3) => {
+    node = n3;
+    unregisterNav?.();
+    unregisterNav = registerNavAction(n3.id, activateField);
+    props.ref?.(n3);
+  }, _el$);
   setProp(_el$, "focusable", true);
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
@@ -6755,195 +6976,6 @@ function ScrollView(props) {
   });
   return _el$;
 }
-// packages/components/src/focus-nav.ts
-var navActions = new Map;
-function registerNavAction(nodeId, action2) {
-  navActions.set(nodeId, action2);
-  return () => {
-    if (navActions.get(nodeId) === action2)
-      navActions.delete(nodeId);
-  };
-}
-var [scopeStack, setScopeStack] = createSignal([], {
-  ownedWrite: true
-});
-function pushNavScope(node) {
-  setScopeStack((s2) => [...s2, node]);
-  return () => setScopeStack((s2) => s2.filter((n3) => n3 !== node));
-}
-function createFocusNav(options) {
-  let currentScope = () => options?.scope?.() ?? scopeStack()[scopeStack().length - 1];
-  let reachable = () => {
-    let scopeNode = currentScope();
-    let placed = [];
-    for (let id2 of getFocusables()) {
-      if (scopeNode && !getNodePath(id2).includes(scopeNode.id))
-        continue;
-      let b2 = getBoundingBoxViewport2({
-        id: id2
-      });
-      if (b2)
-        placed.push({
-          id: id2,
-          x: b2.x + b2.width / 2,
-          y: b2.y + b2.height / 2
-        });
-    }
-    return placed;
-  };
-  let ordered = (placed) => [...placed].sort((a3, b2) => Math.abs(a3.y - b2.y) <= 1 ? a3.x - b2.x : a3.y - b2.y);
-  let lastPos = null;
-  let focusCandidate = (p3) => {
-    lastPos = {
-      x: p3.x,
-      y: p3.y
-    };
-    setFocus(p3.id);
-  };
-  let focusFirst = (placed) => {
-    focusCandidate(ordered(placed)[0]);
-  };
-  let focusEntry = (placed) => {
-    if (!lastPos)
-      return focusFirst(placed);
-    let {
-      x: x2,
-      y: y2
-    } = lastPos;
-    let best = placed.reduce((a3, b2) => (b2.x - x2) ** 2 + (b2.y - y2) ** 2 < (a3.x - x2) ** 2 + (a3.y - y2) ** 2 ? b2 : a3);
-    focusCandidate(best);
-  };
-  let move = (dir) => {
-    let placed = reachable();
-    if (placed.length === 0)
-      return;
-    let focused = focusedNode();
-    let from = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
-    if (!from)
-      return focusEntry(placed);
-    let best = null;
-    let bestScore = Infinity;
-    for (let p3 of placed) {
-      if (p3 === from)
-        continue;
-      let dx = p3.x - from.x;
-      let dy = p3.y - from.y;
-      let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
-      if (ahead <= 1)
-        continue;
-      let across = Math.abs(dir === "up" || dir === "down" ? dx : dy);
-      let score = ahead + 2 * across;
-      if (score < bestScore) {
-        bestScore = score;
-        best = p3;
-      }
-    }
-    if (best)
-      focusCandidate(best);
-  };
-  let tab = (delta) => {
-    let placed = reachable();
-    if (placed.length === 0)
-      return;
-    let row = ordered(placed);
-    let focused = focusedNode();
-    let i3 = focused != null ? row.findIndex((p3) => p3.id === focused) : -1;
-    if (i3 < 0) {
-      if (lastPos)
-        return focusEntry(placed);
-      return focusCandidate(row[delta === 1 ? 0 : row.length - 1]);
-    }
-    focusCandidate(row[(i3 + delta + row.length) % row.length]);
-  };
-  let activate = () => {
-    let placed = reachable();
-    if (placed.length === 0)
-      return;
-    let focused = focusedNode();
-    let hit = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
-    if (!hit)
-      return focusEntry(placed);
-    lastPos = {
-      x: hit.x,
-      y: hit.y
-    };
-    navActions.get(hit.id)?.();
-  };
-  let onKeyDown = (e3) => {
-    if (e3.key === "ArrowUp")
-      move("up");
-    else if (e3.key === "ArrowDown")
-      move("down");
-    else if (e3.key === "ArrowLeft")
-      move("left");
-    else if (e3.key === "ArrowRight")
-      move("right");
-    else if (e3.key === "Tab")
-      tab(e3.shiftKey ? -1 : 1);
-    else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
-      activate();
-  };
-  let prevFocused = null;
-  let refocusPending = false;
-  createEffect(() => focusedNode(), (id2) => {
-    let prev = prevFocused;
-    prevFocused = id2;
-    if (id2 != null || prev == null)
-      return;
-    refocusPending = getNodePath(prev).length === 0;
-  });
-  onLayout(() => {
-    if (!refocusPending)
-      return;
-    refocusPending = false;
-    if (focusedNode() != null)
-      return;
-    let placed = reachable();
-    if (placed.length > 0)
-      focusEntry(placed);
-  });
-  createEffect(() => currentScope(), (scopeNode) => {
-    if (!scopeNode)
-      return;
-    let focused = focusedNode();
-    if (focused != null && getNodePath(focused).includes(scopeNode.id))
-      return;
-    let placed = reachable();
-    if (placed.length > 0)
-      focusFirst(placed);
-    else if (focused != null)
-      setFocus(null);
-  });
-  let prevButtons = new Set;
-  createEffect(() => gamepads(), (pads) => {
-    let now = new Set;
-    for (let pad of pads)
-      for (let b2 of pad?.buttons ?? [])
-        now.add(b2);
-    for (let b2 of now) {
-      if (prevButtons.has(b2))
-        continue;
-      if (b2 === "dpadUp")
-        move("up");
-      else if (b2 === "dpadDown")
-        move("down");
-      else if (b2 === "dpadLeft")
-        move("left");
-      else if (b2 === "dpadRight")
-        move("right");
-      else if (b2 === "south")
-        activate();
-    }
-    prevButtons = now;
-  });
-  return {
-    onKeyDown,
-    move,
-    tab,
-    activate
-  };
-}
-
 // packages/components/src/press.ts
 function createPress(options) {
   let [pressed, setPressed] = createSignal(false);

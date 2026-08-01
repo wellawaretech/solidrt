@@ -1,6 +1,17 @@
-import { createEffect, createMemo, createSignal, onCleanup, focusedNode, measureText, setFocus } from "@solidrt/core"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  focusedNode,
+  measureText,
+  setFocus,
+  startTextInput,
+  textInputActive,
+} from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { Color, Gradient, KeyEvent, LayoutProps } from "@solidrt/core"
+import { registerNavAction } from "./focus-nav"
 import type { StyleProps } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
@@ -28,6 +39,7 @@ export interface TextInputProps {
   disabled?: boolean
   autoFocus?: boolean
 
+  ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps
 }
@@ -35,8 +47,10 @@ export interface TextInputProps {
 // Single-line. The caret moves through the text (Left/Right/Home/End), edits
 // happen at the caret, and the inner box scrolls to keep it in view. Printable
 // text arrives via onTextInput (post-IME commit). onKeyDown handles caret
-// movement, Backspace/Delete, Enter, Escape - and stops those keys from
-// bubbling further. Range selection (shift-movement,
+// movement, Backspace/Delete, Enter/select, Escape - and stops those keys
+// from bubbling further. Focused and editing are distinct (see
+// activateField): navigation focuses, select begins editing, Enter while
+// editing submits. Range selection (shift-movement,
 // highlight, click-to-position) is not wired yet. Outside-click-to-blur is the
 // caller's job.
 export function TextInput(props: TextInputProps) {
@@ -121,9 +135,9 @@ export function TextInput(props: TextInputProps) {
     } else if (e.key === "End") {
       buffer.move("end")
       setCaretOn(true)
-    } else if (e.key === "Enter") {
-      props.onSubmit?.(value())
-      setFocus(null)
+    } else if (e.key === "Enter" || e.code === "Select") {
+      // The remote center key's `key` is "Unidentified"; match its code.
+      activateField()
     } else if (e.key === "Escape") {
       if (node) setFocus(null)
     } else {
@@ -138,8 +152,28 @@ export function TextInput(props: TextInputProps) {
     setCaretOn(true)
   }
 
+  // Select on the focused field: focused and editing are distinct states. A
+  // field reached by navigation is focused but has no text session yet -
+  // select begins one (raising the on-screen keyboard where used, e.g. a TV
+  // with no keyboard attached); while editing, it submits. On platforms
+  // where the session starts invisibly at focus (desktop, physical
+  // keyboard) the first branch never runs and Enter submits as always.
+  // Registered as the nav action too, for a controller's south button.
+  let activateField = () => {
+    if (props.disabled) return
+    if (!textInputActive()) {
+      startTextInput()
+    } else {
+      props.onSubmit?.(value())
+      setFocus(null)
+    }
+  }
+
+  let unregisterNav: (() => void) | null = null
+
   onCleanup(() => {
     if (blinkId != null) clearInterval(blinkId)
+    unregisterNav?.()
   })
 
   // Style overrides fall back to theme defaults. The border doubles as the
@@ -191,7 +225,12 @@ export function TextInput(props: TextInputProps) {
 
   return (
     <view
-      ref={(n: { id: number }) => (node = n)}
+      ref={(n: { id: number }) => {
+        node = n
+        unregisterNav?.()
+        unregisterNav = registerNavAction(n.id, activateField)
+        props.ref?.(n)
+      }}
       focusable
       flexDirection="row"
       alignItems="center"

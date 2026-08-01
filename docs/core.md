@@ -419,13 +419,21 @@ startTextInput(): void
 
 Begins text entry on the focused node, raising the on-screen keyboard where one is used. A tap on the focused node triggers this automatically; call it for any other interaction that should start typing - a remote's select on a focused field, a search button. Throws when the focused node has no `onTextInput` handler.
 
-### getFocusedNodeId
+### textInputActive
 
 ```ts
-getFocusedNodeId(): number | null
+textInputActive(): boolean
 ```
 
-Returns the id of the currently focused node, or `null` if nothing is focused.
+Whether a text-entry session is active on the focused node (text events flowing; the on-screen keyboard up, where one is used), as a reactive accessor. Distinct from focus: a field focused by navigation is not editing until a tap or `startTextInput()` begins the session - which is how a text field tells its focused and editing states apart (select starts editing in the former; Enter submits in the latter).
+
+### focusedNode
+
+```ts
+focusedNode(): number | null
+```
+
+The id of the currently focused node, or `null`, as a reactive accessor: read it inside a tracked scope (JSX, a memo, an effect) to re-run when focus moves; a read in an event handler just sees the current value. `setFocus` is the only writer.
 
 ### getFocusables
 

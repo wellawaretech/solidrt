@@ -35,9 +35,13 @@ The work:
   (pushNavScope in focus-nav.ts) that is every nav's default scope, so the
   `modal` flag disappeared entirely. policy.focusRing now also counts
   gamepads (TV remotes register as gamepads; keyboard-free TVs were
-  ringless). Desktop-verified 2026-08-01 (keyboard + SNES pad), including
-  the reactive-focus auto-refocus after a fix for a frozen derivation memo
-  (short-circuit skipped the signal read); TV round still open. Follow-ups same day: core focus became a reactive accessor
+  ringless). ALL DEVICE-VERIFIED 2026-08-01: desktop (keyboard + SNES pad),
+  Android TV (remote nav, select-to-edit raising the IME, typed text), and
+  Android tablet (single-tap keyboard, outside-tap blur hides it). Fixes
+  found on the way: a frozen derivation memo (short-circuit skipped the
+  signal read) and stale same-dispatch signal reads (focus/session are now
+  plain-field truth + signal purely for tracking; signal writes flush on
+  the microtask). Follow-ups same day: core focus became a reactive accessor
   (`focusedNode()`, replacing getFocusedNodeId; setFocus sole writer), and
   nav now auto-refocuses the nearest successor when the focused control is
   DESTROYED (button swapped by its own action, screen change) - the landing
@@ -52,13 +56,25 @@ Traps for whoever picks this up:
 
 - The registry is candidacy only and non-reactive; recompute candidate
   geometry per keypress, not per registration (boxes move under layout).
-- TV text fields have two states: focused (highlight) and editing (session
-  started). Enter on a focused field must call `startTextInput()`, not
-  submit; Enter while editing submits. TextInput does not distinguish these
-  yet (it is also not `focusable` yet, deliberately).
+- DONE 2026-08-01 (surfaced immediately on the TV round: focused address
+  field + remote did nothing): focused vs editing. Core exports the
+  reactive `textInputActive()`; TextInput's Enter/select (code "Select")
+  runs activateField - startTextInput() when no session (raises the TV
+  IME), submit + blur while editing - and registers it as its nav action so
+  a controller's south button works too.
 - With a physical keyboard attached (Android TV + USB) the text session
   starts eagerly at focus and no on-screen keyboard may ever appear -
   do not "fix" typing-without-select on TV by forcing startTextInput.
+- Android keyboard detection is externality-based (MainActivity
+  isRealKeyboard): TV built-in drivers (Philips TPV_*, MediaTek mtkinp)
+  claim ALPHABETIC keyboards, and Configuration.keyboard lies QWERTY, so
+  only isExternal()/nonzero vendor-product separates a real keyboard.
+  Hotplug via InputDeviceListener (config change does not fire when config
+  already claims QWERTY). TV-verified 2026-08-01 via focus-test.tsx (repo
+  root; MCP-driven test bed - keep it): session start raises the TV IME,
+  typed text flows. IME auto-capitalized the first letter - a future nicety
+  is passing SDL text-input types (numeric/URI/no-autocap) through
+  startTextInput for fields like an address input.
 
 Deliberately deferred from the components stage (inherited from the
 launcher's own stage-1 gaps): scroll-into-view for a focused off-screen
