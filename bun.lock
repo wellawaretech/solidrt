@@ -52,7 +52,6 @@
         "@solidrt/win32-x64-msvc": "workspace:*",
       },
       "peerDependencies": {
-        "@solidrt/core": "workspace:*",
         "typescript": "^7",
       },
     },

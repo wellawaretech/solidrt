@@ -72,7 +72,11 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
 }
 
 // Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
-// generate, targeting @solidrt/core) plus the TS preset. Plain .js/.ts app
+// generate, targeting @solidrt/core) plus the TS preset. `moduleName` only ends
+// up as an import specifier in the emitted code, resolved from the app's tree at
+// bundle time; the CLI itself never loads core, so core is deliberately neither
+// a dependency nor a peer of this package (a second copy under the CLI could be
+// hoisted over the app's and bundle two runtime instances). Plain .js/.ts app
 // modules take the same path (solid is a no-op without JSX) so inlineImport
 // can rewrite their `with { type: "binary" }` imports too; dependency code
 // (node_modules) skips the babel detour and keeps Bun's native loaders.
