@@ -1,3 +1,8 @@
+// There is no `WebAssembly` global in flux; this module is the entire wasm
+// surface. Imports must be scalar-signature functions only (no imported
+// memory, globals or tables), which constrains the toolchain on the other
+// side: default emscripten output imports its memory and is rejected, while
+// `emcc -sSTANDALONE_WASM=1 --no-entry` produces a module that fits.
 declare module "flux:wasm" {
   /**
    * A scalar wasm value. i32/f32/f64 marshal as number; i64 marshals as BigInt
@@ -39,7 +44,8 @@ declare module "flux:wasm" {
     /**
      * Parse and validate a wasm binary (wat text bytes are also accepted).
      * Throws on invalid input or on an unsupported import (non-function, or
-     * non-scalar signature).
+     * non-scalar signature) - see the module note above for the emscripten
+     * flags that produce a compatible binary.
      */
     constructor(bytes: Uint8Array | ArrayBuffer)
     /**

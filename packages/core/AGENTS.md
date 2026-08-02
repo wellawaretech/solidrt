@@ -24,6 +24,15 @@ hardcode desktop pixels.
   (<600), `medium` (600-840), `expanded` (>=840). Drive column counts / layout
   switches off it (see the responsive-grid example).
 
+Exception - fixed-aspect content. For content with fixed internal geometry
+(diagrams, slides, dashboards, games, emulators), do not branch on window size
+at all: author everything in one design space and let `viewBox` fit it.
+`<view flex={1} viewBox={[1280, 800]}>` uniformly scales and centers the
+children (letterboxed), pointer events on them arrive in design coordinates,
+and the same code runs unchanged from a desktop window to a phone. Reach for
+`windowSizeClass` branching only when the layout genuinely reflows across form
+factors.
+
 `env` and `capabilities` (both exported from `@solidrt/core`) are the two
 objects that expose this. They are plain objects with REACTIVE GETTERS, not
 functions - read them as `capabilities.windowSizeClass`, `env.displayScale`
@@ -104,10 +113,11 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   Outlines: `drawStyle="stroke"` (or "stroke-and-fill") plus `strokeWidth`.
   Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]).
 
-- Registered JSX intrinsics: `window`, `view`, `text`, `rect`, `oval`, `path`,
-  `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`, `d-oval`,
-  `d-path`, `d-texture`, `d-text`. NOTE: `<line>` has a LineProps type but is
-  NOT a registered intrinsic - it will not typecheck.
+- Registered JSX intrinsics: `window`, `view`, `text`, `rect`, `oval`, `line`,
+  `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,
+  `d-oval`, `d-line`, `d-path`, `d-texture`, `d-text`. Line endpoints
+  (`x1`/`y1`/`x2`/`y2`) exist only on `d-line`; a laid-out `<line>` has no
+  endpoint props and spans its layout box corner to corner.
 
 - Plain vs `d-` variant (the `d-` prefix means "detached" - detached from the
   layout engine, Taffy): a plain element (e.g. `rect`) is `RectProps &
@@ -136,6 +146,11 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   frame reflows the tree. Anchor the element once with layout (e.g.
   `position:absolute` at `left:0,top:0`, or just let normal flow place it) and
   then translate it with `x`/`y`.
+
+- JSX text children collapse whitespace (ordinary JSX semantics): runs of
+  spaces become one, so space-padding a mono label collapses silently. An
+  expression container preserves it - `<d-text>{"one    two"}</d-text>` - and
+  `\n` inside one produces a hard line break.
 
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,

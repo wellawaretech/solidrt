@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: Diagnostics queue behind the thing they diagnose
-description: get_gpu_resources is a raster command, so it sits at the back of the same backlog it is meant to explain and times out exactly when the client is wedged; get_stats survived the same failure only because it is served elsewhere.
-status: deferred
+description: get_gpu_resources queues behind the raster backlog it exists to explain, and get_stats/get_snapshot need a JS-thread slice, so they time out on a busy (healthy) app with a message that says "wedged"; serve inventory and stats off published state, and name the real timeout.
+status: open
 timestamp: 2026-07-27T00:00:00Z
 ---
 
@@ -50,3 +50,24 @@ nearly free.
 
 Related: mcp-gpu-resource-inspection.md, production-diagnostics-surface.md,
 gpu-pass-timing.md, reload-drain-raster-queue.md.
+
+## The JS-thread flavor (2026-08-02)
+
+From the wasm game-port demo feedback: get_stats and get_snapshot both
+returned the same "JS thread busy or app wedged?" timeout while the app ran
+perfectly - logs flowing, 35 fps steady on three clients. The JS thread was
+simply saturated (cpuPct 90.9) and these queries need a slice of it. That is
+the worst failure mode for exactly the class of app most likely to need
+profiling: the message reads as "your app is wedged" when the truth is "your
+app is busy", and the problem disappears the moment you profile something
+cheap. get_logs stayed reliable throughout because it is pushed, not polled.
+
+So the asymmetry above has two flavors - raster-thread and JS-thread - and
+both halves of the fix generalize: serve get_stats from runtime-side
+published state without touching the JS thread, and make the timeout message
+distinguish busy from wedged; the runtime knows the difference, since it is
+still presenting frames.
+
+Status bumped deferred -> open (2026-08-02): the original rationale ("only
+bites when a client is already wedged") no longer holds - a healthy,
+CPU-saturated app is the common profiling case.

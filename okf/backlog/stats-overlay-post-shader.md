@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: Stats overlay should draw after the window shader pass
-description: The debug overlay is recorded into the same display list as the app, so a window shader warps the HUD too; draw it post-pass so diagnostics stay legible, which also stops the overlay forcing full rebuilds during effect-only frames.
+description: The debug overlay is recorded into the same display list as the app, so a window shader warps the HUD too - and it is painted inside the demand-gated pass, so on texture-driven apps that write zero properties per frame it freezes solid while the app animates; draw it post-pass, outside the gate.
 status: open
 timestamp: 2026-07-27T00:00:00Z
 ---
@@ -38,3 +38,31 @@ overlay-only update.
 Not urgent: the overlay is a dev tool, and toggling stats off restores the
 clean picture. Worth doing together with (or right after) stage 4, which is
 what makes the rebuild-pressure half visible.
+
+## The overlay freezes on texture-driven apps (2026-08-02)
+
+From the wasm game-port demo feedback, and it raises this item's priority
+above "not urgent": with the game running, `stats on` shows an overlay whose
+every field - fps included - is frozen while the game animates underneath.
+get_stats over MCP returns live values the entire time; it is the PAINT that
+is stale. The app writes zero properties per frame (its pixels arrive only
+through uploadTexture, which re-renders the shader target and re-composites),
+so the render tree is structurally never dirty, the demand gate reuses the
+painted output, and the overlay - painted inside that gated pass - is reused
+along with it.
+
+Measured: adding a single per-frame property write (a 1 px d-rect whose x
+alternates) dropped reusedPerSec from 70 to 25 and brought the overlay back
+to life. The runtime presents ~58 fps against a 35 Hz game tick, so ~23
+frames/s write nothing - reusedPerSec counts exactly the frames where no
+property write dirtied the tree.
+
+The gate is behaving correctly; the overlay's dependency on it is the bug.
+It hits ANY app whose pixels come from outside the render tree - game ports,
+video playback, camera feeds, render:"manual" simulation targets,
+shader-only scenes - which makes it a diagnostic tool failing silently at
+exactly the moment something is being diagnosed. The fix direction is the
+same as the warp problem above: composite the overlay outside the app's
+gated pass (or have it mark itself dirty while enabled). Worth an AGENTS.md
+line on what reusedPerSec means regardless, since it is currently the only
+visible signal of the gate.

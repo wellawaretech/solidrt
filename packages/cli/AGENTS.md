@@ -32,9 +32,15 @@ Two reliable checks that need no GUI:
 
 1. `bunx srt bundle src/index.tsx` - exit 0 means the app compiles. Fast.
 2. `bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2` -
-   renders offscreen via EGL/wgpu and writes `frame-NNNNNN.png`. This actually
+   renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
    proves the app renders. Combine with `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s).
+
+Also headless: the bundled flux runtime runs a plain `.js` file directly -
+`node_modules/@solidrt/<platform>/flux script.js` (e.g.
+`@solidrt/linux-x64-gnu`). No display, no dev server, full `flux:*` module
+access. The right tool for micro-benchmarks and for probing flux module
+behavior in isolation.
 
 `render` gotchas:
 - Frames are written to the RUNTIME's working dir (`~/.local/share/SolidRT/go/`),

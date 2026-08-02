@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: MCP improvements and expansion
-description: "Round-2 agent dev-loop feedback: readOnlyHint annotations, call_debug broadcast, form-factor fields in list_clients, interaction-performance visibility, leak diagnostics."
+description: "Round-2 agent dev-loop feedback: readOnlyHint annotations, call_debug broadcast, form-factor fields in list_clients, interaction-performance visibility, leak diagnostics; plus drawn bounds for detached nodes in get_render_tree (2026-08-02)."
 status: deferred
 timestamp: 2026-07-27T00:00:00Z
 ---
@@ -124,6 +124,17 @@ here because they grow the same stats/debug surface:
   collected" from "actually leaked".
 - Dev-build leak sentinel: warn when live nodes grow monotonically across N
   full rebuilds at a stable tree shape.
+
+## 5. Drawn bounds for detached nodes in get_render_tree (2026-08-02)
+
+From the animated-explainer demo feedback: a d-* node has no layout entry,
+so get_render_tree reports the box it inherits from the nearest layout
+ancestor - a d-line spanning (10,120)-(200,120) reported width 1692, height
+1128. Correct per the documented model, useless for locating the node from
+the tree, and any d-*-drawing app is d-*-heavy. The engine already computes
+painted bounds (captureSnapshot sizes d-* captures from local_bounds, see
+capture-detached-nodes.md); surface the same quantity as a `drawn` box
+alongside the inherited one.
 
 ## Relation to existing items
 

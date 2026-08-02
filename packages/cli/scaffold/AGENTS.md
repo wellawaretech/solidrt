@@ -54,9 +54,12 @@ Authoritative references ship inside the installed packages - read them:
    top-level props, not inside `layout`/`style`.
 3. `render(() => <App/>)` once, top level. The root MUST be a `<Window>`
    (from @solidrt/components) or the core `<window>` - it throws otherwise.
-4. `Window`/`View` do not paint on their own; they only paint when you set
-   `style.backgroundColor`/`borderColor` etc - there is no separate
-   background element to place by hand.
+4. Components' `Window`/`View` do not paint on their own; they only paint
+   when you set `style.backgroundColor`/`borderColor` etc - there is no
+   separate background element to place by hand. That is the components level
+   only: the core `<view>`/`<window>` have no background prop at all - in a
+   core-only app the background is a draw-primitive child
+   (`<d-rect color={...} />`) behind the content.
 5. There is no onClick/onPress on host elements. Use `Pressable`/`Button`
    from components (`onPress`), or `onPointerDown` on a `View` for anything
    custom.
@@ -153,7 +156,7 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    to compileShader/linkProgram. Params drive any uniform type: a number
    fills a `float`/`int` scalar, a flat number array fills `vec2`/`vec3`/
    `vec4` (2/3/4 numbers) or `mat4` (16, column-major), dispatched by the
-   shader's own declaration - a ported shader's `vec2 uCenter` or Shadertoy's
+   shader's own declaration - a ported shader's `vec2 uCenter` or
    `vec3 iResolution` needs no splitting into scalars. To combine several
    GPU passes, stack `<texture>` elements and set `blendMode` (e.g. a base
    pass plus an additive `blendMode="plus"` pass) rather than writing a
@@ -171,7 +174,10 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    on screen and to shaders sampling the texture.
 2. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
-   string. get_stats' setPropsPerFrame is the counter to watch.
+   string. get_stats' setPropsPerFrame is the counter to watch. Compiled JSX
+   attribute expressions diff before writing, so a per-frame expression that
+   returns an unchanged value costs no property write - setPropsPerFrame
+   counts values that actually changed, not expressions re-run.
 3. Never leave onFrame registered while nothing animates: a pending onFrame
    is a standing frame request, so the runtime renders and presents every
    vsync even when the callback body does nothing - an invisible 60fps GPU
@@ -187,7 +193,11 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    system classifies these as Transform and keeps the node's own cache).
    What DOES invalidate the cache is any paint or content change inside the
    subtree - colors, path data, text, a Show toggling - so drive animation
-   with transforms and keep the cached content itself static.
+   with transforms and keep the cached content itself static. Off a boundary,
+   `opacity` on a view is NOT cheap: it wraps the subtree in a compositing
+   layer (save_layer) for as long as it is below 1. To fade a single
+   primitive, put the alpha in its `color` (`rgba(...)`) - paint alpha is
+   free; reserve view `opacity` for fading a genuine group as a whole.
 5. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters.
@@ -308,6 +318,9 @@ its tools over guessing at runtime state:
 - get_buffer: a vertex-buffer range decoded to numbers (f32/u16/u8, 64 KiB
   per call) - verify geometry after a writeBuffer instead of inferring it
   from pixels
+- list_debug / call_debug: the app's own debug commands (registered with
+  `registerDebug` from `srt:dev`) - list them, then invoke by name with a
+  JSON argument. Per client, like get_snapshot
 - reload: rebuild from source and push to every client - THE dev loop is
   edit -> reload -> get_logs -> get_snapshot. reload surfaces build errors
   but not type errors; run `bunx srt check` for those.
@@ -350,6 +363,13 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
 - console.log + get_logs is your primary probe into runtime state. For state
   you will want repeatedly (a pose, a mode, a counter), bind a debug key that
   logs it and read it back via get_logs.
+- Better than debug keys when driving the app over MCP: register debug
+  COMMANDS - `registerDebug(name, fn)` from `srt:dev`, invoked via the
+  list_debug/call_debug tools. `seek`/`pause`/`play` commands turn verifying
+  an animation into "jump to t, snapshot, look"; a `zoom` command that
+  shrinks a viewBox to a region gives magnified captures without touching
+  source. Registrations reset on hot reload, so register at module init;
+  sync return values only.
 - Key events start at the focused node and bubble to the window root; with
   nothing focused they go to the window root alone. So a debug key bound via
   `<window onKeyDown>` always fires (unless a focused component consumes the
@@ -367,6 +387,13 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
 - When a human reports a visual bug: capture a snapshot and SAY WHAT YOU SEE
   in it before investigating, so you agree on the symptom. If you cannot see
   the problem in the capture, say that instead of guessing.
+- Snapshots are downscaled by the time you see them, so a full-window capture
+  cannot show you a defect a few pixels across. Whenever you hand-author
+  geometry - a `d-path` from raw path math, a `radius` where two shapes meet,
+  a stroke join - inspect it MAGNIFIED once, when you write it: a throwaway
+  entry file drawing the construction at 4-8x (pushed with `load`), or a
+  `zoom` debug command on the real app. Verifying that a shape is in the
+  right place is not the same check as verifying it is drawn right.
 - GPU/geometry bugs: inspect the actual GPU data FIRST - get_gpu_resources
   for draw counts/uniforms/sizes, get_texture for atlas or data-texture
   contents ("is this tile blank?" is a ten-second question), get_buffer for

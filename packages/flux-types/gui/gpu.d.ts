@@ -202,8 +202,10 @@ declare module "flux:gpu" {
    * to the raw layer. The built-in vertex stage still supplies `vUV` to a
    * complete source; declare `in vec2 vUV;` yourself to read it. Same rule on
    * {@link createPipelineTexture}. A complete source may also declare
-   * `iResolution` as vec3 (the Shadertoy shape); it is then filled as
-   * `(w, h, 1.0)`.
+   * `iResolution` as vec3 (a common convention in ported shaders); it is
+   * then filled as `(w, h, 1.0)`. One naming trap: GLSL ES reserves `packed` as a keyword,
+   * so `vec4 packed = texture(...)` fails with a syntax error that does not
+   * name the identifier - pick another name.
    */
   export function createShaderTexture(
     fragmentSrc: string,

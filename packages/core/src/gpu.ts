@@ -237,7 +237,9 @@ export function createMutableTexture(
  * as written, so a shader carrying its own uniform names - one ported from
  * elsewhere - runs unchanged here without dropping to compileShader /
  * linkProgram. The built-in vertex stage still supplies `vUV`; declare
- * `in vec2 vUV;` yourself to read it.
+ * `in vec2 vUV;` yourself to read it. One naming trap: GLSL ES reserves
+ * `packed` as a keyword, so `vec4 packed = texture(...)` fails with a syntax
+ * error that does not name the identifier - pick another name.
  */
 export function createShaderTexture(
   fragmentSrc: string,

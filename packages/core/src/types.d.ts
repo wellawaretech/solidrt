@@ -185,7 +185,11 @@ export interface TransformProps {
   originX?: OriginX
   originY?: OriginY
   // Group opacity in 0..1: children are composited together, then faded as a
-  // whole (CSS `opacity`). Does not affect hit testing.
+  // whole (CSS `opacity`). Does not affect hit testing. Costs a compositing
+  // layer (save_layer around the subtree) while below 1, except on a
+  // repaintBoundary view, where it is hoisted to composite time for free. To
+  // fade a single primitive, put the alpha in its `color` (rgba) instead -
+  // paint alpha costs nothing.
   opacity?: number
   scrollX?: number
   scrollY?: number
@@ -458,6 +462,13 @@ export interface RectProps extends PaintProps, PointerProps {
 // Strokes paint inside the box, same as `RectProps`.
 export interface OvalProps extends PaintProps, PointerProps {}
 
+// A line's geometry is numbers, not a path string: the segment primitive to
+// reach for when endpoints move (each endpoint is one property write; a path
+// animates by rebuilding its `d` string). Endpoints (x1/y1/x2/y2) exist on
+// the detached `d-line` only. A laid-out `<line>` is practically a rule -
+// give it a thin box (length x strokeWidth); in general it draws its layout
+// box's top-left-to-bottom-right diagonal. For arbitrary angles and
+// connectors use `d-line`; for polylines and curves, a path.
 export interface LineProps extends PaintProps, PointerProps {
   /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   onLength?: number

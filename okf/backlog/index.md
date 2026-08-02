@@ -10,6 +10,49 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Detached-view transform origin pivots around the inherited box](detached-view-transform-origin.md) [open] -
+  With the origin unset, scale/rotate on a d-view pivots around the centre
+  of the inherited layout box, so the same code lands elsewhere on a
+  differently sized window - a silent correctness bug; default the origin to
+  the view's own drawn bounds, or document the rule.
+- [flux:audio live voice control](flux-audio-voice-control.md) [open] - A
+  playing SoundHandle is stop-only: no pan anywhere, gain fixed at play()
+  time, no ended signal, encoded input only - a 2D game port could not
+  express positional audio; per-voice setGain/setPan, an ended signal and a
+  raw-PCM load close it (SDL3_mixer already ships the pan shape).
+- [flux:wasm memory views and named call errors](flux-wasm-memory-access.md) [open] -
+  readMemory mints a fresh Uint8Array per call (9 MB/s of garbage lifting a
+  32bpp framebuffer), the one path the pure-JS build does copy-free;
+  readMemoryInto or a transient view closes it, and "indirect call type
+  mismatch" should name the failing index and signatures.
+- [Zero-copy texture upload staging](texture-upload-staging.md) [open] - The
+  steady state of any texture-driven app is one full-frame copy per frame to
+  cross onto the raster thread; begin/endTextureUpload over raster-owned
+  staging buffers is the only honestly zero-copy shape - matters when
+  video/camera frames arrive.
+- [R8 / indexed uploadTexture format](texture-upload-r8-format.md) [open] -
+  Palette-indexed content must pack four indices per RGBA texel, free only
+  when the width divides by four; an R8 format makes the authentic path the
+  cheap path for every emulator/retro port - measured 2.45x on a whole game
+  tick.
+- [Owner-scoped registerDebug](owner-scoped-register-debug.md) [open] -
+  Reload-reset registrations force any state a debug command touches up to
+  module scope; an owner-scoped variant auto-cleaned like onFrame lets it
+  live in the component.
+- [Statically detect layout-in-detached nesting](detached-nesting-static-check.md) [open] -
+  A view inside a d-view typechecks and fails at runtime, and the type
+  system cannot catch it (one JSX.Element type for every tag); the bundler's
+  JSX pass sees static tags and can error on direct nesting, with runtime as
+  the backstop behind component boundaries.
+- [A zoom debug command in the scaffold](scaffold-zoom-debug-command.md) [open] -
+  Snapshots reach an agent downscaled, so small hand-authored geometry needs
+  magnified inspection; a ~15-line viewBox-shrinking registerDebug zoom
+  turns "look closely at X" into one call.
+- [Diagnostics queue behind the thing they diagnose](diagnostics-off-raster-queue.md) [open] -
+  get_gpu_resources queues behind the raster backlog it exists to explain,
+  and get_stats/get_snapshot need a JS-thread slice so they time out on a
+  busy (healthy) app with a message that says "wedged"; serve inventory and
+  stats off published state, and name the real timeout.
 - [Fix mDNS discovery (Discover finds nothing)](mdns-discovery.md) [open] -
   The client's `_solidrt._tcp` browse is intact but the dev server stopped
   advertising when it moved into flux (deliberate: the p2p ticket is the
@@ -46,9 +89,11 @@ Sorted by status: open first, then partial, deferred, and closed
   impellerc, nor the root layer.
 - [Stats overlay should draw after the window shader pass](stats-overlay-post-shader.md) [open] -
   The debug overlay is recorded into the app's display list, so a window
-  shader warps the HUD too, and its once-per-second refresh forces full
-  rebuilds that defeat clean-tree fast paths; draw it post-pass into FBO 0
-  instead (mind the stage-1 orientation rules).
+  shader warps the HUD too, its once-per-second refresh forces full rebuilds
+  that defeat clean-tree fast paths, and it is painted inside the
+  demand-gated pass so it freezes solid on texture-driven apps that write
+  zero properties per frame (games, video, camera); draw it post-pass into
+  FBO 0, outside the gate.
 - [parseSvg replaces the svg primitive](parse-svg.md) [done] -
   Removed the `<svg>`/`<d-svg>` element for `parseSvg` (forge core, flux:svg
   module) returning plain draws JS maps to d-path subtrees inside a
@@ -171,7 +216,9 @@ Sorted by status: open first, then partial, deferred, and closed
 - [MCP improvements and expansion](mcp-agent-loop-improvements.md) [deferred] -
   Round-2 agent dev-loop feedback: readOnlyHint annotations, call_debug
   broadcast, form-factor fields in list_clients, interaction-performance
-  visibility, leak diagnostics.
+  visibility, leak diagnostics; plus drawn bounds for detached nodes in
+  get_render_tree (d-* nodes report the inherited box, useless for locating
+  them; local_bounds already exists).
 - [Cross-platform GPU usage attribution](gpu-usage-attribution.md) [deferred] -
   Answer "is the client burning GPU while idle, and on what" portably: engine
   self-measurement in get_stats plus a per-OS story for whole-system
@@ -184,10 +231,6 @@ Sorted by status: open first, then partial, deferred, and closed
   A backed-up raster channel survives `load`/`reload`, so a wedged client
   cannot be recovered from the dev loop and the natural instinct (edit, reload)
   is exactly what does not help; defensive now that the runaway is fixed.
-- [Diagnostics queue behind the thing they diagnose](diagnostics-off-raster-queue.md) [deferred] -
-  `get_gpu_resources` is a raster command, so it times out precisely when the
-  client is wedged and blames the JS thread, which was running fine; serve the
-  inventory off published state, or at least name the real timeout.
 - [Android client forgets its dev-server address](android-dev-server-persistence.md) [deferred] -
   The address only arrives as a launch-intent extra, so any relaunch outside
   the CLI (the device's own launcher, a crash, a reboot) starts into
@@ -229,6 +272,12 @@ Sorted by status: open first, then partial, deferred, and closed
   The two calls whose cost class differs from the rest of the surface, both
   blocking the frame loop; invisible while compiles happen at startup, real
   for live-coding, and the async precedent (captureSnapshot) already exists.
+- [Line vs path - the segment primitive](line-layout-endpoints.md)
+  [decided 2026-08-02] - Line stays as the primitive whose geometry is
+  numbers (animatable endpoints, dash) against path's DSL string; a laid-out
+  line is a rule (thin box), no mirror prop, and the recorded growth
+  direction is caps/arrowhead markers when a design asks. Documented in
+  LineProps and core AGENTS.md.
 - [GPU target purity and an explicit render verb](gpu-purity-decision.md)
   [decided 2026-07-30] - Option 2: the purity invariant is documented and
   render: "manual" targets stepped by renderTarget(id) are the one

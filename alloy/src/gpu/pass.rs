@@ -115,7 +115,7 @@ pub(super) fn run_pass(
     gl.use_program(Some(program.program));
 
     // The preambles declare iResolution as vec2; a raw source may declare it
-    // vec3 (the Shadertoy contract), which gets the size with z = 1.
+    // vec3 (a common convention in ported shaders), which gets the size with z = 1.
     match program.uniforms.get("iResolution") {
       Some((loc, glow::FLOAT_VEC2)) => gl.uniform_2_f32(Some(loc), width as f32, height as f32),
       Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
