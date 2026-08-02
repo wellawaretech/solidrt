@@ -34,6 +34,47 @@ pub enum SamplerWrap {
   Repeat,
 }
 
+/// Pixel format of an uploaded texture, declared at creation as a property of
+/// the id (like SamplerState). Rgba8 is the default. R8 is the single-channel
+/// path for palette-indexed or grayscale content: one byte per pixel, sampled
+/// in GLSL as `(v, 0, 0, 1)` (read `.r`), and uploads set unpack alignment 1
+/// so any width works with no 4-byte row padding - the point of the format
+/// (packing indices into RGBA texels is only free when the width divides by
+/// four). Shader/pipeline targets are always RGBA8; this only applies to
+/// pixel uploads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TextureFormat {
+  #[default]
+  Rgba8,
+  R8,
+}
+
+impl TextureFormat {
+  /// Parse the app-facing option string (optional, defaulting to rgba8).
+  pub fn parse(format: Option<&str>) -> Result<Self, String> {
+    match format {
+      None | Some("rgba8") => Ok(TextureFormat::Rgba8),
+      Some("r8") => Ok(TextureFormat::R8),
+      Some(other) => Err(format!("unknown format '{other}' (expected \"rgba8\" or \"r8\")")),
+    }
+  }
+
+  pub fn bytes_per_pixel(self) -> usize {
+    match self {
+      TextureFormat::Rgba8 => 4,
+      TextureFormat::R8 => 1,
+    }
+  }
+
+  /// The app-facing name, for the resource inventory and error messages.
+  pub fn name(self) -> &'static str {
+    match self {
+      TextureFormat::Rgba8 => "rgba8",
+      TextureFormat::R8 => "r8",
+    }
+  }
+}
+
 impl SamplerState {
   /// Parse the app-facing option strings (each optional, defaulting to
   /// linear/clamp). Filter: "linear" | "nearest"; wrap: "clamp" | "repeat".
@@ -111,6 +152,10 @@ pub struct TextureEntry {
   pub width: u32,
   pub height: u32,
   pub sampler: SamplerState,
+  /// Pixel format of the id (rgba8 unless created as r8); sizes update and
+  /// resize validation. Display of an r8 texture shows the red channel only
+  /// (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
+  pub format: TextureFormat,
 }
 
 impl TextureEntry {
@@ -199,6 +244,8 @@ pub struct GpuTexture {
   /// object at bind time. The texture-object parameters set below are only a
   /// completeness fallback, not this state's storage.
   pub sampler: SamplerState,
+  /// Pixel format, fixed at creation; uploads size and unpack against it.
+  pub format: TextureFormat,
   /// Free-form debug name from the create (WebGPU's label), surfaced in the
   /// resource inventory and raster-side messages. Not unique; survives
   /// id-stable resizes (the raster side inherits it on replace-at-id).
@@ -206,8 +253,12 @@ pub struct GpuTexture {
 }
 
 impl GpuTexture {
-  pub fn new(gl: &glow::Context, backend: Backend, size: ISize, sampler: SamplerState) -> Self {
+  pub fn new(gl: &glow::Context, backend: Backend, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
     let (width, height) = (size.width as u32, size.height as u32);
+    let internal = match format {
+      TextureFormat::Rgba8 => glow::RGBA8,
+      TextureFormat::R8 => glow::R8,
+    };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
       let gl_texture = gl.create_texture().expect("glGenTextures failed");
@@ -215,11 +266,14 @@ impl GpuTexture {
       gl.tex_image_2d(
         glow::TEXTURE_2D,
         0,
-        glow::RGBA8 as i32,
+        internal as i32,
         width as i32,
         height as i32,
         0,
-        glow::RGBA,
+        match format {
+          TextureFormat::Rgba8 => glow::RGBA,
+          TextureFormat::R8 => glow::RED,
+        },
         glow::UNSIGNED_BYTE,
         glow::PixelUnpackData::Slice(None),
       );
@@ -232,19 +286,24 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      GpuTexture { gl_texture, backend, width, height, sampler, label: None }
+      GpuTexture { gl_texture, backend, width, height, sampler, format, label: None }
     }
   }
 
   pub fn upload(&self, gl: &glow::Context, data: &[u8], size: ISize) {
     let (width, height) = (size.width as i32, size.height as i32);
+    // RGBA8 rows are width*4, always a multiple of 4, so the default unpack
+    // alignment holds. R8 rows are width*1 and must unpack at alignment 1 or
+    // any width not divisible by 4 reads rows off by their padding - the
+    // whole reason the format exists is to avoid that per-frame repacking.
+    let (gl_format, alignment) = match self.format {
+      TextureFormat::Rgba8 => (glow::RGBA, 4),
+      TextureFormat::R8 => (glow::RED, 1),
+    };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
       gl.bind_texture(glow::TEXTURE_2D, Some(self.gl_texture));
-      // RGBA8 rows are width*4, always a multiple of 4, so the default unpack
-      // alignment is fine; no per-row staging is needed (unlike wgpu's 256-byte
-      // copy alignment).
-      gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
       gl.tex_sub_image_2d(
         glow::TEXTURE_2D,
         0,
@@ -252,10 +311,15 @@ impl GpuTexture {
         0,
         width,
         height,
-        glow::RGBA,
+        gl_format,
         glow::UNSIGNED_BYTE,
         glow::PixelUnpackData::Slice(Some(data)),
       );
+      // Unpack alignment is context state shared with Impeller's own uploads
+      // (glyph atlas), which assume the GL default of 4; restore it.
+      if alignment != 4 {
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      }
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       // No glFinish: the texture is sampled later on this same (single) GL
       // context, so program order already sequences the upload first.

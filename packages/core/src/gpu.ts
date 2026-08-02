@@ -60,6 +60,13 @@ export type CreateOptions = { manual?: boolean; label?: string }
 export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode }
 export type { FilterMode, WrapMode } from "flux:gpu"
 
+// Pixel format option for the pixel-upload creates (createTexture,
+// createMutableTexture), fixed for the id's lifetime like the sampler state.
+// "rgba8" (default) or "r8" - see TextureFormat in flux:gpu for the r8
+// contract (1 byte/pixel, sampled as `(v, 0, 0, 1)`, any width).
+export type TextureFormatOptions = { format?: gpu.TextureFormat }
+export type { TextureFormat } from "flux:gpu"
+
 // The branded id types, one per id space (see flux:gpu): plain numbers at
 // runtime, distinct types to the checker, so a cross-space slip like
 // destroyBuffer(textureId) fails to compile. Exported so apps can annotate
@@ -166,21 +173,22 @@ export let glsl = String.raw
 export { captureSnapshot, readTexture } from "flux:gpu"
 
 /**
- * Uploads raw RGBA8 pixels to an immutable GPU texture and returns its id (use
- * it as `<texture src={id} />`). `data` must be exactly `width * height * 4`
- * bytes; a mismatch throws. For pixels you intend to mutate and re-upload, use
- * `createMutableTexture` instead. When called inside a reactive scope the
- * texture is freed automatically once that owner is disposed; when called
- * outside one (e.g. after an `await`, where the owner is no longer current)
- * nothing is registered and you must call `destroyTexture` (from flux:gpu)
- * yourself. Pass `{ manual: true }` to skip the auto-free and own the
- * disposal yourself even inside a reactive scope.
+ * Uploads raw pixels to an immutable GPU texture and returns its id (use it
+ * as `<texture src={id} />`). `data` must be exactly `width * height` pixels
+ * at the declared format's size (`* 4` bytes for the default "rgba8", `* 1`
+ * for "r8"); a mismatch throws. For pixels you intend to mutate and
+ * re-upload, use `createMutableTexture` instead. When called inside a
+ * reactive scope the texture is freed automatically once that owner is
+ * disposed; when called outside one (e.g. after an `await`, where the owner
+ * is no longer current) nothing is registered and you must call
+ * `destroyTexture` (from flux:gpu) yourself. Pass `{ manual: true }` to skip
+ * the auto-free and own the disposal yourself even inside a reactive scope.
  */
 export function createTexture(
   data: Uint8Array,
   width: number,
   height: number,
-  opts?: CreateOptions & SamplerOptions,
+  opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
   let id = gpu.createTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
@@ -189,18 +197,19 @@ export function createTexture(
 
 /**
  * Creates a GPU texture you intend to update over time: seed it with `data`,
- * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels. `data`
- * is RGBA8 and must hold at least `width * height * 4` bytes (it may hold several
- * frames). Like `createTexture`, the texture is freed automatically when the
- * reactive owner is disposed (opt out with `{ manual: true }`); created
- * outside a reactive scope you must call `destroyTexture` (from flux:gpu)
- * yourself.
+ * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels.
+ * `data` must hold at least `width * height` pixels at the declared format's
+ * size (`* 4` bytes for the default "rgba8", `* 1` for "r8"; it may hold
+ * several frames). Like `createTexture`, the texture is freed automatically
+ * when the reactive owner is disposed (opt out with `{ manual: true }`);
+ * created outside a reactive scope you must call `destroyTexture` (from
+ * flux:gpu) yourself.
  */
 export function createMutableTexture(
   data: Uint8Array,
   width: number,
   height: number,
-  opts?: CreateOptions & SamplerOptions,
+  opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
   let id = gpu.createMutableTexture(data, width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))

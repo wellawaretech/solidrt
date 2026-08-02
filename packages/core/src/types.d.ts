@@ -157,7 +157,12 @@ export type Pct = { readonly __unit: "pct"; v: number }
 // One axis of the transform origin (the point rotate/scale/3D pivot around),
 // split per axis to match the engine's x/y prop convention. A bare number is
 // pixels; `pct(50)` is a fraction of the box, so a percentage origin tracks the
-// layout size with no reactive wiring. Unset defaults to the axis center.
+// layout size with no reactive wiring. Unset defaults to the axis center on a
+// laid-out view; on a d-view (no box of its own) it defaults to the view's
+// local (0,0) - the origin its children's coordinates are authored against, so
+// the pivot never depends on the inherited box. To pivot a d-view around its
+// content's center, set the origin explicitly in pixels; pct()/keywords on a
+// d-view resolve against the inherited box, which is rarely what you want.
 type OriginX = number | Pct | "left" | "center" | "right"
 type OriginY = number | Pct | "top" | "center" | "bottom"
 

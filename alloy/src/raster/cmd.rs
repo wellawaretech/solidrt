@@ -10,7 +10,7 @@ use crate::gpu::{
   DrawRange, GpuLimits, GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable,
   WindowShader,
 };
-use crate::texture::SamplerState;
+use crate::texture::{SamplerState, TextureFormat};
 
 pub(crate) enum RasterCmd {
   /// Draw and present (interactive) or read back (playback) a frame. In
@@ -27,14 +27,16 @@ pub(crate) enum RasterCmd {
   /// return-to-visible, ahead of the resume repaint's Frame on this ordered
   /// channel.
   RebindWindowSurface,
-  /// Create (or replace, same id) a sampleable RGBA8 texture and adopt it
-  /// into Impeller. Replies with the adopted handle for UI-side registration.
+  /// Create (or replace, same id) a sampleable pixel texture (RGBA8 or R8)
+  /// and adopt it into Impeller. Replies with the adopted handle for UI-side
+  /// registration.
   CreateTexture {
     id: u64,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
     sampler: SamplerState,
+    format: TextureFormat,
     /// Debug label; None on a replace-at-id (an id-stable resize) keeps the
     /// existing entry's label.
     label: Option<String>,

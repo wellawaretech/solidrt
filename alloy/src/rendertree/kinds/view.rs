@@ -55,8 +55,11 @@ pub struct View {
   // center is restored so it shifts in screen space. Not the layout position.
   pub translate: Option<Vector>,
   // Transform origin, one independent field per axis (CSS `transform-origin`).
-  // None on an axis falls back to that axis's box center. See OriginCoord for
-  // the Px/Fraction split.
+  // None on an axis falls back to that axis's box center - except on a
+  // detached view, which has no box: there the unset origin is the view's
+  // local (0,0), the point all detached geometry is authored against (an
+  // inherited-box center would move the pivot with the window size). See
+  // OriginCoord for the Px/Fraction split.
   pub origin_x: Option<OriginCoord>,
   pub origin_y: Option<OriginCoord>,
   // Scroll offset applied to children at build time, after the clip is set.
@@ -76,6 +79,11 @@ pub struct View {
   // sizes the element - composed innermost, so the user transform props still
   // operate in box space.
   pub view_box: Option<Size>,
+  // True for a d-view (set by `Element::no_layout`): switches the unset-origin
+  // fallback in `resolve_center` from box center to local (0,0). The size an
+  // origin resolves against is the INHERITED box for a detached view, whose
+  // center is window-size-dependent - never a sane default pivot.
+  pub(crate) detached: bool,
   // Memoized transform; invalidated by the setters when a transform prop
   // changes, and recomputed by `transform` when the layout size differs.
   cache: Cell<Option<TransformCache>>,
@@ -87,8 +95,12 @@ impl View {
   }
 
   pub(crate) fn resolve_center(&self, size: Size) -> Point {
-    let x = self.origin_x.map_or(size.width / 2.0, |c| c.resolve(size.width));
-    let y = self.origin_y.map_or(size.height / 2.0, |c| c.resolve(size.height));
+    // An explicit origin always resolves against `size` (the layout box, or
+    // the inherited box for a detached view - so pct() origins on a d-view
+    // still track that box, documented). Only the unset default differs.
+    let (fx, fy) = if self.detached { (0.0, 0.0) } else { (size.width / 2.0, size.height / 2.0) };
+    let x = self.origin_x.map_or(fx, |c| c.resolve(size.width));
+    let y = self.origin_y.map_or(fy, |c| c.resolve(size.height));
     Point::new(x, y)
   }
 

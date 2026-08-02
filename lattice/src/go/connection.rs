@@ -906,7 +906,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     .textures
     .iter()
     .map(|t| {
-      let mut obj = serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target});
+      let mut obj = serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target, "format": t.format});
       insert_label(&mut obj, &t.label);
       obj
     })

@@ -276,7 +276,13 @@ impl Element {
     }
   }
 
-  pub fn no_layout(kind: ElementKind) -> Self {
+  pub fn no_layout(mut kind: ElementKind) -> Self {
+    // A detached view has no box of its own, so its unset transform origin
+    // pivots at its local (0,0) instead of a box center (see
+    // `View::resolve_center`). Set here so every construction path agrees.
+    if let ElementKind::View(v) = &mut kind {
+      v.detached = true;
+    }
     Self {
       kind,
       children: vec![],

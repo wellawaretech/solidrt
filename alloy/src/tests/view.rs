@@ -1,10 +1,47 @@
-use crate::rendertree::{OriginCoord, Size, View};
+use crate::rendertree::{Element, ElementKind, OriginCoord, Size, View};
 
 #[test]
 fn origin_defaults_to_center() {
   let v = View::default();
   let c = v.resolve_center(Size::new(200.0, 100.0));
   assert_eq!((c.x, c.y), (100.0, 50.0));
+}
+
+#[test]
+fn detached_origin_defaults_to_local_origin() {
+  // Built the way the plugin builds one, so the flag rides the real path. The
+  // size passed here is the INHERITED box (a d-view has none of its own); it
+  // must not supply a center pivot.
+  let el = Element::from_kind("d-view");
+  let ElementKind::View(v) = &el.kind else { panic!("d-view must be a View") };
+  let c = v.resolve_center(Size::new(200.0, 100.0));
+  assert_eq!((c.x, c.y), (0.0, 0.0));
+}
+
+#[test]
+fn detached_scale_pivots_at_local_origin() {
+  // The probe that motivated the default: scale on a d-view leaves content
+  // authored at (0,0) in place instead of pulling it toward the inherited
+  // box's center.
+  let mut el = Element::from_kind("d-view");
+  let ElementKind::View(v) = &mut el.kind else { panic!("d-view must be a View") };
+  v.set_scale_x(0.5);
+  v.set_scale_y(0.5);
+  let m = v.paint_matrix(Size::new(1692.0, 1128.0));
+  assert_eq!(map(&m, 0.0, 0.0), (0.0, 0.0));
+  assert_eq!(map(&m, 200.0, 100.0), (100.0, 50.0));
+}
+
+#[test]
+fn detached_explicit_origin_still_resolves_against_inherited_size() {
+  // Only the unset default changes: an explicit origin keeps its documented
+  // meaning, fractions resolving against the box the view inherits.
+  let mut el = Element::from_kind("d-view");
+  let ElementKind::View(v) = &mut el.kind else { panic!("d-view must be a View") };
+  v.set_origin_x(OriginCoord::Fraction(0.5));
+  v.set_origin_y(OriginCoord::Px(30.0));
+  let c = v.resolve_center(Size::new(200.0, 100.0));
+  assert_eq!((c.x, c.y), (100.0, 30.0));
 }
 
 #[test]

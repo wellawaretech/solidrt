@@ -38,7 +38,7 @@ use crate::gpu::{
   GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram,
   ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
-use crate::texture::{GpuTexture, SamplerCache, SamplerState};
+use crate::texture::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 
 /// Counters shared between the raster thread, the frame loop, and the UI
 /// thread's Context, one allocation for all of them. Diagnostics (get_stats)
@@ -412,8 +412,8 @@ impl RasterState {
               self.present_failures = 0;
             }
           }
-          RasterCmd::CreateTexture { id, width, height, pixels, sampler, label, reply: tx } => {
-            reply(tx, self.create_texture(id, width, height, &pixels, sampler, label));
+          RasterCmd::CreateTexture { id, width, height, pixels, sampler, format, label, reply: tx } => {
+            reply(tx, self.create_texture(id, width, height, &pixels, sampler, format, label));
           }
           RasterCmd::UpdateTexture { id, pixels } => {
             if let Err(e) = self.update_texture(id, &pixels) {
@@ -965,10 +965,11 @@ impl RasterState {
     height: u32,
     pixels: &[u8],
     sampler: SamplerState,
+    format: TextureFormat,
     label: Option<String>,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let mut gpu = GpuTexture::new(&self.gl, self.backend, size, sampler);
+    let mut gpu = GpuTexture::new(&self.gl, self.backend, size, sampler, format);
     // A replace-at-id with no new label is an id-stable resize: labels are
     // create-time state and follow the id through it.
     gpu.label = label.or_else(|| self.textures.get(&id).and_then(|old| old.label.clone()));
@@ -1053,6 +1054,7 @@ impl RasterState {
       width,
       height,
       sampler: shader.sampler(),
+      format: TextureFormat::Rgba8,
       // The id-stable resize keeps the create's label, like create_texture's
       // replace-at-id path.
       label: self.textures.get(&id).and_then(|old| old.label.clone()),
@@ -1084,9 +1086,14 @@ impl RasterState {
 
   fn update_texture(&mut self, id: u64, pixels: &[u8]) -> Result<(), String> {
     let gpu = self.textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
-    let expected = (gpu.width as usize) * (gpu.height as usize) * 4;
+    let expected = (gpu.width as usize) * (gpu.height as usize) * gpu.format.bytes_per_pixel();
     if pixels.len() != expected {
-      return Err(format!("texture {} update is {} bytes, expected {expected}", describe(id, &gpu.label), pixels.len()));
+      return Err(format!(
+        "texture {} update is {} bytes, expected {expected} ({})",
+        describe(id, &gpu.label),
+        pixels.len(),
+        gpu.format.name()
+      ));
     }
     let size = ISize::new(gpu.width as i64, gpu.height as i64);
     gpu.upload(&self.gl, pixels, size);
@@ -1240,6 +1247,7 @@ impl RasterState {
       width,
       height,
       sampler: shader.sampler(),
+      format: TextureFormat::Rgba8,
       label,
     };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
@@ -1321,6 +1329,7 @@ impl RasterState {
         width: gpu.width,
         height: gpu.height,
         target: self.shaders.contains_key(id),
+        format: gpu.format.name(),
         label: gpu.label.clone(),
       })
       .collect();

@@ -10,11 +10,6 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
-- [Detached-view transform origin pivots around the inherited box](detached-view-transform-origin.md) [open] -
-  With the origin unset, scale/rotate on a d-view pivots around the centre
-  of the inherited layout box, so the same code lands elsewhere on a
-  differently sized window - a silent correctness bug; default the origin to
-  the view's own drawn bounds, or document the rule.
 - [flux:audio live voice control](flux-audio-voice-control.md) [open] - A
   playing SoundHandle is stop-only: no pan anywhere, gain fixed at play()
   time, no ended signal, encoded input only - a 2D game port could not
@@ -30,11 +25,6 @@ Sorted by status: open first, then partial, deferred, and closed
   cross onto the raster thread; begin/endTextureUpload over raster-owned
   staging buffers is the only honestly zero-copy shape - matters when
   video/camera frames arrive.
-- [R8 / indexed uploadTexture format](texture-upload-r8-format.md) [open] -
-  Palette-indexed content must pack four indices per RGBA texel, free only
-  when the width divides by four; an R8 format makes the authentic path the
-  cheap path for every emulator/retro port - measured 2.45x on a whole game
-  tick.
 - [Owner-scoped registerDebug](owner-scoped-register-debug.md) [open] -
   Reload-reset registrations force any state a debug command touches up to
   module scope; an owner-scoped variant auto-cleaned like onFrame lets it
@@ -287,6 +277,20 @@ Sorted by status: open first, then partial, deferred, and closed
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to
   okf/plans/component-gestures.md, this file is a pointer.
+- [Detached-view transform origin pivots around the inherited box](detached-view-transform-origin.md) [done] -
+  A d-view's unset transform origin pivoted around the centre of the
+  inherited layout box, so the same code landed elsewhere on a differently
+  sized window; fixed 2026-08-03 - the unset origin on a detached view now
+  defaults to its local (0,0), the anchor every other detached construct
+  uses (drawn-bounds-centre rejected: new machinery plus a pivot that
+  drifts with animating content). Explicit origins unchanged.
+- [R8 / indexed uploadTexture format](texture-upload-r8-format.md) [done] -
+  Palette-indexed content had to pack four indices per RGBA texel, free
+  only when the width divides by four; shipped 2026-08-03 as
+  `format: "r8"` on createTexture/createMutableTexture - 1 byte/pixel,
+  alignment-free at any width, format is id state sizing every later
+  upload/resize. Measured 2.45x on a whole game tick in the port that
+  asked.
 - [App-registered debug commands via MCP](mcp-debug-commands.md) [done] - The
   srt:dev registerDebug plus MCP list_debug/call_debug, replacing the
   debug-keys and get_logs pattern for poking a running app; async commands

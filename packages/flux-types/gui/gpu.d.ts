@@ -117,6 +117,20 @@ declare module "flux:gpu" {
    */
   export type LabelOption = { label?: string }
   /**
+   * Pixel format of an uploaded texture, declared at creation and fixed for
+   * the id's lifetime (like the sampler state). "rgba8" (default) is 4 bytes
+   * per pixel. "r8" is the single-channel format - 1 byte per pixel - for
+   * palette-indexed or grayscale content: upload raw indices and look the
+   * color up in the shader, so palette effects are a palette-texture write
+   * instead of touching every pixel. Any width works (no 4-byte row padding;
+   * the engine uploads r8 at unpack alignment 1). A shader samples an r8
+   * texture as `(v, 0, 0, 1)` - read `.r`; displaying one via `<texture src>`
+   * shows that same red-channel reading. Shader/pipeline targets and
+   * readbacks stay RGBA8.
+   */
+  export type TextureFormat = "rgba8" | "r8"
+  export type TextureFormatOption = { format?: TextureFormat }
+  /**
    * This device's hard ceilings, queried once at startup: process constants.
    * Every create and bind validates against them at the call site, so an
    * oversize target throws naming the limit instead of failing later as a
@@ -138,19 +152,22 @@ declare module "flux:gpu" {
     maxVertexAttribs: number
   }
   /**
-   * Create an immutable texture from an RGBA8 pixel buffer (exactly
-   * width*height*4 bytes). Returns the texture id.
+   * Create an immutable texture from a pixel buffer (exactly
+   * width*height*bytesPerPixel bytes: *4 for the default "rgba8" format, *1
+   * for "r8"). Returns the texture id.
    */
-  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & LabelOption): TextureId
+  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
-   * seed buffer must hold at least one frame (width*height*4 bytes) and may hold
-   * more (uploadTexture selects a frame by offset).
+   * seed buffer must hold at least one frame (width*height bytes at the
+   * declared format's pixel size) and may hold more (uploadTexture selects a
+   * frame by offset).
    */
-  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & LabelOption): TextureId
+  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
-   * Replace a mutable texture's pixels. `data` may hold several frames; `offset`
-   * (default 0) selects which frame to upload.
+   * Replace a mutable texture's pixels; the frame size follows the format the
+   * id was created with. `data` may hold several frames; `offset` (default 0)
+   * selects which frame to upload.
    */
   export function uploadTexture(id: TextureId, data: Uint8Array, offset?: number): void
   /**
@@ -158,8 +175,9 @@ declare module "flux:gpu" {
    * resize): `<texture src>` references and shader sampler bindings keep
    * working, and shaders sampling the texture re-render. `data` seeds the new
    * contents and, like {@link createMutableTexture}, must hold at least one
-   * width*height*4 frame. Shader/pipeline target ids are rejected - resize
-   * those with {@link setShaderSize}.
+   * frame at the id's format (which survives the resize, like the sampler
+   * state). Shader/pipeline target ids are rejected - resize those with
+   * {@link setShaderSize}.
    */
   export function resizeTexture(id: TextureId, data: Uint8Array, width: number, height: number): void
   /**

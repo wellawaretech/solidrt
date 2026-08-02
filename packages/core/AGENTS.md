@@ -129,6 +129,13 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   directly-positioned, often-animating elements (e.g. hundreds of balls), `d-`
   skips the per-element layout that plain elements would incur.
 
+- Transform origin on a `d-view`: with `originX`/`originY` unset, scale/rotate
+  pivot at the view's local (0,0) - the origin its children's coordinates are
+  authored against - not at a box center (a laid-out view pivots at its own
+  box center; a d-view has no box). To scale a detached group around its
+  content's center, set the origin explicitly in pixels, e.g.
+  `originX={100} originY={50}` for content drawn in a 200x100 local space.
+
 - Layout-affecting vs not (this matters for per-frame work). Props fall in three
   buckets, split by where they take effect:
   - `LayoutProps` - width/height, min/max sizes, margin, padding, `position` and

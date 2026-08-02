@@ -128,7 +128,15 @@ Authoritative references ship inside the installed packages - read them:
     effect's apply phase, or `onSettled`; opt in narrowly with
     `createSignal(v, { ownedWrite: true })` for a signal that genuinely is
     internal state.
-19. Cover/contain images: give `Image` a `fit` prop ("fill" | "cover" |
+19. Transform origin on a `d-view`: unset `originX`/`originY` pivots
+    scale/rotate at the view's local (0,0), the point its children's
+    coordinates are drawn against (a laid-out view pivots at its own box
+    center; a d-view has no box). To pivot a detached group around its
+    content's center, set the origin explicitly in pixels
+    (`originX={100} originY={50}` for content drawn in a 200x100 local
+    space). Avoid pct()/keyword origins on a d-view - they resolve against
+    the box inherited from the nearest laid-out ancestor.
+20. Cover/contain images: give `Image` a `fit` prop ("fill" | "cover" |
     "contain" | "none" | "scale-down", CSS object-fit semantics, centered)
     plus a box via `layout` in any form - numbers, pct(), flex. Without
     `fit`, only NUMERIC layout sizes reach the image; `width: pct(100)`
