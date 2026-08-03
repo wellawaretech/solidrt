@@ -447,6 +447,67 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * axis-aligned rects look identical, so prefer it for plain UI panels.
    */
   repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
+  /**
+   * Run this view's rasterized subtree through a GPU program and composite
+   * the result in its place. Requires repaintBoundary="snapshot" (the cost
+   * is snapshot semantics, kept explicit; declared without it the shader is
+   * ignored with a warning). The pass is region-sized and split from content
+   * invalidation: a params-only change re-runs just the pass against the
+   * cached snapshot, so animating an effect over a static subtree never
+   * re-rasterizes it.
+   *
+   * The effect samples only the subtree's own pixels - grading, warping or
+   * dissolving the panel works; anything needing what is behind it does not.
+   * Sampling outside the content clamps to the edge, and the output is
+   * cropped to the layout box like any snapshot. Hit-testing stays on layout
+   * geometry: a distortion moves pixels, not hit targets. The view's own
+   * transform and opacity apply after the effect, so the program sees
+   * unrotated, opaque content.
+   */
+  shader?: ViewShaderProps | null
+}
+
+/**
+ * A boundary shader declaration. The program contract matches shader targets,
+ * not the window pass: the subtree's rasterization binds as
+ * `uniform sampler2D uSource` (top-left origin, like every sampled texture)
+ * and the pass draws the covering triangle attributeless. `iResolution`,
+ * filled by name, is the boundary in physical pixels.
+ */
+export interface ViewShaderProps {
+  /** Linked program handle from linkProgram. */
+  program: ProgramId
+  /**
+   * Uniforms filled by name, paced to the next real repaint. A number drives
+   * a scalar (`float`/`int`); a flat number array drives the declared GLSL
+   * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
+   */
+  params?: Record<string, number | number[]>
+  /** Extra sampler2D inputs: uniform name to texture id. */
+  textures?: Record<string, TextureId>
+  /**
+   * Transparent margin in logical px on every side of the layout box, for
+   * the effect to write into - glow, drop shadow, blur that bleeds past the
+   * edge. Grows the rasterized canvas and the composited quad; the subtree's
+   * own paint stays clipped to the layout box either way. The pass sees only
+   * the bigger iResolution - declare an app uniform if the program needs the
+   * margin size. Default 0.
+   */
+  outset?: number
+  /**
+   * Retain the prior rasterization of the subtree as
+   * `uniform sampler2D uPrevious`. Source history, not output history: it
+   * rotates when the content actually re-rasterizes, not per frame - on a
+   * content change uPrevious holds exactly the old look (transition
+   * material: cross-dissolve old into new), while for a static subtree with
+   * animated params uPrevious equals uSource. Feedback/accumulation is not
+   * this; that stays with manual targets. Costs one extra canvas-sized
+   * texture while declared; transparent until the first rotation, and reset
+   * to transparent by a size or scale change. Only declare the uPrevious
+   * uniform together with this flag - without it the uniform stays at unit 0
+   * and aliases uSource. Default false.
+   */
+  previous?: boolean
 }
 
 export interface ViewProps extends ViewOwnProps, LayoutProps {}

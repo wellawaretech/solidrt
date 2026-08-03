@@ -78,3 +78,37 @@ pub struct WindowShader {
   /// shaded frame.
   pub previous: bool,
 }
+
+/// A shader declared on a snapshot repaint boundary: one fullscreen pass of a
+/// linked program over the boundary's rasterized subtree, composited in its
+/// place (see `rendertree::composite::snapshot_node`). The rasterization
+/// binds as `uniform sampler2D uSource` (top-left origin, like every sampled
+/// texture); `iResolution` is the boundary in physical pixels. The program
+/// contract matches shader targets, not the window pass: offscreen in,
+/// offscreen out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NodeShader {
+  /// Registered program handle (see `link_shader_program`).
+  pub program: u64,
+  /// Float uniforms filled by name.
+  pub params: Vec<(String, ParamValue)>,
+  /// Extra sampler2D inputs: uniform name -> texture registry id.
+  pub textures: Vec<(String, u64)>,
+  /// Transparent margin in logical px on every side of the layout box, for
+  /// the effect to write into (glow, shadow, bleeding blur). Composite-side
+  /// geometry only: it grows the rasterized canvas and the composited quad,
+  /// while the subtree's own paint stays clipped to the layout box; the pass
+  /// itself never reads it (declare an app uniform to know the margin in the
+  /// program).
+  pub outset: f32,
+  /// Retain the prior rasterization of the subtree, exposed to the program
+  /// as `uniform sampler2D uPrevious`. Source history, not output history:
+  /// it rotates when the content actually re-rasterizes, not per frame - so
+  /// for a static subtree with animated params uPrevious equals uSource,
+  /// and on a content change it holds exactly the old look (transition
+  /// material: cross-dissolve old into new). Feedback/accumulation is not
+  /// this; that stays with manual targets. Costs one extra canvas-sized
+  /// texture while declared; transparent until the first rotation, and
+  /// reset to transparent by a canvas resize.
+  pub previous: bool,
+}

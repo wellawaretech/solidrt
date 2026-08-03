@@ -177,6 +177,16 @@ pub(super) fn decode_params(value: &PropValue) -> Vec<(String, alloy::ParamValue
     .unwrap_or_default()
 }
 
+// { name: textureId } sampler bindings for a shader declaration, mapping
+// sampler2D uniform names to texture registry ids. Non-numeric entries are
+// skipped.
+pub(super) fn decode_texture_bindings(value: &PropValue) -> Vec<(String, u64)> {
+  value
+    .as_map()
+    .map(|entries| entries.iter().filter_map(|(k, t)| t.as_f64().map(|n| (k.clone(), n as u64))).collect())
+    .unwrap_or_default()
+}
+
 // JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
 pub(super) fn decode_color(value: &PropValue) -> Color {
   let rgba = value.as_f64().expect("color must be a number") as u32;

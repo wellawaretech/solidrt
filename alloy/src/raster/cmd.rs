@@ -7,8 +7,8 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  DrawRange, GpuLimits, GpuResources, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable,
-  WindowShader,
+  DrawRange, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec,
+  UniformTable, WindowShader,
 };
 use crate::texture::{SamplerState, TextureFormat};
 
@@ -142,12 +142,14 @@ pub(crate) enum RasterCmd {
   /// Free a vertex buffer.
   DestroyBuffer { id: u64 },
   /// Rasterize a display list into a new adopted texture (snapshot repaint
-  /// boundaries). The handle goes back to the UI thread, which draws it.
-  /// `aa: false` skips the multisampled rig (a "snapshot-no-aa" boundary).
+  /// boundaries). Storage is exactly `width` x `height`. The handle goes
+  /// back to the UI thread, which draws it. `aa: false` skips the
+  /// multisampled rig (a "snapshot-no-aa" boundary).
   RasterizeDl { dl: DisplayList, width: u32, height: u32, aa: bool, reply: mpsc::Sender<Result<Texture, String>> },
   /// Re-rasterize into an existing adopted texture, reusing its storage
-  /// (snapshot boundary whose retained allocation still fits). The texture's
-  /// aligned backing must fit `width` x `height`; the UI thread checks this.
+  /// (snapshot boundary at unchanged dimensions). The texture's backing must
+  /// be exactly `width` x `height`; the UI thread only reuses at an exact
+  /// match.
   RasterizeDlInto {
     dl: DisplayList,
     texture: Texture,
@@ -156,8 +158,41 @@ pub(crate) enum RasterCmd {
     aa: bool,
     reply: mpsc::Sender<Result<(), String>>,
   },
+  /// Rasterize a shaded snapshot boundary and run its node shader pass in
+  /// one trip: the display list renders into the source texture, then
+  /// `shader.program` draws one fullscreen pass over it into the output,
+  /// which the boundary composites in place of the raw snapshot. With
+  /// `shader.previous`, `history` binds as `uPrevious` (created transparent
+  /// when None). Some(texture) reuses storage (the UI side guarantees an
+  /// exact dimension match); None allocates and adopts. Replies with every
+  /// handle for the boundary's paint cache - the UI side owns the
+  /// source/history role rotation across calls.
+  RasterizeDlShaded {
+    dl: DisplayList,
+    width: u32,
+    height: u32,
+    aa: bool,
+    shader: NodeShader,
+    source: Option<Texture>,
+    output: Option<Texture>,
+    history: Option<Texture>,
+    reply: mpsc::Sender<Result<(Texture, Texture, Option<Texture>), String>>,
+  },
+  /// Re-run a node shader pass in place over an existing source/output pair
+  /// (plus the history binding while `previous` is declared): the
+  /// declaration changed while the boundary's content stayed valid.
+  /// Fire-and-forget on this ordered channel, so the refreshed pixels land
+  /// ahead of the frame that composites `output`.
+  RerunNodeShader {
+    shader: NodeShader,
+    source: Texture,
+    output: Texture,
+    history: Option<Texture>,
+    width: u32,
+    height: u32,
+  },
   /// Rasterize + read back `width` x `height` pixels in one trip (node
-  /// captures). The intermediate padded texture never crosses threads.
+  /// captures). The intermediate texture never crosses threads.
   RasterizeReadback { dl: DisplayList, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },
   /// Read back a texture's RGBA8 pixels by handle.
   ReadTexture { texture: Texture, width: u32, height: u32, reply: mpsc::Sender<Result<Vec<u8>, String>> },

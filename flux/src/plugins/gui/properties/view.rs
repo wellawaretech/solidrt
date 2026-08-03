@@ -1,8 +1,9 @@
-use super::{as_pct_fraction, decode_radius, f32_of};
+use super::{as_pct_fraction, decode_params, decode_radius, decode_texture_bindings, f32_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::OriginCoord;
 use alloy::rendertree::View;
+use alloy::NodeShader;
 
 pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
   Some(match name {
@@ -32,8 +33,30 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Option<Damage> {
       assert!(list.len() == 2, "viewBox must have exactly [w, h]");
       view.set_view_box(f32_of(&list[0], "viewBox w"), f32_of(&list[1], "viewBox h"))
     }
+    "shader" => view.set_shader(decode_shader(value)),
     _ => return None,
   })
+}
+
+// { program, params?, textures?, outset?, previous? }; null clears. The
+// window shader's shapes (params like the texture element's, textures
+// mapping sampler uniform names to texture ids); outset is a non-negative
+// logical-px margin; previous defaults to false. Applied only with
+// repaintBoundary="snapshot"; the rendertree warns otherwise.
+fn decode_shader(value: &PropValue) -> Option<NodeShader> {
+  if value.is_null() {
+    return None;
+  }
+  let program = value
+    .get("program")
+    .and_then(|v| v.as_f64())
+    .expect("shader.program must be a program handle (number)") as u64;
+  let params = value.get("params").map(decode_params).unwrap_or_default();
+  let textures = value.get("textures").map(decode_texture_bindings).unwrap_or_default();
+  let outset = value.get("outset").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+  assert!(outset >= 0.0 && outset.is_finite(), "shader.outset must be a non-negative number");
+  let previous = value.get("previous").and_then(|v| v.as_bool()).unwrap_or(false);
+  Some(NodeShader { program, params, textures, outset, previous })
 }
 
 // One axis of the transform origin (originX / originY): a pixel number, a

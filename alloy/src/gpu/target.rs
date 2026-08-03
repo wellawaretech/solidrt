@@ -128,19 +128,21 @@ fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::T
   }
 }
 
-/// Create the retained window-layer target: an exactly window-sized RGBA8
-/// texture + FBO the frame resolves into while a window shader is active.
-/// Exactly window-sized on purpose - the shader samples it with 0..1
-/// coordinates, so aligned padding would leak into the sampling contract.
-/// Completeness-checked here (unlike shader targets, nothing later would
-/// catch it); restores the FBO binding it touches. The new layer starts
-/// opaque black (the pass's clear color): a history layer (`uPrevious`) is
-/// sampled one frame before anything resolves into it, and undefined storage
-/// must not reach a program.
+/// Create a retained layer target: an exactly-sized RGBA8 texture + FBO
+/// (the window-shader layer, a boundary shader's output or history). Exact
+/// on purpose - shaders sample it with 0..1 coordinates, so padding would
+/// leak into the sampling contract. Completeness-checked here (unlike shader
+/// targets, nothing later would catch it); restores the FBO binding it
+/// touches. The new layer starts cleared to `clear`: a history layer
+/// (`uPrevious`) is sampled before anything renders into it, and undefined
+/// storage must not reach a program - the window path clears opaque black
+/// (its frames are opaque), boundary layers clear transparent (a snapshot's
+/// empty regions are).
 pub fn create_layer_target(
   gl: &glow::Context,
   width: u32,
   height: u32,
+  clear: [f32; 4],
 ) -> Result<(glow::Texture, glow::Framebuffer), String> {
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
@@ -149,7 +151,7 @@ pub fn create_layer_target(
       if status != glow::FRAMEBUFFER_COMPLETE {
         gl.delete_framebuffer(fbo);
         gl.delete_texture(target);
-        return Err(format!("window layer framebuffer incomplete: {status:#x}"));
+        return Err(format!("layer framebuffer incomplete: {status:#x}"));
       }
       // The FBO is still bound from create_target. Scissor, color mask, and
       // clear color are Impeller-cached state on this shared context: force
@@ -161,7 +163,7 @@ pub fn create_layer_target(
       gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
       gl.disable(glow::SCISSOR_TEST);
       gl.color_mask(true, true, true, true);
-      gl.clear_color(0.0, 0.0, 0.0, 1.0);
+      gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
       gl.clear(glow::COLOR_BUFFER_BIT);
       gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
       gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
@@ -699,7 +701,7 @@ impl ShaderTexture {
   /// pixel: the copyTexture write. A sampling draw, never a blit (see
   /// `gl::draw_and_resolve` for why blits are not an option on this stack).
   pub fn overwrite_with(&self, gl: &glow::Context, program: &ShaderProgram, textures: &[PassInput]) {
-    super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, textures);
+    super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, &[], textures);
   }
 
   /// Clear the target to its clear color (and its depth buffer, when

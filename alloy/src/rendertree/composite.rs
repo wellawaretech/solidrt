@@ -7,6 +7,7 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
+  ShadedCache, SnapshotCache,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -266,6 +267,16 @@ fn build_recursive<'a>(
   }
 
   let element = scene.node(node_id);
+  // A view's boundary shader requires repaintBoundary="snapshot": the prop's
+  // real cost is snapshot semantics, kept explicit rather than implied. Warn
+  // once per declaration write (the dirty flag), not per frame.
+  if !matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
+    if let ElementKind::View(v) = &element.kind {
+      if v.shader.is_some() && v.take_shader_dirty() {
+        log::warn!("node {node_id} declares a shader without repaintBoundary=\"snapshot\"; not applied");
+      }
+    }
+  }
   match element.repaint_boundary {
     BoundaryMode::None => record_node(scene, node_id, ctx, builder, Hoist::None),
     BoundaryMode::Recording => {
@@ -299,6 +310,8 @@ fn build_recursive<'a>(
 // painting outside the layout box is cropped (unlike a recording boundary);
 // the crop happens in untransformed local space, since the boundary's own
 // transform is hoisted out of the raster and applied to the quad instead.
+// All storage is exact-size. A declared boundary shader adds one pass over
+// the rasterization and composites its output instead (see View::set_shader).
 fn snapshot_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -338,13 +351,184 @@ fn snapshot_node<'a>(
   let src = Rect::new(Point::new(0.0, 0.0), Size::new(width * scale, height * scale));
   let dst = Rect::new(Point::new(0.0, 0.0), Size::new(width, height));
 
+  // The boundary shader (views only) and its pending-write flag, consumed
+  // here whichever branch runs: every shaded branch re-runs the pass, and
+  // the plain path has nothing to re-run.
+  let (shader, shader_dirty) = match &element.kind {
+    ElementKind::View(v) => (v.shader.as_ref(), v.take_shader_dirty()),
+    _ => (None, false),
+  };
+
+  // A withdrawn shader keeps the snapshot: the source texture and its
+  // validity are untouched, only the pass output (and any history) drops.
+  // Except with an outset - that canvas is bigger than the plain box-sized
+  // texture, so the storage cannot be kept.
+  if shader.is_none() {
+    let mut cache = element.paint_cache.borrow_mut();
+    let drop_all = if let Some(PaintCache::Snapshot(snap)) = &mut *cache {
+      snap.shaded.take().is_some_and(|sc| sc.outset > 0.0)
+    } else {
+      false
+    };
+    if drop_all {
+      cache.take();
+    }
+  }
+
+  if let Some(decl) = shader {
+    // The outset grows the canvas symmetrically: content sits at
+    // (outset, outset) clipped to the layout box, the margin is transparent
+    // and belongs to the effect, and the composited quad extends past the
+    // box by the same amount. The pass and all textures work at canvas
+    // size, so src/dst and the pixel dims are re-derived here.
+    let outset = decl.outset.max(0.0);
+    let (canvas_w, canvas_h) = (width + 2.0 * outset, height + 2.0 * outset);
+    let (tex_w, tex_h) = ((canvas_w * scale).ceil() as u32, (canvas_h * scale).ceil() as u32);
+    let src = Rect::new(Point::new(0.0, 0.0), Size::new(canvas_w * scale, canvas_h * scale));
+    let dst = Rect::new(Point::new(-outset, -outset), Size::new(canvas_w, canvas_h));
+
+    // Valid content with matching shader storage: composite the cached
+    // output, re-running the pass in place first when a declaration write
+    // is pending (the params path - the snapshot is not re-rasterized). An
+    // outset change or a `previous` toggle fails the compare instead; both
+    // change what storage must exist.
+    let cached = {
+      let cache = element.paint_cache.borrow();
+      match &*cache {
+        Some(PaintCache::Snapshot(snap)) => match &snap.shaded {
+          Some(sc)
+            if snap.valid
+              && snap.width == width
+              && snap.height == height
+              && snap.scale == scale
+              && sc.outset == outset
+              && sc.history.is_some() == decl.previous =>
+          {
+            Some((snap.texture.clone(), sc.output.clone(), sc.history.clone()))
+          }
+          _ => None,
+        },
+        _ => None,
+      }
+    };
+    if let Some((source, output, history)) = cached {
+      if shader_dirty {
+        if let Err(e) = ctx.alloy.rerun_node_shader(decl, &source, &output, history.as_ref(), tex_w, tex_h) {
+          log::warn!("boundary shader re-run failed for node {node_id}: {e}");
+        }
+      }
+      ctx.snapshots_reused += 1;
+      draw_with_transform(builder, own.as_ref(), |b| {
+        b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+      });
+      return;
+    }
+
+    // Content changed (or the declaration needs different storage): record,
+    // rasterize and run the pass in one trip. Dimension-matched storage is
+    // re-rendered in place; exact storage means only an exact match
+    // qualifies, which the (width, height, scale) + outset equality is.
+    let mut sub = DisplayListBuilder::new(None);
+    sub.scale(scale, scale);
+    if outset > 0.0 {
+      sub.translate(outset, outset);
+      // Without an outset the box crop is the texture viewport itself; with
+      // a margin the crop must be explicit, or overflowing content would
+      // paint into the effect's transparent margin.
+      sub.clip_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(width, height)), ClipOperation::Intersect);
+    }
+    record_node(scene, node_id, ctx, &mut sub, hoist);
+    let Some(dl) = sub.build() else { return };
+
+    // Reusable storage: the source (plain or shaded), plus output and
+    // history when the cache was already shaded. A plain cache's texture
+    // counts as outset 0, so declaring a no-outset shader over an existing
+    // snapshot re-renders its storage instead of reallocating.
+    let retained = {
+      let cache = element.paint_cache.borrow();
+      match &*cache {
+        Some(PaintCache::Snapshot(snap))
+          if snap.width == width
+            && snap.height == height
+            && snap.scale == scale
+            && snap.shaded.as_ref().map_or(0.0, |sc| sc.outset) == outset =>
+        {
+          let output = snap.shaded.as_ref().map(|sc| sc.output.clone());
+          let history = snap.shaded.as_ref().and_then(|sc| sc.history.clone());
+          Some((snap.texture.clone(), output, history))
+        }
+        _ => None,
+      }
+    };
+    // Storage roles for this rasterization. Without `previous` the source
+    // re-renders in place. With it, the roles rotate: render into the old
+    // history's storage (fresh when none) and bind the old source as
+    // uPrevious - the previous rasterization by construction, no copy.
+    let (render_into, history_pass, reuse_output) = match &retained {
+      Some((source, output, history)) => {
+        if decl.previous {
+          (history.clone(), Some(source.clone()), output.clone())
+        } else {
+          (Some(source.clone()), None, output.clone())
+        }
+      }
+      None => (None, None, None),
+    };
+    let result = ctx.alloy.rasterize_shaded(
+      &dl,
+      tex_w,
+      tex_h,
+      aa,
+      decl,
+      render_into.as_ref(),
+      reuse_output.as_ref(),
+      history_pass.as_ref(),
+    );
+    match result {
+      Ok((source, output, history)) => {
+        if retained.is_some() {
+          ctx.snapshots_rerendered += 1;
+        } else {
+          ctx.snapshots_rasterized += 1;
+        }
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+        });
+        *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
+          texture: source,
+          width,
+          height,
+          scale,
+          valid: true,
+          shaded: Some(ShadedCache { output, outset, history }),
+        }));
+      }
+      Err(e) => {
+        // Paint inline (unshaded) this frame and drop the cache, so no
+        // stale storage is offered for in-place reuse on the next damage.
+        // The recording carries its own device-scale transform and content
+        // offset, so counter both before replaying.
+        log::warn!("shaded snapshot failed for node {node_id}: {e}; painting inline unshaded");
+        element.paint_cache.borrow_mut().take();
+        draw_with_transform(builder, own.as_ref(), |b| {
+          b.save();
+          b.translate(-outset, -outset);
+          b.scale(1.0 / scale, 1.0 / scale);
+          b.draw_display_list(&dl, opacity);
+          b.restore();
+        });
+      }
+    }
+    return;
+  }
+
   {
     let cache = element.paint_cache.borrow();
-    if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s, valid }) = &*cache {
-      if *valid && *w == width && *h == height && *s == scale {
+    if let Some(PaintCache::Snapshot(snap)) = &*cache {
+      if snap.valid && snap.width == width && snap.height == height && snap.scale == scale {
         ctx.snapshots_reused += 1;
         draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_texture_rect(texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+          b.draw_texture_rect(&snap.texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
         });
         return;
       }
@@ -356,21 +540,17 @@ fn snapshot_node<'a>(
   record_node(scene, node_id, ctx, &mut sub, hoist);
   let Some(dl) = sub.build() else { return };
 
-  // Stale (or resized) storage whose 64px-aligned backing allocation matches
-  // the new content exactly is re-rendered in place: the offscreen draw
-  // clears and rewrites the full allocation, so no stale pixels survive.
-  // Only an exact allocation match qualifies - rendering smaller content
-  // into larger backing would leave stale pixels past the content edge for
-  // linear sampling to bleed in.
-  let align_up = |px: u32| (px + 63) & !63;
+  // Stale storage at unchanged dimensions is re-rendered in place: the
+  // offscreen draw clears and rewrites the full allocation, so no stale
+  // pixels survive. Exact-size storage means any dimension change
+  // reallocates.
   let retained = {
     let cache = element.paint_cache.borrow();
-    if let Some(PaintCache::Snapshot { texture, width: w, height: h, scale: s, .. }) = &*cache {
-      let (old_w, old_h) = ((*w * *s).ceil() as u32, (*h * *s).ceil() as u32);
-      let fits = align_up(old_w) == align_up(tex_w) && align_up(old_h) == align_up(tex_h);
-      fits.then(|| texture.clone())
-    } else {
-      None
+    match &*cache {
+      Some(PaintCache::Snapshot(snap)) if snap.width == width && snap.height == height && snap.scale == scale => {
+        Some(snap.texture.clone())
+      }
+      _ => None,
     }
   };
   if let Some(texture) = retained {
@@ -381,7 +561,7 @@ fn snapshot_node<'a>(
           b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
         });
         *element.paint_cache.borrow_mut() =
-          Some(PaintCache::Snapshot { texture, width, height, scale, valid: true });
+          Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
         return;
       }
       Err(e) => {
@@ -397,7 +577,8 @@ fn snapshot_node<'a>(
       draw_with_transform(builder, own.as_ref(), |b| {
         b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
       });
-      *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot { texture, width, height, scale, valid: true });
+      *element.paint_cache.borrow_mut() =
+        Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
     }
     Err(e) => {
       // Paint inline this frame; the recording carries its own device-scale

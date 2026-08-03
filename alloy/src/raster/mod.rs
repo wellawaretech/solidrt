@@ -574,14 +574,29 @@ impl RasterState {
             self.flush_dirty();
             reply(tx, self.rasterize_into(&dl, &texture, width, height, aa));
           }
+          RasterCmd::RasterizeDlShaded { dl, width, height, aa, shader, source, output, history, reply: tx } => {
+            self.flush_dirty();
+            reply(tx, self.rasterize_shaded(&dl, width, height, aa, &shader, source, output, history));
+          }
+          RasterCmd::RerunNodeShader { shader, source, output, history, width, height } => {
+            // Observes its declared registry bindings (and the boundary's
+            // retained source), so fresh inputs first - the same
+            // pixel-observer rule as RenderTarget. Fire-and-forget: there is
+            // no JS call site left, so a failure only warns and the boundary
+            // keeps compositing the output's previous pixels.
+            self.flush_dirty();
+            if let Err(e) = self.node_shader_pass(&shader, &source, Some(output), history.as_ref(), width, height) {
+              log::warn!("[alloy] node shader re-run failed: {e}");
+            }
+          }
           RasterCmd::RasterizeReadback { dl, width, height, reply: tx } => {
             self.flush_dirty();
             // Node captures carry no boundary prop, so they stay at full AA.
             let result = self.rasterize(&dl, width, height, true).and_then(|texture| {
               let size = ISize::new(width as i64, height as i64);
               gl::read_texture_pixels(&self.gl, &texture, size)
-              // The intermediate padded texture drops here, on the context
-              // thread; Impeller frees its GL name.
+              // The intermediate texture drops here, on the context thread;
+              // Impeller frees its GL name.
             });
             reply(tx, result);
           }
@@ -775,7 +790,7 @@ impl RasterState {
         // creation clear).
         std::mem::swap(&mut state.layer, &mut state.prev_layer);
         if state.prev_layer.is_none() {
-          let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height)?;
+          let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
           state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
         }
       } else if let Some(old) = state.prev_layer.take() {
@@ -797,7 +812,7 @@ impl RasterState {
             glow::HasContext::delete_texture(&self.gl, old.tex);
           }
         }
-        let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height)?;
+        let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
         state.layer = Some(LayerTarget { tex, fbo, width, height });
       }
       let layer = state.layer.as_ref().expect("layer allocated above");

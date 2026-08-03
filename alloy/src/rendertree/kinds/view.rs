@@ -1,3 +1,4 @@
+use crate::gpu::NodeShader;
 use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
@@ -79,6 +80,15 @@ pub struct View {
   // sizes the element - composed innermost, so the user transform props still
   // operate in box space.
   pub view_box: Option<Size>,
+  // The shader declared on this view's snapshot boundary (see
+  // composite::snapshot_node): one pass over the rasterized subtree,
+  // composited in its place. Runs only with repaintBoundary="snapshot";
+  // composite warns otherwise.
+  pub shader: Option<NodeShader>,
+  // A shader write since the last composite: the pass re-runs even when the
+  // snapshot content is untouched (the params path). Interior-mutable
+  // because the composite walk consumes it through a shared tree reference.
+  shader_dirty: Cell<bool>,
   // True for a d-view (set by `Element::no_layout`): switches the unset-origin
   // fallback in `resolve_center` from box center to local (0,0). The size an
   // origin resolves against is the INHERITED box for a detached view, whose
@@ -276,7 +286,7 @@ impl Hittable for View {
 
 impl View {
   // Matrix props (translate, origin, rotate, scale, 3D) invalidate the memoized
-  // matrix and report Damage::Transform: the View's own cached content stays
+  // matrix and report Damage::Compose: the View's own cached content stays
   // valid because composite applies the current matrix around it. Scroll
   // reports Damage::Scroll: a Recording cache survives (offset applied at
   // composite time), a Snapshot texture cannot (scrolled-out pixels are not
@@ -284,61 +294,61 @@ impl View {
   pub fn set_rotate(&mut self, v: f32) -> Damage {
     self.rotate = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_scale_x(&mut self, v: f32) -> Damage {
     self.scale_x = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_scale_y(&mut self, v: f32) -> Damage {
     self.scale_y = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_rotate_x(&mut self, v: f32) -> Damage {
     self.rotate_x = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_rotate_y(&mut self, v: f32) -> Damage {
     self.rotate_y = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_perspective(&mut self, v: f32) -> Damage {
     self.perspective = Some(v);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_x(&mut self, v: f32) -> Damage {
     self.translate.get_or_insert_with(Vector::default).x = v;
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_y(&mut self, v: f32) -> Damage {
     self.translate.get_or_insert_with(Vector::default).y = v;
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_origin_x(&mut self, x: OriginCoord) -> Damage {
     self.origin_x = Some(x);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_origin_y(&mut self, y: OriginCoord) -> Damage {
     self.origin_y = Some(y);
     self.invalidate();
-    Damage::Transform
+    Damage::Compose
   }
   // Not a matrix prop (the memoized transform stays valid), but the same
   // damage class: both boundary modes apply the current opacity around their
   // cached content at composite time, and for a non-boundary View the baked
-  // save_layer lives in the enclosing boundary's recording, which Transform's
+  // save_layer lives in the enclosing boundary's recording, which Compose's
   // parent-up invalidation clears.
   pub fn set_opacity(&mut self, v: f32) -> Damage {
     self.opacity = Some(v.clamp(0.0, 1.0));
-    Damage::Transform
+    Damage::Compose
   }
   pub fn set_scroll_x(&mut self, v: f32) -> Damage {
     self.scroll.get_or_insert_with(Vector::default).x = v;
@@ -352,6 +362,26 @@ impl View {
     self.clip_radius = Some(radius);
     Damage::Paint
   }
+  /// Declare or clear the boundary shader: composite-time state, hence
+  /// Damage::Compose - the snapshot texture itself stays valid (only the
+  /// pass output changes; composite re-runs the pass off the dirty flag),
+  /// while ancestor recordings hold the old composited quad and must
+  /// repaint. Requires repaintBoundary="snapshot"; enforced with a
+  /// composite-time warning rather than a throw here, because prop
+  /// application order would make a set-time check misfire on elements that
+  /// set `shader` before `repaintBoundary`.
+  pub fn set_shader(&mut self, shader: Option<NodeShader>) -> Damage {
+    self.shader = shader;
+    self.shader_dirty.set(true);
+    Damage::Compose
+  }
+
+  /// Take the pending-shader-write flag; composite consumes it at the paint
+  /// walk (running the pass, or warning when the boundary is missing).
+  pub(crate) fn take_shader_dirty(&self) -> bool {
+    self.shader_dirty.replace(false)
+  }
+
   // Paint, not Transform: the fit is recorded into boundary caches and
   // snapshot textures (unlike the hoisted user chain), so changing it must
   // re-record the content.

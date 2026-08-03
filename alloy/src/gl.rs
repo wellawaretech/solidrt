@@ -338,6 +338,12 @@ fn supports_invalidate(gl: &glow::Context) -> bool {
 /// have been created on it. The texture is later sampled on this same context
 /// (the process has exactly one), so GL program order covers all ordering and
 /// no glFinish or fence is needed.
+///
+/// Storage is exactly `size`: no tile-alignment padding. A historical 64px
+/// round-up (for suspected Android tile-boundary corruption) was removed -
+/// the corruption's real cause was cross-context completion, a bug class the
+/// single-context raster thread ended, and the exactly-window-sized shader
+/// layer had long rendered through this same rig on Android without padding.
 pub fn render_display_list_to_texture(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -347,15 +353,7 @@ pub fn render_display_list_to_texture(
   aa: bool,
 ) -> Result<Texture, String> {
   let (width, height) = (size.width as i32, size.height as i32);
-
-  // Some Android GPUs require render-target dimensions aligned to a tile
-  // boundary; an unaligned offscreen texture/renderbuffer can come back with
-  // corrupted (shifted, channel-scrambled) content. Over-allocate storage to
-  // the next multiple of 64 and render into the unaligned top-left corner
-  // (via the wrap_fbo viewport below), so the content itself stays at
-  // (width, height) but lives in aligned backing storage.
-  let align_up = |v: i32| (v + 63) & !63;
-  let alloc = (align_up(width), align_up(height));
+  let alloc = (width, height);
   let (alloc_width, alloc_height) = alloc;
 
   // The resolve target: a plain single-sample texture that Impeller adopts.
@@ -397,10 +395,10 @@ pub fn render_display_list_to_texture(
 }
 
 /// Re-rasterize a display list into an already-adopted offscreen texture,
-/// reusing its storage. `size` must fit the texture's aligned backing
-/// allocation (the caller checks this; both sides compute it with the same
-/// 64px round-up). The texture's owner is unchanged - Impeller adopted the GL
-/// name when the texture was first created and keeps it.
+/// reusing its storage. The texture's backing must be exactly `size` (the
+/// caller only reuses at an exact dimension match). The texture's owner is
+/// unchanged - Impeller adopted the GL name when the texture was first
+/// created and keeps it.
 pub fn render_display_list_into_texture(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,
@@ -413,8 +411,7 @@ pub fn render_display_list_into_texture(
   let gl_handle = texture.get_opengl_handle();
   let tex =
     glow::NativeTexture(NonZeroU32::new(gl_handle as u32).ok_or_else(|| "texture has no GL handle".to_string())?);
-  let align_up = |v: i32| (v + 63) & !63;
-  let alloc = (align_up(size.width as i32), align_up(size.height as i32));
+  let alloc = (size.width as i32, size.height as i32);
   draw_offscreen_with_fallback(gl, impeller_ctx, rig, dl, tex, size, alloc, aa)
 }
 
@@ -745,9 +742,11 @@ fn draw_and_resolve(
   samples: i32,
 ) -> OffscreenDraw {
   let (width, height) = (size.width as i32, size.height as i32);
-  // Same aligned backing as the offscreen path (Android tilers corrupt
-  // unaligned render targets); content renders into the corner and the blit
-  // reads only the window-sized rect.
+  // The rig's transient storage is 64px-quantized purely as an allocation
+  // granularity: it grows monotonically and coarse steps keep slightly
+  // different raster sizes from each forcing a regrow. Content renders into
+  // the corner and the blit reads only the window-sized rect, so this never
+  // shapes what a consumer sees (resolve targets are exact-size).
   let align_up = |v: i32| (v + 63) & !63;
   let alloc = (align_up(width), align_up(height));
 
@@ -878,6 +877,7 @@ fn draw_and_resolve(
           dst,
           width as u32,
           height as u32,
+          &[],
           &[("uSource".to_string(), ext_color, None)],
         );
       }

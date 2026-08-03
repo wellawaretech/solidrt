@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use alloy::AlloyCommand;
 
-use super::{decode_params, str_of};
+use super::{decode_params, decode_texture_bindings, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Window;
@@ -31,13 +31,7 @@ fn decode_shader(value: &PropValue) -> Option<WindowShader> {
     .and_then(|v| v.as_f64())
     .expect("shader.program must be a program handle (number)") as u64;
   let params = value.get("params").map(decode_params).unwrap_or_default();
-  let textures = value
-    .get("textures")
-    .and_then(|v| {
-      v.as_map()
-        .map(|entries| entries.iter().filter_map(|(k, t)| t.as_f64().map(|n| (k.clone(), n as u64))).collect())
-    })
-    .unwrap_or_default();
+  let textures = value.get("textures").map(decode_texture_bindings).unwrap_or_default();
   let vertex_count = value.get("vertexCount").and_then(|v| v.as_f64()).map(|n| n as i32).unwrap_or(3);
   let previous = value.get("previous").and_then(|v| v.as_bool()).unwrap_or(false);
   Some(WindowShader { program, params, textures, vertex_count, previous })

@@ -68,17 +68,20 @@ pub fn render_program_to_window(
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
 /// framebuffer), no clear: the covering triangle writes every pixel. The
 /// in-tile MSAA resolve consumes its resolved texture through this instead of
-/// a blit (see `gl::draw_and_resolve` for why a blit is not an option there).
+/// a blit (see `gl::draw_and_resolve` for why a blit is not an option there);
+/// node shader passes (shaded snapshot boundaries) run through it with their
+/// declared params.
 pub fn render_program_to_fbo(
   gl: &glow::Context,
   program: &ShaderProgram,
   fbo: Option<glow::Framebuffer>,
   width: u32,
   height: u32,
+  params: &[(String, ParamValue)],
   textures: &[PassInput],
 ) {
   let draw = PassDraw::Fullscreen { vertex_count: 3, clear: None };
-  run_pass(gl, program, fbo, width, height, &[], textures, draw);
+  run_pass(gl, program, fbo, width, height, params, textures, draw);
 }
 
 /// Run one draw of `program` into `fbo` (None = the default framebuffer) at

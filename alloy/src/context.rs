@@ -9,7 +9,7 @@ use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, vertex_stride, DrawRange,
-  DrawUpdate, GpuLimits, GpuResources, ParamValue,
+  DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
   PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -894,9 +894,8 @@ impl Context {
 
   /// Re-rasterize a display list into an existing texture from
   /// `render_display_list_to_texture`, reusing its storage (invalidated
-  /// snapshot boundaries re-render this way instead of reallocating). The
-  /// caller must ensure the texture's 64px-aligned backing allocation fits
-  /// `width` x `height`.
+  /// snapshot boundaries re-render this way instead of reallocating).
+  /// Storage is exact-size, so only reuse at the same `width` x `height`.
   pub fn render_display_list_into_texture(
     &self,
     dl: &DisplayList,
@@ -909,16 +908,88 @@ impl Context {
       .rpc(|reply| RasterCmd::RasterizeDlInto { dl: dl.clone(), texture: texture.clone(), width, height, aa, reply })?
   }
 
-  /// Rasterize a display list into a new *registered* texture cropped to
-  /// exactly `width` x `height`, returning its registry id. The raster thread
-  /// rasterizes and reads back in one trip: `render_display_list_to_texture`
-  /// over-allocates the render target to a 64px tile boundary (an Android
-  /// requirement), but the content sits at the origin, so reading back only
-  /// `width` x `height` yields the tightly-packed content with the padding
-  /// excluded. The re-uploaded texture is therefore unpadded, so
-  /// `read_texture_by_id` (and any `<texture src>` sampling) sees exact
-  /// dimensions with no origin-specific knowledge. The intermediate padded
-  /// texture never leaves the raster thread.
+  /// Rasterize a shaded snapshot boundary's display list and run its node
+  /// shader pass in one trip: the subtree renders into the source texture,
+  /// then `shader.program` draws one fullscreen pass over it into the
+  /// output, which the boundary composites in place of the raw snapshot.
+  /// With `shader.previous`, `history` binds as `uPrevious` (created
+  /// transparent when None) - the caller owns rotating source and history
+  /// roles across calls. Pass Some(handles) to re-render in place; they must
+  /// have been created by this method at the same `width` x `height` (only
+  /// an exact dimension match reuses). Validates like `set_window_shader`:
+  /// known program, params/textures naming active uniforms only (`uSource`,
+  /// `uPrevious` and `iResolution` are runtime-filled).
+  pub fn rasterize_shaded(
+    &self,
+    dl: &DisplayList,
+    width: u32,
+    height: u32,
+    aa: bool,
+    shader: &NodeShader,
+    source: Option<&Texture>,
+    output: Option<&Texture>,
+    history: Option<&Texture>,
+  ) -> Result<(Texture, Texture, Option<Texture>), String> {
+    self.validate_node_shader(shader)?;
+    self.rpc(|reply| RasterCmd::RasterizeDlShaded {
+      dl: dl.clone(),
+      width,
+      height,
+      aa,
+      shader: shader.clone(),
+      source: source.cloned(),
+      output: output.cloned(),
+      history: history.cloned(),
+      reply,
+    })?
+  }
+
+  /// Re-run a node shader pass over an existing source/output pair from
+  /// `rasterize_shaded` (plus the history binding while `previous` is
+  /// declared): the declaration changed (the params path) while the
+  /// boundary's content stayed valid. Fire-and-forget on the ordered raster
+  /// channel, so the refreshed pixels land ahead of the frame that
+  /// composites them; the caller owns requesting that frame.
+  pub fn rerun_node_shader(
+    &self,
+    shader: &NodeShader,
+    source: &Texture,
+    output: &Texture,
+    history: Option<&Texture>,
+    width: u32,
+    height: u32,
+  ) -> Result<(), String> {
+    self.validate_node_shader(shader)?;
+    self.send(RasterCmd::RerunNodeShader {
+      shader: shader.clone(),
+      source: source.clone(),
+      output: output.clone(),
+      history: history.cloned(),
+      width,
+      height,
+    });
+    Ok(())
+  }
+
+  // Call-site validation for a node shader declaration, against the UI-side
+  // mirrors (the same checks as the window shader): unit budget including
+  // the runtime-filled uSource (and uPrevious while declared), a known
+  // program, and params/textures naming its active uniforms only.
+  fn validate_node_shader(&self, shader: &NodeShader) -> Result<(), String> {
+    self.gpu_limits().check_texture_units(1 + usize::from(shader.previous) + shader.textures.len())?;
+    let programs = self.program_uniforms.borrow();
+    let uniforms = programs.get(&shader.program).ok_or_else(|| format!("program {} not found", shader.program))?;
+    validate_params(uniforms, &shader.params)?;
+    validate_texture_bindings(uniforms, &shader.textures)?;
+    Ok(())
+  }
+
+  /// Rasterize a display list into a new *registered* texture of exactly
+  /// `width` x `height`, returning its registry id. The raster thread
+  /// rasterizes and reads back in one trip; the intermediate texture never
+  /// leaves it, and the re-upload lands in the registry like any
+  /// `create_texture`, so `read_texture_by_id` (and any `<texture src>`
+  /// sampling) sees exact dimensions.
   pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
     let pixels = self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })??;
     self.create_texture_from_pixels(width, height, &pixels, SamplerState::default(), TextureFormat::Rgba8, None)

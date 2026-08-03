@@ -9,7 +9,7 @@ pub struct RenderTree {
   nodes: HashMap<u64, Element>,
   pub root: Option<u64>,
   // Content revision: bumped on structural changes and on property writes
-  // whose damage says content changed (apply_damage, Transform and up).
+  // whose damage says content changed (apply_damage, Compose and up).
   // None/Present writes and internal layout writes (node_mut) do not count.
   // Lets a painter detect "tree unchanged since last build" and reuse its
   // display list.
@@ -188,9 +188,9 @@ impl RenderTree {
   }
 
   /// Completes a property write by invalidating what the setter reported (see
-  /// `Damage`). Transform-only writes keep the node's own paint cache - its
-  /// matrix is applied at composite time - and clear from the parent up, since
-  /// ancestor recordings hold the node at its old placement.
+  /// `Damage`). Compose writes keep the node's own paint cache - the state is
+  /// applied at composite time - and clear from the parent up, since ancestor
+  /// recordings hold the node's old composited result.
   pub fn apply_damage(&mut self, node_id: u64, damage: Damage) {
     match damage {
       Damage::None | Damage::Present => return,
@@ -198,13 +198,13 @@ impl RenderTree {
     }
     match damage {
       Damage::None | Damage::Present => {}
-      Damage::Transform => {
+      Damage::Compose => {
         if let Some(parent) = self.try_node(node_id).and_then(|e| e.parent) {
           self.invalidate_paint(parent);
         }
       }
       Damage::Scroll => {
-        // Like Transform on a Recording boundary (its cache holds children
+        // Like Compose on a Recording boundary (its cache holds children
         // only; composite re-applies clip and scroll), like Paint elsewhere
         // (a Snapshot texture lacks scrolled-out pixels; a non-boundary has
         // no cache of its own to keep).
@@ -254,7 +254,7 @@ impl RenderTree {
       };
       let mut cache = element.paint_cache.borrow_mut();
       match &mut *cache {
-        Some(PaintCache::Snapshot { valid, .. }) => *valid = false,
+        Some(PaintCache::Snapshot(snap)) => snap.valid = false,
         _ => {
           cache.take();
         }

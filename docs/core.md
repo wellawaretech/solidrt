@@ -170,7 +170,7 @@ The root element. Maps to a native OS window. Every application must have exactl
 
 ### `<view>`
 
-The primary container element. Supports layout, transform, and pointer event props. Use it to compose and structure the UI.
+The primary container element. Supports layout, transform, and pointer event props. Use it to compose and structure the UI. With `repaintBoundary="snapshot"` it can also run its rendered subtree through a GPU program via the `shader` prop (see [Boundary shader](#boundary-shader)).
 
 ```jsx
 <view width={200} height={100} background="#eee">
@@ -396,6 +396,33 @@ One opt-in layer behavior:
 - `previous` (default false): retains the last frame as a second layer the program samples as `uniform sampler2D uPrevious` - one-frame history (motion echo, frame differencing). Costs one extra window-sized texture while declared. Until a second frame exists `uPrevious` is opaque black. Declare the `uPrevious` uniform only together with this flag - without it the uniform defaults to unit 0 and aliases `uSource`.
 
 Animating only the shader is cheap by design: frames where nothing changed but the shader's `params` skip the whole app pipeline - no layout, no repaint, no re-rasterization - and just re-run the pass over the retained layer. This happens automatically; any real change (tree content, a texture upload, a resize, a program swap) takes the full path again on that frame. Frames with `previous` declared always re-rasterize (the history must track the last frame). `get_gpu_resources` reports the skipped frames as `windowShader.passOnlyFrames`.
+
+### Boundary shader
+
+The `shader` prop on a `<view>` with `repaintBoundary="snapshot"` runs the view's rasterized subtree through a linked program and composites the result in its place - a region-sized effect (grade, warp, dissolve a panel) for the cost of one pass over the boundary's pixels:
+
+```tsx
+<view repaintBoundary="snapshot" shader={{ program: warp, params: { uAmount: amount() } }}>
+  ...
+</view>
+```
+
+The declaration is `{ program, params?, textures?, outset? }`; `null` (or omitting it) restores the plain snapshot. The boundary is required, not implied: a snapshot's semantics are the prop's real cost (retained pixels, crop at the layout box, re-rasterization on size and scale changes), so declaring `shader` without `repaintBoundary="snapshot"` does nothing except warn.
+
+`outset` (logical px, default 0) adds a transparent margin on every side of the layout box for the effect to write into - glow, drop shadow, blur that bleeds past the edge. It grows the rasterized canvas and the composited quad by the margin; the subtree's own paint stays clipped to the layout box either way, so the margin always starts transparent. The pass simply sees the bigger `iResolution` - declare an app uniform (and pass the value through `params`) if the program needs to know where the content region sits. Changing `outset` reallocates the boundary's textures, so drive animations through `params`, not by animating the margin.
+
+`previous` (default false) retains the prior rasterization of the subtree as `uniform sampler2D uPrevious`. It is source history, not output history, and it rotates when the content actually re-rasterizes - not per frame. That makes it transition material: on a content change, `uPrevious` holds exactly the old look and `uSource` the new, and a param can sweep a cross-dissolve between them (`mix(texture(uPrevious, vUV), texture(uSource, vUV), uMix)`). Two consequences of the rotation cadence, both by design: for a static subtree with animated params `uPrevious` equals `uSource` (the previous rasterization *is* the same content), and feedback/accumulation cannot be built from it - self-referential passes stay with `render: "manual"` targets. The history costs one canvas-sized texture while declared, samples transparent until the first rotation, and resets to transparent on a size or scale change. As with the window shader, only declare the `uPrevious` uniform together with the flag - without it the uniform stays at unit 0 and aliases `uSource`.
+
+The program's contract matches shader targets, not the window pass:
+
+- `uniform sampler2D uSource`, filled by name, is the subtree's rasterization - top-left origin like every sampled texture, and a target pass's `vUV` origin already matches, so unlike the window pass there is no flip anywhere (`vUV = p` in the covering-triangle vertex stage).
+- `uniform vec2 iResolution`, filled by name, is the boundary in physical pixels.
+- `params` and `textures` work as on the window shader, validated the same way; as a prop the declaration applies deferred, so a bad name surfaces as a runtime warning.
+- The draw is one covering triangle; sampling outside the content clamps to the edge.
+
+The pass is split from content invalidation: a change inside the subtree re-rasterizes the snapshot and re-runs the pass, while a params-only write re-runs just the pass against the cached snapshot. Animating an effect over a static panel therefore never re-rasterizes it - cheaper than the same panel without a boundary.
+
+Three limits define the feature. The effect samples only the subtree's own pixels: anything that needs what is *behind* the panel (frosted glass over the background) is a different mechanism, not a use of this one. Hit-testing stays on layout geometry: a distortion moves pixels, not hit targets. And the view's own transform and group opacity apply to the composited result, so the program sees unrotated, opaque content - the property that makes the snapshot a good effect source.
 
 ---
 
