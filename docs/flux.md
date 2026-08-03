@@ -254,3 +254,35 @@ let doc = parseSvg(src, { color: 0x336699ff })
 doc.width           // intrinsic (viewBox) size
 doc.draws           // [{ d, color, drawStyle, fillRule?, strokeWidth?, ... }]
 ```
+
+### flux:wasm
+
+A generic WebAssembly host (a wasmi interpreter; there is no `WebAssembly`
+global, this module is the entire wasm surface). Runs precompiled `.wasm`
+binaries, or wat text encoded as bytes. Everything is synchronous on the JS
+thread. Imports must be scalar-signature functions only - no imported memory,
+globals, or tables - so default emscripten output is rejected while
+`emcc -sSTANDALONE_WASM=1 --no-entry` fits. i32/f32/f64 marshal as number,
+i64 as BigInt.
+
+```js
+import { Module } from "flux:wasm"
+
+let mod = new Module(bytes)             // Uint8Array | ArrayBuffer
+mod.imports                             // [{ module, name, params, results }]
+let instance = mod.instantiate({
+  env: { mul: (a, b) => a * b },        // host functions, keyed like the standard
+})
+instance.exports                        // [{ name, kind, params?, results? }]
+instance.call("run", 6)                 // scalar / undefined / array by result count
+instance.callIndirect(fp, 1, 2)         // call table[fp] (a guest function pointer)
+instance.memory                         // ArrayBuffer over linear memory, or undefined
+instance.readMemory(ptr, len)           // copy out as a fresh Uint8Array
+instance.writeMemory(ptr, bytes)        // copy in
+```
+
+`instance.memory` aliases the guest's linear memory, so reads and writes are
+copy-free - `new Uint8Array(instance.memory, ptr, len)` hands guest bytes to
+`uploadTexture` without any intermediate allocation. It follows the web's
+`WebAssembly.Memory.buffer` contract: the buffer stays valid until the guest
+grows its memory, which detaches it; read `memory` again for a fresh buffer.

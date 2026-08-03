@@ -15,11 +15,12 @@ Sorted by status: open first, then partial, deferred, and closed
   time, no ended signal, encoded input only - a 2D game port could not
   express positional audio; per-voice setGain/setPan, an ended signal and a
   raw-PCM load close it (SDL3_mixer already ships the pan shape).
-- [flux:wasm memory views and named call errors](flux-wasm-memory-access.md) [open] -
-  readMemory mints a fresh Uint8Array per call (9 MB/s of garbage lifting a
-  32bpp framebuffer), the one path the pure-JS build does copy-free;
-  readMemoryInto or a transient view closes it, and "indirect call type
-  mismatch" should name the failing index and signatures.
+- [flux:wasm memory views and named call errors](flux-wasm-memory-access.md) [done] -
+  `instance.memory` ArrayBuffer aliases linear memory (detach-on-grow, web
+  `Memory.buffer` contract), closing the copy-free gap with the pure-JS
+  build; call errors name the target, signature, and argument; guest-internal
+  indirect-call traps get a stale-function-pointer hint (wasmi hides the
+  index).
 - [Zero-copy texture upload staging](texture-upload-staging.md) [open] - The
   steady state of any texture-driven app is one full-frame copy per frame to
   cross onto the raster thread; begin/endTextureUpload over raster-owned

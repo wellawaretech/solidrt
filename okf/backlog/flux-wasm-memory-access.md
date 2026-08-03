@@ -2,13 +2,38 @@
 type: backlog-item
 title: flux:wasm memory views and named call-mismatch errors
 description: readMemory copies into a fresh Uint8Array per call - 9 MB/s of garbage lifting a 32bpp framebuffer whose size never changes - while the pure-JS build of the same app reaches a genuinely copy-free path; a readMemoryInto or transient view closes the gap, and "indirect call type mismatch" should name the failing index and signatures.
-status: open
+status: done
 timestamp: 2026-08-02T00:00:00Z
 ---
 
 # flux:wasm memory views and named call-mismatch errors
 
 Source: the wasm game-port demo feedback (2026-08-02).
+
+Implemented 2026-08-03, going past the readMemoryInto shape to the standard
+one: `instance.memory` is an ArrayBuffer aliasing the guest's linear memory
+with the web's `WebAssembly.Memory.buffer` contract - copy-free both
+directions, detached when the guest grows its memory (staleness is checked at
+every point JS regains control after guest execution: host-import dispatch,
+call return, and the getter). `memorySize` was dropped (`memory.byteLength`),
+readMemory/writeMemory stay as copying one-shots (writeMemory now reads its
+source in place, staging through a copy only when the source aliases the
+instance's own memory). `new Uint8Array(instance.memory, ptr, len)` into
+`uploadTexture` is the copy-free framebuffer path, equal to the plain-JS
+build's HEAPU8 subarray.
+
+Note: rquickjs's `ArrayBuffer::from_source` + `detach()` is a double-free
+(JS_DetachArrayBuffer runs the free callback but leaves it set, so the
+finalizer runs it again); the plugin creates the buffer with no free callback
+and pins the instance from the handler registry instead (`array_buffer_over`
+in flux/src/plugins/modules/wasm.rs).
+
+Errors now name the target: `wasm call to tick failed: ...`, `table[3] (i32)
+-> i32 expects 1 argument(s), got 2`, `add (i32, i32) -> i32: argument 1:
+expected a number (i32)`. The guest-internal indirect-call limitation stands:
+wasmi's BadSignature trap does not expose the failing table index, so that
+case names the outer call and appends a stale-function-pointer hint instead
+of the index.
 
 ## readMemory always allocates
 

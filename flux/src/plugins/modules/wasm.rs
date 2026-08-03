@@ -28,10 +28,19 @@
 //! instance.exports;                     // [{ name, kind, params?, results? }]
 //! instance.call("run", 6);              // scalar / undefined / array by result count
 //! instance.callIndirect(fp, 1, 2);      // call table[fp] via the exported function table
-//! instance.memorySize;                  // bytes, or undefined if no exported memory
-//! instance.readMemory(ptr, len);        // Uint8Array
-//! instance.writeMemory(ptr, bytes);     // void
+//! instance.memory;                      // ArrayBuffer over linear memory, or undefined
+//! instance.readMemory(ptr, len);        // copy out as a fresh Uint8Array
+//! instance.writeMemory(ptr, bytes);     // copy in
 //! ```
+//!
+//! `instance.memory` aliases the guest's linear memory with the web's
+//! `WebAssembly.Memory.buffer` contract: reads and writes are copy-free, the
+//! buffer stays valid until the guest grows its memory, and growth detaches it
+//! (read `memory` again for a fresh buffer). Growth can only happen while
+//! guest code runs, so the plugin re-checks the storage location at every
+//! point where JS regains control after guest execution (host-import dispatch
+//! and call return) and detaches a stale buffer before any JS can read
+//! through it.
 //!
 //! Value marshalling: i32/f32/f64 <-> JS number; i64 <-> JS BigInt (an i64 does
 //! not fit a JS number without precision loss). A number is also accepted where
@@ -45,12 +54,12 @@ use rquickjs::class::Trace;
 use rquickjs::function::Rest;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{
-  ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
+  qjs, ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
 };
 
 use forge::wasm::{ExportInfo, FuncSig, ImportInfo, WasmType, WasmValue};
 
-// Per-instance host functions live here, in context userdata, NOT in the
+// Per-instance JS state lives here, in context userdata, NOT in the
 // `Instance` class. A `Persistent` held inside a class instance is a GC root
 // released only by the class finalizer, which runs too late and trips QuickJS's
 // shutdown assertion (`gc_obj_list` not empty). Userdata is dropped with the
@@ -64,7 +73,74 @@ struct WasmHandlers(#[qjs(skip_trace)] Rc<RefCell<HandlerStore>>);
 #[derive(Default)]
 struct HandlerStore {
   next_id: u64,
-  by_id: HashMap<u64, Vec<Persistent<Function<'static>>>>,
+  by_id: HashMap<u64, InstanceEntry>,
+}
+
+/// One instance's JS-side state: the host functions backing its imports, and
+/// the cached `instance.memory` buffer if one has been minted.
+struct InstanceEntry {
+  handlers: Vec<Persistent<Function<'static>>>,
+  view: Option<MemoryView>,
+}
+
+/// A minted `instance.memory` ArrayBuffer plus the storage location it was
+/// minted over, so guest growth (which moves the storage) can be detected and
+/// the stale buffer detached. The instance `Rc` pins the wasmi store: QuickJS
+/// holds no ownership of the buffer's bytes (see `array_buffer_over`), so the
+/// registry keeps the memory alive for as long as the buffer can be reached -
+/// even if the `Instance` object itself is collected first.
+struct MemoryView {
+  buffer: Persistent<ArrayBuffer<'static>>,
+  ptr: usize,
+  len: usize,
+  _instance: Rc<forge::wasm::WasmInstance>,
+}
+
+/// Create an ArrayBuffer aliasing external bytes, with NO free callback:
+/// QuickJS never frees or touches the bytes, on detach or at finalization.
+///
+/// Not `ArrayBuffer::from_source`, deliberately: its drop closure is unsound
+/// against detach. `JS_DetachArrayBuffer` invokes the buffer's `free_func`
+/// but does not clear it, so the finalizer invokes it AGAIN at teardown with
+/// the same opaque pointer, and rquickjs's shim then double-drops its boxed
+/// closure (double `Box::from_raw`) - a crash. With no callback registered,
+/// both sites are no-ops and the bytes' lifetime is the caller's contract:
+/// here, `MemoryView` pins the wasm instance in the registry.
+fn array_buffer_over<'js>(ctx: &Ctx<'js>, ptr: *mut u8, len: usize) -> rquickjs::Result<ArrayBuffer<'js>> {
+  let value = unsafe {
+    let raw = qjs::JS_NewArrayBuffer(ctx.as_raw().as_ptr(), ptr, len as _, None, std::ptr::null_mut(), false);
+    Value::from_raw(ctx.clone(), raw)
+  };
+  if value.is_exception() {
+    return Err(rquickjs::Error::Exception);
+  }
+  ArrayBuffer::from_value(value).ok_or(rquickjs::Error::Unknown)
+}
+
+/// Detach the cached memory buffer if the instance's linear memory has moved
+/// or resized, i.e. the guest ran `memory.grow`. Growth is only possible while
+/// guest code executes, so calling this at every point where JS regains
+/// control afterwards (host-import dispatch, call return, and the `memory`
+/// getter itself) guarantees no JS ever reads through a stale pointer. This is
+/// the web's `WebAssembly.Memory.buffer` contract: growth detaches the buffer.
+fn detach_stale_view(ctx: &Ctx<'_>, store: &WasmHandlers, id: u64, inst: &forge::wasm::WasmInstance) {
+  let stale = {
+    let mut s = store.0.borrow_mut();
+    let Some(entry) = s.by_id.get_mut(&id) else { return };
+    let Some(view) = &entry.view else { return };
+    let current = inst.memory_data_ptr().map(|(p, l)| (p as usize, l));
+    if current == Some((view.ptr, view.len)) {
+      return;
+    }
+    entry.view.take()
+  };
+  // Detaching frees the buffer's MemorySource (pure Rust, no registry
+  // re-entry); the registry borrow is already released in case GC runs.
+  if let Some(view) = stale {
+    if let Ok(mut buffer) = view.buffer.restore(ctx) {
+      buffer.detach();
+    }
+  }
 }
 
 /// Get the per-context handler registry, creating it on first use.
@@ -136,7 +212,7 @@ impl Module {
       let mut s = store.0.borrow_mut();
       let id = s.next_id;
       s.next_id += 1;
-      s.by_id.insert(id, handlers);
+      s.by_id.insert(id, InstanceEntry { handlers, view: None });
       id
     };
 
@@ -211,29 +287,73 @@ impl Instance {
     self.invoke(ctx, Target::Table(index), wasm_args)
   }
 
-  /// The exported memory's current size in bytes, or `undefined` if the module
-  /// exports no memory.
-  #[qjs(get, rename = "memorySize")]
-  pub fn memory_size<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self.inner.memory_size() {
-      Some(n) => (n as f64).into_js(&ctx),
-      None => Ok(Value::new_undefined(ctx)),
+  /// The exported linear memory as an `ArrayBuffer` aliasing the instance's
+  /// live bytes, or `undefined` if the module exports no memory. Reads and
+  /// writes go straight to guest memory - no copy; a `Uint8Array` over it is
+  /// the zero-copy way to hand guest bytes to e.g. `uploadTexture`. Follows
+  /// the web's `WebAssembly.Memory.buffer` contract: the buffer stays valid
+  /// until the guest grows its memory, which detaches it; read `memory` again
+  /// for a fresh buffer over the moved storage.
+  #[qjs(get)]
+  pub fn memory<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let Some((ptr, len)) = self.inner.memory_data_ptr() else {
+      return Ok(Value::new_undefined(ctx));
+    };
+    let store = handler_store(&ctx);
+    {
+      let s = store.0.borrow();
+      if let Some(view) = s.by_id.get(&self.id).and_then(|e| e.view.as_ref()) {
+        if (view.ptr, view.len) == (ptr as usize, len) {
+          let buffer = view.buffer.clone().restore(&ctx)?;
+          return Ok(buffer.into_value());
+        }
+      }
     }
+    detach_stale_view(&ctx, &store, self.id, &self.inner);
+    let buffer = array_buffer_over(&ctx, ptr, len)?;
+    let mut s = store.0.borrow_mut();
+    let Some(entry) = s.by_id.get_mut(&self.id) else {
+      // Unreachable: entries live until context teardown, and an Instance
+      // cannot outlive its context. Fail closed rather than hand out a buffer
+      // growth could never detach.
+      return Err(Exception::throw_message(&ctx, "wasm instance state is gone"));
+    };
+    entry.view = Some(MemoryView {
+      buffer: Persistent::save(&ctx, buffer.clone()),
+      ptr: ptr as usize,
+      len,
+      _instance: self.inner.clone(),
+    });
+    Ok(buffer.into_value())
   }
 
-  /// Copy `len` bytes out of the exported memory at `ptr`, as a `Uint8Array`.
+  /// Copy `len` bytes out of the exported memory at `ptr`, as a fresh
+  /// `Uint8Array`. One-shot convenience; for repeated or large reads use
+  /// `memory` directly.
   #[qjs(rename = "readMemory")]
   pub fn read_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, len: usize) -> rquickjs::Result<Value<'js>> {
     let bytes = self.inner.memory_read(ptr, len).map_err(|m| Exception::throw_message(&ctx, &m))?;
     Ok(TypedArray::new(ctx.clone(), bytes)?.into_value())
   }
 
-  /// Copy `bytes` (a `Uint8Array` or `ArrayBuffer`) into the exported memory at
-  /// `ptr`.
+  /// Copy `bytes` (a `Uint8Array` or `ArrayBuffer`) into the exported memory
+  /// at `ptr`. The source is read in place; a source that is itself a view
+  /// over this instance's memory is staged through a copy first so the two
+  /// ranges never alias.
   #[qjs(rename = "writeMemory")]
   pub fn write_memory<'js>(&self, ctx: Ctx<'js>, ptr: usize, bytes: Value<'js>) -> rquickjs::Result<()> {
-    let bytes = value_to_bytes(&ctx, &bytes)?;
-    self.inner.memory_write(ptr, &bytes).map_err(|m| Exception::throw_message(&ctx, &m))
+    let (src, src_len) = value_raw_bytes(&ctx, &bytes)?;
+    let overlaps = self.inner.memory_data_ptr().is_some_and(|(mem, mem_len)| {
+      (src as usize) < mem as usize + mem_len && (mem as usize) < src as usize + src_len
+    });
+    let slice = unsafe { std::slice::from_raw_parts(src, src_len) };
+    let result = if overlaps {
+      let staged = slice.to_vec();
+      self.inner.memory_write(ptr, &staged)
+    } else {
+      self.inner.memory_write(ptr, slice)
+    };
+    result.map_err(|m| Exception::throw_message(&ctx, &m))
   }
 }
 
@@ -253,12 +373,16 @@ impl Instance {
     let imports = self.imports.clone();
     let handlers = handler_store(&ctx);
     let id = self.id;
+    let inner = self.inner.clone();
     let mut thrown: Option<rquickjs::Error> = None;
     let mut host = |index: usize, host_args: Vec<WasmValue>| -> Result<Vec<WasmValue>, String> {
+      // The guest may have grown its memory since JS last ran; detach a stale
+      // memory buffer before this handler can read through it.
+      detach_stale_view(&ctx, &handlers, id, &inner);
       // Clone the Persistent out under a short borrow, then drop the borrow
       // before calling into JS: a re-entrant call/instantiate borrows the same
       // registry.
-      let saved = handlers.0.borrow().by_id.get(&id).and_then(|v| v.get(index)).cloned();
+      let saved = handlers.0.borrow().by_id.get(&id).and_then(|e| e.handlers.get(index)).cloned();
       let func = saved.ok_or_else(|| "wasm host function missing from registry".to_string())?;
       let func = func.restore(&ctx).map_err(err_string)?;
       let js_args: Vec<Value> = host_args.into_iter().map(|v| wasm_to_js(&ctx, v)).collect::<Result<_, _>>()?;
@@ -277,6 +401,7 @@ impl Instance {
       Target::Export(name) => self.inner.call(name, wasm_args, &mut host),
       Target::Table(index) => self.inner.call_indirect(index, wasm_args, &mut host),
     };
+    detach_stale_view(&ctx, &handlers, id, &inner);
     if let Some(e) = thrown {
       return Err(e);
     }
@@ -288,6 +413,8 @@ impl Instance {
 // ---- value marshalling ------------------------------------------------------
 
 /// Check arity and coerce JS arguments to a function's scalar parameter types.
+/// `what` names the call target; errors carry it, the full signature, and the
+/// offending argument's position.
 fn coerce_args<'js>(
   ctx: &Ctx<'js>,
   what: &str,
@@ -297,12 +424,15 @@ fn coerce_args<'js>(
   if args.0.len() != sig.params.len() {
     return Err(Exception::throw_message(
       ctx,
-      &format!("{what} expects {} argument(s), got {}", sig.params.len(), args.0.len()),
+      &format!("{what} {sig} expects {} argument(s), got {}", sig.params.len(), args.0.len()),
     ));
   }
   let mut out = Vec::with_capacity(args.0.len());
-  for (value, ty) in args.0.iter().zip(sig.params.iter()) {
-    out.push(js_to_wasm(ctx, value, *ty).map_err(|m| Exception::throw_message(ctx, &m))?);
+  for (i, (value, ty)) in args.0.iter().zip(sig.params.iter()).enumerate() {
+    out.push(
+      js_to_wasm(ctx, value, *ty)
+        .map_err(|m| Exception::throw_message(ctx, &format!("{what} {sig}: argument {i}: {m}")))?,
+    );
   }
   Ok(out)
 }
@@ -311,19 +441,10 @@ fn err_string<E: std::fmt::Display>(e: E) -> String {
   e.to_string()
 }
 
-fn type_name(t: WasmType) -> &'static str {
-  match t {
-    WasmType::I32 => "i32",
-    WasmType::I64 => "i64",
-    WasmType::F32 => "f32",
-    WasmType::F64 => "f64",
-  }
-}
-
 fn type_names<'js>(ctx: &Ctx<'js>, types: &[WasmType]) -> rquickjs::Result<rquickjs::Array<'js>> {
   let arr = rquickjs::Array::new(ctx.clone())?;
   for (i, t) in types.iter().enumerate() {
-    arr.set(i, type_name(*t))?;
+    arr.set(i, t.name())?;
   }
   Ok(arr)
 }
@@ -339,24 +460,38 @@ fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>>
   }
 }
 
+/// Borrow the bytes of a JS `Uint8Array` or `ArrayBuffer` in place. The
+/// returned pointer is only valid while no JS runs.
+fn value_raw_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<(*const u8, usize)> {
+  let raw = if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
+    ta.as_raw()
+  } else if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
+    ab.as_raw()
+  } else {
+    return Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"));
+  };
+  let raw = raw.ok_or_else(|| Exception::throw_message(ctx, "detached buffer"))?;
+  Ok((raw.ptr.as_ptr(), raw.len))
+}
+
 /// Coerce a JS value to a scalar wasm value of the declared type.
 fn js_to_wasm(_ctx: &Ctx<'_>, value: &Value<'_>, ty: WasmType) -> Result<WasmValue, String> {
   match ty {
-    WasmType::I32 => number(value).map(|n| WasmValue::I32(n as i32)),
-    WasmType::F32 => number(value).map(|n| WasmValue::F32(n as f32)),
-    WasmType::F64 => number(value).map(WasmValue::F64),
+    WasmType::I32 => number(value, ty).map(|n| WasmValue::I32(n as i32)),
+    WasmType::F32 => number(value, ty).map(|n| WasmValue::F32(n as f32)),
+    WasmType::F64 => number(value, ty).map(WasmValue::F64),
     WasmType::I64 => {
       if let Some(b) = value.as_big_int() {
-        b.clone().to_i64().map(WasmValue::I64).map_err(|_| "invalid BigInt for i64 argument".to_string())
+        b.clone().to_i64().map(WasmValue::I64).map_err(|_| "BigInt out of range for i64".to_string())
       } else {
-        number(value).map(|n| WasmValue::I64(n as i64))
+        number(value, ty).map(|n| WasmValue::I64(n as i64))
       }
     }
   }
 }
 
-fn number(value: &Value<'_>) -> Result<f64, String> {
-  value.as_number().ok_or_else(|| "expected a number argument".to_string())
+fn number(value: &Value<'_>, ty: WasmType) -> Result<f64, String> {
+  value.as_number().ok_or_else(|| format!("expected a number ({})", ty.name()))
 }
 
 /// Encode a scalar wasm value as a JS value (i64 -> BigInt, rest -> number).

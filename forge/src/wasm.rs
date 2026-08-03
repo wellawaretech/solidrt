@@ -30,7 +30,8 @@ use std::fmt;
 
 use wasmi::errors::HostError;
 use wasmi::{
-  Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module, ResumableCall, Store, Table, Val, ValType,
+  Engine, ExternType, Func, FuncType, Instance, Linker, Memory, Module, ResumableCall, Store, Table, TrapCode, Val,
+  ValType,
 };
 
 /// A scalar wasm value crossing the host boundary.
@@ -51,11 +52,37 @@ pub enum WasmType {
   F64,
 }
 
+impl WasmType {
+  /// The type's canonical wasm name ("i32", "i64", "f32", "f64").
+  pub fn name(self) -> &'static str {
+    match self {
+      WasmType::I32 => "i32",
+      WasmType::I64 => "i64",
+      WasmType::F32 => "f32",
+      WasmType::F64 => "f64",
+    }
+  }
+}
+
 /// A bridged function signature: scalar parameter and result types.
 #[derive(Debug, Clone)]
 pub struct FuncSig {
   pub params: Vec<WasmType>,
   pub results: Vec<WasmType>,
+}
+
+/// Renders as `(i32, i32) -> i32`; the arrow is omitted for no results and the
+/// result list parenthesized when there are several.
+impl fmt::Display for FuncSig {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let join = |types: &[WasmType]| types.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+    write!(f, "({})", join(&self.params))?;
+    match self.results.len() {
+      0 => Ok(()),
+      1 => write!(f, " -> {}", self.results[0].name()),
+      _ => write!(f, " -> ({})", join(&self.results)),
+    }
+  }
 }
 
 /// One function import a module requires from the host. `index` is the handler
@@ -247,7 +274,7 @@ impl WasmInstance {
       let store = self.store.borrow();
       self.instance.get_func(&*store, name).ok_or_else(|| format!("no exported wasm function named {name}"))?
     };
-    self.drive(func, args, host)
+    self.drive(name, func, args, host)
   }
 
   /// Call a function by its index in the exported function table:
@@ -260,7 +287,14 @@ impl WasmInstance {
     host: HostHandler<'_>,
   ) -> Result<Vec<WasmValue>, String> {
     let func = self.table_func(index)?;
-    self.drive(func, args, host)
+    let what = {
+      let store = self.store.borrow();
+      match func_sig(&func.ty(&*store)) {
+        Ok(sig) => format!("table[{index}] {sig}"),
+        Err(_) => format!("table[{index}]"),
+      }
+    };
+    self.drive(&what, func, args, host)
   }
 
   /// The scalar signature of the function at `index` in the exported table,
@@ -286,7 +320,9 @@ impl WasmInstance {
   }
 
   /// Run `func` to completion, bridging suspended host-import calls to `host`.
-  fn drive(&self, func: Func, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
+  /// `what` names the call target (an export name or `table[i] (sig)`) so
+  /// failures say which call went wrong.
+  fn drive(&self, what: &str, func: Func, args: Vec<WasmValue>, host: HostHandler<'_>) -> Result<Vec<WasmValue>, String> {
     let n_results = {
       let store = self.store.borrow();
       func.ty(&*store).results().len()
@@ -305,7 +341,7 @@ impl WasmInstance {
         }
         Ok(ResumableCall::HostTrap(trap)) => {
           if trap.host_error().downcast_ref::<HostCallPending>().is_none() {
-            return Err(trap.into_host_error().to_string());
+            return Err(format!("wasm call to {what} failed: {}", trap.into_host_error()));
           }
           let (index, host_args) = self
             .store
@@ -326,7 +362,18 @@ impl WasmInstance {
           // Fuel metering is never enabled on this engine.
           return Err("wasm execution ran out of fuel".to_string());
         }
-        Err(e) => return Err(format!("wasm call failed: {e}")),
+        Err(e) => {
+          // A bad-signature trap comes from a call_indirect INSIDE the guest;
+          // wasmi does not expose which table index was called, so the best we
+          // can name is the outer call and the likely cause.
+          let hint = if e.as_trap_code() == Some(TrapCode::BadSignature) {
+            " (an indirect call inside the guest hit a table entry whose signature does not match the call site; \
+             a stale function pointer, e.g. one taken before a re-instantiation, fails this way)"
+          } else {
+            ""
+          };
+          return Err(format!("wasm call to {what} failed: {e}{hint}"));
+        }
       }
     }
   }
@@ -334,6 +381,17 @@ impl WasmInstance {
   /// The exported memory's current size in bytes, if the module exports one.
   pub fn memory_size(&self) -> Option<usize> {
     self.memory.map(|m| m.data(&*self.store.borrow()).len())
+  }
+
+  /// Base pointer and byte length of the exported memory, if the module
+  /// exports one. The pointer aliases the live linear memory: growth
+  /// (`memory.grow`, only possible while guest code runs) may move the
+  /// storage and invalidate it, so a caller that hands the pointer out must
+  /// re-check it after every guest call before letting anyone read through it.
+  pub fn memory_data_ptr(&self) -> Option<(*mut u8, usize)> {
+    let mem = self.memory?;
+    let store = self.store.borrow();
+    Some((mem.data_ptr(&*store), mem.data_size(&*store)))
   }
 
   /// Copy `len` bytes out of the exported memory at `ptr`.

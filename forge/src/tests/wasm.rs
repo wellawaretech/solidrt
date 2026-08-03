@@ -59,6 +59,23 @@ fn reentrant_host_handler() {
 }
 
 #[test]
+fn memory_data_ptr_tracks_growth() {
+  let wat = r#"(module
+    (memory (export "memory") 1 4)
+    (func (export "grow") (result i32) i32.const 1 memory.grow))"#;
+  let inst = WasmModule::parse(wat.as_bytes()).expect("parse").instantiate().expect("instantiate");
+  let (ptr, len) = inst.memory_data_ptr().expect("memory exported");
+  assert!(!ptr.is_null());
+  assert_eq!(len, 65536);
+  inst.call("grow", vec![], &mut no_host).expect("grow");
+  let (_, len) = inst.memory_data_ptr().expect("memory exported");
+  assert_eq!(len, 2 * 65536, "length reflects growth");
+
+  let no_mem = WasmModule::parse(br#"(module)"#).expect("parse").instantiate().expect("instantiate");
+  assert!(no_mem.memory_data_ptr().is_none());
+}
+
+#[test]
 fn memory_read_write() {
   let wat = r#"(module
     (memory (export "memory") 1)
@@ -77,7 +94,51 @@ fn trap_is_error() {
   let wat = r#"(module (func (export "boom") unreachable))"#;
   let inst = WasmModule::parse(wat.as_bytes()).expect("parse").instantiate().expect("instantiate");
   let err = inst.call("boom", vec![], &mut no_host).expect_err("should trap");
+  assert!(err.contains("wasm call to boom failed"), "unexpected error: {err}");
   assert!(err.contains("unreachable"), "unexpected error: {err}");
+}
+
+#[test]
+fn indirect_mismatch_names_target_and_hints() {
+  // The guest's own call_indirect hits a table entry with the wrong signature
+  // (the call site expects (param i32), the entry takes f64). wasmi does not
+  // expose the failing index, so the message names the outer call and points
+  // at the stale-function-pointer cause.
+  let wat = r#"(module
+    (table 1 funcref)
+    (func $wrong (param f64))
+    (elem (i32.const 0) $wrong)
+    (type $expected (func (param i32)))
+    (func (export "run")
+      i32.const 7 i32.const 0 call_indirect (type $expected)))"#;
+  let inst = WasmModule::parse(wat.as_bytes()).expect("parse").instantiate().expect("instantiate");
+  let err = inst.call("run", vec![], &mut no_host).expect_err("should mismatch");
+  assert!(err.contains("wasm call to run failed"), "unexpected error: {err}");
+  assert!(err.contains("indirect call type mismatch"), "unexpected error: {err}");
+  assert!(err.contains("stale function pointer"), "unexpected error: {err}");
+}
+
+#[test]
+fn host_side_indirect_failure_names_index_and_sig() {
+  // A trap inside a host-driven call_indirect names the table slot and its
+  // signature.
+  let wat = r#"(module
+    (table (export "__indirect_function_table") 1 funcref)
+    (func $boom (param i32) (result i32) unreachable)
+    (elem (i32.const 0) $boom))"#;
+  let inst = WasmModule::parse(wat.as_bytes()).expect("parse").instantiate().expect("instantiate");
+  let err = inst.call_indirect(0, vec![WasmValue::I32(1)], &mut no_host).expect_err("should trap");
+  assert!(err.contains("wasm call to table[0] (i32) -> i32 failed"), "unexpected error: {err}");
+}
+
+#[test]
+fn sig_display() {
+  let sig = FuncSig { params: vec![WasmType::I32, WasmType::F64], results: vec![WasmType::I64] };
+  assert_eq!(sig.to_string(), "(i32, f64) -> i64");
+  let none = FuncSig { params: vec![], results: vec![] };
+  assert_eq!(none.to_string(), "()");
+  let multi = FuncSig { params: vec![WasmType::I32], results: vec![WasmType::I32, WasmType::I32] };
+  assert_eq!(multi.to_string(), "(i32) -> (i32, i32)");
 }
 
 #[test]

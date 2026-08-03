@@ -81,13 +81,27 @@ declare module "flux:wasm" {
      */
     callIndirect(index: number, ...args: WasmValue[]): WasmValue | WasmValue[] | undefined
     /**
-     * The exported memory's current size in bytes, or `undefined` if the
-     * module exports no memory.
+     * The exported linear memory as an `ArrayBuffer` aliasing the instance's
+     * live bytes, or `undefined` if the module exports no memory. Reads and
+     * writes go straight to guest memory - no copy; a `Uint8Array` over it
+     * (`new Uint8Array(instance.memory, ptr, len)`) is the zero-copy way to
+     * hand guest bytes to e.g. `uploadTexture`. Follows the web's
+     * `WebAssembly.Memory.buffer` contract: the buffer stays valid until the
+     * guest grows its memory, which detaches it; read `memory` again for a
+     * fresh buffer over the moved storage.
      */
-    readonly memorySize: number | undefined
-    /** Copy `len` bytes out of the exported memory at `ptr`. */
+    readonly memory: ArrayBuffer | undefined
+    /**
+     * Copy `len` bytes out of the exported memory at `ptr`, as a fresh
+     * `Uint8Array`. One-shot convenience; for repeated or large reads use
+     * {@link memory} directly.
+     */
     readMemory(ptr: number, len: number): Uint8Array
-    /** Copy `bytes` into the exported memory at `ptr`. */
+    /**
+     * Copy `bytes` into the exported memory at `ptr`. The source may itself
+     * be a view over this instance's memory; overlapping ranges copy
+     * correctly.
+     */
     writeMemory(ptr: number, bytes: Uint8Array | ArrayBuffer): void
   }
 }
