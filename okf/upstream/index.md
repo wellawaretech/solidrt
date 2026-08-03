@@ -30,3 +30,8 @@ outcome in the file and update any code comments that reference it.
   re-homes the pointer with a NULL opaque, breaking the free-callback
   contract and escaping embedder invalidation. `resize` has the external
   guard; `transfer` forgot it.
+- [taffy: measure cache evicts entries it can still hit](taffy-measure-cache-clobber.md)
+  [unfiled] - `store` picks a slot from the input shape alone while `get`
+  matches on shape AND parent width, so the same-shape/different-parent-width
+  probes one flex pass makes evict each other; the cache is defeated
+  frame-internally and one dirty node re-measures the whole tree.

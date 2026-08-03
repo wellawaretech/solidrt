@@ -89,10 +89,12 @@ async function resolveTemplate(): Promise<TemplateInfo> {
   if (process.stdin.isTTY) {
     let picked = await select(
       "Select a template",
-      templates.map((t) => ({
-        label: t.description ? `${t.name} - ${t.description}` : t.name,
-        value: t.name,
-      })),
+      templates.map((t) => {
+        // Core is the runtime every app has; anything else is a package the
+        // app opts into, so the picker marks it as such.
+        let name = t.level === "core" ? t.name : `${t.name} (extension)`
+        return { label: t.description ? `${name} - ${t.description}` : name, value: t.name }
+      }),
     )
     return templates.find((t) => t.name === picked)!
   }

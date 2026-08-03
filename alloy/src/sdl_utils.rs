@@ -212,16 +212,16 @@ use sdl3::sys::surface::{SDL_ConvertPixels, SDL_Surface};
 pub fn camera_subsystem_init() -> bool {
   // No driver hint: SDL's own Linux order is v4l2 first, pipewire second, and
   // that is what we want. v4l2 is the proven backend (the MJPG format
-  // workaround and hotplug-add were verified against it, and the one-line
-  // device-removal fix we filed upstream targets it, so the default
-  // preference picks that fix up when SDL ships it). SDL's pipewire camera
-  // backend is not trustworthy today: it targets nodes by node.description
-  // (target.object matches node.name/object.serial, so the target never
-  // resolves), it ignores the stream ERROR state so a failed start reports
-  // permission PENDING forever, and upstream has an open never-acquires-a-
-  // frame issue (libsdl-org/SDL#11473) - all observed here on desktop,
-  // 2026-08-01. It stays as SDL's fallback for v4l2-less systems, nothing
-  // more.
+  // workaround and hotplug-add were verified against it, and our one-line
+  // device-removal fix targets it - written up in okf/upstream/, not filed
+  // upstream yet - so the default preference picks it up if SDL takes the
+  // fix). SDL's pipewire camera backend is not trustworthy today: it targets
+  // nodes by node.description (target.object matches node.name/object.serial,
+  // so the target never resolves), it ignores the stream ERROR state so a
+  // failed start reports permission PENDING forever, and upstream has an open
+  // never-acquires-a-frame issue (libsdl-org/SDL#11473) - all observed here
+  // on desktop, 2026-08-01. It stays as SDL's fallback for v4l2-less systems,
+  // nothing more.
   //
   // On a Raspberry Pi 4 (fresh Raspberry Pi OS, no camera attached) v4l2's
   // init never returns - it wedges probing the Pi's bcm2835 codec/isp/rpivid
