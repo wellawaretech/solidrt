@@ -26,7 +26,9 @@ Note: rquickjs's `ArrayBuffer::from_source` + `detach()` is a double-free
 (JS_DetachArrayBuffer runs the free callback but leaves it set, so the
 finalizer runs it again); the plugin creates the buffer with no free callback
 and pins the instance from the handler registry instead (`array_buffer_over`
-in flux/src/plugins/modules/wasm.rs).
+in flux/src/plugins/modules/wasm.rs). Tracked with its quickjs-ng sibling
+(`transfer()` vs external buffers) in [[rquickjs-detach-double-free]] and
+[[quickjs-ng-transfer-external-buffers]] under okf/upstream/.
 
 Errors now name the target: `wasm call to tick failed: ...`, `table[3] (i32)
 -> i32 expects 1 argument(s), got 2`, `add (i32, i32) -> i32: argument 1:

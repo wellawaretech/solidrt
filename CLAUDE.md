@@ -53,6 +53,7 @@ Long-lived notes live under `okf/`, one markdown file per item (OKF-style: YAML 
 - `okf/analysis/` - point-in-time assessments of the codebase (crate/package reviews), dated in frontmatter.
 - `okf/research/` - open design research: surveys and direction notes that precede a backlog item or plan.
 - `okf/plans/` - concrete implementation plans for decided work: staging, decisions made, current status.
+- `okf/upstream/` - bugs in dependencies we track and report; draft report + status lifecycle per file.
 
 # Versioning
 Every package/crate version in source is the `0.0.0` placeholder, including the intra-monorepo `@solidrt/*` deps in `packages/cli/scaffold/package.json`. The `.github/workflows/release.yml` action bumps all of these to the real version and pins the intra-monorepo deps at publish time. So a scaffolded project's `bun install` fails in-repo (nothing on npm matches `0.0.0`) but works against the published packages. Do not "fix" the `0.0.0` placeholders in source.
