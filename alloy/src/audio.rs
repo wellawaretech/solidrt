@@ -13,10 +13,41 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use sdl3::iostream::IOStream;
-use sdl3::mixer::{Audio, Mixer, Track};
+use sdl3::mixer::{Audio, Mixer, StereoGains, Track};
 use sdl3::properties::{Properties, Setter};
+use sdl3::sys::audio::{SDL_AudioFormat, SDL_AudioSpec, SDL_AUDIO_F32, SDL_AUDIO_S16, SDL_AUDIO_U8};
 
 use crate::sdl_utils;
+
+/// Sample format of a raw PCM clip, as handed to `load_pcm_sound`. Multi-byte
+/// formats are native-endian, matching what a JS TypedArray holds in memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcmFormat {
+  U8,
+  S16,
+  F32,
+}
+
+impl PcmFormat {
+  fn to_sdl(self) -> SDL_AudioFormat {
+    match self {
+      PcmFormat::U8 => SDL_AUDIO_U8,
+      PcmFormat::S16 => SDL_AUDIO_S16,
+      PcmFormat::F32 => SDL_AUDIO_F32,
+    }
+  }
+}
+
+/// Map a pan position in [-1, 1] (clamped) to per-channel gains using the
+/// equal-power law, so perceived loudness stays constant as a sound sweeps
+/// across the field. Center is (0.707, 0.707), the same 3 dB dip a Web Audio
+/// StereoPannerNode applies to a mono source at pan 0.
+pub(crate) fn pan_gains(pan: f32) -> StereoGains {
+  // clamp propagates NaN; read NaN as center so the gains are always valid.
+  let pan = if pan.is_nan() { 0.0 } else { pan.clamp(-1.0, 1.0) };
+  let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+  StereoGains { left: angle.cos(), right: angle.sin() }
+}
 
 /// A loaded clip in the registry. A predecoded clip (`load_sound`) is just the
 /// decoded `Audio`; a streamed clip (`stream_sound_io`) also retains its
@@ -71,10 +102,20 @@ impl AudioRegistry {
 
   /// Start a fresh voice for an already-decoded clip and retain it, returning
   /// the track id. Shared by the fire-and-forget path and `play_sound`.
-  fn spawn_track(&self, mixer: &'static Mixer, audio: &Audio, looping: bool, gain: f32) -> Result<u64, String> {
+  fn spawn_track(
+    &self,
+    mixer: &'static Mixer,
+    audio: &Audio,
+    looping: bool,
+    gain: f32,
+    pan: Option<f32>,
+  ) -> Result<u64, String> {
     let track = mixer.create_track().map_err(|e| format!("failed to create audio track: {e}"))?;
     track.set_audio(audio).map_err(|e| format!("failed to assign audio: {e}"))?;
     track.set_gain(gain).map_err(|e| format!("failed to set gain: {e}"))?;
+    if let Some(pan) = pan {
+      track.set_stereo(Some(pan_gains(pan))).map_err(|e| format!("failed to set pan: {e}"))?;
+    }
     // MIX_PlayTrack resets the loop count from its play options every call, so a
     // prior set_loops is ignored (see MIX_PROP_PLAY_LOOPS_NUMBER). Pass the loop
     // count through the play options instead. -1 loops forever.
@@ -97,9 +138,10 @@ impl AudioRegistry {
 
 impl crate::context::Context {
   /// Decode and start an encoded audio clip (Ogg/Vorbis or WAV). `looping`
-  /// repeats it until stopped; `gain` scales volume (1.0 = unchanged). Returns
-  /// the track id, usable with `stop_audio`.
-  pub fn play_audio(&self, bytes: &[u8], looping: bool, gain: f32) -> Result<u64, String> {
+  /// repeats it until stopped; `gain` scales volume (1.0 = unchanged); `pan`
+  /// positions it in the stereo field (see `pan_gains`), `None` leaves the clip
+  /// unspatialized. Returns the track id, usable with `stop_audio`.
+  pub fn play_audio(&self, bytes: &[u8], looping: bool, gain: f32, pan: Option<f32>) -> Result<u64, String> {
     self.audio.sweep_finished();
     let mixer = self.audio.mixer()?;
     // predecode=true fully decodes into the Audio at load time, so neither the
@@ -108,7 +150,7 @@ impl crate::context::Context {
     let audio = mixer.load_audio_io(&io, true).map_err(|e| format!("audio decode failed: {e}"))?;
     // The mixer ref-counts audio assigned to a track, so dropping `audio` at the
     // end of this call is safe: the track keeps the decoded data alive.
-    self.audio.spawn_track(mixer, &audio, looping, gain)
+    self.audio.spawn_track(mixer, &audio, looping, gain, pan)
   }
 
   /// Decode an encoded clip once and retain it, returning a sound id. Replay it
@@ -147,14 +189,60 @@ impl crate::context::Context {
     Ok(id)
   }
 
+  /// Load raw PCM samples as a clip, returning a sound id used the same way as
+  /// `load_sound`. No decoding happens: `spec` metadata is all SDL needs to play
+  /// the bytes directly. The data is copied, so `bytes` need not outlive the call.
+  pub fn load_pcm_sound(&self, bytes: &[u8], sample_rate: i32, channels: i32, format: PcmFormat) -> Result<u64, String> {
+    let mixer = self.audio.mixer()?;
+    let spec = SDL_AudioSpec { format: format.to_sdl(), channels, freq: sample_rate };
+    let audio = mixer.load_raw_audio(bytes, &spec).map_err(|e| format!("pcm load failed: {e}"))?;
+    let id = {
+      let mut next = self.audio.next_sound_id.borrow_mut();
+      *next += 1;
+      *next
+    };
+    self.audio.sounds.borrow_mut().insert(id, LoadedSound { audio, _io: None });
+    Ok(id)
+  }
+
   /// Start a fresh voice for a loaded sound, returning a track id usable with
   /// `stop_audio`. Each call is a new overlapping voice; no decode happens here.
-  pub fn play_sound(&self, sound_id: u64, looping: bool, gain: f32) -> Result<u64, String> {
+  pub fn play_sound(&self, sound_id: u64, looping: bool, gain: f32, pan: Option<f32>) -> Result<u64, String> {
     self.audio.sweep_finished();
     let mixer = self.audio.mixer()?;
     let sounds = self.audio.sounds.borrow();
     let sound = sounds.get(&sound_id).ok_or_else(|| format!("unknown sound {sound_id}"))?;
-    self.audio.spawn_track(mixer, &sound.audio, looping, gain)
+    self.audio.spawn_track(mixer, &sound.audio, looping, gain, pan)
+  }
+
+  /// Change the gain of a playing track. A voice that already finished (or was
+  /// stopped) is silently skipped: live control races with natural completion
+  /// by design, so a late set is not an error.
+  pub fn set_audio_gain(&self, id: u64, gain: f32) -> Result<(), String> {
+    match self.audio.tracks.borrow().get(&id) {
+      Some(track) => track.set_gain(gain).map_err(|e| format!("failed to set gain: {e}")),
+      None => Ok(()),
+    }
+  }
+
+  /// Position a playing track in the stereo field, pan in [-1, 1] (clamped),
+  /// 0 = center; see `pan_gains` for the law. Silently skipped for a finished
+  /// voice, like `set_audio_gain`.
+  pub fn set_audio_pan(&self, id: u64, pan: f32) -> Result<(), String> {
+    match self.audio.tracks.borrow().get(&id) {
+      Some(track) => track.set_stereo(Some(pan_gains(pan))).map_err(|e| format!("failed to set pan: {e}")),
+      None => Ok(()),
+    }
+  }
+
+  /// Whether a track finished playing, naturally or via stop. An unknown id
+  /// reads as ended: finished tracks are swept from the registry, so absence
+  /// means the voice is gone.
+  pub fn audio_ended(&self, id: u64) -> bool {
+    match self.audio.tracks.borrow().get(&id) {
+      Some(track) => !track.is_playing() && !track.is_paused(),
+      None => true,
+    }
   }
 
   /// Release a loaded sound. Any voices already playing keep going (the C

@@ -5,7 +5,7 @@
 // a large track from a file path on demand instead of decoding it into memory.
 //
 // The imperative primitive lives in the `flux:audio` module; import
-// { play, load, stream } from "flux:audio" for non-reactive use.
+// { play, load, loadPcm, stream } from "flux:audio" for non-reactive use.
 
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { load, stream } from "flux:audio"
@@ -13,13 +13,19 @@ import { file } from "flux:fs"
 
 type FluxFile = ReturnType<typeof file>
 
-type LoadedSound = ReturnType<typeof load>
+type Clip = ReturnType<typeof load>
+type Playback = ReturnType<Clip["play"]>
 
 export type SoundOptions = {
   /** Repeat the clip until stopped. Defaults to false. */
   loop?: boolean
   /** Volume scale, 1.0 leaves the clip unchanged. Defaults to 1.0. */
   gain?: number
+  /**
+   * Stereo position in [-1, 1], -1 = left, 0 = center, 1 = right (equal-power).
+   * Omitted means unspatialized.
+   */
+  pan?: number
   /**
    * Let play() stack overlapping voices instead of restarting. Defaults to
    * true: rapid triggers overlap. Set false for a single-voice sound where each
@@ -34,6 +40,8 @@ export type SoundStreamOptions = {
   loop?: boolean
   /** Volume scale, 1.0 leaves the track unchanged. Defaults to 1.0. */
   gain?: number
+  /** Stereo position in [-1, 1] (see {@link SoundOptions.pan}). */
+  pan?: number
 }
 
 /** A decoded sound with reactive lifecycle. */
@@ -42,28 +50,43 @@ export type Sound = {
   play(): void
   /** Stop every voice started from this sound. */
   stop(): void
+  /** Set the volume of every live voice, and of voices started later. */
+  setGain(gain: number): void
+  /** Set the stereo position of every live voice, and of voices started later. */
+  setPan(pan: number): void
   /** True after play() until stop() (does not track natural completion). */
   playing(): boolean
   /** Set if loading failed. */
   error(): Error | undefined
 }
 
-// Shared reactive wrapper: owns the loaded handle, tracks live voices, and
+// Shared reactive wrapper: owns the loaded clip, tracks live voices, and
 // disposes both on cleanup. `loader` runs once (may throw -> error signal).
+// Gain and pan are remembered so later voices start where setGain/setPan left
+// the sound, not back at the initial options.
 function reactiveSound(
-  loader: () => LoadedSound,
+  loader: () => Clip,
   overlap: boolean,
-  playOptions: { loop?: boolean; gain?: number },
+  initial: { loop?: boolean; gain?: number; pan?: number },
 ): Sound {
   let [error, setError] = createSignal<Error | undefined>(undefined, { ownedWrite: true })
   let [playing, setPlaying] = createSignal(false, { ownedWrite: true })
 
-  let handle: LoadedSound | undefined
-  let voices: { stop(): void }[] = []
+  let clip: Clip | undefined
+  let voices: Playback[] = []
+  let loop = initial.loop
+  let gain = initial.gain
+  let pan = initial.pan
   try {
-    handle = loader()
+    clip = loader()
   } catch (e) {
     setError(e instanceof Error ? e : new Error(String(e)))
+  }
+
+  // Voices that finished on their own keep a dead handle in `voices` until the
+  // next call here; ended() lets each touch point clear them out.
+  let prune = () => {
+    voices = voices.filter((v) => !v.ended())
   }
 
   let stopAll = () => {
@@ -74,20 +97,31 @@ function reactiveSound(
 
   onCleanup(() => {
     stopAll()
-    if (handle) {
-      handle.unload()
-      handle = undefined
+    if (clip) {
+      clip.unload()
+      clip = undefined
     }
   })
 
   return {
     play() {
-      if (!handle) return
-      if (!overlap) stopAll()
-      voices.push(handle.play(playOptions))
+      if (!clip) return
+      if (overlap) prune()
+      else stopAll()
+      voices.push(clip.play({ loop, gain, pan }))
       setPlaying(true)
     },
     stop: stopAll,
+    setGain(value) {
+      gain = value
+      prune()
+      for (let v of voices) v.setGain(value)
+    },
+    setPan(value) {
+      pan = value
+      prune()
+      for (let v of voices) v.setPan(value)
+    },
     playing,
     error,
   }
@@ -102,6 +136,7 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
   return reactiveSound(() => load(source), options.overlap ?? true, {
     loop: options.loop,
     gain: options.gain,
+    pan: options.pan,
   })
 }
 
@@ -115,5 +150,5 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
  */
 export function createSoundStream(source: string | FluxFile, options: SoundStreamOptions = {}): Sound {
   let src = typeof source === "string" ? file(source) : source
-  return reactiveSound(() => stream(src), false, { loop: options.loop, gain: options.gain })
+  return reactiveSound(() => stream(src), false, { loop: options.loop, gain: options.gain, pan: options.pan })
 }

@@ -1,3 +1,4 @@
+mod audio;
 mod fonts;
 mod gpu_graph;
 mod gpu_validate;

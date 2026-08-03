@@ -2,7 +2,7 @@
 type: backlog-item
 title: flux:audio live voice control (pan, gain, ended, raw PCM)
 description: A playing SoundHandle is stop-only - no pan anywhere, gain fixed at play() time, no finished signal, encoded input only - so a 2D game port cannot express positional audio; per-voice setGain/setPan, an ended signal and a raw-PCM load close it.
-status: open
+status: done
 timestamp: 2026-08-02T00:00:00Z
 ---
 
@@ -39,3 +39,22 @@ Three asks, in order of value:
 What already worked: 8-bit-source 11025 Hz audio decoded first time with no
 fuss, and load() returning a replayable clip maps cleanly onto "cache the
 sfx, start many voices".
+
+Done 2026-08-03. Surface shipped (types renamed SoundHandle/LoadedSound ->
+Playback/Clip, no backwards compat kept):
+
+1. Playback gains setGain(g) (>= 0) and setPan(p) (-1..1 clamped, equal-power
+   law, the Web Audio StereoPannerNode math; unpanned mono is ~3 dB louder
+   than pan 0). pan also joined the play options ({loop, gain, pan}) so a
+   voice can start positioned. Pan law + track control live in alloy
+   (pan_gains, set_audio_gain/set_audio_pan); plugin marshals only.
+2. ended(): poll method on Playback (HTMLMediaElement vocabulary; no
+   onEnded callback, no audio-thread pump - a missing/swept track reads as
+   ended). @solidrt/core Sound prunes dead voices with it and gained
+   setGain/setPan applying to live + future voices.
+3. loadPcm(data, sampleRate, { channels? }) -> Clip. The typed array is the
+   format: Uint8Array = u8, Int16Array = s16, Float32Array = f32,
+   interleaved when channels: 2 (defaults 1). MIX_LoadRawAudio underneath;
+   no synthesized WAV headers needed.
+
+examples/audio/ exercises all three (synthesized clips only, no assets).

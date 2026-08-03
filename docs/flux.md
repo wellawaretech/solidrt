@@ -143,6 +143,39 @@ off() // unsubscribe
 
 ## flux: modules
 
+### flux:audio
+
+Sound playback (gui-enabled runtime only). `play` decodes (Ogg/Vorbis or WAV)
+and starts in one call; `load` decodes once into a clip whose every `play()`
+is a fresh overlapping playback; `loadPcm` takes raw samples with no container
+(the typed array is the format: `Uint8Array` = u8, `Int16Array` = s16,
+`Float32Array` = f32, interleaved when `channels: 2`); `stream` decodes a
+large track on demand from a `file()` (single playback at a time). A playback
+has live controls: `setGain(g)` (>= 0, 1.0 = clip level), `setPan(p)` (-1 left
+to 1 right, clamped, equal-power; unpanned mono is ~3 dB louder than `pan: 0`),
+and `ended()` for reclaiming voice pools without duration bookkeeping.
+
+```js
+import { play, load, loadPcm, stream, stop } from "flux:audio"
+
+play(bytes, { loop: false, gain: 0.8, pan: -0.5 })  // fire-and-forget
+
+let clip = load(bytes)             // decode once
+let p = clip.play({ gain: 0.5 })   // cheap overlapping playback
+p.setPan(0.7)                      // live, as the source moves
+p.setGain(0.2)
+p.ended()                          // finished (naturally or stopped)?
+p.stop()
+clip.unload()
+
+let tone = loadPcm(new Float32Array(samples), 44100, { channels: 1 })
+
+let music = stream(file("assets/track.ogg"))  // decode on demand
+music.play({ loop: true })
+
+stop()  // stop everything
+```
+
 ### flux:fs
 
 ```js
