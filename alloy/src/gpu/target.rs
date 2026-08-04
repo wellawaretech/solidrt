@@ -13,7 +13,7 @@ use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::resources::GpuDrawInfo;
-use super::vocab::{blend_name, AttrFormat, DrawRange, ParamValue, PipelineDesc};
+use super::vocab::{blend_name, validate_order, AttrFormat, DrawRange, ParamValue, PipelineDesc};
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
 /// One draw of a mesh target's ordered list: the pipeline it draws with
@@ -652,8 +652,9 @@ impl ShaderTexture {
     }
   }
 
-  /// Append a draw entry to a draw target's list (see `DrawEntry`; validated
-  /// UI-side, backstopped here). The entry draws last in list order.
+  /// Add a draw entry to a draw target's list (see `DrawEntry`; validated
+  /// UI-side, backstopped here): appended - drawing last in list order - or
+  /// inserted immediately before entry `before` when given.
   #[allow(clippy::too_many_arguments)]
   pub fn add_entry(
     &mut self,
@@ -666,6 +667,7 @@ impl ShaderTexture {
     draw: DrawRange,
     params: Vec<(String, ParamValue)>,
     bindings: Vec<(String, u64)>,
+    before: Option<u64>,
   ) -> Result<(), String> {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
       return Err("not a draw target".to_string());
@@ -679,8 +681,38 @@ impl ShaderTexture {
     if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
       return Err("pipeline declares attributes but no vertex buffer".to_string());
     }
+    let position = match before {
+      Some(before_id) => Some(
+        mesh
+          .entries
+          .iter()
+          .position(|e| e.id == before_id)
+          .ok_or_else(|| format!("draw {before_id} (before) not found"))?,
+      ),
+      None => None,
+    };
     let vao = build_vao(gl, &pipeline.program, &pipeline.desc.attributes, buffer.as_ref())?;
-    mesh.entries.push(DrawEntry { id, pipeline, pipeline_id, vao, buffer, buffer_id, draw, params, bindings });
+    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffer, buffer_id, draw, params, bindings };
+    match position {
+      Some(pos) => mesh.entries.insert(pos, entry),
+      None => mesh.entries.push(entry),
+    }
+    Ok(())
+  }
+
+  /// Reorder the draw list to `order`, which must be a full permutation of
+  /// the current entry ids (validated UI-side, backstopped here): every
+  /// entry named exactly once. List order is draw order.
+  pub fn set_entry_order(&mut self, order: &[u64]) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    if mesh.fixed {
+      return Err("target's draw list is fixed (created single-draw)".to_string());
+    }
+    validate_order(order, mesh.entries.iter().map(|e| e.id))?;
+    let index: std::collections::HashMap<u64, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    mesh.entries.sort_by_key(|e| index[&e.id]);
     Ok(())
   }
 

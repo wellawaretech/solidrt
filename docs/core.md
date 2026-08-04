@@ -351,14 +351,15 @@ In every target create (`createShaderTexture`, `createPipelineTexture`, `createS
 
 ```ts
 createDrawTarget(width, height, opts?: { depth?, clearColor?, render?, loadOp?, filter?, wrap?, label? }): TextureId
-addDraw(target, pipeline, params?, opts?: { buffer?, textures?, firstVertex?, vertexCount?, instanceCount? }): DrawId
+addDraw(target, pipeline, params?, opts?: { buffer?, textures?, before?, firstVertex?, vertexCount?, instanceCount? }): DrawId
 removeDraw(target, draw): void
 setDrawParams(target, draw, params): void      // setShaderParams, addressed to one entry
 setDrawTextures(target, draw, textures): void  // setShaderTextures, addressed to one entry
 setDrawRange(target, draw, update): void       // setDraw, addressed to one entry
+setDrawOrder(target, order): void              // full permutation of the live DrawIds
 ```
 
-`addDraw` appends an entry - the same per-entry shape `createShaderTarget` takes (a pipeline, its concrete `buffer`, a draw range, `params`, `textures`) - and returns a stable `DrawId`: the handle the per-entry setters take, unaffected by other adds and removes, erroring after its entry is removed rather than aliasing. List order is draw order (later entries land over earlier ones where depth does not decide), so painter-style layering is append order. Per-entry `params` is where per-object state lives - a moved mesh is one `setDrawParams` with its new model matrix - and entries bind textures independently: two entries may bind the same uniform name to different sources.
+`addDraw` adds an entry - the same per-entry shape `createShaderTarget` takes (a pipeline, its concrete `buffer`, a draw range, `params`, `textures`) - and returns a stable `DrawId`: the handle the per-entry setters take, unaffected by other adds and removes, erroring after its entry is removed rather than aliasing. List order is draw order (later entries land over earlier ones where depth does not decide), so painter-style layering is append order; `before` inserts ahead of an existing entry instead, and `setDrawOrder` replaces the whole order with a permutation of the live ids (a missing, duplicate, or unknown id throws) - the sorting verb: opaque front-to-back, transparent back-to-front, re-issued when the camera moves, with entry state riding along untouched. Per-entry `params` is where per-object state lives - a moved mesh is one `setDrawParams` with its new model matrix - and entries bind textures independently: two entries may bind the same uniform name to different sources.
 
 Depth splits the way WebGPU splits it: the target owns the storage (`depth: true`, one buffer cleared once per render and shared by every entry - what makes cross-entry occlusion work), while each entry's pipeline owns the behavior (`depth`/`depthWrite`: whether that draw tests and writes). Adding a depth-testing pipeline to a target without storage throws at `addDraw`.
 

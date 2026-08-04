@@ -8,8 +8,8 @@ use std::sync::{mpsc, Arc};
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, vertex_stride, DrawRange,
-  DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
+  resolve_draw_range, validate_draw_range, validate_order, validate_params, validate_texture_bindings, vertex_stride,
+  DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
   PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -834,21 +834,28 @@ impl Context {
     Ok(id)
   }
 
-  /// Append a draw entry to a draw target: `entry.pipeline` draws
-  /// `entry.buffer` over the target's shared storage, last in list order,
-  /// with its own params and sampler inputs. Returns the entry's stable draw
-  /// id (target-scoped, never reused), the handle every per-entry update
-  /// takes. Fire-and-forget after validation: everything is checked here
-  /// against the mirrors - unknown ids, depth compatibility (a depth-testing
-  /// pipeline needs a target created with depth), draw-range bounds, uniform
-  /// names and arities, per-entry texture-unit count, and sampling cycles -
-  /// so errors throw at the call site. The caller must request a frame.
-  pub fn add_draw(&self, target: u64, mut entry: DrawSpec) -> Result<u64, String> {
+  /// Add a draw entry to a draw target: `entry.pipeline` draws
+  /// `entry.buffer` over the target's shared storage, with its own params
+  /// and sampler inputs - appended (drawing last in list order), or
+  /// inserted immediately before entry `before` when given. Returns the
+  /// entry's stable draw id (target-scoped, never reused), the handle every
+  /// per-entry update takes. Fire-and-forget after validation: everything is
+  /// checked here against the mirrors - unknown ids, depth compatibility (a
+  /// depth-testing pipeline needs a target created with depth), draw-range
+  /// bounds, uniform names and arities, per-entry texture-unit count, and
+  /// sampling cycles - so errors throw at the call site. The caller must
+  /// request a frame.
+  pub fn add_draw(&self, target: u64, mut entry: DrawSpec, before: Option<u64>) -> Result<u64, String> {
     let mut targets = self.targets.borrow_mut();
     let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
     let Some(list) = mirror.entries.as_mut() else {
       return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
     };
+    if let Some(before_id) = before {
+      if !list.entries.contains_key(&before_id) {
+        return Err(format!("draw {before_id} (before) not found on target {target}"));
+      }
+    }
     let (uniforms, stride, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
       Some(pm) => (pm.uniforms.clone(), pm.stride, pm.depth),
       None => return Err(format!("pipeline {} not found", entry.pipeline)),
@@ -875,8 +882,27 @@ impl Context {
       record.insert((draw_id, name.clone()), *src);
     }
     drop(sources);
-    self.send(RasterCmd::AddDraw { target, draw: draw_id, entry });
+    self.send(RasterCmd::AddDraw { target, draw: draw_id, entry, before });
     Ok(draw_id)
+  }
+
+  /// Reorder a draw target's list: `order` must name every current entry
+  /// exactly once (a full permutation, validated here against the mirror).
+  /// List order is draw order - later entries land over earlier ones where
+  /// depth does not decide - so this is the sorting verb: opaque
+  /// front-to-back, transparent back-to-front. Fire-and-forget; the caller
+  /// must request a frame.
+  pub fn set_draw_order(&self, target: u64, order: &[u64]) -> Result<(), String> {
+    {
+      let targets = self.targets.borrow();
+      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let Some(list) = mirror.entries.as_ref() else {
+        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+      };
+      validate_order(order, list.entries.keys().copied())?;
+    }
+    self.send(RasterCmd::SetDrawOrder { target, order: order.to_vec() });
+    Ok(())
   }
 
   /// Remove a draw entry from a draw target; the remaining entries keep

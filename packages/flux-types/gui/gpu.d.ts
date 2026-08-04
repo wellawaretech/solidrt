@@ -558,6 +558,9 @@ declare module "flux:gpu" {
    * cycles. List order is draw order - later entries land over earlier ones
    * where depth does not decide - so painter-style layering is append order,
    * and per-entry `params` is where per-object state (a model matrix) lives.
+   * `before` inserts the entry immediately before an existing one instead
+   * of appending (it must name a live entry); for wholesale reordering use
+   * {@link setDrawOrder}.
    */
   export function addDraw(
     target: TextureId,
@@ -566,6 +569,7 @@ declare module "flux:gpu" {
     opts?: {
       textures?: Record<string, TextureId>
       buffer?: BufferId
+      before?: DrawId
     } & DrawRange,
   ): DrawId
   /**
@@ -593,6 +597,18 @@ declare module "flux:gpu" {
    * single entry, same partial merge and bounds validation.
    */
   export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange): void
+  /**
+   * Reorder a draw target's list. `order` must name every current entry
+   * exactly once - a full permutation of the live {@link DrawId}s; a
+   * missing, duplicate, or unknown id throws, naming the problem. List
+   * order is draw order, which makes this the sorting verb: sort opaque
+   * entries front-to-back (early depth rejection) and transparent ones
+   * back-to-front, and re-issue the order when the camera moves. Entry
+   * state (params, textures, ranges) rides along untouched; ids are
+   * unaffected. Like every draw-list write it re-renders an auto target
+   * once at the next flush, and folds silently on a manual one.
+   */
+  export function setDrawOrder(target: TextureId, order: DrawId[]): void
   /**
    * Render a `render: "manual"` target once, now. Renders land in call order
    * relative to every other GPU call: a `setShaderParams`/`writeBuffer`

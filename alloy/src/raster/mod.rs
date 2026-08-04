@@ -454,10 +454,13 @@ impl RasterState {
           RasterCmd::CreateDrawTarget { id, spec, depth, reply: tx } => {
             reply(tx, self.create_draw_target(id, spec, depth));
           }
-          RasterCmd::AddDraw { target, draw, entry } => {
-            if let Err(e) = self.add_draw(target, draw, entry) {
+          RasterCmd::AddDraw { target, draw, entry, before } => {
+            if let Err(e) = self.add_draw(target, draw, entry, before) {
               log::warn!("[alloy] add draw failed: {e}");
             }
+          }
+          RasterCmd::SetDrawOrder { target, order } => {
+            self.entry_write(target, "draw reorder", |_, shader| shader.set_entry_order(&order));
           }
           RasterCmd::RemoveDraw { target, draw } => {
             self.entry_write(target, "draw removal", |gl, shader| shader.remove_entry(gl, draw));
@@ -1274,10 +1277,10 @@ impl RasterState {
     self.register_shader_target(id, shader, spec.width, spec.height, spec.label, "adopt draw target failed")
   }
 
-  /// Append a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI
+  /// Add a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI
   /// side validated everything against its mirrors; a failure here means the
   /// mirrors diverged.
-  fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec) -> Result<(), String> {
+  fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec, before: Option<u64>) -> Result<(), String> {
     let pipeline =
       self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
     let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
@@ -1292,6 +1295,7 @@ impl RasterState {
       entry.draw,
       entry.params,
       entry.textures,
+      before,
     )?;
     if !shader.manual() {
       self.dirty.insert(target);

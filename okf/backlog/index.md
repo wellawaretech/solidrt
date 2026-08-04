@@ -159,11 +159,12 @@ Sorted by status: open first, then partial, deferred, and closed
   (spun off as gpu-draw-list); still deferred: index buffers (shape
   decided), per-instance attributes, float data textures, sampleable depth,
   cull/depth-func raster state, and alpha translucency.
-- [GPU draw targets](gpu-draw-list.md) [stage 1 implemented] - The
-  multi-pass bullet built as a retained, ordered, mutable draw list:
-  createDrawTarget + addDraw/removeDraw with stable DrawIds and per-entry
-  setters, one clear + N draws = one pass, target-owned depth storage;
-  ordering verbs (insert-before, setDrawOrder) are stage 2.
+- [GPU draw targets](gpu-draw-list.md) [implemented] - The multi-pass
+  bullet built as a retained, ordered, mutable draw list: createDrawTarget
+  + addDraw/removeDraw with stable DrawIds, per-entry setters, and the
+  ordering verbs (before on addDraw, setDrawOrder as the sorting verb);
+  one clear + N draws = one pass, target-owned depth storage.
+  Headless-verified; live-client verification pending.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI

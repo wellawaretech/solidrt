@@ -112,12 +112,16 @@ export type { BlendMode, DrawRange, ShaderParams, Topology, VertexAttribute } fr
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
-// wrap. addDraw appends an entry and returns its stable DrawId; removeDraw
-// drops one; setDrawParams / setDrawTextures / setDrawRange are the per-entry
-// forms of setShaderParams / setShaderTextures / setDraw, taking (target,
-// draw, value) with identical merge and validation semantics. The per-object
-// hot path is setDrawParams (a moved mesh = one call with its new matrix).
-export { addDraw, removeDraw, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
+// wrap. addDraw adds an entry (appended, or inserted via opts.before) and
+// returns its stable DrawId; removeDraw drops one; setDrawParams /
+// setDrawTextures / setDrawRange are the per-entry forms of setShaderParams /
+// setShaderTextures / setDraw, taking (target, draw, value) with identical
+// merge and validation semantics. The per-object hot path is setDrawParams (a
+// moved mesh = one call with its new matrix). setDrawOrder replaces the whole
+// list order with a full permutation of the live ids - the sorting verb
+// (opaque front-to-back, transparent back-to-front, re-issued when the
+// camera moves).
+export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds

@@ -432,6 +432,7 @@ impl ModuleDef for GpuModule {
     decl.declare("setDrawParams")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
+    decl.declare("setDrawOrder")?;
     decl.declare("renderTarget")?;
     decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
@@ -834,10 +835,11 @@ impl ModuleDef for GpuModule {
     )
     .expect("create createDrawTarget");
 
-    // addDraw(target, pipeline, params?, opts?) -> draw id: append a draw
-    // entry (same shape as createShaderTarget's per-entry arguments). The
-    // returned id is stable across add/remove - the handle every per-entry
-    // update takes. Alloy validates everything at this call site.
+    // addDraw(target, pipeline, params?, opts?) -> draw id: add a draw
+    // entry (same shape as createShaderTarget's per-entry arguments),
+    // appended, or inserted via opts.before. The returned id is stable
+    // across add/remove - the handle every per-entry update takes. Alloy
+    // validates everything at this call site.
     let add_draw_atx = atx.clone();
     let add_draw_platform = platform.clone();
     let add_draw = Function::new(
@@ -850,12 +852,30 @@ impl ModuleDef for GpuModule {
             -> rquickjs::Result<u64> {
         reject_pipeline_keys(&ctx, &opts.0, "addDraw")?;
         let entry = collect_entry_half(&ctx, pipeline, &params, &opts.0, "addDraw")?;
-        let id = add_draw_atx.add_draw(target, entry).map_err(|e| throw_str(&ctx, &format!("addDraw: {e}")))?;
+        let before = match &opts.0 {
+          Some(o) => o.get::<_, Option<u64>>("before")?,
+          None => None,
+        };
+        let id = add_draw_atx.add_draw(target, entry, before).map_err(|e| throw_str(&ctx, &format!("addDraw: {e}")))?;
         add_draw_platform.request_frame();
         Ok(id)
       },
     )
     .expect("create addDraw");
+
+    // setDrawOrder(target, order): reorder the list to a full permutation of
+    // the current entry ids - the sorting verb.
+    let set_draw_order_atx = atx.clone();
+    let set_draw_order_platform = platform.clone();
+    let set_draw_order =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, target: u64, order: Vec<u64>| -> rquickjs::Result<()> {
+        set_draw_order_atx
+          .set_draw_order(target, &order)
+          .map_err(|e| throw_str(&ctx, &format!("setDrawOrder: {e}")))?;
+        set_draw_order_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setDrawOrder");
 
     let remove_draw_atx = atx.clone();
     let remove_draw_platform = platform.clone();
@@ -983,6 +1003,7 @@ impl ModuleDef for GpuModule {
     exports.export("setDrawParams", set_draw_params)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
+    exports.export("setDrawOrder", set_draw_order)?;
     exports.export("renderTarget", render_target)?;
     exports.export("copyTexture", copy_texture)?;
     // Named generic fns, not closures: `captureSnapshot` returns a Promise and

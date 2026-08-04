@@ -6,7 +6,7 @@
 //! validators at the bottom: params, sampler bindings, and draw counts are
 //! checked against reflected/mirrored state where the app made the mistake.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A shader uniform value as supplied from the app: a scalar or a flat
 /// component array. The shader's own declaration decides how components are
@@ -413,6 +413,27 @@ pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usiz
   }
   validate_draw_range(range, stride, size.unwrap_or(0))?;
   Ok(range)
+}
+
+/// Check that `order` names every id in `current` exactly once - a full
+/// permutation of a draw target's entry list, the set_draw_order contract.
+/// One copy of the rule for the call-site check (against the UI mirror) and
+/// the raster-side backstop.
+pub fn validate_order(order: &[u64], current: impl ExactSizeIterator<Item = u64>) -> Result<(), String> {
+  let count = current.len();
+  if order.len() != count {
+    return Err(format!("order lists {} draw(s) but the target has {count}", order.len()));
+  }
+  let set: HashSet<u64> = order.iter().copied().collect();
+  if set.len() != order.len() {
+    return Err("order names a draw more than once".to_string());
+  }
+  for id in current {
+    if !set.contains(&id) {
+      return Err(format!("order is missing draw {id}"));
+    }
+  }
+  Ok(())
 }
 
 /// A stage of the programmable pipeline, for the raw compile path.

@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: GPU draw targets (multi-pass into one target)
-description: The multi-pass bullet of gpu-pipeline-extensions, built as a retained ordered draw list - createDrawTarget + addDraw/removeDraw with stable DrawIds and per-entry setters; stage 1 implemented 2026-08-04, ordering verbs (insert-before, setDrawOrder) are stage 2.
-status: stage 1 implemented 2026-08-04, pending runtime verification; stage 2 (ordering) open
+description: The multi-pass bullet of gpu-pipeline-extensions, built as a retained ordered draw list - createDrawTarget + addDraw/removeDraw with stable DrawIds, per-entry setters, and the ordering verbs (before on addDraw, setDrawOrder); stages 1+2 implemented 2026-08-04.
+status: stages 1+2 implemented 2026-08-04, headless-verified + live Linux dev client (gpu-draw-list.tsx over MCP); cross-device verification pending
 timestamp: 2026-08-04T00:00:00Z
 ---
 
@@ -94,12 +94,16 @@ die with the target); the verbs re-export raw.
 - Examples: alloy/examples/draw_list.rs (headless assertions),
   packages/core/examples/gpu-draw-list.tsx.
 
-## Stage 2 (open): ordering verbs
+## Stage 2 (DONE 2026-08-04): ordering verbs
 
-`before?: DrawId` on addDraw and `setDrawOrder(target, DrawId[])` (full
-permutation, validated, fire-and-forget) - the enabler for opaque
-front-to-back / transparent back-to-front sorting. Trivial on top of stage
-1's stable ids; kept out to keep stage 1 reviewable.
+`before?: DrawId` on addDraw (insert immediately before a live entry) and
+`setDrawOrder(target, DrawId[])` - a full permutation of the current ids,
+validated by the shared `validate_order` in vocab.rs (one copy: UI mirror
+check + raster backstop), fire-and-forget, entry state riding along
+untouched. The sorting enabler: opaque front-to-back / transparent
+back-to-front, re-issued when the camera moves. Raster-side reorder is a
+`sort_by_key` over an id->position map; introspection's draws array
+reports the new order automatically (it is list order).
 
 ## Deferred / adjacent
 

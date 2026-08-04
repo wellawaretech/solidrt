@@ -97,11 +97,12 @@ pub(crate) enum RasterCmd {
   /// draw list and optional target-owned depth storage - and adopt it.
   /// Entries arrive via AddDraw; a render is clear + entries in list order.
   CreateDrawTarget { id: u64, spec: TargetSpec, depth: bool, reply: mpsc::Sender<Result<Texture, String>> },
-  /// Append entry `draw` (a UI-allocated, target-scoped id) to a draw
-  /// target's list. Validated UI-side against the mirrors, so this is
+  /// Add entry `draw` (a UI-allocated, target-scoped id) to a draw target's
+  /// list: appended, or inserted immediately before entry `before` when
+  /// given. Validated UI-side against the mirrors, so this is
   /// fire-and-forget like every other write; a raster-side failure warns and
   /// the entry is skipped. Marks the target dirty (manual targets fold only).
-  AddDraw { target: u64, draw: u64, entry: DrawSpec },
+  AddDraw { target: u64, draw: u64, entry: DrawSpec, before: Option<u64> },
   /// Remove entry `draw` from a draw target's list, releasing its VAO and
   /// its uses of the pipeline and buffer. Fire-and-forget; marks dirty.
   RemoveDraw { target: u64, draw: u64 },
@@ -114,6 +115,10 @@ pub(crate) enum RasterCmd {
   /// Set one draw entry's range (resolved and validated UI-side) and mark
   /// the target dirty.
   SetDrawRange { target: u64, draw: u64, range: DrawRange },
+  /// Reorder a draw target's list to `order`: a full permutation of the
+  /// current entry ids (validated UI-side), list order being draw order.
+  /// The sorting verb - opaque front-to-back, transparent back-to-front.
+  SetDrawOrder { target: u64, order: Vec<u64> },
   /// Drop a program from the registry. Pipelines created from it keep it
   /// alive (and keep rendering); the GL program is deleted when the last user
   /// goes.
