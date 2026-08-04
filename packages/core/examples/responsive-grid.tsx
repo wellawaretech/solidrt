@@ -8,6 +8,11 @@
 // functions - read `capabilities.windowSizeClass` (no call). Reading it inside
 // JSX tracks, so the memo below re-runs on every resize. `windowSize()` IS a
 // function (call it) - we read its width to size each card exactly.
+//
+// This is the REFLOW answer, for layouts that genuinely rearrange across form
+// factors. For content with fixed internal geometry (diagrams, slides,
+// dashboards, game boards) do not branch on window size at all: author one
+// design space and let `viewBox` scale it to fit - see view-viewbox.tsx.
 import { render, capabilities, windowSize, createMemo, For } from "@solidrt/core"
 
 const GAP = 16

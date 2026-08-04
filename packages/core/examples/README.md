@@ -8,6 +8,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Host elements and layout
 - `window-root.tsx` - the minimal app; the root must be `<window>`.
 - `view-layout.tsx` - `<view>` as a flex container; containers do not paint.
+- `view-viewbox.tsx` - `viewBox` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. A pure fit transform - it never sizes the element (layout still does); children live in design space (the box they inherit IS the design size, so a bare `d-rect` fills it); pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards.
 - `background-rect.tsx` - a `d-rect` filling its parent as a background.
 - `detached-positioning.tsx` - the `d-` prefix: x/y placement, no reflow, detached-only children.
 - `text-paint-styling.tsx` - the uniform `color` prop; `drawStyle="stroke"` vs fill.
@@ -27,7 +28,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 
 ## Window state
 - `window-signals.tsx` - reactive `windowSize()` / `safeArea()` accessors (prefer over `onResize`).
-- `responsive-grid.tsx` - one app across phone/tablet/desktop: `capabilities.windowSizeClass` (Material 3 breakpoints, a reactive getter) drives the column count and `windowSize()` sizes each card; reflows on resize.
+- `responsive-grid.tsx` - one app across phone/tablet/desktop: `capabilities.windowSizeClass` (Material 3 breakpoints, a reactive getter) drives the column count and `windowSize()` sizes each card; reflows on resize. The reflow answer; for fixed-aspect content use `view-viewbox.tsx` instead.
 
 ## Overlays
 - `portal.tsx` - `createPortal` relocating content to the window root to escape clipping.

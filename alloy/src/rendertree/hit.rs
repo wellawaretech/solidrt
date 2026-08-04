@@ -176,9 +176,24 @@ fn hit_recursive(
   let ctx = HitContext { size };
   let local = element.kind.transform_to_local(point, &ctx);
 
+  // `local` lives in the frame the element's transform maps INTO, which for a
+  // viewBox view is the design space, not the layout box (the inverse includes
+  // the fit). Bounds have to be measured in that same frame: against the box a
+  // design space wider than its box would reject its own overflowing part, and
+  // a rejected view takes its whole subtree with it.
+  let local_size = match &element.kind {
+    ElementKind::View(v) => v.view_box.unwrap_or(size),
+    _ => size,
+  };
+  let local_ctx = HitContext { size: local_size };
+
   // Overflow gate: when an axis has non-visible overflow, the layout box clips
-  // both self and any descendants on that axis. Mirrors the paint-time clip in
-  // composite.rs.
+  // both self and any descendants on that axis. Mirrors record_node's clip,
+  // recorded under the already-fit-composed view matrix - box numbers in
+  // design units on a viewBox view, same as here. (What a viewBox view's
+  // overflow clip SHOULD mean is unsettled: draw_cached_recording applies a
+  // Recording boundary's hoisted clip in box space instead. Resolving that is
+  // a paint-side decision; the hit side follows the recorded form.)
   let (overflow_x, overflow_y) = element
     .layout
     .as_ref()
@@ -190,14 +205,14 @@ fn hit_recursive(
     return false;
   }
 
-  if pointer_events == PointerEvents::Auto && !element.kind.is_in_bounds(local, &ctx) {
+  if pointer_events == PointerEvents::Auto && !element.kind.is_in_bounds(local, &local_ctx) {
     return false;
   }
 
   let my_index = path.len();
   path.push((node_id, point, local));
 
-  if pointer_events == PointerEvents::All && element.kind.is_in_bounds(local, &ctx) {
+  if pointer_events == PointerEvents::All && element.kind.is_in_bounds(local, &local_ctx) {
     return true;
   }
 
@@ -209,17 +224,11 @@ fn hit_recursive(
     _ => Vector::default(),
   };
 
-  // Children of a viewBox view live in the design space; the local point is
-  // already there (the inverse matrix includes the fit), so their inherited
-  // box is the design size, matching the paint-time walk in composite.rs.
-  let inherited_size = match &element.kind {
-    ElementKind::View(v) => v.view_box.unwrap_or(size),
-    _ => size,
-  };
-
+  // Children inherit the frame `local` is in - the design size under a viewBox
+  // view, matching the paint-time walk in composite.rs.
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
-    let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(inherited_size);
+    let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(local_size);
     let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
     let child_point = local - child_pos.to_vector() + scroll;
     if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {

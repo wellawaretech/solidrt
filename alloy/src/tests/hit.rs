@@ -93,6 +93,43 @@ fn locals_match_live_hit_test() {
 }
 
 #[test]
+fn view_box_bounds_measured_in_design_space() {
+  // The recommended fixed-aspect pattern (`<view flex={1} viewBox={[W, H]}>`)
+  // routinely has a design space wider than its box. The view's local point is
+  // in design units, so testing it against the BOX numbers used to reject
+  // everything past design x = box width - and a rejected view drops its whole
+  // subtree, so the scene went pointer-dead on that side.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(800.0, 500.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
+  place(&mut tree, 2, 0.0, 0.0, 400.0, 300.0);
+  place(&mut tree, 3, 600.0, 100.0, 100.0, 100.0);
+
+  // Fit scale 0.5 (400/800 is the tighter axis), centered vertically by
+  // (300 - 500*0.5) / 2 = 25. Design (650, 150) -> window (325, 100), which is
+  // past the box width of 400 in design units but well inside the design space.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(325.0, 100.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  // The child's local point is in design units too, no scale factor in sight.
+  assert_xy(path[2].2, 50.0, 50.0);
+
+  // The flip side of design-space bounds: the letterbox bars map OUTSIDE the
+  // design space (window y = 10 -> design y = -30 here), so the view misses
+  // there and the point falls through to whatever is behind it.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(200.0, 10.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1]);
+}
+
+#[test]
 fn locals_truncate_at_missing_node() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
