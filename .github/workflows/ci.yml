@@ -4,15 +4,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Called by the release workflow as its gate, so a tag publishes only what
+  # main's own checks would have passed. Tag pushes match no trigger above
+  # (the branches filter never matches a tag ref), so without this a release
+  # would run no checks at all.
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
   check:
-    # The Rust check/test stays PR-only; pushes to main run only the cheap
-    # bun-based types job below.
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -24,11 +26,21 @@ jobs:
 
       - uses: ./.github/actions/linux-system-deps
 
+      # --all-targets so tests, examples and bins compile too: without it a
+      # broken test or probe example passes CI untouched.
       - name: Check
-        run: cargo check --workspace
+        run: cargo check --workspace --all-targets
 
+      # Every crate: alloy and forge hold the bulk of the suite (hit testing,
+      # routing, layout cache, GPU graph propagation, cache/fetch/net).
       - name: Test
-        run: cargo test -p lattice -p flux
+        run: cargo test --workspace
+
+      # `go` is not a default feature, so the step above compiles none of the
+      # client-only code - including lattice's app-store and dev-server-tunnel
+      # tests. That is the code that actually ships, so test it explicitly.
+      - name: Test go client
+        run: cargo test -p lattice --features go
 
   types:
     runs-on: ubuntu-24.04

@@ -27,6 +27,14 @@ concurrency:
 # forces SPEECH=0 for every dist-* goal, so this workflow does not pass SPEECH.
 
 jobs:
+  # The release gate is CI itself (same Rust check/test and typecheck), so a
+  # tag cannot publish something that fails on main. It runs alongside the
+  # build jobs rather than in front of them - it finishes well before the
+  # slowest build - and gates `publish` only: a red gate wastes build minutes
+  # but nothing reaches npm.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   build-linux:
     # Build on the oldest supported runner so the binary's glibc baseline stays
     # low enough to run on older distros. ubuntu-22.04 ships glibc 2.35 (Ubuntu
@@ -227,7 +235,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: [build-linux, build-linux-arm, build-darwin, build-windows, build-android]
+    needs: [gate, build-linux, build-linux-arm, build-darwin, build-windows, build-android]
     environment: release
     env:
       NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
