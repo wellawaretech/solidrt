@@ -37,3 +37,8 @@ over-budget GPU rather than granting it always:
   under the instrumented flow of okf/plans/frame-pacing.md), TV throughput
   keeps the depth-2 gain, `fenceTimeouts` still climbing on the TV under
   saturation (waits are capped either way there).
+
+Caveat (2026-08-04): on ANGLE/D3D11 `glClientWaitSync` never blocks, so the
+per-fence wait duration this gate keys on is always ~0 there - the gate
+signal would need the instant-expired count or a `GetSynciv` spin instead.
+See [angle-present-fence-pacing](angle-present-fence-pacing.md).

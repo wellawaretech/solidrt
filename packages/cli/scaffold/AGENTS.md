@@ -279,6 +279,10 @@ up to the frame period, because work outside the frame call is not in them.
 
 ## Run / verify
 
+- FIRST check whether a dev server and a client are already running (MCP
+  list_clients, see below) and build/test against those: `reload` pushes your
+  edits to the live app, get_logs and get_snapshot verify them. Do not start a
+  second `srt run` when one is already up.
 - bunx srt run src/index.tsx     - dev server + window (needs a display)
 - bunx srt check src/index.tsx   - exit 0 means it compiles and the app's
   types hold (dependency-internal type errors are hidden). Builds in memory:

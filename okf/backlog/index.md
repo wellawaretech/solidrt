@@ -128,6 +128,11 @@ Sorted by status: open first, then partial, deferred, and closed
 - [Buffers held like programs](gpu-buffer-lifetime.md) [done] - The one id
   space with an ordered-destroy rule whose violation silently freezes
   geometry; Rc from targets deletes the rule and the failure mode together.
+- [GPU draw targets (multi-pass into one target)](gpu-draw-list.md) [partial] -
+  The multi-pass bullet built as a retained ordered draw list:
+  createDrawTarget + addDraw/removeDraw with stable DrawIds, per-entry
+  setters and ordering verbs (before on addDraw, setDrawOrder); stages
+  1+2 implemented 2026-08-04, cross-device verification pending.
 - [GPU context loss](gpu-context-loss.md) [partial] - A lost GL context used
   to leave the app running against a dead swapchain; swap-result checking and
   exit after two failed presents shipped, real recreation still open.
@@ -233,6 +238,12 @@ Sorted by status: open first, then partial, deferred, and closed
   only while observed fence waits show the GPU is over budget, with
   hysteresis; the gating signals (fenceTimeouts, per-fence wait) already
   exist.
+- [Present-fence pacing on ANGLE](angle-present-fence-pacing.md) [deferred] -
+  ANGLE/D3D11's glClientWaitSync never blocks (measured 2026-08-04, probe
+  example in alloy), so depth-capped pacing degrades to check-and-proceed
+  there; the false fenceTimeouts counter is fixed (glFlush after fence
+  creation), a GetSynciv-spin fallback waits for evidence of real Windows
+  drag latency, and macOS (ANGLE-Metal) is unmeasured.
 - [Move the fetch disk cache out of forge?](fetch-cache-out-of-forge.md) [deferred] -
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for

@@ -21,7 +21,17 @@ PKG_WIN := $(CURDIR)/../packages/win32-x64-msvc
 # (~7 MB of int3 padding, no COMDAT folding: solidrt.exe 52.7 -> 38.5 MB
 # when the override was removed, 2026-07-19).
 WIN_RUSTFLAGS := -Ctarget-feature=+crt-static
-WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+# The two plain env vars only reach whisper-rs-sys, which forwards CMAKE_* env
+# as -D defines. Deps built through the cmake crate (sdl3-sys; cmake 0.1.58
+# passes no MSVC runtime setting) never see them, and under CMP0091=NEW cmake
+# appends its /MD default after the injected -MT, so the last flag wins and SDL
+# objects silently come out /MD. The big client graph still links (UCRT import
+# libs satisfy the __imp_* refs) but it is a static/DLL CRT mix, and small
+# graphs (alloy examples) fail to link outright. The toolchain file is the one
+# channel the cmake crate reads from the env, forcing /MT on every cmake dep;
+# native Windows cmake needs a C:/ path, hence cygpath.
+WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+  CMAKE_TOOLCHAIN_FILE=$(shell cygpath -m $(CURDIR))/msvc-static-crt.cmake
 
 .PHONY: client runtime dist-windows angle-windows
 
