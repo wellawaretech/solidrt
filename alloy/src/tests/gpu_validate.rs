@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, DrawRange, DrawUpdate,
-  GpuLimits, ParamValue, UniformKind, UniformTable,
+  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, DrawBounds, DrawRange,
+  DrawUpdate, GpuLimits, ParamValue, UniformKind, UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -85,61 +85,86 @@ fn range(first: i32, count: i32, instances: i32) -> DrawRange {
   DrawRange { first_vertex: first, vertex_count: count, instance_count: instances }
 }
 
+/// A plain vertex fetch bound: `size` bytes at `stride` bytes/vertex.
+fn vbounds(stride: usize, size: usize) -> DrawBounds {
+  DrawBounds { fetch: Some((stride, size)), indexed: false, instance: None }
+}
+
+/// An index fetch bound: `size` bytes at `elem` bytes/index.
+fn ibounds(elem: usize, size: usize) -> DrawBounds {
+  DrawBounds { fetch: Some((elem, size)), indexed: true, instance: None }
+}
+
 #[test]
 fn draw_range_within_buffer_passes() {
   // 100 vertices at 20 bytes each in a 2000-byte buffer: exactly full.
-  assert_eq!(validate_draw_range(range(0, 100, 1), 20, 2000, false), Ok(()));
-  assert_eq!(validate_draw_range(range(0, 0, 1), 20, 2000, false), Ok(()));
+  assert_eq!(validate_draw_range(range(0, 100, 1), vbounds(20, 2000)), Ok(()));
+  assert_eq!(validate_draw_range(range(0, 0, 1), vbounds(20, 2000)), Ok(()));
   // A sub-range ending exactly at the buffer's end.
-  assert_eq!(validate_draw_range(range(60, 40, 1), 20, 2000, false), Ok(()));
-  // Instances do not widen the vertex fetch; 0 instances (draw nothing) is legal.
-  assert_eq!(validate_draw_range(range(0, 100, 1_000_000), 20, 2000, false), Ok(()));
-  assert_eq!(validate_draw_range(range(0, 100, 0), 20, 2000, false), Ok(()));
-  // Attributeless callers pass stride 0 / size 0: any non-negative range.
-  assert_eq!(validate_draw_range(range(500, 1_000_000, 3), 0, 0, false), Ok(()));
+  assert_eq!(validate_draw_range(range(60, 40, 1), vbounds(20, 2000)), Ok(()));
+  // Instances do not widen the vertex fetch (no instance buffer bound);
+  // 0 instances (draw nothing) is legal.
+  assert_eq!(validate_draw_range(range(0, 100, 1_000_000), vbounds(20, 2000)), Ok(()));
+  assert_eq!(validate_draw_range(range(0, 100, 0), vbounds(20, 2000)), Ok(()));
+  // Attributeless callers have no fetch bound: any non-negative range.
+  assert_eq!(validate_draw_range(range(500, 1_000_000, 3), DrawBounds::default()), Ok(()));
 }
 
 #[test]
 fn draw_range_past_buffer_end_errors() {
-  let err = validate_draw_range(range(0, 101, 1), 20, 2000, false).expect_err("one vertex past the end must error");
+  let err = validate_draw_range(range(0, 101, 1), vbounds(20, 2000)).expect_err("one vertex past the end must error");
   assert!(err.contains("0..101") && err.contains("2020 bytes") && err.contains("100 vertices"), "{err}");
   // first shifts the fetch window even when the count alone would fit.
-  let err = validate_draw_range(range(60, 41, 1), 20, 2000, false).expect_err("first + count past the end must error");
+  let err = validate_draw_range(range(60, 41, 1), vbounds(20, 2000)).expect_err("first + count past the end must error");
   assert!(err.contains("60..101"), "{err}");
 }
 
 #[test]
 fn draw_range_negative_fields_error() {
-  let err = validate_draw_range(range(0, -1, 1), 20, 2000, false).expect_err("negative count must error");
+  let err = validate_draw_range(range(0, -1, 1), vbounds(20, 2000)).expect_err("negative count must error");
   assert!(err.contains("vertex count") && err.contains(">= 0"), "{err}");
-  let err = validate_draw_range(range(-1, 3, 1), 0, 0, false).expect_err("negative first must error");
+  let err = validate_draw_range(range(-1, 3, 1), DrawBounds::default()).expect_err("negative first must error");
   assert!(err.contains("first vertex") && err.contains(">= 0"), "{err}");
-  let err = validate_draw_range(range(0, 3, -1), 0, 0, false).expect_err("negative instances must error");
+  let err = validate_draw_range(range(0, 3, -1), DrawBounds::default()).expect_err("negative instances must error");
   assert!(err.contains("instance count") && err.contains(">= 0"), "{err}");
 }
 
 #[test]
 fn resolve_derives_whole_buffer_and_tail() {
   // The create default: whole buffer, one instance.
-  assert_eq!(resolve_draw_range(DrawRange::default(), 20, Some(2000), false), Ok(range(0, 100, 1)));
+  assert_eq!(resolve_draw_range(DrawRange::default(), vbounds(20, 2000)), Ok(range(0, 100, 1)));
   // With a first vertex, "the rest of the buffer" is the tail.
-  assert_eq!(resolve_draw_range(range(60, -1, 1), 20, Some(2000), false), Ok(range(60, 40, 1)));
+  assert_eq!(resolve_draw_range(range(60, -1, -1), vbounds(20, 2000)), Ok(range(60, 40, 1)));
   // Attributeless: nothing to derive from, so the default resolves to 0.
-  assert_eq!(resolve_draw_range(DrawRange::default(), 0, None, false), Ok(range(0, 0, 1)));
+  assert_eq!(resolve_draw_range(DrawRange::default(), DrawBounds::default()), Ok(range(0, 0, 1)));
   // An explicit range passes through unchanged (validated, not derived).
-  assert_eq!(resolve_draw_range(range(3, 5, 7), 20, Some(2000), false), Ok(range(3, 5, 7)));
+  assert_eq!(resolve_draw_range(range(3, 5, 7), vbounds(20, 2000)), Ok(range(3, 5, 7)));
 }
 
 #[test]
 fn resolve_rejects_bad_ranges() {
-  let err = resolve_draw_range(range(101, -1, 1), 20, Some(2000), false).expect_err("first past the end must error");
+  let err = resolve_draw_range(range(101, -1, 1), vbounds(20, 2000)).expect_err("first past the end must error");
   assert!(err.contains("past the end") && err.contains("100 vertices"), "{err}");
-  let err = resolve_draw_range(range(0, 101, 1), 20, Some(2000), false).expect_err("explicit count past the end must error");
+  let err = resolve_draw_range(range(0, 101, 1), vbounds(20, 2000)).expect_err("explicit count past the end must error");
   assert!(err.contains("2020 bytes"), "{err}");
-  let err = resolve_draw_range(DrawRange::default(), 20, None, false).expect_err("attributes without a buffer must error");
-  assert!(err.contains("no vertex buffer"), "{err}");
-  let err = resolve_draw_range(range(0, 3, -2), 0, None, false).expect_err("negative instances must error");
-  assert!(err.contains("instance count"), "{err}");
+}
+
+#[test]
+fn instance_ranges_bound_and_derive() {
+  // 8 instance records at 12 bytes each in a 96-byte instance buffer.
+  let b = DrawBounds { instance: Some((12, 96)), ..vbounds(20, 2000) };
+  assert_eq!(validate_draw_range(range(0, 100, 8), b), Ok(()));
+  assert_eq!(validate_draw_range(range(0, 100, 0), b), Ok(()));
+  let err = validate_draw_range(range(0, 100, 9), b).expect_err("one instance past the end must error");
+  assert!(err.contains("9 instances") && err.contains("108 bytes") && err.contains("8 instances"), "{err}");
+  // The default derives one instance per record of the instance buffer -
+  // and stays 1 without one (the plain draw, covered above).
+  assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 100, 8)));
+  // The instance bound also holds on an attributeless entry.
+  let b = DrawBounds { instance: Some((12, 96)), ..DrawBounds::default() };
+  assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 0, 8)));
+  let err = validate_draw_range(range(0, 0, 100), b).expect_err("instance bound must hold without vertices");
+  assert!(err.contains("instance buffer holds 96 bytes"), "{err}");
 }
 
 #[test]
@@ -176,14 +201,14 @@ fn draw_update_speaks_the_entry_vocabulary() {
 fn indexed_ranges_speak_indices() {
   // The same bound math at the index element size, with index nouns: 6
   // uint16 indices in a 12-byte buffer.
-  assert_eq!(validate_draw_range(range(0, 6, 1), 2, 12, true), Ok(()));
-  let err = validate_draw_range(range(0, 7, 1), 2, 12, true).expect_err("one index past the end must error");
+  assert_eq!(validate_draw_range(range(0, 6, 1), ibounds(2, 12)), Ok(()));
+  let err = validate_draw_range(range(0, 7, 1), ibounds(2, 12)).expect_err("one index past the end must error");
   assert!(err.contains("index range") && err.contains("6 indices"), "{err}");
-  let err = validate_draw_range(range(0, -1, 1), 2, 12, true).expect_err("negative count must error");
+  let err = validate_draw_range(range(0, -1, 1), ibounds(2, 12)).expect_err("negative count must error");
   assert!(err.contains("index count"), "{err}");
   // Whole-buffer derivation from the index buffer's element count.
-  assert_eq!(resolve_draw_range(DrawRange::default(), 2, Some(12), true), Ok(range(0, 6, 1)));
-  assert_eq!(resolve_draw_range(range(3, -1, 1), 2, Some(12), true), Ok(range(3, 3, 1)));
+  assert_eq!(resolve_draw_range(DrawRange::default(), ibounds(2, 12)), Ok(range(0, 6, 1)));
+  assert_eq!(resolve_draw_range(range(3, -1, 1), ibounds(2, 12)), Ok(range(3, 3, 1)));
 }
 
 #[test]

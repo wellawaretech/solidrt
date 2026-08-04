@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: GPU pipeline extensions
-description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30, multi-pass draw targets and index buffers + cull mode 2026-08-04; per-instance attributes, float data textures, depth func, alpha translucency and sampleable depth remain deferred.
+description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30, multi-pass draw targets, index buffers + cull mode, and per-instance attributes 2026-08-04; float data textures, depth func, alpha translucency and sampleable depth remain deferred.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -54,17 +54,31 @@ draw count. Deliberately deferred, in rough order of expected demand:
   counts from 0 (no base instance in ES 3.0 - `firstInstance` deliberately
   not offered). get_gpu_resources reports firstVertex/instanceCount off
   their 0/1 defaults. Example: packages/core/examples/gpu-instancing.tsx.
-- **Per-instance attributes** (vertex divisor), the follow-up instancing
-  deliberately excludes: without it, instances differ only via
-  `gl_InstanceID` arithmetic or a texelFetch into a data texture - fine for
-  grids and repeated meshes, thin for particles with per-instance state
-  (and data textures want float formats, below, first). The design is
-  additive to what landed: a second, divisor-1 buffer - `instanceBuffer` on
-  the target spec plus `instanceAttributes: [{name, format}]` on the
-  pipeline desc (WebGPU's `stepMode: "instance"` in GL clothing, VAO setup
-  gains `glVertexAttribDivisor`) - leaving `attributes`, `buffer`, and the
-  draw range untouched. `instanceCount` then also gains a fetch bound
-  against the instance buffer, mirroring the vertex one.
+- **Per-instance attributes** (vertex divisor). DONE 2026-08-04, the
+  sketched shape: `instanceAttributes: [{name, format}]` on the pipeline
+  desc plus `instanceBuffer` per entry (WebGPU's `stepMode: "instance"`;
+  `build_vao` records the second layout at divisor 1 - divisor is VAO state
+  in ES 3.0, so `run_pass` needed zero changes). The two layouts share one
+  attribute namespace; a name in both throws at pipeline creation
+  (`RenderPipeline::new`, inside the blocking create RPC). Pairing is a
+  contract: declared instanceAttributes require an entry instanceBuffer and
+  vice versa (`resolve_entry_range` UI-side, `check_entry_buffers` raster
+  backstop). `instanceCount` gained the fetch bound against the instance
+  buffer AND the whole-buffer derivation rule: omitted = one instance per
+  record when an instance buffer is bound, else 1 (DrawRange's default
+  instance_count is now the -1 sentinel, resolved like vertex_count). Two
+  consolidations rode along, deliberately breaking internal signatures: the
+  mirrors' `(draw_bound, indexed)` pair became `vocab::DrawBounds`
+  (fetch/indexed/instance, one value validate_draw_range takes), and the
+  raster-side buffer trio became `target::EntryBuffers`
+  (vertex/index/instance Rc + id, one resolve_entry_buffers).
+  `reads_buffer` covers the third role; introspection reports
+  `instanceBuffer` per entry/flat target and `instanceAttributes` on render
+  pipelines. No matrix attribute formats (a mat4 is four vec4 columns, as
+  in WebGPU) and no base instance (unchanged, ES 3.0). Probe-pinned in
+  alloy/examples/draw_instanced.rs (20 assertions incl. attributeless +
+  instanced and index + instance combined); gpu-instancing.tsx converted to
+  records.
 - **Float texture formats** (`R32F`/`RGBA32F`) for data textures sampled in
   the vertex stage (e.g. per-sector heights via texelFetch). Workaround:
   fixed-point encode into RGBA8 channels and decode in the shader.

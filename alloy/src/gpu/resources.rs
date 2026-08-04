@@ -68,6 +68,9 @@ pub struct GpuRenderPipelineInfo {
   pub depth_write: bool,
   /// (name, format string) of the declared interleaved vertex layout.
   pub attributes: Vec<(String, String)>,
+  /// (name, format string) of the declared per-instance layout; empty when
+  /// the pipeline declares none.
+  pub instance_attributes: Vec<(String, String)>,
 }
 
 /// One entry of a draw target's ordered list, as reported in
@@ -83,6 +86,9 @@ pub struct GpuDrawInfo {
   pub index_buffer_id: Option<u64>,
   /// "uint16" or "uint32", present with `index_buffer_id`.
   pub index_format: Option<&'static str>,
+  /// The entry's per-instance buffer, present when its pipeline declares
+  /// instance attributes.
+  pub instance_buffer_id: Option<u64>,
   pub topology: &'static str,
   /// "none" or "add".
   pub blend: &'static str,
@@ -120,6 +126,9 @@ pub struct GpuPipelineInfo {
   pub index_buffer_id: Option<u64>,
   /// "uint16" or "uint32", present with `index_buffer_id`.
   pub index_format: Option<&'static str>,
+  /// The first entry's per-instance buffer, present when its pipeline
+  /// declares instance attributes.
+  pub instance_buffer_id: Option<u64>,
   pub topology: Option<&'static str>,
   /// The vertex count of the target's draw range; None on a fragment-only
   /// target, like the two range fields below.
@@ -138,6 +147,9 @@ pub struct GpuPipelineInfo {
   pub cull: Option<&'static str>,
   /// (name, format string) of the declared interleaved vertex layout.
   pub attributes: Vec<(String, String)>,
+  /// (name, format string) of the declared per-instance layout; empty when
+  /// the pipeline declares none.
+  pub instance_attributes: Vec<(String, String)>,
   /// sampler2D uniform name -> source texture id.
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render.

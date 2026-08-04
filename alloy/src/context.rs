@@ -9,7 +9,7 @@ use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_params, validate_texture_bindings, vertex_stride,
-  DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
+  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
   PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -36,18 +36,9 @@ struct TargetMirror {
   /// updates against. None for a fullscreen fragment pass (no mesh draw) and
   /// for draw targets (whose ranges live per entry).
   draw: Option<DrawRange>,
-  /// The fetch bound for set_draw, (element stride, buffer byte size):
-  /// the vertex buffer at the pipeline's stride on a plain target, the
-  /// index buffer at the format's element size on an indexed one. None when
-  /// the target draws attributeless - gl_VertexID fetches nothing, so any
-  /// range is safe. Captured at create: buffer sizes are fixed for their
-  /// lifetime and the target holds the buffer alive, so the bound stays
-  /// correct even after the buffer id itself is destroyed.
-  draw_bound: Option<(usize, usize)>,
-  /// Whether the target's one entry draws indexed: picks the range
-  /// vocabulary set_draw accepts (firstIndex/indexCount vs
-  /// firstVertex/vertexCount) and the bound's unit.
-  indexed: bool,
+  /// The fetch bounds and range vocabulary for set_draw, captured at create
+  /// (see `DrawBounds` for why a captured bound stays correct).
+  bounds: DrawBounds,
   /// Some = a draw target: the mutable ordered draw list, mirrored per entry
   /// (the flat fields above then describe nothing). None for the fixed
   /// kinds, whose one pass the flat fields describe.
@@ -74,17 +65,18 @@ struct EntryMirror {
   /// The entry's current resolved draw range, what set_draw_range merges
   /// partial updates against.
   draw: DrawRange,
-  draw_bound: Option<(usize, usize)>,
-  /// Whether the entry draws indexed (see `TargetMirror::indexed`).
-  indexed: bool,
+  /// The entry's fetch bounds and range vocabulary (see `TargetMirror::bounds`).
+  bounds: DrawBounds,
 }
 
 // UI-side mirror of a registered render pipeline: its program's uniforms, the
-// vertex stride of its attribute layout, and whether it declares depth state,
-// for deriving target/entry mirrors and validating adds without an RPC.
+// record strides of its attribute layouts (vertex and per-instance), and
+// whether it declares depth state, for deriving target/entry mirrors and
+// validating adds without an RPC.
 struct PipelineMirror {
   uniforms: Rc<UniformTable>,
   stride: usize,
+  instance_stride: usize,
   depth: bool,
 }
 
@@ -511,7 +503,7 @@ impl Context {
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, draw_bound: None, indexed: false, entries: None });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, bounds: DrawBounds::default(), entries: None });
     self
       .shader_sources
       .borrow_mut()
@@ -660,10 +652,11 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.target.width, spec.target.height)?;
     limits.check_texture_units(spec.entry.textures.len())?;
-    limits.check_vertex_attribs(spec.pipeline.attributes.len())?;
+    limits.check_vertex_attribs(spec.pipeline.attributes.len() + spec.pipeline.instance_attributes.len())?;
     validate_load(&spec.target)?;
     let stride = vertex_stride(&spec.pipeline.attributes) as usize;
-    let (draw_bound, indexed) = self.resolve_entry_range(&mut spec.entry, stride)?;
+    let instance_stride = vertex_stride(&spec.pipeline.instance_attributes) as usize;
+    let bounds = self.resolve_entry_range(&mut spec.entry, stride, instance_stride)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
@@ -675,7 +668,7 @@ impl Context {
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), draw_bound, indexed, entries: None });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), bounds, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -687,7 +680,7 @@ impl Context {
   /// for id 0 (no buffer bound), an error for an unknown id - caught here,
   /// before the create RPC, so the mistake throws at the call site. What the
   /// draw-range resolution and the captured draw bound (see
-  /// `TargetMirror::draw_bound`) both read.
+  /// `TargetMirror::bounds`) both read.
   fn buffer_size(&self, id: u64) -> Result<Option<usize>, String> {
     if id == 0 {
       return Ok(None);
@@ -695,34 +688,51 @@ impl Context {
     self.buffer_sizes.borrow().get(&id).copied().map(Some).ok_or_else(|| format!("buffer {id} not found"))
   }
 
-  /// Resolve an entry's draw range in place and capture its fetch bound
-  /// against the right buffer: the vertex buffer at the pipeline's stride
-  /// for a plain entry, the index buffer at the format's element size for an
-  /// indexed one - whose vertex fetch runs through the index VALUES and so
-  /// cannot be bounds-checked here (raw GL semantics; robust drivers clamp).
-  /// Returns (fetch bound, indexed) for the entry's mirror. Shared by the
-  /// two split creates, the fused create, and add_draw.
-  fn resolve_entry_range(&self, entry: &mut DrawSpec, stride: usize) -> Result<(Option<(usize, usize)>, bool), String> {
+  /// Check an entry's buffers against the pipeline's declared layouts and
+  /// resolve its draw range in place, capturing the bounds for the entry's
+  /// mirror: the fetch bound against the vertex buffer at the pipeline's
+  /// stride for a plain entry, against the index buffer at the format's
+  /// element size for an indexed one - whose vertex fetch runs through the
+  /// index VALUES and so cannot be bounds-checked here (raw GL semantics;
+  /// robust drivers clamp) - and the instance bound against the instance
+  /// buffer at the per-instance record stride. Shared by the two split
+  /// creates, the fused create, and add_draw.
+  fn resolve_entry_range(&self, entry: &mut DrawSpec, stride: usize, instance_stride: usize) -> Result<DrawBounds, String> {
     let size = self.buffer_size(entry.buffer)?;
-    match entry.index {
+    if stride > 0 && size.is_none() {
+      return Err("pipeline declares attributes but no vertex buffer".to_string());
+    }
+    let instance_size = match entry.instance_buffer {
+      0 => None,
+      id => Some(
+        self
+          .buffer_sizes
+          .borrow()
+          .get(&id)
+          .copied()
+          .ok_or_else(|| format!("instance buffer {id} not found"))?,
+      ),
+    };
+    if instance_stride > 0 && instance_size.is_none() {
+      return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
+    }
+    if instance_stride == 0 && instance_size.is_some() {
+      return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
+    }
+    let (fetch, indexed) = match entry.index {
       Some((index_buffer, format)) => {
-        if stride > 0 && size.is_none() {
-          return Err("pipeline declares attributes but no vertex buffer".to_string());
-        }
         let bytes = match index_buffer {
           0 => None,
           id => self.buffer_sizes.borrow().get(&id).copied(),
         }
         .ok_or_else(|| format!("index buffer {index_buffer} not found"))?;
-        let elem = format.size() as usize;
-        entry.draw = resolve_draw_range(entry.draw, elem, Some(bytes), true)?;
-        Ok((Some((elem, bytes)), true))
+        (Some((format.size() as usize, bytes)), true)
       }
-      None => {
-        entry.draw = resolve_draw_range(entry.draw, stride, size, false)?;
-        Ok((size.filter(|_| stride > 0).map(|size| (stride, size)), false))
-      }
-    }
+      None => (size.filter(|_| stride > 0).map(|size| (stride, size)), false),
+    };
+    let bounds = DrawBounds { fetch, indexed, instance: instance_size.map(|size| (instance_stride, size)) };
+    entry.draw = resolve_draw_range(entry.draw, bounds)?;
+    Ok(bounds)
   }
 
   /// Compile a single raw shader stage, returning its stage id (its own id
@@ -781,17 +791,18 @@ impl Context {
   /// is the draw-state object every target created from it shares; creating
   /// one compiles nothing. Free with `destroy_render_pipeline`.
   pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc, label: Option<String>) -> Result<u64, String> {
-    self.gpu_limits().check_vertex_attribs(desc.attributes.len())?;
+    self.gpu_limits().check_vertex_attribs(desc.attributes.len() + desc.instance_attributes.len())?;
     let uniforms = match self.program_uniforms.borrow().get(&program) {
       Some(uniforms) => uniforms.clone(),
       None => return Err(format!("program {program} not found")),
     };
     let stride = vertex_stride(&desc.attributes) as usize;
+    let instance_stride = vertex_stride(&desc.instance_attributes) as usize;
     let depth = desc.depth.is_some();
     let id = self.next_pipeline_id.get();
     self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, label, reply })??;
     self.next_pipeline_id.set(id + 1);
-    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, depth });
+    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, instance_stride, depth });
     Ok(id)
   }
 
@@ -813,13 +824,13 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.width, spec.height)?;
     limits.check_texture_units(entry.textures.len())?;
-    let (uniforms, stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
-      Some(mirror) => (mirror.uniforms.clone(), mirror.stride),
+    let (uniforms, stride, instance_stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
+      Some(mirror) => (mirror.uniforms.clone(), mirror.stride, mirror.instance_stride),
       None => return Err(format!("pipeline {pipeline} not found")),
     };
     validate_load(&spec)?;
     entry.pipeline = pipeline;
-    let (draw_bound, indexed) = self.resolve_entry_range(&mut entry, stride)?;
+    let bounds = self.resolve_entry_range(&mut entry, stride, instance_stride)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
@@ -828,7 +839,7 @@ impl Context {
       entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
-    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), draw_bound, indexed, entries: None });
+    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -857,8 +868,7 @@ impl Context {
       TargetMirror {
         uniforms: Rc::new(UniformTable::default()),
         draw: None,
-        draw_bound: None,
-        indexed: false,
+        bounds: DrawBounds::default(),
         entries: Some(DrawListMirror { depth, next_draw: 1, entries: HashMap::new() }),
       },
     );
@@ -891,8 +901,8 @@ impl Context {
         return Err(format!("draw {before_id} (before) not found on target {target}"));
       }
     }
-    let (uniforms, stride, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
-      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.depth),
+    let (uniforms, stride, instance_stride, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
+      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.instance_stride, pm.depth),
       None => return Err(format!("pipeline {} not found", entry.pipeline)),
     };
     if depth && !list.depth {
@@ -901,13 +911,13 @@ impl Context {
         entry.pipeline
       ));
     }
-    let (draw_bound, indexed) = self.resolve_entry_range(&mut entry, stride)?;
+    let bounds = self.resolve_entry_range(&mut entry, stride, instance_stride)?;
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
     let draw_id = list.next_draw;
     self.validate_new_bindings(target, draw_id, &entry.textures)?;
     list.next_draw += 1;
-    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, draw_bound, indexed });
+    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds });
     drop(targets);
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -1004,9 +1014,8 @@ impl Context {
       return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
     };
     let entry = list.entries.get_mut(&draw).ok_or_else(|| format!("draw {draw} not found on target {target}"))?;
-    let range = entry.draw.merged(update, entry.indexed)?;
-    let (stride, size) = entry.draw_bound.unwrap_or((0, 0));
-    validate_draw_range(range, stride, size, entry.indexed)?;
+    let range = entry.draw.merged(update, entry.bounds.indexed)?;
+    validate_draw_range(range, entry.bounds)?;
     entry.draw = range;
     drop(targets);
     self.send(RasterCmd::SetDrawRange { target, draw, range });
@@ -1100,7 +1109,7 @@ impl Context {
   /// field. The caller must request a frame. Errs on a negative field, or a
   /// vertex range whose fetch would run past the end of the target's buffer
   /// (undefined behaviour in raw GLES; validated against the bound captured
-  /// at create, see `TargetMirror::draw_bound` - attributeless targets fetch
+  /// at create, see `TargetMirror::bounds` - attributeless targets fetch
   /// nothing, so any non-negative range is safe there).
   pub fn set_draw(&self, id: u64, update: DrawUpdate) -> Result<(), String> {
     let mut targets = self.targets.borrow_mut();
@@ -1111,9 +1120,8 @@ impl Context {
     let Some(current) = mirror.draw else {
       return Err("not a pipeline texture".to_string());
     };
-    let range = current.merged(update, mirror.indexed)?;
-    let (stride, size) = mirror.draw_bound.unwrap_or((0, 0));
-    validate_draw_range(range, stride, size, mirror.indexed)?;
+    let range = current.merged(update, mirror.bounds.indexed)?;
+    validate_draw_range(range, mirror.bounds)?;
     mirror.draw = Some(range);
     drop(targets);
     self.send(RasterCmd::SetDraw { id, range });

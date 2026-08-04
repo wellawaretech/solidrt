@@ -16,10 +16,28 @@ use super::resources::GpuDrawInfo;
 use super::vocab::{blend_name, cull_name, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc};
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
+/// The buffers one draw entry fetches through, resolved from registry ids to
+/// live Rc clones (the raster-side counterpart of `DrawSpec`'s id fields).
+/// Each buffer rides in the entry for its VAO's lifetime - Rc-held like the
+/// pipeline, so destroying the registry entry in either order is safe. The
+/// registry ids stay alongside for `reads_buffer` and introspection.
+#[derive(Default)]
+pub struct EntryBuffers {
+  /// The interleaved vertex buffer the pipeline's `attributes` describe;
+  /// None when the pipeline is attributeless.
+  pub vertex: Option<(Rc<GpuBuffer>, u64)>,
+  /// Index binding: present = the entry draws indexed; the buffer's
+  /// ELEMENT_ARRAY binding is captured in the entry's VAO at build time.
+  pub index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
+  /// The per-instance buffer the pipeline's `instance_attributes` describe,
+  /// captured in the VAO at divisor 1; None when it declares none.
+  pub instance: Option<(Rc<GpuBuffer>, u64)>,
+}
+
 /// One draw of a mesh target's ordered list: the pipeline it draws with
 /// (which owns the draw state), plus everything bound to THIS entry - the
-/// VAO built against its concrete vertex buffer, that buffer's registry id,
-/// the draw range, uniform values, and sampler inputs. Entries are addressed
+/// VAO built against its concrete buffers, those buffers' registry ids, the
+/// draw range, uniform values, and sampler inputs. Entries are addressed
 /// by a UI-allocated id that stays stable across add/remove (never an index).
 pub(super) struct DrawEntry {
   pub(super) id: u64,
@@ -28,17 +46,9 @@ pub(super) struct DrawEntry {
   /// fused create path, whose pipeline is anonymous and dies with the target.
   pipeline_id: Option<u64>,
   pub(super) vao: glow::VertexArray,
-  /// The interleaved vertex buffer this entry's VAO reads, held by Rc like
-  /// the pipeline so destroying the registry entry in either order is safe;
-  /// None when the pipeline is attributeless.
-  buffer: Option<Rc<GpuBuffer>>,
-  /// Registry id of that buffer (buffer writes re-render targets through
-  /// this, see `reads_buffer`). 0 when the pipeline is attributeless.
-  buffer_id: u64,
-  /// Index binding: (buffer, registry id, element format). Present = this
-  /// entry draws indexed; the buffer is Rc-held like the vertex one, and its
-  /// ELEMENT_ARRAY binding is captured in the entry's VAO at build time.
-  index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
+  /// The entry's resolved buffers (vertex, index, instance): what the VAO
+  /// reads, and what buffer writes re-render through (see `reads_buffer`).
+  buffers: EntryBuffers,
   /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
   /// it ever reaches this field.
   pub(super) draw: DrawRange,
@@ -169,46 +179,92 @@ unsafe fn attach_depth(gl: &glow::Context, width: u32, height: u32) -> Result<gl
   Ok(rb)
 }
 
-/// Record a pipeline's interleaved vertex layout against a concrete buffer in
-/// a fresh VAO. Attribute locations are looked up by name, so an attribute
-/// the shader does not use is skipped - its bytes still occupy the stride.
-/// The index buffer, when given, is bound as ELEMENT_ARRAY while the VAO is
-/// current: that binding is VAO state, so it is captured here once and needs
-/// no per-draw rebinding (and no explicit save - restoring the previous VAO
-/// restores its own element binding). Restores the VAO and array-buffer
-/// bindings it touches.
+/// Record one interleaved attribute layout against the currently bound
+/// ARRAY_BUFFER into the current VAO. Attribute locations are looked up by
+/// name, so an attribute the shader does not use is skipped - its bytes
+/// still occupy the stride. `divisor` 0 advances per vertex, 1 per instance.
+unsafe fn record_layout(gl: &glow::Context, program: &ShaderProgram, attributes: &[(String, AttrFormat)], divisor: u32) {
+  let stride = super::vocab::vertex_stride(attributes);
+  let mut offset = 0i32;
+  for (name, fmt) in attributes {
+    // None means the shader does not (actively) use the attribute; that
+    // is fine, the bytes are simply skipped over via the stride.
+    if let Some(loc) = gl.get_attrib_location(program.program, name) {
+      gl.enable_vertex_attrib_array(loc);
+      gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
+      if divisor != 0 {
+        gl.vertex_attrib_divisor(loc, divisor);
+      }
+    }
+    offset += fmt.components() * 4;
+  }
+}
+
+/// Record a pipeline's vertex and instance layouts against an entry's
+/// concrete buffers in a fresh VAO: `desc.attributes` over the vertex buffer
+/// (divisor 0), `desc.instance_attributes` over the instance buffer (divisor
+/// 1 - the divisor is VAO state in ES 3.0, like the attribute pointers). The
+/// index buffer, when given, is bound as ELEMENT_ARRAY while the VAO is
+/// current: that binding is VAO state too, so it is captured here once and
+/// needs no per-draw rebinding (and no explicit save - restoring the
+/// previous VAO restores its own element binding). Restores the VAO and
+/// array-buffer bindings it touches.
 fn build_vao(
   gl: &glow::Context,
   program: &ShaderProgram,
-  attributes: &[(String, AttrFormat)],
-  buffer: Option<&Rc<GpuBuffer>>,
-  index: Option<&Rc<GpuBuffer>>,
+  desc: &PipelineDesc,
+  buffers: &EntryBuffers,
 ) -> Result<glow::VertexArray, String> {
   unsafe {
     let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
     let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
     let vao = gl.create_vertex_array().map_err(|e| format!("glGenVertexArrays failed: {e}"))?;
     gl.bind_vertex_array(Some(vao));
-    if let Some(buffer) = buffer {
+    if let Some((buffer, _)) = &buffers.vertex {
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      let stride = super::vocab::vertex_stride(attributes);
-      let mut offset = 0i32;
-      for (name, fmt) in attributes {
-        // None means the shader does not (actively) use the attribute; that
-        // is fine, the bytes are simply skipped over via the stride.
-        if let Some(loc) = gl.get_attrib_location(program.program, name) {
-          gl.enable_vertex_attrib_array(loc);
-          gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
-        }
-        offset += fmt.components() * 4;
-      }
+      record_layout(gl, program, &desc.attributes, 0);
     }
-    if let Some(index) = index {
+    if let Some((buffer, _)) = &buffers.instance {
+      gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
+      record_layout(gl, program, &desc.instance_attributes, 1);
+    }
+    if let Some((index, _, _)) = &buffers.index {
       gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index.vbo));
     }
     gl.bind_vertex_array(prev_vertex_array(prev_vao));
     gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev_ab));
     Ok(vao)
+  }
+}
+
+/// The buffer-presence contract between a pipeline and an entry: a declared
+/// layout needs its buffer, and an instance buffer without a declared layout
+/// would never be read. Validated at the call site against the UI mirrors;
+/// this copy is the raster-side backstop for the create paths.
+fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -> Result<(), String> {
+  if !desc.attributes.is_empty() && buffers.vertex.is_none() {
+    return Err("pipeline declares attributes but no vertex buffer".to_string());
+  }
+  if !desc.instance_attributes.is_empty() && buffers.instance.is_none() {
+    return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
+  }
+  if desc.instance_attributes.is_empty() && buffers.instance.is_some() {
+    return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
+  }
+  Ok(())
+}
+
+/// Drop an entry's uses of its buffers, deleting each GL buffer when the
+/// entry held the last reference (see `release_buffer`).
+fn release_entry_buffers(gl: &glow::Context, buffers: EntryBuffers) {
+  if let Some((buffer, _)) = buffers.vertex {
+    release_buffer(gl, buffer);
+  }
+  if let Some((buffer, _, _)) = buffers.index {
+    release_buffer(gl, buffer);
+  }
+  if let Some((buffer, _)) = buffers.instance {
+    release_buffer(gl, buffer);
   }
 }
 
@@ -340,9 +396,7 @@ impl ShaderTexture {
     fragment_src: &str,
     sampler_bindings: Vec<(String, u64)>,
     desc: PipelineDesc,
-    buffer: Option<Rc<GpuBuffer>>,
-    buffer_id: u64,
-    index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
+    buffers: EntryBuffers,
     draw: DrawRange,
     clear_color: [f32; 4],
   ) -> Result<Self, String> {
@@ -354,7 +408,7 @@ impl ShaderTexture {
         return Err(e);
       }
     };
-    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffer, buffer_id, index, draw, clear_color)
+    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffers, draw, clear_color)
       .map_err(|(pipeline, e)| {
         release_pipeline(gl, pipeline);
         e
@@ -362,11 +416,11 @@ impl ShaderTexture {
   }
 
   /// A fixed single-entry target over a render pipeline: the pipeline's
-  /// vertex layout is bound to this target's concrete buffer in a fresh VAO,
-  /// and the pipeline's depth state gives the target its private depth
-  /// storage. On error the pipeline Rc is handed back so the caller decides
-  /// its fate (a fused create releases it, a shared pipeline stays
-  /// registered).
+  /// vertex and instance layouts are bound to this target's concrete buffers
+  /// in a fresh VAO, and the pipeline's depth state gives the target its
+  /// private depth storage. On error the pipeline Rc is handed back so the
+  /// caller decides its fate (a fused create releases it, a shared pipeline
+  /// stays registered).
   #[allow(clippy::too_many_arguments)]
   pub fn from_pipeline(
     gl: &glow::Context,
@@ -375,14 +429,12 @@ impl ShaderTexture {
     width: u32,
     height: u32,
     sampler_bindings: Vec<(String, u64)>,
-    buffer: Option<Rc<GpuBuffer>>,
-    buffer_id: u64,
-    index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
+    buffers: EntryBuffers,
     draw: DrawRange,
     clear_color: [f32; 4],
   ) -> Result<Self, (Rc<RenderPipeline>, String)> {
-    if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
-      return Err((pipeline, "pipeline declares attributes but no vertex buffer".to_string()));
+    if let Err(e) = check_entry_buffers(&pipeline.desc, &buffers) {
+      return Err((pipeline, e));
     }
     let depth = pipeline.desc.depth.is_some();
 
@@ -422,7 +474,7 @@ impl ShaderTexture {
         return Err((pipeline, format!("pipeline framebuffer incomplete: {status:#x}")));
       }
 
-      let vao = match build_vao(gl, &pipeline.program, &pipeline.desc.attributes, buffer.as_ref(), index.as_ref().map(|(b, _, _)| b)) {
+      let vao = match build_vao(gl, &pipeline.program, &pipeline.desc, &buffers) {
         Ok(vao) => vao,
         Err(e) => {
           if let Some(rb) = depth_rb {
@@ -439,9 +491,7 @@ impl ShaderTexture {
         pipeline,
         pipeline_id,
         vao,
-        buffer,
-        buffer_id,
-        index,
+        buffers,
         draw,
         params: Vec::new(),
         bindings: sampler_bindings,
@@ -597,18 +647,23 @@ impl ShaderTexture {
 
   /// Registry id of the vertex buffer the first entry draws from, if any.
   pub fn buffer_id(&self) -> Option<u64> {
-    self.entry0().map(|e| e.buffer_id).filter(|id| *id != 0)
+    self.entry0().and_then(|e| e.buffers.vertex.as_ref().map(|(_, id)| *id))
   }
 
   /// Registry id of the first entry's index buffer, if it draws indexed.
   pub fn index_buffer_id(&self) -> Option<u64> {
-    self.entry0().and_then(|e| e.index.as_ref().map(|(_, iid, _)| *iid))
+    self.entry0().and_then(|e| e.buffers.index.as_ref().map(|(_, iid, _)| *iid))
   }
 
   /// The first entry's index format as the string `IndexFormat::parse`
   /// accepts; None when it draws plain.
   pub fn index_format_name(&self) -> Option<&'static str> {
-    self.entry0().and_then(|e| e.index.as_ref().map(|(_, _, fmt)| fmt.name()))
+    self.entry0().and_then(|e| e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()))
+  }
+
+  /// Registry id of the first entry's per-instance buffer, if it binds one.
+  pub fn instance_buffer_id(&self) -> Option<u64> {
+    self.entry0().and_then(|e| e.buffers.instance.as_ref().map(|(_, id)| *id))
   }
 
   /// Whether this is a mesh target (vs a fullscreen fragment pass).
@@ -622,12 +677,16 @@ impl ShaderTexture {
     self.mesh().is_some_and(|m| !m.fixed)
   }
 
-  /// Whether any draw entry fetches from buffer `id` - as its vertex buffer
-  /// or its index buffer: buffer writes re-render the targets this returns
+  /// Whether any draw entry fetches from buffer `id` - as its vertex, index,
+  /// or instance buffer: buffer writes re-render the targets this returns
   /// true for.
   pub fn reads_buffer(&self, id: u64) -> bool {
     self.mesh().is_some_and(|m| {
-      m.entries.iter().any(|e| e.buffer_id == id || e.index.as_ref().is_some_and(|(_, iid, _)| *iid == id))
+      m.entries.iter().any(|e| {
+        e.buffers.vertex.as_ref().is_some_and(|(_, bid)| *bid == id)
+          || e.buffers.index.as_ref().is_some_and(|(_, iid, _)| *iid == id)
+          || e.buffers.instance.as_ref().is_some_and(|(_, iid)| *iid == id)
+      })
     })
   }
 
@@ -646,6 +705,12 @@ impl ShaderTexture {
   /// fragment-only shaders and attributeless pipelines.
   pub fn attributes(&self) -> &[(String, AttrFormat)] {
     self.entry0().map(|e| e.pipeline.desc.attributes.as_slice()).unwrap_or(&[])
+  }
+
+  /// The first entry's declared per-instance layout; empty when its
+  /// pipeline declares none (and for fragment-only shaders).
+  pub fn instance_attributes(&self) -> &[(String, AttrFormat)] {
+    self.entry0().map(|e| e.pipeline.desc.instance_attributes.as_slice()).unwrap_or(&[])
   }
 
   /// Whether the target owns depth storage.
@@ -697,9 +762,7 @@ impl ShaderTexture {
     id: u64,
     pipeline: Rc<RenderPipeline>,
     pipeline_id: Option<u64>,
-    buffer: Option<Rc<GpuBuffer>>,
-    buffer_id: u64,
-    index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
+    buffers: EntryBuffers,
     draw: DrawRange,
     params: Vec<(String, ParamValue)>,
     bindings: Vec<(String, u64)>,
@@ -714,9 +777,7 @@ impl ShaderTexture {
     if pipeline.desc.depth.is_some() && mesh.depth.is_none() {
       return Err("pipeline tests depth but the target has no depth buffer (create the draw target with depth: true)".to_string());
     }
-    if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
-      return Err("pipeline declares attributes but no vertex buffer".to_string());
-    }
+    check_entry_buffers(&pipeline.desc, &buffers)?;
     let position = match before {
       Some(before_id) => Some(
         mesh
@@ -727,8 +788,8 @@ impl ShaderTexture {
       ),
       None => None,
     };
-    let vao = build_vao(gl, &pipeline.program, &pipeline.desc.attributes, buffer.as_ref(), index.as_ref().map(|(b, _, _)| b))?;
-    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffer, buffer_id, index, draw, params, bindings };
+    let vao = build_vao(gl, &pipeline.program, &pipeline.desc, &buffers)?;
+    let entry = DrawEntry { id, pipeline, pipeline_id, vao, buffers, draw, params, bindings };
     match position {
       Some(pos) => mesh.entries.insert(pos, entry),
       None => mesh.entries.push(entry),
@@ -765,12 +826,7 @@ impl ShaderTexture {
     let entry = mesh.entries.remove(pos);
     unsafe { gl.delete_vertex_array(entry.vao) };
     release_pipeline(gl, entry.pipeline);
-    if let Some(buffer) = entry.buffer {
-      release_buffer(gl, buffer);
-    }
-    if let Some((buffer, _, _)) = entry.index {
-      release_buffer(gl, buffer);
-    }
+    release_entry_buffers(gl, entry.buffers);
     Ok(())
   }
 
@@ -917,12 +973,7 @@ impl ShaderTexture {
         for entry in mesh.entries {
           unsafe { gl.delete_vertex_array(entry.vao) };
           release_pipeline(gl, entry.pipeline);
-          if let Some(buffer) = entry.buffer {
-            release_buffer(gl, buffer);
-          }
-          if let Some((buffer, _, _)) = entry.index {
-            release_buffer(gl, buffer);
-          }
+          release_entry_buffers(gl, entry.buffers);
         }
         if let Some(rb) = mesh.depth {
           unsafe { gl.delete_renderbuffer(rb) };
@@ -977,9 +1028,10 @@ impl ShaderTexture {
           .map(|e| GpuDrawInfo {
             id: e.id,
             pipeline_id: e.pipeline_id,
-            buffer_id: (e.buffer_id != 0).then_some(e.buffer_id),
-            index_buffer_id: e.index.as_ref().map(|(_, iid, _)| *iid),
-            index_format: e.index.as_ref().map(|(_, _, fmt)| fmt.name()),
+            buffer_id: e.buffers.vertex.as_ref().map(|(_, id)| *id),
+            index_buffer_id: e.buffers.index.as_ref().map(|(_, iid, _)| *iid),
+            index_format: e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()),
+            instance_buffer_id: e.buffers.instance.as_ref().map(|(_, id)| *id),
             topology: e.pipeline.desc.topology.name(),
             blend: blend_name(e.pipeline.desc.blend),
             cull: cull_name(e.pipeline.desc.cull),
@@ -1069,7 +1121,7 @@ impl ShaderTexture {
             desc: &e.pipeline.desc,
             vao: e.vao,
             range: e.draw,
-            index: e.index.as_ref().map(|(_, _, fmt)| *fmt),
+            index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
             params: &e.params,
             inputs: resolve(&e.bindings),
           })

@@ -963,6 +963,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if let Some(index_format) = p.index_format {
         map.insert("indexFormat".into(), index_format.into());
       }
+      if let Some(instance_buffer_id) = p.instance_buffer_id {
+        map.insert("instanceBuffer".into(), instance_buffer_id.into());
+      }
       if let Some(topology) = p.topology {
         map.insert("topology".into(), topology.into());
       }
@@ -995,6 +998,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
         let attrs: Vec<serde_json::Value> =
           p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
         map.insert("attributes".into(), attrs.into());
+      }
+      if !p.instance_attributes.is_empty() {
+        let attrs: Vec<serde_json::Value> = p
+          .instance_attributes
+          .iter()
+          .map(|(name, format)| serde_json::json!({"name": name, "format": format}))
+          .collect();
+        map.insert("instanceAttributes".into(), attrs.into());
       }
       // A draw target (kind "draws") reports its entries in list order; each
       // entry follows the flat fields' off-default conventions.
@@ -1030,6 +1041,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
             }
             if let Some(index_format) = d.index_format {
               map.insert("indexFormat".into(), index_format.into());
+            }
+            if let Some(instance_buffer_id) = d.instance_buffer_id {
+              map.insert("instanceBuffer".into(), instance_buffer_id.into());
             }
             map.insert("topology".into(), d.topology.into());
             map.insert(if indexed { "indexCount".into() } else { "vertexCount".into() }, d.vertex_count.into());
@@ -1084,6 +1098,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
         let attrs: Vec<serde_json::Value> =
           p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
         map.insert("attributes".into(), attrs.into());
+      }
+      if !p.instance_attributes.is_empty() {
+        let attrs: Vec<serde_json::Value> = p
+          .instance_attributes
+          .iter()
+          .map(|(name, format)| serde_json::json!({"name": name, "format": format}))
+          .collect();
+        map.insert("instanceAttributes".into(), attrs.into());
       }
       obj
     })

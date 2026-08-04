@@ -277,8 +277,12 @@ pub struct RenderPipeline {
 impl RenderPipeline {
   /// Pair a linked program with draw state. Fragment programs never get here
   /// through the public surface (a fullscreen fragment pass has no draw
-  /// state); the check is the raster-side backstop. On error the program Rc
-  /// is handed back so the caller decides its fate.
+  /// state); that check is the raster-side backstop. The attribute lists
+  /// share one namespace (each name is one `in` of the vertex stage), so a
+  /// name in both is a contradiction - two layouts for one attribute - and
+  /// is rejected here, the one place every create path runs through (the
+  /// create RPCs block, so the error still surfaces at the call site). On
+  /// error the program Rc is handed back so the caller decides its fate.
   pub fn new(
     program: Rc<ShaderProgram>,
     program_id: Option<u64>,
@@ -286,6 +290,11 @@ impl RenderPipeline {
   ) -> Result<Self, (Rc<ShaderProgram>, String)> {
     if !program.is_pipeline() {
       return Err((program, "program is a fragment shader, not a pipeline".to_string()));
+    }
+    for (name, _) in &desc.instance_attributes {
+      if desc.attributes.iter().any(|(n, _)| n == name) {
+        return Err((program, format!("attribute '{name}' appears in both attributes and instanceAttributes")));
+      }
     }
     Ok(RenderPipeline { program, program_id, desc, label: None })
   }

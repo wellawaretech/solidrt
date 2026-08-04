@@ -283,18 +283,33 @@ declare module "flux:gpu" {
    * (its own id space, like programs and buffers - not a texture id): the
    * pipeline state object of every modern GPU API. The pipeline owns HOW its
    * targets draw - `attributes` (the interleaved vertex layout; omit for
-   * attributeless rendering via gl_VertexID), `topology`, `blend`, `cull`,
-   * `depth`, `depthWrite` (`false` requires `depth: true`) - while each
-   * target brings its own size, buffer, uniforms, and clear. Creating a
-   * pipeline compiles nothing, and many pipelines may share one program. The
-   * vocabulary is validated here, so a bad word throws at this call site.
-   * Free with {@link destroyRenderPipeline}; the program is yours and
-   * outlives it.
+   * attributeless rendering via gl_VertexID), `instanceAttributes` (the
+   * per-instance layout, fetched from each entry's `instanceBuffer` - see
+   * the option's doc), `topology`, `blend`, `cull`, `depth`, `depthWrite`
+   * (`false` requires `depth: true`) - while each target brings its own
+   * size, buffers, uniforms, and clear. Both layouts share one attribute
+   * namespace (each name is one `in` of the vertex stage), so a name in
+   * both lists throws. Creating a pipeline compiles nothing, and many
+   * pipelines may share one program. The vocabulary is validated here, so a
+   * bad word throws at this call site. Free with
+   * {@link destroyRenderPipeline}; the program is yours and outlives it.
    */
   export function createRenderPipeline(
     program: ProgramId,
     opts?: {
       attributes?: VertexAttribute[]
+      /**
+       * One interleaved record per INSTANCE (WebGPU's `stepMode:
+       * "instance"`): these attributes read from the entry's
+       * `instanceBuffer` and advance per instance instead of per vertex, so
+       * every vertex of instance N sees record N - real per-instance state
+       * (offsets, colors, a packed transform) with no `gl_InstanceID`
+       * arithmetic. Declaring any makes `instanceBuffer` required on every
+       * entry drawn with this pipeline. A mat4 per instance is its four
+       * vec4 columns, reassembled in the shader (attributes have no matrix
+       * formats, as in WebGPU).
+       */
+      instanceAttributes?: VertexAttribute[]
       topology?: Topology
       blend?: BlendMode
       cull?: CullMode
@@ -317,13 +332,15 @@ declare module "flux:gpu" {
    * {@link setShaderSize}, destroy with {@link destroyTexture}). Many targets
    * may share one pipeline, and creating a target compiles nothing. `buffer`
    * supplies the concrete vertex buffer the pipeline's attribute layout
-   * describes (required when the pipeline declares attributes); the
-   * {@link DrawRange} keys pick what is drawn from it - `vertexCount`
+   * describes (required when the pipeline declares attributes), and
+   * `instanceBuffer` the per-instance records its `instanceAttributes`
+   * describe (required exactly when it declares any); the
+   * {@link DrawRange} keys pick what is drawn from them - `vertexCount`
    * defaults to the rest of the buffer from `firstVertex` on,
-   * `instanceCount` repeats the range - and a vertex fetch past the
-   * buffer's end throws here. A fullscreen pass over an attributeless
-   * pipeline is `vertexCount: 3` with a covering-triangle vertex stage.
-   * Draw-state keys
+   * `instanceCount` to one instance per instance-buffer record (1 without
+   * one) - and a fetch past either buffer's end throws here. A fullscreen
+   * pass over an attributeless pipeline is `vertexCount: 3` with a
+   * covering-triangle vertex stage. Draw-state keys
    * (`attributes`, `topology`, `blend`, `depth`, `depthWrite`) belong to the
    * pipeline and throw here. `params` and `textures` are validated against
    * the pipeline's program (see {@link ShaderParams}).
@@ -353,6 +370,7 @@ declare module "flux:gpu" {
     opts?: {
       textures?: Record<string, TextureId>
       buffer?: BufferId
+      instanceBuffer?: BufferId
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -426,22 +444,27 @@ declare module "flux:gpu" {
    */
   export type CullMode = "none" | "back" | "front"
   /**
-   * One float attribute of an interleaved vertex. The attribute list's order
-   * defines the byte layout; locations are resolved by name against the
-   * vertex shader's `in` declarations.
+   * One float attribute of an interleaved record - a vertex of `attributes`
+   * or an instance record of `instanceAttributes`. The list's order defines
+   * the byte layout; locations are resolved by name against the vertex
+   * shader's `in` declarations.
    */
   export type VertexAttribute = { name: string; format: "f32" | "vec2" | "vec3" | "vec4" }
   /**
    * A pipeline target's draw as data, WebGPU-style: `firstVertex` +
    * `vertexCount` pick the vertex range `[firstVertex, firstVertex +
    * vertexCount)` of the buffer, `instanceCount` draws that range as N
-   * instances (`glDrawArraysInstanced`) told apart by `gl_InstanceID`. All
-   * keys optional: at create, `firstVertex` defaults to 0, `vertexCount` to
-   * the rest of the buffer and `instanceCount` to 1 (the plain draw); in
-   * {@link setDraw}, absent keys keep their current value. `instanceCount: 0`
-   * draws nothing - a cheap off switch. Two GL facts worth knowing:
-   * `gl_VertexID` includes `firstVertex` (as in WebGPU), and `gl_InstanceID`
-   * always counts from 0 - ES 3.0 has no base instance.
+   * instances (`glDrawArraysInstanced`) told apart by `gl_InstanceID` (and
+   * by their `instanceAttributes` records, when the pipeline declares any).
+   * All keys optional: at create, `firstVertex` defaults to 0, `vertexCount`
+   * to the rest of the buffer, and `instanceCount` to one instance per
+   * record of the entry's `instanceBuffer` - 1 without one, the plain draw;
+   * in {@link setDraw}, absent keys keep their current value.
+   * `instanceCount: 0` draws nothing - a cheap off switch. With an instance
+   * buffer bound, `instanceCount` is bounds-checked against it like every
+   * fetch (instances 0..N-1 each read one record). Two GL facts worth
+   * knowing: `gl_VertexID` includes `firstVertex` (as in WebGPU), and
+   * `gl_InstanceID` always counts from 0 - ES 3.0 has no base instance.
    */
   export type DrawRange = { firstVertex?: number; vertexCount?: number; instanceCount?: number }
   /**
@@ -484,11 +507,14 @@ declare module "flux:gpu" {
    * row of the target and +1 the bottom, so camera-up geometry must negate y
    * (or fold the flip into its projection) to display up. `attributes`
    * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
-   * omit both for attributeless rendering via gl_VertexID. The
-   * {@link DrawRange} keys pick what is drawn: `vertexCount` defaults to the
-   * rest of the buffer from `firstVertex` on, `instanceCount` draws the
-   * range as N instances told apart by `gl_InstanceID`; a vertex fetch past
-   * the buffer's end throws. With
+   * omit both for attributeless rendering via gl_VertexID.
+   * `instanceAttributes` describes one per-instance record in
+   * `instanceBuffer` (see {@link createRenderPipeline}; declare both or
+   * neither). The {@link DrawRange} keys pick what is drawn: `vertexCount`
+   * defaults to the rest of the buffer from `firstVertex` on,
+   * `instanceCount` draws the range as N instances told apart by
+   * `gl_InstanceID` and defaults to one per instance-buffer record; a fetch
+   * past either buffer's end throws. With
    * `depth: true` the pipeline gets a private depth buffer, cleared and tested
    * on every render; `depthWrite: false` (requires `depth: true`) keeps the
    * test but stops the draw from writing depth. `blend` sets the draw's own blending (see
@@ -513,6 +539,9 @@ declare module "flux:gpu" {
       textures?: Record<string, TextureId>
       attributes?: VertexAttribute[]
       buffer?: BufferId
+      /** See {@link createRenderPipeline}'s `instanceAttributes`. */
+      instanceAttributes?: VertexAttribute[]
+      instanceBuffer?: BufferId
       topology?: Topology
       depth?: boolean
       depthWrite?: boolean
@@ -614,6 +643,9 @@ declare module "flux:gpu" {
    * {@link setDrawOrder}. An {@link IndexBinding} makes the entry draw
    * indexed - real meshes share most vertices, and indexing stores and
    * shades each one once - with the range in {@link IndexRange} spelling.
+   * `instanceBuffer` supplies the per-instance records the pipeline's
+   * `instanceAttributes` describe (required exactly when it declares any);
+   * `instanceCount` then defaults to one instance per record.
    */
   export function addDraw(
     target: TextureId,
@@ -622,6 +654,7 @@ declare module "flux:gpu" {
     opts?: {
       textures?: Record<string, TextureId>
       buffer?: BufferId
+      instanceBuffer?: BufferId
       before?: DrawId
     } & (DrawRange | (IndexBinding & IndexRange)),
   ): DrawId

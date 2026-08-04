@@ -267,14 +267,22 @@ fn collect_entry_half(
     }
     (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
   };
+  // The per-instance buffer, fetched through the pipeline's
+  // instanceAttributes; that pairing is validated in alloy against the
+  // pipeline mirror (the desc is not in this bag on the split paths).
+  let instance_buffer = match opts {
+    Some(o) => o.get::<_, Option<u64>>("instanceBuffer")?.unwrap_or(0),
+    None => 0,
+  };
   // The draw range, in the entry's vocabulary: firstVertex + vertexCount
   // pick the vertices on a plain entry, firstIndex + indexCount pick the
   // indices on an indexed one (WebGPU's spellings for both draw calls);
   // instanceCount repeats the range (gl_InstanceID; 1 = the plain draw, 0
   // draws nothing). The wrong pair throws here, where the fix is visible.
-  // A count omitted means "the rest of the buffer" - alloy derives it - so
-  // an explicit negative must be rejected here, where "omit it" is still
-  // meaningful advice; the other fields' sign checks are alloy's.
+  // A count omitted means "the rest of the buffer" - alloy derives it - and
+  // an omitted instanceCount means "one instance per instance-buffer
+  // record" (1 without one), so explicit negatives are rejected here, where
+  // "omit it" is still meaningful advice; the other sign checks are alloy's.
   let has = |name: &str| -> bool {
     match opts {
       Some(o) => o.get::<_, rquickjs::Value>(name).map(|v| !v.is_undefined()).unwrap_or(false),
@@ -311,18 +319,27 @@ fn collect_entry_half(
       return Err(throw_str(ctx, &format!("{api}: {count_key} must be >= 0, got {v} (omit it to draw the whole buffer)")));
     }
   }
+  let instances = match opts {
+    Some(o) => o.get::<_, Option<i32>>("instanceCount")?,
+    None => None,
+  };
+  if let Some(v) = instances {
+    if v < 0 {
+      return Err(throw_str(
+        ctx,
+        &format!("{api}: instanceCount must be >= 0, got {v} (omit it to draw one instance per instance-buffer record)"),
+      ));
+    }
+  }
   let draw = alloy::DrawRange {
     first_vertex: match opts {
       Some(o) => o.get::<_, Option<i32>>(first_key)?.unwrap_or(0),
       None => 0,
     },
     vertex_count: count.unwrap_or(-1),
-    instance_count: match opts {
-      Some(o) => o.get::<_, Option<i32>>("instanceCount")?.unwrap_or(1),
-      None => 1,
-    },
+    instance_count: instances.unwrap_or(-1),
   };
-  Ok(alloy::DrawSpec { pipeline, buffer, index, draw, params, textures })
+  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffer, draw, params, textures })
 }
 
 fn collect_target_spec(
@@ -362,14 +379,15 @@ fn collect_draw_target_spec(
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, bool)> {
   if let Some(o) = opts {
-    for key in
-      ["params", "textures", "buffer", "indexBuffer", "indexFormat", "firstVertex", "vertexCount", "firstIndex", "indexCount", "instanceCount"]
-    {
+    for key in [
+      "params", "textures", "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
+      "firstIndex", "indexCount", "instanceCount",
+    ] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is draw-entry state; pass it to addDraw")));
       }
     }
-    for key in ["attributes", "topology", "blend", "cull", "depthWrite"] {
+    for key in ["attributes", "instanceAttributes", "topology", "blend", "cull", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
@@ -384,24 +402,29 @@ fn collect_draw_target_spec(
 
 // Decode the draw-state options of createRenderPipeline and
 // createPipelineTexture -
-// { attributes: [{name, format}], topology, blend, depth, depthWrite },
-// everything optional - into the typed alloy desc. The vocabulary parses
-// here, at the boundary, so `blend: "addd"` (or an invalid depth/depthWrite
-// combination) throws at the call site instead of failing on the raster
-// thread.
+// { attributes: [{name, format}], instanceAttributes: [{name, format}],
+// topology, blend, depth, depthWrite }, everything optional - into the typed
+// alloy desc. The vocabulary parses here, at the boundary, so `blend:
+// "addd"` (or an invalid depth/depthWrite combination) throws at the call
+// site instead of failing on the raster thread.
 fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::PipelineDesc> {
-  let mut attributes: Vec<(String, alloy::AttrFormat)> = Vec::new();
-  if let Some(opts) = opts {
-    if let Some(arr) = opts.get::<_, Option<Array>>("attributes")? {
-      for item in arr.iter::<Object>() {
-        let entry = item?;
-        let name: String = entry.get("name")?;
-        let format: String = entry.get("format")?;
-        let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
-        attributes.push((name, format));
+  let collect_layout = |key: &str| -> rquickjs::Result<Vec<(String, alloy::AttrFormat)>> {
+    let mut attributes: Vec<(String, alloy::AttrFormat)> = Vec::new();
+    if let Some(opts) = opts {
+      if let Some(arr) = opts.get::<_, Option<Array>>(key)? {
+        for item in arr.iter::<Object>() {
+          let entry = item?;
+          let name: String = entry.get("name")?;
+          let format: String = entry.get("format")?;
+          let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+          attributes.push((name, format));
+        }
       }
     }
-  }
+    Ok(attributes)
+  };
+  let attributes = collect_layout("attributes")?;
+  let instance_attributes = collect_layout("instanceAttributes")?;
   let topology = match opts {
     Some(o) => match o.get::<_, Option<String>>("topology")? {
       Some(s) => alloy::Topology::parse(&s).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?,
@@ -437,7 +460,7 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     }
     (false, _) => None,
   };
-  Ok(alloy::PipelineDesc { attributes, topology, blend, depth, cull })
+  Ok(alloy::PipelineDesc { attributes, instance_attributes, topology, blend, depth, cull })
 }
 
 // The migration guard for the split object model: draw state belongs to
@@ -445,7 +468,7 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
 // exactly the bug class the split removes - so their presence throws.
 fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<()> {
   if let Some(o) = opts {
-    for key in ["attributes", "topology", "blend", "cull", "depth", "depthWrite"] {
+    for key in ["attributes", "instanceAttributes", "topology", "blend", "cull", "depth", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }

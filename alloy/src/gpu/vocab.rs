@@ -244,6 +244,14 @@ pub struct PipelineDesc {
   /// One interleaved float vertex, in buffer order: (attribute name, format).
   /// Empty for attributeless rendering driven by gl_VertexID.
   pub attributes: Vec<(String, AttrFormat)>,
+  /// One interleaved per-INSTANCE record, in buffer order (WebGPU's stepMode
+  /// "instance"): fetched from the entry's instance buffer with vertex
+  /// divisor 1, so every vertex of an instance reads the same record and the
+  /// record advances per instance. Names share the vertex-attribute
+  /// namespace (each is one `in` of the vertex stage), so a name in both
+  /// lists is rejected at pipeline creation. Empty = no per-instance fetch;
+  /// instances then differ only through gl_InstanceID.
+  pub instance_attributes: Vec<(String, AttrFormat)>,
   pub topology: Topology,
   /// None = overwrite (the default); see `BlendMode`.
   pub blend: Option<BlendMode>,
@@ -254,11 +262,19 @@ pub struct PipelineDesc {
 
 impl Default for PipelineDesc {
   fn default() -> Self {
-    PipelineDesc { attributes: Vec::new(), topology: Topology::Triangles, blend: None, depth: None, cull: None }
+    PipelineDesc {
+      attributes: Vec::new(),
+      instance_attributes: Vec::new(),
+      topology: Topology::Triangles,
+      blend: None,
+      depth: None,
+      cull: None,
+    }
   }
 }
 
-/// Byte stride of one interleaved vertex for the given attribute list.
+/// Byte stride of one interleaved record for the given attribute list - a
+/// vertex of `attributes`, or an instance record of `instance_attributes`.
 pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
   attributes.iter().map(|(_, f)| f.components() * 4).sum()
 }
@@ -407,14 +423,17 @@ pub struct DrawRange {
   /// `first_vertex` on"; `resolve_draw_range` replaces it with the concrete
   /// count before the range crosses to the raster thread.
   pub vertex_count: i32,
+  /// Negative at the API boundary means "one instance per record of the
+  /// entry's instance buffer" (1 when the entry has none - the plain draw);
+  /// `resolve_draw_range` replaces it, like `vertex_count`.
   pub instance_count: i32,
 }
 
 impl Default for DrawRange {
-  /// The create-time default: the whole buffer (see `vertex_count`), once,
-  /// from vertex 0.
+  /// The create-time default: the whole buffer (see `vertex_count`), from
+  /// vertex 0, at the derived instance count (see `instance_count`).
   fn default() -> Self {
-    DrawRange { first_vertex: 0, vertex_count: -1, instance_count: 1 }
+    DrawRange { first_vertex: 0, vertex_count: -1, instance_count: -1 }
   }
 }
 
@@ -468,22 +487,42 @@ fn fetch_nouns(indexed: bool) -> (&'static str, &'static str) {
   }
 }
 
-/// Check a resolved draw range against the buffer it fetches from: every
-/// field must be >= 0 and the fetch `[first, first + count) * stride` must
-/// stay within the buffer, or the draw is undefined-behaviour fetch (raw
-/// GLES 3.0 has no draw-time bounds check; WebGL made the same case
-/// INVALID_OPERATION). For a plain entry the bound is the VERTEX buffer at
-/// the pipeline's stride; for an indexed entry (`indexed` picks the error
-/// nouns) it is the INDEX buffer at the format's element size - the index
-/// VALUES are not checked against the vertex buffer, which would mean
-/// reading them back. Stride 0 (attributeless) skips the fetch bound -
-/// gl_VertexID fetches nothing - but the sign rules still apply. Buffer
-/// sizes are fixed at creation, so a bound captured then stays correct for
-/// the target's lifetime. Runs UI-side at the call-site boundary: the create
-/// paths via `resolve_draw_range` and the range updates against the mirrored
-/// bound.
-pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize, indexed: bool) -> Result<(), String> {
-  let (noun, nouns) = fetch_nouns(indexed);
+/// The fetch bounds one entry's draw range is checked against, captured at
+/// create from the mirrored buffer sizes. Sizes are fixed at creation and
+/// the entry holds its buffers alive, so a captured bound stays correct for
+/// the entry's lifetime even after a buffer id itself is destroyed. One
+/// value because the update paths (set_draw/set_draw_range) revalidate the
+/// merged range against all of it, synchronously, without an RPC.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DrawBounds {
+  /// The range's fetch as (element stride, buffer byte size): the VERTEX
+  /// buffer at the pipeline's stride on a plain entry, the INDEX buffer at
+  /// the format's element size on an indexed one. None when the entry
+  /// fetches nothing per vertex (attributeless and unindexed) - gl_VertexID
+  /// fetches nothing, so any range is safe.
+  pub fetch: Option<(usize, usize)>,
+  /// Whether the range counts indices: picks the vocabulary the update
+  /// paths accept (firstIndex/indexCount vs firstVertex/vertexCount) and
+  /// the fetch bound's error nouns.
+  pub indexed: bool,
+  /// The per-instance fetch as (record stride, buffer byte size), present
+  /// when the entry binds an instance buffer. Instances `[0,
+  /// instance_count)` fetch one record each - there is no base instance -
+  /// so `instance_count` bounds against this.
+  pub instance: Option<(usize, usize)>,
+}
+
+/// Check a resolved draw range against the buffers it fetches from: every
+/// field must be >= 0 and each fetch must stay within its buffer, or the
+/// draw is undefined-behaviour fetch (raw GLES 3.0 has no draw-time bounds
+/// check; WebGL made the same case INVALID_OPERATION). `bounds.fetch` bounds
+/// `[first, first + count) * stride` - on an indexed entry that is the INDEX
+/// buffer; the index VALUES are not checked against the vertex buffer, which
+/// would mean reading them back. `bounds.instance` bounds `instance_count`
+/// records. Runs UI-side at the call-site boundary: the create paths via
+/// `resolve_draw_range` and the range updates against the mirrored bounds.
+pub fn validate_draw_range(range: DrawRange, bounds: DrawBounds) -> Result<(), String> {
+  let (noun, nouns) = fetch_nouns(bounds.indexed);
   if range.first_vertex < 0 {
     return Err(format!("first {noun} must be >= 0, got {}", range.first_vertex));
   }
@@ -493,7 +532,7 @@ pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize, indexed
   if range.instance_count < 0 {
     return Err(format!("instance count must be >= 0, got {}", range.instance_count));
   }
-  if stride > 0 {
+  if let Some((stride, size)) = bounds.fetch {
     let end = range.first_vertex as usize + range.vertex_count as usize;
     let need = end * stride;
     if need > size {
@@ -504,27 +543,33 @@ pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize, indexed
       ));
     }
   }
+  if let Some((stride, size)) = bounds.instance {
+    let need = range.instance_count as usize * stride;
+    if need > size {
+      let capacity = size / stride;
+      return Err(format!(
+        "{} instances need {need} bytes at {stride} bytes/instance, but the instance buffer holds {size} bytes ({capacity} instances)",
+        range.instance_count
+      ));
+    }
+  }
   Ok(())
 }
 
-/// Resolve a create-time draw range against its fetch bound (see
-/// `validate_draw_range` for which buffer that is; `None` = no buffer
-/// bound): a negative count becomes "the rest of the buffer from `first`
-/// on" (0 when nothing is fetched), and the result is validated like any
-/// explicit range. A nonzero stride with no buffer is rejected here too, so
-/// the create paths fail at the call site with the real problem instead of
-/// a 0-byte bounds message. Runs UI-side (Context owns the size/stride
-/// mirrors); the raster thread only ever sees resolved ranges.
-pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usize>, indexed: bool) -> Result<DrawRange, String> {
-  if stride > 0 && size.is_none() {
-    return Err("pipeline declares attributes but no vertex buffer".to_string());
-  }
+/// Resolve a create-time draw range against its bounds: a negative
+/// vertex/index count becomes "the rest of the buffer from `first` on" (0
+/// when nothing is fetched), a negative instance count becomes "one instance
+/// per instance-buffer record" (1 without an instance buffer - the plain
+/// draw), and the result is validated like any explicit range. Runs UI-side
+/// (Context owns the size/stride mirrors); the raster thread only ever sees
+/// resolved ranges.
+pub fn resolve_draw_range(mut range: DrawRange, bounds: DrawBounds) -> Result<DrawRange, String> {
   if range.vertex_count < 0 {
-    range.vertex_count = match size {
-      Some(size) if stride > 0 => {
+    range.vertex_count = match bounds.fetch {
+      Some((stride, size)) => {
         let capacity = (size / stride) as i32;
         if range.first_vertex > capacity {
-          let (noun, nouns) = fetch_nouns(indexed);
+          let (noun, nouns) = fetch_nouns(bounds.indexed);
           return Err(format!(
             "first {noun} {} is past the end of the buffer ({capacity} {nouns})",
             range.first_vertex
@@ -532,10 +577,16 @@ pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usiz
         }
         capacity - range.first_vertex.max(0)
       }
-      _ => 0,
+      None => 0,
     };
   }
-  validate_draw_range(range, stride, size.unwrap_or(0), indexed)?;
+  if range.instance_count < 0 {
+    range.instance_count = match bounds.instance {
+      Some((stride, size)) => (size / stride) as i32,
+      None => 1,
+    };
+  }
+  validate_draw_range(range, bounds)?;
   Ok(range)
 }
 

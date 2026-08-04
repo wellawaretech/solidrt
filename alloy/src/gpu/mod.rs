@@ -22,11 +22,11 @@ pub use resources::{
   GpuWindowShaderInfo,
 };
 pub use spec::{DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
-pub use target::{create_layer_target, ShaderTexture};
+pub use target::{create_layer_target, EntryBuffers, ShaderTexture};
 pub use vocab::{
   blend_name, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_draw_range, validate_order,
-  validate_params, validate_texture_bindings, vertex_stride, AttrFormat, BlendMode, CullMode, DepthState, DrawRange,
-  DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage, Topology, UniformKind, UniformTable,
+  validate_params, validate_texture_bindings, vertex_stride, AttrFormat, BlendMode, CullMode, DepthState, DrawBounds,
+  DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage, Topology, UniformKind, UniformTable,
 };
 
 use std::num::NonZeroU32;

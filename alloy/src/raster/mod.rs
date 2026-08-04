@@ -33,10 +33,10 @@ use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec, GpuBuffer,
-  GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
-  GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram,
-  ShaderTexture, TargetSpec, UniformTable, WindowShader,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec,
+  EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
+  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec,
+  RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 
@@ -1169,8 +1169,7 @@ impl RasterState {
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
     let label = spec.target.label.clone();
-    let buffer = resolve_target_buffer(&self.buffers, spec.entry.buffer)?;
-    let index = resolve_target_index(&self.buffers, spec.entry.index)?;
+    let buffers = resolve_entry_buffers(&self.buffers, &spec.entry)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
@@ -1179,9 +1178,7 @@ impl RasterState {
       &spec.fragment_src,
       spec.entry.textures.clone(),
       spec.pipeline,
-      buffer,
-      spec.entry.buffer,
-      index,
+      buffers,
       spec.entry.draw,
       spec.target.clear_color,
     )?;
@@ -1246,8 +1243,7 @@ impl RasterState {
     let uniforms = pipeline.uniform_table();
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
-    let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
-    let index = resolve_target_index(&self.buffers, entry.index)?;
+    let buffers = resolve_entry_buffers(&self.buffers, &entry)?;
     let mut shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
@@ -1255,9 +1251,7 @@ impl RasterState {
       spec.width,
       spec.height,
       entry.textures.clone(),
-      buffer,
-      entry.buffer,
-      index,
+      buffers,
       entry.draw,
       spec.clear_color,
     )
@@ -1287,17 +1281,14 @@ impl RasterState {
   fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec, before: Option<u64>) -> Result<(), String> {
     let pipeline =
       self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
-    let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
-    let index = resolve_target_index(&self.buffers, entry.index)?;
+    let buffers = resolve_entry_buffers(&self.buffers, &entry)?;
     let shader = self.shaders.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
     shader.add_entry(
       &self.gl,
       draw,
       pipeline,
       Some(entry.pipeline),
-      buffer,
-      entry.buffer,
-      index,
+      buffers,
       entry.draw,
       entry.params,
       entry.textures,
@@ -1475,6 +1466,7 @@ impl RasterState {
           buffer_id: if flat { shader.buffer_id() } else { None },
           index_buffer_id: if flat { shader.index_buffer_id() } else { None },
           index_format: if flat { shader.index_format_name() } else { None },
+          instance_buffer_id: if flat { shader.instance_buffer_id() } else { None },
           topology: if flat { shader.topology_name() } else { None },
           draw_count: draw.map(|d| d.vertex_count),
           first_vertex: draw.map(|d| d.first_vertex),
@@ -1485,6 +1477,11 @@ impl RasterState {
           cull: if flat { shader.cull_name() } else { None },
           attributes: if flat {
             shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
+          } else {
+            Vec::new()
+          },
+          instance_attributes: if flat {
+            shader.instance_attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
           } else {
             Vec::new()
           },
@@ -1515,6 +1512,11 @@ impl RasterState {
           depth: desc.depth.is_some(),
           depth_write: desc.depth.map_or(true, |d| d.write),
           attributes: desc.attributes.iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
+          instance_attributes: desc
+            .instance_attributes
+            .iter()
+            .map(|(name, fmt)| (name.clone(), fmt.name().to_string()))
+            .collect(),
         }
       })
       .collect();
@@ -1548,32 +1550,28 @@ fn describe(id: u64, label: &Option<String>) -> String {
   }
 }
 
-/// Resolve a target's vertex buffer against the buffer registry: the Rc
-/// clone the target keeps for its VAO's lifetime. The draw range itself
-/// arrives already resolved and bounds-checked from the UI thread
-/// (`resolve_draw_range`), which owns the stride/size mirrors; a miss here
-/// means those mirrors diverged.
-fn resolve_target_buffer(buffers: &HashMap<u64, Rc<GpuBuffer>>, buffer_id: u64) -> Result<Option<Rc<GpuBuffer>>, String> {
-  if buffer_id == 0 {
-    return Ok(None);
-  }
-  buffers.get(&buffer_id).cloned().map(Some).ok_or_else(|| format!("buffer {buffer_id} not found"))
-}
-
-/// Resolve an entry's index binding against the buffer registry, same
-/// contract as `resolve_target_buffer`: the Rc clone rides in the entry for
-/// the VAO's lifetime.
-fn resolve_target_index(
-  buffers: &HashMap<u64, Rc<GpuBuffer>>,
-  index: Option<(u64, crate::gpu::IndexFormat)>,
-) -> Result<Option<(Rc<GpuBuffer>, u64, crate::gpu::IndexFormat)>, String> {
-  match index {
-    Some((id, format)) => {
-      let buffer = buffers.get(&id).cloned().ok_or_else(|| format!("index buffer {id} not found"))?;
-      Ok(Some((buffer, id, format)))
-    }
-    None => Ok(None),
-  }
+/// Resolve an entry's buffer ids (vertex, index, instance) against the
+/// buffer registry: the Rc clones the entry keeps for its VAO's lifetime.
+/// The draw range itself arrives already resolved and bounds-checked from
+/// the UI thread (`resolve_draw_range`), which owns the stride/size mirrors;
+/// a miss here means those mirrors diverged.
+fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, entry: &DrawSpec) -> Result<EntryBuffers, String> {
+  let lookup = |id: u64, role: &str| -> Result<Rc<GpuBuffer>, String> {
+    buffers.get(&id).cloned().ok_or_else(|| format!("{role} {id} not found"))
+  };
+  let vertex = match entry.buffer {
+    0 => None,
+    id => Some((lookup(id, "buffer")?, id)),
+  };
+  let index = match entry.index {
+    Some((id, format)) => Some((lookup(id, "index buffer")?, id, format)),
+    None => None,
+  };
+  let instance = match entry.instance_buffer {
+    0 => None,
+    id => Some((lookup(id, "instance buffer")?, id)),
+  };
+  Ok(EntryBuffers { vertex, index, instance })
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`
