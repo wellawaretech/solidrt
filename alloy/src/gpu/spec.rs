@@ -5,24 +5,14 @@
 use super::vocab::{DrawRange, ParamValue, PipelineDesc};
 use crate::texture::SamplerState;
 
-/// Everything `create_shader_target` needs to build one target over a render
-/// pipeline: the per-target half of the split (output size, uniform values,
-/// sampler inputs, the concrete vertex buffer, draw range, clear, sampling).
-/// The draw-state half lives on the pipeline (`gpu::PipelineDesc`). Owned,
-/// so the one struct serves both the public API and the raster channel.
+/// The per-target half of a mesh target create: output size, clear, sampling,
+/// render mode, load op. What is drawn into the target is the entry half
+/// (`DrawSpec`) - one entry for the single-draw creates, a mutable ordered
+/// list for draw targets. Owned, so the one struct serves both the public API
+/// and the raster channel.
 pub struct TargetSpec {
   pub width: u32,
   pub height: u32,
-  pub params: Vec<(String, ParamValue)>,
-  pub textures: Vec<(String, u64)>,
-  /// Registry id of the interleaved vertex buffer the pipeline's attributes
-  /// describe; 0 = attributeless rendering via gl_VertexID.
-  pub buffer: u64,
-  /// Which vertices to draw and how many instances (see `DrawRange`). A
-  /// negative `vertex_count` here means "the rest of the buffer"; Context
-  /// resolves it (`resolve_draw_range`) before the spec crosses to the
-  /// raster thread.
-  pub draw: DrawRange,
   pub clear_color: [f32; 4],
   /// How the target's output is sampled everywhere (shader inputs, display).
   pub sampler: SamplerState,
@@ -34,7 +24,7 @@ pub struct TargetSpec {
   /// resize clear a manual target instead of rendering it.
   pub manual: bool,
   /// Color load op. False (the default, loadOp "clear"): every render clears
-  /// to `clear_color` first. True (loadOp "load"): the draw lands over the
+  /// to `clear_color` first. True (loadOp "load"): the draws land over the
   /// previous contents - single-target accumulation. Requires `manual`
   /// (Context rejects the combination otherwise): on a flush-rendered target
   /// the output would depend on how often the flush ran. Depth is per-render
@@ -46,14 +36,38 @@ pub struct TargetSpec {
   pub label: Option<String>,
 }
 
+/// One draw entry of a mesh target: the pipeline it draws with and everything
+/// bound to this entry - the concrete vertex buffer, draw range, uniform
+/// values, and sampler inputs. The single-draw creates carry exactly one;
+/// `add_draw` appends one to a draw target's ordered list. The default is
+/// attributeless: no pipeline, no buffer, the whole-buffer draw range.
+#[derive(Default)]
+pub struct DrawSpec {
+  /// Registry id of the render pipeline; 0 only on the fused create path,
+  /// whose pipeline is anonymous and travels as `PipelineSpec::pipeline`.
+  pub pipeline: u64,
+  /// Registry id of the interleaved vertex buffer the pipeline's attributes
+  /// describe; 0 = attributeless rendering via gl_VertexID.
+  pub buffer: u64,
+  /// Which vertices to draw and how many instances (see `DrawRange`). A
+  /// negative `vertex_count` here means "the rest of the buffer"; Context
+  /// resolves it (`resolve_draw_range`) before the spec crosses to the
+  /// raster thread.
+  pub draw: DrawRange,
+  pub params: Vec<(String, ParamValue)>,
+  pub textures: Vec<(String, u64)>,
+}
+
 /// Everything `create_pipeline_texture` (the fused convenience) needs:
-/// sources to compile, the draw state they run with, and the target to
-/// render into - the same two halves the split API takes separately.
+/// sources to compile, the draw state they run with, and the target plus the
+/// one draw entry - the same halves the split API takes separately.
+/// `entry.pipeline` is 0: the compiled pipeline is anonymous.
 pub struct PipelineSpec {
   pub vertex_src: String,
   pub fragment_src: String,
   pub pipeline: PipelineDesc,
   pub target: TargetSpec,
+  pub entry: DrawSpec,
 }
 
 /// The window shader declaration: a linked program drawn over the window's

@@ -9,7 +9,7 @@ use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, vertex_stride, DrawRange,
-  DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
+  DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
   PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -29,11 +29,12 @@ use crate::texture::{SamplerState, TextureEntry, TextureFormat, TextureRegistry}
 // mirror (the split path). What update-path validation reads.
 struct TargetMirror {
   /// The program's active uniforms; Rc-shared with the program and pipeline
-  /// mirrors on the split path.
+  /// mirrors on the split path. Empty (and unused) for a draw target, whose
+  /// programs live per entry.
   uniforms: Rc<UniformTable>,
   /// The target's current resolved draw range, what set_draw merges partial
-  /// updates against. None for a fullscreen fragment pass (no mesh draw),
-  /// which is also what makes it the pipeline-vs-fragment discriminant.
+  /// updates against. None for a fullscreen fragment pass (no mesh draw) and
+  /// for draw targets (whose ranges live per entry).
   draw: Option<DrawRange>,
   /// (bytes per vertex, buffer byte size): the vertex-fetch bound for
   /// set_draw. None when the target draws attributeless - gl_VertexID
@@ -41,14 +42,42 @@ struct TargetMirror {
   /// are fixed for their lifetime and the target holds the buffer alive, so
   /// the bound stays correct even after the buffer id itself is destroyed.
   draw_bound: Option<(usize, usize)>,
+  /// Some = a draw target: the mutable ordered draw list, mirrored per entry
+  /// (the flat fields above then describe nothing). None for the fixed
+  /// kinds, whose one pass the flat fields describe.
+  entries: Option<DrawListMirror>,
 }
 
-// UI-side mirror of a registered render pipeline: its program's uniforms and
-// the vertex stride of its attribute layout, for deriving target mirrors and
-// draw bounds without an RPC.
+// UI-side mirror of a draw target's entry list: stable id allocation plus
+// per-entry validation state. Entry ids are target-scoped and never reused,
+// so a stale id from a removed entry errors instead of aliasing.
+struct DrawListMirror {
+  /// Whether the target owns depth storage (the addDraw depth-compatibility
+  /// check reads this against the pipeline's declared depth state).
+  depth: bool,
+  next_draw: u64,
+  entries: HashMap<u64, EntryMirror>,
+}
+
+// UI-side mirror of one draw entry: what per-entry update validation reads
+// (the same shape as TargetMirror's flat half, per entry).
+struct EntryMirror {
+  /// The entry's program's active uniforms, Rc-shared with the pipeline
+  /// mirror.
+  uniforms: Rc<UniformTable>,
+  /// The entry's current resolved draw range, what set_draw_range merges
+  /// partial updates against.
+  draw: DrawRange,
+  draw_bound: Option<(usize, usize)>,
+}
+
+// UI-side mirror of a registered render pipeline: its program's uniforms, the
+// vertex stride of its attribute layout, and whether it declares depth state,
+// for deriving target/entry mirrors and validating adds without an RPC.
 struct PipelineMirror {
   uniforms: Rc<UniformTable>,
   stride: usize,
+  depth: bool,
 }
 
 pub struct Context {
@@ -63,13 +92,16 @@ pub struct Context {
   // rebinds, draw counts - synchronously at the call site, without an RPC.
   targets: RefCell<HashMap<u64, TargetMirror>>,
   // UI-side mirror of each shader target's sampler graph: target id ->
-  // (uniform name -> source texture id). Lets update_shader_textures reject
-  // sampling cycles synchronously; the raster thread walks the same edges to
-  // propagate re-renders through target chains, and a cycle there would
-  // under-render, so it must never form. Recorded bindings are real: a
-  // rebind naming anything but an active sampler2D is rejected against the
-  // target mirror's uniform table before it is recorded or sent.
-  shader_sources: RefCell<HashMap<u64, HashMap<String, u64>>>,
+  // ((draw entry id, uniform name) -> source texture id). The entry id keys
+  // per-entry bindings apart - two entries may bind the same uniform name to
+  // different sources - with 0 for the single pass of the fixed kinds. Lets
+  // the bind paths reject sampling cycles synchronously; the raster thread
+  // walks the same edges (unioned per target) to propagate re-renders
+  // through target chains, and a cycle there would under-render, so it must
+  // never form. Recorded bindings are real: a rebind naming anything but an
+  // active sampler2D is rejected against the right uniform table before it
+  // is recorded or sent.
+  shader_sources: RefCell<HashMap<u64, HashMap<(u64, String), u64>>>,
   // UI-side mirror of which shader targets are manual (TargetSpec::manual):
   // validates render_target synchronously, and relaxes the sampling-cycle
   // test - the flush never renders a manual target, so a cycle is only a
@@ -471,8 +503,11 @@ impl Context {
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, draw_bound: None });
-    self.shader_sources.borrow_mut().insert(id, textures.iter().cloned().collect());
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, draw_bound: None, entries: None });
+    self
+      .shader_sources
+      .borrow_mut()
+      .insert(id, textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect());
     Ok(id)
   }
 
@@ -488,6 +523,9 @@ impl Context {
   pub fn update_shader_params(&self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     let targets = self.targets.borrow();
     let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    if mirror.entries.is_some() {
+      return Err(format!("target {id} is a draw target; update params per draw with setDrawParams"));
+    }
     validate_params(&mirror.uniforms, params)?;
     drop(targets);
     self.send(RasterCmd::UpdateShaderParams { id, params: params.to_vec() });
@@ -513,44 +551,59 @@ impl Context {
     {
       let targets = self.targets.borrow();
       let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+      if mirror.entries.is_some() {
+        return Err(format!("target {id} is a draw target; rebind textures per draw with setDrawTextures"));
+      }
       validate_texture_bindings(&mirror.uniforms, textures)?;
     }
-    let limits = self.gpu_limits();
-    {
-      let sources = self.shader_sources.borrow();
-      let manual = self.manual_targets.borrow();
-      // The rebind merges into the existing bindings, so it is the merged
-      // count that must fit the device's texture units.
-      let current = sources.get(&id);
-      let added = textures.iter().filter(|(name, _)| current.is_none_or(|c| !c.contains_key(name))).count();
-      limits.check_texture_units(current.map_or(0, |c| c.len()) + added)?;
-      for (name, src_id) in textures {
-        if self.textures.get(*src_id).is_none() {
-          return Err(format!("texture {src_id} (sampler '{name}') not found"));
-        }
-        if *src_id == id {
-          return Err(format!("sampler '{name}' binds shader texture {id} to its own target (same-pass feedback)"));
-        }
-        // The flush-rendered subgraph is acyclic, and this call only changes
-        // `id`'s own outgoing edges, so any new all-pure cycle runs through
-        // one of the updated bindings: per binding, reject if the target can
-        // already be reached from the new source without passing through a
-        // manual target. A manual `id` needs no walk at all - every cycle
-        // through it has a manual member (its direct self-bind was rejected
-        // above). The walk never needs `id`'s own edges (it stops on reaching
-        // `id`), so the pre-update graph is the right one.
-        if !manual.contains(&id) && samples_transitively(&sources, &manual, *src_id, id) {
-          return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
-        }
-      }
-    }
+    self.validate_new_bindings(id, 0, textures)?;
     let mut sources = self.shader_sources.borrow_mut();
     let entry = sources.entry(id).or_default();
     for (name, src_id) in textures {
-      entry.insert(name.clone(), *src_id);
+      entry.insert((0, name.clone()), *src_id);
     }
     drop(sources);
     self.send(RasterCmd::UpdateShaderTextures { id, textures: textures.to_vec() });
+    Ok(())
+  }
+
+  /// The binding checks shared by every path that adds sampler edges to
+  /// target `id` (pass `entry` 0 for the fixed kinds' single pass): the
+  /// merged per-pass count must fit the device's texture units, every source
+  /// must exist, and no binding may close a flush-rendered sampling cycle.
+  fn validate_new_bindings(&self, id: u64, entry: u64, textures: &[(String, u64)]) -> Result<(), String> {
+    let limits = self.gpu_limits();
+    let sources = self.shader_sources.borrow();
+    let manual = self.manual_targets.borrow();
+    // The rebind merges into the entry's existing bindings, so it is the
+    // merged count that must fit the device's texture units - per entry,
+    // because units rebind per draw.
+    let current = sources.get(&id);
+    let current_count = current.map_or(0, |c| c.keys().filter(|(e, _)| *e == entry).count());
+    let added = textures
+      .iter()
+      .filter(|(name, _)| current.is_none_or(|c| !c.contains_key(&(entry, name.clone()))))
+      .count();
+    limits.check_texture_units(current_count + added)?;
+    for (name, src_id) in textures {
+      if self.textures.get(*src_id).is_none() {
+        return Err(format!("texture {src_id} (sampler '{name}') not found"));
+      }
+      if *src_id == id {
+        return Err(format!("sampler '{name}' binds shader texture {id} to its own target (same-pass feedback)"));
+      }
+      // The flush-rendered subgraph is acyclic, and this call only changes
+      // `id`'s own outgoing edges, so any new all-pure cycle runs through
+      // one of the updated bindings: per binding, reject if the target can
+      // already be reached from the new source without passing through a
+      // manual target. A manual `id` needs no walk at all - every cycle
+      // through it has a manual member (its direct self-bind was rejected
+      // above). The walk never needs `id`'s own edges (it stops on reaching
+      // `id`), so the pre-update graph is the right one.
+      if !manual.contains(&id) && samples_transitively(&sources, &manual, *src_id, id) {
+        return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
+      }
+    }
     Ok(())
   }
 
@@ -598,24 +651,25 @@ impl Context {
   pub fn create_pipeline_texture(&self, mut spec: PipelineSpec) -> Result<u64, String> {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.target.width, spec.target.height)?;
-    limits.check_texture_units(spec.target.textures.len())?;
+    limits.check_texture_units(spec.entry.textures.len())?;
     limits.check_vertex_attribs(spec.pipeline.attributes.len())?;
     validate_load(&spec.target)?;
     let stride = vertex_stride(&spec.pipeline.attributes) as usize;
-    let size = self.buffer_size(spec.target.buffer)?;
-    spec.target.draw = resolve_draw_range(spec.target.draw, stride, size)?;
+    let size = self.buffer_size(spec.entry.buffer)?;
+    spec.entry.draw = resolve_draw_range(spec.entry.draw, stride, size)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
-    let draw = spec.target.draw;
-    let sources: HashMap<String, u64> = spec.target.textures.iter().cloned().collect();
+    let draw = spec.entry.draw;
+    let sources: HashMap<(u64, String), u64> =
+      spec.entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     let draw_bound = size.filter(|_| stride > 0).map(|size| (stride, size));
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), draw_bound });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), draw_bound, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -697,10 +751,11 @@ impl Context {
       None => return Err(format!("program {program} not found")),
     };
     let stride = vertex_stride(&desc.attributes) as usize;
+    let depth = desc.depth.is_some();
     let id = self.next_pipeline_id.get();
     self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, label, reply })??;
     self.next_pipeline_id.set(id + 1);
-    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride });
+    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, depth });
     Ok(id)
   }
 
@@ -718,31 +773,185 @@ impl Context {
   /// id space: params updates, `setShaderSize`, `<texture src>` and
   /// `destroy_texture` all apply). Many targets may share one pipeline, and
   /// creating a target compiles nothing.
-  pub fn create_shader_target(&self, pipeline: u64, mut spec: TargetSpec) -> Result<u64, String> {
+  pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec, mut entry: DrawSpec) -> Result<u64, String> {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.width, spec.height)?;
-    limits.check_texture_units(spec.textures.len())?;
+    limits.check_texture_units(entry.textures.len())?;
     let (uniforms, stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
       Some(mirror) => (mirror.uniforms.clone(), mirror.stride),
       None => return Err(format!("pipeline {pipeline} not found")),
     };
     validate_load(&spec)?;
-    let size = self.buffer_size(spec.buffer)?;
-    spec.draw = resolve_draw_range(spec.draw, stride, size)?;
+    entry.pipeline = pipeline;
+    let size = self.buffer_size(entry.buffer)?;
+    entry.draw = resolve_draw_range(entry.draw, stride, size)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
-    let draw = spec.draw;
-    let sources: HashMap<String, u64> = spec.textures.iter().cloned().collect();
-    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, pipeline, spec, reply })??;
+    let draw = entry.draw;
+    let sources: HashMap<(u64, String), u64> =
+      entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
+    let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     let draw_bound = size.filter(|_| stride > 0).map(|size| (stride, size));
-    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), draw_bound });
+    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), draw_bound, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
     }
     Ok(id)
+  }
+
+  /// Create a draw target: a render target whose contents are an ordered,
+  /// mutable list of draws (see `add_draw`/`remove_draw`), over color storage
+  /// plus optional target-owned `depth` storage shared by every entry. The
+  /// output registers exactly like every shader target (same texture id
+  /// space; `<texture src>`, resize, and destroy all apply). With no entries
+  /// a render is the clear alone. Entry order is draw order; the purity
+  /// contract is unchanged - the list is input data, so a flush-rendered
+  /// draw target re-renders whenever its entries or their inputs change.
+  pub fn create_draw_target(&self, spec: TargetSpec, depth: bool) -> Result<u64, String> {
+    self.gpu_limits().check_texture_size(spec.width, spec.height)?;
+    validate_load(&spec)?;
+    let id = self.textures.allocate_id();
+    let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
+    let manual = spec.manual;
+    let impeller = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, spec, depth, reply })??;
+    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    self.targets.borrow_mut().insert(
+      id,
+      TargetMirror {
+        uniforms: Rc::new(UniformTable::default()),
+        draw: None,
+        draw_bound: None,
+        entries: Some(DrawListMirror { depth, next_draw: 1, entries: HashMap::new() }),
+      },
+    );
+    self.shader_sources.borrow_mut().insert(id, HashMap::new());
+    if manual {
+      self.manual_targets.borrow_mut().insert(id);
+    }
+    Ok(id)
+  }
+
+  /// Append a draw entry to a draw target: `entry.pipeline` draws
+  /// `entry.buffer` over the target's shared storage, last in list order,
+  /// with its own params and sampler inputs. Returns the entry's stable draw
+  /// id (target-scoped, never reused), the handle every per-entry update
+  /// takes. Fire-and-forget after validation: everything is checked here
+  /// against the mirrors - unknown ids, depth compatibility (a depth-testing
+  /// pipeline needs a target created with depth), draw-range bounds, uniform
+  /// names and arities, per-entry texture-unit count, and sampling cycles -
+  /// so errors throw at the call site. The caller must request a frame.
+  pub fn add_draw(&self, target: u64, mut entry: DrawSpec) -> Result<u64, String> {
+    let mut targets = self.targets.borrow_mut();
+    let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+    let Some(list) = mirror.entries.as_mut() else {
+      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    };
+    let (uniforms, stride, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
+      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.depth),
+      None => return Err(format!("pipeline {} not found", entry.pipeline)),
+    };
+    if depth && !list.depth {
+      return Err(format!(
+        "pipeline {} tests depth but target {target} has no depth buffer (create the draw target with depth: true)",
+        entry.pipeline
+      ));
+    }
+    let size = self.buffer_size(entry.buffer)?;
+    entry.draw = resolve_draw_range(entry.draw, stride, size)?;
+    validate_params(&uniforms, &entry.params)?;
+    validate_texture_bindings(&uniforms, &entry.textures)?;
+    let draw_id = list.next_draw;
+    self.validate_new_bindings(target, draw_id, &entry.textures)?;
+    list.next_draw += 1;
+    let draw_bound = size.filter(|_| stride > 0).map(|size| (stride, size));
+    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, draw_bound });
+    drop(targets);
+    let mut sources = self.shader_sources.borrow_mut();
+    let record = sources.entry(target).or_default();
+    for (name, src) in &entry.textures {
+      record.insert((draw_id, name.clone()), *src);
+    }
+    drop(sources);
+    self.send(RasterCmd::AddDraw { target, draw: draw_id, entry });
+    Ok(draw_id)
+  }
+
+  /// Remove a draw entry from a draw target; the remaining entries keep
+  /// their order and ids. The removed id errors from then on (never reused).
+  /// Fire-and-forget; the caller must request a frame.
+  pub fn remove_draw(&self, target: u64, draw: u64) -> Result<(), String> {
+    let mut targets = self.targets.borrow_mut();
+    let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+    let Some(list) = mirror.entries.as_mut() else {
+      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    };
+    if list.entries.remove(&draw).is_none() {
+      return Err(format!("draw {draw} not found on target {target}"));
+    }
+    drop(targets);
+    if let Some(record) = self.shader_sources.borrow_mut().get_mut(&target) {
+      record.retain(|(d, _), _| *d != draw);
+    }
+    self.send(RasterCmd::RemoveDraw { target, draw });
+    Ok(())
+  }
+
+  /// Update one draw entry's params (the per-entry `update_shader_params`):
+  /// validated against the entry's program, merged by name at the next
+  /// render. The caller must request a frame.
+  pub fn set_draw_params(&self, target: u64, draw: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
+    {
+      let targets = self.targets.borrow();
+      let entry = entry_mirror(&targets, target, draw)?;
+      validate_params(&entry.uniforms, params)?;
+    }
+    self.send(RasterCmd::UpdateDrawParams { target, draw, params: params.to_vec() });
+    Ok(())
+  }
+
+  /// Rebind one draw entry's sampler2D inputs by uniform name (the per-entry
+  /// `update_shader_textures`); bindings not named keep their current
+  /// source. Same checks as every bind path: names against the entry's
+  /// program, per-entry unit count, source existence, cycles. The caller
+  /// must request a frame.
+  pub fn set_draw_textures(&self, target: u64, draw: u64, textures: &[(String, u64)]) -> Result<(), String> {
+    {
+      let targets = self.targets.borrow();
+      let entry = entry_mirror(&targets, target, draw)?;
+      validate_texture_bindings(&entry.uniforms, textures)?;
+    }
+    self.validate_new_bindings(target, draw, textures)?;
+    let mut sources = self.shader_sources.borrow_mut();
+    let record = sources.entry(target).or_default();
+    for (name, src_id) in textures {
+      record.insert((draw, name.clone()), *src_id);
+    }
+    drop(sources);
+    self.send(RasterCmd::UpdateDrawTextures { target, draw, textures: textures.to_vec() });
+    Ok(())
+  }
+
+  /// Update one draw entry's range (the per-entry `set_draw`): fields absent
+  /// from `update` keep their current value, and the merged range validates
+  /// against the entry's captured fetch bound. The caller must request a
+  /// frame.
+  pub fn set_draw_range(&self, target: u64, draw: u64, update: DrawUpdate) -> Result<(), String> {
+    let mut targets = self.targets.borrow_mut();
+    let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+    let Some(list) = mirror.entries.as_mut() else {
+      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    };
+    let entry = list.entries.get_mut(&draw).ok_or_else(|| format!("draw {draw} not found on target {target}"))?;
+    let range = entry.draw.merged(update);
+    let (stride, size) = entry.draw_bound.unwrap_or((0, 0));
+    validate_draw_range(range, stride, size)?;
+    entry.draw = range;
+    drop(targets);
+    self.send(RasterCmd::SetDrawRange { target, draw, range });
+    Ok(())
   }
 
   /// Drop a shared program's registry entry and retire its id. Pipelines
@@ -837,6 +1046,9 @@ impl Context {
   pub fn set_draw(&self, id: u64, update: DrawUpdate) -> Result<(), String> {
     let mut targets = self.targets.borrow_mut();
     let mirror = targets.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    if mirror.entries.is_some() {
+      return Err(format!("target {id} is a draw target; set ranges per draw with setDrawRange"));
+    }
     let Some(current) = mirror.draw else {
       return Err("not a pipeline texture".to_string());
     };
@@ -1066,15 +1278,25 @@ fn validate_load(spec: &TargetSpec) -> Result<(), String> {
   Ok(())
 }
 
+// The entry mirror for (target, draw), sharing the error spelling of every
+// per-entry path.
+fn entry_mirror(targets: &HashMap<u64, TargetMirror>, target: u64, draw: u64) -> Result<&EntryMirror, String> {
+  let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+  let Some(list) = mirror.entries.as_ref() else {
+    return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+  };
+  list.entries.get(&draw).ok_or_else(|| format!("draw {draw} not found on target {target}"))
+}
+
 /// Whether `to` is reachable from `from` (inclusive: `from == to` is a hit)
 /// by following sampler edges in `sources` (target id -> its source id per
-/// uniform name) without passing through a node in `barriers`: the
-/// sampling-cycle test behind `update_shader_textures`. Barriers are the
-/// manual targets - the flush never renders one, so a path through one can
-/// never be part of a flush-ordered feedback loop and does not count. Pure
-/// over the id graph, so it unit-tests without a Context.
+/// (draw entry, uniform name) binding) without passing through a node in
+/// `barriers`: the sampling-cycle test behind every bind path. Barriers are
+/// the manual targets - the flush never renders one, so a path through one
+/// can never be part of a flush-ordered feedback loop and does not count.
+/// Pure over the id graph, so it unit-tests without a Context.
 pub(crate) fn samples_transitively(
-  sources: &HashMap<u64, HashMap<String, u64>>,
+  sources: &HashMap<u64, HashMap<(u64, String), u64>>,
   barriers: &HashSet<u64>,
   from: u64,
   to: u64,

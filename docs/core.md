@@ -345,6 +345,25 @@ In every target create (`createShaderTexture`, `createPipelineTexture`, `createS
 
 `compileShader`, `linkProgram`, `createRenderPipeline`, and their destroyers are re-exported raw - the app owns those lifetimes (the runtime still reclaims them on reload). `createShaderTarget` produces a texture and gets the usual owner-scoped auto-free.
 
+### Draw targets: many draws into one target
+
+`createShaderTarget` draws one pipeline. A scene frame is N draws - one per mesh and material - sharing one depth buffer, and that is `createDrawTarget`: a render target whose contents are an ordered, mutable list of draws, rendered as one pass (clear once, then every entry in list order into the same storage). It is the render pass of every 3D API, retained the way everything here is retained: where WebGPU re-encodes the pass each frame, this target holds the list as state and re-renders on demand.
+
+```ts
+createDrawTarget(width, height, opts?: { depth?, clearColor?, render?, loadOp?, filter?, wrap?, label? }): TextureId
+addDraw(target, pipeline, params?, opts?: { buffer?, textures?, firstVertex?, vertexCount?, instanceCount? }): DrawId
+removeDraw(target, draw): void
+setDrawParams(target, draw, params): void      // setShaderParams, addressed to one entry
+setDrawTextures(target, draw, textures): void  // setShaderTextures, addressed to one entry
+setDrawRange(target, draw, update): void       // setDraw, addressed to one entry
+```
+
+`addDraw` appends an entry - the same per-entry shape `createShaderTarget` takes (a pipeline, its concrete `buffer`, a draw range, `params`, `textures`) - and returns a stable `DrawId`: the handle the per-entry setters take, unaffected by other adds and removes, erroring after its entry is removed rather than aliasing. List order is draw order (later entries land over earlier ones where depth does not decide), so painter-style layering is append order. Per-entry `params` is where per-object state lives - a moved mesh is one `setDrawParams` with its new model matrix - and entries bind textures independently: two entries may bind the same uniform name to different sources.
+
+Depth splits the way WebGPU splits it: the target owns the storage (`depth: true`, one buffer cleared once per render and shared by every entry - what makes cross-entry occlusion work), while each entry's pipeline owns the behavior (`depth`/`depthWrite`: whether that draw tests and writes). Adding a depth-testing pipeline to a target without storage throws at `addDraw`.
+
+The render contract is unchanged, and that is the point: the list is input data like params, so "render twice = render once" still holds, and an ordinary (`render: "auto"`) draw target re-renders exactly when its entries or their inputs change. A static scene costs zero passes however many entries it holds, and one render is one pass however many entries it draws - which matters on hardware where pass count is the budget. `render: "manual"` and `loadOp: "load"` compose exactly as on `createShaderTarget`; with no entries a render is the clear alone. The target registers like any other (display via `<texture src>`, `setShaderSize`, owner-scoped auto-free); its entries die with it, while their pipelines and buffers are yours and outlive it. The target-level `setShaderParams`/`setShaderTextures`/`setDraw` throw on a draw target with a pointer to the per-entry forms.
+
 ### Inline shader sources
 
 Shader sources are strings, and a shader small enough to read at a glance belongs in the file beside the code that uses it. Tag it with `glsl` so an editor can highlight it:

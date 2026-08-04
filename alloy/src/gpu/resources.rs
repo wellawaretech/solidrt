@@ -68,13 +68,36 @@ pub struct GpuRenderPipelineInfo {
   pub attributes: Vec<(String, String)>,
 }
 
+/// One entry of a draw target's ordered list, as reported in
+/// `GpuPipelineInfo::draws`.
+pub struct GpuDrawInfo {
+  /// The entry's stable draw id (target-scoped, UI-allocated).
+  pub id: u64,
+  /// The registered pipeline this entry draws with.
+  pub pipeline_id: Option<u64>,
+  pub buffer_id: Option<u64>,
+  pub topology: &'static str,
+  /// "none" or "add".
+  pub blend: &'static str,
+  /// Whether this entry's draw writes depth.
+  pub depth_write: bool,
+  pub first_vertex: i32,
+  pub vertex_count: i32,
+  pub instance_count: i32,
+  /// The float uniforms applied on the entry's most recent render.
+  pub params: Vec<(String, ParamValue)>,
+  /// sampler2D uniform name -> source texture id.
+  pub textures: Vec<(String, u64)>,
+}
+
 pub struct GpuPipelineInfo {
   /// The registry id its output texture is sampleable under.
   pub texture_id: u64,
   /// The create's debug label, when one was given (held by the target's
   /// texture entry, same id).
   pub label: Option<String>,
-  /// "pipeline" (vertex+fragment over a buffer) or "fragment" (fullscreen pass).
+  /// "pipeline" (vertex+fragment over a buffer), "fragment" (fullscreen
+  /// pass), or "draws" (a draw target: ordered entry list, see `draws`).
   pub kind: &'static str,
   /// The shared program behind this target's pipeline; None when it was
   /// created through the fused path and owns its program alone.
@@ -103,6 +126,9 @@ pub struct GpuPipelineInfo {
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render.
   pub params: Vec<(String, ParamValue)>,
+  /// A draw target's ordered entry list (kind "draws"); empty for the fixed
+  /// kinds, whose one pass lives in the flat fields above.
+  pub draws: Vec<GpuDrawInfo>,
   /// Manual render mode: rendered only by an explicit render, never by the
   /// dirty flush (see `TargetSpec::manual`).
   pub manual: bool,

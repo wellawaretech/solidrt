@@ -82,21 +82,15 @@ draw count. Deliberately deferred, in rough order of expected demand:
 - **Raster state**: cull mode and depth func are fixed (depth WRITE is now an
   option, see blending above). Two-sided shading (`abs(dot(n, l))`) hides the
   missing cull for now, but a closed mesh pays double the fragment work.
-- **Multiple draw passes into one target** (shared depth buffer, different
-  programs). One pipeline + a dynamic buffer region covers the known use
-  cases so far. The object-model blocker is gone: the
-  [split](gpu-pipeline-object-model.md) landed 2026-07-30, so draw state now
-  lives on RenderPipeline and "N pipelines into one target" has a natural
-  shape (a target that takes several pipelines, or targets sharing a depth
-  attachment). Cull/depth-func likewise now have their home
-  (`PipelineDesc`); each remaining item extends the desc or the target spec,
-  not a fused struct. But the blocker moved rather than vanished: pass
-  ORDER inside one target breaks the pure-target invariant ("rendering
-  twice is indistinguishable from rendering once") that the dirty flush
-  relies on, so this is gated on the purity decision in
-  [gpu-review](../analysis/gpu-review.md) (structural divergence section:
-  recommended shape is manual targets + one `renderTarget` verb + loadOp).
-  Do not build this, loadOp, or ping-pong feedback before that decision.
+- **Multiple draw passes into one target.** Stage 1 DONE 2026-08-04 as
+  [gpu-draw-list](gpu-draw-list.md): `createDrawTarget` holds a retained,
+  ordered, mutable draw list (addDraw/removeDraw with stable DrawIds,
+  per-entry setDrawParams/setDrawTextures/setDrawRange), rendered clear-once
+  + entries-in-order as ONE pass; depth storage is target-owned, depth
+  behavior stays pipeline state. The purity worry resolved as the
+  scene-graph note argued: a retained list is input data, so the feature is
+  legal on flush-rendered targets and the dirty flush is untouched.
+  Ordering verbs (insert-before, setDrawOrder) are that item's stage 2.
 
 Adjacent, filed separately because they are not createPipeline options:
 [anti-aliasing for pipeline targets](gpu-target-antialiasing.md),

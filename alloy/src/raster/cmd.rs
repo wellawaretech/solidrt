@@ -7,8 +7,8 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  DrawRange, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec,
-  UniformTable, WindowShader,
+  DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
+  TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{SamplerState, TextureFormat};
 
@@ -89,9 +89,31 @@ pub(crate) enum RasterCmd {
   /// Drop a pipeline from the registry. Targets created from it keep it alive
   /// (and keep rendering); GL resources are freed when the last user goes.
   DestroyRenderPipeline { id: u64 },
-  /// Create a target over a registered pipeline and adopt it (first render at
-  /// the next dirty flush). Many targets may share one pipeline.
-  CreateShaderTarget { id: u64, pipeline: u64, spec: TargetSpec, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Create a fixed single-entry target over a registered pipeline
+  /// (`entry.pipeline`) and adopt it (first render at the next dirty flush).
+  /// Many targets may share one pipeline.
+  CreateShaderTarget { id: u64, spec: TargetSpec, entry: DrawSpec, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Create a draw target - a mesh target with an empty, mutable ordered
+  /// draw list and optional target-owned depth storage - and adopt it.
+  /// Entries arrive via AddDraw; a render is clear + entries in list order.
+  CreateDrawTarget { id: u64, spec: TargetSpec, depth: bool, reply: mpsc::Sender<Result<Texture, String>> },
+  /// Append entry `draw` (a UI-allocated, target-scoped id) to a draw
+  /// target's list. Validated UI-side against the mirrors, so this is
+  /// fire-and-forget like every other write; a raster-side failure warns and
+  /// the entry is skipped. Marks the target dirty (manual targets fold only).
+  AddDraw { target: u64, draw: u64, entry: DrawSpec },
+  /// Remove entry `draw` from a draw target's list, releasing its VAO and
+  /// its uses of the pipeline and buffer. Fire-and-forget; marks dirty.
+  RemoveDraw { target: u64, draw: u64 },
+  /// Fold new params into one draw entry's record and mark the target dirty;
+  /// values apply at the next render (flush, or explicit for manual).
+  UpdateDrawParams { target: u64, draw: u64, params: Vec<(String, ParamValue)> },
+  /// Rebind one draw entry's sampler2D inputs by uniform name and mark the
+  /// target dirty. Unnamed bindings keep their current source.
+  UpdateDrawTextures { target: u64, draw: u64, textures: Vec<(String, u64)> },
+  /// Set one draw entry's range (resolved and validated UI-side) and mark
+  /// the target dirty.
+  SetDrawRange { target: u64, draw: u64, range: DrawRange },
   /// Drop a program from the registry. Pipelines created from it keep it
   /// alive (and keep rendering); the GL program is deleted when the last user
   /// goes.

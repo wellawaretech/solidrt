@@ -21,7 +21,7 @@ pub use resources::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
   GpuWindowShaderInfo,
 };
-pub use spec::{NodeShader, PipelineSpec, TargetSpec, WindowShader};
+pub use spec::{DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, ShaderTexture};
 pub use vocab::{
   blend_name, parse_blend, resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings,

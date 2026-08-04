@@ -10,11 +10,6 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
-- [flux:audio live voice control](flux-audio-voice-control.md) [open] - A
-  playing SoundHandle is stop-only: no pan anywhere, gain fixed at play()
-  time, no ended signal, encoded input only - a 2D game port could not
-  express positional audio; per-voice setGain/setPan, an ended signal and a
-  raw-PCM load close it (SDL3_mixer already ships the pan shape).
 - [flux:wasm memory views and named call errors](flux-wasm-memory-access.md) [done] -
   `instance.memory` ArrayBuffer aliases linear memory (detach-on-grow, web
   `Memory.buffer` contract), closing the copy-free gap with the pure-JS
@@ -160,10 +155,15 @@ Sorted by status: open first, then partial, deferred, and closed
   CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
   uniforms and the additive blend/depthWrite toggles landed 2026-07-29, draw
-  range and instancing (setDraw) 2026-07-30; still deferred: index buffers
-  (shape decided), per-instance attributes, float data textures, sampleable
-  depth, cull/depth-func raster state, alpha translucency, and multi-pass
-  targets - the last unblocked as of the 2026-07-30 purity decision.
+  range and instancing (setDraw) 2026-07-30, multi-pass targets 2026-08-04
+  (spun off as gpu-draw-list); still deferred: index buffers (shape
+  decided), per-instance attributes, float data textures, sampleable depth,
+  cull/depth-func raster state, and alpha translucency.
+- [GPU draw targets](gpu-draw-list.md) [stage 1 implemented] - The
+  multi-pass bullet built as a retained, ordered, mutable draw list:
+  createDrawTarget + addDraw/removeDraw with stable DrawIds and per-entry
+  setters, one clear + N draws = one pass, target-owned depth storage;
+  ordering verbs (insert-before, setDrawOrder) are stage 2.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI
@@ -278,6 +278,11 @@ Sorted by status: open first, then partial, deferred, and closed
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to
   okf/plans/component-gestures.md, this file is a pointer.
+- [flux:audio live voice control](flux-audio-voice-control.md) [done] - A
+  playing voice was stop-only; shipped 2026-08-03 as Playback/Clip handles:
+  per-voice setGain/setPan (equal-power, [-1,1], also play options), an
+  ended() poll, and loadPcm where the typed array is the format (u8/s16/f32
+  interleaved). Positional audio for game ports closed.
 - [Detached-view transform origin pivots around the inherited box](detached-view-transform-origin.md) [done] -
   A d-view's unset transform origin pivoted around the centre of the
   inherited layout box, so the same code landed elsewhere on a differently

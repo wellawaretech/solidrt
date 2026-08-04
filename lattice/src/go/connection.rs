@@ -984,6 +984,50 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
           p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
         map.insert("attributes".into(), attrs.into());
       }
+      // A draw target (kind "draws") reports its entries in list order; each
+      // entry follows the flat fields' off-default conventions.
+      if p.kind == "draws" {
+        let draws: Vec<serde_json::Value> = p
+          .draws
+          .iter()
+          .map(|d| {
+            let mut entry = serde_json::json!({
+              "id": d.id,
+              "vertexCount": d.vertex_count,
+              "textures": d.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
+              "params": d.params.iter().map(|(name, v)| {
+                let v = match v {
+                  alloy::ParamValue::Scalar(n) => serde_json::json!(n),
+                  alloy::ParamValue::Array(a) => serde_json::json!(a),
+                };
+                (name.clone(), v)
+              }).collect::<serde_json::Map<_, _>>(),
+            });
+            let map = entry.as_object_mut().expect("draw json is an object");
+            if let Some(pipeline_id) = d.pipeline_id {
+              map.insert("pipelineId".into(), pipeline_id.into());
+            }
+            if let Some(buffer_id) = d.buffer_id {
+              map.insert("bufferId".into(), buffer_id.into());
+            }
+            map.insert("topology".into(), d.topology.into());
+            if d.first_vertex != 0 {
+              map.insert("firstVertex".into(), d.first_vertex.into());
+            }
+            if d.instance_count != 1 {
+              map.insert("instanceCount".into(), d.instance_count.into());
+            }
+            if !d.depth_write {
+              map.insert("depthWrite".into(), false.into());
+            }
+            if d.blend != "none" {
+              map.insert("blend".into(), d.blend.into());
+            }
+            entry
+          })
+          .collect();
+        map.insert("draws".into(), draws.into());
+      }
       obj
     })
     .collect();

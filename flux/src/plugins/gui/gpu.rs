@@ -170,14 +170,54 @@ fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquick
 // ("auto" | "manual") and `loadOp` ("clear" | "load") are vocabulary,
 // validated here at the boundary like the pipeline words; the
 // load-requires-manual invariant is alloy's (Context rejects it).
-fn collect_target_spec(
+// The target half of a create's options: size, clear, render mode, loadOp,
+// sampling, label. Shared by every mesh-target create.
+fn collect_target_half(
   ctx: &Ctx<'_>,
-  params: &Option<Object<'_>>,
   opts: &Option<Object<'_>>,
   width: u32,
   height: u32,
   api: &str,
 ) -> rquickjs::Result<alloy::TargetSpec> {
+  let mut clear_color = [0f32; 4];
+  if let Some(opts) = opts {
+    if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
+      for (slot, v) in clear_color.iter_mut().zip(arr) {
+        *slot = v as f32;
+      }
+    }
+  }
+  let manual = match opts {
+    Some(o) => match o.get::<_, Option<String>>("render")?.as_deref() {
+      None | Some("auto") => false,
+      Some("manual") => true,
+      Some(other) => return Err(throw_str(ctx, &format!("{api}: render must be \"auto\" or \"manual\", got \"{other}\""))),
+    },
+    None => false,
+  };
+  let load = match opts {
+    Some(o) => match o.get::<_, Option<String>>("loadOp")?.as_deref() {
+      None | Some("clear") => false,
+      Some("load") => true,
+      Some(other) => return Err(throw_str(ctx, &format!("{api}: loadOp must be \"clear\" or \"load\", got \"{other}\""))),
+    },
+    None => false,
+  };
+  let sampler = collect_sampler(ctx, opts, api)?;
+  let label = collect_label(opts)?;
+  Ok(alloy::TargetSpec { width, height, clear_color, sampler, manual, load, label })
+}
+
+// The draw-entry half: params (its own argument), textures, buffer, and the
+// draw range. Shared by the single-draw creates and addDraw; `pipeline` is 0
+// on the fused path (anonymous) and the registry id everywhere else.
+fn collect_entry_half(
+  ctx: &Ctx<'_>,
+  pipeline: u64,
+  params: &Option<Object<'_>>,
+  opts: &Option<Object<'_>>,
+  api: &str,
+) -> rquickjs::Result<alloy::DrawSpec> {
   // Params is its own argument (before opts): a params key left in the bag
   // would be silently ignored - the shader renders with defaults - so its
   // presence throws.
@@ -230,33 +270,49 @@ fn collect_target_spec(
       None => 1,
     },
   };
-  let mut clear_color = [0f32; 4];
-  if let Some(opts) = opts {
-    if let Some(arr) = opts.get::<_, Option<Vec<f64>>>("clearColor")? {
-      for (slot, v) in clear_color.iter_mut().zip(arr) {
-        *slot = v as f32;
+  Ok(alloy::DrawSpec { pipeline, buffer, draw, params, textures })
+}
+
+fn collect_target_spec(
+  ctx: &Ctx<'_>,
+  params: &Option<Object<'_>>,
+  opts: &Option<Object<'_>>,
+  width: u32,
+  height: u32,
+  api: &str,
+) -> rquickjs::Result<(alloy::TargetSpec, alloy::DrawSpec)> {
+  Ok((collect_target_half(ctx, opts, width, height, api)?, collect_entry_half(ctx, 0, params, opts, api)?))
+}
+
+// Decode createDrawTarget's options: the target half plus `depth` (the
+// target-OWNED depth storage every entry shares - distinct from the depth
+// STATE a pipeline declares on createRenderPipeline). Entry keys throw with
+// a pointer to addDraw; draw-state keys with a pointer to
+// createRenderPipeline.
+fn collect_draw_target_spec(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  width: u32,
+  height: u32,
+  api: &str,
+) -> rquickjs::Result<(alloy::TargetSpec, bool)> {
+  if let Some(o) = opts {
+    for key in ["params", "textures", "buffer", "firstVertex", "vertexCount", "instanceCount"] {
+      if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
+        return Err(throw_str(ctx, &format!("{api}: '{key}' is draw-entry state; pass it to addDraw")));
+      }
+    }
+    for key in ["attributes", "topology", "blend", "depthWrite"] {
+      if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
+        return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
     }
   }
-  let manual = match opts {
-    Some(o) => match o.get::<_, Option<String>>("render")?.as_deref() {
-      None | Some("auto") => false,
-      Some("manual") => true,
-      Some(other) => return Err(throw_str(ctx, &format!("{api}: render must be \"auto\" or \"manual\", got \"{other}\""))),
-    },
+  let depth = match opts {
+    Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
     None => false,
   };
-  let load = match opts {
-    Some(o) => match o.get::<_, Option<String>>("loadOp")?.as_deref() {
-      None | Some("clear") => false,
-      Some("load") => true,
-      Some(other) => return Err(throw_str(ctx, &format!("{api}: loadOp must be \"clear\" or \"load\", got \"{other}\""))),
-    },
-    None => false,
-  };
-  let sampler = collect_sampler(ctx, opts, api)?;
-  let label = collect_label(opts)?;
-  Ok(alloy::TargetSpec { width, height, params, textures, buffer, draw, clear_color, sampler, manual, load, label })
+  Ok((collect_target_half(ctx, opts, width, height, api)?, depth))
 }
 
 // Decode the draw-state options of createRenderPipeline and
@@ -370,6 +426,12 @@ impl ModuleDef for GpuModule {
     decl.declare("writeBuffer")?;
     decl.declare("destroyBuffer")?;
     decl.declare("setDraw")?;
+    decl.declare("createDrawTarget")?;
+    decl.declare("addDraw")?;
+    decl.declare("removeDraw")?;
+    decl.declare("setDrawParams")?;
+    decl.declare("setDrawTextures")?;
+    decl.declare("setDrawRange")?;
     decl.declare("renderTarget")?;
     decl.declare("copyTexture")?;
     decl.declare("captureSnapshot")?;
@@ -577,9 +639,9 @@ impl ModuleDef for GpuModule {
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipelineTexture")?;
-        let target = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
+        let (target, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
         let id = create_pipeline_atx
-          .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target })
+          .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target, entry })
           .map_err(|e| throw_str(&ctx, &format!("createPipelineTexture: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -674,9 +736,9 @@ impl ModuleDef for GpuModule {
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
         reject_pipeline_keys(&ctx, &opts.0, "createShaderTarget")?;
-        let spec = collect_target_spec(&ctx, &params, &opts.0, width, height, "createShaderTarget")?;
+        let (spec, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createShaderTarget")?;
         let id = create_target_atx
-          .create_shader_target(pipeline, spec)
+          .create_shader_target(pipeline, spec, entry)
           .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
@@ -753,6 +815,110 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setDraw");
 
+    // createDrawTarget(width, height, opts?) -> texture id: a mesh target
+    // whose contents are an ordered, mutable list of draws (addDraw /
+    // removeDraw), over color plus optional target-owned depth storage. The
+    // target half of the options only; entries carry everything else.
+    let create_draw_target_atx = atx.clone();
+    let create_draw_target = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+        let (spec, depth) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
+        let id = create_draw_target_atx
+          .create_draw_target(spec, depth)
+          .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created.borrow_mut().insert(id);
+        Ok(id)
+      },
+    )
+    .expect("create createDrawTarget");
+
+    // addDraw(target, pipeline, params?, opts?) -> draw id: append a draw
+    // entry (same shape as createShaderTarget's per-entry arguments). The
+    // returned id is stable across add/remove - the handle every per-entry
+    // update takes. Alloy validates everything at this call site.
+    let add_draw_atx = atx.clone();
+    let add_draw_platform = platform.clone();
+    let add_draw = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>,
+            target: u64,
+            pipeline: u64,
+            params: Option<Object<'_>>,
+            opts: Opt<Object<'_>>|
+            -> rquickjs::Result<u64> {
+        reject_pipeline_keys(&ctx, &opts.0, "addDraw")?;
+        let entry = collect_entry_half(&ctx, pipeline, &params, &opts.0, "addDraw")?;
+        let id = add_draw_atx.add_draw(target, entry).map_err(|e| throw_str(&ctx, &format!("addDraw: {e}")))?;
+        add_draw_platform.request_frame();
+        Ok(id)
+      },
+    )
+    .expect("create addDraw");
+
+    let remove_draw_atx = atx.clone();
+    let remove_draw_platform = platform.clone();
+    let remove_draw = Function::new(ctx.clone(), move |ctx: Ctx<'_>, target: u64, draw: u64| -> rquickjs::Result<()> {
+      remove_draw_atx.remove_draw(target, draw).map_err(|e| throw_str(&ctx, &format!("removeDraw: {e}")))?;
+      remove_draw_platform.request_frame();
+      Ok(())
+    })
+    .expect("create removeDraw");
+
+    // Per-entry params update: setShaderParams addressed to one draw entry.
+    let set_draw_params_atx = atx.clone();
+    let set_draw_params_platform = platform.clone();
+    let set_draw_params = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, draw: u64, params: Object<'_>| -> rquickjs::Result<()> {
+        let params = collect_params(&ctx, &params, "setDrawParams")?;
+        set_draw_params_atx
+          .set_draw_params(target, draw, &params)
+          .map_err(|e| throw_str(&ctx, &format!("setDrawParams: {e}")))?;
+        set_draw_params_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setDrawParams");
+
+    // Per-entry sampler rebind: setShaderTextures addressed to one draw entry.
+    let set_draw_textures_atx = atx.clone();
+    let set_draw_textures_platform = platform.clone();
+    let set_draw_textures = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, draw: u64, textures: Object<'_>| -> rquickjs::Result<()> {
+        let textures = collect_textures(&ctx, &textures, "setDrawTextures")?;
+        set_draw_textures_atx
+          .set_draw_textures(target, draw, &textures)
+          .map_err(|e| throw_str(&ctx, &format!("setDrawTextures: {e}")))?;
+        set_draw_textures_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setDrawTextures");
+
+    // Per-entry draw range: setDraw addressed to one draw entry, same partial
+    // merge.
+    let set_draw_range_atx = atx.clone();
+    let set_draw_range_platform = platform.clone();
+    let set_draw_range = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>| -> rquickjs::Result<()> {
+        let update = alloy::DrawUpdate {
+          first_vertex: update.get::<_, Option<i32>>("firstVertex")?,
+          vertex_count: update.get::<_, Option<i32>>("vertexCount")?,
+          instance_count: update.get::<_, Option<i32>>("instanceCount")?,
+        };
+        set_draw_range_atx
+          .set_draw_range(target, draw, update)
+          .map_err(|e| throw_str(&ctx, &format!("setDrawRange: {e}")))?;
+        set_draw_range_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setDrawRange");
+
     // The explicit render verb for manual targets (render: "manual"); alloy
     // validates the mode and queues the pass in call order.
     let render_target_atx = atx.clone();
@@ -811,6 +977,12 @@ impl ModuleDef for GpuModule {
     exports.export("writeBuffer", write_buffer)?;
     exports.export("destroyBuffer", destroy_buffer)?;
     exports.export("setDraw", set_draw)?;
+    exports.export("createDrawTarget", create_draw_target)?;
+    exports.export("addDraw", add_draw)?;
+    exports.export("removeDraw", remove_draw)?;
+    exports.export("setDrawParams", set_draw_params)?;
+    exports.export("setDrawTextures", set_draw_textures)?;
+    exports.export("setDrawRange", set_draw_range)?;
     exports.export("renderTarget", render_target)?;
     exports.export("copyTexture", copy_texture)?;
     // Named generic fns, not closures: `captureSnapshot` returns a Promise and

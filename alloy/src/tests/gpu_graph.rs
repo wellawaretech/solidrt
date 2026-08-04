@@ -11,10 +11,10 @@ fn dirty(ids: &[u64]) -> HashSet<u64> {
   ids.iter().copied().collect()
 }
 
-fn sources(list: &[(u64, &[u64])]) -> HashMap<u64, HashMap<String, u64>> {
+fn sources(list: &[(u64, &[u64])]) -> HashMap<u64, HashMap<(u64, String), u64>> {
   list
     .iter()
-    .map(|(id, srcs)| (*id, srcs.iter().enumerate().map(|(i, s)| (format!("u{i}"), *s)).collect()))
+    .map(|(id, srcs)| (*id, srcs.iter().enumerate().map(|(i, s)| ((0, format!("u{i}")), *s)).collect()))
     .collect()
 }
 

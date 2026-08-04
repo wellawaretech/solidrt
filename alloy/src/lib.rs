@@ -31,8 +31,8 @@ pub use app::{setup, App};
 pub use backend::{Backend, DisplayContext};
 pub use context::{CaptureDone, CaptureInfo, Context};
 pub use gpu::{
-  parse_blend, AttrFormat, BlendMode, DepthState, DrawRange, DrawUpdate, GpuLimits, ParamValue, PipelineDesc,
-  NodeShader, PipelineSpec, ShaderStage, TargetSpec, Topology, UniformKind, UniformTable, WindowShader,
+  parse_blend, AttrFormat, BlendMode, DepthState, DrawRange, DrawSpec, DrawUpdate, GpuLimits, ParamValue,
+  PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, Topology, UniformKind, UniformTable, WindowShader,
 };
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,

@@ -1,75 +1,100 @@
-//! Render targets: `ShaderTexture` (an FBO-backed target texture rendered by
-//! a program, fullscreen-fragment or mesh-pipeline kind) and the retained
-//! window-layer target. This is where per-target state lives - the VAO bound
-//! to a concrete buffer, depth storage, clear color, last-applied params.
+//! Render targets: `ShaderTexture` (an FBO-backed target texture rendered as
+//! a fullscreen fragment pass or as an ordered list of mesh draws) and the
+//! retained layer target. This is where per-target state lives - the draw
+//! entries with their VAOs, buffers, params and bindings, the target-owned
+//! depth storage, and the clear color.
 
 use glow::HasContext;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use super::buffer::{release_buffer, GpuBuffer};
-use super::pass::{run_pass, PassDraw, PassInput};
+use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
-use super::vocab::{blend_name, vertex_stride, AttrFormat, DrawRange, ParamValue, PipelineDesc};
+use super::resources::GpuDrawInfo;
+use super::vocab::{blend_name, AttrFormat, DrawRange, ParamValue, PipelineDesc};
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
-/// The per-target mesh half of a pipeline target: the pipeline it draws with
-/// (which owns the draw state), plus everything bound to THIS target - the
+/// One draw of a mesh target's ordered list: the pipeline it draws with
+/// (which owns the draw state), plus everything bound to THIS entry - the
 /// VAO built against its concrete vertex buffer, that buffer's registry id,
-/// the draw range, the private depth storage, and the clear color.
-pub(super) struct MeshState {
+/// the draw range, uniform values, and sampler inputs. Entries are addressed
+/// by a UI-allocated id that stays stable across add/remove (never an index).
+pub(super) struct DrawEntry {
+  pub(super) id: u64,
   pub(super) pipeline: Rc<RenderPipeline>,
-  /// Registry id of the shared pipeline this target was created from; None
-  /// for the fused create path, whose pipeline is anonymous and dies with the
-  /// target.
+  /// Registry id of the shared pipeline this entry draws with; None for the
+  /// fused create path, whose pipeline is anonymous and dies with the target.
   pipeline_id: Option<u64>,
   pub(super) vao: glow::VertexArray,
-  /// The interleaved vertex buffer this target's VAO reads, held by Rc like
+  /// The interleaved vertex buffer this entry's VAO reads, held by Rc like
   /// the pipeline so destroying the registry entry in either order is safe;
   /// None when the pipeline is attributeless.
   buffer: Option<Rc<GpuBuffer>>,
-  /// Registry id of that buffer (Context resolves writes to re-renders
-  /// through this). 0 when the pipeline is attributeless.
+  /// Registry id of that buffer (buffer writes re-render targets through
+  /// this, see `reads_buffer`). 0 when the pipeline is attributeless.
   buffer_id: u64,
   /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
-  /// it ever reaches this cell.
-  pub(super) draw: Cell<DrawRange>,
-  /// Present when the pipeline carries depth state; the renderbuffer stays
-  /// private to the FBO (never adopted into Impeller).
+  /// it ever reaches this field.
+  pub(super) draw: DrawRange,
+  /// This entry's current uniform values, folded in by the params merge (its
+  /// only writer) and re-applied at every render - entries sharing a program
+  /// overwrite each other's uniforms per pass, so re-application is
+  /// mandatory, not redundancy.
+  pub(super) params: Vec<(String, ParamValue)>,
+  /// sampler2D uniform name -> source texture id. Resolved to a live GL
+  /// texture at each render by the owner (which holds the texture registry),
+  /// so an input whose contents or registry entry changed is picked up
+  /// automatically.
+  pub(super) bindings: Vec<(String, u64)>,
+}
+
+/// The mesh half of a target: the ordered draw list sharing this target's
+/// color (and optional depth) storage, rendered as one pass - clear once,
+/// then entries in list order.
+pub(super) struct MeshState {
+  /// The ordered draw list. The single-draw creates hold exactly one entry
+  /// (id 0, `fixed`); draw targets start empty and mutate via
+  /// `add_entry`/`remove_entry`.
+  pub(super) entries: Vec<DrawEntry>,
+  /// Present when the target owns depth storage: explicit on a draw target
+  /// (`create_draw_target`'s depth option), derived from the pipeline on the
+  /// single-draw creates. The renderbuffer stays private to the FBO (never
+  /// adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
   pub(super) clear_color: [f32; 4],
   /// Color load op (see `TargetSpec::load`): true = draw over the previous
   /// contents instead of clearing. Only ever true on manual targets.
   pub(super) load: bool,
+  /// The single-draw creates: the entry set is fixed at creation. The
+  /// per-target verbs address entry 0; add/remove are rejected (gated
+  /// UI-side, backstopped here).
+  fixed: bool,
 }
 
-/// An FBO-backed RGBA8 target texture rendered by a ShaderProgram: either a
-/// fullscreen fragment pass (`mesh: None`) or a vertex+fragment pipeline
-/// drawing an interleaved vertex buffer (`mesh: Some`). The target's GL name
-/// is also adopted into Impeller (and held in the TextureRegistry); this
-/// struct keeps the program/FBO so the same texture can be re-rendered with
-/// new params. Like GpuTexture it never deletes the target name: Impeller
-/// owns it once adopted, and deleting here would double-free.
+/// Which kind of pass renders this target.
+pub(super) enum TargetKind {
+  /// A fullscreen fragment pass: one program with target-level params and
+  /// bindings. No clear, depth, or draw list - the covering triangle writes
+  /// every pixel.
+  Fragment { program: Rc<ShaderProgram>, params: Vec<(String, ParamValue)>, bindings: Vec<(String, u64)> },
+  /// A vertex+fragment mesh target: clear + the ordered draw list.
+  Mesh(MeshState),
+}
+
+/// An FBO-backed RGBA8 target texture rendered by shader passes: either a
+/// fullscreen fragment pass or an ordered list of mesh draws. The target's GL
+/// name is also adopted into Impeller (and held in the TextureRegistry); this
+/// struct keeps the FBO and draw state so the same texture can be re-rendered
+/// with new params. Like GpuTexture it never deletes the target name:
+/// Impeller owns it once adopted, and deleting here would double-free.
 pub struct ShaderTexture {
-  /// The program rendering this target: a mesh target's own clone of its
-  /// pipeline's program Rc (so render and reflection never branch on kind),
-  /// a fragment target's whole identity.
-  program: Rc<ShaderProgram>,
+  kind: TargetKind,
   fbo: glow::Framebuffer,
   target: glow::Texture,
   width: u32,
   height: u32,
-  /// sampler2D uniform name -> source texture id. Resolved to a live GL texture
-  /// at each render by the owner (which holds the texture registry), so an input
-  /// whose contents or registry entry changed is picked up automatically.
-  sampler_bindings: Vec<(String, u64)>,
-  mesh: Option<MeshState>,
-  /// The target's current uniform values, folded in by `merge_params` (its
-  /// only writer) and read by every render. Held here so a re-render the app
-  /// did not ask for directly - a vertex-buffer write, a draw-count change, a
-  /// sampled input that changed - needs no params from the caller.
-  last_params: RefCell<Vec<(String, ParamValue)>>,
   /// Declared sampling for this target's output (how OTHER passes and the
   /// display draw sample it; the target's own inputs carry their own states).
   /// Survives resize; set via `with_sampler` after construction.
@@ -125,6 +150,65 @@ fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::T
     gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
     gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(target), 0);
     Ok((target, fbo))
+  }
+}
+
+/// Attach a fresh DEPTH_COMPONENT24 renderbuffer to the currently bound FBO,
+/// restoring the renderbuffer binding it touches.
+unsafe fn attach_depth(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Renderbuffer, String> {
+  let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+  let rb = gl.create_renderbuffer().map_err(|e| format!("glGenRenderbuffers failed: {e}"))?;
+  gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+  gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, width as i32, height as i32);
+  gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
+  gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
+  Ok(rb)
+}
+
+/// Record a pipeline's interleaved vertex layout against a concrete buffer in
+/// a fresh VAO. Attribute locations are looked up by name, so an attribute
+/// the shader does not use is skipped - its bytes still occupy the stride.
+/// Restores the VAO and array-buffer bindings it touches.
+fn build_vao(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  attributes: &[(String, AttrFormat)],
+  buffer: Option<&Rc<GpuBuffer>>,
+) -> Result<glow::VertexArray, String> {
+  unsafe {
+    let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
+    let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
+    let vao = gl.create_vertex_array().map_err(|e| format!("glGenVertexArrays failed: {e}"))?;
+    gl.bind_vertex_array(Some(vao));
+    if let Some(buffer) = buffer {
+      gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
+      let stride = super::vocab::vertex_stride(attributes);
+      let mut offset = 0i32;
+      for (name, fmt) in attributes {
+        // None means the shader does not (actively) use the attribute; that
+        // is fine, the bytes are simply skipped over via the stride.
+        if let Some(loc) = gl.get_attrib_location(program.program, name) {
+          gl.enable_vertex_attrib_array(loc);
+          gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
+        }
+        offset += fmt.components() * 4;
+      }
+    }
+    gl.bind_vertex_array(prev_vertex_array(prev_vao));
+    gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev_ab));
+    Ok(vao)
+  }
+}
+
+/// Fold a params update into a record by name (new names append, existing
+/// names overwrite): the merge rule shared by target-level and per-entry
+/// params writes.
+fn merge_record(record: &mut Vec<(String, ParamValue)>, params: &[(String, ParamValue)]) {
+  for (name, value) in params {
+    match record.iter_mut().find(|(n, _)| n == name) {
+      Some(entry) => entry.1 = value.clone(),
+      None => record.push((name.clone(), value.clone())),
+    }
   }
 }
 
@@ -220,14 +304,11 @@ impl ShaderTexture {
       }
 
       Ok(ShaderTexture {
-        program,
+        kind: TargetKind::Fragment { program, params: Vec::new(), bindings: sampler_bindings },
         fbo,
         target,
         width,
         height,
-        sampler_bindings,
-        mesh: None,
-        last_params: RefCell::new(Vec::new()),
         sampler: crate::texture::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
@@ -237,7 +318,7 @@ impl ShaderTexture {
   }
 
   /// The fused create path: compile a vertex+fragment pair, wrap it in an
-  /// anonymous pipeline, and build a target over it in one step.
+  /// anonymous pipeline, and build a one-entry target over it in one step.
   #[allow(clippy::too_many_arguments)]
   pub fn new_pipeline(
     gl: &glow::Context,
@@ -267,12 +348,11 @@ impl ShaderTexture {
       })
   }
 
-  /// A target over a render pipeline: the pipeline's vertex layout is bound
-  /// to this target's concrete buffer in a fresh VAO (attribute locations are
-  /// looked up by name, so an attribute the shader does not use is skipped -
-  /// its bytes still occupy the stride), and depth state gets a private
-  /// renderbuffer. On error the pipeline Rc is handed back so the caller
-  /// decides its fate (a fused create releases it, a shared pipeline stays
+  /// A fixed single-entry target over a render pipeline: the pipeline's
+  /// vertex layout is bound to this target's concrete buffer in a fresh VAO,
+  /// and the pipeline's depth state gives the target its private depth
+  /// storage. On error the pipeline Rc is handed back so the caller decides
+  /// its fate (a fused create releases it, a shared pipeline stays
   /// registered).
   #[allow(clippy::too_many_arguments)]
   pub fn from_pipeline(
@@ -290,37 +370,10 @@ impl ShaderTexture {
     if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
       return Err((pipeline, "pipeline declares attributes but no vertex buffer".to_string()));
     }
-    let program = pipeline.program.clone();
-    let attributes = &pipeline.desc.attributes;
     let depth = pipeline.desc.depth.is_some();
 
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-      let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
-      let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
-      let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
-
-      // Cleanup helper for every early exit below; the pipeline itself
-      // travels back in the Err.
-      let fail = |gl: &glow::Context,
-                  target: Option<glow::Texture>,
-                  fbo: Option<glow::Framebuffer>,
-                  rb: Option<glow::Renderbuffer>,
-                  vao: Option<glow::VertexArray>| {
-        if let Some(v) = vao {
-          gl.delete_vertex_array(v);
-        }
-        if let Some(r) = rb {
-          gl.delete_renderbuffer(r);
-        }
-        if let Some(f) = fbo {
-          gl.delete_framebuffer(f);
-        }
-        if let Some(t) = target {
-          gl.delete_texture(t);
-        }
-      };
-
       let (target, fbo) = match create_target(gl, width, height) {
         Ok(pair) => pair,
         Err(e) => {
@@ -329,20 +382,15 @@ impl ShaderTexture {
         }
       };
 
-      // FBO is still bound; attach a private depth renderbuffer when asked.
+      // FBO is still bound; attach the private depth renderbuffer when asked.
       let depth_rb = if depth {
-        match gl.create_renderbuffer() {
-          Ok(rb) => {
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-            gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, width as i32, height as i32);
-            gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
-            gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
-            Some(rb)
-          }
+        match attach_depth(gl, width, height) {
+          Ok(rb) => Some(rb),
           Err(e) => {
             gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-            fail(gl, Some(target), Some(fbo), None, None);
-            return Err((pipeline, format!("glGenRenderbuffers failed: {e}")));
+            gl.delete_framebuffer(fbo);
+            gl.delete_texture(target);
+            return Err((pipeline, e));
           }
         }
       } else {
@@ -352,56 +400,112 @@ impl ShaderTexture {
       let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       if status != glow::FRAMEBUFFER_COMPLETE {
-        fail(gl, Some(target), Some(fbo), depth_rb, None);
+        if let Some(rb) = depth_rb {
+          gl.delete_renderbuffer(rb);
+        }
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(target);
         return Err((pipeline, format!("pipeline framebuffer incomplete: {status:#x}")));
       }
 
-      // Record the interleaved vertex layout in a VAO. The VAO captures the
-      // buffer binding per attribute, so rendering only rebinds the VAO.
-      let vao = match gl.create_vertex_array() {
+      let vao = match build_vao(gl, &pipeline.program, &pipeline.desc.attributes, buffer.as_ref()) {
         Ok(vao) => vao,
         Err(e) => {
-          fail(gl, Some(target), Some(fbo), depth_rb, None);
-          return Err((pipeline, format!("glGenVertexArrays failed: {e}")));
+          if let Some(rb) = depth_rb {
+            gl.delete_renderbuffer(rb);
+          }
+          gl.delete_framebuffer(fbo);
+          gl.delete_texture(target);
+          return Err((pipeline, e));
         }
       };
-      gl.bind_vertex_array(Some(vao));
-      if let Some(buffer) = &buffer {
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-        let stride = vertex_stride(attributes);
-        let mut offset = 0i32;
-        for (name, fmt) in attributes {
-          // None means the shader does not (actively) use the attribute; that
-          // is fine, the bytes are simply skipped over via the stride.
-          if let Some(loc) = gl.get_attrib_location(program.program, name) {
-            gl.enable_vertex_attrib_array(loc);
-            gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
-          }
-          offset += fmt.components() * 4;
-        }
-      }
-      gl.bind_vertex_array(prev_vertex_array(prev_vao));
-      gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev_ab));
 
+      let entry = DrawEntry {
+        id: 0,
+        pipeline,
+        pipeline_id,
+        vao,
+        buffer,
+        buffer_id,
+        draw,
+        params: Vec::new(),
+        bindings: sampler_bindings,
+      };
       Ok(ShaderTexture {
-        program,
+        kind: TargetKind::Mesh(MeshState {
+          entries: vec![entry],
+          depth: depth_rb,
+          clear_color,
+          load: false,
+          fixed: true,
+        }),
         fbo,
         target,
         width,
         height,
-        sampler_bindings,
-        mesh: Some(MeshState {
-          pipeline,
-          pipeline_id,
-          vao,
-          buffer,
-          buffer_id,
-          draw: Cell::new(draw),
+        sampler: crate::texture::SamplerState::default(),
+        manual: false,
+        passes: Cell::new(0),
+        pass_micros: Cell::new(0),
+      })
+    }
+  }
+
+  /// A mesh target with an empty, mutable draw list (`create_draw_target`):
+  /// color storage plus optional target-owned depth storage, rendered as
+  /// clear + entries in list order. Entries arrive via `add_entry`; with none
+  /// the render is the clear alone.
+  pub fn new_draw_target(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+    depth: bool,
+    clear_color: [f32; 4],
+  ) -> Result<Self, String> {
+    unsafe {
+      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+      let (target, fbo) = match create_target(gl, width, height) {
+        Ok(pair) => pair,
+        Err(e) => {
+          gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+          return Err(e);
+        }
+      };
+      let depth_rb = if depth {
+        match attach_depth(gl, width, height) {
+          Ok(rb) => Some(rb),
+          Err(e) => {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+            gl.delete_framebuffer(fbo);
+            gl.delete_texture(target);
+            return Err(e);
+          }
+        }
+      } else {
+        None
+      };
+      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+      if status != glow::FRAMEBUFFER_COMPLETE {
+        if let Some(rb) = depth_rb {
+          gl.delete_renderbuffer(rb);
+        }
+        gl.delete_framebuffer(fbo);
+        gl.delete_texture(target);
+        return Err(format!("draw target framebuffer incomplete: {status:#x}"));
+      }
+      Ok(ShaderTexture {
+        kind: TargetKind::Mesh(MeshState {
+          entries: Vec::new(),
           depth: depth_rb,
           clear_color,
           load: false,
+          fixed: false,
         }),
-        last_params: RefCell::new(Vec::new()),
+        fbo,
+        target,
+        width,
+        height,
         sampler: crate::texture::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
@@ -428,15 +532,26 @@ impl ShaderTexture {
   /// `TargetSpec::load`. A no-op on fragment targets, which have no mesh
   /// state (and cannot be manual anyway).
   pub fn with_load(mut self, load: bool) -> Self {
-    if let Some(mesh) = &mut self.mesh {
+    if let TargetKind::Mesh(mesh) = &mut self.kind {
       mesh.load = load;
     }
     self
   }
 
+  fn mesh(&self) -> Option<&MeshState> {
+    match &self.kind {
+      TargetKind::Mesh(mesh) => Some(mesh),
+      TargetKind::Fragment { .. } => None,
+    }
+  }
+
+  fn entry0(&self) -> Option<&DrawEntry> {
+    self.mesh().and_then(|m| m.entries.first())
+  }
+
   /// Whether the target draws over its previous contents (loadOp "load").
   pub fn load(&self) -> bool {
-    self.mesh.as_ref().is_some_and(|m| m.load)
+    self.mesh().is_some_and(|m| m.load)
   }
 
   pub fn sampler(&self) -> crate::texture::SamplerState {
@@ -452,76 +567,188 @@ impl ShaderTexture {
     self.target
   }
 
-  /// Registry id of the shared program behind this target's pipeline; None
-  /// for fragment targets and for the fused create path, whose program is
-  /// anonymous.
+  /// Registry id of the shared program behind the first entry's pipeline;
+  /// None for fragment targets and for the fused create path, whose program
+  /// is anonymous.
   pub fn program_id(&self) -> Option<u64> {
-    self.mesh.as_ref().and_then(|m| m.pipeline.program_id)
+    self.entry0().and_then(|e| e.pipeline.program_id)
   }
 
-  /// Registry id of the shared pipeline this target was created from; None
+  /// Registry id of the shared pipeline the first entry draws with; None
   /// for fragment targets and the fused create path.
   pub fn pipeline_id(&self) -> Option<u64> {
-    self.mesh.as_ref().and_then(|m| m.pipeline_id)
+    self.entry0().and_then(|e| e.pipeline_id)
   }
 
-  /// Registry id of the vertex buffer this pipeline draws from, if any.
+  /// Registry id of the vertex buffer the first entry draws from, if any.
   pub fn buffer_id(&self) -> Option<u64> {
-    self.mesh.as_ref().map(|m| m.buffer_id).filter(|id| *id != 0)
+    self.entry0().map(|e| e.buffer_id).filter(|id| *id != 0)
   }
 
-  /// Whether this is a vertex+fragment pipeline (vs a fullscreen fragment pass).
+  /// Whether this is a mesh target (vs a fullscreen fragment pass).
   pub fn is_pipeline(&self) -> bool {
-    self.mesh.is_some()
+    self.mesh().is_some()
   }
 
-  /// The draw range (vertices and instances) the next render draws; None on
-  /// a fragment-only shader.
+  /// Whether this is a draw target: a mesh target whose entry list mutates
+  /// via add/remove (vs the fixed single-entry creates).
+  pub fn is_draw_list(&self) -> bool {
+    self.mesh().is_some_and(|m| !m.fixed)
+  }
+
+  /// Whether any draw entry fetches from vertex buffer `id`: buffer writes
+  /// re-render the targets this returns true for.
+  pub fn reads_buffer(&self, id: u64) -> bool {
+    self.mesh().is_some_and(|m| m.entries.iter().any(|e| e.buffer_id == id))
+  }
+
+  /// The draw range of the first entry; None on a fragment-only shader.
   pub fn draw_range(&self) -> Option<DrawRange> {
-    self.mesh.as_ref().map(|m| m.draw.get())
+    self.entry0().map(|e| e.draw)
   }
 
-  /// The pipeline's topology as the string `Topology::parse` accepts; None on
-  /// a fragment-only shader.
+  /// The first entry's topology as the string `Topology::parse` accepts;
+  /// None on a fragment-only shader.
   pub fn topology_name(&self) -> Option<&'static str> {
-    self.mesh.as_ref().map(|m| m.pipeline.desc.topology.name())
+    self.entry0().map(|e| e.pipeline.desc.topology.name())
   }
 
-  /// The declared interleaved attribute layout; empty for fragment-only
-  /// shaders and attributeless pipelines.
+  /// The first entry's declared interleaved attribute layout; empty for
+  /// fragment-only shaders and attributeless pipelines.
   pub fn attributes(&self) -> &[(String, AttrFormat)] {
-    self.mesh.as_ref().map(|m| m.pipeline.desc.attributes.as_slice()).unwrap_or(&[])
+    self.entry0().map(|e| e.pipeline.desc.attributes.as_slice()).unwrap_or(&[])
   }
 
-  /// Whether the pipeline renders with a depth buffer attached.
+  /// Whether the target owns depth storage.
   pub fn has_depth(&self) -> bool {
-    self.mesh.as_ref().is_some_and(|m| m.depth.is_some())
+    self.mesh().is_some_and(|m| m.depth.is_some())
   }
 
-  /// Whether the pipeline's draw writes depth; None on a fragment-only shader.
+  /// Whether the first entry's draw writes depth; None on a fragment-only
+  /// shader.
   pub fn depth_write(&self) -> Option<bool> {
-    self.mesh.as_ref().map(|m| m.pipeline.desc.depth.map_or(true, |d| d.write))
+    self.entry0().map(|e| e.pipeline.desc.depth.map_or(true, |d| d.write))
   }
 
-  /// The pipeline's blend mode as the string `parse_blend` accepts; None on a
-  /// fragment-only shader.
+  /// The first entry's blend mode as the string `parse_blend` accepts; None
+  /// on a fragment-only shader.
   pub fn blend_name(&self) -> Option<&'static str> {
-    self.mesh.as_ref().map(|m| blend_name(m.pipeline.desc.blend))
+    self.entry0().map(|e| blend_name(e.pipeline.desc.blend))
   }
 
-  /// Set the draw range the next render draws (resolved and validated
-  /// UI-side, see `Context::set_draw`). Errors on a fragment-only shader
-  /// (its fullscreen triangle is fixed).
-  pub fn set_draw(&self, range: DrawRange) -> Result<(), String> {
-    let mesh = self.mesh.as_ref().ok_or_else(|| "not a pipeline texture".to_string())?;
-    mesh.draw.set(range);
+  /// Set the first entry's draw range (resolved and validated UI-side, see
+  /// `Context::set_draw`): the single-draw targets' setDraw. Errors on a
+  /// fragment-only shader (its fullscreen triangle is fixed).
+  pub fn set_draw(&mut self, range: DrawRange) -> Result<(), String> {
+    match &mut self.kind {
+      TargetKind::Fragment { .. } => Err("not a pipeline texture".to_string()),
+      TargetKind::Mesh(mesh) => match mesh.entries.first_mut() {
+        Some(entry) => {
+          entry.draw = range;
+          Ok(())
+        }
+        None => Err("target has no draw entries".to_string()),
+      },
+    }
+  }
+
+  /// Append a draw entry to a draw target's list (see `DrawEntry`; validated
+  /// UI-side, backstopped here). The entry draws last in list order.
+  #[allow(clippy::too_many_arguments)]
+  pub fn add_entry(
+    &mut self,
+    gl: &glow::Context,
+    id: u64,
+    pipeline: Rc<RenderPipeline>,
+    pipeline_id: Option<u64>,
+    buffer: Option<Rc<GpuBuffer>>,
+    buffer_id: u64,
+    draw: DrawRange,
+    params: Vec<(String, ParamValue)>,
+    bindings: Vec<(String, u64)>,
+  ) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    if mesh.fixed {
+      return Err("target's draw list is fixed (created single-draw)".to_string());
+    }
+    if pipeline.desc.depth.is_some() && mesh.depth.is_none() {
+      return Err("pipeline tests depth but the target has no depth buffer (create the draw target with depth: true)".to_string());
+    }
+    if !pipeline.desc.attributes.is_empty() && buffer.is_none() {
+      return Err("pipeline declares attributes but no vertex buffer".to_string());
+    }
+    let vao = build_vao(gl, &pipeline.program, &pipeline.desc.attributes, buffer.as_ref())?;
+    mesh.entries.push(DrawEntry { id, pipeline, pipeline_id, vao, buffer, buffer_id, draw, params, bindings });
     Ok(())
   }
 
-  /// A copy of the target's current uniform values, for resource
-  /// introspection (`render` reads the record directly).
+  /// Remove a draw entry by id, releasing its VAO and its uses of the
+  /// pipeline and buffer (deleted only when nothing else holds them).
+  pub fn remove_entry(&mut self, gl: &glow::Context, id: u64) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    if mesh.fixed {
+      return Err("target's draw list is fixed (created single-draw)".to_string());
+    }
+    let pos = mesh.entries.iter().position(|e| e.id == id).ok_or_else(|| format!("draw {id} not found"))?;
+    let entry = mesh.entries.remove(pos);
+    unsafe { gl.delete_vertex_array(entry.vao) };
+    release_pipeline(gl, entry.pipeline);
+    if let Some(buffer) = entry.buffer {
+      release_buffer(gl, buffer);
+    }
+    Ok(())
+  }
+
+  fn entry_mut(&mut self, id: u64) -> Result<&mut DrawEntry, String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    mesh.entries.iter_mut().find(|e| e.id == id).ok_or_else(|| format!("draw {id} not found"))
+  }
+
+  /// Fold a params update into one entry's record by name (validated UI-side
+  /// against the entry's program).
+  pub fn merge_entry_params(&mut self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
+    merge_record(&mut self.entry_mut(id)?.params, params);
+    Ok(())
+  }
+
+  /// Set one entry's draw range (resolved and validated UI-side).
+  pub fn set_entry_draw(&mut self, id: u64, range: DrawRange) -> Result<(), String> {
+    self.entry_mut(id)?.draw = range;
+    Ok(())
+  }
+
+  /// Rebind one entry's sampler2D inputs by uniform name; bindings not named
+  /// keep their current source. Names are validated against the entry's
+  /// program before anything changes.
+  pub fn set_entry_bindings(&mut self, id: u64, updates: &[(String, u64)]) -> Result<(), String> {
+    let entry = self.entry_mut(id)?;
+    for (name, _) in updates {
+      if !entry.pipeline.program.uniforms.contains_key(name) {
+        return Err(format!("no active uniform named '{name}'"));
+      }
+    }
+    for (name, src_id) in updates {
+      match entry.bindings.iter_mut().find(|(n, _)| n == name) {
+        Some(binding) => binding.1 = *src_id,
+        None => entry.bindings.push((name.clone(), *src_id)),
+      }
+    }
+    Ok(())
+  }
+
+  /// A copy of the first pass's current uniform values (fragment, or entry
+  /// 0), for the flat resource introspection fields.
   pub fn last_params(&self) -> Vec<(String, ParamValue)> {
-    self.last_params.borrow().clone()
+    match &self.kind {
+      TargetKind::Fragment { params, .. } => params.clone(),
+      TargetKind::Mesh(mesh) => mesh.entries.first().map(|e| e.params.clone()).unwrap_or_default(),
+    }
   }
 
   /// Record one executed pass into this target (see the `passes` field).
@@ -536,12 +763,12 @@ impl ShaderTexture {
     (self.passes.get(), self.pass_micros.get())
   }
 
-  /// Recreate the render target at a new size, keeping the compiled program,
-  /// FBO, sampler bindings, and draw state; the caller re-renders afterwards.
-  /// The old target texture is NOT deleted here: Impeller owns its GL name via
-  /// the adopted Texture handle (see register_shader_target), which dies with
-  /// the UI side's last reference once the registry entry is replaced. On
-  /// error the old target is left attached and the shader stays usable at its
+  /// Recreate the render target at a new size, keeping the compiled programs,
+  /// FBO, entries, and draw state; the caller re-renders afterwards. The old
+  /// target texture is NOT deleted here: Impeller owns its GL name via the
+  /// adopted Texture handle (see register_shader_target), which dies with the
+  /// UI side's last reference once the registry entry is replaced. On error
+  /// the old target is left attached and the shader stays usable at its
   /// previous size.
   pub fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) -> Result<(), String> {
     unsafe {
@@ -572,9 +799,9 @@ impl ShaderTexture {
       gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
       gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(target), 0);
 
-      // A pipeline's private depth buffer must match the color target's size
-      // or the FBO goes incomplete.
-      let depth_rb = self.mesh.as_ref().and_then(|m| m.depth);
+      // The target's depth buffer must match the color target's size or the
+      // FBO goes incomplete.
+      let depth_rb = self.mesh().and_then(|m| m.depth);
       if let Some(rb) = depth_rb {
         let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
@@ -606,94 +833,177 @@ impl ShaderTexture {
     }
   }
 
-  /// Release GL resources owned by this target (FBO, and for pipelines the
-  /// VAO and depth renderbuffer), and drop its uses of the pipeline, program,
-  /// and vertex buffer - which delete the underlying GL objects only when
-  /// nothing else (a registry, another target) still holds them. The target
-  /// texture is NOT deleted here: Impeller owns it via the adopted Texture
-  /// handle in the TextureRegistry, and that handle is responsible for
-  /// deletion.
+  /// Release GL resources owned by this target (FBO, depth renderbuffer, and
+  /// every entry's VAO), and drop its uses of pipelines, programs, and vertex
+  /// buffers - which delete the underlying GL objects only when nothing else
+  /// (a registry, another target) still holds them. The target texture is NOT
+  /// deleted here: Impeller owns it via the adopted Texture handle in the
+  /// TextureRegistry, and that handle is responsible for deletion.
   pub fn destroy(self, gl: &glow::Context) {
-    unsafe {
-      if let Some(mesh) = &self.mesh {
-        gl.delete_vertex_array(mesh.vao);
+    match self.kind {
+      TargetKind::Fragment { program, .. } => release_program(gl, program),
+      TargetKind::Mesh(mesh) => {
+        for entry in mesh.entries {
+          unsafe { gl.delete_vertex_array(entry.vao) };
+          release_pipeline(gl, entry.pipeline);
+          if let Some(buffer) = entry.buffer {
+            release_buffer(gl, buffer);
+          }
+        }
         if let Some(rb) = mesh.depth {
-          gl.delete_renderbuffer(rb);
+          unsafe { gl.delete_renderbuffer(rb) };
         }
       }
-      gl.delete_framebuffer(self.fbo);
     }
-    release_program(gl, self.program);
-    if let Some(mesh) = self.mesh {
-      release_pipeline(gl, mesh.pipeline);
-      if let Some(buffer) = mesh.buffer {
-        release_buffer(gl, buffer);
+    unsafe { gl.delete_framebuffer(self.fbo) };
+  }
+
+  /// The active uniforms of this target's program (fragment, or entry 0 -
+  /// the two fused creates are single-entry by construction), for the create
+  /// replies that seed the UI-side validation mirror.
+  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+    match &self.kind {
+      TargetKind::Fragment { program, .. } => program.uniform_table(),
+      TargetKind::Mesh(mesh) => {
+        mesh.entries.first().map(|e| e.pipeline.program.uniform_table()).unwrap_or_default()
       }
     }
   }
 
-  /// The active uniforms of this target's program (see
-  /// `ShaderProgram::uniform_table`), for the create replies that seed the
-  /// UI-side validation mirror.
-  pub fn uniform_table(&self) -> super::vocab::UniformTable {
-    self.program.uniform_table()
-  }
-
-  /// The sampler2D inputs this shader declared, as (uniform name, source texture
-  /// id). The owner resolves each id to a live GL texture before rendering.
+  /// The sampler2D inputs of the first pass (fragment, or entry 0), as
+  /// (uniform name, source texture id): the flat introspection view and the
+  /// create-time validation input.
   pub fn sampler_bindings(&self) -> &[(String, u64)] {
-    &self.sampler_bindings
+    match &self.kind {
+      TargetKind::Fragment { bindings, .. } => bindings,
+      TargetKind::Mesh(mesh) => mesh.entries.first().map(|e| e.bindings.as_slice()).unwrap_or(&[]),
+    }
   }
 
-  /// Rebind sampler2D inputs by uniform name; bindings not named keep their
+  /// Every source texture id any pass of this target samples: the fragment
+  /// bindings, or the union over all draw entries. What the flush graph and
+  /// the propagation walk read as this target's incoming edges.
+  pub fn binding_sources(&self) -> Vec<u64> {
+    match &self.kind {
+      TargetKind::Fragment { bindings, .. } => bindings.iter().map(|(_, id)| *id).collect(),
+      TargetKind::Mesh(mesh) => {
+        mesh.entries.iter().flat_map(|e| e.bindings.iter().map(|(_, id)| *id)).collect()
+      }
+    }
+  }
+
+  /// Per-entry introspection for the resource inventory's `draws` list;
+  /// empty for fragment targets.
+  pub fn draw_infos(&self) -> Vec<GpuDrawInfo> {
+    self
+      .mesh()
+      .map(|m| {
+        m.entries
+          .iter()
+          .map(|e| GpuDrawInfo {
+            id: e.id,
+            pipeline_id: e.pipeline_id,
+            buffer_id: (e.buffer_id != 0).then_some(e.buffer_id),
+            topology: e.pipeline.desc.topology.name(),
+            blend: blend_name(e.pipeline.desc.blend),
+            depth_write: e.pipeline.desc.depth.map_or(true, |d| d.write),
+            first_vertex: e.draw.first_vertex,
+            vertex_count: e.draw.vertex_count,
+            instance_count: e.draw.instance_count,
+            params: e.params.clone(),
+            textures: e.bindings.clone(),
+          })
+          .collect()
+      })
+      .unwrap_or_default()
+  }
+
+  /// Rebind the first pass's sampler2D inputs by uniform name (fragment, or
+  /// entry 0: the single-draw update path); bindings not named keep their
   /// current source, and a name without an existing binding is added (a
   /// declared sampler left unbound at creation). Every name is validated
   /// against the program's active uniforms before anything changes, so a
   /// failed call leaves all bindings intact. The caller re-renders afterwards.
   pub fn set_sampler_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
-    for (name, _) in updates {
-      if !self.program.uniforms.contains_key(name) {
-        return Err(format!("no active uniform named '{name}'"));
+    {
+      let uniforms = match &self.kind {
+        TargetKind::Fragment { program, .. } => &program.uniforms,
+        TargetKind::Mesh(mesh) => match mesh.entries.first() {
+          Some(e) => &e.pipeline.program.uniforms,
+          None => return Err("target has no draw entries".to_string()),
+        },
+      };
+      for (name, _) in updates {
+        if !uniforms.contains_key(name) {
+          return Err(format!("no active uniform named '{name}'"));
+        }
       }
     }
+    let bindings = match &mut self.kind {
+      TargetKind::Fragment { bindings, .. } => bindings,
+      TargetKind::Mesh(mesh) => {
+        &mut mesh.entries.first_mut().expect("entry checked above").bindings
+      }
+    };
     for (name, src_id) in updates {
-      match self.sampler_bindings.iter_mut().find(|(n, _)| n == name) {
+      match bindings.iter_mut().find(|(n, _)| n == name) {
         Some(binding) => binding.1 = *src_id,
-        None => self.sampler_bindings.push((name.clone(), *src_id)),
+        None => bindings.push((name.clone(), *src_id)),
       }
     }
     Ok(())
   }
 
-  /// Fold a params update into the current record by name (new names
-  /// append, existing names overwrite). Uniforms are program state in GL, so
-  /// rendering once with the merged record is equivalent to rendering after
-  /// each partial params list; the owner defers that render to its dirty
-  /// flush.
-  pub fn merge_params(&self, params: &[(String, ParamValue)]) {
-    let mut last = self.last_params.borrow_mut();
-    for (name, value) in params {
-      match last.iter_mut().find(|(n, _)| n == name) {
-        Some(entry) => entry.1 = value.clone(),
-        None => last.push((name.clone(), value.clone())),
+  /// Fold a params update into the first pass's record by name (fragment, or
+  /// entry 0: the single-draw update path). Uniforms are program state in GL,
+  /// so rendering once with the merged record is equivalent to rendering
+  /// after each partial params list; the owner defers that render to its
+  /// dirty flush.
+  pub fn merge_params(&mut self, params: &[(String, ParamValue)]) {
+    match &mut self.kind {
+      TargetKind::Fragment { params: record, .. } => merge_record(record, params),
+      TargetKind::Mesh(mesh) => {
+        if let Some(entry) = mesh.entries.first_mut() {
+          merge_record(&mut entry.params, params);
+        }
       }
     }
   }
 
-  /// Render the shader into its target texture with its current params (see
-  /// `merge_params`, the only writer) and the given resolved sampler inputs
-  /// (uniform name -> source GL texture, in the order `sampler_bindings`
-  /// declared them). See `run_pass` for the GL state contract;
-  /// Context::submit's per-frame fence orders the work ahead of the render
-  /// thread sampling the target from its shared GL context, so no glFinish is
-  /// needed here.
-  pub fn render(&self, gl: &glow::Context, textures: &[PassInput]) {
-    let params = self.last_params.borrow();
-    let draw = match &self.mesh {
-      None => PassDraw::Fullscreen { vertex_count: 3, clear: None },
-      Some(mesh) => PassDraw::Mesh(mesh),
-    };
-    run_pass(gl, &self.program, Some(self.fbo), self.width, self.height, &params, textures, draw);
+  /// Render the target's pass into its texture: the fullscreen fragment
+  /// draw, or clear + the ordered entry list. `resolve` maps a binding list
+  /// to live GL textures + sampler objects (the owner holds the registries).
+  /// See `run_pass` for the GL state contract; Context::submit's per-frame
+  /// fence orders the work ahead of the render thread sampling the target
+  /// from its shared GL context, so no glFinish is needed here.
+  pub fn render(&self, gl: &glow::Context, resolve: &dyn Fn(&[(String, u64)]) -> Vec<PassInput>) {
+    match &self.kind {
+      TargetKind::Fragment { program, params, bindings } => {
+        let inputs = resolve(bindings);
+        let draw = PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None };
+        run_pass(gl, Some(self.fbo), self.width, self.height, draw);
+      }
+      TargetKind::Mesh(mesh) => {
+        let draws: Vec<ResolvedDraw> = mesh
+          .entries
+          .iter()
+          .map(|e| ResolvedDraw {
+            program: &e.pipeline.program,
+            desc: &e.pipeline.desc,
+            vao: e.vao,
+            range: e.draw,
+            params: &e.params,
+            inputs: resolve(&e.bindings),
+          })
+          .collect();
+        let draw = PassDraw::Draws {
+          clear: (!mesh.load).then_some(mesh.clear_color),
+          depth: mesh.depth.is_some(),
+          draws: &draws,
+        };
+        run_pass(gl, Some(self.fbo), self.width, self.height, draw);
+      }
+    }
   }
 
   /// Draw the resolved inputs over this target's full contents via `program`
@@ -705,14 +1015,14 @@ impl ShaderTexture {
   }
 
   /// Clear the target to its clear color (and its depth buffer, when
-  /// attached) without running the program: the defined initial contents of a
+  /// attached) without running any program: the defined initial contents of a
   /// manual target, whose pass may be non-idempotent and therefore must not
   /// run outside an explicit render. Creation and resize would otherwise
   /// leave undefined storage. Scissor, color/depth masks, clear values and
   /// the FBO binding are Impeller-cached state on this shared context: force,
   /// clear, and put everything back (same contract as `run_pass`).
   pub fn clear(&self, gl: &glow::Context) {
-    let [r, g, b, a] = self.mesh.as_ref().map(|m| m.clear_color).unwrap_or([0.0; 4]);
+    let [r, g, b, a] = self.mesh().map(|m| m.clear_color).unwrap_or([0.0; 4]);
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
       let scissor = gl.is_enabled(glow::SCISSOR_TEST);
@@ -725,7 +1035,7 @@ impl ShaderTexture {
       gl.disable(glow::SCISSOR_TEST);
       gl.color_mask(true, true, true, true);
       gl.clear_color(r, g, b, a);
-      if self.mesh.as_ref().is_some_and(|m| m.depth.is_some()) {
+      if self.mesh().is_some_and(|m| m.depth.is_some()) {
         let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
         let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
         gl.depth_mask(true);

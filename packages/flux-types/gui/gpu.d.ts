@@ -9,9 +9,12 @@
 // sources, explicit header opt-in); createRenderPipeline pairs a program with
 // draw state (topology, blend, depth, vertex layout - how it draws);
 // createShaderTarget builds a texture-backed target over a pipeline (size,
-// buffer, uniforms, clear - where it draws). createShaderTexture/
-// createPipelineTexture are fused conveniences (compile + link + pipeline +
-// target in one call, curated preamble) - named for what they return.
+// buffer, uniforms, clear - where it draws); createDrawTarget holds an
+// ordered, mutable LIST of such draws in one target (addDraw/removeDraw +
+// per-entry setters, sharing one depth buffer) - the multi-pass render pass.
+// createShaderTexture/createPipelineTexture are fused conveniences (compile +
+// link + pipeline + target in one call, curated preamble) - named for what
+// they return.
 //
 // Sampling is a per-texture property declared at creation: every create path
 // accepts `{ filter?, wrap? }` ("linear"/"nearest", "clamp"/"repeat";
@@ -81,6 +84,13 @@ declare module "flux:gpu" {
   export type ProgramId = number & { readonly __program: unique symbol }
   /** The render-pipeline id space ({@link createRenderPipeline}); see {@link TextureId} for the brand model. */
   export type RenderPipelineId = number & { readonly __renderPipeline: unique symbol }
+  /**
+   * A draw-entry handle on a draw target ({@link addDraw}); see
+   * {@link TextureId} for the brand model. Target-scoped and stable: an id
+   * keeps naming its entry across other adds and removes (never an index),
+   * and a removed entry's id errors from then on rather than aliasing.
+   */
+  export type DrawId = number & { readonly __draw: unique symbol }
   /**
    * Shader uniform values by name. A number drives a scalar uniform (`float`,
    * or `int`/`bool`, truncated); a flat number array drives a typed uniform
@@ -499,6 +509,90 @@ declare module "flux:gpu" {
    * {@link renderTarget}.)
    */
   export function setDraw(id: TextureId, draw: DrawRange): void
+  /**
+   * Create a draw target: a render target whose contents are an ordered,
+   * mutable LIST of draws - one render clears once, then executes every
+   * entry in list order into the same storage. The multi-pass shape of every
+   * 3D API (N meshes, N pipelines, one shared depth buffer), retained: where
+   * WebGPU re-encodes a render pass every frame, this target holds the pass
+   * as state and re-renders on demand. Entries are added and removed at any
+   * time ({@link addDraw}/{@link removeDraw}) and updated per entry
+   * ({@link setDrawParams}, {@link setDrawTextures}, {@link setDrawRange}).
+   *
+   * `depth: true` gives the target its own depth storage, shared by every
+   * entry and cleared once per render - this is what makes cross-entry
+   * occlusion work. It is the storage half of the depth story; whether an
+   * entry tests/writes depth is its pipeline's `depth`/`depthWrite` state,
+   * and adding a depth-testing pipeline to a target without storage throws.
+   *
+   * The render contract is unchanged: the list is input data like params, so
+   * "render twice = render once" still holds and the default `render:
+   * "auto"` target re-renders exactly when its entries or their inputs
+   * change - a static scene costs zero passes, however many entries it
+   * holds, and one render is ONE pass however many entries it draws.
+   * `render: "manual"` and `loadOp: "load"` compose exactly as on
+   * {@link createShaderTarget}. With no entries a render is the clear alone.
+   * Returns a texture id (display, resize, destroy like any target; entries
+   * die with it).
+   */
+  export function createDrawTarget(
+    width: number,
+    height: number,
+    opts?: {
+      depth?: boolean
+      clearColor?: [number, number, number, number]
+      render?: "auto" | "manual"
+      loadOp?: "clear" | "load"
+    } & SamplerOptions &
+      LabelOption,
+  ): TextureId
+  /**
+   * Append a draw entry to a draw target: `pipeline` draws `opts.buffer`
+   * (required when the pipeline declares attributes) with its own `params`
+   * and `textures`, last in list order - the same per-entry shape
+   * {@link createShaderTarget} takes, addressed to one entry of the list.
+   * Returns the entry's {@link DrawId}, the handle every per-entry update
+   * takes. Everything validates here at the call site: unknown ids, depth
+   * compatibility (see {@link createDrawTarget}), uniform names and arities,
+   * the vertex-fetch bound, per-entry texture-unit count, and sampling
+   * cycles. List order is draw order - later entries land over earlier ones
+   * where depth does not decide - so painter-style layering is append order,
+   * and per-entry `params` is where per-object state (a model matrix) lives.
+   */
+  export function addDraw(
+    target: TextureId,
+    pipeline: RenderPipelineId,
+    params?: ShaderParams | null,
+    opts?: {
+      textures?: Record<string, TextureId>
+      buffer?: BufferId
+    } & DrawRange,
+  ): DrawId
+  /**
+   * Remove a draw entry from a draw target. Remaining entries keep their
+   * order and ids; the removed id errors from then on (ids are never
+   * reused). The entry's pipeline and buffer are yours and unaffected.
+   */
+  export function removeDraw(target: TextureId, draw: DrawId): void
+  /**
+   * Update one draw entry's uniforms by name: {@link setShaderParams}
+   * addressed to a single entry, same merge and validation contract. The
+   * per-object hot path - a moved mesh is one setDrawParams with its new
+   * model matrix.
+   */
+  export function setDrawParams(target: TextureId, draw: DrawId, params: ShaderParams): void
+  /**
+   * Rebind one draw entry's sampler2D inputs by uniform name:
+   * {@link setShaderTextures} addressed to a single entry, same merge,
+   * validation, and cycle rules. Entries bind independently - two entries
+   * may bind the same uniform name to different sources.
+   */
+  export function setDrawTextures(target: TextureId, draw: DrawId, textures: Record<string, TextureId>): void
+  /**
+   * Update one draw entry's draw range: {@link setDraw} addressed to a
+   * single entry, same partial merge and bounds validation.
+   */
+  export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange): void
   /**
    * Render a `render: "manual"` target once, now. Renders land in call order
    * relative to every other GPU call: a `setShaderParams`/`writeBuffer`

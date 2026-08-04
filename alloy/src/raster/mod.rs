@@ -33,7 +33,7 @@ use capture::flip_for_fbo;
 use crate::backend::{Backend, FrameOutput};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, GpuBuffer,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec, GpuBuffer,
   GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
   GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram,
   ShaderTexture, TargetSpec, UniformTable, WindowShader,
@@ -448,8 +448,28 @@ impl RasterState {
               release_pipeline(&self.gl, pipeline);
             }
           }
-          RasterCmd::CreateShaderTarget { id, pipeline, spec, reply: tx } => {
-            reply(tx, self.create_shader_target(id, pipeline, spec));
+          RasterCmd::CreateShaderTarget { id, spec, entry, reply: tx } => {
+            reply(tx, self.create_shader_target(id, spec, entry));
+          }
+          RasterCmd::CreateDrawTarget { id, spec, depth, reply: tx } => {
+            reply(tx, self.create_draw_target(id, spec, depth));
+          }
+          RasterCmd::AddDraw { target, draw, entry } => {
+            if let Err(e) = self.add_draw(target, draw, entry) {
+              log::warn!("[alloy] add draw failed: {e}");
+            }
+          }
+          RasterCmd::RemoveDraw { target, draw } => {
+            self.entry_write(target, "draw removal", |gl, shader| shader.remove_entry(gl, draw));
+          }
+          RasterCmd::UpdateDrawParams { target, draw, params } => {
+            self.entry_write(target, "draw params update", |_, shader| shader.merge_entry_params(draw, &params));
+          }
+          RasterCmd::UpdateDrawTextures { target, draw, textures } => {
+            self.entry_write(target, "draw texture rebind", |_, shader| shader.set_entry_bindings(draw, &textures));
+          }
+          RasterCmd::SetDrawRange { target, draw, range } => {
+            self.entry_write(target, "draw range update", |_, shader| shader.set_entry_draw(draw, range));
           }
           RasterCmd::DestroyProgram { id } => {
             if let Some(program) = self.programs.remove(&id) {
@@ -462,7 +482,7 @@ impl RasterState {
           RasterCmd::UpdateShaderParams { id, params } => {
             // A manual target only folds the values (its pixels change on its
             // next explicit render, not here), so it is not marked dirty.
-            match self.shaders.get(&id) {
+            match self.shaders.get_mut(&id) {
               Some(shader) => {
                 shader.merge_params(&params);
                 if !shader.manual() {
@@ -492,7 +512,7 @@ impl RasterState {
           RasterCmd::SetDraw { id, range } => {
             let result = self
               .shaders
-              .get(&id)
+              .get_mut(&id)
               .ok_or_else(|| format!("shader texture {id} not found"))
               .and_then(|shader| shader.set_draw(range).map(|()| shader.manual()));
             match result {
@@ -512,9 +532,8 @@ impl RasterState {
             self.flush_dirty();
             match self.shaders.get(&id) {
               Some(shader) => {
-                let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
                 let start = std::time::Instant::now();
-                shader.render(&self.gl, &resolved);
+                shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
                 let micros = start.elapsed().as_micros() as u64;
                 shader.record_pass(micros);
                 self.stats.passes.fetch_add(1, Ordering::Relaxed);
@@ -1028,7 +1047,7 @@ impl RasterState {
       .shaders
       .iter()
       .filter(|(_, shader)| !shader.manual())
-      .map(|(id, shader)| (*id, shader.sampler_bindings().iter().map(|(_, src)| *src).collect()))
+      .map(|(id, shader)| (*id, shader.binding_sources()))
       .collect();
     let (order, cyclic) = propagation_order(&self.dirty, &edges);
     if !cyclic.is_empty() {
@@ -1040,9 +1059,8 @@ impl RasterState {
     }
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
-        let resolved = resolve_sampler_bindings(&self.textures, &self.samplers, shader);
         let start = std::time::Instant::now();
-        shader.render(&self.gl, &resolved);
+        shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
         let micros = start.elapsed().as_micros() as u64;
         shader.record_pass(micros);
         self.stats.passes.fetch_add(1, Ordering::Relaxed);
@@ -1130,7 +1148,7 @@ impl RasterState {
     sampler: SamplerState,
     label: Option<String>,
   ) -> Result<(Texture, UniformTable), String> {
-    let shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?.with_sampler(sampler);
+    let mut shader = ShaderTexture::new(&self.gl, width, height, fragment_src, textures)?.with_sampler(sampler);
     let uniforms = shader.uniform_table();
     // Uniform names only exist after the compile, so create-time params and
     // bindings validate here, inside the blocking RPC - the error still
@@ -1148,30 +1166,31 @@ impl RasterState {
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
     let label = spec.target.label.clone();
-    let buffer = resolve_target_buffer(&self.buffers, spec.target.buffer)?;
+    let buffer = resolve_target_buffer(&self.buffers, spec.entry.buffer)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
       spec.target.height,
       &spec.vertex_src,
       &spec.fragment_src,
-      spec.target.textures.clone(),
+      spec.entry.textures.clone(),
       spec.pipeline,
       buffer,
-      spec.target.buffer,
-      spec.target.draw,
+      spec.entry.buffer,
+      spec.entry.draw,
       spec.target.clear_color,
     )?;
-    let shader = shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
+    let mut shader =
+      shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
     let uniforms = shader.uniform_table();
     // Same post-compile validation and rollback as create_shader_texture.
-    if let Err(e) = validate_params(&uniforms, &spec.target.params)
+    if let Err(e) = validate_params(&uniforms, &spec.entry.params)
       .and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
     {
       shader.destroy(&self.gl);
       return Err(e);
     }
-    shader.merge_params(&spec.target.params);
+    shader.merge_params(&spec.entry.params);
     let texture = self.register_shader_target(
       id,
       shader,
@@ -1210,34 +1229,98 @@ impl RasterState {
     Ok(())
   }
 
-  /// Create a target over a registered pipeline (the target half of the fused
-  /// create paths) and adopt it under texture id `id`; the first render
+  /// Create a fixed single-entry target over a registered pipeline
+  /// (`entry.pipeline`) and adopt it under texture id `id`; the first render
   /// happens at the next dirty flush.
-  fn create_shader_target(&mut self, id: u64, pipeline_id: u64, spec: TargetSpec) -> Result<Texture, String> {
+  fn create_shader_target(&mut self, id: u64, spec: TargetSpec, entry: DrawSpec) -> Result<Texture, String> {
+    let pipeline_id = entry.pipeline;
     let pipeline =
       self.render_pipelines.get(&pipeline_id).ok_or_else(|| format!("pipeline {pipeline_id} not found"))?.clone();
     // The program already exists, so params and bindings validate before
     // anything is built - no rollback needed on this path.
     let uniforms = pipeline.uniform_table();
-    validate_params(&uniforms, &spec.params)?;
-    validate_texture_bindings(&uniforms, &spec.textures)?;
-    let buffer = resolve_target_buffer(&self.buffers, spec.buffer)?;
-    let shader = ShaderTexture::from_pipeline(
+    validate_params(&uniforms, &entry.params)?;
+    validate_texture_bindings(&uniforms, &entry.textures)?;
+    let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
+    let mut shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
       Some(pipeline_id),
       spec.width,
       spec.height,
-      spec.textures.clone(),
+      entry.textures.clone(),
       buffer,
-      spec.buffer,
-      spec.draw,
+      entry.buffer,
+      entry.draw,
       spec.clear_color,
     )
-    .map_err(|(_, e)| e)?;
-    let shader = shader.with_sampler(spec.sampler).with_manual(spec.manual).with_load(spec.load);
-    shader.merge_params(&spec.params);
+    .map_err(|(_, e)| e)?
+    .with_sampler(spec.sampler)
+    .with_manual(spec.manual)
+    .with_load(spec.load);
+    shader.merge_params(&entry.params);
     self.register_shader_target(id, shader, spec.width, spec.height, spec.label, "adopt shader target failed")
+  }
+
+  /// Create a draw target - empty ordered draw list over color plus optional
+  /// target-owned depth storage - and adopt it under texture id `id`. A
+  /// flush-rendered draw target starts dirty (its first render is the clear);
+  /// a manual one is cleared at registration like every manual target.
+  fn create_draw_target(&mut self, id: u64, spec: TargetSpec, depth: bool) -> Result<Texture, String> {
+    let shader = ShaderTexture::new_draw_target(&self.gl, spec.width, spec.height, depth, spec.clear_color)?
+      .with_sampler(spec.sampler)
+      .with_manual(spec.manual)
+      .with_load(spec.load);
+    self.register_shader_target(id, shader, spec.width, spec.height, spec.label, "adopt draw target failed")
+  }
+
+  /// Append a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI
+  /// side validated everything against its mirrors; a failure here means the
+  /// mirrors diverged.
+  fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec) -> Result<(), String> {
+    let pipeline =
+      self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
+    let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
+    let shader = self.shaders.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+    shader.add_entry(
+      &self.gl,
+      draw,
+      pipeline,
+      Some(entry.pipeline),
+      buffer,
+      entry.buffer,
+      entry.draw,
+      entry.params,
+      entry.textures,
+    )?;
+    if !shader.manual() {
+      self.dirty.insert(target);
+    }
+    Ok(())
+  }
+
+  /// Apply a per-entry write to a draw target and mark it dirty (a manual
+  /// target only folds - its pixels change on its next explicit render),
+  /// warning on failure like every fire-and-forget write.
+  fn entry_write(
+    &mut self,
+    target: u64,
+    what: &str,
+    write: impl FnOnce(&glow::Context, &mut ShaderTexture) -> Result<(), String>,
+  ) {
+    let result = self
+      .shaders
+      .get_mut(&target)
+      .ok_or_else(|| format!("shader texture {target} not found"))
+      .and_then(|shader| write(&self.gl, shader).map(|()| shader.manual()));
+    match result {
+      Ok(manual) => {
+        if !manual {
+          self.dirty.insert(target);
+        }
+      }
+      Err(e) => log::warn!("[alloy] {what} failed: {e}"),
+    }
   }
 
   /// Adopt a new shader/pipeline target into Impeller and record it under
@@ -1320,7 +1403,7 @@ impl RasterState {
     // arrive. (Marked by target id: buffer ids are their own space.) Manual
     // targets pick the new geometry up at their next explicit render.
     let drawing: Vec<u64> =
-      self.shaders.iter().filter(|(_, s)| !s.manual() && s.buffer_id() == Some(id)).map(|(tid, _)| *tid).collect();
+      self.shaders.iter().filter(|(_, s)| !s.manual() && s.reads_buffer(id)).map(|(tid, _)| *tid).collect();
     self.dirty.extend(drawing);
     Ok(())
   }
@@ -1362,24 +1445,39 @@ impl RasterState {
       .iter()
       .map(|(texture_id, shader)| {
         let (passes, pass_micros) = shader.pass_stats();
-        let draw = shader.draw_range();
+        // A draw target reports its entries in the `draws` list; the flat
+        // single-pass fields stay for the fixed kinds, where they describe
+        // the one pass.
+        let flat = !shader.is_draw_list();
+        let draw = if flat { shader.draw_range() } else { None };
         GpuPipelineInfo {
           texture_id: *texture_id,
           label: self.textures.get(texture_id).and_then(|t| t.label.clone()),
-          kind: if shader.is_pipeline() { "pipeline" } else { "fragment" },
-          program_id: shader.program_id(),
-          pipeline_id: shader.pipeline_id(),
-          buffer_id: shader.buffer_id(),
-          topology: shader.topology_name(),
+          kind: if shader.is_draw_list() {
+            "draws"
+          } else if shader.is_pipeline() {
+            "pipeline"
+          } else {
+            "fragment"
+          },
+          program_id: if flat { shader.program_id() } else { None },
+          pipeline_id: if flat { shader.pipeline_id() } else { None },
+          buffer_id: if flat { shader.buffer_id() } else { None },
+          topology: if flat { shader.topology_name() } else { None },
           draw_count: draw.map(|d| d.vertex_count),
           first_vertex: draw.map(|d| d.first_vertex),
           instance_count: draw.map(|d| d.instance_count),
           depth: shader.has_depth(),
-          depth_write: shader.depth_write(),
-          blend: shader.blend_name(),
-          attributes: shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
-          textures: shader.sampler_bindings().to_vec(),
-          params: shader.last_params(),
+          depth_write: if flat { shader.depth_write() } else { None },
+          blend: if flat { shader.blend_name() } else { None },
+          attributes: if flat {
+            shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
+          } else {
+            Vec::new()
+          },
+          textures: if flat { shader.sampler_bindings().to_vec() } else { Vec::new() },
+          params: if flat { shader.last_params() } else { Vec::new() },
+          draws: if flat { Vec::new() } else { shader.draw_infos() },
           manual: shader.manual(),
           load: shader.load(),
           passes,
@@ -1492,15 +1590,16 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
   (order, remaining.into_iter().collect())
 }
 
-/// Map a shader's (name -> source texture id) bindings to live GL textures,
-/// dropping any id no longer registered (it samples as unbound/black).
-fn resolve_sampler_bindings(
+/// Map a (name -> source texture id) binding list to live GL textures,
+/// dropping any id no longer registered (it samples as unbound/black). The
+/// resolver a target's render calls per pass - once for a fragment target,
+/// once per entry for a mesh target.
+fn resolve_binding_list(
   textures: &HashMap<u64, GpuTexture>,
   samplers: &SamplerCache,
-  shader: &ShaderTexture,
+  bindings: &[(String, u64)],
 ) -> Vec<PassInput> {
-  shader
-    .sampler_bindings()
+  bindings
     .iter()
     .filter_map(|(name, src_id)| {
       textures.get(src_id).map(|gpu| (name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler))))

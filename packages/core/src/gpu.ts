@@ -71,7 +71,7 @@ export type { TextureFormat } from "flux:gpu"
 // runtime, distinct types to the checker, so a cross-space slip like
 // destroyBuffer(textureId) fails to compile. Exported so apps can annotate
 // storage (`let ids: TextureId[]`).
-export type { BufferId, ProgramId, RenderPipelineId, ShaderStageId, TextureId } from "flux:gpu"
+export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, TextureId } from "flux:gpu"
 
 // Re-exported so callers that depend on @solidrt/core -- like @solidrt/components
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
@@ -109,6 +109,15 @@ export {
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
 export type { BlendMode, DrawRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+
+// The draw-list verbs, re-exported raw: entries live and die with their draw
+// target (see createDrawTarget below), so there is no per-entry lifetime to
+// wrap. addDraw appends an entry and returns its stable DrawId; removeDraw
+// drops one; setDrawParams / setDrawTextures / setDrawRange are the per-entry
+// forms of setShaderParams / setShaderTextures / setDraw, taking (target,
+// draw, value) with identical merge and validation semantics. The per-object
+// hot path is setDrawParams (a moved mesh = one call with its new matrix).
+export { addDraw, removeDraw, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds
@@ -305,6 +314,42 @@ export function createShaderTarget(
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createShaderTarget(pipeline, width, height, params, opts)
+  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
+ * Creates a draw target: a render target holding an ordered, MUTABLE list of
+ * draws, rendered as one pass - clear once (color, and depth when declared),
+ * then every entry in list order into the same storage. This is the
+ * multi-pass primitive (N meshes x N pipelines sharing one depth buffer -
+ * what every 3D API calls a render pass), retained: build the list with
+ * `addDraw`, prune it with `removeDraw`, and drive per-entry state with
+ * `setDrawParams` / `setDrawTextures` / `setDrawRange`. `depth: true` gives
+ * the target the depth storage all entries share (cross-entry occlusion);
+ * whether an entry tests/writes it stays pipeline state, and a depth-testing
+ * pipeline into a depthless target throws at `addDraw`.
+ *
+ * The render contract is unchanged: the list is input data, so an ordinary
+ * (`render: "auto"`) draw target re-renders exactly when its entries or
+ * their inputs change - a static scene costs zero passes, and one render is
+ * one pass regardless of entry count. `render: "manual"` and `loadOp` work
+ * as on `createShaderTarget`. Returns the texture id; frees on owner
+ * disposal (opt out with `opts.manual`), taking its entries with it - the
+ * entries' pipelines and buffers are yours and outlive it.
+ */
+export function createDrawTarget(
+  width: number,
+  height: number,
+  opts?: {
+    depth?: boolean
+    clearColor?: [number, number, number, number]
+    render?: "auto" | "manual"
+    loadOp?: "clear" | "load"
+  } & CreateOptions &
+    SamplerOptions,
+): gpu.TextureId {
+  let id = gpu.createDrawTarget(width, height, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

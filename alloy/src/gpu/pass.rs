@@ -1,13 +1,13 @@
-//! Pass execution: one draw of a program into a target or the window, with
-//! the exhaustive GL save/restore that keeps Impeller (which shares this
-//! context and caches state) working. Every change here needs that
-//! save/restore set reviewed.
+//! Pass execution: one render into a target or the window - a fullscreen
+//! fragment draw, or clear + an ordered list of mesh draws - with the
+//! exhaustive GL save/restore that keeps Impeller (which shares this context
+//! and caches state) working. Every change here needs that save/restore set
+//! reviewed.
 
 use glow::HasContext;
 
 use super::program::ShaderProgram;
-use super::target::MeshState;
-use super::vocab::{BlendMode, ParamValue};
+use super::vocab::{BlendMode, DrawRange, ParamValue, PipelineDesc};
 use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, and
@@ -16,13 +16,35 @@ use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_ver
 /// texture-object state).
 pub type PassInput = (String, glow::Texture, Option<glow::Sampler>);
 
-/// What a `run_pass` draw executes once the program and uniforms are bound.
+/// One resolved draw of a mesh pass: the entry's program and draw state plus
+/// its resolved sampler inputs, ready for the raster thread to execute in
+/// list order.
+pub(super) struct ResolvedDraw<'a> {
+  pub(super) program: &'a ShaderProgram,
+  pub(super) desc: &'a PipelineDesc,
+  pub(super) vao: glow::VertexArray,
+  pub(super) range: DrawRange,
+  pub(super) params: &'a [(String, ParamValue)],
+  pub(super) inputs: Vec<PassInput>,
+}
+
+/// What a `run_pass` invocation executes.
 pub(super) enum PassDraw<'a> {
-  /// Attributeless triangles (vertex fetch via gl_VertexID). `clear` first
-  /// when the geometry is not guaranteed to cover the target.
-  Fullscreen { vertex_count: i32, clear: Option<[f32; 4]> },
-  /// A pipeline target's VAO-backed mesh draw, with its clear and depth state.
-  Mesh(&'a MeshState),
+  /// Attributeless triangles (vertex fetch via gl_VertexID): the fragment
+  /// targets, the window shader, node shader passes, the copy program.
+  /// `clear` first when the geometry is not guaranteed to cover the target.
+  Fullscreen {
+    program: &'a ShaderProgram,
+    params: &'a [(String, ParamValue)],
+    textures: &'a [PassInput],
+    vertex_count: i32,
+    clear: Option<[f32; 4]>,
+  },
+  /// A mesh target's pass: clear once (color unless loadOp "load"; depth
+  /// always, when the target owns storage), then the draw entries in list
+  /// order, each with its own program, uniforms, inputs, VAO, and its
+  /// pipeline's blend/depth state.
+  Draws { clear: Option<[f32; 4]>, depth: bool, draws: &'a [ResolvedDraw<'a>] },
 }
 
 /// Set one uniform from a param value, dispatching on the reflected GL type.
@@ -46,6 +68,69 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, ut
   }
 }
 
+/// Bind `program` and fill `iResolution` plus the given params by uniform
+/// name. The preambles declare iResolution as vec2; a raw source may declare
+/// it vec3 (a common convention in ported shaders), which gets the size with
+/// z = 1.
+fn apply_program(gl: &glow::Context, program: &ShaderProgram, width: u32, height: u32, params: &[(String, ParamValue)]) {
+  unsafe {
+    gl.use_program(Some(program.program));
+    match program.uniforms.get("iResolution") {
+      Some((loc, glow::FLOAT_VEC2)) => gl.uniform_2_f32(Some(loc), width as f32, height as f32),
+      Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
+      _ => {}
+    }
+    for (name, value) in params {
+      if let Some((loc, utype)) = program.uniforms.get(name) {
+        apply_uniform(gl, name, loc, *utype, value);
+      }
+    }
+  }
+}
+
+/// Bind each resolved sampler input to its own texture unit, bind the input's
+/// sampler object on that unit (its declared filter/wrap; the bound sampler
+/// overrides texture-object parameters, which Impeller rewrites at will on
+/// textures it draws), and point the sampler uniform at the unit. The prior
+/// texture and sampler binding of each unit is saved into `saved` the FIRST
+/// time the pass touches it - draws reuse units from 0 up, so one save per
+/// unit covers the whole pass - and the caller restores them all at the end,
+/// so Impeller (which assumes its own units) is not left looking at our
+/// textures or sampling through our state.
+/// Unit-cap backstop: the UI side validates binding counts against the
+/// mirrored device limits at the call site, so reaching the cap here means
+/// the mirrors diverged. Past the limit the bind itself errors and the draw
+/// samples garbage, so drop the input and say which.
+fn bind_inputs(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  inputs: &[PassInput],
+  saved: &mut Vec<(u32, i32, i32)>,
+  max_units: usize,
+) {
+  unsafe {
+    for (unit, (name, tex, sampler)) in inputs.iter().enumerate() {
+      if unit >= max_units {
+        log::warn!("[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped");
+        continue;
+      }
+      let Some((loc, _)) = program.uniforms.get(name) else { continue };
+      let unit = unit as u32;
+      gl.active_texture(glow::TEXTURE0 + unit);
+      if !saved.iter().any(|(u, _, _)| *u == unit) {
+        saved.push((
+          unit,
+          gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
+          gl.get_parameter_i32(glow::SAMPLER_BINDING),
+        ));
+      }
+      gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
+      gl.bind_sampler(unit, *sampler);
+      gl.uniform_1_i32(Some(loc), unit as i32);
+    }
+  }
+}
+
 /// Draw `program` once into the default framebuffer (FBO 0) at the window's
 /// pixel size: the window shader pass. Attributeless, `vertex_count` vertices
 /// as triangles (3 = the covering triangle). FBO 0 is cleared to opaque black
@@ -61,8 +146,8 @@ pub fn render_program_to_window(
   textures: &[PassInput],
   vertex_count: i32,
 ) {
-  let draw = PassDraw::Fullscreen { vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]) };
-  run_pass(gl, program, None, width, height, params, textures, draw);
+  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]) };
+  run_pass(gl, None, width, height, draw);
 }
 
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
@@ -80,28 +165,17 @@ pub fn render_program_to_fbo(
   params: &[(String, ParamValue)],
   textures: &[PassInput],
 ) {
-  let draw = PassDraw::Fullscreen { vertex_count: 3, clear: None };
-  run_pass(gl, program, fbo, width, height, params, textures, draw);
+  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count: 3, clear: None };
+  run_pass(gl, fbo, width, height, draw);
 }
 
-/// Run one draw of `program` into `fbo` (None = the default framebuffer) at
-/// viewport `width` x `height`: bind, fill `iResolution` and the float params
-/// by uniform name, bind the resolved sampler inputs, neutralize every piece
-/// of fixed-function state that could clip or blend the output away, draw,
-/// and restore all of it. The save/restore set must stay exhaustive: Impeller
-/// runs full render passes on this same context (the process's only one) and
-/// both leaves state behind and caches what it set (see the comments below).
-#[allow(clippy::too_many_arguments)]
-pub(super) fn run_pass(
-  gl: &glow::Context,
-  program: &ShaderProgram,
-  fbo: Option<glow::Framebuffer>,
-  width: u32,
-  height: u32,
-  params: &[(String, ParamValue)],
-  textures: &[PassInput],
-  draw: PassDraw,
-) {
+/// Run one pass into `fbo` (None = the default framebuffer) at viewport
+/// `width` x `height`: neutralize every piece of fixed-function state that
+/// could clip or blend the output away, execute the draw(s), and restore all
+/// of it. The save/restore set must stay exhaustive: Impeller runs full
+/// render passes on this same context (the process's only one) and both
+/// leaves state behind and caches what it set (see the comments below).
+pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width: u32, height: u32, draw: PassDraw) {
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_program_name = gl.get_parameter_i32(glow::CURRENT_PROGRAM);
@@ -115,58 +189,13 @@ pub(super) fn run_pass(
 
     gl.bind_framebuffer(glow::FRAMEBUFFER, fbo);
     gl.viewport(0, 0, width as i32, height as i32);
-    gl.use_program(Some(program.program));
-
-    // The preambles declare iResolution as vec2; a raw source may declare it
-    // vec3 (a common convention in ported shaders), which gets the size with z = 1.
-    match program.uniforms.get("iResolution") {
-      Some((loc, glow::FLOAT_VEC2)) => gl.uniform_2_f32(Some(loc), width as f32, height as f32),
-      Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
-      _ => {}
-    }
-    for (name, value) in params {
-      if let Some((loc, utype)) = program.uniforms.get(name) {
-        apply_uniform(gl, name, loc, *utype, value);
-      }
-    }
-
-    // Bind each resolved sampler input to its own texture unit, bind the
-    // input's sampler object on that unit (its declared filter/wrap; the
-    // bound sampler overrides texture-object parameters, which Impeller
-    // rewrites at will on textures it draws), and point the sampler uniform
-    // at the unit. Save the prior texture and sampler binding per unit so
-    // Impeller (which assumes its own units) is not left looking at our
-    // textures or sampling through our state.
-    // Unit-cap backstop: the UI side validates binding counts against the
-    // mirrored device limits at the call site, so reaching the cap here means
-    // the mirrors diverged. Past the limit the bind itself errors and the
-    // draw samples garbage, so drop the input and say which.
-    let max_units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS).max(1) as usize;
-    let mut prev_unit_bindings: Vec<(u32, i32, i32)> = Vec::new();
-    for (unit, (name, tex, sampler)) in textures.iter().enumerate() {
-      if unit >= max_units {
-        log::warn!("[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped");
-        continue;
-      }
-      let Some((loc, _)) = program.uniforms.get(name) else { continue };
-      let unit = unit as u32;
-      gl.active_texture(glow::TEXTURE0 + unit);
-      prev_unit_bindings.push((
-        unit,
-        gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
-        gl.get_parameter_i32(glow::SAMPLER_BINDING),
-      ));
-      gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
-      gl.bind_sampler(unit, *sampler);
-      gl.uniform_1_i32(Some(loc), unit as i32);
-    }
 
     // Fixed-function state that could clip or blend the output away is off
-    // for both paths; the mesh path opts depth testing back in below. This
-    // set must be exhaustive: Impeller runs full render passes on this same
-    // context (the process's only one) and may have left any of the
-    // states below active - e.g. rasterizer discard or a zero sample
-    // coverage silently kills every draw while clears still land.
+    // for both paths; the mesh draws opt depth testing and blending back in
+    // per entry below. This set must be exhaustive: Impeller runs full render
+    // passes on this same context (the process's only one) and may have left
+    // any of the states below active - e.g. rasterizer discard or a zero
+    // sample coverage silently kills every draw while clears still land.
     gl.disable(glow::BLEND);
     gl.disable(glow::DEPTH_TEST);
     gl.disable(glow::SCISSOR_TEST);
@@ -188,8 +217,15 @@ pub(super) fn run_pass(
     gl.color_mask(true, true, true, true);
     gl.depth_range_f32(0.0, 1.0);
 
+    // Per-unit texture/sampler bindings saved on first touch, restored once
+    // at the end (see bind_inputs).
+    let max_units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS).max(1) as usize;
+    let mut saved_units: Vec<(u32, i32, i32)> = Vec::new();
+
     match draw {
-      PassDraw::Fullscreen { vertex_count, clear } => {
+      PassDraw::Fullscreen { program, params, textures, vertex_count, clear } => {
+        apply_program(gl, program, width, height, params);
+        bind_inputs(gl, program, textures, &mut saved_units, max_units);
         // The covering triangle writes opaque coverage over the whole target,
         // so a clear only happens when the caller asked for one (geometry not
         // guaranteed to cover). Clear color is Impeller-cached state: save
@@ -203,75 +239,82 @@ pub(super) fn run_pass(
         }
         gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
       }
-      PassDraw::Mesh(mesh) => {
-        // Mesh pass: geometry does not cover the target, so clear first, and
-        // depth-test the draw when a depth buffer is attached. Clear color,
-        // depth mask, and depth func are Impeller-cached state too: save and
-        // restore them around the pass. With loadOp "load" (manual targets
-        // only) the color buffer keeps its previous contents - the
-        // accumulation unlock - while depth stays per-render scratch and
-        // always clears.
+      PassDraw::Draws { clear, depth: has_depth, draws } => {
+        // Mesh pass: geometry does not cover the target, so clear first -
+        // once, at the top; every entry then draws over the shared result.
+        // Clear color, depth mask, depth func, clear-depth value, and the
+        // blend func are Impeller-cached state: save all of them here and
+        // restore after the list. With loadOp "load" (manual targets only)
+        // the color buffer keeps its previous contents - the accumulation
+        // unlock - while depth stays per-render scratch and always clears.
         let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
         let mut prev_clear = [0f32; 4];
         gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
         let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
         let prev_depth_func = gl.get_parameter_i32(glow::DEPTH_FUNC) as u32;
         let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
+        let prev_blend_func = [
+          gl.get_parameter_i32(glow::BLEND_SRC_RGB) as u32,
+          gl.get_parameter_i32(glow::BLEND_DST_RGB) as u32,
+          gl.get_parameter_i32(glow::BLEND_SRC_ALPHA) as u32,
+          gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
+        ];
 
-        let desc = &mesh.pipeline.desc;
-        if !mesh.load {
-          let [r, g, b, a] = mesh.clear_color;
-          gl.clear_color(r, g, b, a);
-        }
-        let color_bit = if mesh.load { 0 } else { glow::COLOR_BUFFER_BIT };
-        if let Some(depth) = desc.depth {
-          gl.enable(glow::DEPTH_TEST);
-          // The clear always writes depth (glClear honors the write mask);
-          // the draw's mask is the pipeline's depthWrite option.
+        let color_bit = match clear {
+          Some([r, g, b, a]) => {
+            gl.clear_color(r, g, b, a);
+            glow::COLOR_BUFFER_BIT
+          }
+          None => 0,
+        };
+        if has_depth {
+          // The clear always writes depth (glClear honors the write mask).
           gl.depth_mask(true);
-          gl.depth_func(glow::LESS);
           // Impeller's clip-culling passes set their own depth-clear value
           // (0.0) on this context; clearing with that inverts the test and
           // silently discards every fragment. Always clear to the far plane.
           gl.clear_depth_f32(1.0);
           gl.clear(color_bit | glow::DEPTH_BUFFER_BIT);
-          gl.depth_mask(depth.write);
         } else if color_bit != 0 {
           gl.clear(color_bit);
         }
-        // Blend func is Impeller-cached state like the rest: save and restore
-        // around the draw, and re-disable BLEND after it (the outer restore
-        // only re-enables). Off the blended path nothing is touched.
-        let prev_blend_func = desc.blend.map(|_| {
-          [
-            gl.get_parameter_i32(glow::BLEND_SRC_RGB) as u32,
-            gl.get_parameter_i32(glow::BLEND_DST_RGB) as u32,
-            gl.get_parameter_i32(glow::BLEND_SRC_ALPHA) as u32,
-            gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
-          ]
-        });
-        match desc.blend {
-          Some(BlendMode::Add) => {
-            gl.enable(glow::BLEND);
-            gl.blend_func(glow::ONE, glow::ONE);
+
+        for d in draws {
+          apply_program(gl, d.program, width, height, d.params);
+          bind_inputs(gl, d.program, &d.inputs, &mut saved_units, max_units);
+          // Depth test and write per entry: the pipeline's declared depth
+          // state, against the target-owned storage.
+          match (has_depth, d.desc.depth) {
+            (true, Some(state)) => {
+              gl.enable(glow::DEPTH_TEST);
+              gl.depth_func(glow::LESS);
+              gl.depth_mask(state.write);
+            }
+            _ => gl.disable(glow::DEPTH_TEST),
           }
-          None => {}
-        }
-        gl.bind_vertex_array(Some(mesh.vao));
-        // instance_count 1 keeps the plain draw - bit-identical to the
-        // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
-        // nothing. gl_VertexID includes first_vertex, as in WebGPU.
-        let range = mesh.draw.get();
-        if range.instance_count == 1 {
-          gl.draw_arrays(desc.topology.gl(), range.first_vertex, range.vertex_count);
-        } else {
-          gl.draw_arrays_instanced(desc.topology.gl(), range.first_vertex, range.vertex_count, range.instance_count);
+          match d.desc.blend {
+            Some(BlendMode::Add) => {
+              gl.enable(glow::BLEND);
+              gl.blend_func(glow::ONE, glow::ONE);
+            }
+            None => gl.disable(glow::BLEND),
+          }
+          gl.bind_vertex_array(Some(d.vao));
+          // instance_count 1 keeps the plain draw - bit-identical to the
+          // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
+          // nothing. gl_VertexID includes first_vertex, as in WebGPU.
+          if d.range.instance_count == 1 {
+            gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
+          } else {
+            gl.draw_arrays_instanced(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count, d.range.instance_count);
+          }
         }
 
-        if let Some([src_rgb, dst_rgb, src_alpha, dst_alpha]) = prev_blend_func {
-          gl.disable(glow::BLEND);
-          gl.blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha);
-        }
+        // Re-disable what the entries may have enabled (the outer restore
+        // only re-enables) and put the Impeller-cached values back.
+        gl.disable(glow::BLEND);
+        gl.disable(glow::DEPTH_TEST);
+        gl.blend_func_separate(prev_blend_func[0], prev_blend_func[1], prev_blend_func[2], prev_blend_func[3]);
         gl.bind_vertex_array(prev_vertex_array(prev_vao));
         gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
         gl.depth_mask(prev_depth_mask);
@@ -298,7 +341,7 @@ pub(super) fn run_pass(
     }
     gl.color_mask(prev_color_mask[0] != 0, prev_color_mask[1] != 0, prev_color_mask[2] != 0, prev_color_mask[3] != 0);
     gl.depth_range_f32(prev_depth_range[0], prev_depth_range[1]);
-    for (unit, prev, prev_smp) in prev_unit_bindings {
+    for (unit, prev, prev_smp) in saved_units {
       gl.active_texture(glow::TEXTURE0 + unit);
       gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev));
       gl.bind_sampler(unit, prev_sampler(prev_smp));
