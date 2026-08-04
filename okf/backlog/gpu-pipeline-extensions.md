@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: GPU pipeline extensions
-description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30; index buffers, per-instance attributes, float data textures, raster state, alpha translucency and multi-pass targets remain deferred.
+description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30, multi-pass draw targets and index buffers + cull mode 2026-08-04; per-instance attributes, float data textures, depth func, alpha translucency and sampleable depth remain deferred.
 status: deferred
 timestamp: 2026-07-15T00:00:00Z
 ---
@@ -23,13 +23,23 @@ draw count. Deliberately deferred, in rough order of expected demand:
   covered: both flux marshal sites, rendertree texture params, window shader
   params, gpu-resources JSON (scalar vs array), flux-types + core types +
   docs/core.md.
-- **Index buffers** (`glDrawElements`): unindexed triangles are fine at small
-  scale; indexing pays off once meshes get large or strip-heavy. API shape
-  decided in [gpu-review](../analysis/gpu-review.md) (lesson 13): reuse
-  `createBuffer` - one buffer kind, no separate index-buffer type (neither
-  standard has one) - and the target names `indexBuffer` + `indexFormat:
-  "uint16" | "uint32"`. Normalized vertex formats (`unorm8x4` etc.) are the
-  adjacent bandwidth item recorded there.
+- **Index buffers.** DONE 2026-08-04, lesson 13's decided shape: reuse
+  `createBuffer` (one buffer kind, as in both standards) + per-entry
+  `indexBuffer` + `indexFormat: "uint16" | "uint32"` on addDraw AND the
+  single-draw creates (the shared entry collector). The draw becomes
+  `glDrawElements`; the range switches to WebGPU's indexed spelling -
+  `firstIndex`/`indexCount` - and the vertex-named pair throws on an indexed
+  entry (and vice versa, in setDraw/setDrawRange too: `DrawRange::merged`
+  owns the rule), so a range never silently counts the wrong unit. Bounds
+  check runs against the INDEX buffer at the format's element size; index
+  VALUES are not checked against the vertex buffer (that would mean reading
+  them back - documented as GL's undefined fetch). The element-array binding
+  is VAO state, captured once in `build_vao`; `writeBuffer` into an index
+  buffer re-renders targets indexing through it (`reads_buffer` covers both
+  roles). No base vertex (ES 3.2); demand signal was live: the-third-dimension
+  logged 49926 vertices for 16642 triangles - exactly 3 per triangle, zero
+  sharing. Normalized vertex formats (`unorm8x4` etc.) remain the adjacent
+  bandwidth item.
 - **Draw range and instancing.** DONE 2026-07-30. The draw is one value,
   WebGPU-shaped: `firstVertex` + `vertexCount` + `instanceCount` on the
   target spec (`alloy::DrawRange`), drawn via `glDrawArraysInstanced` when
@@ -79,10 +89,21 @@ draw count. Deliberately deferred, in rough order of expected demand:
   (premultiplied, non-linear RGBA8 - [gpu-review](../analysis/gpu-review.md)
   lesson 12), which answers the straight-vs-premultiplied half by declaring
   it.
-- **Raster state**: cull mode and depth func are fixed (depth WRITE is now an
-  option, see blending above). Two-sided shading (`abs(dot(n, l))`) hides the
-  missing cull for now, but a closed mesh pays double the fragment work.
-- **Multiple draw passes into one target.** Stage 1 DONE 2026-08-04 as
+- **Raster state**: cull mode DONE 2026-08-04 - `cull: "none" | "back" |
+  "front"` on createRenderPipeline, per entry in `run_pass` with cull
+  face/winding in the save/restore set. The winding rule is deliberately
+  WebGPU's framebuffer-space one, NOT GL's raw default: front =
+  counter-clockwise AS DISPLAYED, which pins `glFrontFace(CW)` because the
+  displayed image is the y flip of GL window space. Chosen for the standard
+  rig: a CCW-front mesh through a right-handed camera (looking down -z)
+  with the usual y negation for display culls correctly with "back"
+  (probe-pinned in alloy/examples/draw_indexed.rs). Caveat learned live: a
+  left-handed DIY rig - camera looking toward +z without mirroring x, which
+  gpu-pipeline.tsx originally did - mirrors the winding and shows the mesh
+  interior; the fix is the rig, and the example now carries the textbook
+  one. Depth func remains fixed at LESS - no demand signal yet, additive
+  when one arrives.
+- **Multiple draw passes into one target.** DONE 2026-08-04 (stages 1+2) as
   [gpu-draw-list](gpu-draw-list.md): `createDrawTarget` holds a retained,
   ordered, mutable draw list (addDraw/removeDraw with stable DrawIds,
   per-entry setDrawParams/setDrawTextures/setDrawRange), rendered clear-once
@@ -90,7 +111,8 @@ draw count. Deliberately deferred, in rough order of expected demand:
   behavior stays pipeline state. The purity worry resolved as the
   scene-graph note argued: a retained list is input data, so the feature is
   legal on flush-rendered targets and the dirty flush is untouched.
-  Ordering verbs (insert-before, setDrawOrder) are that item's stage 2.
+  Ordering verbs (before on addDraw, setDrawOrder) landed as stage 2 the
+  same day; verified headless + live (Linux, Android TV).
 
 Adjacent, filed separately because they are not createPipeline options:
 [anti-aliasing for pipeline targets](gpu-target-antialiasing.md),

@@ -7,7 +7,7 @@
 use glow::HasContext;
 
 use super::program::ShaderProgram;
-use super::vocab::{BlendMode, DrawRange, ParamValue, PipelineDesc};
+use super::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc};
 use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, and
@@ -24,6 +24,9 @@ pub(super) struct ResolvedDraw<'a> {
   pub(super) desc: &'a PipelineDesc,
   pub(super) vao: glow::VertexArray,
   pub(super) range: DrawRange,
+  /// Present = draw indexed (`range` counts indices): the index buffer is
+  /// already captured in `vao`, so the format is all the draw call needs.
+  pub(super) index: Option<IndexFormat>,
   pub(super) params: &'a [(String, ParamValue)],
   pub(super) inputs: Vec<PassInput>,
 }
@@ -242,11 +245,12 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
       PassDraw::Draws { clear, depth: has_depth, draws } => {
         // Mesh pass: geometry does not cover the target, so clear first -
         // once, at the top; every entry then draws over the shared result.
-        // Clear color, depth mask, depth func, clear-depth value, and the
-        // blend func are Impeller-cached state: save all of them here and
-        // restore after the list. With loadOp "load" (manual targets only)
-        // the color buffer keeps its previous contents - the accumulation
-        // unlock - while depth stays per-render scratch and always clears.
+        // Clear color, depth mask, depth func, clear-depth value, the blend
+        // func, and the cull face/winding are Impeller-cached state: save
+        // all of them here and restore after the list. With loadOp "load"
+        // (manual targets only) the color buffer keeps its previous contents
+        // - the accumulation unlock - while depth stays per-render scratch
+        // and always clears.
         let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
         let mut prev_clear = [0f32; 4];
         gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
@@ -259,6 +263,8 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
           gl.get_parameter_i32(glow::BLEND_SRC_ALPHA) as u32,
           gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
         ];
+        let prev_cull_face = gl.get_parameter_i32(glow::CULL_FACE_MODE) as u32;
+        let prev_front_face = gl.get_parameter_i32(glow::FRONT_FACE) as u32;
 
         let color_bit = match clear {
           Some([r, g, b, a]) => {
@@ -299,14 +305,44 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
             }
             None => gl.disable(glow::BLEND),
           }
+          // Face culling per entry: winding is pinned (Impeller may have
+          // left either behind) to CW - which is counter-clockwise AS
+          // DISPLAYED, because the displayed image is the y flip of GL
+          // window space. That makes "front" mean what WebGPU's
+          // framebuffer-space rule means: counter-clockwise on screen, so
+          // standard meshes drawn with the usual y negation cull the
+          // intuitive way.
+          match d.desc.cull {
+            Some(mode) => {
+              gl.enable(glow::CULL_FACE);
+              gl.cull_face(mode.gl());
+              gl.front_face(glow::CW);
+            }
+            None => gl.disable(glow::CULL_FACE),
+          }
           gl.bind_vertex_array(Some(d.vao));
           // instance_count 1 keeps the plain draw - bit-identical to the
           // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
-          // nothing. gl_VertexID includes first_vertex, as in WebGPU.
-          if d.range.instance_count == 1 {
-            gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
-          } else {
-            gl.draw_arrays_instanced(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count, d.range.instance_count);
+          // nothing. gl_VertexID includes first_vertex, as in WebGPU (on an
+          // indexed draw it reads the index value). An indexed entry's
+          // element buffer is VAO state, bound since build_vao; the byte
+          // offset positions the range within it.
+          match d.index {
+            Some(fmt) => {
+              let offset = d.range.first_vertex * fmt.size();
+              if d.range.instance_count == 1 {
+                gl.draw_elements(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset);
+              } else {
+                gl.draw_elements_instanced(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset, d.range.instance_count);
+              }
+            }
+            None => {
+              if d.range.instance_count == 1 {
+                gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
+              } else {
+                gl.draw_arrays_instanced(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count, d.range.instance_count);
+              }
+            }
           }
         }
 
@@ -314,7 +350,10 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
         // only re-enables) and put the Impeller-cached values back.
         gl.disable(glow::BLEND);
         gl.disable(glow::DEPTH_TEST);
+        gl.disable(glow::CULL_FACE);
         gl.blend_func_separate(prev_blend_func[0], prev_blend_func[1], prev_blend_func[2], prev_blend_func[3]);
+        gl.cull_face(prev_cull_face);
+        gl.front_face(prev_front_face);
         gl.bind_vertex_array(prev_vertex_array(prev_vao));
         gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
         gl.depth_mask(prev_depth_mask);

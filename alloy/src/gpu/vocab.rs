@@ -95,6 +95,89 @@ pub fn blend_name(b: Option<BlendMode>) -> &'static str {
   }
 }
 
+/// The element type of an index buffer, WebGPU's two formats: uint16 halves
+/// index bandwidth and addresses meshes up to 65535 vertices, uint32 covers
+/// the rest. (ES 3.0's uint8 indices are deliberately not offered; WebGPU
+/// has no such format.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexFormat {
+  U16,
+  U32,
+}
+
+impl IndexFormat {
+  pub fn parse(s: &str) -> Result<Self, String> {
+    Ok(match s {
+      "uint16" => IndexFormat::U16,
+      "uint32" => IndexFormat::U32,
+      _ => return Err(format!("unsupported index format '{s}' (expected uint16|uint32)")),
+    })
+  }
+
+  /// The string form `parse` accepts, for reporting back out.
+  pub fn name(self) -> &'static str {
+    match self {
+      IndexFormat::U16 => "uint16",
+      IndexFormat::U32 => "uint32",
+    }
+  }
+
+  /// Bytes per index, the element stride of the index buffer.
+  pub fn size(self) -> i32 {
+    match self {
+      IndexFormat::U16 => 2,
+      IndexFormat::U32 => 4,
+    }
+  }
+
+  pub(crate) fn gl(self) -> u32 {
+    match self {
+      IndexFormat::U16 => glow::UNSIGNED_SHORT,
+      IndexFormat::U32 => glow::UNSIGNED_INT,
+    }
+  }
+}
+
+/// Which triangle faces a pipeline's draws discard. Winding is fixed:
+/// counter-clockwise AS DISPLAYED = front, WebGPU's framebuffer-space rule.
+/// Because the displayed image is the y flip of GL window space, that pins
+/// glFrontFace to CW (see `run_pass`) - the choice that makes standard
+/// meshes drawn with the pipeline path's usual y negation cull intuitively.
+/// Absent (the default) both faces raster: the two-sided fallback open
+/// surfaces need, which a closed mesh pays for in doubled fragment work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CullMode {
+  Back,
+  Front,
+}
+
+pub fn parse_cull(s: &str) -> Result<Option<CullMode>, String> {
+  Ok(match s {
+    "none" => None,
+    "back" => Some(CullMode::Back),
+    "front" => Some(CullMode::Front),
+    _ => return Err(format!("unsupported cull mode '{s}' (expected none|back|front)")),
+  })
+}
+
+/// The string form `parse_cull` accepts, for reporting back out.
+pub fn cull_name(c: Option<CullMode>) -> &'static str {
+  match c {
+    None => "none",
+    Some(CullMode::Back) => "back",
+    Some(CullMode::Front) => "front",
+  }
+}
+
+impl CullMode {
+  pub(crate) fn gl(self) -> u32 {
+    match self {
+      CullMode::Back => glow::BACK,
+      CullMode::Front => glow::FRONT,
+    }
+  }
+}
+
 /// How a pipeline's vertices assemble into primitives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Topology {
@@ -165,11 +248,13 @@ pub struct PipelineDesc {
   /// None = overwrite (the default); see `BlendMode`.
   pub blend: Option<BlendMode>,
   pub depth: Option<DepthState>,
+  /// None = both faces raster (the default); see `CullMode`.
+  pub cull: Option<CullMode>,
 }
 
 impl Default for PipelineDesc {
   fn default() -> Self {
-    PipelineDesc { attributes: Vec::new(), topology: Topology::Triangles, blend: None, depth: None }
+    PipelineDesc { attributes: Vec::new(), topology: Topology::Triangles, blend: None, depth: None, cull: None }
   }
 }
 
@@ -305,12 +390,16 @@ pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u
 
 /// The draw parameters of one pipeline target: which vertices are drawn
 /// (`[first_vertex, first_vertex + vertex_count)`, WebGPU's `firstVertex` /
-/// `vertexCount`) and how many instances the range is drawn as. One value
-/// because the three numbers describe one draw call; targets mutate it as a
-/// unit via `DrawUpdate`. `instance_count` 1 is the plain non-instanced draw;
-/// 0 draws nothing (a cheap off switch, as in WebGPU). Note `gl_VertexID`
-/// includes `first_vertex` (GL and WebGPU agree) and `gl_InstanceID` always
-/// starts at 0 - ES 3.0 has no base instance.
+/// `vertexCount`) and how many instances the range is drawn as. On an INDEXED
+/// entry the same two fields count indices instead (WebGPU's `firstIndex` /
+/// `indexCount`, the JS surface's spelling there too); the entry's index
+/// binding decides the unit, never the range itself. One value because the
+/// three numbers describe one draw call; targets mutate it as a unit via
+/// `DrawUpdate`. `instance_count` 1 is the plain non-instanced draw; 0 draws
+/// nothing (a cheap off switch, as in WebGPU). Note `gl_VertexID` includes
+/// `first_vertex` (GL and WebGPU agree; on an indexed draw it reads the index
+/// value) and `gl_InstanceID` always starts at 0 - ES 3.0 has no base
+/// instance, and no base vertex either (glDrawElementsBaseVertex is ES 3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawRange {
   pub first_vertex: i32,
@@ -331,41 +420,75 @@ impl Default for DrawRange {
 
 impl DrawRange {
   /// This range with the update's present fields overwritten: the setDraw
-  /// merge - absent fields keep their current value, like params.
-  pub fn merged(self, update: DrawUpdate) -> DrawRange {
-    DrawRange {
-      first_vertex: update.first_vertex.unwrap_or(self.first_vertex),
-      vertex_count: update.vertex_count.unwrap_or(self.vertex_count),
-      instance_count: update.instance_count.unwrap_or(self.instance_count),
+  /// merge - absent fields keep their current value, like params. The update
+  /// must speak the entry's vocabulary - firstVertex/vertexCount on plain
+  /// entries, firstIndex/indexCount on indexed ones - so a range written in
+  /// the wrong unit errors instead of silently counting the other thing.
+  /// One copy of the rule for the single-draw setDraw and the per-entry
+  /// setDrawRange.
+  pub fn merged(self, update: DrawUpdate, indexed: bool) -> Result<DrawRange, String> {
+    if indexed && (update.first_vertex.is_some() || update.vertex_count.is_some()) {
+      return Err("the draw is indexed; use firstIndex/indexCount (the range counts indices)".to_string());
     }
+    if !indexed && (update.first_index.is_some() || update.index_count.is_some()) {
+      return Err("the draw has no index buffer; use firstVertex/vertexCount".to_string());
+    }
+    let first = if indexed { update.first_index } else { update.first_vertex };
+    let count = if indexed { update.index_count } else { update.vertex_count };
+    Ok(DrawRange {
+      first_vertex: first.unwrap_or(self.first_vertex),
+      vertex_count: count.unwrap_or(self.vertex_count),
+      instance_count: update.instance_count.unwrap_or(self.instance_count),
+    })
   }
 }
 
 /// A partial update to a target's `DrawRange` (the setDraw payload); `None`
-/// fields keep their current value.
+/// fields keep their current value. Carries both spellings of the range -
+/// the vertex-named pair for plain entries, the index-named pair for indexed
+/// ones - and `DrawRange::merged` rejects the pair that does not match the
+/// entry, so the marshalling layer stays mode-blind.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DrawUpdate {
   pub first_vertex: Option<i32>,
   pub vertex_count: Option<i32>,
+  pub first_index: Option<i32>,
+  pub index_count: Option<i32>,
   pub instance_count: Option<i32>,
 }
 
+/// The unit nouns of a fetch bound: what the range counts. Vertices through
+/// the pipeline's stride on plain entries, indices through the index format's
+/// element size on indexed ones - the bound math is identical either way.
+fn fetch_nouns(indexed: bool) -> (&'static str, &'static str) {
+  if indexed {
+    ("index", "indices")
+  } else {
+    ("vertex", "vertices")
+  }
+}
+
 /// Check a resolved draw range against the buffer it fetches from: every
-/// field must be >= 0 and the vertex fetch `[first_vertex, first_vertex +
-/// vertex_count) * stride` must stay within the buffer, or the draw is
-/// undefined-behaviour vertex fetch (raw GLES 3.0 has no draw-time bounds
-/// check; WebGL made the same case INVALID_OPERATION). Stride 0
-/// (attributeless) skips the fetch bound - gl_VertexID fetches nothing - but
-/// the sign rules still apply. Buffer sizes are fixed at creation, so a bound
-/// captured then stays correct for the target's lifetime. Runs UI-side at the
-/// call-site boundary: the create paths via `resolve_draw_range` and
-/// `Context::set_draw` against the mirrored bound.
-pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize) -> Result<(), String> {
+/// field must be >= 0 and the fetch `[first, first + count) * stride` must
+/// stay within the buffer, or the draw is undefined-behaviour fetch (raw
+/// GLES 3.0 has no draw-time bounds check; WebGL made the same case
+/// INVALID_OPERATION). For a plain entry the bound is the VERTEX buffer at
+/// the pipeline's stride; for an indexed entry (`indexed` picks the error
+/// nouns) it is the INDEX buffer at the format's element size - the index
+/// VALUES are not checked against the vertex buffer, which would mean
+/// reading them back. Stride 0 (attributeless) skips the fetch bound -
+/// gl_VertexID fetches nothing - but the sign rules still apply. Buffer
+/// sizes are fixed at creation, so a bound captured then stays correct for
+/// the target's lifetime. Runs UI-side at the call-site boundary: the create
+/// paths via `resolve_draw_range` and the range updates against the mirrored
+/// bound.
+pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize, indexed: bool) -> Result<(), String> {
+  let (noun, nouns) = fetch_nouns(indexed);
   if range.first_vertex < 0 {
-    return Err(format!("first vertex must be >= 0, got {}", range.first_vertex));
+    return Err(format!("first {noun} must be >= 0, got {}", range.first_vertex));
   }
   if range.vertex_count < 0 {
-    return Err(format!("vertex count must be >= 0, got {}", range.vertex_count));
+    return Err(format!("{noun} count must be >= 0, got {}", range.vertex_count));
   }
   if range.instance_count < 0 {
     return Err(format!("instance count must be >= 0, got {}", range.instance_count));
@@ -376,7 +499,7 @@ pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize) -> Resu
     if need > size {
       let capacity = size / stride;
       return Err(format!(
-        "vertex range {}..{end} needs {need} bytes at {stride} bytes/vertex, but the buffer holds {size} bytes ({capacity} vertices)",
+        "{noun} range {}..{end} needs {need} bytes at {stride} bytes/{noun}, but the buffer holds {size} bytes ({capacity} {nouns})",
         range.first_vertex
       ));
     }
@@ -384,15 +507,15 @@ pub fn validate_draw_range(range: DrawRange, stride: usize, size: usize) -> Resu
   Ok(())
 }
 
-/// Resolve a create-time draw range against the pipeline's vertex stride and
-/// the concrete buffer size (`None` = no buffer bound): a negative
-/// `vertex_count` becomes "the rest of the buffer from `first_vertex` on" (0
-/// when nothing is fetched), and the result is validated like any explicit
-/// range. A nonzero stride with no buffer is rejected here too, so both
-/// create paths fail at the call site with the real problem instead of a
-/// 0-byte bounds message. Runs UI-side (Context owns the size/stride
+/// Resolve a create-time draw range against its fetch bound (see
+/// `validate_draw_range` for which buffer that is; `None` = no buffer
+/// bound): a negative count becomes "the rest of the buffer from `first`
+/// on" (0 when nothing is fetched), and the result is validated like any
+/// explicit range. A nonzero stride with no buffer is rejected here too, so
+/// the create paths fail at the call site with the real problem instead of
+/// a 0-byte bounds message. Runs UI-side (Context owns the size/stride
 /// mirrors); the raster thread only ever sees resolved ranges.
-pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usize>) -> Result<DrawRange, String> {
+pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usize>, indexed: bool) -> Result<DrawRange, String> {
   if stride > 0 && size.is_none() {
     return Err("pipeline declares attributes but no vertex buffer".to_string());
   }
@@ -401,8 +524,9 @@ pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usiz
       Some(size) if stride > 0 => {
         let capacity = (size / stride) as i32;
         if range.first_vertex > capacity {
+          let (noun, nouns) = fetch_nouns(indexed);
           return Err(format!(
-            "first vertex {} is past the end of the buffer ({capacity} vertices)",
+            "first {noun} {} is past the end of the buffer ({capacity} {nouns})",
             range.first_vertex
           ));
         }
@@ -411,7 +535,7 @@ pub fn resolve_draw_range(mut range: DrawRange, stride: usize, size: Option<usiz
       _ => 0,
     };
   }
-  validate_draw_range(range, stride, size.unwrap_or(0))?;
+  validate_draw_range(range, stride, size.unwrap_or(0), indexed)?;
   Ok(range)
 }
 

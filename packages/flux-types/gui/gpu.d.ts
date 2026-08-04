@@ -7,7 +7,7 @@
 // ids (-> destroyRenderPipeline).
 // Layering: compileShader/linkProgram are the raw GL primitives (complete
 // sources, explicit header opt-in); createRenderPipeline pairs a program with
-// draw state (topology, blend, depth, vertex layout - how it draws);
+// draw state (topology, blend, cull, depth, vertex layout - how it draws);
 // createShaderTarget builds a texture-backed target over a pipeline (size,
 // buffer, uniforms, clear - where it draws); createDrawTarget holds an
 // ordered, mutable LIST of such draws in one target (addDraw/removeDraw +
@@ -283,12 +283,13 @@ declare module "flux:gpu" {
    * (its own id space, like programs and buffers - not a texture id): the
    * pipeline state object of every modern GPU API. The pipeline owns HOW its
    * targets draw - `attributes` (the interleaved vertex layout; omit for
-   * attributeless rendering via gl_VertexID), `topology`, `blend`, `depth`,
-   * `depthWrite` (`false` requires `depth: true`) - while each target brings
-   * its own size, buffer, uniforms, and clear. Creating a pipeline compiles
-   * nothing, and many pipelines may share one program. The vocabulary is
-   * validated here, so a bad word throws at this call site. Free with
-   * {@link destroyRenderPipeline}; the program is yours and outlives it.
+   * attributeless rendering via gl_VertexID), `topology`, `blend`, `cull`,
+   * `depth`, `depthWrite` (`false` requires `depth: true`) - while each
+   * target brings its own size, buffer, uniforms, and clear. Creating a
+   * pipeline compiles nothing, and many pipelines may share one program. The
+   * vocabulary is validated here, so a bad word throws at this call site.
+   * Free with {@link destroyRenderPipeline}; the program is yours and
+   * outlives it.
    */
   export function createRenderPipeline(
     program: ProgramId,
@@ -296,6 +297,7 @@ declare module "flux:gpu" {
       attributes?: VertexAttribute[]
       topology?: Topology
       blend?: BlendMode
+      cull?: CullMode
       depth?: boolean
       depthWrite?: boolean
     } & LabelOption,
@@ -354,7 +356,7 @@ declare module "flux:gpu" {
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
-    } & DrawRange &
+    } & (DrawRange | (IndexBinding & IndexRange)) &
       SamplerOptions &
       LabelOption,
   ): TextureId
@@ -408,6 +410,22 @@ declare module "flux:gpu" {
    */
   export type BlendMode = "none" | "add"
   /**
+   * Face culling for a pipeline's draws. "none" (default) rasters both faces
+   * - the two-sided fallback open surfaces need. "back" discards faces wound
+   * away from the camera, halving a closed mesh's fragment work; "front"
+   * discards the other set (shadow and inside-out tricks). The winding rule
+   * is WebGPU's, fixed: counter-clockwise AS DISPLAYED (screen coordinates,
+   * y down) = front. Measured after every flip, so it just works: a mesh
+   * exported counter-clockwise-front for a y-up world, drawn through a
+   * standard right-handed camera (looking down -z) with the usual y
+   * negation for display, culls correctly with "back". If "back" shows you
+   * the mesh's inside anyway, the winding reaching the screen is mirrored -
+   * either the exporter winds clockwise, or the hand-rolled projection is
+   * left-handed (the classic: camera looking toward +z without mirroring
+   * x). Fix the rig, flip the exporter, or use "front".
+   */
+  export type CullMode = "none" | "back" | "front"
+  /**
    * One float attribute of an interleaved vertex. The attribute list's order
    * defines the byte layout; locations are resolved by name against the
    * vertex shader's `in` declarations.
@@ -426,6 +444,36 @@ declare module "flux:gpu" {
    * always counts from 0 - ES 3.0 has no base instance.
    */
   export type DrawRange = { firstVertex?: number; vertexCount?: number; instanceCount?: number }
+  /**
+   * The element type of an index buffer: "uint16" halves index bandwidth and
+   * addresses meshes up to 65535 vertices, "uint32" covers the rest -
+   * WebGPU's two formats exactly.
+   */
+  export type IndexFormat = "uint16" | "uint32"
+  /**
+   * An entry's index binding: any {@link createBuffer} buffer plus its
+   * element type (the buffer is typeless bytes, so the format must be
+   * declared - as WebGPU does at setIndexBuffer). One buffer kind serves
+   * both roles; there is no separate index-buffer create. With a binding
+   * present the draw is `glDrawElements`: vertices are fetched through the
+   * index VALUES, so shared vertices are stored (and shaded) once, and the
+   * range speaks {@link IndexRange} instead of {@link DrawRange}. The
+   * index-buffer fetch is bounds-checked like every range; the index values
+   * themselves are not checked against the vertex buffer (that would mean
+   * reading them back) - an out-of-range index is the same undefined fetch
+   * raw GL gives you.
+   */
+  export type IndexBinding = { indexBuffer: BufferId; indexFormat: IndexFormat }
+  /**
+   * The index-counted spelling of a draw range, for indexed entries
+   * (WebGPU's drawIndexed vocabulary): `firstIndex` + `indexCount` pick the
+   * range of the INDEX buffer, `instanceCount` as in {@link DrawRange}.
+   * Same defaults and merge rules; the vertex-named keys throw on an
+   * indexed entry (and these throw on a plain one), so a range never
+   * silently counts the wrong thing. `gl_VertexID` reads the index value;
+   * there is no base vertex (ES 3.0, like ES 3.0's missing base instance).
+   */
+  export type IndexRange = { firstIndex?: number; indexCount?: number; instanceCount?: number }
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -469,10 +517,11 @@ declare module "flux:gpu" {
       depth?: boolean
       depthWrite?: boolean
       blend?: BlendMode
+      cull?: CullMode
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
-    } & DrawRange &
+    } & (DrawRange | (IndexBinding & IndexRange)) &
       SamplerOptions &
       LabelOption,
   ): TextureId
@@ -506,9 +555,11 @@ declare module "flux:gpu" {
    * buffer size) - the out-of-bounds draw GL itself never checks; a target
    * without vertex fetch (attributeless) accepts any non-negative range.
    * (On a manual target nothing renders here; the range applies at its next
-   * {@link renderTarget}.)
+   * {@link renderTarget}.) An indexed target takes the {@link IndexRange}
+   * spelling instead, bounds-checked against its index buffer; the pair
+   * that does not match the target's mode throws.
    */
-  export function setDraw(id: TextureId, draw: DrawRange): void
+  export function setDraw(id: TextureId, draw: DrawRange | IndexRange): void
   /**
    * Create a draw target: a render target whose contents are an ordered,
    * mutable LIST of draws - one render clears once, then executes every
@@ -560,7 +611,9 @@ declare module "flux:gpu" {
    * and per-entry `params` is where per-object state (a model matrix) lives.
    * `before` inserts the entry immediately before an existing one instead
    * of appending (it must name a live entry); for wholesale reordering use
-   * {@link setDrawOrder}.
+   * {@link setDrawOrder}. An {@link IndexBinding} makes the entry draw
+   * indexed - real meshes share most vertices, and indexing stores and
+   * shades each one once - with the range in {@link IndexRange} spelling.
    */
   export function addDraw(
     target: TextureId,
@@ -570,7 +623,7 @@ declare module "flux:gpu" {
       textures?: Record<string, TextureId>
       buffer?: BufferId
       before?: DrawId
-    } & DrawRange,
+    } & (DrawRange | (IndexBinding & IndexRange)),
   ): DrawId
   /**
    * Remove a draw entry from a draw target. Remaining entries keep their
@@ -594,9 +647,10 @@ declare module "flux:gpu" {
   export function setDrawTextures(target: TextureId, draw: DrawId, textures: Record<string, TextureId>): void
   /**
    * Update one draw entry's draw range: {@link setDraw} addressed to a
-   * single entry, same partial merge and bounds validation.
+   * single entry, same partial merge, bounds validation, and vocabulary
+   * rule (an indexed entry speaks {@link IndexRange}).
    */
-  export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange): void
+  export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange | IndexRange): void
   /**
    * Reorder a draw target's list. `order` must name every current entry
    * exactly once - a full permutation of the live {@link DrawId}s; a

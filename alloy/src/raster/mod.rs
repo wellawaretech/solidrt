@@ -1170,6 +1170,7 @@ impl RasterState {
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
     let label = spec.target.label.clone();
     let buffer = resolve_target_buffer(&self.buffers, spec.entry.buffer)?;
+    let index = resolve_target_index(&self.buffers, spec.entry.index)?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
@@ -1180,6 +1181,7 @@ impl RasterState {
       spec.pipeline,
       buffer,
       spec.entry.buffer,
+      index,
       spec.entry.draw,
       spec.target.clear_color,
     )?;
@@ -1245,6 +1247,7 @@ impl RasterState {
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
     let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
+    let index = resolve_target_index(&self.buffers, entry.index)?;
     let mut shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
@@ -1254,6 +1257,7 @@ impl RasterState {
       entry.textures.clone(),
       buffer,
       entry.buffer,
+      index,
       entry.draw,
       spec.clear_color,
     )
@@ -1284,6 +1288,7 @@ impl RasterState {
     let pipeline =
       self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
     let buffer = resolve_target_buffer(&self.buffers, entry.buffer)?;
+    let index = resolve_target_index(&self.buffers, entry.index)?;
     let shader = self.shaders.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
     shader.add_entry(
       &self.gl,
@@ -1292,6 +1297,7 @@ impl RasterState {
       Some(entry.pipeline),
       buffer,
       entry.buffer,
+      index,
       entry.draw,
       entry.params,
       entry.textures,
@@ -1467,6 +1473,8 @@ impl RasterState {
           program_id: if flat { shader.program_id() } else { None },
           pipeline_id: if flat { shader.pipeline_id() } else { None },
           buffer_id: if flat { shader.buffer_id() } else { None },
+          index_buffer_id: if flat { shader.index_buffer_id() } else { None },
+          index_format: if flat { shader.index_format_name() } else { None },
           topology: if flat { shader.topology_name() } else { None },
           draw_count: draw.map(|d| d.vertex_count),
           first_vertex: draw.map(|d| d.first_vertex),
@@ -1474,6 +1482,7 @@ impl RasterState {
           depth: shader.has_depth(),
           depth_write: if flat { shader.depth_write() } else { None },
           blend: if flat { shader.blend_name() } else { None },
+          cull: if flat { shader.cull_name() } else { None },
           attributes: if flat {
             shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
           } else {
@@ -1502,6 +1511,7 @@ impl RasterState {
           label: pipeline.label().map(str::to_string),
           topology: desc.topology.name(),
           blend: crate::gpu::blend_name(desc.blend),
+          cull: crate::gpu::cull_name(desc.cull),
           depth: desc.depth.is_some(),
           depth_write: desc.depth.map_or(true, |d| d.write),
           attributes: desc.attributes.iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
@@ -1548,6 +1558,22 @@ fn resolve_target_buffer(buffers: &HashMap<u64, Rc<GpuBuffer>>, buffer_id: u64) 
     return Ok(None);
   }
   buffers.get(&buffer_id).cloned().map(Some).ok_or_else(|| format!("buffer {buffer_id} not found"))
+}
+
+/// Resolve an entry's index binding against the buffer registry, same
+/// contract as `resolve_target_buffer`: the Rc clone rides in the entry for
+/// the VAO's lifetime.
+fn resolve_target_index(
+  buffers: &HashMap<u64, Rc<GpuBuffer>>,
+  index: Option<(u64, crate::gpu::IndexFormat)>,
+) -> Result<Option<(Rc<GpuBuffer>, u64, crate::gpu::IndexFormat)>, String> {
+  match index {
+    Some((id, format)) => {
+      let buffer = buffers.get(&id).cloned().ok_or_else(|| format!("index buffer {id} not found"))?;
+      Ok(Some((buffer, id, format)))
+    }
+    None => Ok(None),
+  }
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`

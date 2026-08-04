@@ -244,33 +244,85 @@ fn collect_entry_half(
     Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
     None => 0,
   };
-  // The draw range: firstVertex + vertexCount pick the vertices (WebGPU's
-  // spelling), instanceCount repeats them (gl_InstanceID; 1 = the plain
-  // draw, 0 draws nothing). vertexCount omitted means "the rest of the
-  // buffer" - alloy derives it - so an explicit negative must be rejected
-  // here, where "omit it" is still meaningful advice; the other fields'
-  // sign checks are alloy's.
-  let vertex_count = match opts {
-    Some(o) => o.get::<_, Option<i32>>("vertexCount")?,
+  // The index binding: indexBuffer + indexFormat arrive together (the
+  // buffer is typeless - any createBuffer result - so the format must be
+  // declared, as WebGPU does at setIndexBuffer). Presence switches the
+  // range vocabulary below.
+  let index_buffer = match opts {
+    Some(o) => o.get::<_, Option<u64>>("indexBuffer")?,
     None => None,
   };
-  if let Some(v) = vertex_count {
+  let index_format = match opts {
+    Some(o) => o.get::<_, Option<String>>("indexFormat")?,
+    None => None,
+  };
+  let index = match (index_buffer, index_format) {
+    (Some(ib), Some(f)) => {
+      let format = alloy::IndexFormat::parse(&f).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+      Some((ib, format))
+    }
+    (None, None) => None,
+    (Some(_), None) => {
+      return Err(throw_str(ctx, &format!("{api}: indexBuffer requires indexFormat (\"uint16\" | \"uint32\")")))
+    }
+    (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
+  };
+  // The draw range, in the entry's vocabulary: firstVertex + vertexCount
+  // pick the vertices on a plain entry, firstIndex + indexCount pick the
+  // indices on an indexed one (WebGPU's spellings for both draw calls);
+  // instanceCount repeats the range (gl_InstanceID; 1 = the plain draw, 0
+  // draws nothing). The wrong pair throws here, where the fix is visible.
+  // A count omitted means "the rest of the buffer" - alloy derives it - so
+  // an explicit negative must be rejected here, where "omit it" is still
+  // meaningful advice; the other fields' sign checks are alloy's.
+  let has = |name: &str| -> bool {
+    match opts {
+      Some(o) => o.get::<_, rquickjs::Value>(name).map(|v| !v.is_undefined()).unwrap_or(false),
+      None => false,
+    }
+  };
+  let (first_key, count_key) = if index.is_some() {
+    for key in ["firstVertex", "vertexCount"] {
+      if has(key) {
+        return Err(throw_str(
+          ctx,
+          &format!("{api}: '{key}' does not apply - the entry is indexed; use firstIndex/indexCount (the range counts indices)"),
+        ));
+      }
+    }
+    ("firstIndex", "indexCount")
+  } else {
+    for key in ["firstIndex", "indexCount"] {
+      if has(key) {
+        return Err(throw_str(
+          ctx,
+          &format!("{api}: '{key}' needs indexBuffer; use firstVertex/vertexCount"),
+        ));
+      }
+    }
+    ("firstVertex", "vertexCount")
+  };
+  let count = match opts {
+    Some(o) => o.get::<_, Option<i32>>(count_key)?,
+    None => None,
+  };
+  if let Some(v) = count {
     if v < 0 {
-      return Err(throw_str(ctx, &format!("{api}: vertexCount must be >= 0, got {v} (omit it to draw the whole buffer)")));
+      return Err(throw_str(ctx, &format!("{api}: {count_key} must be >= 0, got {v} (omit it to draw the whole buffer)")));
     }
   }
   let draw = alloy::DrawRange {
     first_vertex: match opts {
-      Some(o) => o.get::<_, Option<i32>>("firstVertex")?.unwrap_or(0),
+      Some(o) => o.get::<_, Option<i32>>(first_key)?.unwrap_or(0),
       None => 0,
     },
-    vertex_count: vertex_count.unwrap_or(-1),
+    vertex_count: count.unwrap_or(-1),
     instance_count: match opts {
       Some(o) => o.get::<_, Option<i32>>("instanceCount")?.unwrap_or(1),
       None => 1,
     },
   };
-  Ok(alloy::DrawSpec { pipeline, buffer, draw, params, textures })
+  Ok(alloy::DrawSpec { pipeline, buffer, index, draw, params, textures })
 }
 
 fn collect_target_spec(
@@ -282,6 +334,19 @@ fn collect_target_spec(
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, alloy::DrawSpec)> {
   Ok((collect_target_half(ctx, opts, width, height, api)?, collect_entry_half(ctx, 0, params, opts, api)?))
+}
+
+// Decode a partial draw-range update (setDraw / setDrawRange). Both range
+// spellings marshal through untouched; alloy owns the mode rule (the entry
+// state lives in its mirror) and rejects the pair that does not match.
+fn collect_draw_update(update: &Object<'_>) -> rquickjs::Result<alloy::DrawUpdate> {
+  Ok(alloy::DrawUpdate {
+    first_vertex: update.get::<_, Option<i32>>("firstVertex")?,
+    vertex_count: update.get::<_, Option<i32>>("vertexCount")?,
+    first_index: update.get::<_, Option<i32>>("firstIndex")?,
+    index_count: update.get::<_, Option<i32>>("indexCount")?,
+    instance_count: update.get::<_, Option<i32>>("instanceCount")?,
+  })
 }
 
 // Decode createDrawTarget's options: the target half plus `depth` (the
@@ -297,12 +362,14 @@ fn collect_draw_target_spec(
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, bool)> {
   if let Some(o) = opts {
-    for key in ["params", "textures", "buffer", "firstVertex", "vertexCount", "instanceCount"] {
+    for key in
+      ["params", "textures", "buffer", "indexBuffer", "indexFormat", "firstVertex", "vertexCount", "firstIndex", "indexCount", "instanceCount"]
+    {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is draw-entry state; pass it to addDraw")));
       }
     }
-    for key in ["attributes", "topology", "blend", "depthWrite"] {
+    for key in ["attributes", "topology", "blend", "cull", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
@@ -349,6 +416,13 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     },
     None => None,
   };
+  let cull = match opts {
+    Some(o) => match o.get::<_, Option<String>>("cull")? {
+      Some(s) => alloy::parse_cull(&s).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?,
+      None => None,
+    },
+    None => None,
+  };
   let (depth, depth_write) = match opts {
     Some(o) => (o.get::<_, Option<bool>>("depth")?.unwrap_or(false), o.get::<_, Option<bool>>("depthWrite")?),
     None => (false, None),
@@ -363,7 +437,7 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     }
     (false, _) => None,
   };
-  Ok(alloy::PipelineDesc { attributes, topology, blend, depth })
+  Ok(alloy::PipelineDesc { attributes, topology, blend, depth, cull })
 }
 
 // The migration guard for the split object model: draw state belongs to
@@ -371,7 +445,7 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
 // exactly the bug class the split removes - so their presence throws.
 fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<()> {
   if let Some(o) = opts {
-    for key in ["attributes", "topology", "blend", "depth", "depthWrite"] {
+    for key in ["attributes", "topology", "blend", "cull", "depth", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
@@ -799,17 +873,15 @@ impl ModuleDef for GpuModule {
     .expect("create destroyBuffer");
 
     // Partial draw-range update: keys present overwrite, absent keys keep
-    // their current value (the params merge rule). Alloy validates the merged
-    // range against the mirrored vertex-fetch bound at this call site.
+    // their current value (the params merge rule). Both range spellings
+    // marshal through; alloy rejects the pair that does not match the
+    // entry's mode and validates the merged range against the mirrored
+    // fetch bound, all at this call site.
     let set_draw_atx = atx.clone();
     let set_draw_platform = platform.clone();
     let set_draw =
       Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, draw: Object<'_>| -> rquickjs::Result<()> {
-        let update = alloy::DrawUpdate {
-          first_vertex: draw.get::<_, Option<i32>>("firstVertex")?,
-          vertex_count: draw.get::<_, Option<i32>>("vertexCount")?,
-          instance_count: draw.get::<_, Option<i32>>("instanceCount")?,
-        };
+        let update = collect_draw_update(&draw)?;
         set_draw_atx.set_draw(id, update).map_err(|e| throw_str(&ctx, &format!("setDraw: {e}")))?;
         set_draw_platform.request_frame();
         Ok(())
@@ -919,17 +991,13 @@ impl ModuleDef for GpuModule {
     .expect("create setDrawTextures");
 
     // Per-entry draw range: setDraw addressed to one draw entry, same partial
-    // merge.
+    // merge and mode rule.
     let set_draw_range_atx = atx.clone();
     let set_draw_range_platform = platform.clone();
     let set_draw_range = Function::new(
       ctx.clone(),
       move |ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>| -> rquickjs::Result<()> {
-        let update = alloy::DrawUpdate {
-          first_vertex: update.get::<_, Option<i32>>("firstVertex")?,
-          vertex_count: update.get::<_, Option<i32>>("vertexCount")?,
-          instance_count: update.get::<_, Option<i32>>("instanceCount")?,
-        };
+        let update = collect_draw_update(&update)?;
         set_draw_range_atx
           .set_draw_range(target, draw, update)
           .map_err(|e| throw_str(&ctx, &format!("setDrawRange: {e}")))?;

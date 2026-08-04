@@ -954,16 +954,25 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if let Some(buffer_id) = p.buffer_id {
         map.insert("bufferId".into(), buffer_id.into());
       }
+      // An index binding is itself off-default; with one present the range
+      // keys switch to the index spellings (the numbers count indices).
+      let indexed = p.index_buffer_id.is_some();
+      if let Some(index_buffer_id) = p.index_buffer_id {
+        map.insert("indexBuffer".into(), index_buffer_id.into());
+      }
+      if let Some(index_format) = p.index_format {
+        map.insert("indexFormat".into(), index_format.into());
+      }
       if let Some(topology) = p.topology {
         map.insert("topology".into(), topology.into());
       }
       if let Some(draw_count) = p.draw_count {
-        map.insert("drawCount".into(), draw_count.into());
+        map.insert(if indexed { "indexCount".into() } else { "drawCount".into() }, draw_count.into());
       }
       // Reported only off their defaults, like depthWrite below: absent
       // means the plain draw from the buffer's start.
       if let Some(first_vertex) = p.first_vertex.filter(|v| *v != 0) {
-        map.insert("firstVertex".into(), first_vertex.into());
+        map.insert(if indexed { "firstIndex".into() } else { "firstVertex".into() }, first_vertex.into());
       }
       if let Some(instance_count) = p.instance_count.filter(|v| *v != 1) {
         map.insert("instanceCount".into(), instance_count.into());
@@ -979,6 +988,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       if let Some(blend) = p.blend.filter(|b| *b != "none") {
         map.insert("blend".into(), blend.into());
       }
+      if let Some(cull) = p.cull.filter(|c| *c != "none") {
+        map.insert("cull".into(), cull.into());
+      }
       if !p.attributes.is_empty() {
         let attrs: Vec<serde_json::Value> =
           p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
@@ -993,7 +1005,6 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
           .map(|d| {
             let mut entry = serde_json::json!({
               "id": d.id,
-              "vertexCount": d.vertex_count,
               "textures": d.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
               "params": d.params.iter().map(|(name, v)| {
                 let v = match v {
@@ -1010,9 +1021,20 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
             if let Some(buffer_id) = d.buffer_id {
               map.insert("bufferId".into(), buffer_id.into());
             }
+            // An index binding is itself off-default; with one present the
+            // range keys switch to the index spellings (indices, not
+            // vertices).
+            let indexed = d.index_buffer_id.is_some();
+            if let Some(index_buffer_id) = d.index_buffer_id {
+              map.insert("indexBuffer".into(), index_buffer_id.into());
+            }
+            if let Some(index_format) = d.index_format {
+              map.insert("indexFormat".into(), index_format.into());
+            }
             map.insert("topology".into(), d.topology.into());
+            map.insert(if indexed { "indexCount".into() } else { "vertexCount".into() }, d.vertex_count.into());
             if d.first_vertex != 0 {
-              map.insert("firstVertex".into(), d.first_vertex.into());
+              map.insert(if indexed { "firstIndex".into() } else { "firstVertex".into() }, d.first_vertex.into());
             }
             if d.instance_count != 1 {
               map.insert("instanceCount".into(), d.instance_count.into());
@@ -1022,6 +1044,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
             }
             if d.blend != "none" {
               map.insert("blend".into(), d.blend.into());
+            }
+            if d.cull != "none" {
+              map.insert("cull".into(), d.cull.into());
             }
             entry
           })
@@ -1045,6 +1070,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       }
       if p.blend != "none" {
         map.insert("blend".into(), p.blend.into());
+      }
+      if p.cull != "none" {
+        map.insert("cull".into(), p.cull.into());
       }
       if p.depth {
         map.insert("depth".into(), true.into());

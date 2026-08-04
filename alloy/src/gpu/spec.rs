@@ -2,7 +2,7 @@
 //! to the raster thread in one owned value, serving both the public Context
 //! API and the RasterCmd payloads.
 
-use super::vocab::{DrawRange, ParamValue, PipelineDesc};
+use super::vocab::{DrawRange, IndexFormat, ParamValue, PipelineDesc};
 use crate::texture::SamplerState;
 
 /// The per-target half of a mesh target create: output size, clear, sampling,
@@ -49,10 +49,16 @@ pub struct DrawSpec {
   /// Registry id of the interleaved vertex buffer the pipeline's attributes
   /// describe; 0 = attributeless rendering via gl_VertexID.
   pub buffer: u64,
-  /// Which vertices to draw and how many instances (see `DrawRange`). A
-  /// negative `vertex_count` here means "the rest of the buffer"; Context
-  /// resolves it (`resolve_draw_range`) before the spec crosses to the
-  /// raster thread.
+  /// Index binding: (index buffer registry id, element format). Present =
+  /// the entry draws indexed (glDrawElements): `draw` then counts indices
+  /// into this buffer, and vertices are fetched through their values. One
+  /// buffer kind serves both roles (as in WebGPU and WebGL) - any
+  /// `create_gpu_buffer` result works here.
+  pub index: Option<(u64, IndexFormat)>,
+  /// Which vertices (or, indexed, which indices) to draw and how many
+  /// instances (see `DrawRange`). A negative count here means "the rest of
+  /// the buffer"; Context resolves it (`resolve_draw_range`) before the
+  /// spec crosses to the raster thread.
   pub draw: DrawRange,
   pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<(String, u64)>,

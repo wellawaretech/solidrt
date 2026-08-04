@@ -62,6 +62,8 @@ pub struct GpuRenderPipelineInfo {
   pub topology: &'static str,
   /// "none" or "add".
   pub blend: &'static str,
+  /// "none", "back", or "front".
+  pub cull: &'static str,
   pub depth: bool,
   pub depth_write: bool,
   /// (name, format string) of the declared interleaved vertex layout.
@@ -76,9 +78,16 @@ pub struct GpuDrawInfo {
   /// The registered pipeline this entry draws with.
   pub pipeline_id: Option<u64>,
   pub buffer_id: Option<u64>,
+  /// The entry's index buffer; present = it draws indexed, and the range
+  /// fields below count indices.
+  pub index_buffer_id: Option<u64>,
+  /// "uint16" or "uint32", present with `index_buffer_id`.
+  pub index_format: Option<&'static str>,
   pub topology: &'static str,
   /// "none" or "add".
   pub blend: &'static str,
+  /// "none", "back", or "front".
+  pub cull: &'static str,
   /// Whether this entry's draw writes depth.
   pub depth_write: bool,
   pub first_vertex: i32,
@@ -106,6 +115,11 @@ pub struct GpuPipelineInfo {
   /// targets and the fused path.
   pub pipeline_id: Option<u64>,
   pub buffer_id: Option<u64>,
+  /// The first entry's index buffer; present = it draws indexed, and the
+  /// range fields below count indices.
+  pub index_buffer_id: Option<u64>,
+  /// "uint16" or "uint32", present with `index_buffer_id`.
+  pub index_format: Option<&'static str>,
   pub topology: Option<&'static str>,
   /// The vertex count of the target's draw range; None on a fragment-only
   /// target, like the two range fields below.
@@ -120,6 +134,8 @@ pub struct GpuPipelineInfo {
   pub depth_write: Option<bool>,
   /// "none" or "add"; None on a fragment-only target.
   pub blend: Option<&'static str>,
+  /// "none", "back", or "front"; None on a fragment-only target.
+  pub cull: Option<&'static str>,
   /// (name, format string) of the declared interleaved vertex layout.
   pub attributes: Vec<(String, String)>,
   /// sampler2D uniform name -> source texture id.

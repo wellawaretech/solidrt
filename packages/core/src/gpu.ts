@@ -108,7 +108,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, DrawRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
@@ -287,10 +287,12 @@ export function createShaderTexture(
  * repeats it as instances told apart by `gl_InstanceID`; a fullscreen pass
  * over an attributeless pipeline is `{ vertexCount: 3 }` with a
  * covering-triangle vertex stage), uniforms, and
- * `clearColor`. Draw state (`attributes`, `topology`, `blend`, `depth`,
- * `depthWrite`) lives on the pipeline and throws here. Frees the target when
- * the reactive owner is disposed (opt out with `opts.manual`); the pipeline
- * is yours and outlives it.
+ * `clearColor`. An `indexBuffer` + `indexFormat` pair makes the draw indexed
+ * (shared vertices stored once), with the range in `firstIndex`/`indexCount`
+ * spelling - see IndexBinding/IndexRange. Draw state (`attributes`,
+ * `topology`, `blend`, `cull`, `depth`, `depthWrite`) lives on the pipeline
+ * and throws here. Frees the target when the reactive owner is disposed (opt
+ * out with `opts.manual`); the pipeline is yours and outlives it.
  *
  * `render: "manual"` makes it a manual target: the runtime never renders it
  * (it starts cleared to `clearColor`), only an explicit `renderTarget(id)`
@@ -313,7 +315,7 @@ export function createShaderTarget(
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
-  } & gpu.DrawRange &
+  } & (gpu.DrawRange | (gpu.IndexBinding & gpu.IndexRange)) &
     CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
@@ -488,7 +490,10 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * see DrawRange) defaults to the whole buffer drawn once and can be changed
  * later with `setDraw`; `instanceCount` is the standard answer to particles
  * and repeated meshes, N copies of the range told apart by `gl_InstanceID`
- * in the vertex stage. `opts.render: "manual"` and
+ * in the vertex stage. An `indexBuffer` + `indexFormat` pair makes the draw
+ * indexed (shared vertices stored once), with the range in
+ * `firstIndex`/`indexCount` spelling; `opts.cull` discards one face set by
+ * winding (counter-clockwise as displayed = front). `opts.render: "manual"` and
  * `opts.loadOp` behave exactly as on {@link createShaderTarget}: step the
  * target with `renderTarget(id)`, and `loadOp: "load"` (manual-only) keeps
  * the previous contents under each draw. Frees the texture and GL program when the reactive
@@ -509,10 +514,11 @@ export function createPipelineTexture(
     depth?: boolean
     depthWrite?: boolean
     blend?: gpu.BlendMode
+    cull?: gpu.CullMode
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
-  } & gpu.DrawRange &
+  } & (gpu.DrawRange | (gpu.IndexBinding & gpu.IndexRange)) &
     CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
