@@ -961,6 +961,14 @@ impl RasterState {
       // frame: same behavior as before this mechanism existed.
       if let Ok(fence) = unsafe { glow::HasContext::fence_sync(&self.gl, glow::SYNC_GPU_COMMANDS_COMPLETE, 0) } {
         self.present_fences.push_back(fence);
+        // Flush the fence into the command stream now. ANGLE/D3D11 defers a
+        // post-swap fence's submission (~2 swaps) and its glClientWaitSync
+        // never blocks (the flush bit does not rescue it), so without this
+        // the wait reads TIMEOUT_EXPIRED on every frame of a healthy GPU and
+        // fenceTimeouts counts frames instead of stalls. Free elsewhere: the
+        // swap already flushed everything but the fence itself. Measured in
+        // alloy/examples/present_fence_probe.rs (phases A vs D).
+        unsafe { glow::HasContext::flush(&self.gl) };
       }
       return true;
     }
