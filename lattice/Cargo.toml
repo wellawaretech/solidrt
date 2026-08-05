@@ -42,10 +42,6 @@ rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
 # tree (and its lyon/svgtypes path deps) moved to alloy.
 taffy = "0.12.1"
-# decodeImage formats: the practical web set. avif decode is deliberately
-# absent (image only encodes avif in pure Rust; decoding needs the dav1d C
-# system dependency), see okf/backlog/avif-decode.md.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 base64 = { version = "0.22", optional = true }
 tokio = { workspace = true }
 tokio-websockets = { version = "0.13", features = ["client", "fastrand", "sha1_smol"], optional = true }

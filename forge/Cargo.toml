@@ -64,6 +64,11 @@ libloading = "0.9"
 # the normalized geometry as plain data, never rasterize, so resvg/tiny-skia
 # are not pulled.
 usvg = { version = "0.47", default-features = false }
+# forge::image (flux:image decodeImage/encodeImage): the practical web decode
+# set; png + jpeg also encode. avif decode is deliberately absent (the image
+# crate only encodes avif in pure Rust; decoding needs the dav1d C system
+# dependency), see okf/backlog/avif-decode.md.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the

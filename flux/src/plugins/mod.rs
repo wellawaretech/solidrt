@@ -121,6 +121,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:svg");
   loader.add_module("flux:svg", modules::svg::SvgModule);
 
+  resolver.add_module("flux:image");
+  loader.add_module("flux:image", modules::image::ImageModule);
+
   resolver.add_module("flux:wasm");
   loader.add_module("flux:wasm", modules::wasm::WasmModuleDef);
 
@@ -177,7 +180,7 @@ pub(crate) async fn init_context(
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
 pub const BASE_CAPABILITIES: &[&str] =
-  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "wasm", "ffi"];
+  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi"];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");

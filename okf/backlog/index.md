@@ -72,6 +72,11 @@ Sorted by status: open first, then partial, deferred, and closed
   pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already
   has the capability and alloy already discards the deltas.
+- [Move the image codec to forge behind a flux:image module](flux-image-module.md) [done] -
+  decodeImage/encodeImage were inline in a lattice-registered global, so
+  headless flux had no image codec; now a forge core marshalled by a thin
+  flux:image module, core re-exporting like flux:gpu, lattice's image dep
+  dropped entirely.
 - [AVIF decoding in decodeImage](avif-decode.md) [open] - The one practical
   web image format decodeImage lacks; pure-Rust decode does not exist in the
   image crate, so it needs the dav1d C system dependency.

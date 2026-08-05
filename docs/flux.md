@@ -223,6 +223,22 @@ let server = serve({
 server.close()
 ```
 
+### flux:image
+
+The CPU image codec: `decodeImage` turns encoded bytes (png, jpeg, webp, gif,
+bmp, ico) into tightly-packed RGBA8 pixels plus dimensions; `encodeImage` is
+the reverse and round-trips its output. Both are synchronous and throw on bad
+input. `format` defaults to `"png"` (lossless, keeps alpha); `"jpeg"` drops
+the alpha channel and takes `quality` in 0..1 (default 0.9, ignored for png).
+
+```js
+import { decodeImage, encodeImage } from "flux:image"
+
+let img = decodeImage(bytes)                 // { data, width, height }
+let png = encodeImage(img)
+let jpg = encodeImage(img, { format: "jpeg", quality: 0.8 })
+```
+
 ### flux:sqlite
 
 ```js

@@ -1,5 +1,4 @@
 use base64::Engine as _;
-use image::ImageEncoder as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -868,15 +867,10 @@ fn request_snapshot(
 /// Encode a captured RGBA8 buffer as a base64 PNG reply. On-demand and rare (a
 /// dev-server query), so encoding inline on the JS thread is fine.
 fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
-  let expected = (width as usize) * (height as usize) * 4;
-  if rgba.len() != expected {
-    return error_reply(id, "snapshot pixel buffer size mismatch");
-  }
-  let mut png = Vec::new();
-  let encoder = image::codecs::png::PngEncoder::new(&mut png);
-  if let Err(e) = encoder.write_image(&rgba, width, height, image::ExtendedColorType::Rgba8) {
-    return error_reply(id, &format!("png encode failed: {e}"));
-  }
+  let png = match forge::image::encode_png(&rgba, width, height) {
+    Ok(png) => png,
+    Err(e) => return error_reply(id, &format!("png encode failed: {e}")),
+  };
   let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
   serde_json::json!({
     "type": "result",

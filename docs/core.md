@@ -248,6 +248,14 @@ decodeImage(bytes: Uint8Array): DecodedImage
 
 Decodes an image file (JPEG, PNG, etc.) from raw bytes. Returns an object with `data` (raw RGBA pixels), `width`, and `height`.
 
+### encodeImage
+
+```ts
+encodeImage(img: DecodedImage, options?: { format?: "png" | "jpeg", quality?: number }): Uint8Array
+```
+
+The reverse of `decodeImage`: encodes raw RGBA pixels into an image file. `format` defaults to `"png"`. `"jpeg"` has no alpha channel (it is dropped) and takes `quality` in 0..1, default 0.9; `quality` is ignored for png. Throws when `data.length` does not match `width * height * 4`.
+
 ### createTexture
 
 ```ts

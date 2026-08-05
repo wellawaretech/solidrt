@@ -23,10 +23,6 @@ declare global {
     readonly env: { readonly DEV: boolean }
   }
 
-  let image: {
-    decodeImage(bytes: Uint8Array): { data: Uint8Array, width: number, height: number }
-  }
-
   let speech: {
     start(options: {
       model: Uint8Array, vadModel: Uint8Array, lang?: string, microphone?: number,

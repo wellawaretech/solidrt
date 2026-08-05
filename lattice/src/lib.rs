@@ -721,7 +721,6 @@ fn ui_thread(
         .plugin(move |ctx| {
           plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, draw_stats)
         })
-        .plugin(|ctx| plugins::image::init(ctx))
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
         .module_override("srt:dev", plugins::dev::SrtDevModule)

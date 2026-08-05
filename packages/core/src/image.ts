@@ -1,27 +1,15 @@
-// CPU image codec plus the reactive load-and-upload convenience. decodeImage is
-// the raw primitive (no GPU involved); createImage is the owner-aware layer on
-// top that fetches/decodes/uploads for you and swaps the texture when the source
-// changes - the same relationship createTexture/createShaderTexture have to
-// flux:gpu.
+// CPU image codec plus the reactive load-and-upload convenience. The codec is
+// flux:image, re-exported here (like the flux:gpu re-exports in gpu.ts) so
+// applications import everything image-shaped from one place; createImage is
+// the owner-aware layer on top that fetches/decodes/uploads for you and swaps
+// the texture when the source changes.
 
 import { createMemo, onCleanup } from "@solidjs/signals"
+import { decodeImage, type DecodedImage } from "flux:image"
 import { createTexture, destroyTexture, type TextureId } from "./gpu"
 
-export type DecodedImage = {
-  data: Uint8Array
-  width: number
-  height: number
-}
-
-/**
- * Decodes encoded image bytes (PNG, JPEG, and the other formats the runtime's
- * image decoder supports) into raw, tightly-packed RGBA8 pixels plus the
- * decoded dimensions. Feed the result straight into `createTexture`. Use this
- * when you want manual control; for the common case reach for `createImage`.
- */
-export function decodeImage(bytes: Uint8Array): DecodedImage {
-  return image.decodeImage(bytes)
-}
+export { decodeImage, encodeImage } from "flux:image"
+export type { DecodedImage } from "flux:image"
 
 export type ImageSource = string | Uint8Array
 
