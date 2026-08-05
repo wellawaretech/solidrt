@@ -15,6 +15,8 @@
 
 import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
 import type { BufferId, VertexAttribute } from "@solidrt/core/gpu"
+import { add, cross, normalize, sub } from "./math.ts"
+import type { Vec3 } from "./math.ts"
 
 export const VERTEX_LAYOUT: VertexAttribute[] = [
   { name: "aPos", format: "vec3" },
@@ -108,6 +110,88 @@ export function plane(width = 1, height = 1, label?: string): Geometry {
     -x, y, 0, 0, 0, 1, 0, 0,
   ])
   return { vertices, indices: new Uint16Array([0, 1, 2, 0, 2, 3]), label }
+}
+
+/**
+ * A (p,q) torus knot swept into a tube, centered on the origin and standing
+ * y-up: the knot's disc lies in the XZ plane with the weave running
+ * vertically - the orientation a y-up world with XZ floors wants (the
+ * standard-vocabulary divergence: Three's equivalent stands on z). The
+ * tube's (tubularSegments x radialSegments) grid stores each vertex once;
+ * the seam row/column duplicate the first with u/v = 1 (distinct texture
+ * coordinates, so genuinely distinct vertices). UVs: u 0..1 along the knot,
+ * v 0..1 around the tube.
+ */
+export function torusKnot(
+  radius = 1,
+  tube = 0.4,
+  tubularSegments = 64,
+  radialSegments = 8,
+  p = 2,
+  q = 3,
+  label?: string,
+): Geometry {
+  // A point on the knot curve at parameter t (0..2*PI*p).
+  let point = (t: number): Vec3 => {
+    let qp = (q / p) * t
+    let r = radius * (2 + Math.cos(qp)) * 0.5
+    return [r * Math.cos(t), radius * Math.sin(qp) * 0.5, r * Math.sin(t)]
+  }
+
+  let rows = tubularSegments + 1
+  let cols = radialSegments + 1
+  let vertices = new Float32Array(rows * cols * FLOATS_PER_VERTEX)
+  let at = 0
+
+  for (let i = 0; i < rows; i++) {
+    let t = (i / tubularSegments) * Math.PI * 2 * p
+    // A stable frame along the curve: tangent from a finite difference, and
+    // a normal biased away from the axis (P1 + P2), which is well-defined
+    // everywhere on a torus knot and needs no parallel transport.
+    let p1 = point(t)
+    let p2 = point(t + 0.01)
+    let tangent = sub(p2, p1)
+    let bitangent = normalize(cross(tangent, add(p2, p1)))
+    let normal = normalize(cross(bitangent, tangent))
+
+    for (let j = 0; j < cols; j++) {
+      let v = (j / radialSegments) * Math.PI * 2
+      let cv = -Math.cos(v) * tube
+      let sv = Math.sin(v) * tube
+      let x = p1[0] + cv * normal[0] + sv * bitangent[0]
+      let y = p1[1] + cv * normal[1] + sv * bitangent[1]
+      let z = p1[2] + cv * normal[2] + sv * bitangent[2]
+      let n = normalize([x - p1[0], y - p1[1], z - p1[2]])
+      vertices[at] = x
+      vertices[at + 1] = y
+      vertices[at + 2] = z
+      vertices[at + 3] = n[0]
+      vertices[at + 4] = n[1]
+      vertices[at + 5] = n[2]
+      vertices[at + 6] = i / tubularSegments
+      vertices[at + 7] = j / radialSegments
+      at += FLOATS_PER_VERTEX
+    }
+  }
+
+  let indices = new Uint16Array(tubularSegments * radialSegments * 6)
+  let n = 0
+  for (let i = 0; i < tubularSegments; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      let a = i * cols + j
+      let b = (i + 1) * cols + j
+      let c = (i + 1) * cols + j + 1
+      let d = i * cols + j + 1
+      indices[n++] = a
+      indices[n++] = b
+      indices[n++] = c
+      indices[n++] = a
+      indices[n++] = c
+      indices[n++] = d
+    }
+  }
+
+  return { vertices, indices, label }
 }
 
 /** A UV sphere centered on the origin (poles on the y axis). */

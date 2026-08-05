@@ -49,7 +49,9 @@ target only; fov/near/far stay on scene.setCamera. In a component tree,
 reach the scene via `<Scene ref>` or useScene().
 
 Geometry: `box(w?, h?, d?)`, `plane(w?, h?)` (XY, faces +z - rotate
-`[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`.
+`[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`,
+`torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)` (standing
+y-up, unlike Three's z-up).
 Materials:
 
 - `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied

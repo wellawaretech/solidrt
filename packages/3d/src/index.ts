@@ -7,7 +7,7 @@
 
 export { add, createGroup, createMesh, createScene, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible } from "./scene.ts"
 export type { CameraUpdate, Mesh as MeshNode, Scene as SceneHandle, SceneNode, SceneOptions, TransformUpdate } from "./scene.ts"
-export { box, disposeGeometry, plane, sphere, FLOATS_PER_VERTEX, VERTEX_LAYOUT } from "./geometry.ts"
+export { box, disposeGeometry, plane, sphere, torusKnot, FLOATS_PER_VERTEX, VERTEX_LAYOUT } from "./geometry.ts"
 export type { Geometry } from "./geometry.ts"
 export { shaderMaterial, unlit } from "./material.ts"
 export type { Material, ShaderMaterialOptions, UnlitOptions } from "./material.ts"
