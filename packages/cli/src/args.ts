@@ -160,5 +160,7 @@ render options:
       --script <file>    Script file to replay (default: no scripted input)
       --fps <N>          Frames per second (default: 60)
       --duration <N>     Duration in seconds (default: 1)
-      --size <WxH>       Frame size (default: 1280x720)`)
+      --size <WxH>       Frame size in physical pixels (default: 1280x720)
+  -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
+                         or a path prefix (default: the current directory)`)
 }

@@ -142,6 +142,7 @@ fn main() {
   let mut duration: u32 = 1;
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
+  let mut out: Option<String> = None;
   let mut dev_server: Option<String> = None;
   let mut data_root: Option<String> = None;
   let mut client: Option<u32> = None;
@@ -163,6 +164,8 @@ fn main() {
       script_path = Some(args.next().expect("--script requires a file path"));
     } else if arg == "--stats" {
       stats = true;
+    } else if arg == "--out" {
+      out = Some(args.next().expect("--out requires a directory or path prefix"));
     } else if arg == "--dev-server" {
       dev_server = Some(args.next().expect("--dev-server requires a value"));
     } else if arg == "--fps" {
@@ -215,7 +218,7 @@ fn main() {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,
       frames: (duration * fps) as u64,
-      output_prefix: "frame".to_string(),
+      output_prefix: out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
       script: script_path.map(load_script).unwrap_or_default(),
     })
   } else {
@@ -224,6 +227,18 @@ fn main() {
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
   lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage);
+}
+
+// `--out` names where playback frames land: an existing directory (frames
+// appear inside it as frame-NNNNNN.png) or a path prefix (<out>-NNNNNN.png).
+// Absolutized here because the runtime chdirs into the app's data sandbox
+// before frames are written; a relative value therefore means relative to the
+// invoking directory, as a caller expects.
+fn frame_prefix(out: String) -> String {
+  let path = std::path::PathBuf::from(out);
+  let path = if path.is_dir() { path.join("frame") } else { path };
+  let abs = std::path::absolute(&path).unwrap_or_else(|e| panic!("--out path '{}' is unusable: {e}", path.display()));
+  abs.to_string_lossy().into_owned()
 }
 
 // Parses a `--script` file (see `srt render --script`, written by `srt run

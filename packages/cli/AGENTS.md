@@ -34,7 +34,8 @@ Two reliable checks that need no GUI:
 2. `bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2` -
    renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
    proves the app renders. Combine with `--fps`/`--duration` (defaults
-   1280x720, 60fps, 1s).
+   1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
+   driver (falling back to a hidden window where EGL cannot go headless).
 
 Also headless: the bundled flux runtime runs a plain `.js` file directly -
 `node_modules/@solidrt/<platform>/flux script.js` (e.g.
@@ -43,9 +44,10 @@ access. The right tool for micro-benchmarks and for probing flux module
 behavior in isolation.
 
 `render` gotchas:
-- Frames are written to the RUNTIME's working dir (`~/.local/share/SolidRT/go/`),
-  NOT the directory you ran the command from. Look there for the PNGs.
-- The recording includes a debug overlay (FPS/REQ/MiB/CPU) in a corner.
+- Frames land in the directory you ran the command from; `-o <path>` picks a
+  different directory (or a path prefix for the `-NNNNNN.png` names).
+- `--size` is physical output pixels: layout runs at exactly that size
+  (display scale is pinned to 1), so frames are identical on every machine.
 - Run from the project directory. There is no `bunx --cwd` flag.
 
 ## Dev server proxies (when clients on other devices need your machine's data)

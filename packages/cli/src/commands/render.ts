@@ -12,6 +12,9 @@ export async function runRenderCommand() {
   if (values.duration) playbackArgs.push("--duration", values.duration)
   if (values.size) playbackArgs.push("--size", values.size)
   if (values.script) playbackArgs.push("--script", resolve(values.script))
+  // Always absolute: the runtime chdirs into the app's data sandbox before
+  // frames are written, so a bare prefix would land the PNGs there.
+  playbackArgs.push("--out", resolve(values.output ?? "."))
   playbackArgs.push(resolve(jsOutfile))
   let exit = await run(runner, playbackArgs)
   process.exit(exit)

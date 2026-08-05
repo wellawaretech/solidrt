@@ -16,6 +16,18 @@ Sorted by status: open first, then partial, deferred, and closed
   build; call errors name the target, signature, and argument; guest-internal
   indirect-call traps get a stale-function-pointer hint (wasmi hides the
   index).
+- [srt render should be headless, unscaled and able to choose its output folder](render-headless-determinism.md) [done] -
+  Playback now runs on SDL's offscreen video driver (hidden window on the
+  real display only as fallback), lays out with display scale pinned to 1 so
+  `--size` is physical pixels on every machine, and `-o/--output` picks
+  where frames land (default: the invoking directory).
+- [FFI write batching: interned keys, batched creation, command buffer](ffi-write-batching.md) [open] -
+  Every property write is one string-keyed FFI call (mount fans a props
+  object into per-prop calls; update bursts pay per-call overhead N times);
+  three stages - intern prop names to ids, createNode with a props object,
+  and a command buffer whose props land in a shared buffer Rust reads
+  directly, drained once per flush. Generic before the animation-specific
+  finding-b work.
 - [Zero-copy texture upload staging](texture-upload-staging.md) [open] - The
   steady state of any texture-driven app is one full-frame copy per frame to
   cross onto the raster thread; begin/endTextureUpload over raster-owned

@@ -7,7 +7,7 @@ use crate::backend::{DisplayContext, FrameOutput};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  translate_event, AlloyCommand, AlloyEvent,
+  playback_resize_event, translate_event, AlloyCommand, AlloyEvent,
 };
 use crate::gl;
 use crate::mode::Mode;
@@ -29,8 +29,9 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // as PointerType::Mouse with a sentinel pointer_id.
   sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
   sdl3::hint::set("SDL_MOUSE_TOUCH_EVENTS", "0");
-  // For playback, force 1:1 pixel mapping so the window is exactly the
-  // requested size in physical pixels regardless of display scale.
+  // For the playback fallback below, force 1:1 pixel mapping so the hidden
+  // window is exactly the requested size in physical pixels regardless of
+  // display scale.
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
   }
@@ -40,7 +41,36 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // (iroh's network monitoring via flux:p2p) can reach the Android context.
   #[cfg(target_os = "android")]
   crate::sdl_utils::init_android_context();
-  let video = sdl_context.video().expect("Failed to get video subsystem");
+
+  // Playback wants no display at all: SDL's offscreen video driver backs the
+  // window with an EGL pbuffer, so `srt render` runs in CI, over SSH, on any
+  // headless box - and its fake display has no scale to inherit. A box whose
+  // SDL/EGL cannot give the driver a working GL ES context falls back to the
+  // interactive path's hidden window on the real display. The failed attempt
+  // dropped its video subsystem handles, so clearing the hint and re-entering
+  // setup_video re-initializes video on the platform's default driver.
+  if mode.is_playback() {
+    sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
+    match setup_video(&sdl_context, title, (width, height), &mode) {
+      Ok((window, platform)) => return App { sdl_context, window, platform, mode },
+      Err(e) => {
+        log::warn!("[alloy] offscreen video driver unavailable ({e}); falling back to a hidden window");
+        sdl3::hint::set("SDL_VIDEO_DRIVER", "");
+      }
+    }
+  }
+
+  let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
+  App { sdl_context, window, platform, mode }
+}
+
+fn setup_video(
+  sdl_context: &sdl3::Sdl,
+  title: &str,
+  (width, height): (u32, u32),
+  mode: &Mode,
+) -> Result<(sdl3::video::Window, DisplayContext), String> {
+  let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
 
   gl::configure_opengl(&video);
 
@@ -52,14 +82,13 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   if !mode.is_playback() {
     builder.resizable();
   }
-  let mut window = builder.build().expect("Failed to create window");
+  let mut window = builder.build().map_err(|e| format!("window creation: {e}"))?;
   if mode.is_playback() {
     window.hide();
   }
 
-  let platform = DisplayContext::new_opengl(&window).expect("Failed to set up platform");
-
-  App { sdl_context, window, platform, mode }
+  let platform = DisplayContext::new_opengl(&window).map_err(|e| format!("GL setup: {e}"))?;
+  Ok((window, platform))
 }
 
 fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>, mode: &Mode) {
@@ -115,7 +144,7 @@ impl App {
     };
     platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
 
-    let initial = current_resize_event(&window);
+    let initial = if mode.is_playback() { playback_resize_event(&window) } else { current_resize_event(&window) };
     apply_main_thread_effects(&initial, &surface_size, &mode);
     event_tx.send(initial).ok();
 

@@ -235,6 +235,20 @@ pub(crate) fn current_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
   }
 }
 
+// Playback's one resize event. The mode exists for machine-independent
+// captures, so the host display's scale must not leak into layout: the scale
+// is pinned to 1.0 and the size is the capture buffer's physical size, making
+// a layout box map to output pixels 1:1 on every machine. An offscreen
+// capture has no insets, so the safe area is the full window.
+pub(crate) fn playback_resize_event(window: &sdl3::video::Window) -> AlloyEvent {
+  let (w, h) = window.size_in_pixels();
+  AlloyEvent::Resize {
+    size: ISize::new(w as i64, h as i64),
+    safe_area: Rect::new(impellers::Point::new(0.0, 0.0), impellers::Size::new(w as f32, h as f32)),
+    display_scale: 1.0,
+  }
+}
+
 // Maps SDL mouse buttons to web-standard MouseEvent.button codes:
 // 0=left, 1=middle, 2=right, 3=back (X1), 4=forward (X2).
 // Unknown returns None so the caller can drop the event.
