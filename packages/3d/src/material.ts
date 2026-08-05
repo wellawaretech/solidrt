@@ -17,17 +17,36 @@
 // draws into an ordinary draw target - a custom-shaded mesh is a future
 // material class here, or the app's own addDraw beside the scene's.
 
-import { compileShader, createRenderPipeline, glsl, linkProgram } from "@solidrt/core/gpu"
-import type { RenderPipelineId, ShaderParams, ShaderStageId, TextureId } from "@solidrt/core/gpu"
+import {
+  compileShader,
+  createRenderPipeline,
+  destroyProgram,
+  destroyRenderPipeline,
+  destroyShader,
+  glsl,
+  linkProgram,
+} from "@solidrt/core/gpu"
+import type {
+  BlendMode,
+  CullMode,
+  ProgramId,
+  RenderPipelineId,
+  ShaderParams,
+  ShaderStageId,
+  TextureId,
+  Topology,
+} from "@solidrt/core/gpu"
 import { VERTEX_LAYOUT } from "./geometry.ts"
 
 export type Material = {
-  /** The shared pipeline for this material's class (lazily created). */
+  /** The pipeline this material draws with (lazily created). */
   pipeline(): RenderPipelineId
   /** Per-entry uniform values this material contributes at addDraw. */
   params: ShaderParams
-  /** Per-entry sampler bindings, when the class samples textures. */
+  /** Per-entry sampler bindings, when the material samples textures. */
   textures?: Record<string, TextureId>
+  /** Present on materials that own their pipeline (shaderMaterial). */
+  dispose?(): void
 }
 
 // One vertex stage serves every unlit class: MVP transform plus the UV
@@ -102,4 +121,80 @@ export function unlit(opts: UnlitOptions = {}): Material {
     return { pipeline: () => pipelineFor("map"), params: { uColor }, textures: { uMap: opts.map } }
   }
   return { pipeline: () => pipelineFor("color"), params: { uColor } }
+}
+
+// Mirrors the engine's own preamble rule: a source carrying its own
+// #version line is compiled exactly as written.
+function needsHeader(source: string): boolean {
+  return !source.trimStart().startsWith("#version")
+}
+
+export type ShaderMaterialOptions = {
+  /**
+   * Vertex stage GLSL. MUST declare and use `uniform mat4 uMVP` - the scene
+   * writes projection * view * world into it whenever the mesh or camera
+   * moves. Declare any of the shared layout's `in` attributes (aPos vec3,
+   * aNormal vec3, aUV vec2); undeclared ones are skipped.
+   */
+  vertex: string
+  fragment: string
+  /** Uniform seeds beyond uMVP; update per mesh later with setMeshParams. */
+  params?: ShaderParams
+  textures?: Record<string, TextureId>
+  /** Pipeline state; defaults match unlit: depth: true, cull: "back". */
+  depth?: boolean
+  depthWrite?: boolean
+  blend?: BlendMode
+  cull?: CullMode
+  topology?: Topology
+  label?: string
+}
+
+/**
+ * A material from your own GLSL: the custom-look escape hatch, first-class
+ * next to unlit. Sources without a `#version` line get the standard
+ * pipeline preamble (`fragColor`, `iResolution`).
+ *
+ * The INSTANCE is the pipeline handle: two calls with identical sources
+ * compile two pipelines - there is no dedupe by source value (a hidden
+ * cache keyed by content is the anti-pattern the GPU layer avoids
+ * throughout). Create one per look at app scope, share it across meshes,
+ * and `dispose()` it if the app is done with the look for good.
+ */
+export function shaderMaterial(opts: ShaderMaterialOptions): Material {
+  let program: ProgramId | undefined
+  let pipeline: RenderPipelineId | undefined
+  return {
+    pipeline() {
+      if (pipeline === undefined) {
+        let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
+        let fs = compileShader("fragment", opts.fragment, { header: needsHeader(opts.fragment) })
+        program = linkProgram(vs, fs, { label: opts.label })
+        destroyShader(vs)
+        destroyShader(fs)
+        pipeline = createRenderPipeline(program, {
+          attributes: VERTEX_LAYOUT,
+          depth: opts.depth ?? true,
+          depthWrite: opts.depthWrite,
+          blend: opts.blend,
+          cull: opts.cull ?? "back",
+          topology: opts.topology,
+          label: opts.label,
+        })
+      }
+      return pipeline
+    },
+    params: opts.params ?? {},
+    textures: opts.textures,
+    dispose() {
+      if (pipeline !== undefined) {
+        destroyRenderPipeline(pipeline)
+        pipeline = undefined
+      }
+      if (program !== undefined) {
+        destroyProgram(program)
+        program = undefined
+      }
+    },
+  }
 }

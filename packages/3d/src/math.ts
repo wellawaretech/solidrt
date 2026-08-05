@@ -110,6 +110,37 @@ export function perspective(out: Mat4, fovy: number, aspect: number, near: numbe
   return out
 }
 
+// Vec3 helpers for geometry construction. These allocate (unlike the matrix
+// functions above): they serve generation-time code - curve frames, normals -
+// not the per-frame path. Exposed on the /math subpath only, so `add` does
+// not collide with the scene's add() on the package root.
+
+export function add(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+export function sub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+export function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+export function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+export function scale(v: Vec3, s: number): Vec3 {
+  return [v[0] * s, v[1] * s, v[2] * s]
+}
+
+/** Unit vector; a zero-length input comes back unchanged. */
+export function normalize(v: Vec3): Vec3 {
+  let len = Math.hypot(v[0], v[1], v[2]) || 1
+  return [v[0] / len, v[1] / len, v[2] / len]
+}
+
 /**
  * View matrix (world -> camera) for a camera at `eye` looking at `target`
  * with the given `up`. Degenerate inputs (eye == target, up parallel to the

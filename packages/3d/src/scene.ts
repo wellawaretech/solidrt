@@ -13,7 +13,7 @@
 // flush renders once that frame.
 
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setShaderSize } from "@solidrt/core/gpu"
-import type { DrawId, FilterMode, TextureId, WrapMode } from "@solidrt/core/gpu"
+import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidjs/signals"
 import { compose, lookAt, mat4, multiply, perspective } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
@@ -31,6 +31,7 @@ type SceneHooks = {
   _schedule(): void
   _attach(mesh: Mesh): void
   _detach(mesh: Mesh): void
+  _setParams(mesh: Mesh, params: ShaderParams): void
 }
 
 export type SceneNode = {
@@ -56,6 +57,7 @@ export type Mesh = SceneNode & {
   _entry: DrawId | null
   _hidden: boolean
   _fresh: boolean
+  _params: ShaderParams | null
 }
 
 export type CameraUpdate = {
@@ -118,6 +120,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._entry = null
   mesh._hidden = false
   mesh._fresh = false
+  mesh._params = null
   return mesh
 }
 
@@ -230,6 +233,21 @@ function rebuildEntry(mesh: Mesh): void {
 }
 
 /**
+ * Write per-mesh uniforms - the channel for a custom material's app-driven
+ * values (a camera position, a time, a per-object tint). Names must be
+ * declared and used by the mesh's material shaders (unknown names throw at
+ * the call site, the engine's validation contract). Values persist on the
+ * mesh: they survive geometry/material entry rebuilds and re-apply then.
+ * Also the frame-rate path - like setTransform, call it from onFrame
+ * freely.
+ */
+export function setMeshParams(mesh: Mesh, params: ShaderParams): void {
+  if (mesh._params === null) mesh._params = {}
+  Object.assign(mesh._params, params)
+  mesh._scene?._setParams(mesh, params)
+}
+
+/**
  * Create a scene rendering into a depth-buffered draw target of the given
  * size. Returns the scene handle; `scene.texture` is the output. Inside a
  * reactive scope the scene disposes with the owner (opt out with
@@ -313,12 +331,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _attach(mesh) {
       if (disposed) return
       let bufs = geometryBuffers(mesh.geometry)
-      mesh._entry = addDraw(texture, mesh.material.pipeline(), { uMVP: IDENTITY, ...mesh.material.params }, {
-        buffer: bufs.buffer,
-        indexBuffer: bufs.index,
-        indexFormat: "uint16",
-        textures: mesh.material.textures,
-      })
+      mesh._entry = addDraw(
+        texture,
+        mesh.material.pipeline(),
+        { uMVP: IDENTITY, ...mesh.material.params, ...mesh._params },
+        {
+          buffer: bufs.buffer,
+          indexBuffer: bufs.index,
+          indexFormat: "uint16",
+          textures: mesh.material.textures,
+        },
+      )
       mesh._hidden = false
       mesh._fresh = true
       this._schedule()
@@ -326,6 +349,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _detach(mesh) {
       if (mesh._entry !== null && !disposed) removeDraw(texture, mesh._entry)
       mesh._entry = null
+    },
+    _setParams(mesh, params) {
+      if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
     },
   }
 

@@ -39,8 +39,19 @@ blendMode and pointer events like any element. Design rationale:
 
 Geometry: `box(w?, h?, d?)`, `plane(w?, h?)` (XY, faces +z - rotate
 `[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`.
-Material: `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1,
-premultiplied internally.
+Materials:
+
+- `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied
+  internally.
+- `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
+  depthWrite?, blend?, cull?, topology?, label? })` - your own GLSL, the
+  custom-look escape hatch. The vertex stage MUST declare and use
+  `uniform mat4 uMVP` (the scene writes projection * view * world into
+  it); attributes come from the shared layout by name; sources without
+  `#version` get the standard pipeline preamble. App-driven uniforms
+  beyond uMVP: seed via `params`, then write per mesh with
+  `setMeshParams(mesh, { name: value })` (validated names; values persist
+  across entry rebuilds; frame-rate-safe like setTransform).
 
 ## Traps
 
@@ -67,3 +78,11 @@ premultiplied internally.
   when transparency lands.
 - `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
   context).
+- A `shaderMaterial` INSTANCE is the pipeline handle: identical sources
+  compile twice - no dedupe by source value (deliberate; hidden
+  content-keyed caches are the anti-pattern the GPU layer avoids). Create
+  one per look at app scope, share across meshes, `dispose()` when done
+  for good.
+- A shaderMaterial vertex stage without `uniform mat4 uMVP` (declared AND
+  used) throws at mesh attach - the scene seeds uMVP on every entry and
+  the engine rejects unknown uniform names.

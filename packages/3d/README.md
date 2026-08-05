@@ -33,7 +33,8 @@ There is also an imperative layer underneath (`createScene`, `createMesh`,
 `setTransform`, ...) usable without components, plus a small math module
 (`@solidrt/3d/math`: column-major mat4, perspective, lookAt).
 
-v1 scope: unlit color/textured materials, box/plane/sphere geometry, one
+v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
+GLSL as a first-class material), box/plane/sphere geometry, one
 perspective camera. Lights, transparency, model loading and picking are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
 usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:
