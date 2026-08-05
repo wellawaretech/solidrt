@@ -1,0 +1,21 @@
+{
+  "name": "@solidrt/3d",
+  "version": "0.0.0",
+  "license": "MIT",
+  "author": "Antoine van Wel",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./math": "./src/math.ts"
+  },
+  "files": [
+    "src/",
+    "examples/",
+    "AGENTS.md"
+  ],
+  "peerDependencies": {
+    "@solidrt/core": "workspace:*",
+    "@solidjs/signals": "2.0.0-beta.26"
+  }
+}

@@ -10,6 +10,15 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Uniform arrays (vecN[], mat4[])](gpu-uniform-arrays.md) [open] - Array
+  uniforms have no path (the typed-uniform dispatch is single-element
+  only), so a light list or palette becomes N scalar uniforms or a data
+  texture; glUniform*v dispatch by reflected array size is a small
+  extension, first wanted by the scene-graph light model.
+- [Cube map textures](gpu-cube-maps.md) [open] - No TEXTURE_CUBE_MAP
+  support anywhere (upload, sampling, or render target), so skyboxes,
+  environment/reflection mapping and cube shadow maps have no path; ES
+  3.0 core, demand-gated on the scene-graph environment tier.
 - [flux:wasm memory views and named call errors](flux-wasm-memory-access.md) [done] -
   `instance.memory` ArrayBuffer aliases linear memory (detach-on-grow, web
   `Memory.buffer` contract), closing the copy-free gap with the pure-JS
@@ -185,15 +194,9 @@ Sorted by status: open first, then partial, deferred, and closed
 - [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
   uniforms and the additive blend/depthWrite toggles landed 2026-07-29, draw
   range and instancing (setDraw) 2026-07-30, multi-pass targets 2026-08-04
-  (spun off as gpu-draw-list); still deferred: index buffers (shape
-  decided), per-instance attributes, float data textures, sampleable depth,
-  cull/depth-func raster state, and alpha translucency.
-- [GPU draw targets](gpu-draw-list.md) [implemented] - The multi-pass
-  bullet built as a retained, ordered, mutable draw list: createDrawTarget
-  + addDraw/removeDraw with stable DrawIds, per-entry setters, and the
-  ordering verbs (before on addDraw, setDrawOrder as the sorting verb);
-  one clear + N draws = one pass, target-owned depth storage.
-  Headless-verified; live-client verification pending.
+  (spun off as gpu-draw-list), index buffers, cull mode and per-instance
+  attributes 2026-08-04; still deferred: float data textures, sampleable
+  depth, depth func, and alpha translucency.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI

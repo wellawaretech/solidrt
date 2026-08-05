@@ -1,0 +1,69 @@
+# @solidrt/3d - agent notes
+
+A retained 3D scene graph above `@solidrt/core/gpu`. Meshes, materials and
+a camera compile to ONE depth-buffered draw target (`createDrawTarget` +
+one `addDraw` entry per mesh); the scene's output is an ordinary texture
+id composited as a `<texture>` leaf, so it takes layout, transforms,
+blendMode and pointer events like any element. Design rationale:
+`okf/research/scene-graph-3d.md` in the repo.
+
+## The model
+
+- Two layers. The imperative core is Solid-free: `createScene`,
+  `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
+  `setVisible` - plain objects with dirty flags, batched to a microtask,
+  one `setDrawParams` (the uMVP matrix) per changed mesh. The component
+  face (`Scene`/`Group`/`Mesh`/`PerspectiveCamera`) syncs props into that
+  core over context and renders nothing itself.
+- Rendering is the runtime's. The target is `render: "auto"`: it
+  re-renders when entries change, so a STATIC scene costs zero passes and
+  the library registers no frame loop. Continuous animation is the app's
+  own `onFrame` writing a signal (declarative) or `setTransform` on a
+  `ref`-grabbed node (the frame-rate escape hatch - signals carry
+  structure, per-frame motion goes straight to the scene).
+- One vertex layout everywhere: `aPos` vec3 + `aNormal` vec3 + `aUV` vec2,
+  uint16-indexed. Geometry GPU buffers are lazy, shared, and app-lifetime
+  (owner-scoped free would break sharing); `disposeGeometry` frees them.
+- Materials dedupe hard: one program + one pipeline per material CLASS
+  (unlit color, unlit map), `depth: true` + `cull: "back"`; an instance is
+  just per-entry uniforms (`uColor`) and bindings (`uMap`).
+
+## Components
+
+| Component | Props |
+| --- | --- |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)` |
+| `Group` | `position?`, `rotation?` (Euler radians, x-y-z order), `scale?` (number = uniform), `visible?`, `ref?(node)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `ref?(mesh)` |
+| `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
+
+Geometry: `box(w?, h?, d?)`, `plane(w?, h?)` (XY, faces +z - rotate
+`[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`.
+Material: `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1,
+premultiplied internally.
+
+## Traps
+
+- The y-down clip flip is baked into `perspective()`; scene code and
+  geometry are plain y-up right-handed, and CCW-outward winding culls
+  correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not
+  "fix" the negated row of `perspective()` - both would mirror the winding
+  and show mesh interiors.
+- `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
+  cheap off switch). Hidden meshes skip uMVP writes; the fresh matrix is
+  written on unhide.
+- Alpha does not blend in v1: pipelines are opaque (`blend: "none"`), a
+  translucent color overwrites. Transparency waits on blend factors +
+  sorting (research note, staging step 4).
+- Rotation is Euler radians applied x, then y, then z. No quaternions in
+  v1.
+- Transforms have ONE write path: `setTransform`/`setVisible` (or the
+  props that call them). Mutating `node.position` directly does not sync.
+- A camera change rewrites every visible entry's uMVP (documented v1
+  cost, fine at hundreds of meshes). Scene scale honestly: hundreds to a
+  few thousand objects, bounded by the interpreter, not the GPU.
+- Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
+  list END. Irrelevant while everything is opaque + depth-tested; revisit
+  when transparency lands.
+- `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
+  context).

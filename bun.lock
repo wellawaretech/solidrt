@@ -6,12 +6,21 @@
       "devDependencies": {
         "@solidjs/signals": "2.0.0-beta.26",
         "@solidjs/universal": "2.0.0-beta.26",
+        "@solidrt/3d": "workspace:*",
         "@solidrt/cli": "workspace:*",
         "@solidrt/components": "workspace:*",
         "@solidrt/core": "workspace:*",
         "@solidrt/flux-types": "workspace:*",
         "solid-js": "2.0.0-beta.26",
         "typescript": "^7",
+      },
+    },
+    "packages/3d": {
+      "name": "@solidrt/3d",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@solidjs/signals": "2.0.0-beta.26",
+        "@solidrt/core": "workspace:*",
       },
     },
     "packages/android-arm64-v8a": {
@@ -200,6 +209,8 @@
     "@solidjs/signals": ["@solidjs/signals@2.0.0-beta.26", "", {}, "sha512-ocwCOuqNbV6R1swAuNP+AF0FoRhxCK8/vhG+XszM0rP8htyYOqsLSXfUy3hVRJHJ/wh7ajN3pZXpv7SPujzD/w=="],
 
     "@solidjs/universal": ["@solidjs/universal@2.0.0-beta.26", "", { "peerDependencies": { "solid-js": "^2.0.0-beta.26" } }, "sha512-8H0ExyKNTLwNUrbo+jXHePTzsV1ewwAcZl1VRHfwJ4Ok6SZjVA16Mw2KcvMQNhj+tQ3tPJl0CBiZh32C6WQp2Q=="],
+
+    "@solidrt/3d": ["@solidrt/3d@workspace:packages/3d"],
 
     "@solidrt/android-arm64-v8a": ["@solidrt/android-arm64-v8a@workspace:packages/android-arm64-v8a"],
 
