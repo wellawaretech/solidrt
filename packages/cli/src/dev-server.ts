@@ -2,7 +2,7 @@ import { resolve } from "path"
 import { tmpdir, networkInterfaces } from "node:os"
 import { fileURLToPath } from "node:url"
 import { state, print, printErr, requireBinary, pipeAbovePrompt, shutdown } from "./util"
-import { values } from "./args"
+import { appArgs, values } from "./args"
 
 export const DEV_HOST = "127.0.0.1"
 export const DEFAULT_DEV_PORT = 0x8844
@@ -41,6 +41,9 @@ export function buildReload(payload: { code?: string | null; bytecode?: string; 
   return {
     type: "reload",
     proxyHttp: values["proxy-http"],
+    // The session's app arguments ride every push (flux:process argv), so
+    // remote clients see the same vector as the local one.
+    args: appArgs,
     ...(manifest ? { manifest } : {}),
     ...rest,
   }
@@ -213,6 +216,7 @@ export async function startServer() {
     address,
     proxyHttp: values["proxy-http"],
     entry: state.source,
+    args: appArgs,
     minify: values.minify,
     bundlerCmd: [process.execPath, bundleCli],
     cache: values["proxy-http"],

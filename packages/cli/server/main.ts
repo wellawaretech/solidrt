@@ -16,8 +16,7 @@ import { appendLog, clientList, handleControl, resolveQuery } from "./control"
 import { printQr } from "./qr"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 
-// argv layout differs between hosts; the config JSON is always the last argument.
-let config: Config = JSON.parse(argv[argv.length - 1]!)
+let config: Config = JSON.parse(argv[0]!)
 state.config = config
 state.sourceDir = config.sourceDir
 state.projectDir = config.projectDir

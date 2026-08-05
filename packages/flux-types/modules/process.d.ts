@@ -1,7 +1,9 @@
 declare module "flux:process" {
   /**
-   * The program's command-line arguments. `argv[0]` is the script path;
-   * `argv[1]` onward are the user-supplied arguments.
+   * The arguments the app was started with; empty when there are none.
+   * App arguments only: no executable path, no script path (deliberately
+   * simpler than Node/Bun's two leading entries), so `argv[0]` is the first
+   * argument.
    */
   export let argv: string[]
   /** The host OS: "darwin", "win32", "linux", "android", ... */

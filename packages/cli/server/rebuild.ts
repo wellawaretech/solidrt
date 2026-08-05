@@ -16,6 +16,7 @@ function buildReload(code: string, manifest?: string) {
   return {
     type: "reload",
     proxyHttp: config.proxyHttp,
+    args: config.args,
     ...(manifest ? { manifest } : {}),
     code,
   }

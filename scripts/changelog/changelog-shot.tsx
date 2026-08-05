@@ -1,22 +1,28 @@
-// Renders the newest release's sections of CHANGELOG.md as a PNG. Drive it with
-// ./changelog-shot rather than running it by hand: that script does two `srt
-// render` passes, the first to read the laid-out content height printed below,
-// the second to render at exactly that height so the image ends where the
-// content does.
+// Renders the newest release's sections of CHANGELOG.md as a PNG:
 //
-// Playback mode gives an offscreen surface, a virtual clock and the runtime's
-// embedded fonts, so the same changelog produces the same pixels every run and
-// on every machine - which a desktop screenshot never does.
+//   ./changelog-shot [output-dir] [width]
+//
+// The app captures itself and writes the file - render the card, snapshot the
+// content node, encode, write, exit. The capture is the node's own box, so the
+// image is cropped to the content with no measuring pass and no image tooling.
+//
+// Playback gives an offscreen surface, a virtual clock and the runtime's
+// embedded fonts, and lays out at scale 1, so the same changelog produces the
+// same pixels every run and on every machine - which a desktop screenshot never
+// does.
 //
 // The changelog is inlined at bundle time. The runtime chdirs into its own data
 // sandbox before app code runs, so a relative read at runtime would not find
-// the repo file.
+// the repo file, and the output directory arrives as an absolute path in argv.
 //
 // A bullet is one flowing paragraph, as in the source. Core <text> has no
 // inline runs, so the paragraph is laid out a word at a time in a wrapping row
 // and each word carries its own run's style: that is what makes a bold lead-in
 // or `inline code` sit mid-sentence instead of on a line of its own.
-import { createLinearGradient, getBoundingBox, onLayout, render } from "@solidrt/core"
+import { createLinearGradient, encodeImage, exit, render } from "@solidrt/core"
+import { captureSnapshot, destroyTexture, readTexture } from "@solidrt/core/gpu"
+import { file } from "flux:fs"
+import { argv } from "flux:process"
 import source from "../../CHANGELOG.md" with { type: "text" }
 
 const SECTIONS = ["Fixes", "Features", "API"]
@@ -152,24 +158,38 @@ function App() {
   let release = newestRelease(source)
   let sections = parseSections(release.lines)
 
-  // The driver names the file after the release, and the changelog is the only
-  // thing that knows which release this is.
-  console.log(`shot-version ${release.title.split(" ")[0]}`)
-
-  // Playback lays out with the display scale pinned to 1, so a layout unit is
-  // an output pixel and the content height is directly the second pass's
-  // --size height.
+  // One shot, after the first paint: a capture is serviced by the paint walk,
+  // so it needs a frame to have happened. The image is named for the release
+  // because only the changelog knows which one this is; the caller owns the
+  // directory.
   let content!: { id: number }
-  onLayout(() => {
-    let inner = getBoundingBox(content)
-    if (inner) console.log(`shot-height ${Math.ceil(inner.height)}`)
+  requestAnimationFrame(async () => {
+    let dir = argv[0]
+    if (!dir) {
+      console.error("changelog-shot: no output directory (pass one after --)")
+      exit()
+      return
+    }
+    let path = `${dir}/changelog-${release.title.split(" ")[0]}.png`
+    try {
+      let snap = await captureSnapshot(content.id)
+      let pixels = readTexture(snap.id)
+      destroyTexture(snap.id)
+      await file(path).write(encodeImage(pixels))
+      console.log(`changelog-shot: wrote ${path} (${snap.width}x${snap.height})`)
+    } catch (err) {
+      console.error(`changelog-shot: ${err}`)
+    }
+    exit()
   })
 
   return (
     <window flexDirection="column">
-      <d-rect color={backgroundColor} />
-      <view flex={1} flexDirection="column">
+      <view flexDirection="column">
+        {/* The background belongs INSIDE the captured node: a sibling behind it
+            is not part of the node, and the card would capture transparent. */}
         <view ref={n => (content = n)} flexDirection="column" gap={22} padding={PADDING}>
+          <d-rect color={backgroundColor} />
           <text fontSize={16} fontWeight={600} color="#6f86c4">{release.title}</text>
           {sections.map(section => (
             <view flexDirection="column" gap={9}>

@@ -8,10 +8,12 @@ fn log_fn(_level: LogLevel, msg: &str) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-  // argv[0] is the executable, argv[1] the script path (Node/Bun parity); the
-  // rest are forwarded to JS through flux:process.
-  let argv: Vec<String> = std::env::args().collect();
-  let path = argv.get(1).cloned();
+  // The first argument is the script path ("-" or absent: stdin); everything
+  // after it is the program's argument vector, forwarded to JS through
+  // flux:process (which exposes app arguments only, no executable/script).
+  let mut args = std::env::args().skip(1);
+  let path = args.next();
+  let argv: Vec<String> = args.collect();
 
   let source = match path.as_deref() {
     Some("-") | None => {

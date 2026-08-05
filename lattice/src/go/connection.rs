@@ -495,7 +495,15 @@ async fn try_serve(
                   Err(e) => log::warn!("[sgo] Version install failed: {e}"),
                 }
               }
-              let _ = tx.send(crate::EngineCmd::Reload { code: code.to_string(), app_id });
+              // The session's app arguments ride each push (flux:process
+              // argv), so every client - local or remote - sees the same
+              // vector for the same app.
+              let args = json
+                .get("args")
+                .and_then(|a| a.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+              let _ = tx.send(crate::EngineCmd::Reload { code: code.to_string(), app_id, args });
             }
           }
           Some("stats") => {

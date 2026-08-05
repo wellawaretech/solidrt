@@ -98,6 +98,54 @@ assert the pruned set matches the handler map.
    Rust-emitted sticky (fold into `inputDevices` or a `pointerSeen`
    sticky; `note()` already self-unsubscribes once satisfied).
 
+## End-state alternative: handlers stored Rust-side
+
+The stages above keep the JS handler map and teach Rust interest bits. The
+terminal version of the same trajectory moves the pointer handlers
+themselves into Rust: a plugin-side `HashMap<(nodeId, kind),
+Persistent<Function>>` in context userdata, dispatch looks up and calls
+only listening nodes directly - no bus emit, no JS-side walk, no parallel
+arrays, and the registry IS the mask (the divergence failure mode above
+disappears; skip-when-empty is the natural behavior rather than a stage).
+Calling JS handlers from Rust is the established pattern, not new ground:
+the event bus (`ListenerMap`, modules/events.rs), rAF (`RafCallbacks`,
+gui/raf.rs), and timers all store `Persistent<Function>` in userdata and
+restore + call, reporting throws via `report_uncaught`.
+
+Constraints that shape it:
+
+- Persistent discipline (the flux:wasm lesson, flux/CLAUDE.md): Persistents
+  live in a context-userdata registry keyed by id, never in an rquickjs
+  class. The registry cannot live on `Element` (rendertree stays
+  engine-independent), so node destroy must clear its entries explicitly -
+  that map is the new leak surface.
+- stopPropagation crosses the boundary: Rust must observe a flag a handler
+  sets mid-walk (native closure on the event object writing an
+  `Rc<Cell<bool>>`, or a property read-back after each call).
+- Reentrancy: handlers call setFocus, write signals, trigger effects that
+  call setProperty back into Rust. Dispatch must keep the current shape -
+  compute path + locals, drop all tree RefCell borrows, THEN call handlers
+  one at a time - or a handler touching the tree panics the borrow.
+- Partial coverage by design: key/text/focus dispatch routes along the
+  focus chain and focus policy stays in JS (below), so the JS handler map
+  survives for those. End state is two registries split by routing family
+  (hit-tested events in Rust, focus-routed events in JS) - principled, but
+  "single source of truth" is per-family, not global.
+- Dividing line this respects: Rust may own dispatch (calling registered
+  functions at the right moment - it already does everywhere below the
+  renderer), JS owns reactivity (what those calls mean). For the same
+  reason, storing SIGNAL SETTERS in Rust was considered and rejected: a
+  setter is just a function so it is mechanically identical, but it bakes
+  a Solid dependency into flux (which runs plain JS apps), the facts it
+  would carry are rare window events where the bus hop costs nothing, and
+  the sticky-replay pattern would have to be reinvented. Rust emits facts;
+  JS makes them reactive.
+
+Justify with the stage-1 counters before building: the mask gets most of
+the marshalling win with a much smaller blast radius, so this step needs
+the remaining delta (per-event JS walk + emit overhead) to show up in
+numbers.
+
 ## Deliberately out of scope
 
 - Moving focus to Rust: rejected. Focus is entangled with JS-only policy

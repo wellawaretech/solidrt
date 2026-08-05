@@ -17,6 +17,9 @@ export type Config = {
    * MCP-triggered reload, or undefined when srt was started without a source.
    * Moved by the repl `load` command via /__internal__/reload. */
   entry?: string
+  /** The session's app arguments (the srt command-line tail after a bare
+   * "--"), included in every reload push as flux:process argv. */
+  args: string[]
   /** Minify the rebuild output, mirroring the srt --minify flag. */
   minify: boolean
   /** How the server invokes the external bundler: [bunPath, bundleCliPath],

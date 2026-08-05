@@ -1,7 +1,16 @@
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 
+// Everything after a bare "--" is the app's argument vector, kept out of
+// parseArgs (which would fold it into positionals) and forwarded verbatim to
+// the runner, where it becomes flux:process argv. srt's own flags may follow
+// the source file, so the separator is required.
+let rawArgs = process.argv.slice(2)
+let appArgsSep = rawArgs.indexOf("--")
+export let appArgs = appArgsSep === -1 ? [] : rawArgs.slice(appArgsSep + 1)
+
 export let { values, positionals } = parseArgs({
+  args: appArgsSep === -1 ? rawArgs : rawArgs.slice(0, appArgsSep),
   options: {
     dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
@@ -126,6 +135,7 @@ run/server options:
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel
+      -- <args...>       Everything after -- reaches the app on every client (flux:process argv)
 
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
@@ -162,5 +172,6 @@ render options:
       --duration <N>     Duration in seconds (default: 1)
       --size <WxH>       Frame size in physical pixels (default: 1280x720)
   -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
-                         or a path prefix (default: the current directory)`)
+                         or a path prefix (default: the current directory)
+      -- <args...>       Everything after -- is passed to the app (flux:process argv)`)
 }

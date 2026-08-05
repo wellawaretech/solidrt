@@ -22,8 +22,10 @@ enum EngineCmd {
   // `app_id` names the app a dev push belongs to (from its installed
   // manifest); the runtime re-anchors into that app's data sandbox before the
   // reload applies. None for pushes without a manifest (bytecode one-shots,
-  // the BSOD trigger), which keep the current sandbox.
-  Reload { code: String, app_id: Option<String> },
+  // the BSOD trigger), which keep the current sandbox. `args` is the app's
+  // argument vector for this start (the dev session's configured args; empty
+  // for a launcher launch), exposed as flux:process argv.
+  Reload { code: String, app_id: Option<String>, args: Vec<String> },
 }
 
 // What "exit the current app" means, decided by host context (see
@@ -32,9 +34,12 @@ enum EngineCmd {
 // launcher-less runtime builds, the client quits - process exit on desktop,
 // backgrounding the activity on Android (the platform's back-at-root
 // convention). Backs the srt:app exit() verb, which is core's default action
-// for an unprevented `back` event.
+// for an unprevented `back` event. In playback mode exit() ends the recording
+// run instead: the frame budget is only an upper bound, and there is no
+// launcher to return to.
 #[derive(Clone)]
 struct ExitPolicy {
+  playback: bool,
   #[cfg(feature = "go")]
   launcher_active: Arc<std::sync::atomic::AtomicBool>,
   #[cfg(feature = "go")]
@@ -44,6 +49,9 @@ struct ExitPolicy {
 
 impl ExitPolicy {
   fn exit(&self) {
+    if self.playback {
+      std::process::exit(0);
+    }
     #[cfg(feature = "go")]
     if !self.launcher_active.load(Ordering::Relaxed) {
       // A failed send means the engine loop is already shutting down; there
@@ -79,8 +87,10 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
   // Android resolves its own sandboxed root; no flags, no packed identity.
+  // No app argument channel either: the activity is launched by intent, not
+  // from a command line.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage);
+  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
   0
 }
 
@@ -204,6 +214,10 @@ struct RunOptions {
   fonts: Vec<FontPayload>,
   // Data-root resolution inputs (see storage::resolve).
   storage: storage::StorageSpec,
+  // The app's argument vector (everything after the source path or a bare
+  // `--` on the runner command line), exposed as flux:process argv. Process-
+  // level: a reload or launcher-launched app sees the same vector.
+  args: Vec<String>,
 }
 
 // Point the assets mount (see forge::fs) at the app's current installed
@@ -278,7 +292,7 @@ fn ui_thread(
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec } = opts;
+  let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -328,6 +342,10 @@ fn ui_thread(
   let mut current_app = app.unwrap_or_else(|| AppSource::Text(LAUNCHER_SOURCE.to_string()));
   #[cfg(not(feature = "go"))]
   let mut current_app = app.expect("runtime builds must provide an app source");
+  // The running app's argument vector (flux:process argv), per app start:
+  // the process tail for the app the process was started for, a push's args
+  // for a dev reload, empty for the launcher and its launches.
+  let mut current_args = args;
   let mut showing_bsod = false;
 
   // Bridge the synchronous Alloy event channel onto an async one: a blocking
@@ -614,6 +632,7 @@ fn ui_thread(
     #[cfg(feature = "go")]
     let launcher_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let exit_policy = ExitPolicy {
+      playback: playback_fps.is_some(),
       #[cfg(feature = "go")]
       launcher_active: launcher_active.clone(),
       #[cfg(feature = "go")]
@@ -726,7 +745,8 @@ fn ui_thread(
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .module_override("srt:apps", plugins::apps::SrtAppsModule)
         .module_override("srt:app", plugins::app::SrtAppModule)
-        .userdata(clock.clone());
+        .userdata(clock.clone())
+        .userdata(flux::ProcessArgs(current_args.clone()));
       // The running app's own surface (exit()), in every build: the
       // production runtime exits too, it just always quits.
       let builder = {
@@ -801,13 +821,15 @@ fn ui_thread(
             } => {}
             Some(cmd) = cmd_rx.recv() => {
               match cmd {
-                EngineCmd::Reload { code, app_id } => {
+                EngineCmd::Reload { code, app_id, args } => {
                   next_app = Some(AppSource::Text(code));
                   next_app_id = app_id;
+                  current_args = args;
                 }
                 #[cfg(feature = "go")]
                 EngineCmd::Stop => {
                   next_app = Some(AppSource::Text(LAUNCHER_SOURCE.to_string()));
+                  current_args = Vec::new();
                   // Back to the launcher: release the stopped app's sandbox
                   // by re-anchoring to the startup default, so the launcher
                   // can remove the app without the cwd (or the loop-top
@@ -840,7 +862,7 @@ fn ui_thread(
       } else {
         // The BSOD itself exited; wait for a command rather than respinning.
         match local.run_until(cmd_rx.recv()).await {
-          Some(EngineCmd::Reload { code, app_id }) => {
+          Some(EngineCmd::Reload { code, app_id, args }) => {
             if let Some(app_id) = &app_id {
               anchor_app(app_id, &mut current_app_id);
               #[cfg(feature = "go")]
@@ -849,11 +871,13 @@ fn ui_thread(
               apply_app_fonts(app_id, &platform, &base_fonts);
             }
             current_app = AppSource::Text(code);
+            current_args = args;
             showing_bsod = false;
           }
           #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
             current_app = AppSource::Text(LAUNCHER_SOURCE.to_string());
+            current_args = Vec::new();
             showing_bsod = false;
             // Same sandbox and font release as the in-loop Stop arm above.
             current_app_id = Some(default_app_id.clone());
@@ -875,6 +899,7 @@ pub fn start(
   dev_server: Option<String>,
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
+  args: Vec<String>,
 ) {
   alloy::install_logger();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -886,7 +911,7 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage };
+  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage, args };
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
   });

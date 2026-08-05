@@ -34,7 +34,9 @@ async fn main() {
     std::process::exit(1);
   });
 
-  let argv: Vec<String> = std::env::args().collect();
+  // Everything after the executable is the program's argument vector,
+  // forwarded to JS through flux:process (app arguments only).
+  let argv: Vec<String> = std::env::args().skip(1).collect();
 
   let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
   engine.eval(bytecode).await;

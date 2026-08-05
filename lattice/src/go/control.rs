@@ -92,7 +92,7 @@ pub fn install_apps_control(ctx: Ctx<'_>, engine_tx: UnboundedSender<crate::Engi
     launch: Box::new(move |id| {
       let boot = super::store::load(&id).ok_or_else(|| format!("app {id} is not installed"))?;
       engine_tx
-        .send(crate::EngineCmd::Reload { code: boot.code, app_id: Some(boot.app_id) })
+        .send(crate::EngineCmd::Reload { code: boot.code, app_id: Some(boot.app_id), args: Vec::new() })
         .map_err(|_| "engine is shutting down".to_string())
     }),
     remove: Box::new(|id| super::store::remove_app(&id)),

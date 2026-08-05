@@ -21,6 +21,12 @@ Sorted by status: open first, then partial, deferred, and closed
   real display only as fallback), lays out with display scale pinned to 1 so
   `--size` is physical pixels on every machine, and `-o/--output` picks
   where frames land (default: the invoking directory).
+- [Apps cannot see their own arguments (lattice never sets ProcessArgs)](app-process-argv.md) [done] -
+  resolved 2026-08-05: argv is app arguments only (no exe/script slots),
+  owned per app start - a distribution owns its whole command line (fluxrt
+  parity), the dev runner passes the tail after the source path, and dev
+  pushes carry the session's args so remote clients match local ones; exit()
+  now ends a playback run early.
 - [FFI write batching: interned keys, batched creation, command buffer](ffi-write-batching.md) [open] -
   Every property write is one string-keyed FFI call (mount fans a props
   object into per-prop calls; update bursts pay per-call overhead N times);
@@ -67,7 +73,8 @@ Sorted by status: open first, then partial, deferred, and closed
   Rust marshals the full hit path into JS per pointer event because only the
   JS handler registry knows interest; a per-element event-kind bitmask prunes
   delivery to listening nodes and (staged) skips empty emissions, making
-  input over handler-free regions free. Stage 1 is dispatch counters.
+  input over handler-free regions free. Stage 1 is dispatch counters; the
+  documented end state stores the handlers themselves Rust-side.
 - [Relative mouse input (mouse look)](relative-mouse-input.md) [open] - No
   pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

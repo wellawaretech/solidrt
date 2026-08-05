@@ -1,65 +1,34 @@
 #!/usr/bin/env bash
-# Render the newest release's Fixes and Features sections of CHANGELOG.md to a
-# PNG, using changelog-shot.tsx and `srt render`.
+# Render the newest release's sections of CHANGELOG.md to a PNG named after that
+# release. changelog-shot.tsx does the work - it captures itself and writes the
+# file - so this only picks the destination and runs it.
 #
-# Two passes: the first lays the content out in an over-tall window and prints
-# its height, the second renders at exactly that height. The result is cropped
-# to the content without any image tooling, and is identical on every run.
-#
-#   ./scripts/changelog-shot [output.png] [width]
+#   ./scripts/changelog/changelog-shot [output-dir] [width]
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$HERE/changelog-shot.tsx"
-# Images land next to the script. The default name comes from the release the
-# image covers, which only the app knows; an explicit path wins.
-OUT="${1:-}"
+OUT_DIR="${1:-$HERE}"
 WIDTH="${2:-900}"
 
-# Tall enough for any plausible release; the pass exists only to measure.
-MEASURE_HEIGHT=4000
+# The window only has to be at least as tall as the card; the capture is the
+# content node's own box, so the extra height never reaches the image.
+HEIGHT=4000
 
+# Playback writes a PNG per frame as well. Those are not the output - park them
+# in a temp dir rather than beside the one we want. --duration is an upper
+# bound: the app exits as soon as it has written its file.
 FRAME_DIR="$(mktemp -d)"
 trap 'rm -rf "$FRAME_DIR"' EXIT
 
-# The app logs through the runtime, so everything it prints arrives on stderr.
-srt() {
-  bun "$HERE/../../packages/cli/bin/srt" "$@" 2>&1
-}
+out="$(bun "$HERE/../../packages/cli/bin/srt" render "$APP" \
+  --size "${WIDTH}x${HEIGHT}" --fps 4 --duration 5 -o "$FRAME_DIR" \
+  -- "$(cd "$OUT_DIR" && pwd)" 2>&1)"
 
-measure="$(srt render "$APP" --size "${WIDTH}x${MEASURE_HEIGHT}" --fps 1 --duration 1 -o "$FRAME_DIR")"
-
-# Playback lays out with the display scale pinned to 1, so the reported layout
-# height is already output pixels.
-height="$(printf '%s\n' "$measure" | sed -n 's/.*shot-height \([0-9]\+\).*/\1/p' | tail -n 1)"
-if [ -z "$height" ]; then
-  printf '%s\n' "$measure" >&2
-  echo "Measure pass printed no height; the app failed to lay out." >&2
+# The app logs the path it wrote; anything else means it never got there.
+if ! printf '%s\n' "$out" | grep -q "changelog-shot: wrote "; then
+  printf '%s\n' "$out" >&2
   exit 1
 fi
-
-if [ -z "$OUT" ]; then
-  version="$(printf '%s\n' "$measure" | sed -n 's/.*shot-version \([^ ]*\).*/\1/p' | tail -n 1)"
-  if [ -z "$version" ]; then
-    echo "Measure pass printed no version; cannot name the output file." >&2
-    exit 1
-  fi
-  OUT="$HERE/changelog-$version.png"
-fi
-
-if [ "$height" -gt "$MEASURE_HEIGHT" ]; then
-  echo "Content is ${height}px, taller than the ${MEASURE_HEIGHT}px measure window: raise MEASURE_HEIGHT." >&2
-  exit 1
-fi
-
-srt render "$APP" --size "${WIDTH}x${height}" --fps 1 --duration 1 -o "$FRAME_DIR" >/dev/null
-
-FRAME="$FRAME_DIR/frame-000000.png"
-if [ ! -f "$FRAME" ]; then
-  echo "Render pass wrote no frame to $FRAME_DIR." >&2
-  exit 1
-fi
-
-mv "$FRAME" "$OUT"
-echo "Wrote $OUT (${WIDTH}x${height})"
+printf '%s\n' "$out" | sed -n 's/^changelog-shot: //p'

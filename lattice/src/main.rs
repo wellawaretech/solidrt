@@ -135,6 +135,21 @@ fn load_adjacent_folder() -> Option<FactoryPayload> {
 }
 
 fn main() {
+  // A distribution owns its entire command line (fluxrt parity): when this
+  // binary carries a packed payload - embedded trailer or adjacent folder -
+  // everything after the executable is the app's argument vector, and none of
+  // the runner flags below apply. Those are dev tooling for the source-path
+  // shape.
+  #[cfg(not(feature = "go"))]
+  if let Some(payload) = load_embedded_payload().or_else(load_adjacent_folder) {
+    forge::fs::set_assets_base(Some(payload.base));
+    let app_args: Vec<String> = std::env::args().skip(1).collect();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
+    let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
+    lattice::start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
+    return;
+  }
+
   let mut args = std::env::args().skip(1);
   let mut playback = false;
   let mut script_path: Option<String> = None;
@@ -147,6 +162,7 @@ fn main() {
   let mut data_root: Option<String> = None;
   let mut client: Option<u32> = None;
   let mut source_path: Option<String> = None;
+  let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
     if arg == "--playback" {
       playback = true;
@@ -181,30 +197,23 @@ fn main() {
         h.parse().expect("--size height must be a positive integer"),
       );
     } else {
+      // The first non-flag argument is the source path; everything after it
+      // is the app's argument vector, verbatim, so a stray runner flag can
+      // neither select the app nor leak into its arguments.
       source_path = Some(arg);
+      app_args.extend(args);
+      break;
     }
   }
   let path_app = |path: String| {
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
     lattice::AppSource::Text(src)
   };
-  // Precedence: embedded trailer > explicit path argument > adjacent folder.
-  // A factory payload (trailer or folder) also mounts its assets: reads under
-  // assets/ resolve into the distribution instead of the cwd.
+  // Payloads were handled above, so this is the bare runtime: no fonts
+  // either; text falls back to the platform font manager.
   #[cfg(not(feature = "go"))]
-  let (app, fonts, app_id) = {
-    let factory = load_embedded_payload()
-      .or_else(|| if source_path.is_none() { load_adjacent_folder() } else { None });
-    match factory {
-      Some(payload) => {
-        forge::fs::set_assets_base(Some(payload.base));
-        (Some(payload.app), payload.fonts, Some(payload.app_id))
-      }
-      // Bare runtime: no fonts either; text falls back to the platform font
-      // manager.
-      None => (source_path.map(path_app), Vec::new(), None),
-    }
-  };
+  let (app, fonts, app_id): (_, Vec<alloy::rendertree::FontPayload>, Option<String>) =
+    (source_path.map(path_app), Vec::new(), None);
   // The runtime has no built-in screen to fall back to (the launcher is
   // go-only); without an app there is nothing to run.
   #[cfg(not(feature = "go"))]
@@ -226,7 +235,7 @@ fn main() {
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
-  lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage);
+  lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage, app_args);
 }
 
 // `--out` names where playback frames land: an existing directory (frames

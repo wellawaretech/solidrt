@@ -55,6 +55,14 @@ When running, a REPL is started. See section Dev server REPL.
 | ---------------- | -------------------------------------------------------- |
 | `--proxy-http`   | Route fetch calls through the dev server (cache enabled) |
 | `--capture <file>` | Record connected clients' key events to a script file  |
+| `-- <args...>`   | App arguments, pushed to every client with the app       |
+
+Everything after a bare `--` is the app's argument vector, exposed as
+`flux:process` `argv`. It rides every push of the session, so remote clients
+see the same arguments as the local one. Relative paths in the arguments
+resolve inside the app's data sandbox (the runtime changes into it before app
+code runs), so pass absolute paths when you mean a location on the invoking
+machine.
 
 `--capture` records keyboard input (keydown/keyup) from every connected
 client into one script file, for replaying later with `render --script`.
@@ -137,6 +145,12 @@ ffmpeg -framerate 60 -i frame-%06d.png -c:v libx264 -crf 18 -pix_fmt yuv420p out
 | `--size <WxH>`    | Frame size (default: `1280x720`)                      |
 | `--fps <N>`       | Frames per second (default: `60`)                     |
 | `--duration <N>`  | Duration in seconds (default: `1`)                    |
+| `-- <args...>`    | App arguments (`flux:process` `argv`)                 |
+
+`--duration` is an upper bound: an app that calls `exit()` (from `srt:app`)
+ends the render run early, so a tool that captures, writes its output, and
+exits does not need to guess a frame count. App arguments follow the same
+sandbox rule as under `run`: pass absolute paths.
 
 ## Development server REPL
 

@@ -5679,6 +5679,8 @@ import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipel
 import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
 // packages/core/src/image.ts
+import { decodeImage } from "flux:image";
+import { decodeImage as decodeImage2, encodeImage } from "flux:image";
 var imageCache = new Map;
 // packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";

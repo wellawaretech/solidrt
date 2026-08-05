@@ -239,6 +239,28 @@ let png = encodeImage(img)
 let jpg = encodeImage(img, { format: "jpeg", quality: 0.8 })
 ```
 
+### flux:process
+
+Process-level surface: arguments, host platform, memory usage, OS signals.
+`argv` is the arguments the app was started with, empty when there are none.
+App arguments only - no executable path, no script path (deliberately simpler
+than Node/Bun's two leading entries): `flux script.js a b` gives `["a", "b"]`,
+and a packed `fluxrt` binary passes everything after the executable.
+
+```js
+import { argv, platform, arch, memoryUsage, on } from "flux:process"
+
+argv           // ["a", "b"] for `flux script.js a b`
+platform       // "linux", "darwin", "win32", "android", ...
+arch           // "x64", "arm64", ...
+memoryUsage()  // { rss } - resident set size in bytes
+let off = on("SIGINT", (signal) => { /* ... */ })
+```
+
+A signal listener registered with `on`/`once` keeps the process alive until it
+unsubscribes (`once` fires at most once and removes itself; `on` returns the
+unsubscribe function). Signals are Unix only; elsewhere listeners are a no-op.
+
 ### flux:sqlite
 
 ```js

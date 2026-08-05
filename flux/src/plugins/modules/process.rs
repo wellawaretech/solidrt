@@ -28,8 +28,11 @@ use forge::process::{arch, platform, rss, SignalStream};
 //   import { argv } from "flux:process"
 //
 // The host sets it with FluxEngine::builder().userdata(ProcessArgs(...)); when
-// unset, argv is an empty array. Node/Bun parity: argv[0] is the executable,
-// argv[1] the script path, and the rest are the user-supplied arguments.
+// unset, argv is an empty array. The contract is app arguments only: no
+// executable path, no script slot - argv[0] is the first argument passed to
+// the app. Deliberately simpler than Node/Bun's two leading entries, which
+// would force filler values in hosts without a script path (packed binaries,
+// lattice apps).
 #[derive(Clone, JsLifetime, Default)]
 pub struct ProcessArgs(#[qjs(skip_trace)] pub Vec<String>);
 

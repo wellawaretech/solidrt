@@ -1,4 +1,4 @@
-import { source, values } from "../args"
+import { appArgs, source, values } from "../args"
 import { requireBinary, run } from "../util"
 import { bundleTo } from "../bundler"
 import { resolve } from "path"
@@ -16,6 +16,9 @@ export async function runRenderCommand() {
   // frames are written, so a bare prefix would land the PNGs there.
   playbackArgs.push("--out", resolve(values.output ?? "."))
   playbackArgs.push(resolve(jsOutfile))
+  // The runner takes everything after the source path verbatim as the app's
+  // argument vector (flux:process argv).
+  playbackArgs.push(...appArgs)
   let exit = await run(runner, playbackArgs)
   process.exit(exit)
 }
