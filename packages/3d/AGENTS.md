@@ -37,6 +37,17 @@ blendMode and pointer events like any element. Design rationale:
 | `Mesh` | `geometry`, `material`, transforms as Group, `ref?(mesh)` |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
+Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
+distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
+zoomSpeed? })` - drag-to-rotate, wheel-to-zoom, optional auto-orbit. Spread
+`orbit.handlers` onto the input-owning element, call `orbit.update(dt)`
+from your onFrame (no frame loop of its own), and use its return - true
+when the pose changed - to gate per-frame dependents like a `uCamPos`
+write. `orbiting()` is reactive (HUD-safe); the pose is plain state via
+`pose()`/`set()` (also the debug-command shape). It drives position and
+target only; fov/near/far stay on scene.setCamera. In a component tree,
+reach the scene via `<Scene ref>` or useScene().
+
 Geometry: `box(w?, h?, d?)`, `plane(w?, h?)` (XY, faces +z - rotate
 `[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`.
 Materials:

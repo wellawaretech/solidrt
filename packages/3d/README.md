@@ -35,7 +35,8 @@ There is also an imperative layer underneath (`createScene`, `createMesh`,
 
 v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
 GLSL as a first-class material), box/plane/sphere geometry, one
-perspective camera. Lights, transparency, model loading and picking are
+perspective camera with an orbit control (`createOrbitCamera`: drag,
+zoom, auto-orbit). Lights, transparency, model loading and picking are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
 usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:
 [examples/](examples/).
