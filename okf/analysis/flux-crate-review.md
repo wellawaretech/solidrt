@@ -1,11 +1,32 @@
 ---
 type: analysis
 title: Flux crate review
-description: Marshalling contract upheld, error model strong, 129 tests pass; gaps span gui prop panics, fetch dropping Headers, standards conformance, and missing teaching examples.
+description: Marshalling contract upheld, error model strong; the two biggest 2026-07-15 gaps - gui prop panics and fetch silently dropping Headers/bodies - are fixed as of 2026-08-06 (see status note). Remaining gaps are standards-conformance nits and missing teaching examples.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
 # Flux crate review
+
+## Status update 2026-08-06
+
+The top two improvement points landed:
+
+1. **Fail-soft gui property decode (point 1): done.** All value-decode panic
+   sites in `plugins/gui/properties/` (and `to_prop_value`'s UTF-8 expect)
+   return `Err` through apply_jsx's existing channel; a bad JSX value throws
+   a catchable JS Error naming property, value, and accepted set. The gui
+   layer's first unit tests exist (`flux/src/tests/properties.rs`, 10 tests
+   driving apply_jsx), closing the "properties/ decode is pure and directly
+   unit-testable" half of the gui test gap. The five copy-pasted string-throw
+   helpers (camera/microphone/audio/gpu/tree) now throw real `Error` objects
+   via `Exception::throw_message`.
+2. **fetch correctness (point 4): done** ("Fixed Flux silent fetch drops",
+   2026-08-06) - Headers instances are read via the shared
+   `header_pairs_from_init`, unsupported body types throw, direct tests added.
+
+Point 3 (W3C key values, repeat flag, console Error formatting) had already
+landed separately (`alloy/src/keymap.rs`, KeyEvent modifier fields,
+`format_error` in console.rs). The rest of the list stands.
 
 Full-crate review of `flux` (~9.7k lines of source: engine + 3 bins + 3 plugin
 layers; 51 plugin files) as of 2026-07-15: every layer read (all of the engine,

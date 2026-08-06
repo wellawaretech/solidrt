@@ -19,7 +19,7 @@ use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, 
 use super::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
-  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+  rquickjs::Exception::throw_message(ctx, msg)
 }
 
 struct PendingOpen {

@@ -1,11 +1,33 @@
 ---
 type: analysis
 title: Core package review
-description: Best docs and layering in the repo; gaps are zero tests, docs teaching nonexistent props, a throwing onFrame killing sibling animations, and silently black invalid colors.
+description: Best docs and layering in the repo; the frame-loop/dispatch fragility and silently-black invalid colors are fixed as of 2026-08-06 (see status note). Remaining gaps are zero tests and docs teaching nonexistent props.
 timestamp: 2026-07-15T00:00:00Z
 ---
 
 # Core package review
+
+## Status update 2026-08-06
+
+Improvement point 2 and parts of 5/6 landed:
+
+- **Frame loop and pointer dispatch hardened (point 2): done.** onFrame
+  callbacks re-register before running and are individually try/caught, so a
+  throwing callback stays subscribed and no longer silences sibling
+  animations; runFrame guards `flush()` so a throwing effect cannot skip
+  `renderFrame()`; dispatchPath isolates each handler so one throw no longer
+  suppresses the rest of the path or the outside-tap blur. The
+  same-tick-cancellation defect (cancelling an onFrame from inside another
+  onFrame re-registered the victim) is fixed via a cancelled flag.
+- **Invalid colors throw** (the parseColor item from point 6): `parseColor`
+  throws `Invalid color "..."` instead of silently packing opaque black -
+  throw-in-dev policy, stricter than the dev-warn this review suggested.
+- **KeyEvent (point 5)** had already landed separately: W3C `key`/`code`
+  values plus `repeat` and modifier flags.
+
+Still open from the list: docs/core.md rewrite (1), tests (3), AGENTS.md
+drifts (4), the rest of the small-defects batch in 6 (response.ok,
+setSelection clamp, pointerCaptures on destroy, voice pruning), and 7/8.
 
 Full review of `packages/core` (~2.2k lines of TypeScript: 18 src modules, two
 ambient .d.ts files, jsx-runtime.d.ts) as of 2026-07-15. Every source file

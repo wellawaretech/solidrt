@@ -83,7 +83,7 @@ impl Drop for TextureInner {
 }
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
-  ctx.throw(rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
+  rquickjs::Exception::throw_message(ctx, msg)
 }
 
 // Flatten a JS { name: number | number[] } object into the (name, value) pairs

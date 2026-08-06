@@ -148,8 +148,11 @@ function setTreeProperty(node: ProxyNode, name: string, value: unknown): void {
   try {
     tree.setProperty(node.id, name, value)
   } catch (e) {
+    // Name-level rejections (the exact prefixes apply_jsx in flux emits) are
+    // warn-and-continue so a stale prop does not kill the app; a bad VALUE for
+    // a known property rethrows, per the throw-in-dev validation policy.
     let message = String(e)
-    if (!message.includes("unknown property") && !message.includes("detached-only")) throw e
+    if (!message.includes("Unknown property") && !message.includes("Detached-only")) throw e
     let key = node.elementType + "." + name
     if (warnedRejectedProps.has(key)) return
     warnedRejectedProps.add(key)

@@ -28,7 +28,13 @@ declare module "flux:rendertree" {
   export function detachNode(parentId: number, nodeId: number): void
   /** Free `nodeId` and its whole subtree. Call after {@link detachNode}. */
   export function destroyNode(nodeId: number): void
-  /** Write a single property on a node; `value` is marshalled per property. */
+  /**
+   * Write a single property on a node; `value` is marshalled per property.
+   * Throws an `Error` for an unknown property name (message starts with
+   * "Unknown property") or a value that does not decode; it never aborts the
+   * runtime. Core's renderer warns-and-continues on the name-level rejections
+   * and rethrows value errors.
+   */
   export function setProperty(nodeId: number, name: string, value: unknown): void
   /**
    * Declare which pointer deliveries the node's handlers want, as a bitmask

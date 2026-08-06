@@ -51,7 +51,9 @@ separate item.
   Rust API on rendertree, engine-independence holds). A write to a dead
   node is semantically a no-op.
 - The error path moves. Today a rejected prop throws per call and
-  renderer.ts warn-onces on "unknown property"/"detached-only". A drain
+  renderer.ts warn-onces on "Unknown property"/"Detached-only" (bad VALUES
+  for known properties rethrow since the 2026-08-06 fail-soft decode work;
+  a drain design must preserve that split). A drain
   cannot throw mid-batch (later writes would be lost); it returns an
   [index, message] error list and JS reruns the same filter per item. DX
   cost: the writer's stack is gone at drain time - the warn still names

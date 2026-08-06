@@ -26,11 +26,13 @@ timestamp: 2026-07-15T00:00:00Z
   hardened; gaps are unenforced unsafe Send/Sync, panics at the tree boundary,
   and thin tests with damage and hit testing uncovered.
 - [Flux crate review](flux-crate-review.md) - Marshalling contract upheld,
-  error model strong, 129 tests pass; gaps span gui prop panics, fetch
-  dropping Headers, standards conformance, and missing teaching examples.
+  error model strong; the two biggest gaps - gui prop panics and fetch
+  silently dropping Headers/bodies - fixed 2026-08-06 (status note in file).
+  Remaining: standards-conformance nits, missing teaching examples.
 - [Core package review](core-package-review.md) - Best docs and layering in
-  the repo; gaps are zero tests, docs teaching nonexistent props, a throwing
-  onFrame killing sibling animations, and silently black invalid colors.
+  the repo; the frame-loop/dispatch fragility and silently-black invalid
+  colors fixed 2026-08-06 (status note in file). Remaining gaps: zero tests,
+  docs teaching nonexistent props.
 - [CLI package review](cli-package-review.md) - Architecture strong and
   dogfoods flux as the dev server; gaps are zero tests, a crashing --help,
   stale README, tsx-only repl reload, watcher races and a LAN-open file PUT.

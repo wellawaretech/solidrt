@@ -44,20 +44,35 @@ let refreshRate = 60
  */
 export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
   let frameId: number = null!
+  // Cancellation is a flag, not map membership: while a frame runs the whole
+  // callback map is swapped out, so a cleanup() called from another onFrame
+  // callback in the same tick could not reach this entry through the map.
+  let cancelled = false
 
   let extendedFn = (tick: number, frame: number, rate: number) => {
-    fn(tick, frame, rate)
+    if (cancelled) return
+    // Re-register BEFORE running fn, so a throwing callback stays subscribed
+    // (event-listener semantics: the error is reported, the subscription
+    // lives) and a cleanup() from inside fn sees the current frameId. A
+    // pending onFrame callback is a standing request for the next frame.
     frameId = nextFrameId++
     animationFrames.set(frameId, extendedFn)
-    // A pending onFrame callback is a standing request for the next frame.
     requestFrame()
+    try {
+      fn(tick, frame, rate)
+    } catch (err) {
+      console.error("Error in onFrame callback:", err)
+    }
   }
 
   frameId = nextFrameId++
   animationFrames.set(frameId, extendedFn)
   requestFrame()
 
-  let cleanup = () => animationFrames.delete(frameId)
+  let cleanup = () => {
+    cancelled = true
+    animationFrames.delete(frameId)
+  }
   onCleanup(cleanup)
   return cleanup
 }
@@ -253,7 +268,13 @@ export function attachWindow(nodeId: number) {
       animationFrames = new Map()
       for (let fn of frames.values()) fn(t, frame, refreshRate)
     }
-    flush()
+    try {
+      // A throwing effect must not skip renderFrame: the frame still paints
+      // whatever state committed before the throw.
+      flush()
+    } catch (err) {
+      console.error("Error in reactive flush:", err)
+    }
     scanForOrphans(t)
     renderFrame()
   }
@@ -298,7 +319,13 @@ export function attachWindow(nodeId: number) {
         e.localY = localY[i]!
         e.parentX = parentX[i]!
         e.parentY = parentY[i]!
-        getEventHandler(targets[i]!, handler)?.(e)
+        try {
+          getEventHandler(targets[i]!, handler)?.(e)
+        } catch (err) {
+          // One throwing handler must not suppress delivery to the rest of
+          // the path (or the focus/blur step that follows the loop).
+          console.error(`Error in ${handler} handler:`, err)
+        }
         if (stopped) break
       }
     }

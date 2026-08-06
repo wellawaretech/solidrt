@@ -3,6 +3,9 @@ mod logger;
 pub(crate) mod pending;
 mod plugins;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(feature = "gui")]
 pub use plugins::gui;
 

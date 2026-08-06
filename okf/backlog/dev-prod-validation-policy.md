@@ -29,6 +29,19 @@ pinned apps), this item is about:
 First known site: the fetch `cache` option (unknown string values), see
 `../plans/fetch-cache.md`.
 
+Update 2026-08-06: the gui property decoders now follow the dev half of the
+convention end to end. All ~70 value-decode panic sites in
+flux/src/plugins/gui/properties/ became `Err` through apply_jsx's existing
+channel (a bad JSX value throws a catchable JS Error instead of aborting the
+process), and `parseColor` in core throws on invalid color strings instead
+of silently packing opaque black. Relevant for the future sweep: every
+property-decode failure now exits through ONE throw site
+(flux/src/plugins/gui/tree.rs setProperty, `Exception::throw_message`), and
+core's renderer (setTreeProperty) already splits name-level rejections
+(warn-and-continue, matched on the "Unknown property"/"Detached-only"
+prefixes) from value errors (rethrow) - so when the runtime signal lands,
+the throw-vs-warn switch for this whole class is those two sites, not 70.
+
 Update 2026-07-25: core's `process.env.NODE_ENV` read (renderer leak
 sentinel) migrated to `import.meta.env.DEV`, a bundle-time constant the
 srt bundler defines - deliberately NOT this runtime signal, because that

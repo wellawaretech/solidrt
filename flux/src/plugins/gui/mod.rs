@@ -9,7 +9,7 @@ pub mod camera;
 pub mod events;
 pub mod input;
 pub mod microphone;
-mod properties;
+pub(crate) mod properties;
 pub mod raf;
 pub mod gpu;
 pub mod tree;

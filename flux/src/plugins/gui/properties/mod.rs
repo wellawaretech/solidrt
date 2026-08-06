@@ -31,9 +31,15 @@ use crate::plugins::gui::value::PropValue;
 use alloy::impellers::Color;
 use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};
 
-// Returns Ok(damage) on success; Err(message) for an unknown property, which
-// the FFI caller surfaces as a throwable JS error rather than aborting the
-// process. A single typo'd or unsupported prop must not take down the runtime.
+// Returns Ok(damage) on success; Err(message) for an unknown property or a
+// value that does not decode, which the FFI caller surfaces as a throwable JS
+// error rather than aborting the process. A single typo'd or unsupported prop
+// must not take down the runtime.
+//
+// The "Unknown property" and "Detached-only" message prefixes are matched by
+// core's renderer (setTreeProperty) to warn-and-continue on name-level
+// rejections; every other Err - a bad VALUE for a known property - is
+// rethrown there, per the throw-in-dev validation policy.
 pub fn apply_jsx(
   el: &mut Element,
   name: &str,
@@ -44,10 +50,10 @@ pub fn apply_jsx(
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.
   if name == "position" {
-    let position = match str_of(value, "position") {
+    let position = match str_of(value, "position")? {
       "relative" => Position::Relative,
       "absolute" => Position::Absolute,
-      v => panic!("unknown position value '{v}'"),
+      v => return Err(format!("Unknown position value \"{v}\"; expected relative or absolute")),
     };
     el.set_position(position);
     return Ok(Damage::Layout);
@@ -62,7 +68,12 @@ pub fn apply_jsx(
       PropValue::Bool(true) => BoundaryMode::Recording,
       PropValue::Text(s) if s == "snapshot" => BoundaryMode::Snapshot,
       PropValue::Text(s) if s == "snapshot-no-aa" => BoundaryMode::SnapshotNoAa,
-      _ => panic!("repaintBoundary must be a boolean, \"snapshot\", or \"snapshot-no-aa\""),
+      _ => {
+        return Err(format!(
+          "repaintBoundary must be a boolean, \"snapshot\", or \"snapshot-no-aa\", got {}",
+          describe(value)
+        ))
+      }
     };
     return Ok(Damage::Paint);
   }
@@ -75,11 +86,11 @@ pub fn apply_jsx(
   if name == "pointerEvents" {
     let pointer_events = match value {
       PropValue::Null => None,
-      _ => match str_of(value, "pointerEvents") {
+      _ => match str_of(value, "pointerEvents")? {
         "auto" => Some(PointerEvents::Auto),
         "none" => Some(PointerEvents::None),
         "all" => Some(PointerEvents::All),
-        v => panic!("unknown pointerEvents value '{v}'"),
+        v => return Err(format!("Unknown pointerEvents value \"{v}\"; expected auto, none or all")),
       },
     };
     el.set_pointer_events(pointer_events);
@@ -92,37 +103,37 @@ pub fn apply_jsx(
   // warns and continues) instead of silently painting geometry that diverges
   // from the box. View x/y are transforms, not box geometry, and stay.
   if el.has_layout() && detached_only_geometry(&el.kind, name) {
-    return Err(format!("detached-only property '{name}': a layout element's geometry is its layout box (size it with width/height), so this is available on the d-* form only"));
+    return Err(format!("Detached-only property '{name}': a layout element's geometry is its layout box (size it with width/height), so this is available on the d-* form only"));
   }
 
   let handled = match &mut el.kind {
-    ElementKind::Window(win) => window::apply(win, name, value, cmd_tx),
-    ElementKind::View(view) => view::apply(view, name, value),
-    ElementKind::Rectangle(rect) => rectangle::apply(rect, name, value),
-    ElementKind::Oval(oval) => oval::apply(oval, name, value),
-    ElementKind::Line(line) => line::apply(line, name, value),
-    ElementKind::Path(path) => path::apply(path, name, value),
-    ElementKind::Text(text) => text::apply(text, name, value),
-    ElementKind::Span(span) => text::apply_span(span, name, value),
-    ElementKind::Texture(tex) => texture::apply(tex, name, value),
+    ElementKind::Window(win) => window::apply(win, name, value, cmd_tx)?,
+    ElementKind::View(view) => view::apply(view, name, value)?,
+    ElementKind::Rectangle(rect) => rectangle::apply(rect, name, value)?,
+    ElementKind::Oval(oval) => oval::apply(oval, name, value)?,
+    ElementKind::Line(line) => line::apply(line, name, value)?,
+    ElementKind::Path(path) => path::apply(path, name, value)?,
+    ElementKind::Text(text) => text::apply(text, name, value)?,
+    ElementKind::Span(span) => text::apply_span(span, name, value)?,
+    ElementKind::Texture(tex) => texture::apply(tex, name, value)?,
   };
   if let Some(damage) = handled {
     return Ok(damage);
   }
 
   if let Some(paint) = el.kind.paint_mut() {
-    if let Some(damage) = paint::apply(paint, name, value) {
+    if let Some(damage) = paint::apply(paint, name, value)? {
       return Ok(damage);
     }
   }
 
   if let Some(style) = el.style_mut() {
-    if let Some(damage) = layout::apply(style, name, value) {
+    if let Some(damage) = layout::apply(style, name, value)? {
       return Ok(damage);
     }
   }
 
-  Err(format!("unknown property '{name}'"))
+  Err(format!("Unknown property '{name}'"))
 }
 
 fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {
@@ -136,83 +147,119 @@ fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {
   }
 }
 
+// Renders a PropValue for error messages: scalars verbatim, composites
+// summarized, so a bad value names itself instead of just its expected type.
+pub(super) fn describe(value: &PropValue) -> String {
+  match value {
+    PropValue::Null => "null".into(),
+    PropValue::Bool(b) => b.to_string(),
+    PropValue::Number(n) => n.to_string(),
+    PropValue::Text(s) => format!("\"{s}\""),
+    PropValue::List(items) => format!("a list of {}", items.len()),
+    PropValue::Map(_) => "an object".into(),
+  }
+}
+
 // Shared value decoders, kept here so every per-element module reads the same.
-pub(super) fn f32_of(value: &PropValue, what: &str) -> f32 {
-  value.as_f64().unwrap_or_else(|| panic!("{what} must be a number")) as f32
+pub(super) fn f32_of(value: &PropValue, what: &str) -> Result<f32, String> {
+  value.as_f64().map(|n| n as f32).ok_or_else(|| format!("{what} must be a number, got {}", describe(value)))
 }
 
 // The branded `pct(n)` value from JS: { __unit: "pct", v: n }. Returns the
 // fraction (n / 100), or None for any value that is not a pct. Lets a
 // percentage cross the boundary as a first-class value that no consumer has to
 // string-parse; a bare number stays pixels.
-pub(super) fn as_pct_fraction(value: &PropValue) -> Option<f32> {
+pub(super) fn as_pct_fraction(value: &PropValue) -> Result<Option<f32>, String> {
   if value.get("__unit").and_then(PropValue::as_str) == Some("pct") {
-    let v = value.get("v").and_then(PropValue::as_f64).expect("pct value must be a number") as f32;
-    Some(v / 100.0)
+    let v = value
+      .get("v")
+      .and_then(PropValue::as_f64)
+      .ok_or_else(|| "pct() value must be a number".to_string())? as f32;
+    Ok(Some(v / 100.0))
   } else {
-    None
+    Ok(None)
   }
 }
 
-pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> &'a str {
-  value.as_str().unwrap_or_else(|| panic!("{what} must be a string"))
+pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> Result<&'a str, String> {
+  value.as_str().ok_or_else(|| format!("{what} must be a string, got {}", describe(value)))
 }
 
 // { name: number | number[] } shader uniform values, dispatched by the
 // shader's declared GLSL type in alloy (float/int scalar, vec2/3/4, mat4 as
-// 16 numbers). Non-numeric entries (and arrays with non-numeric elements) are
-// skipped.
-pub(super) fn decode_params(value: &PropValue) -> Vec<(String, alloy::ParamValue)> {
-  let decode_one = |v: &PropValue| -> Option<alloy::ParamValue> {
-    if let Some(n) = v.as_f64() {
-      Some(alloy::ParamValue::Scalar(n as f32))
+// 16 numbers). Null clears (an empty set); a non-numeric entry is an error.
+pub(super) fn decode_params(value: &PropValue) -> Result<Vec<(String, alloy::ParamValue)>, String> {
+  if value.is_null() {
+    return Ok(Vec::new());
+  }
+  let entries =
+    value.as_map().ok_or_else(|| format!("Params must be an object of numbers, got {}", describe(value)))?;
+  let mut out = Vec::with_capacity(entries.len());
+  for (k, v) in entries {
+    let param = if let Some(n) = v.as_f64() {
+      alloy::ParamValue::Scalar(n as f32)
+    } else if let Some(list) = v.as_list() {
+      let nums: Option<Vec<f32>> = list.iter().map(|x| x.as_f64().map(|n| n as f32)).collect();
+      alloy::ParamValue::Array(nums.ok_or_else(|| format!("Param '{k}' array must contain only numbers"))?)
     } else {
-      let nums: Option<Vec<f32>> = v.as_list()?.iter().map(|x| x.as_f64().map(|n| n as f32)).collect();
-      nums.map(alloy::ParamValue::Array)
-    }
-  };
-  value
-    .as_map()
-    .map(|entries| entries.iter().filter_map(|(k, v)| decode_one(v).map(|p| (k.clone(), p))).collect())
-    .unwrap_or_default()
+      return Err(format!("Param '{k}' must be a number or an array of numbers, got {}", describe(v)));
+    };
+    out.push((k.clone(), param));
+  }
+  Ok(out)
 }
 
 // { name: textureId } sampler bindings for a shader declaration, mapping
-// sampler2D uniform names to texture registry ids. Non-numeric entries are
-// skipped.
-pub(super) fn decode_texture_bindings(value: &PropValue) -> Vec<(String, u64)> {
-  value
-    .as_map()
-    .map(|entries| entries.iter().filter_map(|(k, t)| t.as_f64().map(|n| (k.clone(), n as u64))).collect())
-    .unwrap_or_default()
+// sampler2D uniform names to texture registry ids. Null clears; a non-numeric
+// entry is an error.
+pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<(String, u64)>, String> {
+  if value.is_null() {
+    return Ok(Vec::new());
+  }
+  let entries =
+    value.as_map().ok_or_else(|| format!("Textures must be an object of texture ids, got {}", describe(value)))?;
+  entries
+    .iter()
+    .map(|(k, t)| {
+      let id = t
+        .as_f64()
+        .ok_or_else(|| format!("Texture binding '{k}' must be a texture id (number), got {}", describe(t)))?;
+      Ok((k.clone(), id as u64))
+    })
+    .collect()
 }
 
 // JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
-pub(super) fn decode_color(value: &PropValue) -> Color {
-  let rgba = value.as_f64().expect("color must be a number") as u32;
-  Color::new_srgba(
+pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
+  let rgba = value
+    .as_f64()
+    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA), got {}", describe(value)))? as u32;
+  Ok(Color::new_srgba(
     ((rgba >> 24) & 0xFF) as f32 / 255.0,
     ((rgba >> 16) & 0xFF) as f32 / 255.0,
     ((rgba >> 8) & 0xFF) as f32 / 255.0,
     (rgba & 0xFF) as f32 / 255.0,
-  )
+  ))
 }
 
 // A single number applies to all four corners; an array is
 // [top-left, top-right, bottom-right, bottom-left] (CSS border-radius order).
-pub(super) fn decode_radius(value: &PropValue) -> [f32; 4] {
+pub(super) fn decode_radius(value: &PropValue) -> Result<[f32; 4], String> {
   if let Some(arr) = value.as_list() {
     if arr.len() != 4 {
-      panic!("radius array must have 4 elements [top-left, top-right, bottom-right, bottom-left]");
+      return Err(format!(
+        "Radius array must have 4 elements [top-left, top-right, bottom-right, bottom-left], got {}",
+        arr.len()
+      ));
     }
-    [
-      arr[0].as_f64().expect("radius[0] must be a number") as f32,
-      arr[1].as_f64().expect("radius[1] must be a number") as f32,
-      arr[2].as_f64().expect("radius[2] must be a number") as f32,
-      arr[3].as_f64().expect("radius[3] must be a number") as f32,
-    ]
+    Ok([
+      f32_of(&arr[0], "radius[0]")?,
+      f32_of(&arr[1], "radius[1]")?,
+      f32_of(&arr[2], "radius[2]")?,
+      f32_of(&arr[3], "radius[3]")?,
+    ])
   } else {
-    let v = value.as_f64().expect("radius must be a number or an array of 4 numbers") as f32;
-    [v, v, v, v]
+    let v = f32_of(value, "radius")?;
+    Ok([v, v, v, v])
   }
 }

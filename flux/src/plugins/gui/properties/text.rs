@@ -5,30 +5,32 @@ use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Span, Text};
 
-pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<Damage> {
-  Some(match name {
-    "x" => text.set_x(f32_of(value, "x")),
-    "y" => text.set_y(f32_of(value, "y")),
-    "w" => text.set_w(f32_of(value, "w")),
-    "h" => text.set_h(f32_of(value, "h")),
+pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
+  Ok(Some(match name {
+    "x" => text.set_x(f32_of(value, "x")?),
+    "y" => text.set_y(f32_of(value, "y")?),
+    "w" => text.set_w(f32_of(value, "w")?),
+    "h" => text.set_h(f32_of(value, "h")?),
     // Role names ("sans", "serif", "mono") are registered font aliases; every
     // family name passes through to the typographer as-is.
-    "fontFamily" => text.set_font_family(str_of(value, "fontFamily").to_string()),
-    "fontSize" => text.set_font_size(f32_of(value, "fontSize")),
-    "textAlign" => text.set_text_alignment(match str_of(value, "textAlign") {
+    "fontFamily" => text.set_font_family(str_of(value, "fontFamily")?.to_string()),
+    "fontSize" => text.set_font_size(f32_of(value, "fontSize")?),
+    "textAlign" => text.set_text_alignment(match str_of(value, "textAlign")? {
       "left" => TextAlignment::Left,
       "right" => TextAlignment::Right,
       "center" => TextAlignment::Center,
       "justify" => TextAlignment::Justify,
-      v => panic!("unknown textAlign value '{v}'"),
+      v => return Err(format!("Unknown textAlign value \"{v}\"; expected left, right, center or justify")),
     }),
-    "lineHeight" => text.set_line_height(f32_of(value, "lineHeight")),
-    "maxLines" => text.set_max_lines(value.as_f64().expect("maxLines must be a number") as u32),
-    "fontStyle" => text.set_font_style(match str_of(value, "fontStyle") {
+    "lineHeight" => text.set_line_height(f32_of(value, "lineHeight")?),
+    "maxLines" => text.set_max_lines(f32_of(value, "maxLines")? as u32),
+    "fontStyle" => text.set_font_style(match str_of(value, "fontStyle")? {
       "italic" => FontStyle::Italic,
-      _ => FontStyle::Normal,
+      "normal" => FontStyle::Normal,
+      v => return Err(format!("Unknown fontStyle value \"{v}\"; expected normal or italic")),
     }),
-    "fontWeight" => text.set_font_weight(match value.as_f64().expect("fontWeight must be a number") as u32 {
+    // Unlisted weights fall back to Regular by design (400 is the common case).
+    "fontWeight" => text.set_font_weight(match f32_of(value, "fontWeight")? as u32 {
       100 => FontWeight::Thin,
       200 => FontWeight::ExtraLight,
       300 => FontWeight::Light,
@@ -39,13 +41,13 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Option<Damage> {
       900 => FontWeight::Black,
       _ => FontWeight::Regular,
     }),
-    _ => return None,
-  })
+    _ => return Ok(None),
+  }))
 }
 
-pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Option<Damage> {
-  Some(match name {
-    "text" => span.set_text(str_of(value, "text").to_string()),
-    _ => return None,
-  })
+pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
+  Ok(Some(match name {
+    "text" => span.set_text(str_of(value, "text")?.to_string()),
+    _ => return Ok(None),
+  }))
 }

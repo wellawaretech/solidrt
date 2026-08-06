@@ -115,11 +115,13 @@ interaction-frequency work only.
 
 ### Aside (correctness, found while reading)
 
-apply_jsx and its shared decoders (f32_of, str_of, decode_radius, the
-`position` match) panic! on malformed property VALUES, contradicting the flux
-"never panic on JS input" rule; a typo'd property NAME throws a catchable JS
-error, a typo'd value aborts the process. Also flagged in the flux crate
-review (flux-crate-review.md).
+RESOLVED 2026-08-06: apply_jsx and its shared decoders (f32_of, str_of,
+decode_radius, the `position` match) used to panic! on malformed property
+VALUES, contradicting the flux "never panic on JS input" rule; a typo'd
+property NAME threw a catchable JS error, a typo'd value aborted the
+process. All decode sites now return Err through apply_jsx's channel, unit
+tested in flux/src/tests/properties.rs. Also flagged in the flux crate
+review (flux-crate-review.md), which carries the status note.
 
 ## Should SolidJS move into Rust? Mostly no - move the frames, not the framework
 

@@ -23,20 +23,34 @@ thread_local! {
 
 // Marshals a JavaScript value into the engine-independent PropValue that
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on
-// this side of it.
-fn to_prop_value(value: &Value<'_>) -> PropValue {
-  if value.is_null() || value.is_undefined() {
+// this side of it. Errors are real JS exceptions raised while reading the
+// value (e.g. a Proxy getter throwing) and propagate to the caller unchanged.
+fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
+  Ok(if value.is_null() || value.is_undefined() {
     PropValue::Null
   } else if let Some(b) = value.as_bool() {
     PropValue::Bool(b)
   } else if let Some(n) = value.as_number() {
     PropValue::Number(n)
   } else if let Some(s) = value.as_string() {
-    PropValue::Text(s.to_string().expect("property string must be valid UTF-8"))
+    match s.to_string() {
+      Ok(text) => PropValue::Text(text),
+      // A JS string with unpaired surrogates (possible from UTF-16 slicing in
+      // text-editing code) is not valid UTF-8; degrade to a lossy copy instead
+      // of failing the whole property write over string CONTENT.
+      Err(_) => {
+        let c = s.clone().to_cstring()?;
+        // SAFETY: as_ptr/len delimit the engine-owned byte buffer of this
+        // string, alive until `c` drops at the end of this block; the bytes
+        // are read once and copied out by from_utf8_lossy.
+        let bytes = unsafe { std::slice::from_raw_parts(c.as_ptr() as *const u8, c.len()) };
+        PropValue::Text(String::from_utf8_lossy(bytes).into_owned())
+      }
+    }
   } else if let Some(arr) = value.as_array() {
     let mut items = Vec::with_capacity(arr.len());
     for i in 0..arr.len() {
-      items.push(to_prop_value(&arr.get::<Value>(i).expect("array element must be a value")));
+      items.push(to_prop_value(&arr.get::<Value>(i)?)?);
     }
     PropValue::List(items)
   } else if value.as_function().is_some() {
@@ -49,14 +63,14 @@ fn to_prop_value(value: &Value<'_>) -> PropValue {
     let entries = obj
       .props::<String, Value>()
       .map(|entry| {
-        let (k, v) = entry.expect("object property must be a key/value pair");
-        (k, to_prop_value(&v))
+        let (k, v) = entry?;
+        Ok((k, to_prop_value(&v)?))
       })
-      .collect();
+      .collect::<rquickjs::Result<Vec<_>>>()?;
     PropValue::Map(entries)
   } else {
     PropValue::Null
-  }
+  })
 }
 
 struct TextSize {
@@ -197,13 +211,11 @@ impl ModuleDef for RenderTreeModule {
       ctx.clone(),
       move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
         SETPROP_COUNT.with(|c| c.set(c.get() + 1));
-        let value = to_prop_value(&value);
+        let value = to_prop_value(&value)?;
         tree_ref
           .borrow_mut()
           .try_edit(node_id, |el| super::properties::apply_jsx(el, &property, &value, &cmd_tx))
-          .map_err(|msg| {
-            ctx.throw(rquickjs::String::from_str(ctx.clone(), &msg).expect("create error string").into())
-          })?;
+          .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
         platform_ref.request_frame();
         Ok(())
       },

@@ -48,6 +48,12 @@ Sorted by status: open first, then partial, deferred, and closed
   parity), the dev runner passes the tail after the source path, and dev
   pushes carry the session's args so remote clients match local ones; exit()
   now ends a playback run early.
+- [Headless render loose ends - a shutdown abort and a blind windowSize()](headless-render-loose-ends.md) [open] -
+  Playback aborted once with SIGABRT at shutdown and has not reproduced in 22
+  runs (suspect the new exit()-during-playback path, unproven), and
+  `windowSize()` reads 0x0 in every headless render because playback's
+  synthesised resize never reaches JS - so an app that lays out from it
+  captures silently wrong instead of failing.
 - [FFI write batching: interned keys, batched creation, command buffer](ffi-write-batching.md) [open] -
   Every property write is one string-keyed FFI call (mount fans a props
   object into per-prop calls; update bursts pay per-call overhead N times);
