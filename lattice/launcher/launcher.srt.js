@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/error.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -32,7 +32,7 @@ class NoOwnerError extends Error {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -70,7 +70,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -139,7 +139,7 @@ function assignOrMergeLane(n, e) {
   n.Me = e;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -153,6 +153,14 @@ var zombieQueue = {
   He: 0,
   EE: 0
 };
+function cancelZombieRecompute(e) {
+  if (e.se & REACTIVE_IN_HEAP_HEIGHT)
+    e.se &= -12;
+  else {
+    deleteFromHeap(e, zombieQueue);
+    e.se &= -4;
+  }
+}
 var clock = 0;
 var activeTransition = null;
 var scheduled = false;
@@ -176,7 +184,7 @@ function sweepTransientStoreNodes() {
       transientStoreNodes.delete(e);
       continue;
     }
-    if (e._e !== NOT_PENDING)
+    if (e.De !== NOT_PENDING)
       continue;
     if (e.Ae !== undefined && e.Ae !== NOT_PENDING)
       continue;
@@ -199,7 +207,7 @@ function createBatch() {
     cn: new Set,
     ie: [],
     yt: {
-      gt: [[], []],
+      bt: [[], []],
       vt: []
     },
     fn: false,
@@ -240,7 +248,7 @@ function schedule() {
   if (scheduled)
     return;
   scheduled = true;
-  if (!syncDepth && !globalQueue.bt && !projectionWriteActive)
+  if (!syncDepth && !globalQueue.gt && !projectionWriteActive)
     queueMicrotask(flush);
 }
 function haltReactivity(e) {
@@ -256,10 +264,13 @@ function notifyHalted() {
   haltNotified = true;
   console.error("[REACTIVITY_HALTED]");
 }
+var queueRunToken = 0;
+
 class Queue {
   ve = null;
-  gt = [[], []];
+  bt = [[], []];
   vt = [];
+  kt = 0;
   created = clock;
   addChild(e) {
     this.vt.push(e);
@@ -278,13 +289,25 @@ class Queue {
     return false;
   }
   run(e) {
-    if (this.gt[e - 1].length) {
-      const t = this.gt[e - 1];
-      this.gt[e - 1] = [];
-      runQueue(t, e);
+    if (this.bt[e - 1].length) {
+      const t2 = this.bt[e - 1];
+      this.bt[e - 1] = [];
+      runQueue(t2, e);
     }
-    for (let t = 0;t < this.vt.length; t++)
-      this.vt[t].run?.(e);
+    const t = this.vt;
+    const i = ++queueRunToken;
+    for (let n = 0;n < t.length; ) {
+      const s = t[n];
+      if (s.kt !== i) {
+        s.kt = i;
+        s.run?.(e);
+        if (t[n] !== s) {
+          n = 0;
+          continue;
+        }
+      }
+      n++;
+    }
   }
   enqueue(e, t) {
     if (e) {
@@ -292,21 +315,21 @@ class Queue {
         const i = findLane(currentOptimisticLane);
         i.rn[e - 1].push(t);
       } else {
-        this.gt[e - 1].push(t);
+        this.bt[e - 1].push(t);
       }
     }
     schedule();
   }
   stashQueues(e) {
-    e.gt[0].push(...this.gt[0]);
-    e.gt[1].push(...this.gt[1]);
-    this.gt = [[], []];
+    e.bt[0].push(...this.bt[0]);
+    e.bt[1].push(...this.bt[1]);
+    this.bt = [[], []];
     for (let t = 0;t < this.vt.length; t++) {
       let i = this.vt[t];
       let n = e.vt[t];
       if (!n) {
         n = {
-          gt: [[], []],
+          bt: [[], []],
           vt: []
         };
         e.vt[t] = n;
@@ -315,8 +338,8 @@ class Queue {
     }
   }
   restoreQueues(e) {
-    this.gt[0].push(...e.gt[0]);
-    this.gt[1].push(...e.gt[1]);
+    this.bt[0].push(...e.bt[0]);
+    this.bt[1].push(...e.bt[1]);
     for (let t = 0;t < e.vt.length; t++) {
       const i = e.vt[t];
       let n = this.vt[t];
@@ -327,32 +350,32 @@ class Queue {
 }
 
 class GlobalQueue extends Queue {
-  bt = false;
+  gt = false;
   m = createBatch();
-  static pe;
   static Ce;
+  static me;
   static Xe;
-  static kt = null;
+  static Dt = null;
   static p = null;
   static G = null;
   static M = null;
   static h = null;
-  static It = null;
   static dt = null;
-  static De = null;
+  static It = null;
+  static _e = null;
   static ce = null;
-  static Oe = null;
+  static Ge = null;
   static un = null;
   static St = null;
   static At = null;
   static Pt = null;
   static $e = null;
   static k = null;
-  static Dt = null;
+  static Gt = null;
   static ht = null;
   static En = null;
-  static dn = null;
   static Tn = null;
+  static dn = null;
   static In = null;
   static Ot = null;
   static Ct = null;
@@ -362,18 +385,18 @@ class GlobalQueue extends Queue {
   static Ke = null;
   static Nn = null;
   flush() {
-    if (this.bt)
+    if (this.gt)
       return;
-    this.bt = true;
+    this.gt = true;
     try {
       if (false)
         ;
-      runHeap(dirtyQueue, GlobalQueue.pe);
+      runHeap(dirtyQueue, GlobalQueue.Ce);
       if (activeTransition) {
         const e = transitionComplete(activeTransition);
         if (!e) {
           const e2 = activeTransition;
-          runHeap(zombieQueue, GlobalQueue.pe);
+          runHeap(zombieQueue, this.m === e2 ? cancelZombieRecompute : GlobalQueue.Ce);
           if (this.m === e2)
             currentBatch = this.m = createBatch();
           if (activeLanes.size) {
@@ -408,12 +431,12 @@ class GlobalQueue extends Queue {
         if (canUseSimpleSyncFlush(this)) {
           commitPendingNodes();
           if (dirtyQueue.EE >= dirtyQueue.He) {
-            runHeap(dirtyQueue, GlobalQueue.pe);
+            runHeap(dirtyQueue, GlobalQueue.Ce);
             commitPendingNodes();
           }
         } else {
           if (transitions.size)
-            runHeap(zombieQueue, GlobalQueue.pe);
+            runHeap(zombieQueue, GlobalQueue.Ce);
           finalizePureQueue();
         }
       }
@@ -430,7 +453,7 @@ class GlobalQueue extends Queue {
       if (false)
         ;
     } finally {
-      this.bt = false;
+      this.gt = false;
     }
   }
   notify(e, t, i, n) {
@@ -487,6 +510,11 @@ class GlobalQueue extends Queue {
         activeTransition.A.push(...t.A);
       for (const e2 of t.cn)
         activeTransition.cn.add(e2);
+      if (t.ln.size) {
+        for (const e2 of t.ln)
+          activeTransition.ln.add(e2);
+        t.ln.clear();
+      }
       currentBatch = this.m = activeTransition;
     }
     for (const e2 of activeLanes) {
@@ -523,17 +551,17 @@ function insertSubs(e, t = false) {
 function commitPendingNode(e) {
   const t = e;
   if (!t.ae) {
-    if (e._e !== NOT_PENDING) {
-      e.Ue = e._e;
-      e._e = NOT_PENDING;
+    if (e.De !== NOT_PENDING) {
+      e.Ue = e.De;
+      e.De = NOT_PENDING;
     }
-    if (e.he || e.Ge)
+    if (e.he || e.pe)
       GlobalQueue.un(e);
     return;
   }
-  if (e._e !== NOT_PENDING) {
-    e.Ue = e._e;
-    e._e = NOT_PENDING;
+  if (e.De !== NOT_PENDING) {
+    e.Ue = e.De;
+    e.De = NOT_PENDING;
     if (e.Pe && e.Pe !== EFFECT_TRACKED)
       e.Be = true;
   }
@@ -541,8 +569,8 @@ function commitPendingNode(e) {
   if (!(t.S & STATUS_PENDING))
     t.S &= ~STATUS_UNINITIALIZED;
   if (t.Qe !== null || t.ye !== null)
-    GlobalQueue.Ce(t, false, true);
-  if (e.he || e.Ge)
+    GlobalQueue.me(t, false, true);
+  if (e.he || e.pe)
     GlobalQueue.un(e);
 }
 function commitPendingNodes() {
@@ -560,20 +588,21 @@ function finalizePureQueue(e = null, t = false) {
     checkBoundaryChildren(globalQueue);
   const n = dirtyQueue.EE >= dirtyQueue.He;
   if (n)
-    runHeap(dirtyQueue, GlobalQueue.pe);
+    runHeap(dirtyQueue, GlobalQueue.Ce);
   if (i) {
     if (n)
       commitPendingNodes();
     const t2 = e ?? globalQueue.m;
     if (t2.je.length)
       GlobalQueue.En(t2.je);
-    if (e && e.ln.size) {
-      for (const t3 of e.ln) {
-        if (t3.se & REACTIVE_DISPOSED)
+    if (t2.ln.size) {
+      for (const e2 of t2.ln) {
+        if (e2.se & REACTIVE_DISPOSED)
           continue;
-        enqueueSub(t3);
+        enqueueSub(e2);
       }
-      e.ln.clear();
+      t2.ln.clear();
+      schedule();
     }
     if (t2.A.length) {
       GlobalQueue.G(t2.A);
@@ -581,10 +610,10 @@ function finalizePureQueue(e = null, t = false) {
         checkBoundaryChildren(globalQueue);
     }
     if (t2.cn.size)
-      GlobalQueue.kt(t2.cn, e);
+      GlobalQueue.Dt(t2.cn, e);
     sweepTransientStoreNodes();
     if (activeLanes.size)
-      GlobalQueue.Tn(e);
+      GlobalQueue.dn(e);
   }
 }
 function checkBoundaryChildren(e) {
@@ -613,7 +642,7 @@ function flush(e) {
       }
     }
   }
-  if (globalQueue.bt) {
+  if (globalQueue.gt) {
     return;
   }
   if (halted)
@@ -663,7 +692,7 @@ function transitionComplete(e) {
       break;
     }
   }
-  if (t && e.je.length && GlobalQueue.dn(e))
+  if (t && GlobalQueue.Tn?.(e))
     t = false;
   t && (e.fn = true);
   return t;
@@ -683,7 +712,7 @@ function runInTransition(e, t) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.se & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -818,7 +847,7 @@ function adjustHeight(e, E) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/owner.js
 var PENDING_OWNER = {};
 function markDisposal(e) {
   let n = e.ke;
@@ -843,7 +872,7 @@ function disposeChildren(e, n = false, t) {
   if (n) {
     e.se = i | REACTIVE_DISPOSED;
     const n2 = e;
-    if (n2.he || n2.Ge)
+    if (n2.he || n2.pe)
       GlobalQueue.un(n2);
   }
   if (n && e.ae)
@@ -979,7 +1008,7 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(l) {
   const n = l.nt;
   const e = l.tt;
@@ -1027,7 +1056,7 @@ function unobserved(l) {
 function link(l, n, e = false) {
   const u = n.We;
   if (u !== null && u.nt === l) {
-    u.ge &&= e;
+    u.Oe &&= e;
     return;
   }
   let s = null;
@@ -1037,16 +1066,16 @@ function link(l, n, e = false) {
     if (s !== null && s.nt === l) {
       s.nl = n.Ye;
       n.We = s;
-      s.ge = e;
+      s.Oe = e;
       return;
     }
   }
   const i = l.st;
   if (i !== null && i.le === n && (!t || i.nl === n.Ye)) {
     if (t)
-      i.ge &&= e;
+      i.Oe &&= e;
     else
-      i.ge = e;
+      i.Oe = e;
     return;
   }
   const o = n.We = l.st = {
@@ -1056,7 +1085,7 @@ function link(l, n, e = false) {
     ll: i,
     ue: null,
     nl: n.Ye,
-    ge: e
+    Oe: e
   };
   if (u !== null)
     u.tt = o;
@@ -1068,7 +1097,7 @@ function link(l, n, e = false) {
     l.o = o;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/async.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.oe?.has(n))
     return false;
@@ -1126,6 +1155,23 @@ function releaseSettledDependents(e) {
   if (n)
     for (const e2 of n)
       releaseIfSettledUnobserved(e2);
+}
+function settleErroredDependents(e, n) {
+  let t = false;
+  const r = new Set;
+  const visit = (e2) => {
+    if (r.has(e2))
+      return;
+    r.add(e2);
+    if (e2._ === n) {
+      enqueueSub(e2);
+      t = true;
+    }
+    forEachDependent(e2, visit);
+  };
+  forEachDependent(e, visit);
+  if (t)
+    schedule();
 }
 function settlePendingSource(e) {
   let n = false;
@@ -1215,22 +1261,22 @@ function handleAsync(e, n, t) {
       if (u2)
         clearStatus(e, true);
     } else if (e.Ae !== undefined) {
-      if (e._e === NOT_PENDING)
+      if (e.De === NOT_PENDING)
         queuePendingNode(e);
-      e._e = r2;
-      GlobalQueue.De !== null && GlobalQueue.De(e, r2);
+      e.De = r2;
+      GlobalQueue._e !== null && GlobalQueue._e(e, r2);
       if (!hasActiveOverride(e))
         insertSubs(e);
       e.Se = clock;
     } else if (l) {
       const n2 = e.Pe;
       const t2 = e.Ue;
-      const o3 = e.Re;
+      const o3 = e.be;
       try {
         if (!n2 && u2 || !o3 || !o3(r2, t2)) {
           e.Ue = r2;
           e.Se = clock;
-          GlobalQueue.De !== null && GlobalQueue.De(e, r2);
+          GlobalQueue._e !== null && GlobalQueue._e(e, r2);
           insertSubs(e, true);
         }
       } catch (n3) {
@@ -1364,14 +1410,14 @@ function clearStatus(e, n = false) {
     clearPendingSources(e);
   if (e.de)
     e.de = false;
-  e.be = false;
+  e.Re = false;
   e.S = n ? 0 : e.S & STATUS_UNINITIALIZED;
   if (e._)
     setPendingError(e);
-  if (e.he || e.Ge)
+  if (e.he || e.pe)
     GlobalQueue.ce(e);
-  if (e.u && GlobalQueue.Oe !== null)
-    GlobalQueue.Oe(e);
+  if (e.u && GlobalQueue.Ge !== null)
+    GlobalQueue.Ge(e);
   if (e.i)
     e.i();
 }
@@ -1393,8 +1439,8 @@ function notifyStatus(e, n, t, r, o) {
       e._ = t;
     }
     GlobalQueue.ce !== null && GlobalQueue.ce(e);
-    if (e.u && GlobalQueue.Oe !== null)
-      GlobalQueue.Oe(e);
+    if (e.u && GlobalQueue.Ge !== null)
+      GlobalQueue.Ge(e);
   }
   if (o && !r) {
     assignOrMergeLane(e, o);
@@ -1415,7 +1461,7 @@ function notifyStatus(e, n, t, r, o) {
   forEachDependent(e, (e2, r2) => {
     e2.Se = clock;
     if (n === STATUS_PENDING && u && !e2.oe?.has(u) || n !== STATUS_PENDING && (e2._ !== t || e2.oe)) {
-      if (r2.ge && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
+      if (r2.Oe && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
         enqueueSub(e2);
         schedule();
         return;
@@ -1427,9 +1473,9 @@ function notifyStatus(e, n, t, r, o) {
   });
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/core.js
-GlobalQueue.pe = recompute;
-GlobalQueue.Ce = disposeChildren;
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/core.js
+GlobalQueue.Ce = recompute;
+GlobalQueue.me = disposeChildren;
 var tracking = false;
 var stale = false;
 var pendingCheckActive = false;
@@ -1440,7 +1486,7 @@ var snapshotCaptureActive = false;
 var snapshotSources = null;
 function ownerInSnapshotScope(e) {
   while (e) {
-    if (e.me)
+    if (e.ge)
       return true;
     e = e.ve;
   }
@@ -1467,19 +1513,20 @@ function recompute(e, t = false) {
   let i = !!(e.se & REACTIVE_OPTIMISTIC_DIRTY);
   const u = e.Ae !== undefined && e.Ae !== NOT_PENDING;
   const l = !!(e.S & STATUS_UNINITIALIZED);
-  const o = (e.se & REACTIVE_REASK) !== 0;
-  const s = context;
+  const o = e.S & STATUS_ERROR ? e._ : undefined;
+  const s = (e.se & REACTIVE_REASK) !== 0;
+  const a = context;
   context = e;
   e.We = null;
   e.Ye++;
   e.se = REACTIVE_RECOMPUTING_DEPS;
   e.Se = clock;
-  let a = e._e === NOT_PENDING ? e.Ue : e._e;
-  let r = e.Ve;
-  let c = tracking;
-  let _ = currentOptimisticLane;
+  let r = e.De === NOT_PENDING ? e.Ue : e.De;
+  let c = e.Ve;
+  let _ = tracking;
+  let f = currentOptimisticLane;
   tracking = true;
-  const f = latestReadActive;
+  const E = latestReadActive;
   latestReadActive = false;
   if (i) {
     const t2 = GlobalQueue.Ze(e, true);
@@ -1492,24 +1539,24 @@ function recompute(e, t = false) {
       currentOptimisticLane = t2;
     }
   }
-  const E = n && n !== EFFECT_USER;
-  const N = stale;
-  if (E)
+  const N = n && n !== EFFECT_USER;
+  const T = stale;
+  if (N)
     stale = true;
   try {
     if (e.T & CONFIG_SYNC) {
-      a = e.ae(a);
+      r = e.ae(r);
       e.Te = null;
     } else {
       const t2 = e.Te;
-      const n2 = e.ae(a);
+      const n2 = e.ae(r);
       const i2 = typeof n2 === "object" && n2 !== null;
       const u2 = e.Te !== t2;
-      a = u2 || !i2 ? n2 : handleAsync(e, n2);
+      r = u2 || !i2 ? n2 : handleAsync(e, n2);
       if (!u2 && !i2)
         e.Te = null;
     }
-    if (e.S !== 0 || e.i !== undefined || e._ || e.be || e.de || e.oe !== undefined || e.he !== undefined || e.Ge !== undefined || e.u !== null)
+    if (e.S !== 0 || e.i !== undefined || e._ || e.Re || e.de || e.oe !== undefined || e.he !== undefined || e.pe !== undefined || e.u !== null)
       clearStatus(e, t);
     if (e.Me)
       GlobalQueue.Ke(e);
@@ -1520,63 +1567,65 @@ function recompute(e, t = false) {
     if (t2 instanceof NotReadyError) {
       e.de = true;
       if (GlobalQueue.$e !== null)
-        n2 = GlobalQueue.$e(e, o);
+        n2 = GlobalQueue.$e(e, s);
     }
     notifyStatus(e, t2 instanceof NotReadyError ? STATUS_PENDING : STATUS_ERROR, t2, undefined, t2 instanceof NotReadyError ? e.Me : undefined);
     if (n2)
       GlobalQueue.k(e);
   } finally {
-    tracking = c;
-    latestReadActive = f;
-    if (E)
-      stale = N;
+    tracking = _;
+    latestReadActive = E;
+    if (N)
+      stale = T;
     e.se = REACTIVE_NONE | (t ? e.se & REACTIVE_SNAPSHOT_STALE : 0);
-    context = s;
+    context = a;
   }
   if (!e._) {
     trimStaleDeps(e);
-    const o2 = u ? unwrapOverride(e.Ae) : e._e === NOT_PENDING ? e.Ue : e._e;
-    let s2 = false;
+    const s2 = u ? unwrapOverride(e.Ae) : e.De === NOT_PENDING ? e.Ue : e.De;
+    let a2 = false;
     try {
-      s2 = !n && l || !e.Re || !e.Re(o2, a);
+      a2 = !n && l || !e.be || !e.be(s2, r);
     } catch (t2) {
       notifyStatus(e, STATUS_ERROR, t2);
     }
-    if (n && s2) {
+    if (n && a2) {
       e.Be = !e._;
       if (!t)
         e.C.enqueue(n, e.Je ??= GlobalQueue.Xe.bind(null, e));
     }
     if (e._)
       ;
-    else if (s2) {
+    else if (a2) {
       const l2 = u ? e.Ae : undefined;
       if (t || n && (activeTransition !== e.Ie || activeTransition === null) || i) {
-        e.Ue = a;
+        e.Ue = r;
         if (u && i) {
-          e.Ae = a === undefined ? OVERRIDE_UNDEFINED : a;
-          e._e = NOT_PENDING;
+          e.Ae = r === undefined ? OVERRIDE_UNDEFINED : r;
+          e.De = NOT_PENDING;
         }
       } else {
-        e._e = a;
-        if ((activeTransition || e.Ie) && GlobalQueue.De !== null)
-          GlobalQueue.De(e, a);
+        e.De = r;
+        if ((activeTransition || e.Ie) && GlobalQueue._e !== null)
+          GlobalQueue._e(e, r);
       }
       if (e.o !== null && (!u || i || e.Ae !== l2))
         insertSubs(e, i || u);
     } else if (u) {
-      if (e._e === NOT_PENDING)
+      if (e.De === NOT_PENDING)
         queuePendingNode(e);
-      e._e = a;
-    } else if (e.Ve != r) {
+      e.De = r;
+    } else if (e.Ve != c) {
       for (let t2 = e.o;t2 !== null; t2 = t2.ue) {
         insertIntoHeapHeight(t2.le, queueFor(t2.le));
       }
     }
+    if (o !== undefined && !a2 && !e._)
+      settleErroredDependents(e, o);
   }
-  currentOptimisticLane = _;
-  const T = e._e !== NOT_PENDING || e.Qe !== null || e.ye !== null || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
-  T && (!t || e.S & STATUS_PENDING) && (!e.Ie || u) && queuePendingNode(e);
+  currentOptimisticLane = f;
+  const d = e.De !== NOT_PENDING || e.Qe !== null || e.ye !== null || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
+  d && (!t || e.S & STATUS_PENDING) && (!e.Ie || u) && queuePendingNode(e);
   e.Ie && n && activeTransition !== e.Ie && runInTransition(e.Ie, () => recompute(e));
 }
 function updateIfNecessary(e) {
@@ -1602,7 +1651,7 @@ function computed(e, t) {
   const i = {
     id: inheritId(t, n, context),
     T: (n ? CONFIG_TRANSPARENT : 0) | (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (!context || t?.lazy ? CONFIG_AUTO_DISPOSE : 0) | (t?.sync ? CONFIG_SYNC : 0) | (t?.V ? CONFIG_NO_SNAPSHOT : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    Re: t?.equals != null ? t.equals : isEqual,
+    be: t?.equals != null ? t.equals : isEqual,
     ut: t?.unobserved,
     Le: null,
     C: context?.C ?? globalQueue,
@@ -1626,12 +1675,12 @@ function computed(e, t) {
     se: t?.lazy ? REACTIVE_LAZY : REACTIVE_NONE,
     S: STATUS_UNINITIALIZED,
     Se: clock,
-    _e: NOT_PENDING,
+    De: NOT_PENDING,
     ye: null,
     Qe: null,
     Te: null,
     Ie: null,
-    be: false
+    Re: false
   };
   setupComputedNode(i, t);
   return i;
@@ -1641,7 +1690,7 @@ function createEffectNode(e, t, n, i, u, l) {
   const s = {
     id: inheritId(l, o, context),
     T: (o ? CONFIG_TRANSPARENT : 0) | (l?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (l?.sync ? CONFIG_SYNC : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    Re: false,
+    be: false,
     ut: l?.unobserved,
     Le: null,
     C: context?.C ?? globalQueue,
@@ -1665,12 +1714,12 @@ function createEffectNode(e, t, n, i, u, l) {
     se: REACTIVE_LAZY,
     S: STATUS_UNINITIALIZED,
     Se: clock,
-    _e: NOT_PENDING,
+    De: NOT_PENDING,
     ye: null,
     Qe: null,
     Te: null,
     Ie: null,
-    be: false,
+    Re: false,
     Be: false,
     ct: undefined,
     _t: t,
@@ -1700,8 +1749,8 @@ function setupComputedNode(e, t) {
   }
   if (n)
     e.Ve = n.Ve + 1;
-  if (GlobalQueue.It !== null)
-    GlobalQueue.It(e);
+  if (GlobalQueue.dt !== null)
+    GlobalQueue.dt(e);
   !t?.lazy && recompute(e, true);
   if (snapshotCaptureActive && !t?.lazy) {
     if (!(e.S & STATUS_PENDING) && !(e.T & CONFIG_NO_SNAPSHOT)) {
@@ -1712,7 +1761,7 @@ function setupComputedNode(e, t) {
 }
 function signal(e, t, n = null) {
   const i = {
-    Re: t?.equals != null ? t.equals : isEqual,
+    be: t?.equals != null ? t.equals : isEqual,
     T: (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (t?.V ? CONFIG_NO_SNAPSHOT : 0),
     ut: t?.unobserved,
     Ue: e,
@@ -1721,7 +1770,7 @@ function signal(e, t, n = null) {
     Se: clock,
     it: n,
     fe: n?.u || null,
-    _e: NOT_PENDING
+    De: NOT_PENDING
   };
   n && (n.u = i);
   if (snapshotCaptureActive && !(i.T & CONFIG_NO_SNAPSHOT) && !((n?.S ?? 0) & STATUS_PENDING)) {
@@ -1734,13 +1783,13 @@ function isEqual(e, t) {
   return e === t;
 }
 function untrack(e, t) {
-  if (GlobalQueue.dt === null && !tracking && true)
+  if (GlobalQueue.It === null && !tracking && true)
     return e();
   const n = tracking;
   tracking = false;
   try {
-    if (GlobalQueue.dt !== null)
-      return GlobalQueue.dt(e);
+    if (GlobalQueue.It !== null)
+      return GlobalQueue.It(e);
     return e();
   } finally {
     tracking = n;
@@ -1765,7 +1814,7 @@ function readNodeFast(e) {
     t = t.Tt;
   if (t && tracking)
     link(e, t);
-  return !t || e._e === NOT_PENDING ? e.Ue : e._e;
+  return !t || e.De === NOT_PENDING ? e.Ue : e.De;
 }
 function read(e) {
   if (latestReadActive)
@@ -1784,7 +1833,7 @@ function read(e) {
   if (!n.ae && u === e && e.Ae === undefined && e.xe === undefined && activeTransition === null && currentOptimisticLane === null && !snapshotCaptureActive && true) {
     if (t && tracking)
       link(e, t);
-    return !t || e._e === NOT_PENDING ? e.Ue : e._e;
+    return !t || e.De === NOT_PENDING ? e.Ue : e.De;
   }
   if (t && tracking) {
     link(e, t, pendingCheckActive);
@@ -1816,18 +1865,18 @@ function read(e) {
       throw u._;
     }
   }
-  if (e.ae && e.S & STATUS_ERROR) {
-    if (tracking && !pendingCheckActive && e.Se < clock) {
-      recompute(e);
+  if (u.ae && u.S & STATUS_ERROR) {
+    if (tracking && !pendingCheckActive && u.Se < clock) {
+      recompute(u);
       return read(e);
     } else
-      throw e._;
+      throw u._;
   }
   if (snapshotCaptureActive && t && t.T & CONFIG_IN_SNAPSHOT_SCOPE) {
     const n2 = e.xe;
     if (n2 !== undefined) {
       const i2 = n2 === NO_SNAPSHOT ? undefined : n2;
-      const u2 = e._e !== NOT_PENDING ? e._e : e.Ue;
+      const u2 = e.De !== NOT_PENDING ? e.De : e.Ue;
       if (u2 !== i2)
         t.se |= REACTIVE_SNAPSHOT_STALE;
       return i2;
@@ -1839,7 +1888,7 @@ function read(e) {
   if (currentOptimisticLane !== null && activeTransition !== null && t !== null && GlobalQueue.Ot(e, u, t)) {
     return e.Ue;
   }
-  const l = !t || currentOptimisticLane !== null && GlobalQueue.Rt(e, u, t) || e._e === NOT_PENDING || stale && e.Ie && activeTransition !== e.Ie ? e.Ue : e._e;
+  const l = !t || currentOptimisticLane !== null && GlobalQueue.Rt(e, u, t) || e.De === NOT_PENDING || stale && e.Ie && activeTransition !== e.Ie ? e.Ue : e.De;
   if (pendingCheckActive)
     GlobalQueue.Pt(e, l);
   if (!t && u === e && typeof n.ae === "function" && e.T & CONFIG_AUTO_DISPOSE && !(u.S & STATUS_PENDING) && !e.o) {
@@ -1852,16 +1901,16 @@ function setSignal(e, t) {
     globalQueue.initTransition(e.Ie);
   if (e.Ae !== undefined && !projectionWriteActive)
     return GlobalQueue.ht(e, t);
-  const n = e._e === NOT_PENDING ? e.Ue : e._e;
+  const n = e.De === NOT_PENDING ? e.Ue : e.De;
   if (typeof t === "function")
     t = t(n);
-  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.Re || !e.Re(n, t);
+  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.be || !e.be(n, t);
   if (!i)
     return t;
-  if (e._e === NOT_PENDING)
+  if (e.De === NOT_PENDING)
     queuePendingNode(e);
-  e._e = t;
-  (e.he !== undefined || e.Ge !== undefined) && GlobalQueue.De !== null && GlobalQueue.De(e, t);
+  e.De = t;
+  (e.he !== undefined || e.pe !== undefined) && GlobalQueue._e !== null && GlobalQueue._e(e, t);
   e.Se = clock;
   insertSubs(e);
   schedule();
@@ -1869,7 +1918,7 @@ function setSignal(e, t) {
 }
 function suppressComputedRecompute(e) {
   deleteFromHeap(e, queueFor(e));
-  if (!(e.se & REACTIVE_MANUAL_WRITE) && e._e === NOT_PENDING) {
+  if (!(e.se & REACTIVE_MANUAL_WRITE) && e.De === NOT_PENDING) {
     queuePendingNode(e);
     schedule();
   }
@@ -1901,7 +1950,7 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/context.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/context.js
 function setContext(e, t, n = getOwner()) {
   if (!n) {
     throw new NoOwnerError;
@@ -1914,7 +1963,7 @@ function setContext(e, t, n = getOwner()) {
 function isUndefined(e) {
   return typeof e === "undefined";
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, E, e, R) {
   const r = !!R?.user;
   const f = createEffectNode(t, E, e, r ? EFFECT_USER : EFFECT_RENDER, notifyEffectStatus, R);
@@ -2021,7 +2070,7 @@ function trackedEffect(t, E) {
   e.C.enqueue(EFFECT_USER, run);
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/signals.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2060,12 +2109,12 @@ function onSettled(e) {
     e();
   });
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/store/reconcile.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/store/reconcile.js
 function nodeKeys(e) {
   const t = Object.keys(e);
   if (symbolKeyedRecords.has(e)) {
     const n = Object.getOwnPropertySymbols(e);
-    for (let e2 = 0, a = n.length;e2 < a; e2++) {
+    for (let e2 = 0, r = n.length;e2 < r; e2++) {
       if (n[e2] !== $TRACK)
         t.push(n[e2]);
     }
@@ -2077,50 +2126,50 @@ function unwrap(e) {
     return e;
   return e[$TARGET]?.[STORE_VALUE] ?? e;
 }
-function getOverrideValue(e, t, n, a) {
-  if (a && n in a)
-    return a[n];
+function getOverrideValue(e, t, n, r) {
+  if (r && n in r)
+    return r[n];
   return t && n in t ? t[n] : e[n];
 }
 function addEnumSymbols(e, t, n) {
-  for (let a = 0, r = t.length;a < r; a++) {
-    if (Object.prototype.propertyIsEnumerable.call(e, t[a]))
-      n.add(t[a]);
+  for (let r = 0, a = t.length;r < a; r++) {
+    if (Object.prototype.propertyIsEnumerable.call(e, t[r]))
+      n.add(t[r]);
   }
 }
 function getAllKeys(e, t, n) {
-  const a = getKeys(e, t);
-  const r = Object.keys(n);
+  const r = getKeys(e, t);
+  const a = Object.keys(n);
   const i = e[$TARGET] ? untrack(() => Object.getOwnPropertySymbols(e)) : Object.getOwnPropertySymbols(e);
-  const s = Object.getOwnPropertySymbols(n);
-  if (i.length === 0 && s.length === 0) {
-    if (a.length === r.length) {
+  const l = Object.getOwnPropertySymbols(n);
+  if (i.length === 0 && l.length === 0) {
+    if (r.length === a.length) {
       let e3 = true;
-      for (let t2 = 0;t2 < a.length; t2++) {
-        if (a[t2] !== r[t2]) {
+      for (let t2 = 0;t2 < r.length; t2++) {
+        if (r[t2] !== a[t2]) {
           e3 = false;
           break;
         }
       }
       if (e3)
-        return a;
+        return r;
     }
-    const e2 = new Set(a);
-    for (let t2 = 0;t2 < r.length; t2++)
-      e2.add(r[t2]);
+    const e2 = new Set(r);
+    for (let t2 = 0;t2 < a.length; t2++)
+      e2.add(a[t2]);
     return Array.from(e2);
   }
-  const l = new Set(a);
-  addEnumSymbols(e, i, l);
+  const s = new Set(r);
+  addEnumSymbols(e, i, s);
   if (t) {
     for (const e2 of Reflect.ownKeys(t)) {
-      t[e2] === $DELETED ? l.delete(e2) : l.add(e2);
+      t[e2] === $DELETED ? s.delete(e2) : s.add(e2);
     }
   }
-  for (let e2 = 0;e2 < r.length; e2++)
-    l.add(r[e2]);
-  addEnumSymbols(n, s, l);
-  return Array.from(l);
+  for (let e2 = 0;e2 < a.length; e2++)
+    s.add(a[e2]);
+  addEnumSymbols(n, l, s);
+  return Array.from(s);
 }
 function wrapValue(e, t) {
   return isWrappable(e) ? wrap(e, t) : e;
@@ -2131,13 +2180,16 @@ function itemKey(e, t) {
 function keyedMatch(e, t, n) {
   return e === t || isWrappable(e) && isWrappable(t) && n(e) === n(t);
 }
+function recursablePair(e, t) {
+  return isWrappable(e) && isWrappable(t) && !(rawValuesUsed && (isRawValue(e) || isRawValue(t))) && Array.isArray(e) === Array.isArray(t);
+}
 function syncArrayNodeMembership(e, t) {
   let n = e[STORE_NODE];
   if (n) {
     if (symbolKeyedRecords.has(n)) {
       const e2 = nodeKeys(n);
-      for (let a = 0, r = e2.length;a < r; a++) {
-        e2[a] in t || setSignal(n[e2[a]], undefined);
+      for (let r = 0, a = e2.length;r < a; r++) {
+        e2[r] in t || setSignal(n[e2[r]], undefined);
       }
     } else {
       for (const e2 in n) {
@@ -2148,8 +2200,8 @@ function syncArrayNodeMembership(e, t) {
   if (n = e[STORE_HAS]) {
     if (symbolKeyedRecords.has(n)) {
       const e2 = nodeKeys(n);
-      for (let a = 0, r = e2.length;a < r; a++) {
-        setSignal(n[e2[a]], e2[a] in t);
+      for (let r = 0, a = e2.length;r < a; r++) {
+        setSignal(n[e2[r]], e2[r] in t);
       }
     } else {
       for (const e2 in n) {
@@ -2158,136 +2210,136 @@ function syncArrayNodeMembership(e, t) {
     }
   }
 }
-function applyStateChild(e, t, n, a) {
+function applyStateChild(e, t, n, r) {
   if (n[STORE_WRAP] !== undefined) {
-    applyState(e, wrap(t, n), a);
+    applyState(e, wrap(t, n), r);
     return;
   }
-  const r = t[$TARGET] ?? storeLookup.get(t);
-  if (r === undefined)
+  const a = t[$TARGET] ?? storeLookup.get(t);
+  if (a === undefined)
     return;
   e = unwrap(e);
-  if (r[STORE_SHALLOW]) {
-    applyStateShallow(e, r);
-  } else if (r[STORE_OVERRIDE] || r[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(e, r, a);
+  if (a[STORE_SHALLOW]) {
+    applyStateShallow(e, a);
+  } else if (a[STORE_OVERRIDE] || a[STORE_OPTIMISTIC_OVERRIDE]) {
+    applyStateSlow(e, a, r);
   } else {
-    applyStateFast(e, r, a);
+    applyStateFast(e, a, r);
   }
 }
-function applyArrayItem(e, t, n, a, r) {
-  if (isWrappable(e) && isWrappable(t) && !(rawValuesUsed && (isRawValue(t) || isRawValue(e)))) {
+function applyArrayItem(e, t, n, r, a) {
+  if (recursablePair(t, e)) {
     const i = wrap(t, n);
-    a && setSignal(a, i);
-    applyState(e, i, r);
+    r && setSignal(r, i);
+    applyState(e, i, a);
   } else
-    a && setSignal(a, wrapValue(e, n));
+    r && setSignal(r, wrapValue(e, n));
 }
-function applyDescendants(e, t, n, a, r, i, s) {
-  const l = n[STORE_LOOKUP] || storeLookup;
+function applyDescendants(e, t, n, r, a, i, l) {
+  const s = n[STORE_LOOKUP] || storeLookup;
   if (i) {
     const n2 = getKeys(e, i).concat(getStoreSymbols(e, i));
     for (let o2 = 0, f = n2.length;o2 < f; o2++) {
       const f2 = n2[o2];
-      if (a?.[f2])
+      if (r?.[f2])
         continue;
-      const p = unwrap(getOverrideValue(e, i, f2, s));
-      if (!isWrappable(p))
+      const u = unwrap(getOverrideValue(e, i, f2, l));
+      if (!isWrappable(u))
         continue;
-      descendInto(p, t[f2], l, r);
+      descendInto(u, t[f2], s, a);
     }
     return;
   }
   for (const n2 in e) {
-    if (a?.[n2])
+    if (r?.[n2])
       continue;
     const i2 = unwrap(e[n2]);
     if (!isWrappable(i2))
       continue;
-    descendInto(i2, t[n2], l, r);
+    descendInto(i2, t[n2], s, a);
   }
   const o = Object.getOwnPropertySymbols(e);
   for (let n2 = 0, i2 = o.length;n2 < i2; n2++) {
     if (Object.prototype.propertyIsEnumerable.call(e, o[n2])) {
-      if (a?.[o[n2]])
+      if (r?.[o[n2]])
         continue;
       const i3 = unwrap(e[o[n2]]);
       if (!isWrappable(i3))
         continue;
-      descendInto(i3, t[o[n2]], l, r);
+      descendInto(i3, t[o[n2]], s, a);
     }
   }
 }
-function descendInto(e, t, n, a) {
-  const r = lookupTarget(e, n);
-  if (!r?.[STORE_DESC])
+function descendInto(e, t, n, r) {
+  const a = lookupTarget(e, n);
+  if (!a?.[STORE_DESC])
     return;
   const i = unwrap(t);
-  if (e === i || !isWrappable(i) || Array.isArray(e) !== Array.isArray(i) || a(e) != null && a(e) !== a(i))
+  if (e === i || !isWrappable(i) || Array.isArray(e) !== Array.isArray(i) || r(e) != null && r(e) !== r(i))
     return;
-  if (r[STORE_SHALLOW]) {
-    applyStateShallow(i, r);
-  } else if (r[STORE_OVERRIDE] || r[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(i, r, a);
+  if (a[STORE_SHALLOW]) {
+    applyStateShallow(i, a);
+  } else if (a[STORE_OVERRIDE] || a[STORE_OPTIMISTIC_OVERRIDE]) {
+    applyStateSlow(i, a, r);
   } else {
-    applyStateFast(i, r, a);
+    applyStateFast(i, a, r);
   }
 }
 function applyState(e, t, n) {
   e = unwrap(e);
-  const a = t?.[$TARGET];
-  if (!a)
+  const r = t?.[$TARGET];
+  if (!r)
     return;
-  if (a[STORE_SHALLOW]) {
-    applyStateShallow(e, a);
-  } else if (a[STORE_OVERRIDE] || a[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(e, a, n);
+  if (r[STORE_SHALLOW]) {
+    applyStateShallow(e, r);
+  } else if (r[STORE_OVERRIDE] || r[STORE_OPTIMISTIC_OVERRIDE]) {
+    applyStateSlow(e, r, n);
   } else {
-    applyStateFast(e, a, n);
+    applyStateFast(e, r, n);
   }
 }
-function shallowDiffNodes(e, t, n, a) {
-  let r = false;
+function shallowDiffNodes(e, t, n, r) {
+  let a = false;
   for (const i in e) {
-    if (a && i === "length")
+    if (r && i === "length")
       continue;
     if (i in t) {
-      const a2 = t[i];
-      if (a2 !== n(i)) {
-        r = true;
-        setSignal(e[i], a2);
+      const r2 = t[i];
+      if (r2 !== n(i)) {
+        a = true;
+        setSignal(e[i], r2);
       }
     } else {
-      r = true;
+      a = true;
       setSignal(e[i], undefined);
     }
   }
-  return r;
+  return a;
 }
 function applyStateShallow(e, t, n) {
-  const a = t[STORE_VALUE];
-  const r = t[STORE_OVERRIDE];
+  const r = t[STORE_VALUE];
+  const a = t[STORE_OVERRIDE];
   const i = t[STORE_OPTIMISTIC_OVERRIDE];
-  if (e === a && !r && !i)
+  if (e === r && !a && !i)
     return;
   const prevAt = (e2) => {
-    const t2 = getOverrideValue(a, r, e2, i);
+    const t2 = getOverrideValue(r, a, e2, i);
     return t2 === $DELETED ? undefined : t2;
   };
   t[STORE_OVERRIDE] = undefined;
-  const s = t[STORE_LOOKUP];
-  s !== undefined ? s.set(e, t[$PROXY]) : storeLookup.set(e, t);
+  const l = t[STORE_LOOKUP];
+  l !== undefined ? l.set(e, t[$PROXY]) : storeLookup.set(e, t);
   t[STORE_VALUE] = e;
   markRawIngest(e);
-  const l = t[STORE_NODE];
-  const o = l && l[$TRACK];
+  const s = t[STORE_NODE];
+  const o = s && s[$TRACK];
   let f = false;
-  if (Array.isArray(a)) {
-    const n2 = r?.length ?? i?.length ?? a.length;
-    if (l) {
-      f = shallowDiffNodes(l, e, prevAt, true);
-      if (l.length && n2 !== e.length)
-        setSignal(l.length, e.length);
+  if (Array.isArray(r)) {
+    const n2 = a?.length ?? i?.length ?? r.length;
+    if (s) {
+      f = shallowDiffNodes(s, e, prevAt, true);
+      if (s.length && n2 !== e.length)
+        setSignal(s.length, e.length);
     }
     if (!f && (o || t[STORE_HAS])) {
       if (n2 !== e.length)
@@ -2302,295 +2354,313 @@ function applyStateShallow(e, t, n) {
       }
     }
   } else {
-    if (l) {
-      f = shallowDiffNodes(l, e, prevAt, false);
+    if (s) {
+      f = shallowDiffNodes(s, e, prevAt, false);
     }
     if (!f && (o || t[STORE_HAS]))
       f = true;
   }
-  let p = t[STORE_HAS];
-  if (p) {
-    for (const t2 in p) {
-      setSignal(p[t2], t2 in e);
+  let u = t[STORE_HAS];
+  if (u) {
+    for (const t2 in u) {
+      setSignal(u[t2], t2 in e);
     }
   }
   f && notifySelf(t);
 }
 function applyStateFast(e, t, n) {
-  const a = t[STORE_VALUE];
-  if (e === a)
+  const r = t[STORE_VALUE];
+  if (e === r)
     return;
-  const r = t[STORE_NODE];
+  const a = t[STORE_NODE];
   {
     const n2 = t[STORE_LOOKUP];
     n2 !== undefined ? n2.set(e, t[$PROXY]) : storeLookup.set(e, t);
   }
   t[STORE_VALUE] = e;
-  if (Array.isArray(a)) {
+  if (Array.isArray(r)) {
     let i2 = false;
-    const s2 = a.length;
-    if (e.length && s2 && isWrappable(e[0]) && n(e[0]) != null) {
-      let l, o, f, p, u, c, S, R;
-      for (f = 0, p = Math.min(s2, e.length);f < p && keyedMatch(c = a[f], e[f], n); f++) {
+    const l2 = r.length;
+    if (e.length && l2 && isWrappable(e[0]) && n(e[0]) != null) {
+      let s, o, f, u, p, c, S, E;
+      for (f = 0, u = Math.min(l2, e.length);f < u && keyedMatch(c = r[f], e[f], n); f++) {
         if (c !== e[f]) {
-          if (rawValuesUsed && (isRawValue(c) || isRawValue(e[f]))) {
-            r?.[f] && setSignal(r[f], wrapValue(e[f], t));
+          if (!recursablePair(c, e[f])) {
+            a?.[f] && setSignal(a[f], wrapValue(e[f], t));
           } else
             applyStateChild(e[f], c, t, n);
         }
       }
-      if (f === e.length && f === s2)
+      if (f === e.length && f === l2)
         return;
-      const E = new Array(e.length), O = new Map;
-      for (p = s2 - 1, u = e.length - 1;p >= f && u >= f && keyedMatch(c = a[p], e[u], n); p--, u--) {
-        E[u] = c;
+      const O = new Array(e.length), R = new Map;
+      for (u = l2 - 1, p = e.length - 1;u >= f && p >= f && keyedMatch(c = r[u], e[p], n); u--, p--) {
+        O[p] = c;
       }
-      if (f > u || f > p) {
-        for (o = f;o <= u; o++) {
+      if (f > p || f > u) {
+        for (o = f;o <= p; o++) {
           i2 = true;
-          r?.[o] && setSignal(r[o], wrapValue(e[o], t));
+          a?.[o] && setSignal(a[o], wrapValue(e[o], t));
         }
         for (;o < e.length; o++) {
           i2 = true;
-          applyArrayItem(e[o], E[o], t, r?.[o], n);
+          applyArrayItem(e[o], O[o], t, a?.[o], n);
         }
         syncArrayNodeMembership(t, e);
-        (i2 || s2 !== e.length) && notifySelf(t);
-        s2 !== e.length && r?.length && setSignal(r.length, e.length);
+        (i2 || l2 !== e.length) && notifySelf(t);
+        l2 !== e.length && a?.length && setSignal(a.length, e.length);
         return;
       }
-      S = new Array(u + 1);
-      for (o = u;o >= f; o--) {
+      S = new Array(p + 1);
+      for (o = p;o >= f; o--) {
         c = e[o];
-        R = itemKey(c, n);
-        l = O.get(R);
-        S[o] = l === undefined ? -1 : l;
-        O.set(R, o);
+        E = itemKey(c, n);
+        s = R.get(E);
+        S[o] = s === undefined ? -1 : s;
+        R.set(E, o);
       }
-      for (l = f;l <= p; l++) {
-        c = a[l];
-        R = itemKey(c, n);
-        o = O.get(R);
+      for (s = f;s <= u; s++) {
+        c = r[s];
+        E = itemKey(c, n);
+        o = R.get(E);
         if (o !== undefined && o !== -1) {
-          E[o] = c;
+          O[o] = c;
           o = S[o];
-          O.set(R, o);
+          R.set(E, o);
         }
       }
       for (o = f;o < e.length; o++) {
-        if (o in E) {
-          applyArrayItem(e[o], E[o], t, r?.[o], n);
+        if (o in O) {
+          applyArrayItem(e[o], O[o], t, a?.[o], n);
         } else
-          r?.[o] && setSignal(r[o], wrapValue(e[o], t));
+          a?.[o] && setSignal(a[o], wrapValue(e[o], t));
       }
       if (f < e.length)
         i2 = true;
     } else if (e.length) {
-      for (let s3 = 0, l = e.length;s3 < l; s3++) {
-        const l2 = a[s3];
-        if (isWrappable(l2) && isWrappable(e[s3]) && !(rawValuesUsed && (isRawValue(l2) || isRawValue(e[s3])))) {
-          if (l2 !== e[s3])
-            applyStateChild(e[s3], l2, t, n);
+      for (let l3 = 0, s = e.length;l3 < s; l3++) {
+        const s2 = r[l3];
+        if (recursablePair(s2, e[l3])) {
+          if (s2 !== e[l3])
+            applyStateChild(e[l3], s2, t, n);
         } else {
-          if (l2 !== e[s3])
+          if (s2 !== e[l3])
             i2 = true;
-          r?.[s3] && setSignal(r[s3], wrapValue(e[s3], t));
+          a?.[l3] && setSignal(a[l3], wrapValue(e[l3], t));
         }
       }
     }
     syncArrayNodeMembership(t, e);
-    if (s2 !== e.length) {
+    if (l2 !== e.length) {
       i2 = true;
-      r?.length && setSignal(r.length, e.length);
+      a?.length && setSignal(a.length, e.length);
     }
     i2 && notifySelf(t);
     return;
   }
   let i = t[STORE_NODE];
-  let s;
+  let l;
   if (i) {
-    s = i[$TRACK];
-    if (s || symbolKeyedRecords.has(i)) {
-      const r2 = s ? getAllKeys(a, undefined, e) : nodeKeys(i);
-      for (let l = 0, o = r2.length;l < o; l++) {
-        const o2 = r2[l];
+    l = i[$TRACK];
+    if (l || symbolKeyedRecords.has(i)) {
+      const a2 = l ? getAllKeys(r, undefined, e) : nodeKeys(i);
+      for (let s = 0, o = a2.length;s < o; s++) {
+        const o2 = a2[s];
         const f = i[o2];
-        const p = unwrap(a[o2]);
-        const u = unwrap(e[o2]);
-        if (p === u)
+        const u = unwrap(r[o2]);
+        const p = unwrap(e[o2]);
+        if (u === p)
           continue;
-        if (!p || !isWrappable(p) || !isWrappable(u) || rawValuesUsed && (isRawValue(p) || isRawValue(u)) || Array.isArray(p) !== Array.isArray(u) || n(p) != null && n(p) !== n(u)) {
-          s && setSignal(s, undefined);
-          f && setSignal(f, isWrappable(u) ? wrap(u, t) : u);
+        if (!u || !isWrappable(u) || !isWrappable(p) || rawValuesUsed && (isRawValue(u) || isRawValue(p)) || Array.isArray(u) !== Array.isArray(p) || n(u) != null && n(u) !== n(p)) {
+          l && setSignal(l, undefined);
+          f && setSignal(f, isWrappable(p) ? wrap(p, t) : p);
         } else
-          applyStateChild(u, p, t, n);
+          applyStateChild(p, u, t, n);
       }
     } else {
-      for (const r2 in i) {
-        const l = i[r2];
-        const o = unwrap(a[r2]);
-        const f = unwrap(e[r2]);
+      for (const a2 in i) {
+        const s = i[a2];
+        const o = unwrap(r[a2]);
+        const f = unwrap(e[a2]);
         if (o === f)
           continue;
         if (!o || !isWrappable(o) || !isWrappable(f) || rawValuesUsed && (isRawValue(o) || isRawValue(f)) || Array.isArray(o) !== Array.isArray(f) || n(o) != null && n(o) !== n(f)) {
-          s && setSignal(s, undefined);
-          l && setSignal(l, isWrappable(f) ? wrap(f, t) : f);
+          l && setSignal(l, undefined);
+          s && setSignal(s, isWrappable(f) ? wrap(f, t) : f);
         } else
           applyStateChild(f, o, t, n);
       }
     }
   }
-  if (!s && t[STORE_DESC])
-    applyDescendants(a, e, t, i, n);
+  if (!l && t[STORE_DESC])
+    applyDescendants(r, e, t, i, n);
   if (i = t[STORE_HAS]) {
     const t2 = nodeKeys(i);
-    for (let n2 = 0, a2 = t2.length;n2 < a2; n2++) {
-      const a3 = t2[n2];
-      setSignal(i[a3], a3 in e);
+    for (let n2 = 0, r2 = t2.length;n2 < r2; n2++) {
+      const r3 = t2[n2];
+      setSignal(i[r3], r3 in e);
     }
   }
 }
 function applyStateSlow(e, t, n) {
-  const a = t[STORE_VALUE];
-  const r = t[STORE_OVERRIDE];
+  const r = t[STORE_VALUE];
+  const a = t[STORE_OVERRIDE];
   const i = t[STORE_OPTIMISTIC_OVERRIDE];
-  let s = t[STORE_NODE];
+  let l = t[STORE_NODE];
   {
     const n2 = t[STORE_LOOKUP];
     n2 !== undefined ? n2.set(e, t[$PROXY]) : storeLookup.set(e, t);
   }
   t[STORE_VALUE] = e;
   t[STORE_OVERRIDE] = undefined;
-  if (Array.isArray(a)) {
-    let l2 = false;
-    const o = getOverrideValue(a, r, "length", i);
+  if (Array.isArray(r)) {
+    let s2 = false;
+    const o = getOverrideValue(r, a, "length", i);
     if (e.length && o && isWrappable(e[0]) && n(e[0]) != null) {
-      let f2, p, u, c, S, R, E, O;
-      for (u = 0, c = Math.min(o, e.length);u < c && keyedMatch(R = getOverrideValue(a, r, u, i), e[u], n); u++) {
-        if (isWrappable(R) && isWrappable(e[u]) && R !== e[u]) {
-          if (rawValuesUsed && (isRawValue(R) || isRawValue(e[u]))) {
-            s?.[u] && setSignal(s[u], wrapValue(e[u], t));
+      let f2, u, p, c, S, E, O, R;
+      for (p = 0, c = Math.min(o, e.length);p < c && keyedMatch(E = getOverrideValue(r, a, p, i), e[p], n); p++) {
+        if (E !== e[p] && isWrappable(E) && isWrappable(e[p])) {
+          if (!recursablePair(E, e[p])) {
+            l?.[p] && setSignal(l[p], wrapValue(e[p], t));
           } else
-            applyState(e[u], wrap(R, t), n);
+            applyState(e[p], wrap(E, t), n);
         }
       }
-      const y = new Array(e.length), d = new Map;
-      for (c = o - 1, S = e.length - 1;c >= u && S >= u && keyedMatch(R = getOverrideValue(a, r, c, i), e[S], n); c--, S--) {
-        y[S] = R;
+      const d = new Array(e.length), y = new Map;
+      for (c = o - 1, S = e.length - 1;c >= p && S >= p && keyedMatch(E = getOverrideValue(r, a, c, i), e[S], n); c--, S--) {
+        d[S] = E;
       }
-      if (u > S || u > c) {
-        for (p = u;p <= S; p++) {
-          l2 = true;
-          s?.[p] && setSignal(s[p], wrapValue(e[p], t));
+      if (p > S || p > c) {
+        for (u = p;u <= S; u++) {
+          s2 = true;
+          l?.[u] && setSignal(l[u], wrapValue(e[u], t));
         }
-        for (;p < e.length; p++) {
-          l2 = true;
-          applyArrayItem(e[p], y[p], t, s?.[p], n);
+        for (;u < e.length; u++) {
+          s2 = true;
+          applyArrayItem(e[u], d[u], t, l?.[u], n);
         }
-        const a2 = e.length;
+        const r2 = e.length;
         syncArrayNodeMembership(t, e);
-        (l2 || o !== a2) && notifySelf(t);
-        o !== a2 && s?.length && setSignal(s.length, a2);
+        (s2 || o !== r2) && notifySelf(t);
+        o !== r2 && l?.length && setSignal(l.length, r2);
         return;
       }
-      E = new Array(S + 1);
-      for (p = S;p >= u; p--) {
-        R = e[p];
-        O = itemKey(R, n);
-        f2 = d.get(O);
-        E[p] = f2 === undefined ? -1 : f2;
-        d.set(O, p);
+      O = new Array(S + 1);
+      for (u = S;u >= p; u--) {
+        E = e[u];
+        R = itemKey(E, n);
+        f2 = y.get(R);
+        O[u] = f2 === undefined ? -1 : f2;
+        y.set(R, u);
       }
-      for (f2 = u;f2 <= c; f2++) {
-        R = getOverrideValue(a, r, f2, i);
-        O = itemKey(R, n);
-        p = d.get(O);
-        if (p !== undefined && p !== -1) {
-          y[p] = R;
-          p = E[p];
-          d.set(O, p);
+      for (f2 = p;f2 <= c; f2++) {
+        E = getOverrideValue(r, a, f2, i);
+        R = itemKey(E, n);
+        u = y.get(R);
+        if (u !== undefined && u !== -1) {
+          d[u] = E;
+          u = O[u];
+          y.set(R, u);
         }
       }
-      for (p = u;p < e.length; p++) {
-        if (p in y) {
-          applyArrayItem(e[p], y[p], t, s?.[p], n);
+      for (u = p;u < e.length; u++) {
+        if (u in d) {
+          applyArrayItem(e[u], d[u], t, l?.[u], n);
         } else
-          s?.[p] && setSignal(s[p], wrapValue(e[p], t));
+          l?.[u] && setSignal(l[u], wrapValue(e[u], t));
       }
-      if (u < e.length)
-        l2 = true;
+      if (p < e.length)
+        s2 = true;
     } else if (e.length) {
       for (let o2 = 0, f2 = e.length;o2 < f2; o2++) {
-        const f3 = getOverrideValue(a, r, o2, i);
-        if (isWrappable(f3) && isWrappable(e[o2]) && !(rawValuesUsed && (isRawValue(f3) || isRawValue(e[o2])))) {
+        const f3 = getOverrideValue(r, a, o2, i);
+        if (recursablePair(f3, e[o2])) {
           if (f3 !== e[o2])
             applyState(e[o2], wrap(f3, t), n);
         } else {
           if (f3 !== e[o2])
-            l2 = true;
-          s?.[o2] && setSignal(s[o2], wrapValue(e[o2], t));
+            s2 = true;
+          l?.[o2] && setSignal(l[o2], wrapValue(e[o2], t));
         }
       }
     }
     const f = e.length;
     syncArrayNodeMembership(t, e);
     if (o !== f) {
-      l2 = true;
-      s?.length && setSignal(s.length, f);
+      s2 = true;
+      l?.length && setSignal(l.length, f);
     }
-    l2 && notifySelf(t);
+    s2 && notifySelf(t);
     return;
   }
-  let l;
-  if (s) {
-    l = s[$TRACK];
-    const o = l ? getAllKeys(a, r, e) : nodeKeys(s);
-    for (let f = 0, p = o.length;f < p; f++) {
-      const p2 = o[f];
-      const u = s[p2];
-      const c = unwrap(getOverrideValue(a, r, p2, i));
-      let S = unwrap(e[p2]);
+  let s;
+  if (l) {
+    s = l[$TRACK];
+    const o = s ? getAllKeys(r, a, e) : nodeKeys(l);
+    for (let f = 0, u = o.length;f < u; f++) {
+      const u2 = o[f];
+      const p = l[u2];
+      const c = unwrap(getOverrideValue(r, a, u2, i));
+      let S = unwrap(e[u2]);
       if (c === S)
         continue;
       if (!c || !isWrappable(c) || !isWrappable(S) || rawValuesUsed && (isRawValue(c) || isRawValue(S)) || Array.isArray(c) !== Array.isArray(S) || n(c) != null && n(c) !== n(S)) {
-        l && setSignal(l, undefined);
-        u && setSignal(u, isWrappable(S) ? wrap(S, t) : S);
+        s && setSignal(s, undefined);
+        p && setSignal(p, isWrappable(S) ? wrap(S, t) : S);
       } else
         applyState(S, wrap(c, t), n);
     }
   }
-  if (!l && t[STORE_DESC])
-    applyDescendants(a, e, t, s, n, r, i);
-  if (s = t[STORE_HAS]) {
-    const t2 = nodeKeys(s);
-    for (let n2 = 0, a2 = t2.length;n2 < a2; n2++) {
-      const a3 = t2[n2];
-      setSignal(s[a3], a3 in e);
+  if (!s && t[STORE_DESC])
+    applyDescendants(r, e, t, l, n, a, i);
+  if (l = t[STORE_HAS]) {
+    const t2 = nodeKeys(l);
+    for (let n2 = 0, r2 = t2.length;n2 < r2; n2++) {
+      const r3 = t2[n2];
+      setSignal(l[r3], r3 in e);
     }
   }
 }
 var NOKEY = () => null;
-function reconcile(e, t = "id") {
-  return (n) => {
-    if (n == null)
-      throw new Error("");
-    if (t === null) {
-      applyState(e, n, NOKEY);
-      return;
+var IDENTITY = (e) => e;
+function reconcileState(e, t, n, r) {
+  if (t == null)
+    throw new Error("");
+  let a;
+  const i = r ? t[$TARGET] : undefined;
+  if (i !== undefined) {
+    if (e?.[$TARGET] !== undefined && e[$TARGET] !== i && !i[STORE_SHALLOW]) {
+      if (i[STORE_VALUE] === e)
+        return;
+      a = e;
     }
-    const a = typeof t === "string" ? (e2) => e2[t] : t;
-    const r = a(n);
-    if (r !== undefined && a(e) !== r)
-      throw new Error("");
-    applyState(e, n, a);
-  };
+    while (i[STORE_VALUE]?.[$TARGET] !== undefined)
+      i[STORE_VALUE] = unwrap(i[STORE_VALUE]);
+  }
+  if (n === null)
+    applyState(e, t, NOKEY);
+  else {
+    let a2 = typeof n === "string" ? (e2) => e2[n] : n;
+    const i2 = a2(t);
+    if (i2 !== undefined && a2(e) !== i2) {
+      if (!r)
+        throw new Error("");
+      const n2 = t[$TARGET];
+      if (n2 && n2[STORE_VALUE] !== unwrap(e))
+        n2[STORE_LOOKUP]?.delete(n2[STORE_VALUE]);
+      a2 = IDENTITY;
+    }
+    applyState(e, t, a2);
+  }
+  if (a !== undefined)
+    i[STORE_VALUE] = a;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/store/projection.js
-function createProjectionInternal(e, r, t) {
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/store/projection.js
+function createProjectionInternal(e, t, r) {
   let o;
   const n = new WeakMap;
-  const i = !!t?.shallow;
+  const i = !!r?.shallow;
   const wrapper = (e2) => {
     e2[STORE_WRAP] = wrapProjection;
     e2[STORE_LOOKUP] = n;
@@ -2610,15 +2680,15 @@ function createProjectionInternal(e, r, t) {
       return n.get(e2);
     if (e2[$TARGET]?.[STORE_WRAP] === wrapProjection)
       return e2;
-    const r2 = createStoreProxy(e2, storeTraps, wrapper);
-    n.set(e2, r2);
-    return r2;
+    const t2 = createStoreProxy(e2, storeTraps, wrapper);
+    n.set(e2, t2);
+    return t2;
   };
-  const c = wrapProjection(r);
+  const c = wrapProjection(t);
   o = computed(() => {
     if (!o)
       o = getOwner();
-    runProjectionComputed(c, e, t?.key || "id");
+    runProjectionComputed(c, e, r?.key === undefined ? "id" : r.key);
   }, undefined);
   o.T &= ~CONFIG_AUTO_DISPOSE;
   return {
@@ -2626,74 +2696,74 @@ function createProjectionInternal(e, r, t) {
     node: o
   };
 }
-function runProjectionComputed(e, r, t, o, n) {
+function runProjectionComputed(e, t, r, o, n) {
   const i = getOwner();
   let c = false;
   let s;
   const u = new Proxy(e, createWriteTraps(() => !c || i.Te === s, n));
   storeSetter(u, (n2) => {
-    s = r(n2);
+    s = t(n2);
     c = true;
-    const commit = (r2) => {
-      if (r2 === n2 || r2 === undefined)
+    const commit = (t2) => {
+      if (t2 === n2 || t2 === undefined)
         return;
-      const write = () => storeSetter(e, reconcile(r2, t));
+      const write = () => storeSetter(e, (e2) => reconcileState(t2, e2, r, true));
       o ? o(write) : write();
     };
     commit(handleAsync(i, s, commit));
   });
   return i;
 }
-function createWriteTraps(e, r) {
-  const t = {
-    get(e2, r2) {
+function createWriteTraps(e, t) {
+  const r = {
+    get(e2, t2) {
       let o;
       setWriteOverride(true);
       setProjectionWriteActive(true);
       try {
-        o = e2[r2];
+        o = e2[t2];
       } finally {
         setWriteOverride(false);
         setProjectionWriteActive(false);
       }
-      if (r2 === $TARGET)
+      if (t2 === $TARGET)
         return o;
-      return typeof o === "object" && o !== null ? new Proxy(o, t) : o;
+      return typeof o === "object" && o !== null ? new Proxy(o, r) : o;
     },
-    has(e2, r2) {
-      let t2;
+    has(e2, t2) {
+      let r2;
       setWriteOverride(true);
       setProjectionWriteActive(true);
       try {
-        t2 = r2 in e2;
+        r2 = t2 in e2;
       } finally {
         setWriteOverride(false);
         setProjectionWriteActive(false);
       }
-      return t2;
+      return r2;
     },
-    set(t2, o, n) {
+    set(r2, o, n) {
       if (e && !e())
         return true;
       setWriteOverride(true);
       setProjectionWriteActive(true);
       try {
-        t2[o] = n;
-        r?.();
+        r2[o] = n;
+        t?.();
       } finally {
         setWriteOverride(false);
         setProjectionWriteActive(false);
       }
       return true;
     },
-    deleteProperty(t2, o) {
+    deleteProperty(r2, o) {
       if (e && !e())
         return true;
       setWriteOverride(true);
       setProjectionWriteActive(true);
       try {
-        delete t2[o];
-        r?.();
+        delete r2[o];
+        t?.();
       } finally {
         setWriteOverride(false);
         setProjectionWriteActive(false);
@@ -2701,10 +2771,10 @@ function createWriteTraps(e, r) {
       return true;
     }
   };
-  return t;
+  return r;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/store/store.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -2830,10 +2900,22 @@ function wrapShallow(e) {
   markRawIngest(e);
   return r;
 }
+var OBJECT_PROTO = Object.prototype;
+var wrappableProtos = new WeakMap;
 function isWrappable(e) {
   if (e == null || typeof e !== "object" || Object.isFrozen(e))
     return false;
-  return typeof Node === "undefined" || !(e instanceof Node);
+  const t = Object.getPrototypeOf(e);
+  if (t === OBJECT_PROTO || t === null)
+    return true;
+  if (Array.isArray(e))
+    return true;
+  let r = wrappableProtos.get(t);
+  if (r === undefined) {
+    r = Object.prototype.toString.call(e) === "[object Object]" && (typeof Node === "undefined" || !(e instanceof Node));
+    wrappableProtos.set(t, r);
+  }
+  return r;
 }
 var writeOverride = false;
 function setWriteOverride(e) {
@@ -2898,7 +2980,7 @@ function getOverlayLayer(e, t) {
   return;
 }
 function visibleNodeValue(e) {
-  return e.Ae !== undefined && e.Ae !== NOT_PENDING ? unwrapOverride(e.Ae) : e._e !== NOT_PENDING ? e._e : e.Ue;
+  return e.Ae !== undefined && e.Ae !== NOT_PENDING ? unwrapOverride(e.Ae) : e.De !== NOT_PENDING ? e.De : e.Ue;
 }
 function hasOwnStoreProperty(e, t) {
   const r = getOverlayLayer(e, t);
@@ -2976,12 +3058,12 @@ var affectsScopes = new Map;
 function witnessAffectsMark(e, t) {
   const r = e[STORE_NODE]?.[$AFFECTS];
   if (r?.t)
-    GlobalQueue.Dt(r);
+    GlobalQueue.Gt(r);
   if (affectsScopes.size) {
     const n = e[STORE_VALUE];
     for (const [e2, o] of affectsScopes) {
       if (e2 !== r && e2.t && o.scope.has(n) && (o.key === undefined || o.key === t))
-        GlobalQueue.Dt(e2);
+        GlobalQueue.Gt(e2);
     }
   }
 }
@@ -3115,9 +3197,12 @@ function notifyStoreProperty(e, t, r, n, o, i) {
   notifySelf(e);
 }
 var Writing = null;
-function throwIfUninitialized(e) {
+function throwIfUnreadable(e) {
   const t = e[STORE_FIREWALL];
-  if (t && t.S & STATUS_UNINITIALIZED)
+  if (!t)
+    return;
+  const r = t.S;
+  if (r & STATUS_ERROR || r & STATUS_UNINITIALIZED && r & STATUS_PENDING)
     throw t._ ?? new NotReadyError(t);
 }
 var storeTraps = {
@@ -3159,22 +3244,22 @@ var storeTraps = {
     const s = getOverlayLayer(e, t);
     const E = !!s;
     const S = !!e[STORE_VALUE][$TARGET];
-    const f = s ?? e[STORE_VALUE];
+    const T = s ?? e[STORE_VALUE];
     if (!i) {
-      const n2 = Object.getOwnPropertyDescriptor(f, t);
+      const n2 = Object.getOwnPropertyDescriptor(T, t);
       if (n2 && n2.get)
         return n2.get.call(r);
       if (!n2 && !E && e[STORE_CUSTOM_PROTO]) {
-        const e2 = unwrapStoreValue(f);
+        const e2 = unwrapStoreValue(T);
         if (hasInheritedAccessor(e2, t)) {
-          return Reflect.get(f, t, r);
+          return Reflect.get(T, t, r);
         }
       }
     }
     if (writeOnly(r)) {
       if (isPrototypePollutionKey(t) && !hasOwnStoreProperty(e, t))
         return;
-      let r2 = i && (E || !S) ? visibleNodeValue(i) : f[t];
+      let r2 = i && (E || !S) ? visibleNodeValue(i) : T[t];
       r2 === $DELETED && (r2 = undefined);
       if (!isWrappable(r2))
         return r2;
@@ -3184,19 +3269,19 @@ var storeTraps = {
       Writing?.add(n2);
       return n2;
     }
-    let R = i ? E || !S ? read(o[t]) : (read(o[t]), f[t]) : f[t];
-    R === $DELETED && (R = undefined);
+    let c = i ? E || !S ? read(o[t]) : (read(o[t]), T[t]) : T[t];
+    c === $DELETED && (c = undefined);
     if (!i) {
-      if (!E && typeof R === "function" && !Object.prototype.hasOwnProperty.call(f, t)) {
+      if (!E && typeof c === "function" && !Object.prototype.hasOwnProperty.call(T, t)) {
         let t2;
-        return !Array.isArray(e[STORE_VALUE]) && (t2 = Object.getPrototypeOf(e[STORE_VALUE])) && t2 !== Object.prototype ? R.bind(f) : R;
+        return !Array.isArray(e[STORE_VALUE]) && (t2 = Object.getPrototypeOf(e[STORE_VALUE])) && t2 !== Object.prototype ? c.bind(T) : c;
       } else if (getObserver() && !n) {
-        return read(getNode(e, o, t, isWrappable(R) ? wrap(R, e) : R, isEqual, e[STORE_SNAPSHOT_PROPS]));
+        return read(getNode(e, o, t, isWrappable(c) ? wrap(c, e) : c, isEqual, e[STORE_SNAPSHOT_PROPS]));
       }
     }
     if (!n && !getObserver())
-      throwIfUninitialized(e);
-    return isWrappable(R) ? wrap(R, e) : R;
+      throwIfUnreadable(e);
+    return isWrappable(c) ? wrap(c, e) : c;
   },
   has(e, t) {
     if (t === $PROXY || t === $TRACK || t === "__proto__")
@@ -3213,7 +3298,7 @@ var storeTraps = {
     if (getObserver()) {
       return read(getNode(e, o, t, n));
     }
-    throwIfUninitialized(e);
+    throwIfUnreadable(e);
     return n;
   },
   set(e, t, r) {
@@ -3226,37 +3311,37 @@ var storeTraps = {
         const s = getOverlayLayer(e, t);
         const E = s ? s[t] : o;
         const S = s ? s[t] !== $DELETED : (t in e[STORE_VALUE]);
-        const f = !!e[STORE_SHALLOW] && r?.[$TARGET] !== undefined;
-        const R = f ? r : unwrapStoreValue(r);
-        if (e[STORE_SHALLOW] && !f && isWrappable(R)) {
+        const T = !!e[STORE_SHALLOW] && r?.[$TARGET] !== undefined;
+        const c = T ? r : unwrapStoreValue(r);
+        if (e[STORE_SHALLOW] && !T && isWrappable(c)) {
           rawValuesUsed = true;
-          rawValues.add(R);
+          rawValues.add(c);
         }
-        const c = typeof t === "string" ? Number(t) : -1;
-        const T = Array.isArray(O) && Number.isInteger(c) && c >= 0 && c < 4294967295 && String(c) === t;
-        const u = T ? c + 1 : 0;
-        const a = T && (getOverlayLayer(e, "length") ?? O).length;
-        const l = T && u > a ? u : undefined;
-        if (E === R && l === undefined)
+        const f = typeof t === "string" ? Number(t) : -1;
+        const R = Array.isArray(O) && Number.isInteger(f) && f >= 0 && f < 4294967295 && String(f) === t;
+        const u = R ? f + 1 : 0;
+        const a = R && (getOverlayLayer(e, "length") ?? O).length;
+        const l = R && u > a ? u : undefined;
+        if (E === c && l === undefined)
           return true;
         armOptimisticStoreWrite(e, n);
-        if (R !== undefined && R === o && l === undefined) {
+        if (c !== undefined && c === o && l === undefined) {
           delete e[i]?.[t];
           if (i === STORE_OPTIMISTIC_OVERRIDE)
             delete e[STORE_OPTIMISTIC_OWNERS]?.[t];
         } else {
           const r2 = e[i] || (e[i] = Object.create(null));
-          r2[t] = R;
+          r2[t] = c;
           stampOptimisticOwner(e, i, t);
           if (l !== undefined) {
             r2.length = l;
             stampOptimisticOwner(e, i, "length");
           }
         }
-        notifyStoreProperty(e, t, "set", R, E, S);
-        if (Array.isArray(O) && t === "length" && typeof R === "number" && typeof E === "number" && R < E) {
+        notifyStoreProperty(e, t, "set", c, E, S);
+        if (Array.isArray(O) && t === "length" && typeof c === "number" && typeof E === "number" && c < E) {
           const t2 = e[i] || (e[i] = Object.create(null));
-          for (let r2 = R;r2 < E; r2++) {
+          for (let r2 = c;r2 < E; r2++) {
             if (t2[r2] === $DELETED)
               continue;
             const n2 = r2 in t2 ? t2[r2] : O[r2];
@@ -3336,7 +3421,7 @@ var storeTraps = {
     if (getObserver() !== e[STORE_FIREWALL]) {
       trackSelf(e);
       if (!getObserver() && !writeOnly(e[$PROXY]))
-        throwIfUninitialized(e);
+        throwIfUnreadable(e);
     }
     let t = getKeys(e[STORE_VALUE], e[STORE_OVERRIDE], false);
     if (e[STORE_OPTIMISTIC_OVERRIDE]) {
@@ -3430,7 +3515,7 @@ function createStore(e, t, r) {
   } : (e2) => storeSetter(o, e2)];
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/map.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, i) {
   const e = typeof i?.keyed === "function" ? i.keyed : undefined;
   const r = s.length > 1;
@@ -3442,12 +3527,12 @@ function mapArray(t, s, i) {
     Mt: [],
     Kt: n,
     xt: [],
-    Gt: [],
-    Ut: e,
-    $t: e || i?.keyed === false ? [] : undefined,
-    qt: r && i?.keyed !== false ? [] : undefined,
-    zt: i?.keyed === false,
-    Bt: i?.fallback
+    Ut: [],
+    $t: e,
+    qt: e || i?.keyed === false ? [] : undefined,
+    zt: r && i?.keyed !== false ? [] : undefined,
+    Bt: i?.keyed === false,
+    Ht: i?.fallback
   };
   const o = computed(updateKeyedMap.bind(h));
   h.wt.Tt = o;
@@ -3461,14 +3546,14 @@ function updateKeyedMap() {
   const t = this.Wt() || [], s = t.length;
   t[$TRACK];
   runWithOwner(this.wt, () => {
-    let i, e, r, n, h = this.$t ? this.zt ? () => {
+    let i, e, r, n, h = this.qt ? this.Bt ? () => {
       r[e] = signal(t[e], pureOptions);
       return this.Kt(accessor(r[e]), e);
     } : () => {
       r[e] = signal(t[e], pureOptions);
       n && (n[e] = signal(e, pureOptions));
       return this.Kt(accessor(r[e]), n ? accessor(n[e]) : undefined);
-    } : this.qt ? () => {
+    } : this.zt ? () => {
       const s2 = t[e];
       n[e] = signal(e, pureOptions);
       return this.Kt(s2, accessor(n[e]));
@@ -3479,22 +3564,22 @@ function updateKeyedMap() {
     if (s === 0) {
       if (this.jt !== 0) {
         this.wt.dispose(false);
-        this.Gt = [];
+        this.Ut = [];
         this.Mt = [];
         this.xt = [];
         this.jt = 0;
-        this.$t && (this.$t = []);
         this.qt && (this.qt = []);
+        this.zt && (this.zt = []);
       }
-      if (this.Bt && !this.xt[0]) {
-        this.Gt[0]?.dispose();
-        this.xt[0] = runWithOwner(this.Gt[0] = createOwner(), this.Bt);
+      if (this.Ht && !this.xt[0]) {
+        this.Ut[0]?.dispose();
+        this.xt[0] = runWithOwner(this.Ut[0] = createOwner(), this.Ht);
       }
     } else if (this.jt === 0) {
       const o = new Array(s);
       const c = new Array(s);
-      r = this.$t && new Array(s);
-      n = this.qt && new Array(s);
+      r = this.qt && new Array(s);
+      n = this.zt && new Array(s);
       try {
         for (e = 0;e < s; e++)
           o[e] = runWithOwner(c[e] = createOwner(), h);
@@ -3503,21 +3588,21 @@ function updateKeyedMap() {
           c[i]?.dispose();
         throw t2;
       }
-      if (this.Gt[0])
-        this.Gt[0].dispose();
+      if (this.Ut[0])
+        this.Ut[0].dispose();
       this.xt = o;
-      this.Gt = c;
-      r && (this.$t = r);
-      n && (this.qt = n);
+      this.Ut = c;
+      r && (this.qt = r);
+      n && (this.zt = n);
       this.Mt = t.slice(0);
       this.jt = s;
     } else {
       let o, c, a, f, u, p, w, l, d;
-      for (o = 0, c = Math.min(this.jt, s);o < c && (this.Mt[o] === t[o] || this.$t && compare(this.Ut, this.Mt[o], t[o])); o++) {
-        if (this.$t)
-          setSignal(this.$t[o], t[o]);
+      for (o = 0, c = Math.min(this.jt, s);o < c && (this.Mt[o] === t[o] || this.qt && compare(this.$t, this.Mt[o], t[o])); o++) {
+        if (this.qt)
+          setSignal(this.qt[o], t[o]);
       }
-      for (c = this.jt - 1, a = s - 1;c >= o && a >= o && (this.Mt[c] === t[a] || this.$t && compare(this.Ut, this.Mt[c], t[a])); c--, a--)
+      for (c = this.jt - 1, a = s - 1;c >= o && a >= o && (this.Mt[c] === t[a] || this.qt && compare(this.$t, this.Mt[c], t[a])); c--, a--)
         ;
       if (o === s && this.jt === s) {
         this.Mt = t.slice(0);
@@ -3526,30 +3611,30 @@ function updateKeyedMap() {
       const O = s - this.jt;
       const m = new Array(s);
       const _ = new Array(s);
-      r = this.$t ? new Array(s) : undefined;
-      n = this.qt ? new Array(s) : undefined;
+      r = this.qt ? new Array(s) : undefined;
+      n = this.zt ? new Array(s) : undefined;
       p = new Map;
       w = new Array(a + 1);
       for (e = a;e >= o; e--) {
         f = t[e];
-        u = this.Ut ? this.Ut(f) : f;
+        u = this.$t ? this.$t(f) : f;
         i = p.get(u);
         w[e] = i === undefined ? -1 : i;
         p.set(u, e);
       }
       for (i = o;i <= c; i++) {
         f = this.Mt[i];
-        u = this.Ut ? this.Ut(f) : f;
+        u = this.$t ? this.$t(f) : f;
         e = p.get(u);
         if (e !== undefined && e !== -1) {
           m[e] = this.xt[i];
-          _[e] = this.Gt[i];
-          r && (r[e] = this.$t[i]);
-          n && (n[e] = this.qt[i]);
+          _[e] = this.Ut[i];
+          r && (r[e] = this.qt[i]);
+          n && (n[e] = this.zt[i]);
           e = w[e];
           p.set(u, e);
         } else
-          (l ??= []).push(this.Gt[i]);
+          (l ??= []).push(this.Ut[i]);
       }
       try {
         for (e = o;e <= a; e++) {
@@ -3566,9 +3651,9 @@ function updateKeyedMap() {
       }
       for (i = 0;i < o; i++) {
         m[i] = this.xt[i];
-        _[i] = this.Gt[i];
-        r && (r[i] = this.$t[i]);
-        n && (n[i] = this.qt[i]);
+        _[i] = this.Ut[i];
+        r && (r[i] = this.qt[i]);
+        n && (n[i] = this.zt[i]);
       }
       for (e = o;e <= a; e++) {
         if (r)
@@ -3578,21 +3663,21 @@ function updateKeyedMap() {
       }
       for (e = a + 1;e < s; e++) {
         m[e] = this.xt[e - O];
-        _[e] = this.Gt[e - O];
+        _[e] = this.Ut[e - O];
         if (r) {
-          r[e] = this.$t[e - O];
+          r[e] = this.qt[e - O];
           setSignal(r[e], t[e]);
         }
         if (n) {
-          n[e] = this.qt[e - O];
+          n[e] = this.zt[e - O];
           if (O !== 0)
             setSignal(n[e], e);
         }
       }
       this.xt = m;
-      this.Gt = _;
-      r && (this.$t = r);
-      n && (this.qt = n);
+      this.Ut = _;
+      r && (this.qt = r);
+      n && (this.zt = n);
       this.jt = s;
       this.Mt = t.slice(0);
       if (l)
@@ -3605,7 +3690,7 @@ function updateKeyedMap() {
 function compare(t, s, i) {
   return t ? t(s) === t(i) : true;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -3724,7 +3809,7 @@ function merge(...e) {
   i[$SOURCES] = r;
   return i;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-beta.26/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// node_modules/.bun/@solidjs+signals@2.0.0-beta.31/node_modules/@solidjs/signals/dist/prod/boundaries.js
 var ON_INIT = Symbol();
 var _revealUsed = false;
 function isRevealController(e) {
@@ -4010,7 +4095,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return s;
 }
-// node_modules/.bun/solid-js@2.0.0-beta.26/node_modules/solid-js/dist/solid.js
+// node_modules/.bun/solid-js@2.0.0-beta.31/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 function createContext2(defaultValue, options) {
@@ -4047,6 +4132,10 @@ var _createMemo;
 var _createRenderEffect;
 var createMemo2 = (...args) => (_createMemo || createMemo)(...args);
 var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffect)(...args);
+var _fragments = new Map;
+var _truncated = new Set;
+var _revealSubs = new Set;
+var _truncationRejectors = new Map;
 function createComponent(Comp, props) {
   return untrack(() => Comp(props || {}));
 }
@@ -4133,7 +4222,7 @@ function Match(props) {
   return props;
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-beta.26+bdd014273d80398c/node_modules/@solidjs/universal/dist/universal.js
+// node_modules/.bun/@solidjs+universal@2.0.0-beta.31+756a40d0d7c487f8/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
