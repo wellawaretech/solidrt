@@ -76,6 +76,9 @@ fn serve_and_fetch_round_trip() {
 
             let r4 = await fetch(base + "/echo", {{ method: "POST", body: "hi", headers: {{ "X-Demo": "abc" }} }});
             console.log("echo", await r4.text());
+
+            let r5 = await fetch(base + "/echo", {{ method: "POST", body: "hi", headers: new Headers({{ "X-Demo": "inst" }}) }});
+            console.log("echo-headers", await r5.text());
         }})()
             .catch(e => console.error("test error: " + (e && e.message || e)))
             // Stopping lets the engine go idle so the test thread finishes.
@@ -96,8 +99,36 @@ fn serve_and_fetch_round_trip() {
       "custom 418 I'm a teapot false flux made",
       // POST body and a request header reach the handler; method is uppercased
       "echo POST:hi:abc",
+      // a Headers instance works as the headers option (entries live in Rust,
+      // so it must be recognized, not iterated as a plain object)
+      "echo-headers POST:hi:inst",
     ]
   );
+}
+
+#[tokio::test]
+async fn fetch_rejects_unsupported_header_and_body_values() {
+  // Both throw synchronously at the call site (caller bugs, not environmental
+  // failures), before any network activity - so no server is needed.
+  let out = common::run_source(
+    r#"
+            try {
+                fetch("http://127.0.0.1:9/", { method: "POST", body: { a: 1 } });
+                console.log("no throw");
+            } catch (e) {
+                console.log("body", String(e.message || e).includes("Fetch body"));
+            }
+            try {
+                fetch("http://127.0.0.1:9/", { headers: { "X-N": 5 } });
+                console.log("no throw");
+            } catch (e) {
+                console.log("headers", String(e.message || e).includes("must be a string"));
+            }
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.lines_at(flux::LogLevel::Log), vec!["body true", "headers true"]);
 }
 
 #[test]

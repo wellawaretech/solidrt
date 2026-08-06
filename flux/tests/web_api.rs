@@ -32,6 +32,30 @@ async fn headers_case_insensitive_and_multi_value() {
 }
 
 #[tokio::test]
+async fn headers_init_copies_instance_and_rejects_non_string_values() {
+  let out = run_source(
+    r#"
+            let a = new Headers({ "X-A": "1" });
+            let b = new Headers(a);
+            a.set("X-A", "changed");
+            // b copied a's entries at construction; a's later mutation stays in a.
+            console.log(b.get("x-a"));
+            // A non-string value is a caller bug and throws (never stringified
+            // or silently dropped).
+            try {
+                new Headers({ "X-N": 5 });
+                console.log("no throw");
+            } catch (e) {
+                console.log("threw", String(e.message || e).includes("must be a string"));
+            }
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.lines_at(flux::LogLevel::Log), vec!["1", "threw true"]);
+}
+
+#[tokio::test]
 async fn response_status_headers_and_body() {
   let out = run_source(
     r#"

@@ -16,7 +16,8 @@ pub use plugins::modules::events::{emit_event, emit_sticky, has_listeners, regis
 pub use plugins::modules::process::ProcessArgs;
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
-pub use plugins::standards::fetch::JsResponseData;
+pub use plugins::standards::fetch::{request_body_from_value, JsResponseData};
+pub use plugins::standards::headers::header_pairs_from_init;
 pub use plugins::standards::time::Clock;
 pub use rquickjs;
 

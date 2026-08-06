@@ -21,7 +21,7 @@ impl Headers {
   #[qjs(constructor)]
   pub fn new<'js>(init: Opt<Value<'js>>) -> rquickjs::Result<Self> {
     let entries = match init.0 {
-      Some(v) => entries_from_init(&v)?,
+      Some(v) => header_pairs_from_init(&v)?,
       None => Vec::new(),
     };
     Ok(Headers { entries: RefCell::new(entries) })
@@ -82,11 +82,18 @@ impl Headers {
   }
 }
 
-fn entries_from_init<'js>(val: &Value<'js>) -> rquickjs::Result<Vec<(String, String)>> {
+/// Parse a HeadersInit value (a plain object, a Headers instance, or
+/// null/undefined) into (lowercased name, value) pairs. Shared by the Headers
+/// constructor, the Request/Response inits, the fetch `headers` option, and the
+/// lattice dev-server proxy's fetch. A non-string value throws rather than
+/// stringify (the web coerces; here a number or undefined value is a caller
+/// bug).
+pub fn header_pairs_from_init<'js>(val: &Value<'js>) -> rquickjs::Result<Vec<(String, String)>> {
   if val.is_null() || val.is_undefined() {
     return Ok(Vec::new());
   }
-  // Headers instance: copy entries.
+  // Headers instance: copy entries. Its entries live in Rust, so the plain
+  // object path below would see no keys and silently produce nothing.
   if let Ok(other) = Class::<Headers>::from_value(val) {
     let other = other.borrow();
     return Ok(other.entries.borrow().clone());
@@ -94,10 +101,17 @@ fn entries_from_init<'js>(val: &Value<'js>) -> rquickjs::Result<Vec<(String, Str
   // Plain object: iterate own keys.
   if let Some(obj) = val.as_object() {
     let mut out = Vec::new();
-    for key in obj.keys::<String>().flatten() {
-      if let Ok(Some(v)) = obj.get::<_, Option<String>>(&key) {
-        out.push((key.to_ascii_lowercase(), v));
-      }
+    for key in obj.keys::<String>() {
+      let key = key?;
+      let v: Value = obj.get(&key)?;
+      let Some(s) = v.as_string() else {
+        return Err(rquickjs::Error::new_from_js_message(
+          "init",
+          "Headers",
+          format!("value for '{key}' must be a string"),
+        ));
+      };
+      out.push((key.to_ascii_lowercase(), s.to_string()?));
     }
     return Ok(out);
   }
@@ -130,7 +144,7 @@ pub(crate) fn headers_from_init<'js>(
   init: Option<&Value<'js>>,
 ) -> rquickjs::Result<Class<'js, Headers>> {
   let entries = match init {
-    Some(v) => entries_from_init(v)?,
+    Some(v) => header_pairs_from_init(v)?,
     None => Vec::new(),
   };
   Class::instance(ctx.clone(), Headers { entries: RefCell::new(entries) })

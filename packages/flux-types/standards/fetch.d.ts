@@ -4,12 +4,16 @@
 // Grouped in one file because the four share BodyInit/HeadersInit and reference
 // each other.
 
-/** Header initializer: a plain name -> value object, or another Headers. */
+/**
+ * Header initializer: a plain name -> value object, or another Headers.
+ * Values must be strings: a non-string value throws (the web stringifies it).
+ */
 type HeadersInit = Record<string, string> | Headers
 
 /**
  * A message body: a string, raw bytes, or an async-iterable of string/byte
- * chunks (e.g. an `async function*`), which is sent as a stream.
+ * chunks (e.g. an `async function*`), which is sent as a stream. Any other
+ * value throws (the web stringifies it).
  */
 type BodyInit = string | Uint8Array | AsyncIterable<string | Uint8Array>
 

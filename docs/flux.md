@@ -25,6 +25,12 @@ let data = await res.json()
 read once via `text()`, `bytes()`, `arrayBuffer()`, or `json()`, or stream
 with `for await (let chunk of res.body)`.
 
+The `headers` option takes a plain object or a `Headers` instance; values
+must be strings. A body must be a string, `Uint8Array`, or async-iterable.
+Anything else throws (where the web would stringify it): a number header
+value or a plain-object body is treated as a caller bug, never coerced or
+silently dropped.
+
 #### Caching
 
 Caching is explicit and per call. By default `fetch` never caches (like
