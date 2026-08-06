@@ -123,7 +123,7 @@ declare module "flux:gpu" {
    * messages, so a chain of targets reads as "bloom-h samples particle-verts"
    * instead of anonymous ids. Not unique, never interpreted; set at create,
    * kept across id-stable resizes ({@link resizeTexture},
-   * {@link setShaderSize}).
+   * {@link setTargetSize}).
    */
   export type LabelOption = { label?: string }
   /**
@@ -186,8 +186,8 @@ declare module "flux:gpu" {
    * working, and shaders sampling the texture re-render. `data` seeds the new
    * contents and, like {@link createMutableTexture}, must hold at least one
    * frame at the id's format (which survives the resize, like the sampler
-   * state). Shader/pipeline target ids are rejected - resize those with
-   * {@link setShaderSize}.
+   * state). Render target ids are rejected - resize those with
+   * {@link setTargetSize}.
    */
   export function resizeTexture(id: TextureId, data: Uint8Array, width: number, height: number): void
   /**
@@ -205,7 +205,7 @@ declare module "flux:gpu" {
    * for the value shapes and the validation contract - a typo'd name throws
    * here, at the create). It is its own argument, not an option, because it
    * is the initial value of a live channel - the same values the `<texture
-   * params>` prop and {@link setShaderParams} drive later; pass `null` (or
+   * params>` prop and {@link setTargetParams} drive later; pass `null` (or
    * omit it) for a shader with none. `opts.textures` binds sampler2D
    * uniforms to texture ids - any texture id, including another
    * shader/pipeline target's output, under a name that must be an active
@@ -328,8 +328,8 @@ declare module "flux:gpu" {
    * Create a render target over a {@link createRenderPipeline} pipeline and
    * render it once: the target half of {@link createPipelineTexture}. Returns
    * a texture id exactly like the fused creates do (drive uniforms
-   * via the `params` prop or {@link setShaderParams}, resize with
-   * {@link setShaderSize}, destroy with {@link destroyTexture}). Many targets
+   * via the `params` prop or {@link setTargetParams}, resize with
+   * {@link setTargetSize}, destroy with {@link destroyTexture}). Many targets
    * may share one pipeline, and creating a target compiles nothing. `buffer`
    * supplies the concrete vertex buffer the pipeline's attribute layout
    * describes (required when the pipeline declares attributes), and
@@ -385,36 +385,6 @@ declare module "flux:gpu" {
    * immediately.
    */
   export function destroyProgram(id: ProgramId): void
-  /**
-   * Update a shader texture's uniforms by name and re-render it (see
-   * {@link ShaderParams} for the value shapes and the validation contract -
-   * an unknown name or a mismatched length throws here, on the line that
-   * wrote it). On a manual target nothing renders here; the values apply at
-   * its next {@link renderTarget}.
-   */
-  export function setShaderParams(id: TextureId, params: ShaderParams): void
-  /**
-   * Rebind a shader texture's sampler2D inputs by uniform name and re-render
-   * it with its last-applied params - the sampler analog of
-   * {@link setShaderParams}. Bindings not named keep their current source, so
-   * a single input can be retargeted (post-process source swap, ping-pong
-   * between two data textures) without recompiling the shader. Throws if the
-   * shader or a source texture id is unknown, if a binding names anything
-   * but an active `sampler2D` uniform, if it names the shader's own target
-   * (same-pass feedback), or if it would close a sampling cycle among
-   * runtime-rendered targets. A cycle through a
-   * `render: "manual"` target is legal - the runtime never renders one, so
-   * the loop only steps when the app calls {@link renderTarget}.
-   */
-  export function setShaderTextures(id: TextureId, textures: Record<string, TextureId>): void
-  /**
-   * Resize a shader or pipeline target texture in place and re-render it: the
-   * id, compiled program, last-applied params, and sampler bindings all carry
-   * over; only the output size changes. The setDraw analog for output
-   * size.
-   */
-  export function setShaderSize(id: TextureId, width: number, height: number): void
-
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**
    * Blending for a pipeline's own draw. "none" (default) overwrites:
@@ -526,7 +496,7 @@ declare module "flux:gpu" {
    * {@link renderTarget}, and `loadOp: "load"` (manual-only) keeps the
    * previous contents under each draw.
    * Returns a texture id: display it with `<texture src>`, drive uniforms via
-   * the `params` prop or {@link setShaderParams}, destroy with
+   * the `params` prop or {@link setTargetParams}, destroy with
    * {@link destroyTexture}.
    */
   export function createPipelineTexture(
@@ -676,51 +646,73 @@ declare module "flux:gpu" {
    */
   export function removeDraw(target: TextureId, draw: DrawId): void
   /**
-   * Update one draw entry's uniforms by name: {@link setShaderParams}
+   * Update one draw entry's uniforms by name: {@link setTargetParams}
    * addressed to a single entry, same merge and validation contract. The
    * per-object hot path - a moved mesh is one setDrawParams with its new
    * model matrix.
    */
   export function setDrawParams(target: TextureId, draw: DrawId, params: ShaderParams): void
   /**
-   * Update a draw target's SHARED (target-level) params: values every entry
-   * reads - a camera's view-projection above all - written once per target
-   * instead of once per entry, with the usual merge-by-name. Shared values
-   * apply at render before each entry's own params, so an entry naming the
-   * same uniform overrides the shared value (specific beats general), and
-   * they are target state: entry add/remove/rebuild cannot lose them.
+   * Update a target's target-level uniforms by name, on any target kind,
+   * with the usual merge-by-name (see {@link ShaderParams} for value shapes;
+   * a bad name or a mismatched length throws here, on the line that wrote
+   * it). On a single-program target (a fragment texture or a pipeline
+   * target) the target level IS its one pass: every name validates against
+   * that program and the target re-renders. On a manual target nothing
+   * renders here; the values apply at its next {@link renderTarget}.
    *
-   * A draw target legitimately mixes material classes, so coverage may be
-   * partial: a name only some entries' programs declare is applied where
-   * declared and skipped elsewhere. Validation follows: each name must be an
-   * active settable uniform of at least ONE current entry's program (with
-   * the matching arity everywhere it is declared) - a name no entry declares
-   * throws. With no entries yet, names are accepted as-is; an entry added
-   * later whose program lacks an already-set name is never a retroactive
-   * error, the value just skips it.
+   * On a draw target these are the SHARED params: values every entry reads
+   * - a camera's view-projection above all - written once per target
+   * instead of once per entry. Shared values apply at render before each
+   * entry's own params, so an entry naming the same uniform overrides the
+   * shared value (specific beats general), and they are target state: entry
+   * add/remove/rebuild cannot lose them. A draw target legitimately mixes
+   * material classes, so coverage may be partial: a name only some entries'
+   * programs declare is applied where declared and skipped elsewhere.
+   * Validation follows: each name must be an active settable uniform of at
+   * least ONE current entry's program (with the matching arity everywhere it
+   * is declared) - a name no entry declares throws. With no entries yet,
+   * names are accepted as-is; an entry added later whose program lacks an
+   * already-set name is never a retroactive error, the value just skips it.
    */
   export function setTargetParams(target: TextureId, params: ShaderParams): void
   /**
-   * Rebind a draw target's SHARED (target-level) sampler2D inputs by uniform
-   * name: sources every entry reads - an environment map, a shadow map, a
-   * LUT - bound once per target. {@link setTargetParams}'s sampler analog,
-   * with the same rules throughout: an entry's own binding for the same name
-   * wins; a name only some entries' programs declare binds where declared
-   * and is skipped elsewhere; bindings not named keep their current source;
-   * shared bindings are target state that entry add/remove/rebuild cannot
-   * lose. Validation matches too - each name must be an active sampler2D of
-   * at least ONE current entry's program, with no entries yet names are
-   * accepted as-is, and a later entry never retroactively errors - plus the
-   * usual binding checks: sources must exist, each entry's effective inputs
-   * (its own plus the applicable shared ones) must fit the device's texture
-   * units, and a binding that would close a flush-rendered sampling cycle
-   * throws. Shared sources are live dependencies exactly like entry
-   * bindings: the target re-renders when one changes.
+   * Rebind a target's target-level sampler2D inputs by uniform name, on any
+   * target kind - {@link setTargetParams}'s sampler analog. Bindings not
+   * named keep their current source, so a single input can be retargeted
+   * (post-process source swap, ping-pong between two data textures) without
+   * recompiling anything. Bound sources are live dependencies: the target
+   * re-renders when one changes. Every path throws if the target or a
+   * source texture id is unknown, if a binding names the target's own
+   * texture (same-pass feedback), or if it would close a sampling cycle
+   * among runtime-rendered targets; a cycle through a `render: "manual"`
+   * target is legal - the runtime never renders one, so the loop only steps
+   * when the app calls {@link renderTarget}. On a single-program target each
+   * name must be an active `sampler2D` of its one program.
+   *
+   * On a draw target these are the SHARED bindings: sources every entry
+   * reads - an environment map, a shadow map, a LUT - bound once per
+   * target, with the shared-params rules throughout: an entry's own binding
+   * for the same name wins; a name only some entries' programs declare
+   * binds where declared and is skipped elsewhere; shared bindings are
+   * target state that entry add/remove/rebuild cannot lose. Each name must
+   * be an active sampler2D of at least ONE current entry's program (with no
+   * entries yet names are accepted as-is, and a later entry never
+   * retroactively errors), and each entry's effective inputs (its own plus
+   * the applicable shared ones) must fit the device's texture units.
    */
   export function setTargetTextures(target: TextureId, textures: Record<string, TextureId>): void
   /**
+   * Resize a render target of any kind in place and re-render it: the id,
+   * compiled programs, last-applied params, sampler bindings, and draw
+   * state all carry over; only the output size changes. The setDraw analog
+   * for output size. (Pixel textures resize with {@link resizeTexture},
+   * which carries seed pixels instead.)
+   */
+  export function setTargetSize(id: TextureId, width: number, height: number): void
+  /**
    * Rebind one draw entry's sampler2D inputs by uniform name:
-   * {@link setShaderTextures} addressed to a single entry, same merge,
+   * {@link setTargetTextures} addressed to a single entry, same merge,
    * validation, and cycle rules. Entries bind independently - two entries
    * may bind the same uniform name to different sources.
    */
@@ -745,7 +737,7 @@ declare module "flux:gpu" {
   export function setDrawOrder(target: TextureId, order: DrawId[]): void
   /**
    * Render a `render: "manual"` target once, now. Renders land in call order
-   * relative to every other GPU call: a `setShaderParams`/`writeBuffer`
+   * relative to every other GPU call: a `setTargetParams`/`writeBuffer`
    * issued before is visible to the pass, a {@link readTexture} issued after
    * observes it, and two renders run the pass twice in order. Inputs are
    * fresh: pending runtime-driven renders of sampled targets resolve first.

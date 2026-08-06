@@ -105,7 +105,7 @@ pub struct Context {
   // UI-side mirror of which shader targets are manual (TargetSpec::manual):
   // validates render_target synchronously, and relaxes the sampling-cycle
   // test - the flush never renders a manual target, so a cycle is only a
-  // hazard when every member is flush-rendered (see update_shader_textures).
+  // hazard when every member is flush-rendered (see set_target_textures).
   manual_targets: RefCell<HashSet<u64>>,
   // UI-side mirror of the raster thread's program registry: program id ->
   // active uniforms (from the LinkProgram reply). Programs are their own id
@@ -429,15 +429,15 @@ impl Context {
   /// new texture immediately (shaders sampling it re-render), in-flight users
   /// of the old entry keep it alive until released. `pixels` seeds the new
   /// contents and must hold at least one frame at the id's format
-  /// (width*height*4 for rgba8, width*height for r8). Rejects shader/pipeline
-  /// target ids - resize those with `resize_shader_texture`, which carries
-  /// the compiled program along. The caller must request a frame.
+  /// (width*height*4 for rgba8, width*height for r8). Rejects render target
+  /// ids - resize those with `resize_target`, which carries the compiled
+  /// program and draw state along. The caller must request a frame.
   pub fn resize_texture(&self, id: u64, width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
     let Some(entry) = self.textures.get(id) else {
       return Err(format!("texture {id} not found"));
     };
     if self.targets.borrow().contains_key(&id) {
-      return Err(format!("texture {id} is a shader target; use resize_shader_texture"));
+      return Err(format!("texture {id} is a render target; resize it with setTargetSize"));
     }
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
@@ -449,15 +449,15 @@ impl Context {
     self.create_texture_at(id, width, height, &pixels[..frame_size], sampler, format, None)
   }
 
-  /// Recreate a shader/pipeline target at a new size under the same id: the
-  /// compiled program, sampler bindings, last-applied params, and draw state
-  /// carry over, and the output re-renders at the new size at the next dirty
-  /// flush. Lookups pick up the new target right away; in-flight users of
-  /// the old one keep it alive until released. The caller must request a
+  /// Recreate a render target of any kind at a new size under the same id:
+  /// the compiled programs, sampler bindings, last-applied params, and draw
+  /// state carry over, and the output re-renders at the new size at the next
+  /// dirty flush. Lookups pick up the new target right away; in-flight users
+  /// of the old one keep it alive until released. The caller must request a
   /// frame.
-  pub fn resize_shader_texture(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
+  pub fn resize_target(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
     if !self.targets.borrow().contains_key(&id) {
-      return Err(format!("shader texture {id} not found"));
+      return Err(format!("target {id} not found"));
     }
     self.gpu_limits().check_texture_size(width, height)?;
     let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
@@ -471,7 +471,7 @@ impl Context {
   /// is sampleable under (usable anywhere a normal texture id is); the first
   /// render happens at the raster thread's next dirty flush, before anything
   /// observes the pixels. The compiled program is retained so
-  /// update_shader_params can re-render the same texture without recompiling
+  /// set_target_params can re-render the same texture without recompiling
   /// or re-adopting.
   #[allow(clippy::too_many_arguments)]
   pub fn create_shader_texture(
@@ -509,62 +509,6 @@ impl Context {
       .borrow_mut()
       .insert(id, textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect());
     Ok(id)
-  }
-
-  /// Update an existing shader texture's params; it re-renders (sampler
-  /// inputs re-resolved) at the raster thread's next dirty flush, as do any
-  /// targets sampling it, transitively. The output keeps its id and Impeller
-  /// texture (no re-adoption); only the GL contents change, so the caller
-  /// must request a frame for the new pixels to reach the screen. Every name
-  /// must be an active uniform with a matching component count (validated
-  /// here, against the mirror, so the error lands at the call site; note a
-  /// declared-but-optimized-out uniform reflects as absent and reports "no
-  /// active uniform").
-  pub fn update_shader_params(&self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
-    let targets = self.targets.borrow();
-    let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    if mirror.entries.is_some() {
-      return Err(format!("target {id} is a draw target; update params per draw with setDrawParams"));
-    }
-    validate_params(&mirror.uniforms, params)?;
-    drop(targets);
-    self.send(RasterCmd::UpdateShaderParams { id, params: params.to_vec() });
-    Ok(())
-  }
-
-  /// Rebind an existing shader texture's sampler2D inputs by uniform name;
-  /// bindings not named keep their current source. The target re-renders
-  /// against the new sources at the raster thread's next dirty flush, and
-  /// keeps its id and Impeller texture (no re-adoption), so the caller must
-  /// request a frame, same as `update_shader_params`. Errors if the shader or
-  /// any source texture id is unknown, or a binding would create a sampling
-  /// cycle whose members are all flush-rendered targets (such a cycle is a
-  /// feedback loop the flush cannot order). A cycle through a manual target
-  /// is legal: the flush never renders one, so the loop is only ever stepped
-  /// by explicit renders - ping-pong feedback is two manual targets bound to
-  /// each other. Self-binding stays rejected for every target, manual
-  /// included: a pass sampling the very texture it writes is a same-pass GL
-  /// feedback loop (undefined pixels), not a scheduling problem. A name that
-  /// is not an active sampler2D uniform errors here too, against the mirror,
-  /// leaving all bindings unchanged.
-  pub fn update_shader_textures(&self, id: u64, textures: &[(String, u64)]) -> Result<(), String> {
-    {
-      let targets = self.targets.borrow();
-      let mirror = targets.get(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-      if mirror.entries.is_some() {
-        return Err(format!("target {id} is a draw target; rebind textures per draw with setDrawTextures"));
-      }
-      validate_texture_bindings(&mirror.uniforms, textures)?;
-    }
-    self.validate_new_bindings(id, 0, textures)?;
-    let mut sources = self.shader_sources.borrow_mut();
-    let entry = sources.entry(id).or_default();
-    for (name, src_id) in textures {
-      entry.insert((0, name.clone()), *src_id);
-    }
-    drop(sources);
-    self.send(RasterCmd::UpdateShaderTextures { id, textures: textures.to_vec() });
-    Ok(())
   }
 
   /// The binding checks shared by every path that adds sampler edges to
@@ -644,7 +588,7 @@ impl Context {
 
   /// Compile a vertex+fragment pipeline, render it once into a new RGBA8
   /// target texture, and register the output exactly like
-  /// `create_shader_texture` (same id space; `update_shader_params`,
+  /// `create_shader_texture` (same id space; `set_target_params`,
   /// `destroy_texture`, and `<texture src>` all apply). The fused convenience
   /// over `create_render_pipeline` + `create_shader_target`; the anonymous
   /// program and pipeline die with the target.
@@ -817,7 +761,7 @@ impl Context {
 
   /// Create a render target over a pipeline from `create_render_pipeline` and
   /// register the output exactly like `create_shader_texture` (same texture
-  /// id space: params updates, `setShaderSize`, `<texture src>` and
+  /// id space: params updates, `resize_target`, `<texture src>` and
   /// `destroy_texture` all apply). Many targets may share one pipeline, and
   /// creating a target compiles nothing.
   pub fn create_shader_target(&self, pipeline: u64, spec: TargetSpec, mut entry: DrawSpec) -> Result<u64, String> {
@@ -986,9 +930,9 @@ impl Context {
     Ok(())
   }
 
-  /// Update one draw entry's params (the per-entry `update_shader_params`):
-  /// validated against the entry's program, merged by name at the next
-  /// render. The caller must request a frame.
+  /// Update one draw entry's params (the per-entry analog of
+  /// `set_target_params`): validated against the entry's program, merged by
+  /// name at the next render. The caller must request a frame.
   pub fn set_draw_params(&self, target: u64, draw: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
@@ -999,11 +943,22 @@ impl Context {
     Ok(())
   }
 
-  /// Update a draw target's shared (target-level) params: values every entry
-  /// reads - a camera's view-projection above all - folded by name like every
-  /// params write and applied at render before each entry's own params, so an
-  /// entry naming the same uniform overrides the shared value (specific beats
-  /// general). Shared params are target state: they survive entry
+  /// Update a target's target-level params, routing by target kind. A
+  /// single-program target (fragment texture, fixed pipeline target) has one
+  /// pass, so target-level params ARE that pass's params: every name must be
+  /// an active uniform with a matching component count (validated here,
+  /// against the mirror, so the error lands at the call site; note a
+  /// declared-but-optimized-out uniform reflects as absent and reports "no
+  /// active uniform"), and the target re-renders (sampler inputs
+  /// re-resolved) at the raster thread's next dirty flush, as do any targets
+  /// sampling it, transitively. The output keeps its id and Impeller texture
+  /// (no re-adoption); only the GL contents change.
+  ///
+  /// A draw target's target-level params are its SHARED params: values every
+  /// entry reads - a camera's view-projection above all - folded by name like
+  /// every params write and applied at render before each entry's own params,
+  /// so an entry naming the same uniform overrides the shared value (specific
+  /// beats general). Shared params are target state: they survive entry
   /// add/remove/rebuild. A target legitimately mixes material classes, so a
   /// name only some entries' programs declare is applied where declared and
   /// skipped elsewhere (the iResolution rule); validation requires each name
@@ -1015,9 +970,12 @@ impl Context {
   pub fn set_target_params(&self, target: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
-      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
       let Some(list) = mirror.entries.as_ref() else {
-        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+        validate_params(&mirror.uniforms, params)?;
+        drop(targets);
+        self.send(RasterCmd::UpdateShaderParams { id: target, params: params.to_vec() });
+        return Ok(());
       };
       if !list.entries.is_empty() {
         for (name, value) in params {
@@ -1042,27 +1000,49 @@ impl Context {
     Ok(())
   }
 
-  /// Rebind a draw target's shared (target-level) sampler2D inputs by
-  /// uniform name: sources every entry reads (an environment map, a shadow
-  /// map, a LUT), written once per target. At render each entry gets the
-  /// shared names its program declares and its own bindings do not override
-  /// - an entry's own binding wins, and coverage may be partial, exactly
-  /// like `set_target_params`. Bindings not named keep their current source,
-  /// and shared bindings are target state: entry add/remove/rebuild cannot
-  /// lose them. Validation: each name must be an active sampler2D of at
-  /// least ONE current entry's program (and a sampler2D everywhere it is
-  /// declared); with no entries yet names are accepted as-is (the create
-  /// seed). Sources must exist, every entry's effective input count (its own
-  /// bindings plus the applicable merged shared set) must fit the device's
-  /// texture units, and the sampling-cycle rules apply unchanged - a shared
+  /// Rebind a target's target-level sampler2D inputs by uniform name,
+  /// routing by target kind like `set_target_params`; bindings not named
+  /// keep their current source, and the caller must request a frame. On a
+  /// single-program target the bindings are the one pass's inputs, validated
+  /// strictly against its uniform table. Every path errors if the target or
+  /// any source texture id is unknown, or a binding would create a sampling
+  /// cycle whose members are all flush-rendered targets (such a cycle is a
+  /// feedback loop the flush cannot order). A cycle through a manual target
+  /// is legal: the flush never renders one, so the loop is only ever stepped
+  /// by explicit renders - ping-pong feedback is two manual targets bound to
+  /// each other. Self-binding stays rejected for every target, manual
+  /// included: a pass sampling the very texture it writes is a same-pass GL
+  /// feedback loop (undefined pixels), not a scheduling problem.
+  ///
+  /// A draw target's target-level bindings are its SHARED bindings: sources
+  /// every entry reads (an environment map, a shadow map, a LUT), written
+  /// once per target. At render each entry gets the shared names its program
+  /// declares and its own bindings do not override - an entry's own binding
+  /// wins, and coverage may be partial, exactly like `set_target_params`.
+  /// Shared bindings are target state: entry add/remove/rebuild cannot lose
+  /// them. Validation: each name must be an active sampler2D of at least ONE
+  /// current entry's program (and a sampler2D everywhere it is declared);
+  /// with no entries yet names are accepted as-is (the create seed). Every
+  /// entry's effective input count (its own bindings plus the applicable
+  /// merged shared set) must fit the device's texture units, and a shared
   /// edge counts for propagation and cycles even before any entry declares
-  /// its name. The caller must request a frame.
+  /// its name.
   pub fn set_target_textures(&self, target: u64, textures: &[(String, u64)]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
-      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
       let Some(list) = mirror.entries.as_ref() else {
-        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+        validate_texture_bindings(&mirror.uniforms, textures)?;
+        drop(targets);
+        self.validate_new_bindings(target, 0, textures)?;
+        let mut sources = self.shader_sources.borrow_mut();
+        let record = sources.entry(target).or_default();
+        for (name, src_id) in textures {
+          record.insert((0, name.clone()), *src_id);
+        }
+        drop(sources);
+        self.send(RasterCmd::UpdateShaderTextures { id: target, textures: textures.to_vec() });
+        return Ok(());
       };
       if !list.entries.is_empty() {
         for (name, _) in textures {
@@ -1117,7 +1097,7 @@ impl Context {
   }
 
   /// Rebind one draw entry's sampler2D inputs by uniform name (the per-entry
-  /// `update_shader_textures`); bindings not named keep their current
+  /// analog of `set_target_textures`); bindings not named keep their current
   /// source. Same checks as every bind path: names against the entry's
   /// program, per-entry unit count, source existence, cycles. The caller
   /// must request a frame.

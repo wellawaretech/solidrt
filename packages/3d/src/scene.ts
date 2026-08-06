@@ -14,7 +14,7 @@
 // each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setShaderSize, setTargetParams } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidjs/signals"
 import { compose, lookAt, mat4, multiply, perspective } from "./math.ts"
@@ -379,7 +379,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed || (w === width && h === height)) return
       width = w
       height = h
-      setShaderSize(texture, w, h)
+      setTargetSize(texture, w, h)
       cameraDirty = true
       hooks._schedule()
     },

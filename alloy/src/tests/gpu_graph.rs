@@ -128,7 +128,7 @@ fn barrier_at_the_start_blocks_expansion() {
 fn barrier_endpoint_still_hits() {
   // Reaching `to` is a hit even when `to` is a barrier: the check is "is
   // there a path", barriers only stop paths from continuing THROUGH a node.
-  // (In update_shader_textures a manual `to` skips the walk entirely.)
+  // (In set_target_textures a manual `to` skips the walk entirely.)
   let s = sources(&[(2, &[1])]);
   assert!(samples_transitively(&s, &barriers(&[1]), 2, 1));
 }

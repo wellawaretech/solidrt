@@ -99,8 +99,8 @@ impl Buildable for Texture {
       return;
     };
     if let Some(params) = self.pending_params.borrow_mut().take() {
-      if let Err(e) = ctx.alloy.update_shader_params(tex_id, &params) {
-        log::warn!("[texture] build: setShaderParams tex_id={tex_id}: {e}");
+      if let Err(e) = ctx.alloy.set_target_params(tex_id, &params) {
+        log::warn!("[texture] build: params tex_id={tex_id}: {e}");
       }
     }
     let Some(entry) = ctx.alloy.textures.get(tex_id) else {
@@ -226,8 +226,9 @@ impl Texture {
     Damage::Paint
   }
 
-  // Only meaningful when texture_id names a shader texture; applied at the
-  // next build (see pending_params above), not here.
+  // Only meaningful when texture_id names a render target (any kind: for a
+  // draw target these are its shared params); applied at the next build (see
+  // pending_params above), not here.
   pub fn set_params(&mut self, params: Vec<(String, ParamValue)>) -> Damage {
     *self.pending_params.get_mut() = Some(params);
     Damage::Paint

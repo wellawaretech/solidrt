@@ -1,12 +1,14 @@
 // GPU textures and shaders, reactive (SolidJS) layer: the create* helpers free
 // their texture automatically when the reactive owner is disposed. Drive a
-// shader's uniforms declaratively with `<texture src={id} params={{...}} />`
+// target's uniforms declaratively with `<texture src={id} params={{...}} />`
 // (see TextureProps) - the preferred way, deferred to the next real repaint so
-// a fast-changing signal stays paced to actual frames. setShaderParams is the
-// imperative exception: reach for it only when there is no `<texture>` element
-// to hold a params prop, e.g. a shader that only feeds another shader as a
-// sampler2D input. The imperative primitives (uploadTexture, setShaderParams,
-// destroyTexture, ...) live in the `flux:gpu` module.
+// a fast-changing signal stays paced to actual frames; the prop means "the
+// target's params" on every kind (on a draw target, its shared params).
+// setTargetParams is the imperative exception: reach for it only when there
+// is no `<texture>` element to hold a params prop, e.g. a target that only
+// feeds another shader as a sampler2D input. The imperative primitives
+// (uploadTexture, setTargetParams, destroyTexture, ...) live in the
+// `flux:gpu` module.
 //
 // Sampling is a per-texture property declared at creation: `filter`
 // ("linear" default | "nearest") and `wrap` ("clamp" default | "repeat") on
@@ -77,19 +79,28 @@ export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, Text
 // -- need not import flux directly: destroyTexture for the manual-cleanup path
 // (textures made outside a reactive scope, e.g. after an await, are not
 // auto-freed), uploadTexture to push new pixels into a mutable texture, and
-// setShaderParams as the non-reactive exception described above - prefer
-// `<texture params={...}>` when a `<texture>` element is already in the tree.
-// resizeTexture and setShaderSize resize in place at a stable id (so
-// `<texture src>` and sampler bindings stay valid); because the id survives,
-// the owner-scoped auto-free registered at creation keeps working and no
-// re-registration is needed. setShaderTextures is the sampler analog of
-// setShaderParams: retarget a shader's sampler2D inputs without recompiling.
+// the target-level verbs. setTargetParams writes a target's params on ANY
+// target kind - the non-reactive exception described above, so prefer
+// `<texture params={...}>` when a `<texture>` element is already in the
+// tree. On a single-program target (fragment texture, pipeline target) the
+// names validate strictly against its one program; on a draw target they are
+// the SHARED params every entry reads (a camera's view-projection: one write
+// per camera move instead of one per mesh), applied before each entry's own
+// params so an entry naming the same uniform overrides the shared value, and
+// a name only some entries' programs declare applies where declared.
+// setTargetTextures is its sampler analog: retarget sampler2D inputs without
+// recompiling (on a draw target, shared sources every entry reads - an
+// environment map, a LUT - bound where an entry's program declares the name
+// and its own bindings do not override it). resizeTexture and setTargetSize
+// resize in place at a stable id (so `<texture src>` and sampler bindings
+// stay valid); because the id survives, the owner-scoped auto-free
+// registered at creation keeps working and no re-registration is needed.
 export {
   destroyTexture,
   resizeTexture,
-  setShaderParams,
-  setShaderSize,
-  setShaderTextures,
+  setTargetParams,
+  setTargetSize,
+  setTargetTextures,
   uploadTexture,
 } from "flux:gpu"
 
@@ -114,21 +125,16 @@ export type { BlendMode, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRa
 // target (see createDrawTarget below), so there is no per-entry lifetime to
 // wrap. addDraw adds an entry (appended, or inserted via opts.before) and
 // returns its stable DrawId; removeDraw drops one; setDrawParams /
-// setDrawTextures / setDrawRange are the per-entry forms of setShaderParams /
-// setShaderTextures / setDraw, taking (target, draw, value) with identical
+// setDrawTextures / setDrawRange are the per-entry forms of setTargetParams /
+// setTargetTextures / setDraw, taking (target, draw, value) with identical
 // merge and validation semantics. The per-object hot path is setDrawParams (a
-// moved mesh = one call with its new matrix). setTargetParams writes the
-// target's SHARED params - values every entry reads (a camera's
-// view-projection: one write per camera move instead of one per mesh),
-// applied before each entry's own params so an entry naming the same uniform
-// overrides the shared value. setTargetTextures is its sampler analog: shared
-// sources every entry reads (an environment map, a LUT), bound where an
-// entry's program declares the name and its own bindings do not override it.
-// setDrawOrder replaces the whole
+// moved mesh = one call with its new matrix); the per-target one is
+// setTargetParams (exported above), which on a draw target writes the SHARED
+// params every entry reads. setDrawOrder replaces the whole
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
 // camera moves).
-export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetTextures } from "flux:gpu"
+export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds
@@ -245,7 +251,7 @@ export function createMutableTexture(
  * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
  * array); drive their values with `<texture src={id} params={{...}} />`
  * (preferred) or, when there is no `<texture>` element for it, imperatively
- * with `setShaderParams`. `params` is its own argument - it seeds the same
+ * with `setTargetParams`. `params` is its own argument - it seeds the same
  * live channel those two drive - and takes `null` (or nothing) for a shader
  * without uniforms. A time-driven shader declares its own time uniform
  * (`uniform float uTime;`) and the app drives it like any other value.
@@ -285,8 +291,8 @@ export function createShaderTexture(
 /**
  * Creates a render target over a pipeline from `createRenderPipeline` and
  * renders it once, returning the texture id (usable anywhere a normal
- * texture id is, e.g. `<texture src>`; resize with `setShaderSize`, drive
- * uniforms with `<texture params>` or `setShaderParams`). Many targets may
+ * texture id is, e.g. `<texture src>`; resize with `setTargetSize`, drive
+ * uniforms with `<texture params>` or `setTargetParams`). Many targets may
  * share one pipeline, and creating a target compiles nothing. The target
  * brings the per-target half: size, the concrete vertex `buffer` the
  * pipeline's attribute layout describes, the `instanceBuffer` its
@@ -420,7 +426,7 @@ function sameRecord(
  * current texture id (use it as `<texture src={id()} />`) and keeps the GPU
  * resource in step with `spec` from then on. Changes that keep the compiled
  * program valid mutate in place at a stable id - a size change routes to
- * `setShaderSize`, a params change to `setShaderParams` - while a change to
+ * `setTargetSize`, a params change to `setTargetParams` - while a change to
  * the fragment source or the sampler bindings rebuilds at a fresh id, updates
  * the accessor, and destroys the old id. That destroy is frame-safe (the
  * runtime reclaims an id only once the render tree no longer references it),
@@ -457,10 +463,10 @@ export function createShaderTextureMemo(
       ) {
         // Program and inputs unchanged: mutate in place, the id stays stable.
         if (next.width !== current.width || next.height !== current.height) {
-          gpu.setShaderSize(currentId, next.width, next.height)
+          gpu.setTargetSize(currentId, next.width, next.height)
         }
         if (!sameRecord(next.params, current.params) && next.params) {
-          gpu.setShaderParams(currentId, next.params)
+          gpu.setTargetParams(currentId, next.params)
         }
         current = next
         return
@@ -504,7 +510,7 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * reference `iResolution` and any uniform they declare (`float`/`int`
  * scalars from a number, `vec2`/`vec3`/`vec4`/`mat4` from a flat number
  * array); drive values with `<texture src={id} params={{...}} />` or
- * `setShaderParams`, exactly like a fragment shader.
+ * `setTargetParams`, exactly like a fragment shader.
  * `opts.depth` attaches a private depth buffer (cleared + tested per render);
  * `opts.depthWrite: false` (requires depth) keeps the test but stops the
  * draw from writing depth. `opts.blend: "add"` makes the draw accumulate

@@ -1,7 +1,7 @@
 // Shared target state on a draw target: values every entry reads, written
 // ONCE per target instead of once per entry. A ring of quads spins under a
 // single "camera" uniform (uView) and color-cycles under a shared tint
-// (uTint) - one setTargetParams call per frame however many entries the
+// (uTint) - one target-level write per frame however many entries the
 // list holds, where per-entry setDrawParams would cost one call and one
 // value's worth of JS arithmetic per quad (the cost profile @solidrt/3d's
 // camera rides on). setTargetTextures is the sampler analog: the patterned
@@ -16,7 +16,13 @@
 // whose program does not declare the name. Shared state is target state:
 // createDrawTarget seeds it (positional params + opts.textures) before any
 // entry exists, and entry add/remove/rebuild cannot lose it.
-import { render, onFrame } from "@solidrt/core"
+//
+// Two channels drive the same shared params. uView goes imperatively
+// (setTargetParams in onFrame), uTint goes declaratively: the `<texture
+// params>` prop means "the target's params" on every target kind, so on a
+// draw target it writes the shared record - a signal into the prop is all
+// the wiring a shared value needs.
+import { render, onFrame, createSignal } from "@solidrt/core"
 import {
   addDraw,
   compileShader,
@@ -102,15 +108,14 @@ function App() {
     }
   }
 
+  let [sharedTint, setSharedTint] = createSignal([0.3, 0.8, 0.9, 1])
   let mapFlip = -1
   onFrame(tick => {
     let t = tick / 1000
-    // The whole ring, one write: uView spins every entry, uTint recolors
-    // every tint entry that did not bring its own.
-    setTargetParams(target, {
-      uView: t * 0.5,
-      uTint: [0.45 + 0.45 * Math.sin(t), 0.45 + 0.45 * Math.sin(t + 2.1), 0.45 + 0.45 * Math.sin(t + 4.2), 1],
-    })
+    // The whole ring, one write: uView spins every entry. uTint takes the
+    // declarative channel instead - the signal feeds the params prop below.
+    setTargetParams(target, { uView: t * 0.5 })
+    setSharedTint([0.45 + 0.45 * Math.sin(t), 0.45 + 0.45 * Math.sin(t + 2.1), 0.45 + 0.45 * Math.sin(t + 4.2), 1])
     // The shared sampler source swaps every two seconds; only the entry
     // with its own uMap keeps its pattern.
     let flip = Math.floor(t / 2) % 2
@@ -122,7 +127,7 @@ function App() {
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={target} width={420} height={420} />
+      <texture src={target} width={420} height={420} params={{ uTint: sharedTint() }} />
     </window>
   )
 }

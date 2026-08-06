@@ -528,9 +528,6 @@ impl ModuleDef for GpuModule {
     decl.declare("createRenderPipeline")?;
     decl.declare("destroyRenderPipeline")?;
     decl.declare("destroyProgram")?;
-    decl.declare("setShaderParams")?;
-    decl.declare("setShaderTextures")?;
-    decl.declare("setShaderSize")?;
     decl.declare("createPipelineTexture")?;
     decl.declare("createBuffer")?;
     decl.declare("writeBuffer")?;
@@ -542,6 +539,7 @@ impl ModuleDef for GpuModule {
     decl.declare("setDrawParams")?;
     decl.declare("setTargetParams")?;
     decl.declare("setTargetTextures")?;
+    decl.declare("setTargetSize")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
     decl.declare("setDrawOrder")?;
@@ -638,7 +636,7 @@ impl ModuleDef for GpuModule {
     // `<texture src>` references and shader sampler bindings stay valid (the
     // sampling shaders re-render). `data` seeds the new size and, like
     // createMutableTexture, must hold at least one frame. Alloy validates the
-    // id (shader targets are rejected there; those resize via setShaderSize).
+    // id (render targets are rejected there; those resize via setTargetSize).
     let resize_atx = atx.clone();
     let resize_platform = platform.clone();
     let resize_texture = Function::new(
@@ -688,53 +686,6 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create createShaderTexture");
-
-    let set_params_atx = atx.clone();
-    let set_params_platform = platform.clone();
-    let set_shader_params =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, params: Object<'_>| -> rquickjs::Result<()> {
-        let params = collect_params(&ctx, &params, "setShaderParams")?;
-        set_params_atx
-          .update_shader_params(id, &params)
-          .map_err(|e| throw_str(&ctx, &format!("setShaderParams: {e}")))?;
-        // New shader output changes the screen without any tree mutation.
-        set_params_platform.request_frame();
-        Ok(())
-      })
-      .expect("create setShaderParams");
-
-    // Rebind a shader/pipeline target's sampler2D inputs by uniform name -
-    // the sampler analog of setShaderParams: mutate, then re-render with the
-    // last-applied params. Unnamed bindings keep their current source.
-    let set_textures_atx = atx.clone();
-    let set_textures_platform = platform.clone();
-    let set_shader_textures =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, textures: Object<'_>| -> rquickjs::Result<()> {
-        let textures = collect_textures(&ctx, &textures, "setShaderTextures")?;
-        set_textures_atx
-          .update_shader_textures(id, &textures)
-          .map_err(|e| throw_str(&ctx, &format!("setShaderTextures: {e}")))?;
-        // New shader output changes the screen without any tree mutation.
-        set_textures_platform.request_frame();
-        Ok(())
-      })
-      .expect("create setShaderTextures");
-
-    // Resize a shader/pipeline target in place - the setDraw analog for
-    // output size: the id, compiled program, last-applied params, and sampler
-    // bindings all carry over, and the output re-renders at the new size.
-    let shader_size_atx = atx.clone();
-    let shader_size_platform = platform.clone();
-    let set_shader_size =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, width: u32, height: u32| -> rquickjs::Result<()> {
-        shader_size_atx
-          .resize_shader_texture(id, width, height)
-          .map_err(|e| throw_str(&ctx, &format!("setShaderSize: {e}")))?;
-        // New shader output changes the screen without any tree mutation.
-        shader_size_platform.request_frame();
-        Ok(())
-      })
-      .expect("create setShaderSize");
 
     // createPipelineTexture(vertexSrc, fragmentSrc, width, height, params?,
     // opts?) -> texture id: the fused convenience, taking the draw-state
@@ -1019,7 +970,7 @@ impl ModuleDef for GpuModule {
     })
     .expect("create removeDraw");
 
-    // Per-entry params update: setShaderParams addressed to one draw entry.
+    // Per-entry params update: setTargetParams addressed to one draw entry.
     let set_draw_params_atx = atx.clone();
     let set_draw_params_platform = platform.clone();
     let set_draw_params = Function::new(
@@ -1035,11 +986,14 @@ impl ModuleDef for GpuModule {
     )
     .expect("create setDrawParams");
 
-    // Target-level shared params update: values every entry reads (a camera's
+    // Target-level params update on any target kind; alloy routes. On a
+    // single-program target (fragment texture, fixed pipeline target) these
+    // are the one pass's params, validated strictly. On a draw target they
+    // are the SHARED params: values every entry reads (a camera's
     // view-projection), applied before each entry's own params - an entry
-    // naming the same uniform overrides the shared value. Alloy validates at
-    // this call site (each name must be declared by at least one entry's
-    // program; partial coverage is fine, the apply skips undeclared names).
+    // naming the same uniform overrides the shared value - with each name
+    // declared by at least one entry's program (partial coverage is fine,
+    // the apply skips undeclared names).
     let set_target_params_atx = atx.clone();
     let set_target_params_platform = platform.clone();
     let set_target_params = Function::new(
@@ -1055,10 +1009,12 @@ impl ModuleDef for GpuModule {
     )
     .expect("create setTargetParams");
 
-    // Target-level shared sampler rebind: sources every entry reads (an
-    // environment map, a LUT), applied where an entry's program declares the
-    // name and its own bindings do not override it. Alloy validates at this
-    // call site (coverage, sources, unit budget, cycles).
+    // Target-level sampler rebind on any target kind; alloy routes (the
+    // sampler analog of setTargetParams). On a draw target these are the
+    // SHARED bindings: sources every entry reads (an environment map, a
+    // LUT), applied where an entry's program declares the name and its own
+    // bindings do not override it. Alloy validates at this call site
+    // (coverage, sources, unit budget, cycles).
     let set_target_textures_atx = atx.clone();
     let set_target_textures_platform = platform.clone();
     let set_target_textures = Function::new(
@@ -1074,7 +1030,23 @@ impl ModuleDef for GpuModule {
     )
     .expect("create setTargetTextures");
 
-    // Per-entry sampler rebind: setShaderTextures addressed to one draw entry.
+    // Resize a target of any kind in place: the id, compiled programs,
+    // last-applied params, sampler bindings, and draw state all carry over,
+    // and the output re-renders at the new size.
+    let target_size_atx = atx.clone();
+    let target_size_platform = platform.clone();
+    let set_target_size =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, width: u32, height: u32| -> rquickjs::Result<()> {
+        target_size_atx
+          .resize_target(id, width, height)
+          .map_err(|e| throw_str(&ctx, &format!("setTargetSize: {e}")))?;
+        // New target output changes the screen without any tree mutation.
+        target_size_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setTargetSize");
+
+    // Per-entry sampler rebind: setTargetTextures addressed to one draw entry.
     let set_draw_textures_atx = atx.clone();
     let set_draw_textures_platform = platform.clone();
     let set_draw_textures = Function::new(
@@ -1157,9 +1129,6 @@ impl ModuleDef for GpuModule {
     exports.export("createRenderPipeline", create_render_pipeline)?;
     exports.export("destroyRenderPipeline", destroy_render_pipeline)?;
     exports.export("destroyProgram", destroy_program)?;
-    exports.export("setShaderParams", set_shader_params)?;
-    exports.export("setShaderTextures", set_shader_textures)?;
-    exports.export("setShaderSize", set_shader_size)?;
     exports.export("createPipelineTexture", create_pipeline_texture)?;
     exports.export("createBuffer", create_buffer)?;
     exports.export("writeBuffer", write_buffer)?;
@@ -1171,6 +1140,7 @@ impl ModuleDef for GpuModule {
     exports.export("setDrawParams", set_draw_params)?;
     exports.export("setTargetParams", set_target_params)?;
     exports.export("setTargetTextures", set_target_textures)?;
+    exports.export("setTargetSize", set_target_size)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
     exports.export("setDrawOrder", set_draw_order)?;

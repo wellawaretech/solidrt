@@ -10,6 +10,13 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Target verb unification](gpu-target-verb-unification.md) [open] -
+  Approved pre-release breaking sweep: one setTarget* family for
+  target-level state routing by kind (retiring setShader*), the
+  `<texture params>` prop driving draw targets' shared params (today it
+  warn-fails on them), and the lifetime `manual` option renamed out of its
+  collision with render: "manual". Staged plan + audited migration surface
+  in the file.
 - [3D roadmap - toward Three.js parity](3d-roadmap.md) [open] - The
   scoreboard for @solidrt/3d: v1 landed 2026-08-05 (unlit + shaderMaterial,
   four primitives, orbit camera, all engine prerequisites); the remaining
