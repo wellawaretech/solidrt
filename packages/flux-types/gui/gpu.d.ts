@@ -627,6 +627,14 @@ declare module "flux:gpu" {
    * `instanceBuffer` supplies the per-instance records the pipeline's
    * `instanceAttributes` describe (required exactly when it declares any);
    * `instanceCount` then defaults to one instance per record.
+   *
+   * Seed every uniform the entry's program declares - here, via the
+   * target's shared params, or with a later write. GL uniform state lives
+   * on the program object, so a declared name nothing writes holds
+   * whatever the last draw through that program applied, from any entry
+   * or target sharing it - not zero (only a freshly linked program reads
+   * the link-time zero). Coverage is deliberately not validated here:
+   * adding entries first and setting shared values after is legal.
    */
   export function addDraw(
     target: TextureId,

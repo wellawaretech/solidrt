@@ -276,6 +276,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let target: Vec3 = [0, 0, 0]
   let up: Vec3 = [0, 1, 0]
   let cameraDirty = true
+  let cameraSynced = false
   let proj = mat4()
   let view = mat4()
   let viewProj = mat4()
@@ -287,6 +288,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The camera is target state: one shared write, whatever the scene
       // holds. Entries are untouched - uModel is camera-independent.
       cameraDirty = false
+      cameraSynced = true
       perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
       lookAt(view, eye, target, up)
       multiply(viewProj, proj, view)
@@ -349,6 +351,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._hidden = false
       mesh._fresh = true
       this._schedule()
+      // Re-issue the camera (same value, one write): a scene whose only
+      // materials lack uViewProj then throws HERE, at add(), with the
+      // engine's coverage message, instead of inside the next camera sync's
+      // microtask. Before the first sync there is no value to re-issue; the
+      // sync this attach just scheduled writes (and checks) it. Scheduled
+      // first so a throw still leaves the walk queued.
+      if (cameraSynced) setTargetParams(texture, { uViewProj: viewProj })
     },
     _detach(mesh) {
       if (mesh._entry !== null && !disposed) removeDraw(texture, mesh._entry)

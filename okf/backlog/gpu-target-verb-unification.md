@@ -2,7 +2,7 @@
 type: backlog-item
 title: "Target verb unification: one target-level family, declarative draw-target params, lifetime-option rename"
 description: Pre-release breaking sweep. setShaderParams/setShaderTextures/setShaderSize and setTargetParams/setTargetTextures are two names for one concept - a target's target-level state - split only by target kind; unify on the setTarget* family routing by kind, route the <texture params> prop through the same channel (draw targets currently have NO declarative uniform channel and the prop warn-fails on them), and rename the lifetime `manual` option out of its collision with render: "manual". Cheapest now; more expensive with every app shipped.
-status: open
+status: done
 timestamp: 2026-08-06T00:00:00Z
 ---
 
@@ -34,7 +34,35 @@ creates have no lifetime opt-out today) and no example/app usage in or out
 of repo (cheezed checked). The render-vs-lifetime disambiguation sentences
 were deleted rather than reworded - with distinct names they said nothing.
 Semantics byte-for-byte unchanged: default true, registration still
-conditional on a current owner. Stage 3 (riders) remains.
+conditional on a current owner.
+
+Stage 3 (riders) landed 2026-08-06, same day. The program-state leak is
+documented in docs/core.md (draw-targets section) and flux-types addDraw
+("seed everything a program declares - only a freshly linked program reads
+the link-time zero"). @solidrt/3d _attach re-issues the shared uViewProj
+after addDraw once the camera has synced at least once (cameraSynced
+flag), scheduled-first so a throw still leaves the walk queued: a scene
+whose only materials lack uViewProj now throws at add() with the engine's
+coverage message; only the very first attach (no sync yet) still reports
+asynchronously, from the sync that attach schedules. Trap updated in
+packages/3d/AGENTS.md.
+
+The internal cleanups were assessed and deliberately SKIPPED:
+
+- shader_sources key enum (Shared vs Entry(id)): the unification made the
+  0 key MORE meaningful, not less - key 0 is the target-level slot on
+  every kind (the fixed kinds' single pass, a draw target's shared
+  bindings), which is exactly what lets set_target_textures route by kind
+  over one record shape. An enum would obscure that the two deliberately
+  share the slot. Documented at the field instead (context.rs
+  shader_sources comment).
+- DrawSpec.instance_buffer Option: the struct carries 0-sentinels on all
+  three id fields (pipeline, buffer, instance_buffer) by design -
+  derive(Default) is the attributeless entry, registry ids are never 0,
+  and buffer_size() handles 0 centrally. Converting one field makes the
+  struct inconsistent; converting all three churns the fused-create
+  pipeline plumbing for zero behavior change. Each field documents its
+  sentinel.
 
 ## A. One target-level verb family
 

@@ -10,13 +10,6 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
-- [Target verb unification](gpu-target-verb-unification.md) [open] -
-  Approved pre-release breaking sweep: one setTarget* family for
-  target-level state routing by kind (retiring setShader*), the
-  `<texture params>` prop driving draw targets' shared params (today it
-  warn-fails on them), and the lifetime `manual` option renamed out of its
-  collision with render: "manual". Staged plan + audited migration surface
-  in the file.
 - [3D roadmap - toward Three.js parity](3d-roadmap.md) [open] - The
   scoreboard for @solidrt/3d: v1 landed 2026-08-05 (unlit + shaderMaterial,
   four primitives, orbit camera, all engine prerequisites); the remaining
@@ -445,6 +438,13 @@ Sorted by status: open first, then partial, deferred, and closed
   options on every create path, per-texture-id state applied via GL sampler
   objects (shader passes) and per-draw Impeller sampling (display); wrap
   default unified to clamp everywhere, repeat now explicit.
+- [Target verb unification](gpu-target-verb-unification.md) [done] -
+  Landed 2026-08-06, all three stages: setTargetParams/Textures/Size are
+  the target-level verbs on every kind (setShader* retired), the
+  `<texture params>` prop drives draw targets' shared params, the lifetime
+  opt-out is `autoFree: false` (no more `manual` collision), and the
+  program-state leak is documented publicly. Internal sentinel cleanups
+  assessed and deliberately skipped - rationale in the file.
 - [Dependency propagation between GPU targets](gpu-target-dependency-propagation.md) [done] -
   Target rendering is now pull-based: writes mark dirty, and a flush at each
   observation point (frame, capture, readback) re-renders the affected

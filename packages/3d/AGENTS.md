@@ -104,7 +104,11 @@ Materials:
 - A shaderMaterial vertex stage without `uniform mat4 uModel` (declared
   AND used) throws at mesh attach - the scene seeds uModel on every entry
   and the engine rejects unknown uniform names. One without `uViewProj`
-  throws later, at the first camera sync after it becomes the scene's ONLY
-  material class (shared params need at least one declaring pipeline);
-  with other declaring materials present it silently ignores the camera
-  instead. Declare and use both, always.
+  also throws at attach when it is the scene's ONLY material class: after
+  the first camera sync, _attach re-issues the shared uViewProj (same
+  value, one write) so the coverage error lands at add() instead of
+  inside a later camera-sync microtask. Only the very first attach (no
+  camera sync yet) reports it asynchronously, from the sync that attach
+  schedules. With other declaring materials present it silently ignores
+  the camera instead (partial coverage is legal). Declare and use both,
+  always.

@@ -94,7 +94,10 @@ pub struct Context {
   // UI-side mirror of each shader target's sampler graph: target id ->
   // ((draw entry id, uniform name) -> source texture id). The entry id keys
   // per-entry bindings apart - two entries may bind the same uniform name to
-  // different sources - with 0 for the single pass of the fixed kinds. Lets
+  // different sources - and key 0 is the TARGET-LEVEL slot on every kind:
+  // the single pass of the fixed kinds, the shared bindings of a draw
+  // target (whose entry ids start at 1). One meaning, which is what lets
+  // set_target_textures route by kind over one record shape. Lets
   // the bind paths reject sampling cycles synchronously; the raster thread
   // walks the same edges (unioned per target) to propagate re-renders
   // through target chains, and a cycle there would under-render, so it must
