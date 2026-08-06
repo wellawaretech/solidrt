@@ -605,6 +605,13 @@ declare module "flux:gpu" {
    * entry tests/writes depth is its pipeline's `depth`/`depthWrite` state,
    * and adding a depth-testing pipeline to a target without storage throws.
    *
+   * `params` seeds the target's SHARED params - the target-level values
+   * every entry reads, the same live channel {@link setTargetParams} drives
+   * later (positional like every create's params; see there for the
+   * precedence and validation contract). At creation there are no entries to
+   * validate against, so names are accepted as-is and simply apply to
+   * whichever later entries' programs declare them.
+   *
    * The render contract is unchanged: the list is input data like params, so
    * "render twice = render once" still holds and the default `render:
    * "auto"` target re-renders exactly when its entries or their inputs
@@ -618,6 +625,7 @@ declare module "flux:gpu" {
   export function createDrawTarget(
     width: number,
     height: number,
+    params?: ShaderParams | null,
     opts?: {
       depth?: boolean
       clearColor?: [number, number, number, number]
@@ -671,6 +679,24 @@ declare module "flux:gpu" {
    * model matrix.
    */
   export function setDrawParams(target: TextureId, draw: DrawId, params: ShaderParams): void
+  /**
+   * Update a draw target's SHARED (target-level) params: values every entry
+   * reads - a camera's view-projection above all - written once per target
+   * instead of once per entry, with the usual merge-by-name. Shared values
+   * apply at render before each entry's own params, so an entry naming the
+   * same uniform overrides the shared value (specific beats general), and
+   * they are target state: entry add/remove/rebuild cannot lose them.
+   *
+   * A draw target legitimately mixes material classes, so coverage may be
+   * partial: a name only some entries' programs declare is applied where
+   * declared and skipped elsewhere. Validation follows: each name must be an
+   * active settable uniform of at least ONE current entry's program (with
+   * the matching arity everywhere it is declared) - a name no entry declares
+   * throws. With no entries yet, names are accepted as-is; an entry added
+   * later whose program lacks an already-set name is never a retroactive
+   * error, the value just skips it.
+   */
+  export function setTargetParams(target: TextureId, params: ShaderParams): void
   /**
    * Rebind one draw entry's sampler2D inputs by uniform name:
    * {@link setShaderTextures} addressed to a single entry, same merge,

@@ -72,6 +72,13 @@ pub(super) struct MeshState {
   /// (id 0, `fixed`); draw targets start empty and mutate via
   /// `add_entry`/`remove_entry`.
   pub(super) entries: Vec<DrawEntry>,
+  /// Target-level params every entry shares (a camera's view-projection),
+  /// applied at render before each entry's own params so an entry naming the
+  /// same uniform overrides the shared value. Target state, not entry state:
+  /// it survives entry add/remove/rebuild. Only draw targets write it (via
+  /// `merge_shared_params`); the fixed kinds' target-level params ARE entry
+  /// 0's params.
+  pub(super) shared_params: Vec<(String, ParamValue)>,
   /// Present when the target owns depth storage: explicit on a draw target
   /// (`create_draw_target`'s depth option), derived from the pipeline on the
   /// single-draw creates. The renderbuffer stays private to the FBO (never
@@ -499,6 +506,7 @@ impl ShaderTexture {
       Ok(ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: vec![entry],
+          shared_params: Vec::new(),
           depth: depth_rb,
           clear_color,
           load: false,
@@ -562,6 +570,7 @@ impl ShaderTexture {
       Ok(ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: Vec::new(),
+          shared_params: Vec::new(),
           depth: depth_rb,
           clear_color,
           load: false,
@@ -842,6 +851,30 @@ impl ShaderTexture {
   pub fn merge_entry_params(&mut self, id: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     merge_record(&mut self.entry_mut(id)?.params, params);
     Ok(())
+  }
+
+  /// Fold a params update into a draw target's shared record (see
+  /// `MeshState::shared_params`; validated UI-side against the union of the
+  /// entries' programs). The fixed single-draw kinds error: their target-level
+  /// params are entry 0's, written via `merge_params`.
+  pub fn merge_shared_params(&mut self, params: &[(String, ParamValue)]) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    if mesh.fixed {
+      return Err("target's draw list is fixed (created single-draw)".to_string());
+    }
+    merge_record(&mut mesh.shared_params, params);
+    Ok(())
+  }
+
+  /// A draw target's current shared params (empty for every other kind), for
+  /// resource introspection.
+  pub fn shared_params(&self) -> &[(String, ParamValue)] {
+    match &self.kind {
+      TargetKind::Mesh(mesh) => &mesh.shared_params,
+      TargetKind::Fragment { .. } => &[],
+    }
   }
 
   /// Set one entry's draw range (resolved and validated UI-side).
@@ -1129,6 +1162,7 @@ impl ShaderTexture {
         let draw = PassDraw::Draws {
           clear: (!mesh.load).then_some(mesh.clear_color),
           depth: mesh.depth.is_some(),
+          shared: &mesh.shared_params,
           draws: &draws,
         };
         run_pass(gl, Some(self.fbo), self.width, self.height, draw);

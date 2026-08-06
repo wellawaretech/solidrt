@@ -46,8 +46,10 @@ pub(super) enum PassDraw<'a> {
   /// A mesh target's pass: clear once (color unless loadOp "load"; depth
   /// always, when the target owns storage), then the draw entries in list
   /// order, each with its own program, uniforms, inputs, VAO, and its
-  /// pipeline's blend/depth state.
-  Draws { clear: Option<[f32; 4]>, depth: bool, draws: &'a [ResolvedDraw<'a>] },
+  /// pipeline's blend/depth state. `shared` carries the target-level params
+  /// every entry gets, applied before the entry's own so an entry naming the
+  /// same uniform overrides the shared value.
+  Draws { clear: Option<[f32; 4]>, depth: bool, shared: &'a [(String, ParamValue)], draws: &'a [ResolvedDraw<'a>] },
 }
 
 /// Set one uniform from a param value, dispatching on the reflected GL type.
@@ -71,6 +73,17 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, ut
   }
 }
 
+/// Apply params to the bound program by uniform name; a name the program
+/// does not declare is skipped (how a shared param covers only the entries
+/// whose program declares it).
+fn apply_params(gl: &glow::Context, program: &ShaderProgram, params: &[(String, ParamValue)]) {
+  for (name, value) in params {
+    if let Some((loc, utype)) = program.uniforms.get(name) {
+      apply_uniform(gl, name, loc, *utype, value);
+    }
+  }
+}
+
 /// Bind `program` and fill `iResolution` plus the given params by uniform
 /// name. The preambles declare iResolution as vec2; a raw source may declare
 /// it vec3 (a common convention in ported shaders), which gets the size with
@@ -83,12 +96,8 @@ fn apply_program(gl: &glow::Context, program: &ShaderProgram, width: u32, height
       Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
       _ => {}
     }
-    for (name, value) in params {
-      if let Some((loc, utype)) = program.uniforms.get(name) {
-        apply_uniform(gl, name, loc, *utype, value);
-      }
-    }
   }
+  apply_params(gl, program, params);
 }
 
 /// Bind each resolved sampler input to its own texture unit, bind the input's
@@ -242,7 +251,7 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
         }
         gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
       }
-      PassDraw::Draws { clear, depth: has_depth, draws } => {
+      PassDraw::Draws { clear, depth: has_depth, shared, draws } => {
         // Mesh pass: geometry does not cover the target, so clear first -
         // once, at the top; every entry then draws over the shared result.
         // Clear color, depth mask, depth func, clear-depth value, the blend
@@ -286,7 +295,10 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
         }
 
         for d in draws {
-          apply_program(gl, d.program, width, height, d.params);
+          // Shared params first, the entry's own second: an entry naming the
+          // same uniform overwrites the shared value (specific beats general).
+          apply_program(gl, d.program, width, height, shared);
+          apply_params(gl, d.program, d.params);
           bind_inputs(gl, d.program, &d.inputs, &mut saved_units, max_units);
           // Depth test and write per entry: the pipeline's declared depth
           // state, against the target-owned storage.

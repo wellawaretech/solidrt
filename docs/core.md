@@ -360,17 +360,20 @@ In every target create (`createShaderTexture`, `createPipelineTexture`, `createS
 `createShaderTarget` draws one pipeline. A scene frame is N draws - one per mesh and material - sharing one depth buffer, and that is `createDrawTarget`: a render target whose contents are an ordered, mutable list of draws, rendered as one pass (clear once, then every entry in list order into the same storage). It is the render pass of every 3D API, retained the way everything here is retained: where WebGPU re-encodes the pass each frame, this target holds the list as state and re-renders on demand.
 
 ```ts
-createDrawTarget(width, height, opts?: { depth?, clearColor?, render?, loadOp?, filter?, wrap?, label? }): TextureId
+createDrawTarget(width, height, params?, opts?: { depth?, clearColor?, render?, loadOp?, filter?, wrap?, label? }): TextureId
 addDraw(target, pipeline, params?, opts?: { buffer?, instanceBuffer?, textures?, before?, firstVertex?, vertexCount?, instanceCount? }): DrawId
 addDraw(target, pipeline, params?, opts?: { indexBuffer, indexFormat, firstIndex?, indexCount?, ... }): DrawId  // the indexed form
 removeDraw(target, draw): void
 setDrawParams(target, draw, params): void      // setShaderParams, addressed to one entry
+setTargetParams(target, params): void          // the target's SHARED params, read by every entry
 setDrawTextures(target, draw, textures): void  // setShaderTextures, addressed to one entry
 setDrawRange(target, draw, update): void       // setDraw, addressed to one entry
 setDrawOrder(target, order): void              // full permutation of the live DrawIds
 ```
 
 `addDraw` adds an entry - the same per-entry shape `createShaderTarget` takes (a pipeline, its concrete `buffer` and `instanceBuffer`, a draw range, `params`, `textures`) - and returns a stable `DrawId`: the handle the per-entry setters take, unaffected by other adds and removes, erroring after its entry is removed rather than aliasing. List order is draw order (later entries land over earlier ones where depth does not decide), so painter-style layering is append order; `before` inserts ahead of an existing entry instead, and `setDrawOrder` replaces the whole order with a permutation of the live ids (a missing, duplicate, or unknown id throws) - the sorting verb: opaque front-to-back, transparent back-to-front, re-issued when the camera moves, with entry state riding along untouched. Per-entry `params` is where per-object state lives - a moved mesh is one `setDrawParams` with its new model matrix - and entries bind textures independently: two entries may bind the same uniform name to different sources.
+
+A value every entry shares - a camera's view-projection above all - is target state, not entry state: `setTargetParams` writes it once per target (`createDrawTarget`'s positional `params` seeds it), where per-entry writes would cost one call and one matrix multiply per mesh every camera move. Shared values apply before each entry's own params, so an entry naming the same uniform overrides the shared value (specific beats general), and they survive entry add/remove/rebuild - a geometry or material swap cannot lose them. Coverage may be partial, since a target legitimately mixes material classes: a name only some entries' programs declare is applied where declared and skipped elsewhere, exactly like `iResolution`. Validation follows: each name must be declared settable by at least one current entry's program (with the matching arity everywhere it is declared); with no entries yet, names are accepted as-is, and an entry added later never retroactively errors on a shared name its program lacks.
 
 Depth splits the way WebGPU splits it: the target owns the storage (`depth: true`, one buffer cleared once per render and shared by every entry - what makes cross-entry occlusion work), while each entry's pipeline owns the behavior (`depth`/`depthWrite`: whether that draw tests and writes). Adding a depth-testing pipeline to a target without storage throws at `addDraw`.
 

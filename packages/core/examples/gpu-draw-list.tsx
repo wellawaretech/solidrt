@@ -73,7 +73,7 @@ function App() {
     attributes: attrs,
   })
 
-  let target = createDrawTarget(512, 512, { depth: true, clearColor: [0.04, 0.04, 0.08, 1], label: "orbits" })
+  let target = createDrawTarget(512, 512, null, { depth: true, clearColor: [0.04, 0.04, 0.08, 1], label: "orbits" })
   let warmDraw = addDraw(target, warm, { uAngle: 0 }, { buffer: triangle })
   let coolDraw = addDraw(target, cool, { uAngle: Math.PI }, { buffer: triangle })
 

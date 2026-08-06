@@ -152,7 +152,9 @@ pub struct GpuPipelineInfo {
   pub instance_attributes: Vec<(String, String)>,
   /// sampler2D uniform name -> source texture id.
   pub textures: Vec<(String, u64)>,
-  /// The float uniforms applied on the most recent render.
+  /// The float uniforms applied on the most recent render; for a draw target
+  /// (kind "draws"), its shared (target-level) params - per-entry params live
+  /// in `draws`.
   pub params: Vec<(String, ParamValue)>,
   /// A draw target's ordered entry list (kind "draws"); empty for the fixed
   /// kinds, whose one pass lives in the flat fields above.

@@ -361,31 +361,43 @@ fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
   }
 }
 
+/// Check one param against a program's active uniforms, tolerating absence:
+/// Ok(false) when the name is not active (the shared-params partial-coverage
+/// rule - the render-side apply skips undeclared names), Ok(true) when it is
+/// active, settable (not a sampler - those bind via textures - and not an
+/// unsupported type), and carries exactly the component count its declared
+/// type dispatches on; Err when it is active but fails either check.
+pub fn validate_param_if_declared(uniforms: &UniformTable, name: &str, value: &ParamValue) -> Result<bool, String> {
+  let Some(kind) = uniforms.get(name) else { return Ok(false) };
+  match kind.components() {
+    Some(expected) => {
+      let got = value.components().len();
+      if got != expected {
+        return Err(format!(
+          "param '{name}' has {got} component(s), but uniform is {} (expects {expected})",
+          kind.glsl_name()
+        ));
+      }
+    }
+    None => {
+      return Err(match kind {
+        UniformKind::Sampler2D => format!("param '{name}' is a sampler2D; bind it via textures"),
+        _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4)"),
+      })
+    }
+  }
+  Ok(true)
+}
+
 /// Check a params list against a program's active uniforms: every name must
-/// be active, settable (not a sampler - those bind via textures - and not an
-/// unsupported type), and carry exactly the component count its declared type
-/// dispatches on. Run at the call-site boundary (create RPCs raster-side,
-/// updates UI-side from the mirror), so a typo'd name or a wrong arity throws
-/// on the line that wrote it instead of warning on the raster thread.
+/// pass `validate_param_if_declared`, and absence is an error too. Run at the
+/// call-site boundary (create RPCs raster-side, updates UI-side from the
+/// mirror), so a typo'd name or a wrong arity throws on the line that wrote
+/// it instead of warning on the raster thread.
 pub fn validate_params(uniforms: &UniformTable, params: &[(String, ParamValue)]) -> Result<(), String> {
   for (name, value) in params {
-    let kind = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
-    match kind.components() {
-      Some(expected) => {
-        let got = value.components().len();
-        if got != expected {
-          return Err(format!(
-            "param '{name}' has {got} component(s), but uniform is {} (expects {expected})",
-            kind.glsl_name()
-          ));
-        }
-      }
-      None => {
-        return Err(match kind {
-          UniformKind::Sampler2D => format!("param '{name}' is a sampler2D; bind it via textures"),
-          _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4)"),
-        })
-      }
+    if !validate_param_if_declared(uniforms, name, value)? {
+      return Err(unknown_uniform(uniforms, name));
     }
   }
   Ok(())

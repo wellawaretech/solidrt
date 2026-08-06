@@ -1,18 +1,20 @@
 // The retained scene: plain objects and dirty flags, no signals - the hot
 // path (a moved node) is flat imperative code, and reactivity stays at the
 // component boundary (components.tsx). A scene compiles to one draw
-// target: every mesh is one draw entry whose uMVP uniform this module
-// keeps in step with the tree. Mutations batch to a microtask, so a burst
-// of writes (a whole subtree moved, many effects in one flush) syncs once.
+// target: every mesh is one draw entry whose uModel uniform this module
+// keeps in step with the tree, and the camera is the target's SHARED
+// uViewProj - one setTargetParams per camera move, not one write per mesh.
+// Mutations batch to a microtask, so a burst of writes (a whole subtree
+// moved, many effects in one flush) syncs once.
 //
 // Rendering itself belongs to the runtime: the target is an ordinary
 // `render: "auto"` draw target that re-renders when its entries change, so
 // a static scene costs zero passes and this module registers no frame
 // loop. Continuous animation is the app's onFrame writing transforms -
-// each write lands here, the microtask syncs the affected uMVPs, and the
+// each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setShaderSize } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setShaderSize, setTargetParams } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidjs/signals"
 import { compose, lookAt, mat4, multiply, perspective } from "./math.ts"
@@ -26,7 +28,9 @@ const RESOLVED = Promise.resolve()
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
-// the app-facing surface.
+// the app-facing surface. uViewProj is written through the shared channel
+// only when the camera changes - attach never re-seeds it, because target
+// state survives entry churn.
 type SceneHooks = {
   _schedule(): void
   _attach(mesh: Mesh): void
@@ -254,7 +258,7 @@ export function setMeshParams(mesh: Mesh, params: ShaderParams): void {
  * `manual: true`); outside one, call `dispose()` yourself.
  */
 export function createScene(width: number, height: number, opts?: SceneOptions): Scene {
-  let texture = createDrawTarget(width, height, {
+  let texture = createDrawTarget(width, height, null, {
     depth: true,
     clearColor: opts?.clearColor,
     filter: opts?.filter,
@@ -275,17 +279,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let proj = mat4()
   let view = mat4()
   let viewProj = mat4()
-  let mvp = mat4()
 
   let sync = () => {
     scheduled = false
     if (disposed) return
-    let cameraChanged = cameraDirty
     if (cameraDirty) {
+      // The camera is target state: one shared write, whatever the scene
+      // holds. Entries are untouched - uModel is camera-independent.
       cameraDirty = false
       perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
       lookAt(view, eye, target, up)
       multiply(viewProj, proj, view)
+      setTargetParams(texture, { uViewProj: viewProj })
     }
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
       let changed = parentChanged
@@ -307,9 +312,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             mesh._hidden = !shown
             if (shown) mesh._fresh = true
           }
-          if (!mesh._hidden && (changed || cameraChanged || mesh._fresh)) {
-            multiply(mvp, viewProj, mesh._world)
-            setDrawParams(texture, mesh._entry, { uMVP: mvp })
+          if (!mesh._hidden && (changed || mesh._fresh)) {
+            setDrawParams(texture, mesh._entry, { uModel: mesh._world })
             mesh._fresh = false
           } else if (changed) {
             // Moved while hidden: write the fresh matrix on unhide.
@@ -334,7 +338,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._entry = addDraw(
         texture,
         mesh.material.pipeline(),
-        { uMVP: IDENTITY, ...mesh.material.params, ...mesh._params },
+        { uModel: IDENTITY, ...mesh.material.params, ...mesh._params },
         {
           buffer: bufs.buffer,
           indexBuffer: bufs.index,

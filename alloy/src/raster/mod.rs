@@ -468,6 +468,9 @@ impl RasterState {
           RasterCmd::UpdateDrawParams { target, draw, params } => {
             self.entry_write(target, "draw params update", |_, shader| shader.merge_entry_params(draw, &params));
           }
+          RasterCmd::UpdateTargetParams { target, params } => {
+            self.entry_write(target, "target params update", |_, shader| shader.merge_shared_params(&params));
+          }
           RasterCmd::UpdateDrawTextures { target, draw, textures } => {
             self.entry_write(target, "draw texture rebind", |_, shader| shader.set_entry_bindings(draw, &textures));
           }
@@ -1494,7 +1497,9 @@ impl RasterState {
             Vec::new()
           },
           textures: if flat { shader.sampler_bindings().to_vec() } else { Vec::new() },
-          params: if flat { shader.last_params() } else { Vec::new() },
+          // For a draw target the flat params field carries its shared
+          // (target-level) params; per-entry params live in `draws`.
+          params: if flat { shader.last_params() } else { shader.shared_params().to_vec() },
           draws: if flat { Vec::new() } else { shader.draw_infos() },
           manual: shader.manual(),
           load: shader.load(),

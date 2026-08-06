@@ -1,6 +1,7 @@
 // A minimal scene: unlit meshes with real cross-mesh occlusion (one shared
 // depth buffer), a spinning group, and a fixed camera. One onFrame loop
-// drives one signal; the library keeps every draw entry's uMVP in step.
+// drives one signal; the library keeps every draw entry's uModel (and the
+// scene target's shared uViewProj) in step.
 // The sphere orbits with the group, crossing behind and in front of the
 // tall box - that alternation is the depth buffer at work, not draw order.
 //

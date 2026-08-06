@@ -49,17 +49,22 @@ export type Material = {
   dispose?(): void
 }
 
-// One vertex stage serves every unlit class: MVP transform plus the UV
-// varying. aNormal from the shared layout is deliberately not declared -
-// inactive attributes are skipped and only the stride accounts for them.
+// One vertex stage serves every unlit class: model then view-projection,
+// plus the UV varying. uModel is per-entry (the scene writes it when the
+// mesh moves), uViewProj is target-shared (one write per camera move) - the
+// split is what keeps camera motion O(1) instead of O(meshes), and the
+// extra per-vertex mat4 multiply is free on the GPU. aNormal from the
+// shared layout is deliberately not declared - inactive attributes are
+// skipped and only the stride accounts for them.
 const VERTEX_SRC = glsl`
   in vec3 aPos;
   in vec2 aUV;
   out vec2 vUv;
-  uniform mat4 uMVP;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
 
   void main() {
-    gl_Position = uMVP * vec4(aPos, 1.0);
+    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
     vUv = aUV;
   }
 `
@@ -131,14 +136,18 @@ function needsHeader(source: string): boolean {
 
 export type ShaderMaterialOptions = {
   /**
-   * Vertex stage GLSL. MUST declare and use `uniform mat4 uMVP` - the scene
-   * writes projection * view * world into it whenever the mesh or camera
-   * moves. Declare any of the shared layout's `in` attributes (aPos vec3,
-   * aNormal vec3, aUV vec2); undeclared ones are skipped.
+   * Vertex stage GLSL. MUST declare and use `uniform mat4 uModel` (the
+   * mesh's world matrix, written per entry whenever the mesh moves) and
+   * `uniform mat4 uViewProj` (the camera's view-projection, shared by the
+   * whole scene target and written once per camera move) - transform with
+   * `uViewProj * uModel * vec4(aPos, 1.0)`. Declare any of the shared
+   * layout's `in` attributes (aPos vec3, aNormal vec3, aUV vec2);
+   * undeclared ones are skipped.
    */
   vertex: string
   fragment: string
-  /** Uniform seeds beyond uMVP; update per mesh later with setMeshParams. */
+  /** Uniform seeds beyond uModel/uViewProj; update per mesh later with
+   * setMeshParams. */
   params?: ShaderParams
   textures?: Record<string, TextureId>
   /** Pipeline state; defaults match unlit: depth: true, cull: "back". */

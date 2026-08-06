@@ -2,9 +2,20 @@
 type: backlog-item
 title: Shared (target-level) params for draw targets
 description: setDrawParams is per-entry, so a value every entry shares - a camera's view-projection above all - must be written once per mesh from JS, turning camera motion into O(scene) FFI crossings. Target-level params generalize what createShaderTarget already has for the single-draw case, and the GL layer's apply-if-declared semantics already do the hard part.
-status: open
+status: done
 timestamp: 2026-08-05T00:00:00Z
 ---
+
+Landed 2026-08-06: `shared_params` on the draw-list target (alloy), applied
+per entry before its own params (entry overrides shared - specific beats
+general); `setTargetParams(target, params)` plus a positional `params`
+argument on `createDrawTarget` (the positional-params convention, matching
+`createShaderTarget`); validation is coverage-based as proposed below
+(declared by at least one current entry's pipeline, accepted as-is with no
+entries, never retroactive). Shared sampler bindings deferred to a consumer
+as suggested. `@solidrt/3d` now writes per-mesh `uModel` + target-shared
+`uViewProj`; the `shaderMaterial` vertex contract requires both. Introspection
+reports a draw target's shared params in the flat `params` field.
 
 # Shared (target-level) params for draw targets
 

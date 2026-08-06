@@ -370,7 +370,8 @@ fn collect_draw_update(update: &Object<'_>) -> rquickjs::Result<alloy::DrawUpdat
 // target-OWNED depth storage every entry shares - distinct from the depth
 // STATE a pipeline declares on createRenderPipeline). Entry keys throw with
 // a pointer to addDraw; draw-state keys with a pointer to
-// createRenderPipeline.
+// createRenderPipeline; a `params` key with a pointer to the positional
+// argument (shared target-level params, like every create's params).
 fn collect_draw_target_spec(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -379,8 +380,11 @@ fn collect_draw_target_spec(
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, bool)> {
   if let Some(o) = opts {
+    if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
+      return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
+    }
     for key in [
-      "params", "textures", "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
+      "textures", "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
       "firstIndex", "indexCount", "instanceCount",
     ] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
@@ -527,6 +531,7 @@ impl ModuleDef for GpuModule {
     decl.declare("addDraw")?;
     decl.declare("removeDraw")?;
     decl.declare("setDrawParams")?;
+    decl.declare("setTargetParams")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
     decl.declare("setDrawOrder")?;
@@ -911,18 +916,34 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setDraw");
 
-    // createDrawTarget(width, height, opts?) -> texture id: a mesh target
-    // whose contents are an ordered, mutable list of draws (addDraw /
-    // removeDraw), over color plus optional target-owned depth storage. The
-    // target half of the options only; entries carry everything else.
+    // createDrawTarget(width, height, params?, opts?) -> texture id: a mesh
+    // target whose contents are an ordered, mutable list of draws (addDraw /
+    // removeDraw), over color plus optional target-owned depth storage.
+    // `params` seeds the SHARED (target-level) params setTargetParams drives
+    // later - positional like every create's params; the options are the
+    // target half only, entries carry everything else.
     let create_draw_target_atx = atx.clone();
     let create_draw_target = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>,
+            width: u32,
+            height: u32,
+            params: Option<Object<'_>>,
+            opts: Opt<Object<'_>>|
+            -> rquickjs::Result<u64> {
         let (spec, depth) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
+        let params = match &params {
+          Some(o) => collect_params(&ctx, o, "createDrawTarget")?,
+          None => Vec::new(),
+        };
         let id = create_draw_target_atx
           .create_draw_target(spec, depth)
           .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+        if !params.is_empty() {
+          create_draw_target_atx
+            .set_target_params(id, &params)
+            .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+        }
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created.borrow_mut().insert(id);
         Ok(id)
@@ -996,6 +1017,26 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create setDrawParams");
+
+    // Target-level shared params update: values every entry reads (a camera's
+    // view-projection), applied before each entry's own params - an entry
+    // naming the same uniform overrides the shared value. Alloy validates at
+    // this call site (each name must be declared by at least one entry's
+    // program; partial coverage is fine, the apply skips undeclared names).
+    let set_target_params_atx = atx.clone();
+    let set_target_params_platform = platform.clone();
+    let set_target_params = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, params: Object<'_>| -> rquickjs::Result<()> {
+        let params = collect_params(&ctx, &params, "setTargetParams")?;
+        set_target_params_atx
+          .set_target_params(target, &params)
+          .map_err(|e| throw_str(&ctx, &format!("setTargetParams: {e}")))?;
+        set_target_params_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setTargetParams");
 
     // Per-entry sampler rebind: setShaderTextures addressed to one draw entry.
     let set_draw_textures_atx = atx.clone();
@@ -1092,6 +1133,7 @@ impl ModuleDef for GpuModule {
     exports.export("addDraw", add_draw)?;
     exports.export("removeDraw", remove_draw)?;
     exports.export("setDrawParams", set_draw_params)?;
+    exports.export("setTargetParams", set_target_params)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
     exports.export("setDrawOrder", set_draw_order)?;

@@ -109,6 +109,10 @@ pub(crate) enum RasterCmd {
   /// Fold new params into one draw entry's record and mark the target dirty;
   /// values apply at the next render (flush, or explicit for manual).
   UpdateDrawParams { target: u64, draw: u64, params: Vec<(String, ParamValue)> },
+  /// Fold new params into a draw target's shared (target-level) record and
+  /// mark the target dirty. Shared params apply per entry before the entry's
+  /// own params, so an entry naming the same uniform overrides them.
+  UpdateTargetParams { target: u64, params: Vec<(String, ParamValue)> },
   /// Rebind one draw entry's sampler2D inputs by uniform name and mark the
   /// target dirty. Unnamed bindings keep their current source.
   UpdateDrawTextures { target: u64, draw: u64, textures: Vec<(String, u64)> },

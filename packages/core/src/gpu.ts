@@ -117,11 +117,15 @@ export type { BlendMode, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRa
 // setDrawTextures / setDrawRange are the per-entry forms of setShaderParams /
 // setShaderTextures / setDraw, taking (target, draw, value) with identical
 // merge and validation semantics. The per-object hot path is setDrawParams (a
-// moved mesh = one call with its new matrix). setDrawOrder replaces the whole
+// moved mesh = one call with its new matrix). setTargetParams writes the
+// target's SHARED params - values every entry reads (a camera's
+// view-projection: one write per camera move instead of one per mesh),
+// applied before each entry's own params so an entry naming the same uniform
+// overrides the shared value. setDrawOrder replaces the whole
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
 // camera moves).
-export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
+export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds
@@ -340,6 +344,15 @@ export function createShaderTarget(
  * whether an entry tests/writes it stays pipeline state, and a depth-testing
  * pipeline into a depthless target throws at `addDraw`.
  *
+ * `params` seeds the target's SHARED params - values every entry reads,
+ * written once per target instead of once per entry (a camera's
+ * view-projection is the motivating case: one `setTargetParams` per camera
+ * move instead of one `setDrawParams` per mesh). Shared values apply before
+ * each entry's own params, so an entry naming the same uniform overrides
+ * the shared value; a name only some entries' programs declare is applied
+ * where declared and skipped elsewhere. They are target state: entry
+ * add/remove/rebuild cannot lose them.
+ *
  * The render contract is unchanged: the list is input data, so an ordinary
  * (`render: "auto"`) draw target re-renders exactly when its entries or
  * their inputs change - a static scene costs zero passes, and one render is
@@ -351,6 +364,7 @@ export function createShaderTarget(
 export function createDrawTarget(
   width: number,
   height: number,
+  params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean
     clearColor?: [number, number, number, number]
@@ -359,7 +373,7 @@ export function createDrawTarget(
   } & CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
-  let id = gpu.createDrawTarget(width, height, opts)
+  let id = gpu.createDrawTarget(width, height, params, opts)
   if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

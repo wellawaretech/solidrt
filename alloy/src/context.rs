@@ -8,9 +8,9 @@ use std::sync::{mpsc, Arc};
 use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_order, validate_params, validate_texture_bindings, vertex_stride,
-  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources, NodeShader, ParamValue,
-  PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
+  resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
+  validate_texture_bindings, vertex_stride, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources,
+  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterSender, RasterStats};
@@ -978,6 +978,49 @@ impl Context {
       validate_params(&entry.uniforms, params)?;
     }
     self.send(RasterCmd::UpdateDrawParams { target, draw, params: params.to_vec() });
+    Ok(())
+  }
+
+  /// Update a draw target's shared (target-level) params: values every entry
+  /// reads - a camera's view-projection above all - folded by name like every
+  /// params write and applied at render before each entry's own params, so an
+  /// entry naming the same uniform overrides the shared value (specific beats
+  /// general). Shared params are target state: they survive entry
+  /// add/remove/rebuild. A target legitimately mixes material classes, so a
+  /// name only some entries' programs declare is applied where declared and
+  /// skipped elsewhere (the iResolution rule); validation requires each name
+  /// to be declared settable by at least ONE current entry's program, with
+  /// the matching arity everywhere it is declared. With no entries yet there
+  /// is nothing to check against, so names are accepted as-is - and an entry
+  /// added later never re-checks them (a name its program lacks stays a skip,
+  /// not a retroactive error). The caller must request a frame.
+  pub fn set_target_params(&self, target: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
+    {
+      let targets = self.targets.borrow();
+      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let Some(list) = mirror.entries.as_ref() else {
+        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+      };
+      if !list.entries.is_empty() {
+        for (name, value) in params {
+          let mut declared = false;
+          for entry in list.entries.values() {
+            declared |= validate_param_if_declared(&entry.uniforms, name, value)?;
+          }
+          if !declared {
+            let mut names: Vec<&str> =
+              list.entries.values().flat_map(|e| e.uniforms.keys().map(|s| s.as_str())).collect();
+            names.sort_unstable();
+            names.dedup();
+            return Err(format!(
+              "no entry's program has an active uniform named '{name}' (active across entries: {})",
+              names.join(", ")
+            ));
+          }
+        }
+      }
+    }
+    self.send(RasterCmd::UpdateTargetParams { target, params: params.to_vec() });
     Ok(())
   }
 

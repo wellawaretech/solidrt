@@ -16,12 +16,6 @@ Sorted by status: open first, then partial, deferred, and closed
   work ranked by structural leverage - the uModel/uViewProj split and
   UI-as-texture first, then lights, transparency, glTF and mipmaps, out to
   shadows and PBR - each entry pointing at its engine backlog file.
-- [Shared (target-level) params for draw targets](gpu-shared-draw-params.md)
-  [open] - setDrawParams is per-entry, so a value every entry shares (a
-  camera's view-projection above all) costs one write per mesh from JS,
-  making camera motion O(scene) FFI crossings; target-level params
-  generalize what createShaderTarget already has for the one-draw case, and
-  the GL layer's apply-if-declared handling already does the hard part.
 - [A snapshot boundary's retained texture as a texture id](snapshot-boundary-texture-id.md)
   [open] - repaintBoundary="snapshot" already keeps its subtree's
   rasterization in an adopted texture, but only the boundary shader can
@@ -448,6 +442,13 @@ Sorted by status: open first, then partial, deferred, and closed
   Target rendering is now pull-based: writes mark dirty, and a flush at each
   observation point (frame, capture, readback) re-renders the affected
   subgraph in dependency order; sampling cycles are rejected at bind time.
+- [Shared (target-level) params for draw targets](gpu-shared-draw-params.md)
+  [done] - Landed 2026-08-06: a draw target holds shared params every entry
+  reads, applied before the entry's own (entry overrides shared), written
+  once via setTargetParams or seeded by createDrawTarget's positional
+  params; validation is coverage-based (at least one declaring pipeline,
+  partial coverage tolerated). @solidrt/3d swapped uMVP for per-mesh uModel
+  + shared uViewProj, making camera motion one write instead of O(meshes).
 - [Split GPU pipeline state from the render target](gpu-pipeline-object-model.md) [done] -
   Landed 2026-07-30: RenderPipeline (program + typed draw state) with
   createRenderPipeline/createShaderTarget split, one owned spec instead of

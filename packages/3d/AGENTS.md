@@ -12,7 +12,9 @@ blendMode and pointer events like any element. Design rationale:
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
   `setVisible` - plain objects with dirty flags, batched to a microtask,
-  one `setDrawParams` (the uMVP matrix) per changed mesh. The component
+  one `setDrawParams` (the uModel matrix) per changed mesh and ONE
+  `setTargetParams` (the shared uViewProj) per camera change, however many
+  meshes. The component
   face (`Scene`/`Group`/`Mesh`/`PerspectiveCamera`) syncs props into that
   core over context and renders nothing itself.
 - Rendering is the runtime's. The target is `render: "auto"`: it
@@ -58,11 +60,13 @@ Materials:
   internally.
 - `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
   depthWrite?, blend?, cull?, topology?, label? })` - your own GLSL, the
-  custom-look escape hatch. The vertex stage MUST declare and use
-  `uniform mat4 uMVP` (the scene writes projection * view * world into
-  it); attributes come from the shared layout by name; sources without
+  custom-look escape hatch. The vertex stage MUST declare and use BOTH
+  `uniform mat4 uModel` (the mesh's world matrix, per entry) and
+  `uniform mat4 uViewProj` (the camera, shared target-level params) -
+  transform with `uViewProj * uModel * vec4(aPos, 1.0)`; attributes come
+  from the shared layout by name; sources without
   `#version` get the standard pipeline preamble. App-driven uniforms
-  beyond uMVP: seed via `params`, then write per mesh with
+  beyond uModel/uViewProj: seed via `params`, then write per mesh with
   `setMeshParams(mesh, { name: value })` (validated names; values persist
   across entry rebuilds; frame-rate-safe like setTransform).
 
@@ -74,7 +78,7 @@ Materials:
   "fix" the negated row of `perspective()` - both would mirror the winding
   and show mesh interiors.
 - `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
-  cheap off switch). Hidden meshes skip uMVP writes; the fresh matrix is
+  cheap off switch). Hidden meshes skip uModel writes; the fresh matrix is
   written on unhide.
 - Alpha does not blend in v1: pipelines are opaque (`blend: "none"`), a
   translucent color overwrites. Transparency waits on blend factors +
@@ -83,8 +87,9 @@ Materials:
   v1.
 - Transforms have ONE write path: `setTransform`/`setVisible` (or the
   props that call them). Mutating `node.position` directly does not sync.
-- A camera change rewrites every visible entry's uMVP (documented v1
-  cost, fine at hundreds of meshes). Scene scale honestly: hundreds to a
+- A camera change is ONE `setTargetParams` write (uViewProj is target
+  state), independent of mesh count - never reintroduce per-mesh camera
+  writes. Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU.
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
   list END. Irrelevant while everything is opaque + depth-tested; revisit
@@ -96,6 +101,10 @@ Materials:
   content-keyed caches are the anti-pattern the GPU layer avoids). Create
   one per look at app scope, share across meshes, `dispose()` when done
   for good.
-- A shaderMaterial vertex stage without `uniform mat4 uMVP` (declared AND
-  used) throws at mesh attach - the scene seeds uMVP on every entry and
-  the engine rejects unknown uniform names.
+- A shaderMaterial vertex stage without `uniform mat4 uModel` (declared
+  AND used) throws at mesh attach - the scene seeds uModel on every entry
+  and the engine rejects unknown uniform names. One without `uViewProj`
+  throws later, at the first camera sync after it becomes the scene's ONLY
+  material class (shared params need at least one declaring pipeline);
+  with other declaring materials present it silently ignores the camera
+  instead. Declare and use both, always.

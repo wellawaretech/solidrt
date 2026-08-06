@@ -56,18 +56,18 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   [gpu-pipeline-extensions](gpu-pipeline-extensions.md)).
 
 Known v1 limits, documented as traps in `packages/3d/AGENTS.md`: opaque
-only, Euler-only rotation, fixed 8-float vertex layout, camera motion
-rewrites every visible entry's uMVP, entry rebuilds append at the list end.
+only, Euler-only rotation, fixed 8-float vertex layout, entry rebuilds
+append at the list end.
 
 ## The ranked list
 
 1. **Camera off the O(scene) path: per-entry uModel + target-shared
-   uViewProj.** Engine: [gpu-shared-draw-params](gpu-shared-draw-params.md)
-   [open]. Library: split the premultiplied uMVP into the two matrices.
-   First because it removes the one case where the retained model's
-   O(delta) promise fails (orbiting a 500-mesh scene is 500 writes today),
-   and because it changes the `shaderMaterial` uniform contract - cheapest
-   now, more expensive with every app that ships against uMVP.
+   uViewProj.** DONE 2026-08-06. Engine:
+   [gpu-shared-draw-params](gpu-shared-draw-params.md) [done]
+   (`setTargetParams` + `createDrawTarget` positional params). Library:
+   uMVP split into per-mesh `uModel` + shared `uViewProj`; a camera move is
+   one write, and the `shaderMaterial` vertex contract now requires both
+   matrices (changed before any app shipped against uMVP).
 2. **The standard uniform set and the exported-GLSL policy.** Library
    only, no backlog file (differentiators note, implications item 4).
    uModel/uViewProj/normal matrix/camera position as the documented
