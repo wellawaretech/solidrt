@@ -15,6 +15,11 @@ pub mod gpu;
 pub mod tree;
 pub mod value;
 
+// The read half of the property adapter, for inspection surfaces (the dev
+// connection's tree query); the write half stays crate-internal behind
+// setProperty.
+pub use properties::{read_jsx, ReadValue};
+
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 

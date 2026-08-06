@@ -31,6 +31,10 @@ pub struct DevFlags {
   /// True while a dev-server connection is up. Gates senders that would
   /// otherwise queue unboundedly while offline (log forwarding).
   pub connected: Arc<AtomicBool>,
+  /// Dev-tool pause/step/scale state, applied by the frame verb (see
+  /// runtime::ClockControl); written from `clock` queries, reset on
+  /// reload/stop so no app starts under a stale pause.
+  pub clock: crate::runtime::ClockControl,
 }
 
 /// Send-safe handles the connection answers dev-server queries from, without a
@@ -481,6 +485,10 @@ async fn try_serve(
             }
           }
           Some("reload") => {
+            // A fresh push must not start under a stale dev-tool pause: an
+            // agent (or human) that paused and forgot would see every later
+            // app boot frozen.
+            flags.clock.reset();
             let proxy_http = json.get("proxyHttp").and_then(|p| p.as_bool()).unwrap_or(false);
             flags.proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
             if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
@@ -514,11 +522,34 @@ async fn try_serve(
             }
           }
           Some("stop") => {
+            // The launcher must never come up paused.
+            flags.clock.reset();
             let _ = tx.send(crate::EngineCmd::Stop);
           }
           Some("query") => {
             let id = json.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
             match json.get("kind").and_then(|k| k.as_str()) {
+              Some("clock") => {
+                // Dev-tool clock control (pause/step/scale): the state is
+                // atomics shared with the frame verb, so apply and ack right
+                // here without a JS-thread round trip. The latch makes the
+                // change visible promptly even on an idle app (a stepped or
+                // resumed frame presents; a pause shows its current state).
+                if let Some(scale) = json.get("scale").and_then(|s| s.as_f64()) {
+                  flags.clock.set_scale(scale);
+                }
+                if let Some(step) = json.get("step").and_then(|s| s.as_u64()) {
+                  flags.clock.add_steps(step);
+                }
+                flags.frame_requested.store(true, Ordering::Relaxed);
+                let reply = serde_json::json!({
+                  "type": "result",
+                  "id": id,
+                  "data": { "scale": flags.clock.scale(), "pendingSteps": flags.clock.pending_steps() },
+                })
+                .to_string();
+                let _ = client.send(tokio_websockets::Message::text(reply)).await;
+              }
               Some("stats") => {
                 // The snapshot answers from the draw loop's latch; the mounted
                 // count is derived from the live tree on the JS thread when an
@@ -561,12 +592,13 @@ async fn try_serve(
                 let root = json.get("root").and_then(|n| n.as_u64());
                 let depth = json.get("depth").and_then(|n| n.as_u64()).map(|n| n as usize);
                 let search = json.get("query").and_then(|q| q.as_str()).map(str::to_string);
+                let props = json.get("props").and_then(|p| p.as_bool()).unwrap_or(false);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(tree_reply(&ctx, id, root, depth, search.as_deref()));
+                      let _ = reply_tx.send(tree_reply(&ctx, id, root, depth, search.as_deref(), props));
                     });
                   }
                   None => {
@@ -580,12 +612,14 @@ async fn try_serve(
                 // capture is async (serviced on a paint), so unlike tree/stats
                 // the reply is sent from the capture callback, not here.
                 let node_id = json.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
+                let rect = query_rect(&json);
+                let scale = query_scale(&json);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     let frame_requested = flags.frame_requested.clone();
-                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, reply_tx, frame_requested));
+                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, rect, scale, reply_tx, frame_requested));
                   }
                   None => {
                     let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
@@ -613,20 +647,14 @@ async fn try_serve(
                 // needs no paint pass (the texture already exists), so the reply
                 // is built synchronously on the JS thread.
                 let texture_id = json.get("textureId").and_then(|n| n.as_u64()).unwrap_or(0);
-                let rect = json.get("rect").and_then(|r| {
-                  Some((
-                    r.get("x")?.as_u64()? as u32,
-                    r.get("y")?.as_u64()? as u32,
-                    r.get("width")?.as_u64()? as u32,
-                    r.get("height")?.as_u64()? as u32,
-                  ))
-                });
+                let rect = query_rect(&json);
+                let scale = query_scale(&json);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(texture_reply(&ctx, id, texture_id, rect));
+                      let _ = reply_tx.send(texture_reply(&ctx, id, texture_id, rect, scale));
                     });
                   }
                   None => {
@@ -794,18 +822,20 @@ fn tree_reply(
   root: Option<u64>,
   depth: Option<usize>,
   search: Option<&str>,
+  props: bool,
 ) -> String {
   let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() else {
     return error_reply(id, "no render tree");
   };
   let tree = tree.0.borrow();
+  let props_tree = props.then_some(&*tree);
   if let Some(needle) = search {
     return match tree.snapshot_matches(root, needle, TREE_MATCH_LIMIT) {
       Some(matches) => {
         let entries: Vec<_> = matches
           .iter()
           .map(|m| {
-            let mut obj = node_json(&m.node);
+            let mut obj = node_json(&m.node, props_tree);
             let map = obj.as_object_mut().expect("node_json is an object");
             map.remove("children");
             map.insert("path".into(), m.path.clone().into());
@@ -822,7 +852,7 @@ fn tree_reply(
     };
   }
   match tree.snapshot_from(root, depth) {
-    Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node)}).to_string(),
+    Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node, props_tree)}).to_string(),
     None => match root {
       Some(r) => error_reply(id, &format!("no node with id {r}")),
       None => error_reply(id, "no render tree (the app has not rendered)"),
@@ -830,15 +860,92 @@ fn tree_reply(
   }
 }
 
+/// The optional crop rect of a snapshot/texture query message.
+fn query_rect(json: &serde_json::Value) -> Option<(u32, u32, u32, u32)> {
+  let r = json.get("rect")?;
+  Some((
+    r.get("x")?.as_u64()? as u32,
+    r.get("y")?.as_u64()? as u32,
+    r.get("width")?.as_u64()? as u32,
+    r.get("height")?.as_u64()? as u32,
+  ))
+}
+
+/// The optional integer magnification of a snapshot/texture query message.
+fn query_scale(json: &serde_json::Value) -> u32 {
+  json.get("scale").and_then(|s| s.as_u64()).unwrap_or(1) as u32
+}
+
+/// Cap on a scaled capture's side length: magnification multiplies the PNG
+/// encode input by scale^2, and that encode runs inline on the JS thread.
+const CAPTURE_OUT_MAX: u32 = 8192;
+
+/// Apply an optional crop rect and integer nearest-neighbour magnification to
+/// an RGBA8 buffer: crop first, then duplicate each pixel into a scale x scale
+/// block. The full readback is already in hand, so doing both CPU-side keeps
+/// the GL path identical to the plain case.
+fn crop_scale_rgba(
+  pixels: Vec<u8>,
+  width: u32,
+  height: u32,
+  rect: Option<(u32, u32, u32, u32)>,
+  scale: u32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+  if scale < 1 || scale > 8 {
+    return Err(format!("scale {scale} outside 1-8"));
+  }
+  let (pixels, width, height) = match rect {
+    None => (pixels, width, height),
+    Some((x, y, w, h)) => {
+      if w == 0 || h == 0 || x.saturating_add(w) > width || y.saturating_add(h) > height {
+        return Err(format!("rect {w}x{h} at {x},{y} outside the {width}x{height} source"));
+      }
+      let mut cropped = Vec::with_capacity((w as usize) * (h as usize) * 4);
+      for row in y..y + h {
+        let start = ((row as usize) * (width as usize) + x as usize) * 4;
+        cropped.extend_from_slice(&pixels[start..start + (w as usize) * 4]);
+      }
+      (cropped, w, h)
+    }
+  };
+  if scale == 1 {
+    return Ok((pixels, width, height));
+  }
+  let (out_w, out_h) = (width * scale, height * scale);
+  if out_w > CAPTURE_OUT_MAX || out_h > CAPTURE_OUT_MAX {
+    return Err(format!(
+      "scaled output {out_w}x{out_h} exceeds {CAPTURE_OUT_MAX} px per side; crop tighter or lower the scale"
+    ));
+  }
+  let mut scaled = Vec::with_capacity((out_w as usize) * (out_h as usize) * 4);
+  let mut line = Vec::with_capacity((out_w as usize) * 4);
+  for row in 0..height as usize {
+    line.clear();
+    let row_start = row * (width as usize) * 4;
+    for px in 0..width as usize {
+      let p = &pixels[row_start + px * 4..row_start + px * 4 + 4];
+      for _ in 0..scale {
+        line.extend_from_slice(p);
+      }
+    }
+    for _ in 0..scale {
+      scaled.extend_from_slice(&line);
+    }
+  }
+  Ok((scaled, out_w, out_h))
+}
+
 /// Queue a snapshot capture of `node_id` on the alloy context (reached from JS
 /// userdata, like `tree_reply` reaches the render tree). The completion callback
 /// runs on this same JS thread during the paint pass that services the capture:
-/// it PNG-encodes the captured pixels and routes the reply out. Runs on the JS
-/// thread via the engine exec handle.
+/// it crops/scales and PNG-encodes the captured pixels and routes the reply out.
+/// Runs on the JS thread via the engine exec handle.
 fn request_snapshot(
   ctx: &flux::rquickjs::Ctx<'_>,
   node_id: u64,
   id: u64,
+  rect: Option<(u32, u32, u32, u32)>,
+  scale: u32,
   reply_tx: UnboundedSender<String>,
   frame_requested: Arc<AtomicBool>,
 ) {
@@ -851,7 +958,10 @@ fn request_snapshot(
     node_id,
     Box::new(move |result| {
       let reply = match result {
-        Ok(info) => snapshot_reply(id, info.width, info.height, info.pixels),
+        Ok(info) => match crop_scale_rgba(info.pixels, info.width, info.height, rect, scale) {
+          Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels),
+          Err(e) => error_reply(id, &e),
+        },
         Err(e) => error_reply(id, &e),
       };
       let _ = reply_tx.send(reply);
@@ -1134,34 +1244,23 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
   .to_string()
 }
 
-/// Read back a registered texture's pixels (optionally cropped to `rect`) and
-/// encode them as a PNG reply. Runs on the JS thread.
+/// Read back a registered texture's pixels (optionally cropped to `rect` and
+/// magnified by `scale`) and encode them as a PNG reply. Runs on the JS thread.
 fn texture_reply(
   ctx: &flux::rquickjs::Ctx<'_>,
   id: u64,
   texture_id: u64,
   rect: Option<(u32, u32, u32, u32)>,
+  scale: u32,
 ) -> String {
   let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
     return error_reply(id, "no alloy context");
   };
   match atx.0.read_texture_by_id(texture_id) {
     Err(e) => error_reply(id, &e),
-    Ok((width, height, pixels)) => match rect {
-      None => snapshot_reply(id, width, height, pixels),
-      Some((x, y, w, h)) => {
-        if w == 0 || h == 0 || x.saturating_add(w) > width || y.saturating_add(h) > height {
-          return error_reply(id, &format!("rect {w}x{h} at {x},{y} outside texture {width}x{height}"));
-        }
-        // The full readback is already in hand; cropping CPU-side keeps the
-        // GL path identical to the uncropped case.
-        let mut cropped = Vec::with_capacity((w as usize) * (h as usize) * 4);
-        for row in y..y + h {
-          let start = ((row as usize) * (width as usize) + x as usize) * 4;
-          cropped.extend_from_slice(&pixels[start..start + (w as usize) * 4]);
-        }
-        snapshot_reply(id, w, h, cropped)
-      }
+    Ok((width, height, pixels)) => match crop_scale_rgba(pixels, width, height, rect, scale) {
+      Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels),
+      Err(e) => error_reply(id, &e),
     },
   }
 }
@@ -1286,7 +1385,13 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
   }
 }
 
-fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {
+/// `props`, when set, is the live tree: each node additionally carries its
+/// current off-default property values (JSX names, see flux read_jsx) and,
+/// when a transform anywhere on its ancestor chain moved it off its
+/// axis-aligned box, the painted `quad` (four corners, window coordinates,
+/// [x0,y0, x1,y1, x2,y2, x3,y3] from pre-transform top-left clockwise). The
+/// box x/y/width/height stay the quad's axis-aligned bounds either way.
+fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rendertree::RenderTree>) -> serde_json::Value {
   let mut obj = serde_json::json!({
     "id": node.id,
     "kind": node.kind,
@@ -1302,8 +1407,27 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {
   if let Some(text) = &node.text {
     map.insert("text".into(), text.clone().into());
   }
+  if let Some(tree) = props {
+    if let Some(element) = tree.try_node(node.id) {
+      let values = flux::gui::read_jsx(element);
+      if !values.is_empty() {
+        let mut props_map = serde_json::Map::with_capacity(values.len());
+        for (name, value) in values {
+          props_map.insert(name.into(), read_value_json(value));
+        }
+        map.insert("props".into(), props_map.into());
+      }
+    }
+    if let Some(quad) = tree.painted_quad(node.id) {
+      if !quad_is_aabb(&quad) {
+        let flat: Vec<serde_json::Value> =
+          quad.iter().flat_map(|p| [round2(p.x).into(), round2(p.y).into()]).collect();
+        map.insert("quad".into(), flat.into());
+      }
+    }
+  }
   if !node.children.is_empty() {
-    map.insert("children".into(), node.children.iter().map(node_json).collect::<Vec<_>>().into());
+    map.insert("children".into(), node.children.iter().map(|c| node_json(c, props)).collect::<Vec<_>>().into());
   }
   // A depth cap cut this node's children off: surface how many exist so a
   // reader knows to descend with root=<id>.
@@ -1311,4 +1435,32 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot) -> serde_json::Value {
     map.insert("childCount".into(), node.child_count.into());
   }
   obj
+}
+
+/// True when the painted quad is still the axis-aligned box the snapshot
+/// already reports (top-left, top-right, bottom-right, bottom-left of its own
+/// AABB) - the untransformed common case, where emitting it would be noise.
+fn quad_is_aabb(quad: &[alloy::rendertree::Point; 4]) -> bool {
+  const EPS: f32 = 0.01;
+  let eq = |a: f32, b: f32| (a - b).abs() < EPS;
+  let (min_x, max_x) = (quad.iter().map(|p| p.x).fold(f32::MAX, f32::min), quad.iter().map(|p| p.x).fold(f32::MIN, f32::max));
+  let (min_y, max_y) = (quad.iter().map(|p| p.y).fold(f32::MAX, f32::min), quad.iter().map(|p| p.y).fold(f32::MIN, f32::max));
+  eq(quad[0].x, min_x)
+    && eq(quad[0].y, min_y)
+    && eq(quad[1].x, max_x)
+    && eq(quad[1].y, min_y)
+    && eq(quad[2].x, max_x)
+    && eq(quad[2].y, max_y)
+    && eq(quad[3].x, min_x)
+    && eq(quad[3].y, max_y)
+}
+
+fn read_value_json(value: flux::gui::ReadValue) -> serde_json::Value {
+  match value {
+    flux::gui::ReadValue::Num(n) => round2(n as f32).into(),
+    flux::gui::ReadValue::Int(n) => n.into(),
+    flux::gui::ReadValue::Bool(b) => b.into(),
+    flux::gui::ReadValue::Str(s) => s.into(),
+    flux::gui::ReadValue::Nums(list) => list.into_iter().map(|n| round2(n as f32)).collect::<Vec<_>>().into(),
+  }
 }

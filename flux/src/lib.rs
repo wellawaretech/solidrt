@@ -21,7 +21,7 @@ pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
 pub use plugins::standards::fetch::{request_body_from_value, JsResponseData};
 pub use plugins::standards::headers::header_pairs_from_init;
-pub use plugins::standards::time::Clock;
+pub use plugins::standards::time::{advance_virtual_time, install_virtual_time, Clock};
 pub use rquickjs;
 
 /// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.

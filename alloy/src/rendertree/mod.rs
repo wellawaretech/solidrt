@@ -130,6 +130,19 @@ impl ElementKind {
     }
   }
 
+  /// Read access to the shared paint, for inspection surfaces.
+  pub fn paint(&self) -> Option<&PaintState> {
+    match self {
+      ElementKind::Rectangle(r) => Some(&r.paint),
+      ElementKind::Oval(o) => Some(&o.paint),
+      ElementKind::Line(l) => Some(&l.paint),
+      ElementKind::Path(p) => Some(&p.paint),
+      ElementKind::Text(t) => Some(&t.paint),
+      ElementKind::Texture(t) => Some(&t.paint),
+      _ => None,
+    }
+  }
+
   /// Kinds sized by their own geometry (leaves), as opposed to container kinds
   /// sized by their children. MUST stay in sync with the arms of `Measurable
   /// for ElementKind` below: a leaf here is a kind that has a real `measure`.

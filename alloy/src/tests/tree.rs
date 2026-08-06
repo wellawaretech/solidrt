@@ -407,6 +407,57 @@ fn bounding_box_own_scale() {
   assert_box(b, -25.0, -25.0, 100.0, 100.0);
 }
 
+fn assert_point(p: Point, x: f32, y: f32) {
+  let eps = 1e-3;
+  assert!((p.x - x).abs() < eps && (p.y - y).abs() < eps, "expected ({x}, {y}), got ({}, {})", p.x, p.y);
+}
+
+#[test]
+fn painted_quad_untransformed_is_box_corners() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.insert_node(1, 2, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 10.0, 20.0, 100.0, 50.0);
+
+  let q = tree.painted_quad(2).expect("laid out");
+  assert_point(q[0], 10.0, 20.0);
+  assert_point(q[1], 110.0, 20.0);
+  assert_point(q[2], 110.0, 70.0);
+  assert_point(q[3], 10.0, 70.0);
+}
+
+#[test]
+fn painted_quad_rotated_ancestor_carries_corners() {
+  // Same setup as bounding_box_rotated_ancestor: the AABB collapses the
+  // rotation, the quad preserves it - and rebuilding the AABB from the quad
+  // must reproduce bounding_box_viewport exactly (one code path).
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_rotate(std::f32::consts::FRAC_PI_2);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  place(&mut tree, 3, 0.0, 0.0, 100.0, 20.0);
+
+  let q = tree.painted_quad(3).expect("laid out");
+  // A quarter turn around (50, 50): pre-transform top-left lands at (100, 0),
+  // and the corner order keeps identifying which original corner is which.
+  assert_point(q[0], 100.0, 0.0);
+  assert_point(q[1], 100.0, 100.0);
+  assert_point(q[2], 80.0, 100.0);
+  assert_point(q[3], 80.0, 0.0);
+
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_eq!(b, Rect::from_points(q));
+  assert_box(b, 80.0, 0.0, 20.0, 100.0);
+}
+
 #[test]
 fn bounding_box_translate_and_scroll_fast_path() {
   let mut tree = RenderTree::new();

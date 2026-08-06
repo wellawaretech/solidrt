@@ -12,6 +12,58 @@ use flux::{emit_event, ExecHandle};
 use crate::paced_clock::PacedClock;
 use crate::resample::Resampler;
 
+/// Dev-tool clock control, shared between the dev-server connection (any
+/// thread) and the frame verb: a time scale (0 pauses frame delivery to JS)
+/// and a pending single-step count consumed one per frame signal while
+/// paused. Cheap to clone: both fields are `Arc`s. Defaults to scale 1 with
+/// no steps, which leaves the frame path byte-for-byte on its normal route -
+/// builds without a dev connection never see another value.
+#[derive(Clone)]
+pub struct ClockControl {
+  // f64 bits.
+  scale: Arc<AtomicU64>,
+  steps: Arc<AtomicU64>,
+}
+
+// The writer half is only reachable from the dev connection (go builds); the
+// runtime builds still construct and read the control.
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
+impl ClockControl {
+  pub fn new() -> Self {
+    Self { scale: Arc::new(AtomicU64::new(1.0f64.to_bits())), steps: Arc::new(AtomicU64::new(0)) }
+  }
+
+  pub fn scale(&self) -> f64 {
+    f64::from_bits(self.scale.load(Ordering::Relaxed))
+  }
+
+  /// Set the time scale; negative input is clamped to 0 (paused).
+  pub fn set_scale(&self, scale: f64) {
+    self.scale.store(scale.max(0.0).to_bits(), Ordering::Relaxed);
+  }
+
+  /// Queue `n` single-step frames, delivered while paused.
+  pub fn add_steps(&self, n: u64) {
+    self.steps.fetch_add(n, Ordering::Relaxed);
+  }
+
+  pub fn pending_steps(&self) -> u64 {
+    self.steps.load(Ordering::Relaxed)
+  }
+
+  /// Consume one pending step; false when none are queued.
+  fn take_step(&self) -> bool {
+    self.steps.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1)).is_ok()
+  }
+
+  /// Back to normal time: scale 1, pending steps dropped. Applied on
+  /// reload/stop so no app starts under a stale pause.
+  pub fn reset(&self) {
+    self.set_scale(1.0);
+    self.steps.store(0, Ordering::Relaxed);
+  }
+}
+
 /// The engine seam: the verbs the runner's event loop drives a UI runtime
 /// with. Runner-owned bookkeeping (pointer positions, window facts, fps) has
 /// already been applied when a verb is called; implementations only marshal
@@ -41,6 +93,14 @@ pub struct FluxRuntime {
   // Run-mode pacing for the animation timestamps (see paced_clock). None in
   // playback mode, which uses the deterministic frame/fps clock.
   paced: Option<PacedClock>,
+  // Dev-tool pause/step/scale state; permanently scale 1 outside a dev
+  // session (and in playback mode, which has no dev connection).
+  clock_control: ClockControl,
+  // Wall origin for the paced clock's correction target. Read here rather
+  // than from flux::Clock, which reports the paced clock itself in run mode
+  // (performance.now() and the timers live on the frame-stepped timeline).
+  // tokio's Instant so tokio's test clock can drive it.
+  wall_start: tokio::time::Instant,
   platform: Arc<PlatformContext>,
   // At most one move dispatch in flight per pointer (mouse and pen; touch
   // goes through the resampler below and never dispatches on arrival). A map
@@ -132,12 +192,15 @@ impl FluxRuntime {
     exec: Rc<RefCell<Option<ExecHandle>>>,
     playback_frame: Arc<AtomicU64>,
     paced: Option<PacedClock>,
+    clock_control: ClockControl,
     platform: Arc<PlatformContext>,
   ) -> Self {
     Self {
       exec,
       playback_frame,
       paced,
+      clock_control,
+      wall_start: tokio::time::Instant::now(),
       platform,
       pending_moves: Arc::new(Mutex::new(HashMap::new())),
       resampler: Resampler::new(),
@@ -208,10 +271,7 @@ impl UiRuntime for FluxRuntime {
                 modifiers: m.modifiers,
               },
             );
-            timing
-              .lock()
-              .expect("js timing lock poisoned")
-              .record_move(start.elapsed().as_secs_f32() * 1000.0);
+            timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
           });
         }
       }
@@ -282,6 +342,8 @@ impl UiRuntime for FluxRuntime {
     let moves = self.resampler.sample();
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
+    let clock_control = self.clock_control.clone();
+    let wall_start = self.wall_start;
     let platform = self.platform.clone();
     let timing = self.timing.clone();
     eh.exec(move |ctx| {
@@ -305,18 +367,42 @@ impl UiRuntime for FluxRuntime {
       // Publish the present being computed before reading the clock, so in
       // playback mode the clock reports this frame's virtual time.
       playback_frame.store(next_frame, Ordering::Relaxed);
-      // rAF and the render event use the paced clock in run mode (see
-      // paced_clock); playback mode and performance.now() read flux::Clock
-      // directly. Idle Ticks arrive at the refresh cadence, so ticking the
-      // paced clock for them preserves its one-period-per-call model. Render
-      // event carries seconds; JS scales to ms.
-      let raw = ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0);
+      // Dev-tool clock control: at scale 0 frame delivery to JS is gated (a
+      // true pause: onFrame, rAF and the reactive flush all hang off the
+      // render event), except that each queued step lets exactly one frame
+      // through at one full period. Everything above and below this gate -
+      // touch dispatch, cameras, capture settling, the draw path - keeps
+      // running, so the compositor and the capture tools stay alive while
+      // app time stands still.
+      let scale = clock_control.scale();
+      let deliver = scale != 0.0 || clock_control.take_step();
+      // rAF, the render event, performance.now() and the virtual timers all
+      // march on one timeline: the paced clock in run mode (which flux::Clock
+      // also reports), the frame-derived virtual clock in playback. Idle
+      // Ticks arrive at the refresh cadence, so ticking the paced clock for
+      // them preserves its one-period-per-call model. Render event carries
+      // seconds; JS scales to ms.
       let ts = match &paced {
         Some(pc) => {
-          pc.tick(raw);
+          // The correction target is wall time, read from the runner's own
+          // origin - flux::Clock reports this very clock now, so reading it
+          // back would be circular. A gated frame ticks at scale 0 (no
+          // advance, accrue the offset); a stepped frame advances one exact
+          // period.
+          let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
+          pc.tick(
+            raw,
+            if !deliver {
+              0.0
+            } else if scale == 0.0 {
+              1.0
+            } else {
+              scale
+            },
+          );
           pc.now_ms()
         }
-        None => raw,
+        None => ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0),
       };
       if flux::gui::camera::tick(&ctx) {
         // A camera frame landed in its texture; the screen content changed
@@ -328,6 +414,23 @@ impl UiRuntime for FluxRuntime {
       flux::gui::gpu::tick(&ctx);
       #[cfg(feature = "speech")]
       crate::plugins::speech::tick(&ctx);
+      if !deliver {
+        // Paused: skip rAF and the render event so app time stops, but run
+        // the draw path directly - its demand gate decides whether anything
+        // needs painting (a queued snapshot capture, a camera frame, a
+        // timer-driven tree change), and skips for free otherwise.
+        crate::plugins::draw::render_now(&ctx);
+        return;
+      }
+      if scale == 0.0 {
+        // A stepped frame must present even when the app requests nothing,
+        // so the step is visible to a following snapshot.
+        platform.request_frame();
+      }
+      // Timers fire before the frame callbacks, one task-queue turn per
+      // frame (see flux virtual time); the frame then consumes the state
+      // they dirtied.
+      flux::advance_virtual_time(&ctx, ts);
       flux::gui::raf::flush(&ctx, ts);
       let time = ts / 1000.0;
       let obj = flux::rquickjs::Object::new(ctx.clone()).expect("create object");

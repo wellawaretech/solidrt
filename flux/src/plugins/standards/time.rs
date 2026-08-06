@@ -1,9 +1,9 @@
 use rquickjs::{
   function::{MutFn, Opt, This},
-  Ctx, Function, JsLifetime, Object, Value,
+  Ctx, Function, JsLifetime, Object, Persistent, Value,
 };
-use std::cell::Cell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -12,6 +12,136 @@ use tokio::time::Instant;
 
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
+
+// ----- Virtual time: embedder-driven timers -----
+
+/// Virtual timer queue, opted into per context by an embedder that drives
+/// time explicitly (`install_virtual_time` once, then `advance_virtual_time`
+/// per quantum). While installed, setTimeout/setInterval deadlines live on
+/// the embedder's timeline instead of tokio's: nothing fires until an advance
+/// moves virtual time past it, so pausing the drive pauses the timers, and a
+/// frame-clock drive quantizes firing to frames. Two behavioral consequences,
+/// both deliberate for a frame-paced app runtime: timer resolution is one
+/// advance quantum (a `setTimeout(fn, 0)` runs on the NEXT advance, in
+/// registration order, like a task queue turn), and an interval fires at most
+/// once per advance (missed periods collapse instead of storming after a
+/// pause). Without an install, timers keep the tokio wall-clock path -
+/// headless flux is untouched.
+///
+/// Callbacks are held as Persistents in context userdata, dropped with the
+/// context (the safe order; see the flux conventions on Persistent storage).
+#[derive(Clone, JsLifetime)]
+pub struct VirtualTime(#[qjs(skip_trace)] Rc<VirtualState>);
+
+struct VirtualState {
+  now: Cell<f64>,
+  seq: Cell<u64>,
+  // Firing order: (deadline ms bits, registration seq). Deadlines never go
+  // negative, so the f64 bit pattern orders like the number.
+  queue: RefCell<BTreeMap<(u64, u64), VirtualEntry>>,
+  // id -> callback. Cancellation removes the callback and leaves the queue
+  // entry stale (lazy deletion); advance() skips ids with no callback.
+  callbacks: RefCell<HashMap<u32, Persistent<Function<'static>>>>,
+}
+
+struct VirtualEntry {
+  id: u32,
+  // Some(period): re-arm after firing (setInterval).
+  period_ms: Option<f64>,
+}
+
+impl VirtualTime {
+  fn insert(&self, deadline_ms: f64, id: u32, period_ms: Option<f64>) {
+    let seq = self.0.seq.get();
+    self.0.seq.set(seq + 1);
+    self.0.queue.borrow_mut().insert((deadline_ms.max(0.0).to_bits(), seq), VirtualEntry { id, period_ms });
+  }
+
+  fn schedule<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, id: u32, delay_ms: f64, period_ms: Option<f64>) {
+    self.0.callbacks.borrow_mut().insert(id, Persistent::save(ctx, cb));
+    pending(ctx).hold();
+    self.insert(self.0.now.get() + delay_ms, id, period_ms);
+  }
+
+  /// Remove a live timer; false when the id is unknown or already fired.
+  fn cancel(&self, ctx: &Ctx<'_>, id: u32) -> bool {
+    if self.0.callbacks.borrow_mut().remove(&id).is_some() {
+      pending(ctx).release();
+      true
+    } else {
+      false
+    }
+  }
+}
+
+fn pending(ctx: &Ctx<'_>) -> PendingOps {
+  ctx.userdata::<PendingOps>().expect("pending ops userdata").clone()
+}
+
+/// Put this context's timers on a virtual timeline, seeded at `now_ms` (the
+/// same timeline later `advance_virtual_time` calls report). Install before
+/// app code runs so every timer the app registers is virtual.
+pub fn install_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
+  let state = VirtualTime(Rc::new(VirtualState {
+    now: Cell::new(now_ms),
+    seq: Cell::new(0),
+    queue: RefCell::new(BTreeMap::new()),
+    callbacks: RefCell::new(HashMap::new()),
+  }));
+  ctx.store_userdata(state).expect("store virtual time");
+}
+
+/// Advance virtual time to `now_ms` and fire everything due at or before it,
+/// in deadline order (ties in registration order). Timers registered by the
+/// fired callbacks - including a re-armed interval - wait for the next
+/// advance, so one call is one task-queue turn and can never loop. Time never
+/// rewinds: a smaller reading than the current virtual now fires what is due
+/// at the current now. No-op without `install_virtual_time`.
+pub fn advance_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
+  let Some(vt) = ctx.userdata::<VirtualTime>() else { return };
+  let vt = vt.clone();
+  if now_ms > vt.0.now.get() {
+    vt.0.now.set(now_ms);
+  }
+  let now = vt.0.now.get();
+  let end_seq = vt.0.seq.get();
+  loop {
+    // Pop one due entry under a short borrow: the callback may register or
+    // cancel timers, which borrows the same cells.
+    let entry = {
+      let mut queue = vt.0.queue.borrow_mut();
+      match queue.first_key_value() {
+        Some((&(deadline, seq), _)) if f64::from_bits(deadline) <= now && seq < end_seq => {
+          queue.pop_first().map(|(_, e)| e)
+        }
+        _ => None,
+      }
+    };
+    let Some(entry) = entry else { break };
+    let persistent = match entry.period_ms {
+      // One-shot: consume the callback and its engine-liveness hold.
+      None => match vt.0.callbacks.borrow_mut().remove(&entry.id) {
+        Some(p) => {
+          pending(ctx).release();
+          p
+        }
+        None => continue, // canceled; stale queue entry
+      },
+      // Interval: keep the callback and re-arm one period past now.
+      Some(_) => match vt.0.callbacks.borrow().get(&entry.id) {
+        Some(p) => p.clone(),
+        None => continue,
+      },
+    };
+    if let Some(period) = entry.period_ms {
+      vt.insert(now + period, entry.id, entry.period_ms);
+    }
+    let Ok(cb) = persistent.restore(ctx) else { continue };
+    if let Err(e) = cb.call::<(), ()>(()) {
+      report_uncaught(ctx, e, if entry.period_ms.is_some() { "setInterval callback" } else { "setTimeout callback" });
+    }
+  }
+}
 
 // ----- Scheduling: setTimeout / setInterval / queueMicrotask -----
 
@@ -44,7 +174,15 @@ impl Timers {
     self.pending.release();
   }
 
-  fn cancel(&self, id: u32) {
+  fn cancel(&self, ctx: &Ctx<'_>, id: u32) {
+    // Virtual mode owns every timer registered while it is installed; ids are
+    // allocated from the same counter either way, so an id lives in exactly
+    // one of the two stores.
+    if let Some(vt) = ctx.userdata::<VirtualTime>() {
+      if vt.clone().cancel(ctx, id) {
+        return;
+      }
+    }
     if let Some(tx) = self.active.borrow_mut().remove(&id) {
       let _ = tx.send(());
       self.pending.release();
@@ -57,6 +195,10 @@ impl Timers {
 
   fn set_timeout<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
     let id = self.alloc_id();
+    if let Some(vt) = ctx.userdata::<VirtualTime>() {
+      vt.clone().schedule(ctx, cb, id, ms as f64, None);
+      return id;
+    }
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     self.active.borrow_mut().insert(id, cancel_tx);
     self.pending.hold();
@@ -77,6 +219,11 @@ impl Timers {
 
   fn set_interval<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, ms: u64) -> u32 {
     let id = self.alloc_id();
+    if let Some(vt) = ctx.userdata::<VirtualTime>() {
+      // First fire after one period, like the tokio path's skipped first tick.
+      vt.clone().schedule(ctx, cb, id, ms as f64, Some(ms as f64));
+      return id;
+    }
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     self.active.borrow_mut().insert(id, cancel_tx);
     self.pending.hold();
@@ -159,9 +306,9 @@ fn init_timers(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from({
       let timers = timers.clone();
-      move |id: Opt<Value<'_>>| {
+      move |ctx: Ctx<'_>, id: Opt<Value<'_>>| {
         if let Some(id) = timer_id(id) {
-          timers.cancel(id);
+          timers.cancel(&ctx, id);
         }
       }
     }),
@@ -182,9 +329,9 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let clear_interval = Function::new(
     ctx.clone(),
-    MutFn::from(move |id: Opt<Value<'_>>| {
+    MutFn::from(move |ctx: Ctx<'_>, id: Opt<Value<'_>>| {
       if let Some(id) = timer_id(id) {
-        timers.cancel(id);
+        timers.cancel(&ctx, id);
       }
     }),
   )

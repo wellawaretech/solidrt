@@ -383,8 +383,16 @@ fn ui_thread(
       Some(rfps) if rfps > 0 => None,
       _ => Some(paced_clock::PacedClock::new()),
     };
-    let mut ui_runtime =
-      runtime::FluxRuntime::new(current_exec_events, playback_frame.clone(), paced_clock, platform.clone());
+    // Dev-tool pause/step/scale state, shared with the dev connection (which
+    // is the only writer); permanently scale 1 in builds without one.
+    let clock_control = runtime::ClockControl::new();
+    let mut ui_runtime = runtime::FluxRuntime::new(
+      current_exec_events,
+      playback_frame.clone(),
+      paced_clock.clone(),
+      clock_control.clone(),
+      platform.clone(),
+    );
 
     // Live input capture (see `--capture` in dev-server.ts): set from the
     // dev server's `welcome`/`capture` messages (see go::DevSession::start
@@ -409,7 +417,7 @@ fn ui_thread(
     // thread for tree queries.
     let query_exec: Arc<std::sync::Mutex<Option<ExecHandle>>> = Arc::new(std::sync::Mutex::new(None));
     #[cfg(not(feature = "go"))]
-    let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx);
+    let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx, &clock_control);
 
     // The resize settle window: after a resize, re-latch a frame request on
     // every frame signal until the deadline. A single repaint can race the
@@ -652,14 +660,17 @@ fn ui_thread(
       platform.stats_handles(),
       capture_enabled,
       dev_connected.clone(),
+      clock_control.clone(),
       outbound_rx,
       go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,
     );
 
-    // flux::Clock backs performance.now() (and the run-mode paced clock corrects
-    // toward it). Injected into each engine; persists across reloads for continuous
-    // time.
+    // flux::Clock backs performance.now(). Injected into each engine; persists
+    // across reloads for continuous time. Both modes report the SAME timeline
+    // the rAF/render timestamps and the virtual timers march on - one time
+    // surface, frame-stepped, pausable by the dev clock control. Wall time is
+    // deliberately absent from it; Date.now() is the real-time escape hatch.
     let clock = match playback_fps {
       // Playback mode: derive time from the present counter (frame/fps) so the
       // whole JS time surface is deterministic and recordings reproducible.
@@ -667,11 +678,11 @@ fn ui_thread(
         let playback_frame = playback_frame.clone();
         flux::Clock::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
       }
-      // Run mode: wall clock built on tokio's Instant so the time surface stays
-      // controllable under tokio's test clock (pause / advance).
+      // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
+      // it, correcting toward wall time at normal speed).
       _ => {
-        let raf_start = tokio::time::Instant::now();
-        flux::Clock::new(move || raf_start.elapsed().as_secs_f64() * 1000.0)
+        let paced = paced_clock.clone().expect("run mode has a paced clock");
+        flux::Clock::new(move || paced.now_ms())
       }
     };
 
@@ -747,6 +758,15 @@ fn ui_thread(
         .module_override("srt:app", plugins::app::SrtAppModule)
         .userdata(clock.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
+      // Timers join the frame-stepped timeline (see flux virtual time): the
+      // frame verb advances them with the same timestamp rAF gets, so a
+      // dev-clock pause freezes setTimeout/setInterval too, and playback
+      // replays them deterministically. Seeded with the current reading so a
+      // reload does not replay the timeline from zero.
+      let builder = {
+        let seed = clock.now_ms();
+        builder.plugin(move |ctx| flux::install_virtual_time(&ctx, seed))
+      };
       // The running app's own surface (exit()), in every build: the
       // production runtime exits too, it just always quits.
       let builder = {

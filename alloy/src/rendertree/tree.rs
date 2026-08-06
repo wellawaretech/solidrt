@@ -267,7 +267,10 @@ impl RenderTree {
     self.nodes.get(&id).expect(&format!("node {} not found", id))
   }
 
-  pub(crate) fn try_node(&self, id: u64) -> Option<&Element> {
+  /// Read access to a node for inspection surfaces (the dev-server tree
+  /// query reads current property values through this). Mutation stays
+  /// behind edit/try_edit, which own damage tracking.
+  pub fn try_node(&self, id: u64) -> Option<&Element> {
     self.nodes.get(&id)
   }
 
@@ -303,6 +306,21 @@ impl RenderTree {
   /// testing uses under perspective. Views without matrix props keep the cheap
   /// translation-only path.
   fn compute_bounding_box(&self, id: u64, stop_at_context: bool) -> Option<Rect> {
+    // The axis-aligned bounds of the transformed quad.
+    self.compute_corners(id, stop_at_context).map(Rect::from_points)
+  }
+
+  /// The four corners of the node's painted box in window coordinates, after
+  /// every transform on the ancestor chain - the quad `bounding_box_viewport`
+  /// collapses to an AABB. Corner order follows `rect_corners` (top-left,
+  /// top-right, bottom-right, bottom-left, pre-transform). Under a rotation
+  /// or 3D transform the AABB alone says a transform happened but not where
+  /// the edges landed; the quad is the readable form.
+  pub fn painted_quad(&self, id: u64) -> Option<[Point; 4]> {
+    self.compute_corners(id, false)
+  }
+
+  fn compute_corners(&self, id: u64, stop_at_context: bool) -> Option<[Point; 4]> {
     let node = self.try_node(id)?;
     let local = node.kind.local_bounds(self.content_fallback(id)?);
 
@@ -379,8 +397,7 @@ impl RenderTree {
       cur_id = parent_id;
     }
 
-    // The axis-aligned bounds of the transformed quad.
-    Some(Rect::from_points(corners))
+    Some(corners)
   }
 
   /// Fallback size for shapes without explicit w/h: the nearest laid-out node's

@@ -70,7 +70,7 @@ let TOOLS: {
     name: "list_clients",
     readOnly: true,
     description:
-      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors) and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime. Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
+      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `entry` (the app source file this server currently serves and rebuilds - check it matches the app you intend to drive before acting, since the dev port is fixed and a `load` moves the entry mid-session), `projectDir` (the project root the server was started in), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime. Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
@@ -110,7 +110,7 @@ let TOOLS: {
     name: "get_render_tree",
     readOnly: true,
     description:
-      "Snapshot of a running app client's render tree: node id, kind, window-relative box (x, y, width, height), text content, and children. Use it to verify what the app actually rendered and where. Whole trees get large: prefer `query` to find nodes by kind or text first, then `root` + `depth` to inspect the region around a match. A node whose children were cut off by `depth` carries `childCount`; descend into it with root=<its id>.",
+      "Snapshot of a running app client's render tree: node id, kind, window-relative box (x, y, width, height), text content, and children. Use it to verify what the app actually rendered and where. Pass props: true to also get each node's current property values (JSX names, only values that differ from the defaults - so an empty/absent props object means everything is at its default) and, for nodes moved off their box by a rotate/scale/3D transform anywhere on their ancestor chain, `quad`: the four painted corners in window coordinates [x0,y0, x1,y1, x2,y2, x3,y3] (pre-transform top-left, top-right, bottom-right, bottom-left). The box is always the quad's axis-aligned bounds, so under a transform the box alone overstates the footprint - read the quad for where edges actually landed. Use props to answer 'is rotate/color/d applied right now' in one call instead of loading probe entries. Whole trees get large: prefer `query` to find nodes by kind or text first, then `root` + `depth` (+ props) to inspect the region around a match. A node whose children were cut off by `depth` carries `childCount`; descend into it with root=<its id>.",
     inputSchema: {
       root: z
         .number()
@@ -130,6 +130,10 @@ let TOOLS: {
             "scope the search; `depth` is ignored.",
         )
         .optional(),
+      props: z
+        .boolean()
+        .describe("Include each node's current off-default property values and, for transformed nodes, the painted quad")
+        .optional(),
       client: CLIENT_ARG,
     },
   },
@@ -137,12 +141,30 @@ let TOOLS: {
     name: "get_snapshot",
     readOnly: true,
     description:
-      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. Capture the smallest node that contains what you are checking (e.g. the <texture> leaf itself) - that is exactly the content at its own pixel size; the window root is mostly empty layout around it and orders of magnitude more pixels. Reserve root captures for when layout/positioning itself is the question. The node must be currently mounted and paint a non-zero box. Detached (`d-*`) nodes capture their painted box: their own `w`/`h` when set, else the box inherited from the nearest laid-out ancestor (the same box get_render_tree reports for them). Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle.",
+      "Capture a PNG image of any node in a running app client's render tree, by node id (get ids from get_render_tree). Returns the rendered pixels of that node's subtree, so you can see what the app actually drew. Capture the smallest node that contains what you are checking (e.g. the <texture> leaf itself) - that is exactly the content at its own pixel size; the window root is mostly empty layout around it and orders of magnitude more pixels. Reserve root captures for when layout/positioning itself is the question. The node must be currently mounted and paint a non-zero box. Detached (`d-*`) nodes capture their painted box: their own `w`/`h` when set, else the box inherited from the nearest laid-out ancestor (the same box get_render_tree reports for them). A capture renders only that node's subtree, with no ancestor paint: pixels nothing in the subtree draws come back transparent, not the background an ancestor draws behind the node - capture the window root when the background matters. Pass x/y/width/height to crop and `scale` to magnify: captures may be downscaled before you see them, so verify small hand-authored geometry (sprites, path data, icons) with a tight crop at 4x-8x rather than squinting at a full capture. Crop coordinates are in captured-image pixels (the width x height a capture of that node reports - device pixels), not the logical units get_render_tree reports. Works on an idle client (the capture requests its own frame); a timeout means the client's JS thread is busy or wedged, not that the app is idle.",
     inputSchema: {
       nodeId: z
         .number()
         .int()
         .describe("Id of the node to capture, from get_render_tree; prefer the smallest relevant node over the root"),
+      x: z
+        .number()
+        .int()
+        .describe("Crop rect left edge in captured-image pixels (requires y, width, height)")
+        .optional(),
+      y: z.number().int().describe("Crop rect top edge in captured-image pixels").optional(),
+      width: z.number().int().describe("Crop rect width in captured-image pixels").optional(),
+      height: z.number().int().describe("Crop rect height in captured-image pixels").optional(),
+      scale: z
+        .number()
+        .int()
+        .min(1)
+        .max(8)
+        .describe(
+          "Integer magnification, 1-8: each captured pixel becomes an NxN block (nearest-neighbour), so you see " +
+            "the actual rendered pixels enlarged. Combine with a crop; the scaled output is capped at 8192 px per side",
+        )
+        .optional(),
       save_to: SAVE_TO_ARG,
       client: CLIENT_ARG,
     },
@@ -158,13 +180,23 @@ let TOOLS: {
     name: "get_texture",
     readOnly: true,
     description:
-      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShaderTexture/createPipelineTexture in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame: a render target reads as its current output, with any pending params, geometry or sampled-input changes resolved first. Pass x/y/width/height to crop, e.g. one tile of an atlas.",
+      "Read back any GPU texture from a running app client as a PNG, by texture id (from get_gpu_resources, or the id returned by createImage/createShaderTexture/createPipelineTexture in app code). Works on sampled textures (atlases, data textures) and shader/pipeline render targets alike, without needing a frame: a render target reads as its current output, with any pending params, geometry or sampled-input changes resolved first. Pass x/y/width/height to crop, e.g. one tile of an atlas, and `scale` to magnify small content like a single tile or glyph.",
     inputSchema: {
       id: z.number().int().describe("Texture id, from get_gpu_resources"),
       x: z.number().int().describe("Crop rect left edge in texture pixels (requires y, width, height)").optional(),
       y: z.number().int().describe("Crop rect top edge in texture pixels").optional(),
       width: z.number().int().describe("Crop rect width in texture pixels").optional(),
       height: z.number().int().describe("Crop rect height in texture pixels").optional(),
+      scale: z
+        .number()
+        .int()
+        .min(1)
+        .max(8)
+        .describe(
+          "Integer magnification, 1-8: each texture pixel becomes an NxN block (nearest-neighbour). Combine with " +
+            "a crop; the scaled output is capped at 8192 px per side",
+        )
+        .optional(),
       save_to: SAVE_TO_ARG,
       client: CLIENT_ARG,
     },
@@ -214,6 +246,29 @@ let TOOLS: {
     },
   },
   {
+    name: "set_time_scale",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Control a running app client's clock. scale=0 freezes app time: onFrame/requestAnimationFrame stop being delivered, setTimeout/setInterval freeze, performance.now() holds still, and the picture stops - so get_snapshot can capture an exact frame of any animation instead of racing it (tool round trips are usually slower than the animation). Combine with a registerDebug command that sets up the state to photograph: set state, pause, snapshot. Other values scale time for dt-driven apps (0.5 = half speed, 2 = double); apps that advance a fixed amount per onFrame call only respond to 0 and 1. Date.now() stays wall time throughout. The scale is client runtime state: it survives across your snapshots but resets to 1 on reload/load and on client restart. ALWAYS set it back to 1 when you are done - a paused client looks wedged to the human watching the screen.",
+    inputSchema: {
+      scale: z
+        .number()
+        .min(0)
+        .describe("Time scale: 0 = pause, 1 = normal, 0.5 = half speed, 2 = double speed"),
+      client: CLIENT_ARG,
+    },
+  },
+  {
+    name: "step_frames",
+    annotations: { destructiveHint: false },
+    description:
+      "While paused (set_time_scale 0), advance a running app client by exactly n frames: each frame moves app time forward one refresh period (~16.7 ms at 60 Hz), runs onFrame/requestAnimationFrame and any timers that come due, and presents the result. Deterministic single-stepping for animations and game logic: pause, snapshot, step, snapshot again to see exactly what changed in n frames. With the clock running this is a no-op (frames already flow). Steps are applied at the client's frame rate, so n frames take about n refresh periods of wall time before a following snapshot shows the result.",
+    inputSchema: {
+      n: z.number().int().min(1).max(1000).describe("Number of frames to advance (1-1000)"),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "watch",
     annotations: { destructiveHint: false, idempotentHint: true },
     description:
@@ -248,6 +303,7 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       if (typeof args?.root === "number") params.set("root", String(args.root))
       if (typeof args?.depth === "number") params.set("depth", String(args.depth))
       if (typeof args?.query === "string") params.set("query", args.query)
+      if (args?.props === true) params.set("props", "true")
       if (typeof args?.client === "number") params.set("client", String(args.client))
       let qs = params.toString()
       return control(qs ? `/tree?${qs}` : "/tree")
@@ -267,8 +323,25 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
       let params = new URLSearchParams({ node: String(args.nodeId) })
+      for (let key of ["x", "y", "width", "height", "scale"]) {
+        if (typeof args?.[key] === "number") params.set(key, String(args[key]))
+      }
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/snapshot?${params.toString()}`)
+    }
+    case "set_time_scale": {
+      if (typeof args?.scale !== "number" || !(args.scale >= 0)) {
+        return { ok: false, message: "set_time_scale requires scale >= 0" }
+      }
+      let params = new URLSearchParams({ scale: String(args.scale) })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/clock?${params.toString()}`, "POST")
+    }
+    case "step_frames": {
+      if (typeof args?.n !== "number" || !(args.n >= 1)) return { ok: false, message: "step_frames requires n >= 1" }
+      let params = new URLSearchParams({ step: String(args.n) })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/clock?${params.toString()}`, "POST")
     }
     case "get_gpu_resources":
       return control(`/gpu${clientParam(args)}`)
@@ -283,7 +356,7 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     case "get_texture": {
       if (typeof args?.id !== "number") return { ok: false, message: "get_texture requires a numeric id" }
       let params = new URLSearchParams({ id: String(args.id) })
-      for (let key of ["x", "y", "width", "height"]) {
+      for (let key of ["x", "y", "width", "height", "scale"]) {
         if (typeof args?.[key] === "number") params.set(key, String(args[key]))
       }
       if (typeof args?.client === "number") params.set("client", String(args.client))

@@ -2,9 +2,16 @@
 type: backlog-item
 title: A zoom debug command in the scaffold
 description: Snapshots reach an agent downscaled, so small hand-authored geometry needs magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom") turns "look closely at X" into one call, worth shipping in the create-solidrt scaffold.
-status: open
+status: done
 timestamp: 2026-08-02T00:00:00Z
 ---
+
+> Retired 2026-08-06, superseded by the tool: get_snapshot now takes
+> x/y/width/height + scale (nearest-neighbour, 1-8), so magnified
+> inspection is one call on any app with no app-side scaffolding - see
+> [[mcp-verification-surface]]. The viewBox trick below remains a valid
+> app-side pattern when a re-rendered (rather than pixel-magnified) zoom
+> is wanted.
 
 # A zoom debug command in the scaffold
 

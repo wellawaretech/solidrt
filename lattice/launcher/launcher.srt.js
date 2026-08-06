@@ -4778,16 +4778,26 @@ var animationFrames = new Map;
 var refreshRate = 60;
 function onFrame(fn) {
   let frameId = null;
+  let cancelled = false;
   let extendedFn = (tick, frame, rate) => {
-    fn(tick, frame, rate);
+    if (cancelled)
+      return;
     frameId = nextFrameId++;
     animationFrames.set(frameId, extendedFn);
     requestFrame();
+    try {
+      fn(tick, frame, rate);
+    } catch (err) {
+      console.error("Error in onFrame callback:", err);
+    }
   };
   frameId = nextFrameId++;
   animationFrames.set(frameId, extendedFn);
   requestFrame();
-  let cleanup2 = () => animationFrames.delete(frameId);
+  let cleanup2 = () => {
+    cancelled = true;
+    animationFrames.delete(frameId);
+  };
   onCleanup(cleanup2);
   return cleanup2;
 }
@@ -4898,7 +4908,11 @@ function attachWindow(nodeId) {
       for (let fn of frames.values())
         fn(t, frame, refreshRate);
     }
-    flush();
+    try {
+      flush();
+    } catch (err) {
+      console.error("Error in reactive flush:", err);
+    }
     scanForOrphans(t);
     renderFrame();
   }
@@ -4936,7 +4950,11 @@ function attachWindow(nodeId) {
         e.localY = localY[i];
         e.parentX = parentX[i];
         e.parentY = parentY[i];
-        getEventHandler(targets[i], handler)?.(e);
+        try {
+          getEventHandler(targets[i], handler)?.(e);
+        } catch (err) {
+          console.error(`Error in ${handler} handler:`, err);
+        }
         if (stopped)
           break;
       }
@@ -5309,12 +5327,15 @@ function mix_default(t3) {
 // packages/core/src/color.ts
 k([names_default, mix_default]);
 function parseColor(color) {
+  let c3 = w(color);
+  if (!c3.isValid())
+    throw new Error(`Invalid color "${color}"`);
   let {
     r: r3,
     g: g2,
     b: b2,
     a: a3
-  } = w(color).toRgb();
+  } = c3.toRgb();
   return ((r3 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a3 * 255 & 255) >>> 0;
 }
 function mixColors(a3, b2, t3) {
@@ -5435,7 +5456,7 @@ function setTreeProperty(node, name, value) {
     tree2.setProperty(node.id, name, value);
   } catch (e3) {
     let message = String(e3);
-    if (!message.includes("unknown property") && !message.includes("detached-only"))
+    if (!message.includes("Unknown property") && !message.includes("Detached-only"))
       throw e3;
     let key = node.elementType + "." + name;
     if (warnedRejectedProps.has(key))

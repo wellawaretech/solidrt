@@ -85,6 +85,16 @@ let id = setInterval(cb, ms)
 clearInterval(id)
 ```
 
+Headless flux runs timers on the wall clock. An embedder can instead put a
+context's timers on a virtual timeline (`install_virtual_time` +
+`advance_virtual_time` from Rust): deadlines then live on the embedder's
+clock, nothing fires until an advance moves past it, and one advance is one
+task-queue turn (a due interval fires once; a timer registered by a fired
+callback waits for the next advance). The GUI runtime does this, advancing
+once per frame with the paced frame timestamp - timers are frame-quantized
+there, freeze when the runtime clock pauses, and replay deterministically
+in playback.
+
 ### Console
 
 ```js
@@ -99,8 +109,13 @@ Arguments are joined by spaces. Strings print as-is, Error objects print as
 ### performance
 
 ```js
-let ms = performance.now()  // ms since process start
+let ms = performance.now()  // ms since a monotonic origin
 ```
+
+Headless: ms since process start. In a GUI runtime: the paced frame
+timeline (the same clock the frame timestamps and timers march on), so it
+freezes with the runtime clock; `Date.now()` is the wall-clock escape
+hatch.
 
 ### TextEncoder / TextDecoder
 

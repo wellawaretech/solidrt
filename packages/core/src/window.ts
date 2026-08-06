@@ -38,8 +38,9 @@ let refreshRate = 60
  * the present count, and `rate` is the current refresh rate in Hz. `tick` is paced
  * by the runtime (one refresh period per present, slow-corrected toward the wall
  * clock) so animations driven off it stay smooth even when swap-return times
- * jitter. For raw, continuous wall-clock time (e.g. measuring code), use
- * performance.now() instead.
+ * jitter. performance.now() and timers report/march on this same paced timeline
+ * (so the whole time surface freezes together under the dev tools' clock
+ * control); for real wall-clock time use Date.now().
  * Returns a cleanup function; also auto-cleans within a reactive scope.
  */
 export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {

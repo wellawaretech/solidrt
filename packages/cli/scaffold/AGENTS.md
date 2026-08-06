@@ -298,12 +298,19 @@ The project ships an MCP server (.mcp.json, `srt mcp`) that talks to the dev
 server `bunx srt run` starts. When it is loaded in your environment, prefer
 its tools over guessing at runtime state:
 
-- list_clients: connected app clients, their platform and runtime capabilities
+- list_clients: connected app clients, their platform and runtime
+  capabilities, plus the server's `entry` (the app source it serves) and
+  `projectDir` - check entry matches the app you think you are driving; the
+  dev port is fixed, so another project's server answers on the same port
 - get_logs: console output and runtime errors (seq cursor; `wait_ms` long-poll
   to catch output right after a reload; `level`/`contains` filters; repeated
   lines collapse into one entry with a `repeats` count)
 - get_render_tree: what the app actually rendered - node kinds, text, and
-  window-relative boxes. Whole trees get large: `query` finds nodes by
+  window-relative boxes. Pass `props: true` for each node's current
+  property values (JSX names, off-default only - "is rotate/color/d applied
+  right now" is one call, not a probe entry) and, on transformed nodes, the
+  painted `quad` (four corners after transforms; the box is just its
+  axis-aligned bounds). Whole trees get large: `query` finds nodes by
   kind/text, then `root` + `depth` inspect just that region
 - client ids and log cursors die with the dev server: list_clients and
   get_logs responses carry `generation`, and a changed generation means
@@ -315,10 +322,22 @@ its tools over guessing at runtime state:
   or a defeated layout cache (healthy incremental rebuilds show a near-100%
   cacheHits rate)
 - get_snapshot: PNG capture of any render-tree node's pixels (get node ids
-  from get_render_tree; the window node captures everything). Pass `save_to`
-  on get_snapshot or get_texture to also write the PNG to a file - the image
-  in the tool result cannot be saved afterwards, so decide before capturing
-  (e.g. keep a before/after pair to diff)
+  from get_render_tree; the window node captures everything). A subtree
+  capture renders with NO ancestor paint: pixels the subtree does not draw
+  come back transparent, not the background behind the node. Crop with
+  x/y/width/height (captured-image pixels) and magnify with `scale` (1-8,
+  nearest-neighbour) - a tight crop at 4-8x is how small geometry gets
+  verified. Pass `save_to` on get_snapshot or get_texture to also write the
+  PNG to a file - the image in the tool result cannot be saved afterwards,
+  so decide before capturing (e.g. keep a before/after pair to diff)
+- set_time_scale / step_frames: the runtime clock. `set_time_scale 0`
+  freezes app time (onFrame, requestAnimationFrame, timers, and
+  performance.now all stop; Date.now stays wall time), so a snapshot can
+  catch an exact frame of any animation instead of racing it; `step_frames
+  n` then advances exactly n frames (one refresh period each). Pause,
+  snapshot, step, snapshot again to see precisely what changed. ALWAYS set
+  the scale back to 1 when done - a paused client looks wedged to the human
+  watching - though reload/load also reset it
 - get_gpu_resources: inventory of GPU state - textures (size, render target
   or not), vertex buffers (byteLength), pipelines (draw count, attribute
   layout, bound textures, current uniform values - the most recent writes,
@@ -326,7 +345,7 @@ its tools over guessing at runtime state:
 - get_texture: any GPU texture read back as a PNG by id - atlases, data
   textures, and shader/pipeline render targets alike (a render target reads
   as its current output, pending writes included, with no frame or snapshot
-  needed); crop with x/y/width/height
+  needed); crop with x/y/width/height, magnify with `scale`
 - get_buffer: a vertex-buffer range decoded to numbers (f32/u16/u8, 64 KiB
   per call) - verify geometry after a writeBuffer instead of inferring it
   from pixels
@@ -377,11 +396,14 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
   logs it and read it back via get_logs.
 - Better than debug keys when driving the app over MCP: register debug
   COMMANDS - `registerDebug(name, fn)` from `srt:dev`, invoked via the
-  list_debug/call_debug tools. `seek`/`pause`/`play` commands turn verifying
-  an animation into "jump to t, snapshot, look"; a `zoom` command that
-  shrinks a viewBox to a region gives magnified captures without touching
-  source. Registrations reset on hot reload, so register at module init;
-  sync return values only.
+  list_debug/call_debug tools. Use them to SET UP state (jump to a level,
+  force a mode, seed a scenario); then the runtime-level tools take over -
+  set_time_scale 0 freezes the result for as many snapshots as you need,
+  and step_frames walks it forward deterministically. Set state, pause,
+  snapshot. Registrations reset on hot reload, so register at module init;
+  sync return values only - and note a signal you just wrote flushes on a
+  microtask, so returning a signal read straight after setting it returns
+  the OLD value.
 - Key events start at the focused node and bubble to the window root; with
   nothing focused they go to the window root alone. So a debug key bound via
   `<window onKeyDown>` always fires (unless a focused component consumes the
@@ -402,10 +424,12 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
 - Snapshots are downscaled by the time you see them, so a full-window capture
   cannot show you a defect a few pixels across. Whenever you hand-author
   geometry - a `d-path` from raw path math, a `radius` where two shapes meet,
-  a stroke join - inspect it MAGNIFIED once, when you write it: a throwaway
-  entry file drawing the construction at 4-8x (pushed with `load`), or a
-  `zoom` debug command on the real app. Verifying that a shape is in the
-  right place is not the same check as verifying it is drawn right.
+  a stroke join - inspect it MAGNIFIED once, when you write it: get_snapshot
+  with a tight crop at scale 4-8 shows the actual rendered pixels enlarged,
+  in one call, on the real app. Verifying that a shape is in the right place
+  is not the same check as verifying it is drawn right - and get_render_tree
+  props answers the third question, whether the value you set is the value
+  the renderer holds.
 - GPU/geometry bugs: inspect the actual GPU data FIRST - get_gpu_resources
   for draw counts/uniforms/sizes, get_texture for atlas or data-texture
   contents ("is this tile blank?" is a ten-second question), get_buffer for

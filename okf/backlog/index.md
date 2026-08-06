@@ -10,6 +10,22 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [The MCP verification surface - input, clock, crop, props](mcp-verification-surface.md)
+  [done] - Five independent external agent-built app reports named the same
+  four gaps; 2026-08-06 landed crop+scale on get_snapshot/get_texture
+  (runtime-side, shared with texture's crop), set_time_scale/step_frames
+  (paused frames still run the draw path natively so captures stay alive),
+  frame-stepped virtual time for the WHOLE JS clock surface (timers +
+  performance.now; Date.now is the wall escape hatch), props+quad on
+  get_render_tree (reader lives next to apply_jsx), and server app identity
+  on list_clients. [[mcp-input-injection]] remains the open ask, three
+  deferrals in; traps in the file's implementation note.
+- [Generate the docs/core.md props reference from the types](core-docs-generated-props.md)
+  [open] - Hand-copied prop lists are how core.md drifted
+  (fill/background/imageWidth); jsx-runtime.d.ts + types.d.ts are clean
+  enough to generate the per-element props reference from, in a marked
+  block, killing that drift class. Prose and the imperative surface stay
+  hand-written; TS-5-from-bun-store and JSDoc-comment prep noted in file.
 - [3D roadmap - toward Three.js parity](3d-roadmap.md) [open] - The
   scoreboard for @solidrt/3d: v1 landed 2026-08-05 (unlit + shaderMaterial,
   four primitives, orbit camera, all engine prerequisites); the remaining
@@ -75,10 +91,11 @@ Sorted by status: open first, then partial, deferred, and closed
   system cannot catch it (one JSX.Element type for every tag); the bundler's
   JSX pass sees static tags and can error on direct nesting, with runtime as
   the backstop behind component boundaries.
-- [A zoom debug command in the scaffold](scaffold-zoom-debug-command.md) [open] -
-  Snapshots reach an agent downscaled, so small hand-authored geometry needs
-  magnified inspection; a ~15-line viewBox-shrinking registerDebug zoom
-  turns "look closely at X" into one call.
+- [A zoom debug command in the scaffold](scaffold-zoom-debug-command.md) [done] -
+  Retired 2026-08-06: get_snapshot's crop+scale params made magnified
+  inspection one tool call with no app-side scaffolding (see
+  [[mcp-verification-surface]]); the viewBox trick stays documented as the
+  re-rendered-zoom alternative.
 - [Diagnostics queue behind the thing they diagnose](diagnostics-off-raster-queue.md) [open] -
   get_gpu_resources queues behind the raster backlog it exists to explain,
   and get_stats/get_snapshot need a JS-thread slice so they time out on a

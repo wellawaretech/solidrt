@@ -25,7 +25,9 @@ Improvement point 2 and parts of 5/6 landed:
 - **KeyEvent (point 5)** had already landed separately: W3C `key`/`code`
   values plus `repeat` and modifier flags.
 
-Still open from the list: docs/core.md rewrite (1), tests (3), AGENTS.md
+Still open from the list: docs/core.md rewrite (1) - now scoped as
+okf/backlog/core-docs-generated-props.md (generate the props reference from
+jsx-runtime.d.ts/types.d.ts, hand-write the rest) - tests (3), AGENTS.md
 drifts (4), the rest of the small-defects batch in 6 (response.ok,
 setSelection clamp, pointerCaptures on destroy, voice pruning), and 7/8.
 

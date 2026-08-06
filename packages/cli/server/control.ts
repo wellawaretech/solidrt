@@ -92,6 +92,29 @@ function findClient(param: string | undefined): { ws: ServerWebSocket } | { erro
   return { ws: entry[0] }
 }
 
+// Optional crop rect shared by /snapshot and /texture: all four of
+// x/y/width/height in captured/texture pixels, or none. Returns undefined
+// when absent, a 400 Response when malformed.
+function parseRect(query: Map<string, string>): { x: number; y: number; width: number; height: number } | Response | undefined {
+  let params = ["x", "y", "width", "height"].map((k) => query.get(k))
+  if (params.every((v) => v === undefined)) return undefined
+  let [x, y, width, height] = params.map((v) => parseInt(v ?? "", 10))
+  if (![x, y, width, height].every(Number.isFinite))
+    return Response.json({ error: "Crop rect requires all of x, y, width, height" }, { status: 400 })
+  return { x: x!, y: y!, width: width!, height: height! }
+}
+
+// Optional integer magnification shared by /snapshot and /texture. Returns
+// undefined when absent or 1, a 400 Response when out of range.
+function parseScale(query: Map<string, string>): number | Response | undefined {
+  let param = query.get("scale")
+  if (param === undefined) return undefined
+  let scale = parseInt(param, 10)
+  if (!Number.isFinite(scale) || scale < 1 || scale > 8)
+    return Response.json({ error: "Scale must be an integer between 1 and 8" }, { status: 400 })
+  return scale === 1 ? undefined : scale
+}
+
 async function handleQuery(query: Map<string, string>, kind: string, extra?: Record<string, unknown>): Promise<Response> {
   let target = findClient(query.get("client"))
   if ("error" in target) return target.error
@@ -174,7 +197,15 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
-      return Response.json({ generation: state.generation, clients: clientList() })
+      // `entry`/`projectDir` identify which app this server is serving: the
+      // fixed dev port means an agent can reach a different project's server
+      // than it thinks, and a repl/MCP `load` moves the entry mid-session.
+      return Response.json({
+        generation: state.generation,
+        entry: state.config.entry ?? null,
+        projectDir: state.projectDir,
+        clients: clientList(),
+      })
     case "/__control__/logs":
       return handleLogs(query)
     case "/__control__/tree": {
@@ -185,6 +216,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (Number.isFinite(depth)) extra.depth = depth
       let q = query.get("query")
       if (q) extra.query = q
+      if (query.get("props") === "true") extra.props = true
       return handleQuery(query, "tree", extra)
     }
     case "/__control__/stats":
@@ -192,7 +224,14 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     case "/__control__/snapshot": {
       let nodeId = parseInt(query.get("node") ?? "", 10)
       if (!Number.isFinite(nodeId)) return Response.json({ error: "Snapshot requires ?node=<id>" }, { status: 400 })
-      return handleQuery(query, "snapshot", { nodeId })
+      let extra: Record<string, unknown> = { nodeId }
+      let rect = parseRect(query)
+      if (rect instanceof Response) return rect
+      if (rect) extra.rect = rect
+      let scale = parseScale(query)
+      if (scale instanceof Response) return scale
+      if (scale) extra.scale = scale
+      return handleQuery(query, "snapshot", extra)
     }
     case "/__control__/gpu":
       return handleQuery(query, "gpu")
@@ -211,16 +250,38 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     case "/__control__/texture": {
       let textureId = parseInt(query.get("id") ?? "", 10)
       if (!Number.isFinite(textureId)) return Response.json({ error: "Texture requires ?id=<textureId>" }, { status: 400 })
-      // Optional crop: all four of x/y/width/height, in texture pixels.
-      let rectParams = ["x", "y", "width", "height"].map((k) => query.get(k))
       let extra: Record<string, unknown> = { textureId }
-      if (rectParams.some((v) => v !== undefined)) {
-        let [x, y, width, height] = rectParams.map((v) => parseInt(v ?? "", 10))
-        if (![x, y, width, height].every(Number.isFinite))
-          return Response.json({ error: "Texture rect requires all of x, y, width, height" }, { status: 400 })
-        extra.rect = { x, y, width, height }
-      }
+      let rect = parseRect(query)
+      if (rect instanceof Response) return rect
+      if (rect) extra.rect = rect
+      let scale = parseScale(query)
+      if (scale instanceof Response) return scale
+      if (scale) extra.scale = scale
       return handleQuery(query, "texture", extra)
+    }
+    case "/__control__/clock": {
+      // Clock control: ?scale=<x> sets the client's time scale (0 pauses),
+      // ?step=<n> advances n frames while paused. Applied by the client
+      // runtime; the reply carries the resulting clock state.
+      if (req.method !== "POST") return Response.json({ error: "Clock requires POST" }, { status: 405 })
+      let extra: Record<string, unknown> = {}
+      let scaleParam = query.get("scale")
+      if (scaleParam !== undefined) {
+        let scale = parseFloat(scaleParam)
+        if (!Number.isFinite(scale) || scale < 0)
+          return Response.json({ error: "Clock scale must be a number >= 0" }, { status: 400 })
+        extra.scale = scale
+      }
+      let stepParam = query.get("step")
+      if (stepParam !== undefined) {
+        let step = parseInt(stepParam, 10)
+        if (!Number.isFinite(step) || step < 1 || step > 1000)
+          return Response.json({ error: "Clock step must be an integer between 1 and 1000" }, { status: 400 })
+        extra.step = step
+      }
+      if (!("scale" in extra) && !("step" in extra))
+        return Response.json({ error: "Clock requires ?scale=<x> or ?step=<n>" }, { status: 400 })
+      return handleQuery(query, "clock", extra)
     }
     case "/__control__/buffer": {
       let bufferId = parseInt(query.get("id") ?? "", 10)

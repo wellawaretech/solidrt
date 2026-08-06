@@ -32,11 +32,19 @@ pub struct PacedClock {
   now_ms: Arc<AtomicU64>,
   // f64 bits: latest known refresh rate in Hz.
   hz: Arc<AtomicU64>,
+  // f64 bits: wall time this clock has not lived through (paused or scaled
+  // stretches), subtracted from the raw reading before the correction so
+  // resuming normal speed is jump-free. Zero until the clock is first scaled.
+  offset: Arc<AtomicU64>,
 }
 
 impl PacedClock {
   pub fn new() -> Self {
-    Self { now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())), hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())) }
+    Self {
+      now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+      hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())),
+      offset: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+    }
   }
 
   // Update the refresh rate used to derive the per-present period. Ignored if not
@@ -47,14 +55,24 @@ impl PacedClock {
     }
   }
 
-  // Advance one refresh period, then nudge toward the raw wall-clock reading.
-  // Called once per present.
-  pub fn tick(&self, raw_ms: f64) {
+  // Advance one refresh period scaled by `scale`, then (at normal speed) nudge
+  // toward the raw wall-clock reading. Called once per frame signal. At any
+  // other scale - including 0, a paused frame - the correction is skipped and
+  // the skipped wall time accrues into `offset` instead, so the eventual
+  // return to scale 1 resumes exactly where the clock stopped instead of
+  // fast-forwarding through the gap at GAIN per frame.
+  pub fn tick(&self, raw_ms: f64, scale: f64) {
     let hz = f64::from_bits(self.hz.load(Ordering::Relaxed));
     let period = 1000.0 / hz;
     let mut clock = f64::from_bits(self.now_ms.load(Ordering::Relaxed));
-    clock += period;
-    clock += (raw_ms - clock) * GAIN;
+    if scale == 1.0 {
+      let offset = f64::from_bits(self.offset.load(Ordering::Relaxed));
+      clock += period;
+      clock += ((raw_ms - offset) - clock) * GAIN;
+    } else {
+      clock += period * scale;
+      self.offset.store((raw_ms - clock).to_bits(), Ordering::Relaxed);
+    }
     self.now_ms.store(clock.to_bits(), Ordering::Relaxed);
   }
 
