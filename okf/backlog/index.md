@@ -10,6 +10,24 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [3D roadmap - toward Three.js parity](3d-roadmap.md) [open] - The
+  scoreboard for @solidrt/3d: v1 landed 2026-08-05 (unlit + shaderMaterial,
+  four primitives, orbit camera, all engine prerequisites); the remaining
+  work ranked by structural leverage - the uModel/uViewProj split and
+  UI-as-texture first, then lights, transparency, glTF and mipmaps, out to
+  shadows and PBR - each entry pointing at its engine backlog file.
+- [Shared (target-level) params for draw targets](gpu-shared-draw-params.md)
+  [open] - setDrawParams is per-entry, so a value every entry shares (a
+  camera's view-projection above all) costs one write per mesh from JS,
+  making camera motion O(scene) FFI crossings; target-level params
+  generalize what createShaderTarget already has for the one-draw case, and
+  the GL layer's apply-if-declared handling already does the hard part.
+- [A snapshot boundary's retained texture as a texture id](snapshot-boundary-texture-id.md)
+  [open] - repaintBoundary="snapshot" already keeps its subtree's
+  rasterization in an adopted texture, but only the boundary shader can
+  sample it; vending it as an ordinary TextureId that updates as the
+  subtree repaints makes any UI subtree live content for the GPU stack -
+  the load-bearing piece of UI mapped onto 3D geometry.
 - [Uniform arrays (vecN[], mat4[])](gpu-uniform-arrays.md) [open] - Array
   uniforms have no path (the typed-uniform dispatch is single-element
   only), so a light list or palette becomes N scalar uniforms or a data
