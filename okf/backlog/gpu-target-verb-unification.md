@@ -26,8 +26,15 @@ imperative); draw_list.rs replaced the fixed-target-rejection assertion
 with a positive routing assertion (create-time red -> routed white ->
 strict uNope error). Verified: workspace cargo check (gui feature),
 draw_list + shader_uniforms headless assertions, core/3d/trails tsc gates.
-Stages 2 (autoFree rename - naming decision still open) and 3 (riders)
-remain.
+Stage 2 (lifetime `manual` -> `autoFree: false`) landed 2026-08-06, same
+day: core gpu.ts CreateOptions + all guards (`opts?.autoFree !== false`),
+3d SceneOptions + createScene internals + geometryBuffers, docs/core.md.
+The audit found NO other wrappers carrying the option (image/audio/camera
+creates have no lifetime opt-out today) and no example/app usage in or out
+of repo (cheezed checked). The render-vs-lifetime disambiguation sentences
+were deleted rather than reworded - with distinct names they said nothing.
+Semantics byte-for-byte unchanged: default true, registration still
+conditional on a current owner. Stage 3 (riders) remains.
 
 ## A. One target-level verb family
 

@@ -47,15 +47,16 @@
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
 
-// The create* helpers accept { manual: true } to opt out of the owner-scoped
-// auto-free, for resources whose lifetime is managed by hand (rebuilt on
-// signal changes inside a long-lived component, handed across owners, ...).
-// Without it, each rebuild would stack another onCleanup on the component
-// owner: a leak until unmount, then a double-free against manual destroys.
+// The create* helpers accept { autoFree: false } to opt out of the
+// owner-scoped auto-free, for resources whose lifetime is managed by hand
+// (rebuilt on signal changes inside a long-lived component, handed across
+// owners, ...). Without the opt-out, each rebuild would stack another
+// onCleanup on the component owner: a leak until unmount, then a double-free
+// against the by-hand destroys.
 // `label` is a free-form debug name (WebGPU's label): surfaced by the dev
 // tooling's GPU inventory and engine log messages, never interpreted, kept
 // across id-stable resizes.
-export type CreateOptions = { manual?: boolean; label?: string }
+export type CreateOptions = { autoFree?: boolean; label?: string }
 
 // Sampling options every texture-producing create* helper accepts, applied at
 // creation as a property of the texture id (there is no set-sampler-later).
@@ -113,8 +114,7 @@ export {
 // the explicit render verb for `render: "manual"` targets - targets whose
 // pass is state (accumulation, feedback) rather than a pure function of its
 // inputs, which the runtime therefore never renders on its own; the app
-// steps them, usually from onFrame. (`render: "manual"` is the render mode;
-// the unrelated `manual: true` create option is the lifetime opt-out above.)
+// steps them, usually from onFrame.
 // copyTexture overwrites a manual target with another texture's pixels
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
@@ -207,8 +207,9 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * reactive scope the texture is freed automatically once that owner is
  * disposed; when called outside one (e.g. after an `await`, where the owner
  * is no longer current) nothing is registered and you must call
- * `destroyTexture` (from flux:gpu) yourself. Pass `{ manual: true }` to skip
- * the auto-free and own the disposal yourself even inside a reactive scope.
+ * `destroyTexture` (from flux:gpu) yourself. Pass `{ autoFree: false }` to
+ * skip the auto-free and own the disposal yourself even inside a reactive
+ * scope.
  */
 export function createTexture(
   data: Uint8Array,
@@ -217,7 +218,7 @@ export function createTexture(
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
   let id = gpu.createTexture(data, width, height, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -227,7 +228,7 @@ export function createTexture(
  * `data` must hold at least `width * height` pixels at the declared format's
  * size (`* 4` bytes for the default "rgba8", `* 1` for "r8"; it may hold
  * several frames). Like `createTexture`, the texture is freed automatically
- * when the reactive owner is disposed (opt out with `{ manual: true }`);
+ * when the reactive owner is disposed (opt out with `{ autoFree: false }`);
  * created outside a reactive scope you must call `destroyTexture` (from
  * flux:gpu) yourself.
  */
@@ -238,7 +239,7 @@ export function createMutableTexture(
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
   let id = gpu.createMutableTexture(data, width, height, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -261,7 +262,7 @@ export function createMutableTexture(
  * re-renders whenever a source changes - including a sampled target
  * re-rendering, transitively through chains. Frees the
  * texture and shader program when the reactive owner is disposed (opt out
- * with `{ manual: true }`); create outside any reactive scope for
+ * with `{ autoFree: false }`); create outside any reactive scope for
  * app-lifetime shaders. For a shader whose source or inputs change
  * reactively, use {@link createShaderTextureMemo} instead.
  *
@@ -284,7 +285,7 @@ export function createShaderTexture(
   opts?: CreateOptions & SamplerOptions & { textures?: Record<string, gpu.TextureId> },
 ): gpu.TextureId {
   let id = gpu.createShaderTexture(fragmentSrc, width, height, params, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -308,7 +309,7 @@ export function createShaderTexture(
  * `instanceAttributes`, `topology`, `blend`, `cull`, `depth`, `depthWrite`)
  * lives on the pipeline
  * and throws here. Frees the target when the reactive owner is disposed (opt
- * out with `opts.manual`); the pipeline is yours and outlives it.
+ * out with `autoFree: false`); the pipeline is yours and outlives it.
  *
  * `render: "manual"` makes it a manual target: the runtime never renders it
  * (it starts cleared to `clearColor`), only an explicit `renderTarget(id)`
@@ -317,8 +318,7 @@ export function createShaderTexture(
  * previous contents under each draw - single-target accumulation - while
  * the default `"clear"` clears to `clearColor` per render; state that must
  * read its own pixels (decay, blur, simulation) still ping-pongs across two
- * manual targets, and `copyTexture` seeds either shape. Distinct from the
- * `manual` lifetime option: `render` is who renders, `manual` is who frees.
+ * manual targets, and `copyTexture` seeds either shape.
  */
 export function createShaderTarget(
   pipeline: gpu.RenderPipelineId,
@@ -337,7 +337,7 @@ export function createShaderTarget(
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createShaderTarget(pipeline, width, height, params, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -370,7 +370,7 @@ export function createShaderTarget(
  * their inputs change - a static scene costs zero passes, and one render is
  * one pass regardless of entry count. `render: "manual"` and `loadOp` work
  * as on `createShaderTarget`. Returns the texture id; frees on owner
- * disposal (opt out with `opts.manual`), taking its entries with it - the
+ * disposal (opt out with `autoFree: false`), taking its entries with it - the
  * entries' pipelines and buffers are yours and outlive it.
  */
 export function createDrawTarget(
@@ -387,7 +387,7 @@ export function createDrawTarget(
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createDrawTarget(width, height, params, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -532,7 +532,7 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * `opts.loadOp` behave exactly as on {@link createShaderTarget}: step the
  * target with `renderTarget(id)`, and `loadOp: "load"` (manual-only) keeps
  * the previous contents under each draw. Frees the texture and GL program when the reactive
- * owner is disposed (opt out with `opts.manual`); create outside any reactive
+ * owner is disposed (opt out with `autoFree: false`); create outside any reactive
  * scope for app-lifetime pipelines.
  */
 export function createPipelineTexture(
@@ -560,7 +560,7 @@ export function createPipelineTexture(
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createPipelineTexture(vertexSrc, fragmentSrc, width, height, params, opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }
 
@@ -569,13 +569,13 @@ export function createPipelineTexture(
  * Float32Array laid out to match the pipeline's interleaved attribute list).
  * Update it later with {@link writeBuffer}; the buffer's byte size is fixed at
  * creation, so reserve room up front for dynamic geometry. Freed automatically
- * when the reactive owner is disposed (opt out with `{ manual: true }`);
+ * when the reactive owner is disposed (opt out with `{ autoFree: false }`);
  * created outside a reactive scope you must call `destroyBuffer` yourself.
  * (Destruction order relative to pipelines does not matter.)
  */
 export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): gpu.BufferId {
   let id = gpu.createBuffer(toUint8(data), opts)
-  if (!opts?.manual && getOwner()) onCleanup(() => gpu.destroyBuffer(id))
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyBuffer(id))
   return id
 }
 

@@ -77,8 +77,8 @@ export type CameraUpdate = {
 export type SceneOptions = {
   clearColor?: [number, number, number, number]
   label?: string
-  /** Opt out of owner-scoped auto-dispose (then call dispose yourself). */
-  manual?: boolean
+  /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
+  autoFree?: boolean
   filter?: FilterMode
   wrap?: WrapMode
 }
@@ -255,7 +255,7 @@ export function setMeshParams(mesh: Mesh, params: ShaderParams): void {
  * Create a scene rendering into a depth-buffered draw target of the given
  * size. Returns the scene handle; `scene.texture` is the output. Inside a
  * reactive scope the scene disposes with the owner (opt out with
- * `manual: true`); outside one, call `dispose()` yourself.
+ * `autoFree: false`); outside one, call `dispose()` yourself.
  */
 export function createScene(width: number, height: number, opts?: SceneOptions): Scene {
   let texture = createDrawTarget(width, height, null, {
@@ -264,7 +264,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     filter: opts?.filter,
     wrap: opts?.wrap,
     label: opts?.label ?? "scene",
-    manual: true,
+    autoFree: false,
   })
   let disposed = false
   let scheduled = false
@@ -389,6 +389,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       destroyTexture(texture)
     },
   }
-  if (!opts?.manual && getOwner()) onCleanup(() => scene.dispose())
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())
   return scene
 }

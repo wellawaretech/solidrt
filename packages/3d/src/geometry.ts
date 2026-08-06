@@ -41,11 +41,11 @@ export function geometryBuffers(geometry: Geometry): { buffer: BufferId; index: 
   let index = geometry._index
   if (buffer === undefined || index === undefined) {
     buffer = createBuffer(geometry.vertices, {
-      manual: true,
+      autoFree: false,
       label: geometry.label ? geometry.label + "-verts" : undefined,
     })
     index = createBuffer(geometry.indices, {
-      manual: true,
+      autoFree: false,
       label: geometry.label ? geometry.label + "-indices" : undefined,
     })
     geometry._buffer = buffer
