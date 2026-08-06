@@ -79,6 +79,14 @@ pub(super) struct MeshState {
   /// `merge_shared_params`); the fixed kinds' target-level params ARE entry
   /// 0's params.
   pub(super) shared_params: Vec<(String, ParamValue)>,
+  /// Target-level sampler bindings every entry shares (an environment map, a
+  /// shadow map, a LUT): sampler2D uniform name -> source texture id, same
+  /// shape as an entry's `bindings`. At render each entry gets the shared
+  /// names its program declares and its own bindings do not override - so
+  /// coverage may be partial and an entry's own binding wins, mirroring
+  /// `shared_params`. Target state; only draw targets write it (via
+  /// `merge_shared_bindings`).
+  pub(super) shared_bindings: Vec<(String, u64)>,
   /// Present when the target owns depth storage: explicit on a draw target
   /// (`create_draw_target`'s depth option), derived from the pipeline on the
   /// single-draw creates. The renderbuffer stays private to the FBO (never
@@ -507,6 +515,7 @@ impl ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: vec![entry],
           shared_params: Vec::new(),
+          shared_bindings: Vec::new(),
           depth: depth_rb,
           clear_color,
           load: false,
@@ -571,6 +580,7 @@ impl ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: Vec::new(),
           shared_params: Vec::new(),
+          shared_bindings: Vec::new(),
           depth: depth_rb,
           clear_color,
           load: false,
@@ -877,6 +887,35 @@ impl ShaderTexture {
     }
   }
 
+  /// Fold a sampler-binding update into a draw target's shared record (see
+  /// `MeshState::shared_bindings`; validated UI-side - names, sources, unit
+  /// budget, cycles). Bindings not named keep their current source. Same
+  /// gating as `merge_shared_params`.
+  pub fn merge_shared_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
+    let TargetKind::Mesh(mesh) = &mut self.kind else {
+      return Err("not a draw target".to_string());
+    };
+    if mesh.fixed {
+      return Err("target's draw list is fixed (created single-draw)".to_string());
+    }
+    for (name, src_id) in updates {
+      match mesh.shared_bindings.iter_mut().find(|(n, _)| n == name) {
+        Some(binding) => binding.1 = *src_id,
+        None => mesh.shared_bindings.push((name.clone(), *src_id)),
+      }
+    }
+    Ok(())
+  }
+
+  /// A draw target's current shared sampler bindings (empty for every other
+  /// kind), for resource introspection.
+  pub fn shared_bindings(&self) -> &[(String, u64)] {
+    match &self.kind {
+      TargetKind::Mesh(mesh) => &mesh.shared_bindings,
+      TargetKind::Fragment { .. } => &[],
+    }
+  }
+
   /// Set one entry's draw range (resolved and validated UI-side).
   pub fn set_entry_draw(&mut self, id: u64, range: DrawRange) -> Result<(), String> {
     self.entry_mut(id)?.draw = range;
@@ -1039,13 +1078,21 @@ impl ShaderTexture {
   }
 
   /// Every source texture id any pass of this target samples: the fragment
-  /// bindings, or the union over all draw entries. What the flush graph and
-  /// the propagation walk read as this target's incoming edges.
+  /// bindings, or the union over all draw entries plus the shared bindings.
+  /// What the flush graph and the propagation walk read as this target's
+  /// incoming edges. A shared binding counts even while no entry's program
+  /// declares its name - conservative (at worst an extra re-render), and it
+  /// matches the UI-side sampler-graph mirror.
   pub fn binding_sources(&self) -> Vec<u64> {
     match &self.kind {
       TargetKind::Fragment { bindings, .. } => bindings.iter().map(|(_, id)| *id).collect(),
       TargetKind::Mesh(mesh) => {
-        mesh.entries.iter().flat_map(|e| e.bindings.iter().map(|(_, id)| *id)).collect()
+        mesh
+          .entries
+          .iter()
+          .flat_map(|e| e.bindings.iter().map(|(_, id)| *id))
+          .chain(mesh.shared_bindings.iter().map(|(_, id)| *id))
+          .collect()
       }
     }
   }
@@ -1149,14 +1196,31 @@ impl ShaderTexture {
         let draws: Vec<ResolvedDraw> = mesh
           .entries
           .iter()
-          .map(|e| ResolvedDraw {
-            program: &e.pipeline.program,
-            desc: &e.pipeline.desc,
-            vao: e.vao,
-            range: e.draw,
-            index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
-            params: &e.params,
-            inputs: resolve(&e.bindings),
+          .map(|e| {
+            // An entry's inputs are its own bindings plus the shared ones its
+            // program declares and does not bind itself (entry overrides
+            // shared, and an undeclared shared name must not eat a texture
+            // unit on this entry).
+            let inputs = if mesh.shared_bindings.is_empty() {
+              resolve(&e.bindings)
+            } else {
+              let mut combined = e.bindings.clone();
+              for (name, src_id) in &mesh.shared_bindings {
+                if e.pipeline.program.uniforms.contains_key(name) && !combined.iter().any(|(n, _)| n == name) {
+                  combined.push((name.clone(), *src_id));
+                }
+              }
+              resolve(&combined)
+            };
+            ResolvedDraw {
+              program: &e.pipeline.program,
+              desc: &e.pipeline.desc,
+              vao: e.vao,
+              range: e.draw,
+              index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
+              params: &e.params,
+              inputs,
+            }
           })
           .collect();
         let draw = PassDraw::Draws {

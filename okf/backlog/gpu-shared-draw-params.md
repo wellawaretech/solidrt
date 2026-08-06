@@ -12,10 +12,23 @@ general); `setTargetParams(target, params)` plus a positional `params`
 argument on `createDrawTarget` (the positional-params convention, matching
 `createShaderTarget`); validation is coverage-based as proposed below
 (declared by at least one current entry's pipeline, accepted as-is with no
-entries, never retroactive). Shared sampler bindings deferred to a consumer
-as suggested. `@solidrt/3d` now writes per-mesh `uModel` + target-shared
-`uViewProj`; the `shaderMaterial` vertex contract requires both. Introspection
-reports a draw target's shared params in the flat `params` field.
+entries, never retroactive). `@solidrt/3d` now writes per-mesh `uModel` +
+target-shared `uViewProj`; the `shaderMaterial` vertex contract requires
+both. Introspection reports a draw target's shared params in the flat
+`params` field.
+
+Shared SAMPLER bindings landed the same day (stage 2, ahead of the lit-tier
+consumer): `setTargetTextures(target, textures)` + `createDrawTarget`
+`opts.textures` seed, same precedence and coverage rules; shared edges join
+the sampler graph (propagation and cycle rules unchanged, recorded under
+entry key 0 - draw ids start at 1), and the unit budget checks each entry's
+own bindings PLUS the applicable shared names at `setTargetTextures`,
+`addDraw`, and `setDrawTextures`, so overflow throws at the call site.
+Both halves are pixel-asserted headlessly in `alloy/examples/draw_list.rs`
+(apply/override/partial-coverage, seed-then-add persistence, live
+dependency through a shared edge, self-bind and coverage guard rails).
+Still deferred: program-sorted draw ordering (separate optimization, as
+argued above).
 
 # Shared (target-level) params for draw targets
 

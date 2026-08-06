@@ -10,7 +10,7 @@ use crate::camera::CameraRegistry;
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
   validate_texture_bindings, vertex_stride, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources,
-  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformTable, WindowShader,
+  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader,
 };
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterSender, RasterStats};
@@ -916,6 +916,24 @@ impl Context {
     validate_texture_bindings(&uniforms, &entry.textures)?;
     let draw_id = list.next_draw;
     self.validate_new_bindings(target, draw_id, &entry.textures)?;
+    // The entry's effective inputs include the shared names its program
+    // declares and does not bind itself (shared bindings live under entry
+    // key 0): the unit budget must hold for the combination, checked here so
+    // an over-budget add throws at its call site instead of dropping inputs
+    // raster-side. The one place existing shared state gates an add.
+    {
+      let sources = self.shader_sources.borrow();
+      let shared_extra = sources.get(&target).map_or(0, |c| {
+        c.keys()
+          .filter(|(e, name)| {
+            *e == 0
+              && uniforms.get(name.as_str()) == Some(&UniformKind::Sampler2D)
+              && !entry.textures.iter().any(|(n, _)| n == name)
+          })
+          .count()
+      });
+      self.gpu_limits().check_texture_units(entry.textures.len() + shared_extra)?;
+    }
     list.next_draw += 1;
     list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds });
     drop(targets);
@@ -1024,18 +1042,113 @@ impl Context {
     Ok(())
   }
 
+  /// Rebind a draw target's shared (target-level) sampler2D inputs by
+  /// uniform name: sources every entry reads (an environment map, a shadow
+  /// map, a LUT), written once per target. At render each entry gets the
+  /// shared names its program declares and its own bindings do not override
+  /// - an entry's own binding wins, and coverage may be partial, exactly
+  /// like `set_target_params`. Bindings not named keep their current source,
+  /// and shared bindings are target state: entry add/remove/rebuild cannot
+  /// lose them. Validation: each name must be an active sampler2D of at
+  /// least ONE current entry's program (and a sampler2D everywhere it is
+  /// declared); with no entries yet names are accepted as-is (the create
+  /// seed). Sources must exist, every entry's effective input count (its own
+  /// bindings plus the applicable merged shared set) must fit the device's
+  /// texture units, and the sampling-cycle rules apply unchanged - a shared
+  /// edge counts for propagation and cycles even before any entry declares
+  /// its name. The caller must request a frame.
+  pub fn set_target_textures(&self, target: u64, textures: &[(String, u64)]) -> Result<(), String> {
+    {
+      let targets = self.targets.borrow();
+      let mirror = targets.get(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
+      let Some(list) = mirror.entries.as_ref() else {
+        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+      };
+      if !list.entries.is_empty() {
+        for (name, _) in textures {
+          let mut declared = false;
+          for entry in list.entries.values() {
+            if let Some(kind) = entry.uniforms.get(name) {
+              if *kind != UniformKind::Sampler2D {
+                return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
+              }
+              declared = true;
+            }
+          }
+          if !declared {
+            return Err(format!("no entry's program has an active sampler2D named '{name}'"));
+          }
+        }
+      }
+      // Per-entry unit budget against the MERGED shared set: an entry's
+      // effective inputs are its own bindings plus the shared names its
+      // program declares and does not bind itself.
+      let sources = self.shader_sources.borrow();
+      let record = sources.get(&target);
+      let mut shared: Vec<&str> =
+        record.map(|c| c.keys().filter(|(e, _)| *e == 0).map(|(_, n)| n.as_str()).collect()).unwrap_or_default();
+      for (name, _) in textures {
+        if !shared.contains(&name.as_str()) {
+          shared.push(name);
+        }
+      }
+      let limits = self.gpu_limits();
+      for (draw_id, entry) in list.entries.iter() {
+        let own_count = record.map_or(0, |c| c.keys().filter(|(e, _)| *e == *draw_id).count());
+        let extra = shared
+          .iter()
+          .filter(|n| {
+            entry.uniforms.get(**n) == Some(&UniformKind::Sampler2D)
+              && record.is_none_or(|c| !c.contains_key(&(*draw_id, (**n).to_string())))
+          })
+          .count();
+        limits.check_texture_units(own_count + extra).map_err(|e| format!("draw {draw_id}: {e}"))?;
+      }
+    }
+    self.validate_new_bindings(target, 0, textures)?;
+    let mut sources = self.shader_sources.borrow_mut();
+    let record = sources.entry(target).or_default();
+    for (name, src_id) in textures {
+      record.insert((0, name.clone()), *src_id);
+    }
+    drop(sources);
+    self.send(RasterCmd::UpdateTargetTextures { target, textures: textures.to_vec() });
+    Ok(())
+  }
+
   /// Rebind one draw entry's sampler2D inputs by uniform name (the per-entry
   /// `update_shader_textures`); bindings not named keep their current
   /// source. Same checks as every bind path: names against the entry's
   /// program, per-entry unit count, source existence, cycles. The caller
   /// must request a frame.
   pub fn set_draw_textures(&self, target: u64, draw: u64, textures: &[(String, u64)]) -> Result<(), String> {
-    {
+    let entry_uniforms = {
       let targets = self.targets.borrow();
       let entry = entry_mirror(&targets, target, draw)?;
       validate_texture_bindings(&entry.uniforms, textures)?;
-    }
+      entry.uniforms.clone()
+    };
     self.validate_new_bindings(target, draw, textures)?;
+    // Combined with the target's shared bindings (entry key 0), the entry's
+    // merged inputs must still fit the unit budget - the add_draw rule,
+    // re-checked because a rebind can add names.
+    {
+      let sources = self.shader_sources.borrow();
+      let record = sources.get(&target);
+      let own = record.map_or(0, |c| c.keys().filter(|(e, _)| *e == draw).count())
+        + textures.iter().filter(|(name, _)| record.is_none_or(|c| !c.contains_key(&(draw, name.clone())))).count();
+      let shared_extra = record.map_or(0, |c| {
+        c.keys()
+          .filter(|(e, name)| {
+            *e == 0
+              && entry_uniforms.get(name.as_str()) == Some(&UniformKind::Sampler2D)
+              && !c.contains_key(&(draw, name.clone()))
+              && !textures.iter().any(|(n, _)| n == name)
+          })
+          .count()
+      });
+      self.gpu_limits().check_texture_units(own + shared_extra)?;
+    }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
     for (name, src_id) in textures {

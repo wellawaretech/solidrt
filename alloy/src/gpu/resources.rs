@@ -150,7 +150,9 @@ pub struct GpuPipelineInfo {
   /// (name, format string) of the declared per-instance layout; empty when
   /// the pipeline declares none.
   pub instance_attributes: Vec<(String, String)>,
-  /// sampler2D uniform name -> source texture id.
+  /// sampler2D uniform name -> source texture id; for a draw target (kind
+  /// "draws"), its shared (target-level) bindings - per-entry bindings live
+  /// in `draws`.
   pub textures: Vec<(String, u64)>,
   /// The float uniforms applied on the most recent render; for a draw target
   /// (kind "draws"), its shared (target-level) params - per-entry params live

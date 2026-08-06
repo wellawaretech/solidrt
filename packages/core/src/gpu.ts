@@ -121,11 +121,14 @@ export type { BlendMode, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRa
 // target's SHARED params - values every entry reads (a camera's
 // view-projection: one write per camera move instead of one per mesh),
 // applied before each entry's own params so an entry naming the same uniform
-// overrides the shared value. setDrawOrder replaces the whole
+// overrides the shared value. setTargetTextures is its sampler analog: shared
+// sources every entry reads (an environment map, a LUT), bound where an
+// entry's program declares the name and its own bindings do not override it.
+// setDrawOrder replaces the whole
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
 // camera moves).
-export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams } from "flux:gpu"
+export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds
@@ -351,7 +354,10 @@ export function createShaderTarget(
  * each entry's own params, so an entry naming the same uniform overrides
  * the shared value; a name only some entries' programs declare is applied
  * where declared and skipped elsewhere. They are target state: entry
- * add/remove/rebuild cannot lose them.
+ * add/remove/rebuild cannot lose them. `opts.textures` is the sampler
+ * analog - shared sources every entry reads (an environment map, a LUT),
+ * driven later with `setTargetTextures`, same precedence and coverage
+ * rules.
  *
  * The render contract is unchanged: the list is input data, so an ordinary
  * (`render: "auto"`) draw target re-renders exactly when its entries or
@@ -367,6 +373,7 @@ export function createDrawTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean
+    textures?: Record<string, gpu.TextureId>
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"

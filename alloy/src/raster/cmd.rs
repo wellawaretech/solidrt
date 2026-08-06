@@ -113,6 +113,11 @@ pub(crate) enum RasterCmd {
   /// mark the target dirty. Shared params apply per entry before the entry's
   /// own params, so an entry naming the same uniform overrides them.
   UpdateTargetParams { target: u64, params: Vec<(String, ParamValue)> },
+  /// Fold sampler rebinds into a draw target's shared (target-level) record
+  /// and mark the target dirty. Each entry gets the shared names its program
+  /// declares and its own bindings do not override; unnamed shared bindings
+  /// keep their current source.
+  UpdateTargetTextures { target: u64, textures: Vec<(String, u64)> },
   /// Rebind one draw entry's sampler2D inputs by uniform name and mark the
   /// target dirty. Unnamed bindings keep their current source.
   UpdateDrawTextures { target: u64, draw: u64, textures: Vec<(String, u64)> },

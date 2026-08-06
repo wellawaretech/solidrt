@@ -5,6 +5,8 @@
     "jsx": "preserve",
     "jsxImportSource": "@solidrt/core",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
     "types": ["@solidrt/flux-types"]

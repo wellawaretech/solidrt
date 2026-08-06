@@ -449,6 +449,9 @@ Sorted by status: open first, then partial, deferred, and closed
   params; validation is coverage-based (at least one declaring pipeline,
   partial coverage tolerated). @solidrt/3d swapped uMVP for per-mesh uModel
   + shared uViewProj, making camera motion one write instead of O(meshes).
+  Shared sampler bindings (setTargetTextures + opts.textures seed) landed
+  the same day with identical rules, pixel-asserted in the draw_list
+  example; program-sorted ordering stays deferred.
 - [Split GPU pipeline state from the render target](gpu-pipeline-object-model.md) [done] -
   Landed 2026-07-30: RenderPipeline (program + typed draw state) with
   createRenderPipeline/createShaderTarget split, one owned spec instead of

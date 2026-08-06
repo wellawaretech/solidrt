@@ -366,25 +366,27 @@ fn collect_draw_update(update: &Object<'_>) -> rquickjs::Result<alloy::DrawUpdat
   })
 }
 
-// Decode createDrawTarget's options: the target half plus `depth` (the
+// Decode createDrawTarget's options: the target half, `depth` (the
 // target-OWNED depth storage every entry shares - distinct from the depth
-// STATE a pipeline declares on createRenderPipeline). Entry keys throw with
-// a pointer to addDraw; draw-state keys with a pointer to
-// createRenderPipeline; a `params` key with a pointer to the positional
-// argument (shared target-level params, like every create's params).
+// STATE a pipeline declares on createRenderPipeline), and `textures` (the
+// SHARED target-level sampler bindings setTargetTextures drives later - in
+// opts like every create's textures). Entry keys throw with a pointer to
+// addDraw; draw-state keys with a pointer to createRenderPipeline; a
+// `params` key with a pointer to the positional argument (shared
+// target-level params, like every create's params).
 fn collect_draw_target_spec(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
   width: u32,
   height: u32,
   api: &str,
-) -> rquickjs::Result<(alloy::TargetSpec, bool)> {
+) -> rquickjs::Result<(alloy::TargetSpec, bool, Vec<(String, u64)>)> {
   if let Some(o) = opts {
     if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
       return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
     }
     for key in [
-      "textures", "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
+      "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
       "firstIndex", "indexCount", "instanceCount",
     ] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
@@ -401,7 +403,14 @@ fn collect_draw_target_spec(
     Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
     None => false,
   };
-  Ok((collect_target_half(ctx, opts, width, height, api)?, depth))
+  let textures = match opts {
+    Some(o) => match o.get::<_, Option<Object<'_>>>("textures")? {
+      Some(t) => collect_textures(ctx, &t, api)?,
+      None => Vec::new(),
+    },
+    None => Vec::new(),
+  };
+  Ok((collect_target_half(ctx, opts, width, height, api)?, depth, textures))
 }
 
 // Decode the draw-state options of createRenderPipeline and
@@ -532,6 +541,7 @@ impl ModuleDef for GpuModule {
     decl.declare("removeDraw")?;
     decl.declare("setDrawParams")?;
     decl.declare("setTargetParams")?;
+    decl.declare("setTargetTextures")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
     decl.declare("setDrawOrder")?;
@@ -920,8 +930,10 @@ impl ModuleDef for GpuModule {
     // target whose contents are an ordered, mutable list of draws (addDraw /
     // removeDraw), over color plus optional target-owned depth storage.
     // `params` seeds the SHARED (target-level) params setTargetParams drives
-    // later - positional like every create's params; the options are the
-    // target half only, entries carry everything else.
+    // later - positional like every create's params - and `opts.textures`
+    // seeds the shared sampler bindings setTargetTextures drives; the rest
+    // of the options are the target half only, entries carry everything
+    // else.
     let create_draw_target_atx = atx.clone();
     let create_draw_target = Function::new(
       ctx.clone(),
@@ -931,7 +943,7 @@ impl ModuleDef for GpuModule {
             params: Option<Object<'_>>,
             opts: Opt<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let (spec, depth) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
+        let (spec, depth, textures) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
         let params = match &params {
           Some(o) => collect_params(&ctx, o, "createDrawTarget")?,
           None => Vec::new(),
@@ -942,6 +954,11 @@ impl ModuleDef for GpuModule {
         if !params.is_empty() {
           create_draw_target_atx
             .set_target_params(id, &params)
+            .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+        }
+        if !textures.is_empty() {
+          create_draw_target_atx
+            .set_target_textures(id, &textures)
             .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
         }
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
@@ -1037,6 +1054,25 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create setTargetParams");
+
+    // Target-level shared sampler rebind: sources every entry reads (an
+    // environment map, a LUT), applied where an entry's program declares the
+    // name and its own bindings do not override it. Alloy validates at this
+    // call site (coverage, sources, unit budget, cycles).
+    let set_target_textures_atx = atx.clone();
+    let set_target_textures_platform = platform.clone();
+    let set_target_textures = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, textures: Object<'_>| -> rquickjs::Result<()> {
+        let textures = collect_textures(&ctx, &textures, "setTargetTextures")?;
+        set_target_textures_atx
+          .set_target_textures(target, &textures)
+          .map_err(|e| throw_str(&ctx, &format!("setTargetTextures: {e}")))?;
+        set_target_textures_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setTargetTextures");
 
     // Per-entry sampler rebind: setShaderTextures addressed to one draw entry.
     let set_draw_textures_atx = atx.clone();
@@ -1134,6 +1170,7 @@ impl ModuleDef for GpuModule {
     exports.export("removeDraw", remove_draw)?;
     exports.export("setDrawParams", set_draw_params)?;
     exports.export("setTargetParams", set_target_params)?;
+    exports.export("setTargetTextures", set_target_textures)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
     exports.export("setDrawOrder", set_draw_order)?;

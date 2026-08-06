@@ -608,9 +608,11 @@ declare module "flux:gpu" {
    * `params` seeds the target's SHARED params - the target-level values
    * every entry reads, the same live channel {@link setTargetParams} drives
    * later (positional like every create's params; see there for the
-   * precedence and validation contract). At creation there are no entries to
-   * validate against, so names are accepted as-is and simply apply to
-   * whichever later entries' programs declare them.
+   * precedence and validation contract). `opts.textures` seeds the shared
+   * sampler bindings the same way, the channel {@link setTargetTextures}
+   * drives (in opts like every create's textures). At creation there are no
+   * entries to validate against, so names are accepted as-is and simply
+   * apply to whichever later entries' programs declare them.
    *
    * The render contract is unchanged: the list is input data like params, so
    * "render twice = render once" still holds and the default `render:
@@ -628,6 +630,7 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       depth?: boolean
+      textures?: Record<string, TextureId>
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -697,6 +700,24 @@ declare module "flux:gpu" {
    * error, the value just skips it.
    */
   export function setTargetParams(target: TextureId, params: ShaderParams): void
+  /**
+   * Rebind a draw target's SHARED (target-level) sampler2D inputs by uniform
+   * name: sources every entry reads - an environment map, a shadow map, a
+   * LUT - bound once per target. {@link setTargetParams}'s sampler analog,
+   * with the same rules throughout: an entry's own binding for the same name
+   * wins; a name only some entries' programs declare binds where declared
+   * and is skipped elsewhere; bindings not named keep their current source;
+   * shared bindings are target state that entry add/remove/rebuild cannot
+   * lose. Validation matches too - each name must be an active sampler2D of
+   * at least ONE current entry's program, with no entries yet names are
+   * accepted as-is, and a later entry never retroactively errors - plus the
+   * usual binding checks: sources must exist, each entry's effective inputs
+   * (its own plus the applicable shared ones) must fit the device's texture
+   * units, and a binding that would close a flush-rendered sampling cycle
+   * throws. Shared sources are live dependencies exactly like entry
+   * bindings: the target re-renders when one changes.
+   */
+  export function setTargetTextures(target: TextureId, textures: Record<string, TextureId>): void
   /**
    * Rebind one draw entry's sampler2D inputs by uniform name:
    * {@link setShaderTextures} addressed to a single entry, same merge,

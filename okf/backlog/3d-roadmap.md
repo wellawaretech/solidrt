@@ -67,7 +67,9 @@ append at the list end.
    (`setTargetParams` + `createDrawTarget` positional params). Library:
    uMVP split into per-mesh `uModel` + shared `uViewProj`; a camera move is
    one write, and the `shaderMaterial` vertex contract now requires both
-   matrices (changed before any app shipped against uMVP).
+   matrices (changed before any app shipped against uMVP). The engine
+   item's sampler half (`setTargetTextures`, shared target-level bindings)
+   landed the same day - the binding channel items 14 and 15 consume.
 2. **The standard uniform set and the exported-GLSL policy.** Library
    only, no backlog file (differentiators note, implications item 4).
    uModel/uViewProj/normal matrix/camera position as the documented
@@ -130,9 +132,14 @@ append at the list end.
     [relative-mouse-input](relative-mouse-input.md) [open] - pointer
     lock/relative motion - not on anything in the GPU stack.
 14. **Environment tier: skybox, reflection/environment maps.** Engine:
-    [gpu-cube-maps](gpu-cube-maps.md) [open]. Demand-gated.
+    [gpu-cube-maps](gpu-cube-maps.md) [open]. Demand-gated. The binding
+    side is already paid: a shared target-level sampler
+    (`setTargetTextures`, landed 2026-08-06) binds an environment map once
+    per scene target; cube maps are the remaining engine gap.
 15. **Shadow maps.** Engine: sampleable depth and a depth-func option,
-    both deferred in [gpu-pipeline-extensions](gpu-pipeline-extensions.md).
+    both deferred in [gpu-pipeline-extensions](gpu-pipeline-extensions.md);
+    the map itself binds through the shared target-level sampler channel
+    (landed 2026-08-06).
 16. **Skinning and morph targets.** Engine: float texture formats (same
     extensions file). Per-vertex JS is ruled out by the interpreter, so
     bone matrices live in textures and are sampled in the vertex shader.
