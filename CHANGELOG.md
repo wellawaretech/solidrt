@@ -21,8 +21,6 @@ Sections, in this order. Omit none: a section with nothing in it says
                         commands and their output, dev server behavior,
                         launcher UI, error messages. Contributor-facing
                         build and CI work goes in Various instead.
-  Agents                Aimed at coding agents: scaffold AGENTS.md,
-                        MCP surfaces, examples (examples exist for agents).
   Breaking changes      Removals and signature changes. Behavior changes
                         an app can notice without opting in go here too,
                         as a note under "None." So do platform and
@@ -30,6 +28,8 @@ Sections, in this order. Omit none: a section with nothing in it says
                         dropped target, a minimum OS, Bun or Rust bump.
                         New platform support, which strands nobody, goes
                         in Features.
+  Agents                Aimed at coding agents: scaffold AGENTS.md,
+                        MCP surfaces, examples (examples exist for agents).
   Various               Everything else: dependency updates, build, CI,
                         backlog notes. Lead the dependency bullet with
                         "Dependencies:", and say so even when there are
@@ -49,6 +49,50 @@ Rules:
 
 # Changelog
 
+## 0.0.46 - 2026-08-06
+
+### Fixes
+- None.
+
+### Features
+- **New `@solidrt/3d` package** - the SolidRT variant of Three.js.
+- **GPU: shared target params/textures** - values every draw entry reads; one write per camera move.
+- **GPU: unified target verbs** - `setTargetParams` / `setTargetTextures` / `setTargetSize` on every target kind.
+- **Image encoding** - `encodeImage` reverses `decodeImage`; the codec now lives in `flux:image`.
+- **App arguments** - apps read theirs from `flux:process` `argv`; `argv[0]` is the first argument.
+
+### API
+- New package `@solidrt/3d`.
+- `flux:gpu` and `@solidrt/core/gpu`: `setTargetParams` / `setTargetTextures` / `setTargetSize`.
+- `createDrawTarget` gains positional `params` and `opts.textures`.
+- `flux:image`: `decodeImage`, `encodeImage`; core re-exports `encodeImage`.
+- `CreateOptions.autoFree` replaces `manual` (see Breaking changes).
+- `flux:process` `argv`.
+
+### Developer experience
+- **`srt render` needs no display** - runs over SSH and in CI; captures are machine-independent.
+- Render frames land in the invoking directory; `-o` picks another.
+- Everything after a bare `--` reaches the app, on every client of a dev session.
+- **`exit()` ends a render run** - `--duration` is now an upper bound.
+- Scaffolded `tsconfig.json` allows `.ts`/`.tsx` import extensions.
+
+### Breaking changes
+- **`setShader*` removed** - use the `setTarget*` verbs; fails at typecheck (TS) or import (JS).
+- **`manual: true` is now `autoFree: false`** - plain JS ignores the old option silently (double-free risk).
+- **`createDrawTarget`** - options move behind positional `params`; a `clearColor`-only bag silently reads as params.
+- **`argv` reshaped** - no executable/script entries; `argv[0]` is the first app argument.
+- **SolidJS peer bump** - to `2.0.0-beta.31`; move your `solid-js` / `@solidjs/*` pins with it.
+
+### Agents
+- **`packages/3d/AGENTS.md`** - the scene model, material uniform contract, and traps.
+- New examples: `gpu-shared-params`, `scene-basic`.
+
+### Various
+- Dependencies: SolidJS family to `2.0.0-beta.31` (see Breaking changes).
+- `@solidrt/3d` joins the published package set.
+- Changelog screenshot script under `scripts/changelog/`.
+- Backlog filed: 3D roadmap, shared draw params, headless render determinism, and more.
+
 ## 0.0.45 - 2026-08-04
 
 ### Fixes
@@ -67,12 +111,12 @@ Rules:
 ### Developer experience
 - None.
 
+### Breaking changes
+- None. One behavior change: `instanceCount` now defaults to one instance per instance-buffer record (was required).
+
 ### Agents
 - **Scaffold `AGENTS.md`** - agents must first check for an already-running dev server + client (MCP `list_clients`) and work against it via `reload` / `get_logs` / `get_snapshot`, instead of starting a second `srt run`.
 - **New examples** covering the new surfaces: `gpu-draw-list`, `view-shader`, `view-shader-history`, `view-viewbox` (plus README index and a `responsive-grid` touch-up).
-
-### Breaking changes
-- None. One behavior change: `instanceCount` now defaults to one instance per instance-buffer record (was required).
 
 ### Various
 - Dependencies: no updates.

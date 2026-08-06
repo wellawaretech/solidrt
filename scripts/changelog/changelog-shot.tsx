@@ -25,10 +25,10 @@ import { file } from "flux:fs"
 import { argv } from "flux:process"
 import source from "../../CHANGELOG.md" with { type: "text" }
 
-const SECTIONS = ["Fixes", "Features", "API"]
+const SECTIONS = ["Fixes", "Features", "API", "Breaking changes"]
 const PADDING = 50
 
-type RunKind = "normal" | "strong" | "code" | "label"
+type RunKind = "normal" | "strong" | "code" | "strong-code" | "label"
 
 type Run = {
   kind: RunKind
@@ -70,16 +70,30 @@ function inlineRuns(text: string): Run[] {
     push("label", label[0])
     text = text.slice(label[0].length)
   }
+  // Code spans nest inside strong spans ("**`argv` reshaped**"), so strong
+  // splits first and each side parses its own code spans; a code span may also
+  // contain asterisks ("`setShader*`"), which is why strong cannot be the
+  // inner pass.
+  let code = (part: string, kind: "normal" | "strong") => {
+    let index = 0
+    let span = /`([^`]+)`/g
+    let match: RegExpExecArray | null
+    while ((match = span.exec(part)) !== null) {
+      push(kind, part.slice(index, match.index))
+      push(kind === "strong" ? "strong-code" : "code", match[1]!)
+      index = match.index + match[0].length
+    }
+    push(kind, part.slice(index))
+  }
   let index = 0
-  let span = /\*\*([^*]+)\*\*|`([^`]+)`/g
+  let strong = /\*\*(.+?)\*\*/g
   let match: RegExpExecArray | null
-  while ((match = span.exec(text)) !== null) {
-    push("normal", text.slice(index, match.index))
-    if (match[1] !== undefined) push("strong", match[1])
-    else push("code", match[2]!)
+  while ((match = strong.exec(text)) !== null) {
+    code(text.slice(index, match.index), "normal")
+    code(match[1]!, "strong")
     index = match.index + match[0].length
   }
-  push("normal", text.slice(index))
+  code(text.slice(index), "normal")
   return runs
 }
 
@@ -142,6 +156,9 @@ function Word(props: { kind: RunKind, text: string }) {
   }
   if (props.kind === "code") {
     return <text fontFamily="mono" fontSize={16} lineHeight={1.55} color="#9fc0ff">{props.text}</text>
+  }
+  if (props.kind === "strong-code") {
+    return <text fontFamily="mono" fontSize={16} fontWeight={700} lineHeight={1.55} color="#9fc0ff">{props.text}</text>
   }
   if (props.kind === "label") {
     return <text fontSize={16} fontWeight={600} lineHeight={1.45} color="#7f9bd8">{props.text}</text>
