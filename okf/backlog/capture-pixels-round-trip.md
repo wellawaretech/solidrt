@@ -1,12 +1,32 @@
 ---
 type: backlog-item
 title: Node captures round-trip through a texture nobody wants
-description: Every capture rasterizes, reads back, uploads a texture and is then read back again, because both consumers only ever wanted the pixels; a pixels-returning variant halves the sync points.
-status: open
+description: "Done 2026-08-06: captureSnapshot now resolves { width, height, data } directly and no texture is created; the padding-aware capture texture (variant 2) stays unbuilt until a caller wants a texture."
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
 # Node captures round-trip through a texture nobody wants
+
+## Update 2026-08-06: variant 1 implemented as a breaking change
+
+`captureSnapshot(nodeId)` now resolves `{ width, height, data }` (the
+`readTexture` result shape) and creates no texture; there is nothing to
+destroy afterward. The texture-returning form is gone at every layer:
+`Context::capture_node_texture` became `capture_node_pixels` (the
+`RasterizeReadback` RPC without the re-upload), `CaptureInfo` carries
+`pixels` instead of `texture_id`, and MCP `get_snapshot` PNG-encodes the
+callback's pixels directly. A caller that wants a texture composes with
+`createTexture` / `create_texture_from_pixels` (alloy's `capture_crop`
+example demonstrates it). All three in-repo callers (terminal atlas bake,
+sandbox runtime ink measure, changelog-shot) dropped their
+readTexture + destroyTexture pairs.
+
+Variant 2 (the padding-aware capture texture) stays unbuilt as this note
+decided: no caller wants a capture as a texture today. What would revive it
+is unchanged - a freeze-frame consumer that samples rather than reads.
+
+Original analysis follows.
 
 `capture_node_texture` (alloy/src/context.rs) rasterizes a node's display
 list, reads the pixels back to the CPU, and uploads them again as a

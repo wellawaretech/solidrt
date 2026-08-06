@@ -773,7 +773,8 @@ declare module "flux:gpu" {
    */
   export function copyTexture(src: TextureId, dst: TextureId): void
   /**
-   * Capture a render-tree node's subtree into a new GPU texture, resolving once
+   * Capture a render-tree node's subtree as RGBA8 pixels (tightly packed,
+   * top-to-bottom rows - the {@link readTexture} result shape), resolving once
    * it has been rendered on the next paint pass. The node must be attached to
    * the live tree (an unmounted node is never painted, so its capture rejects)
    * and paint a non-zero box. A laid-out node captures its layout box. A `d-*`
@@ -781,34 +782,32 @@ declare module "flux:gpu" {
    * painted box instead: its own `w`/`h` when set, else the nearest laid-out
    * ancestor's box (the same box the render tree reports for it), with its
    * `x`/`y` paint offset mapped to the texture origin.
-   * Rendered at the current display scale, so `width`/`height` are the texture's
-   * actual pixel dimensions (ceil(logicalSize * displayScale)), not logical
-   * points. Each call returns an independent id you must {@link destroyTexture}
-   * when done. Use the returned id anywhere a texture id is accepted
-   * (`<texture src>`, a shader sampler input, {@link readTexture}).
+   * Rendered at the current display scale, so `width`/`height` are actual
+   * pixel dimensions (ceil(logicalSize * displayScale)), not logical points.
+   * No texture is created and there is nothing to free; to display or sample
+   * the result, upload it with {@link createTexture}.
    *
    * Intended for one-shot bakes and inspection: turning something the engine
    * can draw but the app cannot compute - shaped text, an SVG, a themed view -
-   * into pixels, usually to hand to {@link readTexture} and process on the CPU.
-   * Baking a glyph atlas by laying out cells, capturing them and keeping the
-   * coverage channel is the worked example. Tests and freeze-frames are the
-   * same shape.
+   * into pixels the app processes on the CPU. Baking a glyph atlas by laying
+   * out cells, capturing them and keeping the coverage channel is the worked
+   * example. Tests and freeze-frames are the same shape.
    *
    * Not a rendering primitive. Every call rasterizes the subtree into a fresh
-   * offscreen MSAA target, reads the pixels back to the CPU and uploads them
-   * again as a new texture: a full GPU -> CPU -> GPU round trip plus a paint
-   * pass of latency, per call, with nothing incremental about it. Batch what
-   * you capture (many nodes captured together are serviced by one paint pass),
-   * and do not drive it per frame or reach for it to feed live content into a
-   * shader - an effect over what is beneath it, a backdrop filter. Content that
-   * must stay current has to come from a source that updates in place: another
-   * pipeline's render target, a camera texture, a mutable texture.
+   * offscreen MSAA target and reads the pixels back to the CPU: a GPU -> CPU
+   * readback stall plus a paint pass of latency, per call, with nothing
+   * incremental about it. Batch what you capture (many nodes captured together
+   * are serviced by one paint pass), and do not drive it per frame or reach
+   * for it to feed live content into a shader - an effect over what is beneath
+   * it, a backdrop filter. Content that must stay current has to come from a
+   * source that updates in place: another pipeline's render target, a camera
+   * texture, a mutable texture.
    */
-  export function captureSnapshot(nodeId: number): Promise<{ id: TextureId; width: number; height: number }>
+  export function captureSnapshot(nodeId: number): Promise<{ width: number; height: number; data: Uint8Array }>
   /**
    * Read back a registered texture's current pixels as RGBA8 (tightly packed,
    * top-to-bottom rows), for any texture id whatever created it (createTexture,
-   * createShaderTexture, captureSnapshot). Synchronous. Throws if the id is
+   * createShaderTexture, a render target). Synchronous. Throws if the id is
    * unknown.
    */
   export function readTexture(id: TextureId): { width: number; height: number; data: Uint8Array }

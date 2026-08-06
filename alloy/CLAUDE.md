@@ -1,6 +1,8 @@
-Alloy is the platform/rendering layer: SDL3 + Impeller, with glow (GL/ANGLE)
-as the single trusted GPU path. Target is cross-platform (Linux, Android,
-Windows, macOS, iOS), OpenGL ES 3.0 minimum. Backend priority: OpenGL first,
+Alloy is the platform and rendering layer: SDL3 for windowing, input, and
+audio; Impeller for 2D paint; glow as the single trusted GL path; and the
+rendertree - Alloy's own scene graph with taffy-based layout (cached), hit
+testing and pointer routing, damage tracking, and compositing. Target is
+cross-platform (Linux, Android, Windows, macOS, iOS), OpenGL ES 3.0 minimum. Backend priority: OpenGL first,
 Vulkan next, Metal last (Vulkan/Metal are stubs today).
 
 # Threads and frame loop

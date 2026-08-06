@@ -136,10 +136,11 @@ Sorted by status: open first, then partial, deferred, and closed
   module) returning plain draws JS maps to d-path subtrees inside a
   `viewBox`-fitted view; usvg moved alloy -> forge, gradients ride the
   extended absolute-space wire format, per-path hit-testing/animation live.
-- [Node captures round-trip through a texture nobody wants](capture-pixels-round-trip.md) [open] -
-  Every capture rasterizes, reads back, uploads a texture and is then read back
-  again, because both consumers only ever wanted the pixels; a pixels-returning
-  variant halves the sync points.
+- [Node captures round-trip through a texture nobody wants](capture-pixels-round-trip.md) [done] -
+  captureSnapshot now resolves { width, height, data } directly (2026-08-06,
+  breaking); no texture is created and nothing needs destroying. The
+  padding-aware capture texture (variant 2) stays unbuilt until a caller
+  wants a texture rather than bytes.
 - [Refactor the fused creates over the raw shading layer](gpu-fused-create-refactor.md) [partial] -
   The gpu-review naming findings landed 2026-07-31 as a hard rename
   (createShaderTexture/createPipelineTexture/createShaderTextureMemo) and

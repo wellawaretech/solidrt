@@ -24,10 +24,10 @@ struct TextureInner {
   // after an upload / shader-param change, the way the global closures captured
   // it before.
   platform: Arc<PlatformContext>,
-  // Every texture id this engine created (immutable, mutable, shader, and
-  // captureSnapshot output). The alloy texture registry outlives the engine, so
-  // without this a reload leaks the previous app's textures - the app rarely
-  // calls destroyTexture itself.
+  // Every texture id this engine created (immutable, mutable, and shader).
+  // The alloy texture registry outlives the engine, so without this a reload
+  // leaks the previous app's textures - the app rarely calls destroyTexture
+  // itself.
   created: RefCell<HashSet<u64>>,
   // Same bookkeeping for vertex buffers (their own id space in alloy).
   created_buffers: RefCell<HashSet<u64>>,
@@ -1226,14 +1226,13 @@ pub fn tick(ctx: &Ctx<'_>) {
   let settles = std::mem::take(&mut *state.0.capture_settle.borrow_mut());
   for CaptureSettle { result, resolve, reject } in settles {
     match result {
-      Ok(CaptureInfo { texture_id, width, height }) => {
-        // Same reload-cleanup bookkeeping the create* functions do.
-        state.0.created.borrow_mut().insert(texture_id);
+      Ok(CaptureInfo { pixels, width, height }) => {
+        // Plain bytes, no registry entry: nothing to track for reload cleanup.
         let settle = || -> rquickjs::Result<()> {
           let obj = Object::new(ctx.clone())?;
-          obj.set("id", texture_id)?;
           obj.set("width", width)?;
           obj.set("height", height)?;
+          obj.set("data", TypedArray::new(ctx.clone(), pixels)?)?;
           resolve.restore(ctx)?.call::<_, ()>((obj,))
         };
         if let Err(e) = settle() {

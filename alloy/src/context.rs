@@ -149,11 +149,12 @@ pub struct Context {
   pending_destroys: RefCell<Vec<u64>>,
 }
 
-/// The successful outcome of a node capture: the registry id of the texture the
-/// node's subtree was rasterized into, and its device-pixel dimensions. The
-/// caller owns the texture and must `destroy_texture` it.
+/// The successful outcome of a node capture: the RGBA8 pixels the node's
+/// subtree was rasterized into (tightly packed top-to-bottom rows, same
+/// layout as `Context::read_texture`) and their device-pixel dimensions.
+/// Nothing is registered; there is nothing for the caller to free.
 pub struct CaptureInfo {
-  pub texture_id: u64,
+  pub pixels: Vec<u8>,
   pub width: u32,
   pub height: u32,
 }
@@ -1402,15 +1403,13 @@ impl Context {
     Ok(())
   }
 
-  /// Rasterize a display list into a new *registered* texture of exactly
-  /// `width` x `height`, returning its registry id. The raster thread
-  /// rasterizes and reads back in one trip; the intermediate texture never
-  /// leaves it, and the re-upload lands in the registry like any
-  /// `create_texture`, so `read_texture_by_id` (and any `<texture src>`
-  /// sampling) sees exact dimensions.
-  pub fn capture_node_texture(&self, dl: &DisplayList, width: u32, height: u32) -> Result<u64, String> {
-    let pixels = self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })??;
-    self.create_texture_from_pixels(width, height, &pixels, SamplerState::default(), TextureFormat::Rgba8, None)
+  /// Rasterize a display list and read back exactly `width` x `height` RGBA8
+  /// pixels (tightly packed top-to-bottom rows, same layout as
+  /// `read_texture`). The raster thread rasterizes and reads back in one
+  /// trip; the render target never leaves it and no texture is registered. A
+  /// caller that wants a texture composes with `create_texture_from_pixels`.
+  pub fn capture_node_pixels(&self, dl: &DisplayList, width: u32, height: u32) -> Result<Vec<u8>, String> {
+    self.rpc(|reply| RasterCmd::RasterizeReadback { dl: dl.clone(), width, height, reply })?
   }
 
   /// Read back a registered texture's RGBA8 pixels by id, using the entry's

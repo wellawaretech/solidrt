@@ -28,9 +28,10 @@ SDL is accessed through the sdl3 Rust crate, which does not expose all SDL funct
 
 # Projects
 ## Rust
-- `alloy` combines SDL, Impeller, glow (GL)
-- `flux` embeds a JavaScript runtime built on QuickJS
-- `packages/core/lattice` combines Alloy, Crystal and Flux, providing commands to access rendering from JavaScript
+- `alloy` platform and rendering: SDL, Impeller, glow (GL), and the rendertree (layout, hit testing, compositing)
+- `forge` engine-free capability cores (HTTP, fs, sqlite, subprocess, p2p, ...); no scripting-engine types
+- `flux` embeds a JavaScript runtime built on QuickJS; its plugins marshal the forge cores and the alloy GUI
+- `lattice` the SolidRT runtime: binds alloy, forge, and flux and drives the event loop
 
 ## JavaScript
 - `packages/core` SolidRT core, linking SolidJS and Lattice

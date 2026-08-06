@@ -661,12 +661,12 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
     return;
   };
 
-  // Fresh, independent texture per request (design: a new id per call).
+  // Fresh, independent readback per request (design: each caller owns its bytes).
   for done in requests {
     let result = ctx
       .alloy
-      .capture_node_texture(&dl, tex_w, tex_h)
-      .map(|texture_id| CaptureInfo { texture_id, width: tex_w, height: tex_h });
+      .capture_node_pixels(&dl, tex_w, tex_h)
+      .map(|pixels| CaptureInfo { pixels, width: tex_w, height: tex_h });
     ctx.alloy.complete_capture(done, result);
   }
 }

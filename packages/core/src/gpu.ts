@@ -178,24 +178,22 @@ export {
  */
 export let glsl = String.raw
 
-// captureSnapshot renders a node to a texture and readTexture reads any
-// texture's bytes back. A laid-out node captures its layout box; a `d-*` node
-// captures its painted box - its own w/h when set, else the nearest laid-out
-// ancestor's box, its x/y offset mapped to the texture origin. Re-exported raw
-// (no reactive auto-cleanup wrapper):
-// captureSnapshot resolves asynchronously, by which point the reactive owner is
-// no longer current, so the caller owns the returned id and frees it with
-// destroyTexture (as with any texture created after an await).
+// captureSnapshot renders a node to pixels and readTexture reads any
+// texture's bytes back; both resolve the same { width, height, data } shape.
+// A laid-out node captures its layout box; a `d-*` node captures its painted
+// box - its own w/h when set, else the nearest laid-out ancestor's box, its
+// x/y offset mapped to the texture origin. A capture creates no texture and
+// nothing needs freeing; to display or sample the result, upload it with
+// createTexture.
 //
-// Together they are the one-shot bake path: draw something only the engine can
-// produce (shaped text, an SVG, a themed view), capture it, read the pixels and
-// process them on the CPU - baking a glyph atlas is the worked example. Not a
-// rendering path: a capture rasterizes the subtree offscreen, reads it back to
-// the CPU and re-uploads it, costing a full GPU -> CPU -> GPU round trip and a
-// paint pass of latency every call. Batch captures (one paint pass services
-// many), never run them per frame, and do not use them to feed live screen
-// content into a shader - for that the source has to update in place (another
-// pipeline's target, a camera texture).
+// This is the one-shot bake path: draw something only the engine can produce
+// (shaped text, an SVG, a themed view), capture it and process the pixels on
+// the CPU - baking a glyph atlas is the worked example. Not a rendering path:
+// a capture rasterizes the subtree offscreen and reads it back to the CPU,
+// costing a readback stall and a paint pass of latency every call. Batch
+// captures (one paint pass services many), never run them per frame, and do
+// not use them to feed live screen content into a shader - for that the
+// source has to update in place (another pipeline's target, a camera texture).
 export { captureSnapshot, readTexture } from "flux:gpu"
 
 /**

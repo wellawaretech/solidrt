@@ -833,8 +833,8 @@ fn tree_reply(
 /// Queue a snapshot capture of `node_id` on the alloy context (reached from JS
 /// userdata, like `tree_reply` reaches the render tree). The completion callback
 /// runs on this same JS thread during the paint pass that services the capture:
-/// it reads the texture back, PNG-encodes it, frees the texture, and routes the
-/// reply out. Runs on the JS thread via the engine exec handle.
+/// it PNG-encodes the captured pixels and routes the reply out. Runs on the JS
+/// thread via the engine exec handle.
 fn request_snapshot(
   ctx: &flux::rquickjs::Ctx<'_>,
   node_id: u64,
@@ -847,19 +847,11 @@ fn request_snapshot(
     return;
   };
   let alloy = atx.0.clone();
-  let encode_alloy = alloy.clone();
   alloy.request_capture(
     node_id,
     Box::new(move |result| {
       let reply = match result {
-        Ok(info) => {
-          let read = encode_alloy.read_texture_by_id(info.texture_id);
-          encode_alloy.destroy_texture(info.texture_id);
-          match read {
-            Ok((width, height, pixels)) => snapshot_reply(id, width, height, pixels),
-            Err(e) => error_reply(id, &e),
-          }
-        }
+        Ok(info) => snapshot_reply(id, info.width, info.height, info.pixels),
         Err(e) => error_reply(id, &e),
       };
       let _ = reply_tx.send(reply);

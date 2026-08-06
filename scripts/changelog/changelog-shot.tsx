@@ -20,7 +20,7 @@
 // and each word carries its own run's style: that is what makes a bold lead-in
 // or `inline code` sit mid-sentence instead of on a line of its own.
 import { createLinearGradient, encodeImage, exit, render } from "@solidrt/core"
-import { captureSnapshot, destroyTexture, readTexture } from "@solidrt/core/gpu"
+import { captureSnapshot } from "@solidrt/core/gpu"
 import { file } from "flux:fs"
 import { argv } from "flux:process"
 import source from "../../CHANGELOG.md" with { type: "text" }
@@ -190,9 +190,7 @@ function App() {
     let path = `${dir}/changelog-${release.title.split(" ")[0]}.png`
     try {
       let snap = await captureSnapshot(content.id)
-      let pixels = readTexture(snap.id)
-      destroyTexture(snap.id)
-      await file(path).write(encodeImage(pixels))
+      await file(path).write(encodeImage(snap))
       console.log(`changelog-shot: wrote ${path} (${snap.width}x${snap.height})`)
     } catch (err) {
       console.error(`changelog-shot: ${err}`)
