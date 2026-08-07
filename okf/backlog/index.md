@@ -18,8 +18,8 @@ Sorted by status: open first, then partial, deferred, and closed
   frame-stepped virtual time for the WHOLE JS clock surface (timers +
   performance.now; Date.now is the wall escape hatch), props+quad on
   get_render_tree (reader lives next to apply_jsx), and server app identity
-  on list_clients. [[mcp-input-injection]] remains the open ask, three
-  deferrals in; traps in the file's implementation note.
+  on list_clients. [[mcp-input-injection]] landed the day after; traps in
+  the file's implementation note.
 - [Generate the docs/core.md props reference from the types](core-docs-generated-props.md)
   [open] - Hand-copied prop lists are how core.md drifted
   (fill/background/imageWidth); jsx-runtime.d.ts + types.d.ts are clean
@@ -248,9 +248,18 @@ Sorted by status: open first, then partial, deferred, and closed
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
-- [MCP input injection](mcp-input-injection.md) [deferred] - Synthetic key and
-  pointer events to clients, plus a snapshot-diff helper, so an agent can
-  navigate and verify visuals without a human ferrying the app around.
+- [MCP input injection](mcp-input-injection.md) [done] - 2026-08-07 landed
+  send_input: synthetic pointer/key/wheel/text sequences through the REAL
+  input pipeline (the batch-loop channel real SDL input feeds; no
+  frame-request latch by design), with per-event delayMs/holdMs so "walk
+  forward 500ms" or a typing burst is one call. Composes with clock control
+  for deterministic interaction tests; traps (mouse hover persists, tap
+  fields before text) in the implementation note. The snapshot-diff
+  companion split to [[snapshot-diff-helper]].
+- [Snapshot diff helper](snapshot-diff-helper.md) [deferred] - A numeric
+  pixel-delta mode on get_snapshot against the previous capture of the same
+  node; needs runtime-side raw-RGBA retention (the CLI has no PNG codec),
+  so it is its own design, split out of [[mcp-input-injection]].
 - [onFrame tick reset on reload](onframe-tick-reset-on-reload.md) [deferred] -
   The tick timebase resets across hot reload after the new instance's first
   frame, handing apps one enormous negative delta; apps clamp dt as a

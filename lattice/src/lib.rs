@@ -352,6 +352,11 @@ fn ui_thread(
   // recv on a dedicated thread forwards each event, so the event loop can await
   // events instead of polling on a timer.
   let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<alloy::AlloyEvent>();
+  // The dev connection's input-injection sender: synthetic events from
+  // `input` queries enter the same batch loop as real SDL input, getting the
+  // full pipeline (coalescing, input state, hit testing, capture, focus).
+  #[cfg(feature = "go")]
+  let input_inject_tx = ev_tx.clone();
   std::thread::spawn(move || {
     while let Ok(event) = event_rx.recv() {
       if ev_tx.send(event).is_err() {
@@ -661,6 +666,7 @@ fn ui_thread(
       capture_enabled,
       dev_connected.clone(),
       clock_control.clone(),
+      input_inject_tx,
       outbound_rx,
       go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,

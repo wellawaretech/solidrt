@@ -356,6 +356,94 @@ fn named_key(k: Keycode, keymod: Mod) -> Option<&'static str> {
   })
 }
 
+/// W3C `KeyboardEvent.code` for a synthetic event that carries only a `key`
+/// name: the position that produces that value on a US layout, or
+/// "Unidentified" when the key has no single unshifted position (shifted
+/// punctuation, non-ASCII, unknown names). Real events derive `code` from the
+/// scancode instead (`w3c_code`).
+pub fn w3c_code_for_key(key: &str) -> &'static str {
+  const LETTERS: [&str; 26] = [
+    "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN",
+    "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ",
+  ];
+  const DIGITS: [&str; 10] =
+    ["Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
+  let mut chars = key.chars();
+  if let (Some(c), None) = (chars.next(), chars.next()) {
+    return match c {
+      'a'..='z' | 'A'..='Z' => LETTERS[(c.to_ascii_lowercase() as u8 - b'a') as usize],
+      '0'..='9' => DIGITS[(c as u8 - b'0') as usize],
+      ' ' => "Space",
+      '-' => "Minus",
+      '=' => "Equal",
+      '[' => "BracketLeft",
+      ']' => "BracketRight",
+      '\\' => "Backslash",
+      ';' => "Semicolon",
+      '\'' => "Quote",
+      '`' => "Backquote",
+      ',' => "Comma",
+      '.' => "Period",
+      '/' => "Slash",
+      _ => "Unidentified",
+    };
+  }
+  match key {
+    "Enter" => "Enter",
+    "Escape" => "Escape",
+    "Backspace" => "Backspace",
+    "Tab" => "Tab",
+    "Delete" => "Delete",
+    "Insert" => "Insert",
+    "Home" => "Home",
+    "End" => "End",
+    "PageUp" => "PageUp",
+    "PageDown" => "PageDown",
+    "ArrowUp" => "ArrowUp",
+    "ArrowDown" => "ArrowDown",
+    "ArrowLeft" => "ArrowLeft",
+    "ArrowRight" => "ArrowRight",
+    "CapsLock" => "CapsLock",
+    "NumLock" => "NumLock",
+    "ScrollLock" => "ScrollLock",
+    "PrintScreen" => "PrintScreen",
+    "Pause" => "Pause",
+    "ContextMenu" => "ContextMenu",
+    "Help" => "Help",
+    "Power" => "Power",
+    // Left/right placement is not expressible in `key`; synthesize the left.
+    "Shift" => "ShiftLeft",
+    "Control" => "ControlLeft",
+    "Alt" => "AltLeft",
+    "Meta" => "MetaLeft",
+    "F1" => "F1",
+    "F2" => "F2",
+    "F3" => "F3",
+    "F4" => "F4",
+    "F5" => "F5",
+    "F6" => "F6",
+    "F7" => "F7",
+    "F8" => "F8",
+    "F9" => "F9",
+    "F10" => "F10",
+    "F11" => "F11",
+    "F12" => "F12",
+    "F13" => "F13",
+    "F14" => "F14",
+    "F15" => "F15",
+    "F16" => "F16",
+    "F17" => "F17",
+    "F18" => "F18",
+    "F19" => "F19",
+    "F20" => "F20",
+    "F21" => "F21",
+    "F22" => "F22",
+    "F23" => "F23",
+    "F24" => "F24",
+    _ => "Unidentified",
+  }
+}
+
 // The character a keycode produces, when it is a printable codepoint. SDL
 // keycodes for printables are the unicode value itself; non-character keys
 // have the scancode bit (1<<30) or extended bit (1<<29) set instead.

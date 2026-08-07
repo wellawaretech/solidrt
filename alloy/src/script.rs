@@ -18,9 +18,9 @@ impl ScriptEvent {
     AlloyEvent::Key {
       down: self.down,
       key: self.key.clone(),
-      // Scripts record logical keys only; there is no physical position to
-      // reconstruct.
-      code: "Unidentified",
+      // Scripts record logical keys only; reconstruct the US-layout position,
+      // "Unidentified" where there is no single one.
+      code: crate::keymap::w3c_code_for_key(&self.key),
       modifiers: Modifiers::default(),
       repeat: false,
     }

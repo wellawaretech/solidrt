@@ -35,6 +35,11 @@ pub struct DevFlags {
   /// runtime::ClockControl); written from `clock` queries, reset on
   /// reload/stop so no app starts under a stale pause.
   pub clock: crate::runtime::ClockControl,
+  /// Synthetic-input sender for `input` queries: events pushed here enter the
+  /// UI thread's batch loop through the same channel as real SDL input, so
+  /// injected events get the full pipeline (coalescing, input-state
+  /// bookkeeping, hit testing, capture forwarding, focus).
+  pub input_tx: UnboundedSender<alloy::AlloyEvent>,
 }
 
 /// Send-safe handles the connection answers dev-server queries from, without a
@@ -550,6 +555,39 @@ async fn try_serve(
                 .to_string();
                 let _ = client.send(tokio_websockets::Message::text(reply)).await;
               }
+              Some("input") => {
+                // Synthetic input: parsed events enter the same channel real
+                // SDL input feeds (see DevFlags::input_tx), deliberately with
+                // no frame-request latch - like real input, the app's own
+                // handlers request whatever frames their reactions need. Timed
+                // sequences run on their own task so a hold or delay never
+                // blocks this loop; the reply follows the last event so a
+                // caller knows the gesture has fully entered the pipeline.
+                match parse_input_events(json.get("events")) {
+                  Ok(seq) => {
+                    let delivered = seq.len();
+                    let input_tx = flags.input_tx.clone();
+                    let reply_tx = queries.outbound_tx.clone();
+                    tokio::spawn(async move {
+                      for (delay_ms, event) in seq {
+                        if delay_ms > 0 {
+                          tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        }
+                        if input_tx.send(event).is_err() {
+                          // The runtime is shutting down; nobody left to reply to.
+                          return;
+                        }
+                      }
+                      let reply =
+                        serde_json::json!({"type": "result", "id": id, "data": {"delivered": delivered}}).to_string();
+                      let _ = reply_tx.send(reply);
+                    });
+                  }
+                  Err(e) => {
+                    let _ = client.send(tokio_websockets::Message::text(error_reply(id, &e))).await;
+                  }
+                }
+              }
               Some("stats") => {
                 // The snapshot answers from the draw loop's latch; the mounted
                 // count is derived from the live tree on the JS thread when an
@@ -739,6 +777,141 @@ fn round2(v: f32) -> f64 {
 
 fn error_reply(id: u64, message: &str) -> String {
   serde_json::json!({"type": "result", "id": id, "error": message}).to_string()
+}
+
+/// Reserved pointer id for injected pointer events: far outside anything SDL
+/// hands out, so a synthetic pointer never aliases a live one in the router
+/// or the runner's input state.
+const SYNTHETIC_POINTER_ID: u64 = 1 << 60;
+/// Per-event cap on `delayMs`/`holdMs` and whole-sequence duration cap for
+/// `input` queries, bounding how long a sequence task can run. The dev server
+/// sizes its query timeout from the same request, so these two never race.
+const INPUT_DELAY_MAX_MS: u64 = 5000;
+const INPUT_TOTAL_MAX_MS: u64 = 30_000;
+
+/// Parse an `input` query's `events` array into a flat send plan of
+/// (delay-before-send ms, event). A `tap` expands to down + up with its
+/// `holdMs` as the up's delay. Everything is validated upfront: any invalid
+/// event rejects the whole sequence before a single event is sent.
+pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<Vec<(u64, alloy::AlloyEvent)>, String> {
+  use alloy::{AlloyEvent, Modifiers, PointerType};
+  let arr = events.and_then(|e| e.as_array()).ok_or("events must be an array")?;
+  if arr.is_empty() {
+    return Err("events must not be empty".into());
+  }
+  let mut out = Vec::new();
+  let mut total: u64 = 0;
+  for (i, ev) in arr.iter().enumerate() {
+    let field_ms = |name: &str| -> Result<u64, String> {
+      match ev.get(name) {
+        None => Ok(0),
+        Some(v) => match v.as_u64() {
+          Some(ms) if ms <= INPUT_DELAY_MAX_MS => Ok(ms),
+          _ => Err(format!("events[{i}]: {name} must be an integer 0..={INPUT_DELAY_MAX_MS}")),
+        },
+      }
+    };
+    let str_field = |name: &str| ev.get(name).and_then(|v| v.as_str());
+    let num_field = |name: &str| -> Result<f32, String> {
+      ev.get(name)
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map(|v| v as f32)
+        .ok_or_else(|| format!("events[{i}]: {name} must be a finite number"))
+    };
+    let flag = |name: &str| ev.get(name).and_then(|v| v.as_bool()).unwrap_or(false);
+    let modifiers = Modifiers { shift: flag("shift"), ctrl: flag("ctrl"), alt: flag("alt"), meta: flag("meta") };
+    let delay = field_ms("delayMs")?;
+    let hold = field_ms("holdMs")?;
+    let ty = str_field("type").ok_or_else(|| format!("events[{i}]: missing type"))?;
+    let action = str_field("action");
+    if ev.get("holdMs").is_some() && action != Some("tap") {
+      return Err(format!("events[{i}]: holdMs only applies to action \"tap\""));
+    }
+    match ty {
+      "key" => {
+        let key = str_field("key")
+          .filter(|k| !k.is_empty())
+          .ok_or_else(|| format!("events[{i}]: key events need a non-empty key name"))?;
+        let make = |down: bool| AlloyEvent::Key {
+          down,
+          key: key.to_string(),
+          code: alloy::w3c_code_for_key(key),
+          modifiers,
+          repeat: false,
+        };
+        match action {
+          Some("down") => out.push((delay, make(true))),
+          Some("up") => out.push((delay, make(false))),
+          Some("tap") => {
+            out.push((delay, make(true)));
+            out.push((hold, make(false)));
+          }
+          _ => return Err(format!("events[{i}]: key action must be down, up or tap")),
+        }
+      }
+      "pointer" => {
+        let x = num_field("x")?;
+        let y = num_field("y")?;
+        let pointer_type = match str_field("pointerType") {
+          None | Some("mouse") => PointerType::Mouse,
+          Some("touch") => PointerType::Touch,
+          Some(_) => return Err(format!("events[{i}]: pointerType must be mouse or touch")),
+        };
+        let button = match ev.get("button") {
+          None => 0u8,
+          Some(v) => match v.as_u64() {
+            Some(b) if b <= 4 => b as u8,
+            _ => return Err(format!("events[{i}]: button must be an integer 0..=4")),
+          },
+        };
+        let down =
+          || AlloyEvent::PointerDown { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
+        let up = || AlloyEvent::PointerUp { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
+        let mv = || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, modifiers };
+        match action {
+          Some("move") => out.push((delay, mv())),
+          Some("down") => out.push((delay, down())),
+          Some("up") => out.push((delay, up())),
+          Some("tap") => {
+            out.push((delay, down()));
+            out.push((hold, up()));
+          }
+          _ => return Err(format!("events[{i}]: pointer action must be down, up, move or tap")),
+        }
+      }
+      "wheel" => {
+        let x = num_field("x")?;
+        let y = num_field("y")?;
+        let delta_x = num_field("deltaX")?;
+        let delta_y = num_field("deltaY")?;
+        out.push((
+          delay,
+          AlloyEvent::Wheel {
+            pointer_id: SYNTHETIC_POINTER_ID,
+            pointer_type: PointerType::Mouse,
+            x,
+            y,
+            delta_x,
+            delta_y,
+            modifiers,
+          },
+        ));
+      }
+      "text" => {
+        let text = str_field("text")
+          .filter(|t| !t.is_empty())
+          .ok_or_else(|| format!("events[{i}]: text events need a non-empty text"))?;
+        out.push((delay, AlloyEvent::TextInput { text: text.to_string() }));
+      }
+      _ => return Err(format!("events[{i}]: type must be key, pointer, wheel or text")),
+    }
+    total += delay + hold;
+    if total > INPUT_TOTAL_MAX_MS {
+      return Err(format!("Sequence too long: delays and holds total over {INPUT_TOTAL_MAX_MS} ms"));
+    }
+  }
+  Ok(out)
 }
 
 /// GPU-side counters read live from the alloy context at query time (never

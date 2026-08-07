@@ -338,6 +338,19 @@ its tools over guessing at runtime state:
   snapshot, step, snapshot again to see precisely what changed. ALWAYS set
   the scale back to 1 when done - a paused client looks wedged to the human
   watching - though reload/load also reset it
+- send_input: synthetic pointer/key/wheel/text events through the REAL
+  input pipeline (hit testing, focus, bubbling) - the way to verify an
+  interaction actually works, where call_debug would bypass it. A click is
+  one call ({type: "pointer", action: "tap", x, y} - logical points, the
+  same space get_render_tree reports); a key hold is {type: "key", action:
+  "tap", key: "w", holdMs: 500}; text needs the field focused first (tap
+  it), then {type: "text", text: "go"}; drags are down + moves (delayMs
+  ~16 apiece) + up. Sequences run in order with per-event delayMs and the
+  call returns after the last event is delivered, so a following snapshot
+  sees the result. A synthetic mouse keeps hovering at its last position
+  (like a real cursor at rest); use pointerType: "touch" for gestures that
+  should end hover-free. Composes with the clock: pause, send_input,
+  step_frames, snapshot = a deterministic interaction test
 - get_gpu_resources: inventory of GPU state - textures (size, render target
   or not), vertex buffers (byteLength), pipelines (draw count, attribute
   layout, bound textures, current uniform values - the most recent writes,
@@ -380,8 +393,8 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
   user's call to make, once, in their own tooling.
 - Multiple clients: several clients may be attached (desktop window,
   phone, tablet) with different sizes, display scales, and safe areas.
-  reload pushes to all of them, but call_debug / get_snapshot / log
-  cursors are per client, and interactive state does NOT sync - a flow
+  reload pushes to all of them, but call_debug / send_input / get_snapshot
+  / log cursors are per client, and interactive state does NOT sync - a flow
   driven on one client leaves the others sitting on the initial screen,
   which reads as a crash to a human holding that device. So: when driving
   state via call_debug, send the same call to every client (or say which
@@ -404,6 +417,10 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
   sync return values only - and note a signal you just wrote flushes on a
   microtask, so returning a signal read straight after setting it returns
   the OLD value.
+- call_debug sets state directly, skipping focus, key routing, and
+  TextInput - fine for SETUP, but "the interaction works" is only shown by
+  the real pipeline: verify clicks, typing, and drags with send_input,
+  which enters events where SDL input does.
 - Key events start at the focused node and bubble to the window root; with
   nothing focused they go to the window root alone. So a debug key bound via
   `<window onKeyDown>` always fires (unless a focused component consumes the

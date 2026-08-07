@@ -115,7 +115,12 @@ function parseScale(query: Map<string, string>): number | Response | undefined {
   return scale === 1 ? undefined : scale
 }
 
-async function handleQuery(query: Map<string, string>, kind: string, extra?: Record<string, unknown>): Promise<Response> {
+async function handleQuery(
+  query: Map<string, string>,
+  kind: string,
+  extra?: Record<string, unknown>,
+  timeoutMs: number = QUERY_TIMEOUT_MS,
+): Promise<Response> {
   let target = findClient(query.get("client"))
   if ("error" in target) return target.error
   let id = nextQueryId++
@@ -123,7 +128,7 @@ async function handleQuery(query: Map<string, string>, kind: string, extra?: Rec
     pendingQueries.set(id, resolve)
   })
   target.ws.send(JSON.stringify({ type: "query", kind, id, ...extra }))
-  let msg = await Promise.race([reply, sleep(QUERY_TIMEOUT_MS)])
+  let msg = await Promise.race([reply, sleep(timeoutMs)])
   pendingQueries.delete(id)
   if (!msg)
     return Response.json(
@@ -282,6 +287,39 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (!("scale" in extra) && !("step" in extra))
         return Response.json({ error: "Clock requires ?scale=<x> or ?step=<n>" }, { status: 400 })
       return handleQuery(query, "clock", extra)
+    }
+    case "/__control__/input": {
+      // Synthetic input injection: POST {events: [...]} forwards a timed
+      // event sequence to the client, which feeds it through the real input
+      // pipeline. Shape checks only here - the runtime validates each event
+      // and rejects the whole sequence on any bad one. The query timeout
+      // stretches by the sequence's own delays, since the client replies
+      // only after the last event has been sent.
+      if (req.method !== "POST") return Response.json({ error: "Input requires POST" }, { status: 405 })
+      let body: any = null
+      try {
+        body = await req.json()
+      } catch {}
+      let events = body?.events
+      if (!Array.isArray(events) || events.length === 0)
+        return Response.json({ error: "Input requires a body {events: [...]} with at least one event" }, { status: 400 })
+      if (events.length > 200) return Response.json({ error: "Input sequences are capped at 200 events" }, { status: 400 })
+      let totalMs = 0
+      for (let e of events) {
+        if (typeof e !== "object" || e === null)
+          return Response.json({ error: "Each event must be an object" }, { status: 400 })
+        for (let f of ["delayMs", "holdMs"]) {
+          let v = e[f]
+          if (v !== undefined) {
+            if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 5000)
+              return Response.json({ error: `Event ${f} must be an integer between 0 and 5000` }, { status: 400 })
+            totalMs += v
+          }
+        }
+      }
+      if (totalMs > 30000)
+        return Response.json({ error: "Input sequence too long: delays and holds total over 30000 ms" }, { status: 400 })
+      return handleQuery(query, "input", { events }, QUERY_TIMEOUT_MS + totalMs)
     }
     case "/__control__/buffer": {
       let bufferId = parseInt(query.get("id") ?? "", 10)

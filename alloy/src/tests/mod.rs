@@ -3,6 +3,7 @@ mod fonts;
 mod gpu_graph;
 mod gpu_validate;
 mod hit;
+mod keymap;
 mod layout_cache;
 mod paint;
 mod router;

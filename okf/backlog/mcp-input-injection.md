@@ -2,7 +2,7 @@
 type: backlog-item
 title: MCP input injection
 description: Synthetic key and pointer events to clients, plus a snapshot-diff helper, so an agent can navigate and verify visuals without a human ferrying the app around.
-status: deferred
+status: done
 timestamp: 2026-07-15T00:00:00Z
 ---
 
@@ -33,7 +33,9 @@ Companion (cheap once this exists): a snapshot-diff helper - `get_snapshot`
 against the previous capture of the same node (mean/max pixel delta, coarse
 grid like doom's old "p" tool) - turns "does it still render the same after
 my change" into one call with a numeric answer instead of eyeballing two
-images.
+images. (Split out to [[snapshot-diff-helper]] at implementation time: not
+actually cheap, the CLI has no PNG codec so the runtime must retain raw
+captures to diff against.)
 
 Safety: dev-server-only surface, same trust level as `reload` (which already
 pushes arbitrary code), so no new trust boundary.
@@ -47,3 +49,41 @@ This is the missing half of the verify loop: call_debug sets signals
 directly, bypassing focus/keys/TextInput, so "verified working" never covers
 the real input pipeline where latency lives. Pairs with the tracing items in
 [[mcp-agent-loop-improvements]].
+
+## Implementation (2026-08-07)
+
+Landed as the `send_input` MCP tool, the stage-4 follow-up to
+[[mcp-verification-surface]]. Decisions and traps:
+
+- Seam: `DevFlags::input_tx`, a clone of the UI thread's batch-loop channel
+  (`lattice/src/lib.rs`, next to the bridge thread). Injected `AlloyEvent`s
+  take the ENTIRE real pipeline - batch coalescing, InputState bookkeeping
+  (hover refresh), capture forwarding, touch resampler, PointerRouter hit
+  testing and drag capture, focus + text-session activation - the same
+  top-of-pipeline entry playback mode uses (`alloy/src/playback.rs`).
+  Deliberately no frame_requested latch: real input does not latch either;
+  the app's handlers request whatever frames their reactions need.
+- Vocabulary (wire JSON, parsed in `connection.rs::parse_input_events`):
+  `key` (down/up/tap, `holdMs` on tap, modifier booleans; W3C `key` names
+  as the runtime reports them, `code` derived by `alloy::w3c_code_for_key`
+  - US-layout positions, "Unidentified" for shifted punctuation);
+  `pointer` (down/up/move/tap; pointerType mouse default or touch; button
+  0/1/2; fixed synthetic pointer id `1 << 60`); `wheel`; `text`. Per-event
+  `delayMs`. Caps: 5000 ms per delay/hold, 30 s per sequence, 200 events.
+  Whole-batch validation: any bad event rejects everything before a single
+  send. `hold_ms` from the proposal became `holdMs` (API camelCase); "tap"
+  rather than "click" because the runtime has no click event.
+- Sequences run on a spawned tokio task on the connection runtime (a hold
+  never blocks the connection loop); the reply `{delivered: N}` follows the
+  last event, and the dev server stretches its 5 s query timeout by the
+  sequence's own delays (`handleQuery` gained a per-call timeout).
+- Traps: a synthetic MOUSE pointer persists in InputState and keeps
+  hovering at its last position (real-cursor semantics; use touch for
+  hover-free gestures). Move bursts without delayMs coalesce to the newest
+  per batch. Text lands only with a focused `onTextInput` node and an
+  active session - pointer-tap the field first. Injected keys are recorded
+  by `--capture` exactly like real ones. `ScriptEvent` stays keyboard-only;
+  extending it with pointer variants is the designed growth path if
+  record/playback should share this vocabulary.
+- The snapshot-diff companion did NOT ship; split to
+  [[snapshot-diff-helper]].

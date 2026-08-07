@@ -54,8 +54,9 @@ let SAVE_TO_ARG = z
 
 // readOnly marks tools that only inspect state; it is surfaced as the
 // MCP-standard readOnlyHint annotation so agent harnesses that honor it can
-// auto-approve the inspection majority. load, reload, and call_debug mutate
-// the running app and keep the default hints (destructive, not idempotent);
+// auto-approve the inspection majority. load, reload, call_debug, and
+// send_input mutate the running app and keep the default hints (destructive,
+// not idempotent);
 // `annotations` overrides those defaults where a mutating tool is benign
 // (watch: a reversible, idempotent toggle). Every tool gets
 // openWorldHint: false - the bridge only ever talks to the local dev server.
@@ -269,6 +270,38 @@ let TOOLS: {
     },
   },
   {
+    name: "send_input",
+    description:
+      "Send synthetic input to a running app client through the real input pipeline (hit testing, focus, event bubbling) - the same path physical input takes, unlike call_debug which sets state directly, so use this to verify interactions actually work. Events run in order; each may wait delayMs (0-5000 ms) before firing, and the call returns after the last event has entered the pipeline, so a following get_snapshot sees the result. Event kinds: {type:'pointer', action:'down'|'up'|'move'|'tap', x, y} for clicks and drags - coordinates in logical points, the same space get_render_tree reports; 'tap' is down+up with an optional holdMs between; button 0 = left (default), 1 = middle, 2 = right; pointerType 'mouse' (default) keeps hovering at its last position afterwards like a real cursor, use 'touch' for gestures that should end hover-free. {type:'key', action:'down'|'up'|'tap', key} with W3C key names exactly as the runtime reports them ('w', 'ArrowLeft', 'Enter', ' '); a 'tap' with holdMs holds the key down that long, e.g. holdMs 500 = walk forward half a second in one call; modifier booleans shift/ctrl/alt/meta. {type:'text', text} enters text through the TextInput path - focus the target first with a pointer tap on it (the tap also activates the text session). {type:'wheel', x, y, deltaX, deltaY} scrolls; positive deltaY scrolls content down. Recipes: click a button = [{type:'pointer',action:'tap',x:400,y:300}]. Drag = down, then moves with delayMs 16 each, then up. Deterministic interaction test = set_time_scale 0, send_input, step_frames, get_snapshot. A down/up over empty space hits nothing, exactly like real input - check coordinates against get_render_tree when a click seems to do nothing.",
+    inputSchema: {
+      events: z
+        .array(
+          z.object({
+            type: z.enum(["key", "pointer", "wheel", "text"]),
+            action: z.enum(["down", "up", "move", "tap"]).optional(),
+            key: z.string().optional().describe("W3C key name, required for type key"),
+            text: z.string().optional().describe("Text to enter, required for type text"),
+            x: z.number().optional().describe("Logical points, required for pointer and wheel"),
+            y: z.number().optional().describe("Logical points, required for pointer and wheel"),
+            deltaX: z.number().optional(),
+            deltaY: z.number().optional(),
+            button: z.number().int().min(0).max(4).optional(),
+            pointerType: z.enum(["mouse", "touch"]).optional(),
+            delayMs: z.number().int().min(0).max(5000).optional().describe("Wait before this event"),
+            holdMs: z.number().int().min(0).max(5000).optional().describe("Tap only: time between down and up"),
+            shift: z.boolean().optional(),
+            ctrl: z.boolean().optional(),
+            alt: z.boolean().optional(),
+            meta: z.boolean().optional(),
+          }),
+        )
+        .min(1)
+        .max(200)
+        .describe("Event sequence, executed in order"),
+      client: CLIENT_ARG,
+    },
+  },
+  {
     name: "watch",
     annotations: { destructiveHint: false, idempotentHint: true },
     description:
@@ -342,6 +375,11 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       let params = new URLSearchParams({ step: String(args.n) })
       if (typeof args?.client === "number") params.set("client", String(args.client))
       return control(`/clock?${params.toString()}`, "POST")
+    }
+    case "send_input": {
+      if (!Array.isArray(args?.events) || args.events.length === 0)
+        return { ok: false, message: "send_input requires a non-empty events array" }
+      return control(`/input${clientParam(args)}`, "POST", { events: args.events })
     }
     case "get_gpu_resources":
       return control(`/gpu${clientParam(args)}`)

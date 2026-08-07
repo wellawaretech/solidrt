@@ -1,3 +1,5 @@
+#[cfg(feature = "go")]
+mod input;
 mod resample;
 mod storage;
 #[cfg(feature = "go")]
