@@ -10,7 +10,8 @@
 declare function btoa(data: string): string
 /**
  * Base64-decode to a binary string: each decoded byte becomes one char code
- * (read the bytes back with `charCodeAt`). ASCII whitespace in the input is
- * ignored; anything else that is not valid base64 throws.
+ * (read the bytes back with `charCodeAt`). Forgiving per WHATWG: ASCII
+ * whitespace is ignored and missing `=` padding is tolerated; anything else
+ * that is not valid base64 throws.
  */
 declare function atob(data: string): string

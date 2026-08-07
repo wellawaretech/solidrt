@@ -3,7 +3,6 @@
 // WebSocket client. Installed as globals. The Fetch types are reused by the
 // `flux:http` server in the sibling `modules` layer.
 
-pub mod base64;
 pub mod body;
 pub mod console;
 pub mod fetch;

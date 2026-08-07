@@ -109,13 +109,15 @@ Arguments are joined by spaces. Strings print as-is, Error objects print as
 ### performance
 
 ```js
-let ms = performance.now()  // ms since a monotonic origin
+let ms = performance.now()      // ms since a monotonic origin
+let t0 = performance.timeOrigin // wall-clock ms when the runtime started
 ```
 
 Headless: ms since process start. In a GUI runtime: the paced frame
 timeline (the same clock the frame timestamps and timers march on), so it
 freezes with the runtime clock; `Date.now()` is the wall-clock escape
-hatch.
+hatch. Because `now()` is paced, `timeOrigin + now()` is not the current
+wall-clock time.
 
 ### TextEncoder / TextDecoder
 
@@ -127,8 +129,9 @@ let str = new TextDecoder().decode(bytes)
 ### atob / btoa
 
 Base64 over binary strings (each char code is one raw byte, no UTF-8 step).
-`btoa` throws on a code point above 255; `atob` ignores ASCII whitespace and
-throws on anything else that is not valid base64.
+`btoa` throws on a code point above 255. `atob` is forgiving per WHATWG:
+ASCII whitespace is ignored and missing `=` padding is tolerated; anything
+else that is not valid base64 throws.
 
 ```js
 let encoded = btoa("\x00\xff")   // "AP8="

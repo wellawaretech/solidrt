@@ -154,7 +154,6 @@ pub(crate) async fn init_context(
       standards::time::init(&ctx);
       standards::fetch::init_fetch(&ctx);
       standards::console::init_console(&ctx);
-      standards::base64::init_base64(&ctx);
       modules::events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");

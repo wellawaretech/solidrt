@@ -33,7 +33,6 @@ gui = ["dep:alloy", "dep:taffy"]
 
 [dependencies]
 forge = { workspace = true }
-base64 = "0.22.1"
 alloy = { workspace = true, optional = true }
 # Render-tree layout types named by the gui tree/properties bindings. Must match
 # the version alloy + lattice pin (0.12.1) so the taffy `Style` type unifies

@@ -1,6 +1,6 @@
 use rquickjs::{
-  function::{MutFn, Opt, This},
-  Ctx, Function, JsLifetime, Object, Persistent, Value,
+  function::{MutFn, Opt},
+  Ctx, Exception, Function, JsLifetime, Object, Persistent, Value,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
@@ -246,16 +246,24 @@ impl Timers {
   }
 }
 
-// Schedule a callback as a microtask. An already-resolved promise's `then`
-// reaction runs on the job (microtask) queue, which is the timing we want. The
-// callback is wrapped so a throw is reported as an uncaught error, matching the
-// behavior of setTimeout/setInterval rather than being swallowed into an
-// unhandled promise rejection.
+// The engine's native queueMicrotask, stashed in context userdata by
+// init_timers before the global is overwritten with the flux wrapper.
+// (Userdata rather than a closure capture: rquickjs callback params are
+// higher-ranked over 'js, so a captured Function can't unify with them.)
+#[derive(JsLifetime)]
+struct NativeQueueMicrotask<'js>(Function<'js>);
+
+// Schedule a callback as a microtask by delegating to the engine's native
+// queueMicrotask: one job record, no promise machinery. This is the reactive
+// scheduler's per-flush path, so the enqueue cost matters. The callback is
+// wrapped so a throw is reported as an uncaught error, matching the behavior
+// of setTimeout/setInterval rather than falling into rquickjs's raw job-error
+// fallback.
 fn schedule_microtask<'js>(cb: Function<'js>) -> rquickjs::Result<()> {
   let ctx = cb.ctx().clone();
-  let (promise, resolve, _reject) = ctx.promise()?;
-  resolve.call::<_, ()>(())?;
-
+  let Some(native) = ctx.userdata::<NativeQueueMicrotask>() else {
+    return Err(Exception::throw_message(&ctx, "queueMicrotask: timers not initialized"));
+  };
   let wrapper = Function::new(
     ctx.clone(),
     MutFn::from(move || {
@@ -264,10 +272,7 @@ fn schedule_microtask<'js>(cb: Function<'js>) -> rquickjs::Result<()> {
       }
     }),
   )?;
-
-  let then = promise.then()?;
-  then.call::<_, ()>((This(promise), wrapper))?;
-  Ok(())
+  native.0.call::<_, ()>((wrapper,))
 }
 
 // Extract a timer id from clearTimeout/clearInterval's argument. Node and the
@@ -337,6 +342,10 @@ fn init_timers(ctx: &Ctx<'_>) {
   )
   .unwrap();
 
+  // Stash the engine's native queueMicrotask before the global is overwritten
+  // below - reading it afterwards would recurse into our wrapper.
+  let native_queue: Function = globals.get("queueMicrotask").expect("engine queueMicrotask");
+  ctx.store_userdata(NativeQueueMicrotask(native_queue)).expect("store native queueMicrotask");
   let queue_microtask = Function::new(ctx.clone(), MutFn::from(|cb: Function<'_>| schedule_microtask(cb))).unwrap();
 
   globals.set("setTimeout", set_timeout).unwrap();
@@ -385,9 +394,16 @@ fn perf_now(ctx: Ctx<'_>) -> f64 {
 }
 
 fn init_performance(ctx: &Ctx<'_>) {
+  // The engine's performance object can't be patched in place (its now() is
+  // wall-clock and its properties are non-configurable), so it is replaced
+  // wholesale; timeOrigin - the wall-clock ms when the context started - is
+  // carried over from it.
+  let engine_perf: Object = ctx.globals().get("performance").expect("engine performance object");
+  let time_origin: f64 = engine_perf.get("timeOrigin").expect("engine performance.timeOrigin");
   let performance = Object::new(ctx.clone()).expect("create performance object");
   let now = Function::new(ctx.clone(), perf_now).expect("create performance.now");
   performance.set("now", now).expect("set performance.now");
+  performance.set("timeOrigin", time_origin).expect("set performance.timeOrigin");
   ctx.globals().set("performance", performance).expect("set performance global");
 }
 

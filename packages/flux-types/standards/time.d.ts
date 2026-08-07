@@ -40,4 +40,10 @@ declare let performance: {
    * wall time use Date.now().
    */
   now(): number
+  /**
+   * Wall-clock time (ms since the Unix epoch) when the runtime started. Unlike
+   * the browser, timeOrigin + now() is not the current wall-clock time: now()
+   * runs on the paced runtime timeline, which can be frozen or scaled.
+   */
+  readonly timeOrigin: number
 }

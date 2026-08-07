@@ -1159,7 +1159,6 @@ name = "flux"
 version = "0.0.0"
 dependencies = [
  "alloy",
- "base64 0.22.1",
  "bytes",
  "fastwebsockets",
  "forge",
