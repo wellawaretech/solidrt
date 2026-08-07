@@ -1,6 +1,8 @@
 // Geometry: interleaved vertex data in the one layout every scene material
 // shares - position vec3, normal vec3, uv vec2 (8 floats per vertex) - plus
-// uint16 indices. Winding is counter-clockwise seen from outside in the
+// indices, uint16 or uint32 (the generators here emit uint16; hand-built
+// geometry past 64k vertices uses a Uint32Array and the draw entry follows
+// the array type). Winding is counter-clockwise seen from outside in the
 // y-up world, which the standard camera rig (perspective() with its baked
 // y flip) presents as the engine's displayed-CCW front faces: every
 // generator here culls correctly with cull: "back". Normals ride along
@@ -14,7 +16,7 @@
 // disposeGeometry frees them when an app is done with a geometry for good.
 
 import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
-import type { BufferId, VertexAttribute } from "@solidrt/core/gpu"
+import type { BufferId, IndexFormat, VertexAttribute } from "@solidrt/core/gpu"
 import { add, cross, normalize, sub } from "./math.ts"
 import type { Vec3 } from "./math.ts"
 
@@ -28,15 +30,22 @@ export const FLOATS_PER_VERTEX = 8
 export type Geometry = {
   /** Interleaved [pos.xyz, normal.xyz, uv.xy] per vertex. */
   vertices: Float32Array
-  indices: Uint16Array
+  /** The array type picks the draw's index format: Uint32Array past 64k
+   * vertices. */
+  indices: Uint16Array | Uint32Array
   /** Debug name for the lazily-created GPU buffers. */
   label?: string
   _buffer?: BufferId
   _index?: BufferId
 }
 
-/** The geometry's GPU buffers, created on first use and cached on it. */
-export function geometryBuffers(geometry: Geometry): { buffer: BufferId; index: BufferId } {
+/** The geometry's GPU buffers, created on first use and cached on it,
+ * plus the index format the draw entry must bind them with. */
+export function geometryBuffers(geometry: Geometry): {
+  buffer: BufferId
+  index: BufferId
+  indexFormat: IndexFormat
+} {
   let buffer = geometry._buffer
   let index = geometry._index
   if (buffer === undefined || index === undefined) {
@@ -51,7 +60,7 @@ export function geometryBuffers(geometry: Geometry): { buffer: BufferId; index: 
     geometry._buffer = buffer
     geometry._index = index
   }
-  return { buffer, index }
+  return { buffer, index, indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16" }
 }
 
 /**
@@ -64,6 +73,26 @@ export function disposeGeometry(geometry: Geometry): void {
   if (geometry._index !== undefined) destroyBuffer(geometry._index)
   geometry._buffer = undefined
   geometry._index = undefined
+}
+
+// Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two
+// CCW triangles per cell, split across the row0col0-row1col1 diagonal -
+// the one quad pattern every grid generator here shares (rows run along
+// the surface, columns around, same handedness everywhere). A collapsed
+// first/last vertex row (sphere pole, cone apex) skips its zero-area
+// triangle per cell.
+function gridIndices(cellRows: number, cellCols: number, skipFirst = false, skipLast = false): number[] {
+  let cols = cellCols + 1
+  let out: number[] = []
+  for (let r = 0; r < cellRows; r++) {
+    for (let c = 0; c < cellCols; c++) {
+      let r0 = r * cols + c
+      let r1 = r0 + cols
+      if (!skipFirst || r > 0) out.push(r0 + 1, r0, r1 + 1)
+      if (!skipLast || r < cellRows - 1) out.push(r0, r1, r1 + 1)
+    }
+  }
+  return out
 }
 
 /** An axis-aligned box centered on the origin: 24 vertices, 36 indices. */
@@ -174,30 +203,165 @@ export function torusKnot(
     }
   }
 
-  let indices = new Uint16Array(tubularSegments * radialSegments * 6)
-  let n = 0
-  for (let i = 0; i < tubularSegments; i++) {
-    for (let j = 0; j < radialSegments; j++) {
-      let a = i * cols + j
-      let b = (i + 1) * cols + j
-      let c = (i + 1) * cols + j + 1
-      let d = i * cols + j + 1
-      indices[n++] = a
-      indices[n++] = b
-      indices[n++] = c
-      indices[n++] = a
-      indices[n++] = c
-      indices[n++] = d
-    }
-  }
+  let indices = new Uint16Array(gridIndices(tubularSegments, radialSegments))
 
   return { vertices, indices, label }
+}
+
+/**
+ * A capped cylinder on the y axis, centered on the origin. Different top
+ * and bottom radii make it a truncated cone (`cone()` is the zero-top
+ * case); side normals tilt with the taper. Side UVs: u around the
+ * circumference, v 0 at the top to 1 at the bottom; caps get a planar
+ * disc map. A zero radius skips that cap and the degenerate side
+ * triangles at the apex.
+ */
+export function cylinder(
+  radiusTop = 0.5,
+  radiusBottom = 0.5,
+  height = 1,
+  radialSegments = 24,
+  label?: string,
+): Geometry {
+  let h = height / 2
+  let cols = radialSegments + 1
+  let verts: number[] = []
+  // Side normal: perpendicular to the slant line in the (radial, y) plane.
+  let slant = Math.hypot(height, radiusBottom - radiusTop) || 1
+  let nr = height / slant
+  let ny = (radiusBottom - radiusTop) / slant
+  let rows = [
+    { r: radiusTop, y: h, v: 0 },
+    { r: radiusBottom, y: -h, v: 1 },
+  ]
+  for (let row of rows) {
+    for (let ix = 0; ix < cols; ix++) {
+      let u = ix / radialSegments
+      let phi = u * Math.PI * 2
+      let dx = -Math.cos(phi)
+      let dz = Math.sin(phi)
+      verts.push(row.r * dx, row.y, row.r * dz, nr * dx, ny, nr * dz, u, row.v)
+    }
+  }
+  let indices = gridIndices(1, radialSegments, radiusTop <= 0, radiusBottom <= 0)
+  // Caps fan around a center vertex; the planar UV map has no seam, so the
+  // ring wraps with modulo instead of duplicating a column.
+  let cap = (r: number, y: number, up: number) => {
+    let base = verts.length / FLOATS_PER_VERTEX
+    verts.push(0, y, 0, 0, up, 0, 0.5, 0.5)
+    for (let i = 0; i < radialSegments; i++) {
+      let phi = (i / radialSegments) * Math.PI * 2
+      let x = -Math.cos(phi) * r
+      let z = Math.sin(phi) * r
+      verts.push(x, y, z, 0, up, 0, 0.5 + x / (2 * r), 0.5 + (up > 0 ? z : -z) / (2 * r))
+    }
+    for (let i = 0; i < radialSegments; i++) {
+      let j = (i + 1) % radialSegments
+      if (up > 0) indices.push(base, base + 1 + i, base + 1 + j)
+      else indices.push(base, base + 1 + j, base + 1 + i)
+    }
+  }
+  if (radiusTop > 0) cap(radiusTop, h, 1)
+  if (radiusBottom > 0) cap(radiusBottom, -h, -1)
+  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+}
+
+/** A capped cone on the y axis, centered on the origin: `cylinder()` with
+ * a zero top radius (each apex vertex carries its column's side normal, so
+ * the surface shades smoothly around). */
+export function cone(radius = 0.5, height = 1, radialSegments = 24, label?: string): Geometry {
+  return cylinder(0, radius, height, radialSegments, label)
+}
+
+/**
+ * A torus lying flat, centered on the origin: the ring lies in the XZ
+ * plane with the hole on the y axis - the y-up orientation torusKnot also
+ * uses (Three's equivalent stands in XY). Signature order is Three's:
+ * radialSegments subdivides the tube cross-section, tubularSegments the
+ * ring. UVs: u 0..1 around the ring, v 0..1 around the tube, seam
+ * row/column duplicated like torusKnot.
+ */
+export function torus(
+  radius = 0.5,
+  tube = 0.2,
+  radialSegments = 12,
+  tubularSegments = 32,
+  label?: string,
+): Geometry {
+  let rows = tubularSegments + 1
+  let cols = radialSegments + 1
+  let vertices = new Float32Array(rows * cols * FLOATS_PER_VERTEX)
+  let at = 0
+  for (let i = 0; i < rows; i++) {
+    let phi = (i / tubularSegments) * Math.PI * 2
+    let dx = -Math.cos(phi)
+    let dz = Math.sin(phi)
+    for (let j = 0; j < cols; j++) {
+      let psi = (j / radialSegments) * Math.PI * 2
+      let cp = Math.cos(psi)
+      let sp = Math.sin(psi)
+      let r = radius + tube * cp
+      vertices[at] = r * dx
+      vertices[at + 1] = tube * sp
+      vertices[at + 2] = r * dz
+      vertices[at + 3] = cp * dx
+      vertices[at + 4] = sp
+      vertices[at + 5] = cp * dz
+      vertices[at + 6] = i / tubularSegments
+      vertices[at + 7] = j / radialSegments
+      at += FLOATS_PER_VERTEX
+    }
+  }
+  let indices = new Uint16Array(gridIndices(tubularSegments, radialSegments))
+  return { vertices, indices, label }
+}
+
+/**
+ * A disc in the XY plane facing +z, centered on the origin (rotate flat
+ * like plane()). UVs are the planar map of the disc inscribed in the unit
+ * square.
+ */
+export function circle(radius = 0.5, segments = 32, label?: string): Geometry {
+  let verts: number[] = [0, 0, 0, 0, 0, 1, 0.5, 0.5]
+  let indices: number[] = []
+  for (let i = 0; i < segments; i++) {
+    let a = (i / segments) * Math.PI * 2
+    let c = Math.cos(a)
+    let s = Math.sin(a)
+    verts.push(radius * c, radius * s, 0, 0, 0, 1, 0.5 + c * 0.5, 0.5 - s * 0.5)
+  }
+  for (let i = 0; i < segments; i++) {
+    indices.push(0, 1 + i, 1 + ((i + 1) % segments))
+  }
+  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+}
+
+/**
+ * A flat annulus in the XY plane facing +z, centered on the origin. UVs
+ * are the planar map of the OUTER disc, so a ring textures like the
+ * matching circle() with the middle cut out.
+ */
+export function ring(innerRadius = 0.25, outerRadius = 0.5, segments = 32, label?: string): Geometry {
+  let verts: number[] = []
+  let indices: number[] = []
+  for (let i = 0; i < segments; i++) {
+    let a = (i / segments) * Math.PI * 2
+    let c = Math.cos(a)
+    let s = Math.sin(a)
+    for (let r of [innerRadius, outerRadius]) {
+      verts.push(r * c, r * s, 0, 0, 0, 1, 0.5 + (r * c) / (2 * outerRadius), 0.5 - (r * s) / (2 * outerRadius))
+    }
+  }
+  for (let i = 0; i < segments; i++) {
+    let j = (i + 1) % segments
+    indices.push(i * 2, i * 2 + 1, j * 2 + 1, i * 2, j * 2 + 1, j * 2)
+  }
+  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
 }
 
 /** A UV sphere centered on the origin (poles on the y axis). */
 export function sphere(radius = 0.5, widthSegments = 24, heightSegments = 16, label?: string): Geometry {
   let verts: number[] = []
-  let indices: number[] = []
   for (let iy = 0; iy <= heightSegments; iy++) {
     let v = iy / heightSegments
     let theta = v * Math.PI
@@ -212,16 +376,7 @@ export function sphere(radius = 0.5, widthSegments = 24, heightSegments = 16, la
       verts.push(radius * nx, radius * ny, radius * nz, nx, ny, nz, u, v)
     }
   }
-  let cols = widthSegments + 1
-  for (let iy = 0; iy < heightSegments; iy++) {
-    for (let ix = 0; ix < widthSegments; ix++) {
-      let a = iy * cols + ix + 1
-      let b = iy * cols + ix
-      let c = (iy + 1) * cols + ix
-      let d = (iy + 1) * cols + ix + 1
-      if (iy !== 0) indices.push(a, b, d)
-      if (iy !== heightSegments - 1) indices.push(b, c, d)
-    }
-  }
+  // Both pole rows are collapsed to the pole point.
+  let indices = gridIndices(heightSegments, widthSegments, true, true)
   return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
 }

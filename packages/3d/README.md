@@ -31,12 +31,14 @@ mesh costs one uniform write.
 
 There is also an imperative layer underneath (`createScene`, `createMesh`,
 `setTransform`, ...) usable without components, plus a small math module
-(`@solidrt/3d/math`: column-major mat4, perspective, lookAt).
+(`@solidrt/3d/math`: column-major mat4, perspective, lookAt). For HUD
+overlays, `scene.project(point)` maps a world point to scene pixels.
 
 v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
-GLSL as a first-class material), box/plane/sphere geometry, one
-perspective camera with an orbit control (`createOrbitCamera`: drag,
-zoom, auto-orbit). Lights, transparency, model loading and picking are
+GLSL as a first-class material), geometry generators (box, plane, circle,
+ring, sphere, cylinder, cone, torus, torus knot), one perspective camera
+with an orbit control (`createOrbitCamera`: drag, zoom, auto-orbit).
+Lights, transparency, model loading and picking are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
 usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:
 [examples/](examples/).

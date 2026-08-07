@@ -23,9 +23,12 @@ blendMode and pointer events like any element. Design rationale:
   own `onFrame` writing a signal (declarative) or `setTransform` on a
   `ref`-grabbed node (the frame-rate escape hatch - signals carry
   structure, per-frame motion goes straight to the scene).
-- One vertex layout everywhere: `aPos` vec3 + `aNormal` vec3 + `aUV` vec2,
-  uint16-indexed. Geometry GPU buffers are lazy, shared, and app-lifetime
-  (owner-scoped free would break sharing); `disposeGeometry` frees them.
+- One vertex layout everywhere: `aPos` vec3 + `aNormal` vec3 + `aUV` vec2.
+  Indices are uint16 or uint32 - the `Geometry.indices` array type picks
+  the draw's index format, so hand-built geometry past 64k vertices just
+  uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
+  lazy, shared, and app-lifetime (owner-scoped free would break sharing);
+  `disposeGeometry` frees them.
 - Materials dedupe hard: one program + one pipeline per material CLASS
   (unlit color, unlit map), `depth: true` + `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
@@ -50,10 +53,22 @@ write. `orbiting()` is reactive (HUD-safe); the pose is plain state via
 target only; fov/near/far stay on scene.setCamera. In a component tree,
 reach the scene via `<Scene ref>` or useScene().
 
-Geometry: `box(w?, h?, d?)`, `plane(w?, h?)` (XY, faces +z - rotate
-`[-Math.PI/2, 0, 0]` for a floor), `sphere(radius?, wSeg?, hSeg?)`,
-`torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)` (standing
-y-up, unlike Three's z-up).
+Overlay projection: `scene.project(point)` maps a world point to scene
+pixels (top-left origin, y down - the output texture's own space; `w` is
+clip-space w, the camera-forward distance) and returns null for a point
+at or behind the camera plane. It reflects a pending `setCamera`
+immediately, so set-then-project in one tick is exact. `scene.viewProj(out?)`
+copies the view-projection matrix for batch work. Never rebuild the
+camera matrices by hand for a HUD.
+
+Geometry: `box(w?, h?, d?)`; `plane(w?, h?)`, `circle(radius?, seg?)` and
+`ring(inner?, outer?, seg?)` (XY, facing +z - rotate `[-Math.PI/2, 0, 0]`
+for a floor); `sphere(radius?, wSeg?, hSeg?)`;
+`cylinder(rTop?, rBottom?, height?, radialSeg?)` (y axis, capped; unequal
+radii taper it) and `cone(radius?, height?, radialSeg?)`;
+`torus(radius?, tube?, radialSeg?, tubularSeg?)` (lying flat, hole on the
+y axis) and `torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)`
+(standing y-up) - both oriented for the y-up world, unlike Three's z-up.
 Materials:
 
 - `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied

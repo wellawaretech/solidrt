@@ -44,7 +44,16 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   `multiply`), Vec3 ops, zero per-frame allocation.
 - **Geometry**: `box`, `plane`, `sphere`, `torusKnot`; shared 8-float
   layout (aPos/aNormal/aUV), uint16 indices, lazy shared app-lifetime GPU
-  buffers, `disposeGeometry`.
+  buffers, `disposeGeometry`. Breadth added 2026-08-07 (demand-driven,
+  item 10's cheap half): `cylinder` (tapered = truncated cone), `cone`,
+  `torus`, `circle`, `ring`; same day the 64k-vertex ceiling fell -
+  `Geometry.indices` may be a Uint32Array and the draw entry follows the
+  array type (the engine took uint32 all along; the cap was library-side).
+- **Overlay projection** (2026-08-07): `scene.project(point)` - world
+  point to scene pixels (top-left origin; `w` = camera-forward distance,
+  null behind the camera) - plus a `scene.viewProj(out?)` copy getter.
+  The forward half of picking (item 4); HUD overlays stop rebuilding the
+  camera matrices by hand.
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -87,7 +96,9 @@ append at the list end.
    deliberately deferred past v1). Raycast against bounding volumes,
    driven from the `<texture>` element's pointer events (localX/localY
    arrive with ancestor transforms undone). Three's Raycaster equivalent,
-   and the interaction half of item 3.
+   and the interaction half of item 3. The forward direction landed
+   2026-08-07 (`scene.project`, see landed); what remains is the inverse:
+   pixel to ray to hit.
 5. **Lights and lit materials (lambert/phong).** Engine:
    [gpu-uniform-arrays](gpu-uniform-arrays.md) [open] - light lists
    without baking a cap into shader source (the agreed answer; the
@@ -112,9 +123,11 @@ append at the list end.
 9. **MSAA on pipeline targets.** Engine:
    [gpu-target-antialiasing](gpu-target-antialiasing.md) [open].
    Silhouette jaggies are the dominant artifact on filled geometry.
-10. **Geometry breadth and the vertex-layout ceiling.** Library. More
-    primitives (cylinder, cone, torus, circle, capsule, lathe/extrude)
-    are cheap and demand-driven. The real item is the fixed 8-float
+10. **Geometry breadth and the vertex-layout ceiling.** Library. The
+    cheap primitives landed 2026-08-07 (cylinder, cone, torus, circle,
+    ring - see landed); still demand-gated: capsule, and the profile
+    tier (lathe/extrude with bevels, 2D profile helpers, triangulation).
+    The real item is the fixed 8-float
     layout - vertex colors, tangents and skin weights all need layout
     work; the recorded direction is a small set of named layouts, not an
     open BufferGeometry-style model.

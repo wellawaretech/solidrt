@@ -17,8 +17,8 @@
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidjs/signals"
-import { compose, lookAt, mat4, multiply, perspective } from "./math.ts"
-import type { Mat4, Vec3 } from "./math.ts"
+import { compose, copy, lookAt, mat4, multiply, perspective, transformPoint } from "./math.ts"
+import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
@@ -91,6 +91,18 @@ export type Scene = {
   /** Partial camera update; absent keys keep their current value. */
   setCamera(update: CameraUpdate): void
   setSize(width: number, height: number): void
+  /**
+   * Project a world point to scene pixels: origin top-left, y down - the
+   * output texture's own coordinate space, ready for overlay layout (HUD
+   * markers, labels). `w` is the clip-space w, the point's camera-forward
+   * distance (useful for depth-ordering or distance-scaling markers).
+   * Returns null for a point at or behind the camera plane - such a point
+   * has no place on screen. Reflects a pending setCamera immediately.
+   */
+  project(point: Vec3): { x: number; y: number; w: number } | null
+  /** The camera's view-projection matrix, copied into `out` (or a fresh
+   * mat4). The batch escape hatch; for single points use project(). */
+  viewProj(out?: Mat4): Mat4
   /** Destroy the target (entries die with it). Idempotent. Geometry
    * buffers and material pipelines are shared and survive - they are
    * app-lifetime (see geometry.ts / material.ts). */
@@ -276,22 +288,34 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let target: Vec3 = [0, 0, 0]
   let up: Vec3 = [0, 1, 0]
   let cameraDirty = true
+  let cameraPending = false
   let cameraSynced = false
   let proj = mat4()
   let view = mat4()
   let viewProj = mat4()
+  let clip: Vec4 = [0, 0, 0, 0]
+
+  // Matrix recompute, split from sync so project()/viewProj() see a fresh
+  // matrix right after setCamera, before the microtask runs. cameraPending
+  // keeps the GPU write owed to the next sync.
+  let ensureCamera = () => {
+    if (!cameraDirty) return
+    cameraDirty = false
+    cameraPending = true
+    perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
+    lookAt(view, eye, target, up)
+    multiply(viewProj, proj, view)
+  }
 
   let sync = () => {
     scheduled = false
     if (disposed) return
-    if (cameraDirty) {
+    ensureCamera()
+    if (cameraPending) {
       // The camera is target state: one shared write, whatever the scene
       // holds. Entries are untouched - uModel is camera-independent.
-      cameraDirty = false
+      cameraPending = false
       cameraSynced = true
-      perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
-      lookAt(view, eye, target, up)
-      multiply(viewProj, proj, view)
       setTargetParams(texture, { uViewProj: viewProj })
     }
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
@@ -344,7 +368,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         {
           buffer: bufs.buffer,
           indexBuffer: bufs.index,
-          indexFormat: "uint16",
+          indexFormat: bufs.indexFormat,
           textures: mesh.material.textures,
         },
       )
@@ -391,6 +415,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetSize(texture, w, h)
       cameraDirty = true
       hooks._schedule()
+    },
+    project(point) {
+      ensureCamera()
+      transformPoint(clip, viewProj, point)
+      let w = clip[3]
+      if (w < 1e-6) return null
+      // perspective() bakes the y-down clip flip, so NDC maps straight to
+      // top-left-origin pixels with no negation here.
+      return { x: ((clip[0] / w) * 0.5 + 0.5) * width, y: ((clip[1] / w) * 0.5 + 0.5) * height, w }
+    },
+    viewProj(out) {
+      ensureCamera()
+      return copy(out ?? mat4(), viewProj)
     },
     dispose() {
       if (disposed) return

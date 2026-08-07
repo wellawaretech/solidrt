@@ -10,6 +10,7 @@
 // `number` under noUncheckedIndexedAccess.
 
 export type Vec3 = [number, number, number]
+export type Vec4 = [number, number, number, number]
 // prettier-ignore
 export type Mat4 = [
   number, number, number, number,
@@ -36,6 +37,20 @@ export function copy(out: Mat4, m: Mat4): Mat4 {
   out[4] = m[4]; out[5] = m[5]; out[6] = m[6]; out[7] = m[7]
   out[8] = m[8]; out[9] = m[9]; out[10] = m[10]; out[11] = m[11]
   out[12] = m[12]; out[13] = m[13]; out[14] = m[14]; out[15] = m[15]
+  return out
+}
+
+/**
+ * Transform a point by m with w = 1, keeping the homogeneous result: the
+ * clip-space building block (scene.project, picking). The caller owns the
+ * perspective divide and the w <= 0 behind-the-camera test.
+ */
+export function transformPoint(out: Vec4, m: Mat4, p: Vec3): Vec4 {
+  let x = p[0], y = p[1], z = p[2]
+  out[0] = m[0] * x + m[4] * y + m[8] * z + m[12]
+  out[1] = m[1] * x + m[5] * y + m[9] * z + m[13]
+  out[2] = m[2] * x + m[6] * y + m[10] * z + m[14]
+  out[3] = m[3] * x + m[7] * y + m[11] * z + m[15]
   return out
 }
 
