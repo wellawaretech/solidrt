@@ -37,6 +37,61 @@ Authoritative references ship inside the installed packages - read them:
 @./node_modules/@solidrt/core/AGENTS.md
 @./node_modules/@solidrt/cli/AGENTS.md
 
+## What you paint with (there is no CSS layer)
+
+Layout and props are half the model. There is no stylesheet: no filters, no
+box-shadow, no keyframes, no canvas. The visual range a web app gets from CSS
+comes from the tiers below instead, and reaching past tier 1 is ordinary
+app-building here, not optimization - a screen built only from view
+backgrounds and text is using a fraction of the runtime. Pick the tier the
+CONTENT calls for, not the one that looks safest.
+
+1. Laid-out elements - `<view>`/`<text>`, with `<rect>` (or a filling
+   `<d-rect>` child) for background, border, radius. The structure of a
+   screen, not its finish.
+2. Vector art, detached from layout - `d-path`/`d-rect`/`d-oval`/`d-line`,
+   whose `color` takes a gradient (createLinearGradient /
+   createRadialGradient) and which honour `blendMode`, plus `parseSvg` to
+   draw a whole SVG document as one subtree. Free-form shapes, decoration,
+   diagrams, charts, anything positioned rather than flowed. Examples:
+   parse-svg, detached-positioning, text-paint-styling.
+3. GPU textures - `createShaderTexture` puts a fragment shader in a
+   `<texture>` (moving gradients, noise, glow, dissolves, a background that
+   is alive), `createPipelineTexture` draws geometry you generate yourself
+   (particles, point clouds, splats), and the `shader` prop post-processes
+   content that already exists: on a `<view>` it grades, warps or dissolves
+   that subtree, on `<window>` the whole frame. Stack `<texture>` elements
+   with `blendMode` to combine passes. Examples: gpu-shader, gpu-particles,
+   gpu-pipeline, gpu-instancing, gpu-texture-blend, view-shader,
+   window-shader.
+4. 3D scenes - add `@solidrt/3d` (not a scaffold dependency): meshes,
+   materials and a camera declared as Solid components, rendered into a
+   texture that sits in the UI tree like any other element.
+
+Tier 3 is cheaper than it looks. A shader costs one property write per frame
+no matter how complex the effect, which is why the performance notes below
+reach for it first rather than as a last resort.
+
+Web reflexes and what replaces them:
+- gradient background -> a gradient `color` on a `d-rect` (gradients are
+  paint values, usable anywhere a color is)
+- `filter: blur/grayscale/hue-rotate`, and any "make this look processed" ->
+  a `shader` on the view (requires repaintBoundary="snapshot"), or on
+  `<window>` for the whole frame
+- `box-shadow` / `text-shadow` / glow -> no shadow prop exists: draw an
+  offset `d-*` shape under the content, or a view shader with `outset` (the
+  transparent margin an effect bleeds into)
+- `backdrop-filter` -> no equivalent. A view shader sees only its own
+  subtree's pixels, never what is behind it. Frost the whole frame with a
+  window shader, or fake the layer with your own content
+- `@keyframes` / transitions -> `onFrame` writing a signal for discrete
+  motion; a `uTime` uniform when the animation is continuous and visual
+- `<canvas>` 2D -> `d-*` primitives (rebuild one `d-path` string per frame
+  rather than animating N elements)
+- `<canvas>` WebGL, three.js -> `createPipelineTexture`, or `@solidrt/3d`
+- video background, animated hero, particle field -> a shader texture; this
+  is the case the runtime is built for
+
 ## The things assistants get wrong (this is not React/DOM)
 
 1. This is SolidJS 2.0 (see CHEATSHEET.md for the reactivity/control-flow
@@ -209,6 +264,22 @@ work stops being free" below is where it does not. Rules, in order of leverage:
 5. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters.
+6. Shading pixels the app already drew is a different mechanism from rule 1's
+   generated textures, and both forms are a `shader` prop taking a linked
+   program from compileShader/linkProgram (@solidrt/core/gpu), not a
+   createShaderTexture source. On `<window>`, `shader={{ program, params }}`
+   runs the finished frame through the program as the last step before it
+   reaches the screen: the frame binds as `uniform sampler2D uSource`,
+   `iResolution` fills by name, and `previous: true` retains the last frame as
+   `uPrevious` for motion echo or frame differencing. On a `<view>` the same
+   prop shades that subtree in place and REQUIRES repaintBoundary="snapshot"
+   (without it the shader is ignored with a warning); the pass sees only the
+   subtree's own pixels - grading, warping or dissolving the panel works,
+   anything needing what is behind it does not - and is split from content
+   invalidation, so a params-only change re-runs the pass against the cached
+   snapshot instead of re-rasterizing. A window shader's output is invisible
+   to get_snapshot and every other MCP tool; `srt render` is the only way to
+   see it (Run / verify below).
 
 ### Where GPU work stops being free
 
@@ -290,7 +361,10 @@ up to the frame period, because work outside the frame call is not in them.
   iterating - `srt bundle` writes output files and reloads connected clients
 - bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
   render to PNG frames (proves it renders; see the cli AGENTS.md for where the
-  frames land)
+  frames land). It is also the ONLY way to see the output of a window shader
+  (the `shader` prop on `<window>`): that pass runs on the finished frame on
+  its way to the screen, past the point every other capture reads, so `render`
+  frames are the only programmatic view of what it produces
 
 ## MCP: inspect the running app
 
@@ -324,7 +398,12 @@ its tools over guessing at runtime state:
 - get_snapshot: PNG capture of any render-tree node's pixels (get node ids
   from get_render_tree; the window node captures everything). A subtree
   capture renders with NO ancestor paint: pixels the subtree does not draw
-  come back transparent, not the background behind the node. Crop with
+  come back transparent, not the background behind the node. Captures
+  re-rasterize the tree offscreen, so they are also PRE window shader: an app
+  with a `shader` on its `<window>` snapshots as its unshaded content, window
+  node included, and no MCP tool reads the shaded result (its layer is
+  runtime-owned, so get_texture has no id for it; get_gpu_resources reports
+  only that the pass exists). Use `srt render` for that one. Crop with
   x/y/width/height (captured-image pixels) and magnify with `scale` (1-8,
   nearest-neighbour) - a tight crop at 4-8x is how small geometry gets
   verified. Pass `save_to` on get_snapshot or get_texture to also write the
