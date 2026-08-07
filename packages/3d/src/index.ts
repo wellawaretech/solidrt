@@ -17,5 +17,5 @@ export { Group, Mesh, PerspectiveCamera, Scene, useScene } from "./components.ts
 export type { MeshProps, PerspectiveCameraProps, SceneProps, TransformProps } from "./components.tsx"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
-export { compose, copy, identity, lookAt, mat4, multiply, perspective } from "./math.ts"
+export { compose, copy, identity, lookAt, mat4, multiply, normalMatrix, perspective } from "./math.ts"
 export type { Mat4, Vec2, Vec3 } from "./math.ts"

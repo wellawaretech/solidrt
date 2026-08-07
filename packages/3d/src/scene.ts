@@ -1,9 +1,12 @@
 // The retained scene: plain objects and dirty flags, no signals - the hot
 // path (a moved node) is flat imperative code, and reactivity stays at the
 // component boundary (components.tsx). A scene compiles to one draw
-// target: every mesh is one draw entry whose uModel uniform this module
-// keeps in step with the tree, and the camera is the target's SHARED
-// uViewProj - one setTargetParams per camera move, not one write per mesh.
+// target: every mesh is one draw entry whose uModel (and, for materials
+// declaring it, uNormal) this module keeps in step with the tree, and the
+// camera is the target's SHARED uViewProj + uCamPos - one setTargetParams
+// per camera move, not one write per mesh. uCamPos rides unconditionally:
+// shared params tolerate zero coverage (stored and skipped until a
+// declaring material arrives), so no bookkeeping tracks who reads it.
 // Mutations batch to a microtask, so a burst of writes (a whole subtree
 // moved, many effects in one flush) syncs once.
 //
@@ -17,7 +20,7 @@
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidjs/signals"
-import { compose, copy, lookAt, mat4, multiply, perspective, transformPoint } from "./math.ts"
+import { compose, copy, lookAt, mat4, multiply, normalMatrix, perspective, transformPoint } from "./math.ts"
 import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -25,12 +28,15 @@ import type { Material } from "./material.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
+// Param values are snapshotted at the FFI boundary (addDraw shares
+// IDENTITY the same way), so one scratch serves every uNormal write.
+let normalScratch = mat4()
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
-// the app-facing surface. uViewProj is written through the shared channel
-// only when the camera changes - attach never re-seeds it, because target
-// state survives entry churn.
+// the app-facing surface. The camera (uViewProj + uCamPos) is written
+// through the shared channel only when it changes - attach never re-seeds
+// it, because target state survives entry churn.
 type SceneHooks = {
   _schedule(): void
   _attach(mesh: Mesh): void
@@ -250,7 +256,7 @@ function rebuildEntry(mesh: Mesh): void {
 
 /**
  * Write per-mesh uniforms - the channel for a custom material's app-driven
- * values (a camera position, a time, a per-object tint). Names must be
+ * values (a time, a per-object tint). Names must be
  * declared and used by the mesh's material shaders (unknown names throw at
  * the call site, the engine's validation contract). Values persist on the
  * mesh: they survive geometry/material entry rebuilds and re-apply then.
@@ -289,7 +295,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let up: Vec3 = [0, 1, 0]
   let cameraDirty = true
   let cameraPending = false
-  let cameraSynced = false
   let proj = mat4()
   let view = mat4()
   let viewProj = mat4()
@@ -313,10 +318,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     ensureCamera()
     if (cameraPending) {
       // The camera is target state: one shared write, whatever the scene
-      // holds. Entries are untouched - uModel is camera-independent.
+      // holds. Entries are untouched - uModel is camera-independent, and
+      // uCamPos is stored even when no current material declares it.
       cameraPending = false
-      cameraSynced = true
-      setTargetParams(texture, { uViewProj: viewProj })
+      setTargetParams(texture, { uViewProj: viewProj, uCamPos: eye })
     }
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
       let changed = parentChanged
@@ -339,7 +344,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             if (shown) mesh._fresh = true
           }
           if (!mesh._hidden && (changed || mesh._fresh)) {
-            setDrawParams(texture, mesh._entry, { uModel: mesh._world })
+            if (mesh.material.normalMatrix) {
+              setDrawParams(texture, mesh._entry, {
+                uModel: mesh._world,
+                uNormal: normalMatrix(normalScratch, mesh._world),
+              })
+            } else {
+              setDrawParams(texture, mesh._entry, { uModel: mesh._world })
+            }
             mesh._fresh = false
           } else if (changed) {
             // Moved while hidden: write the fresh matrix on unhide.
@@ -361,27 +373,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _attach(mesh) {
       if (disposed) return
       let bufs = geometryBuffers(mesh.geometry)
-      mesh._entry = addDraw(
-        texture,
-        mesh.material.pipeline(),
-        { uModel: IDENTITY, ...mesh.material.params, ...mesh._params },
-        {
-          buffer: bufs.buffer,
-          indexBuffer: bufs.index,
-          indexFormat: bufs.indexFormat,
-          textures: mesh.material.textures,
-        },
-      )
+      // The uNormal seed keys off the material flag because entry params
+      // validate strictly - and a material declaring uNormal without using
+      // it therefore throws right here, at add().
+      let seed: ShaderParams = mesh.material.normalMatrix
+        ? { uModel: IDENTITY, uNormal: IDENTITY, ...mesh.material.params, ...mesh._params }
+        : { uModel: IDENTITY, ...mesh.material.params, ...mesh._params }
+      mesh._entry = addDraw(texture, mesh.material.pipeline(), seed, {
+        buffer: bufs.buffer,
+        indexBuffer: bufs.index,
+        indexFormat: bufs.indexFormat,
+        textures: mesh.material.textures,
+      })
       mesh._hidden = false
       mesh._fresh = true
       this._schedule()
-      // Re-issue the camera (same value, one write): a scene whose only
-      // materials lack uViewProj then throws HERE, at add(), with the
-      // engine's coverage message, instead of inside the next camera sync's
-      // microtask. Before the first sync there is no value to re-issue; the
-      // sync this attach just scheduled writes (and checks) it. Scheduled
-      // first so a throw still leaves the walk queued.
-      if (cameraSynced) setTargetParams(texture, { uViewProj: viewProj })
     },
     _detach(mesh) {
       if (mesh._entry !== null && !disposed) removeDraw(texture, mesh._entry)

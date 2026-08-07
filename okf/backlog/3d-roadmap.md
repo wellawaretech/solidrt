@@ -62,6 +62,13 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   throughout; sharp points crease, smooth-tagged points share normals;
   outputs pick uint16/uint32 indices by vertex count. Verified by
   manifold/winding/area checks, not just typecheck.
+- **Standard uniform set + exported lighting GLSL** (2026-08-07, item 2 -
+  see the ranked entry below for the contract). Engine prerequisite the
+  same day: shared target params and bindings tolerate ZERO coverage
+  (stored and skipped until a declaring entry arrives; arity still
+  validated wherever declared, single-program targets stay strict), so
+  the scene publishes uCamPos beside uViewProj whatever materials are
+  attached - pixel-asserted in `alloy/examples/draw_list.rs`.
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -87,13 +94,20 @@ append at the list end.
    matrices (changed before any app shipped against uMVP). The engine
    item's sampler half (`setTargetTextures`, shared target-level bindings)
    landed the same day - the binding channel items 14 and 15 consume.
-2. **The standard uniform set and the exported-GLSL policy.** Library
-   only, no backlog file (differentiators note, implications item 4).
-   uModel/uViewProj/normal matrix/camera position as the documented
-   contract, and lit materials composed from exported GLSL string
-   constants an app can import and recombine - so custom materials never
-   become second-class. Paired with item 1 (same contract change) and a
-   hard prerequisite of item 5.
+2. **The standard uniform set and the exported-GLSL policy.** DONE
+   2026-08-07 (differentiators note, implications item 4). The contract:
+   per-mesh `uModel` plus opt-in `uNormal` (world inverse-transpose,
+   written beside uModel for materials that declare it - correct normals
+   under non-uniform scale), shared `uViewProj` plus `uCamPos` (one
+   target write per camera move, whatever materials are attached - the
+   engine's zero-coverage relaxation, recorded in
+   [gpu-shared-draw-params](gpu-shared-draw-params.md)). Missing
+   uModel/uViewProj throws at shaderMaterial() creation.
+   `@solidrt/3d/glsl` exports `LIT_VERTEX` (pins the vWorldPos/vNormal/
+   vUv varying interface) and pure `HEMISPHERE`/`LAMBERT`/
+   `BLINN_SPECULAR`/`FRESNEL` functions - the pieces item 5's lit
+   material classes will also be built from, so custom materials never
+   become second-class.
 3. **UI as live 3D content.** Engine:
    [snapshot-boundary-texture-id](snapshot-boundary-texture-id.md) [open].
    A snapshot boundary's retained texture as an ordinary TextureId that

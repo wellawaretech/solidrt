@@ -12,7 +12,20 @@ general); `setTargetParams(target, params)` plus a positional `params`
 argument on `createDrawTarget` (the positional-params convention, matching
 `createShaderTarget`); validation is coverage-based as proposed below
 (declared by at least one current entry's pipeline, accepted as-is with no
-entries, never retroactive). `@solidrt/3d` now writes per-mesh `uModel` +
+entries, never retroactive).
+
+Contract change 2026-08-07: coverage may now be ZERO - a shared param (or
+shared binding, symmetric) that no current entry declares is stored and
+skips everywhere until a declaring entry arrives; arity (and sampler2D
+kind) stay validated wherever a name IS declared, and single-program
+targets stay strict. Rationale: the old rule made the same stored state
+legal or an error depending only on write order (a create seed / write
+before entries vs a write after), and the 3d scene's standard uniform set
+needs to publish `uCamPos` beside `uViewProj` whatever materials are
+attached. The typo guard moved up a layer: `shaderMaterial()` validates
+its vertex source at creation. Pixel-asserted in
+`alloy/examples/draw_list.rs` (stored-then-applies-later, arity-where-
+declared, strict fixed-target routing). `@solidrt/3d` now writes per-mesh `uModel` +
 target-shared `uViewProj`; the `shaderMaterial` vertex contract requires
 both. Introspection reports a draw target's shared params in the flat
 `params` field.

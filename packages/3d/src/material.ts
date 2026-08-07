@@ -45,6 +45,10 @@ export type Material = {
   params: ShaderParams
   /** Per-entry sampler bindings, when the material samples textures. */
   textures?: Record<string, TextureId>
+  /** True when the vertex stage declares `uNormal`: the scene then writes
+   * the world matrix's inverse-transpose alongside uModel for meshes using
+   * this material (set automatically by shaderMaterial). */
+  normalMatrix?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -140,13 +144,20 @@ export type ShaderMaterialOptions = {
    * mesh's world matrix, written per entry whenever the mesh moves) and
    * `uniform mat4 uViewProj` (the camera's view-projection, shared by the
    * whole scene target and written once per camera move) - transform with
-   * `uViewProj * uModel * vec4(aPos, 1.0)`. Declare any of the shared
+   * `uViewProj * uModel * vec4(aPos, 1.0)`; a source mentioning neither
+   * throws right here. The rest of the standard uniform set is opt-in by
+   * declare-and-use: `uniform mat4 uNormal` (either stage) receives the
+   * world inverse-transpose beside uModel - take `mat3(uNormal)` for
+   * normals, correct under non-uniform scale - and `uniform vec3 uCamPos`
+   * the camera's world position, shared like uViewProj (the specular /
+   * fresnel view vector: `uCamPos - worldPos`). Declare any of the shared
    * layout's `in` attributes (aPos vec3, aNormal vec3, aUV vec2);
-   * undeclared ones are skipped.
+   * undeclared ones are skipped. `@solidrt/3d/glsl` exports a standard
+   * vertex stage and lighting pieces built on exactly this contract.
    */
   vertex: string
   fragment: string
-  /** Uniform seeds beyond uModel/uViewProj; update per mesh later with
+  /** Uniform seeds beyond the standard set; update per mesh later with
    * setMeshParams. */
   params?: ShaderParams
   textures?: Record<string, TextureId>
@@ -171,9 +182,21 @@ export type ShaderMaterialOptions = {
  * and `dispose()` it if the app is done with the look for good.
  */
 export function shaderMaterial(opts: ShaderMaterialOptions): Material {
+  // The standard-set contract, checked where the mistake is made: a vertex
+  // stage that never mentions the matrices cannot place meshes, and with
+  // shared params skipping undeclared names the omission would otherwise
+  // surface as a silently untransformed render, not an error.
+  for (let name of ["uModel", "uViewProj"]) {
+    if (!new RegExp("\\b" + name + "\\b").test(opts.vertex)) {
+      throw new Error(
+        "shaderMaterial vertex stage must declare and use '" + name + "' (see the standard uniform set in AGENTS.md)",
+      )
+    }
+  }
   let program: ProgramId | undefined
   let pipeline: RenderPipelineId | undefined
   return {
+    normalMatrix: /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment),
     pipeline() {
       if (pipeline === undefined) {
         let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })

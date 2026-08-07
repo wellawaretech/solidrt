@@ -964,13 +964,15 @@ impl Context {
   /// so an entry naming the same uniform overrides the shared value (specific
   /// beats general). Shared params are target state: they survive entry
   /// add/remove/rebuild. A target legitimately mixes material classes, so a
-  /// name only some entries' programs declare is applied where declared and
-  /// skipped elsewhere (the iResolution rule); validation requires each name
-  /// to be declared settable by at least ONE current entry's program, with
-  /// the matching arity everywhere it is declared. With no entries yet there
-  /// is nothing to check against, so names are accepted as-is - and an entry
-  /// added later never re-checks them (a name its program lacks stays a skip,
-  /// not a retroactive error). The caller must request a frame.
+  /// name is applied where declared and skipped elsewhere (the iResolution
+  /// rule), down to ZERO coverage: a name no current entry declares is
+  /// stored and skips everywhere until a declaring entry arrives. That keeps
+  /// shared state independent of write order - a value seeded before any
+  /// entry exists and one written after entries attached are the same state -
+  /// and lets a scene publish a standard set (camera position beside the
+  /// view-projection) whatever materials are present. Validation is arity
+  /// where declared: a name must match the declared component count in every
+  /// entry program that declares it. The caller must request a frame.
   pub fn set_target_params(&self, target: u64, params: &[(String, ParamValue)]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
@@ -981,22 +983,9 @@ impl Context {
         self.send(RasterCmd::UpdateShaderParams { id: target, params: params.to_vec() });
         return Ok(());
       };
-      if !list.entries.is_empty() {
-        for (name, value) in params {
-          let mut declared = false;
-          for entry in list.entries.values() {
-            declared |= validate_param_if_declared(&entry.uniforms, name, value)?;
-          }
-          if !declared {
-            let mut names: Vec<&str> =
-              list.entries.values().flat_map(|e| e.uniforms.keys().map(|s| s.as_str())).collect();
-            names.sort_unstable();
-            names.dedup();
-            return Err(format!(
-              "no entry's program has an active uniform named '{name}' (active across entries: {})",
-              names.join(", ")
-            ));
-          }
+      for (name, value) in params {
+        for entry in list.entries.values() {
+          validate_param_if_declared(&entry.uniforms, name, value)?;
         }
       }
     }
@@ -1024,13 +1013,13 @@ impl Context {
   /// declares and its own bindings do not override - an entry's own binding
   /// wins, and coverage may be partial, exactly like `set_target_params`.
   /// Shared bindings are target state: entry add/remove/rebuild cannot lose
-  /// them. Validation: each name must be an active sampler2D of at least ONE
-  /// current entry's program (and a sampler2D everywhere it is declared);
-  /// with no entries yet names are accepted as-is (the create seed). Every
-  /// entry's effective input count (its own bindings plus the applicable
-  /// merged shared set) must fit the device's texture units, and a shared
-  /// edge counts for propagation and cycles even before any entry declares
-  /// its name.
+  /// them. Validation: each name must be a sampler2D everywhere it is
+  /// declared, and coverage may be ZERO exactly like `set_target_params` -
+  /// an undeclared name is stored, joins the sampler graph, and binds when
+  /// a declaring entry arrives. Every entry's effective input count (its
+  /// own bindings plus the applicable merged shared set) must fit the
+  /// device's texture units, and a shared edge counts for propagation and
+  /// cycles even before any entry declares its name.
   pub fn set_target_textures(&self, target: u64, textures: &[(String, u64)]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
@@ -1048,19 +1037,12 @@ impl Context {
         self.send(RasterCmd::UpdateShaderTextures { id: target, textures: textures.to_vec() });
         return Ok(());
       };
-      if !list.entries.is_empty() {
-        for (name, _) in textures {
-          let mut declared = false;
-          for entry in list.entries.values() {
-            if let Some(kind) = entry.uniforms.get(name) {
-              if *kind != UniformKind::Sampler2D {
-                return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
-              }
-              declared = true;
+      for (name, _) in textures {
+        for entry in list.entries.values() {
+          if let Some(kind) = entry.uniforms.get(name) {
+            if *kind != UniformKind::Sampler2D {
+              return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
             }
-          }
-          if !declared {
-            return Err(format!("no entry's program has an active sampler2D named '{name}'"));
           }
         }
       }

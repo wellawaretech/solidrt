@@ -676,12 +676,14 @@ declare module "flux:gpu" {
    * shared value (specific beats general), and they are target state: entry
    * add/remove/rebuild cannot lose them. A draw target legitimately mixes
    * material classes, so coverage may be partial: a name only some entries'
-   * programs declare is applied where declared and skipped elsewhere.
-   * Validation follows: each name must be an active settable uniform of at
-   * least ONE current entry's program (with the matching arity everywhere it
-   * is declared) - a name no entry declares throws. With no entries yet,
-   * names are accepted as-is; an entry added later whose program lacks an
-   * already-set name is never a retroactive error, the value just skips it.
+   * programs declare is applied where declared and skipped elsewhere - down
+   * to zero coverage: a name no current entry declares is stored and skips
+   * everywhere until a declaring entry arrives, so shared state does not
+   * depend on write order (a seed before entries and a write after are the
+   * same state). Validation is arity where declared: a name must match the
+   * declared component count in every entry program that declares it; an
+   * entry added later whose program lacks an already-set name is never a
+   * retroactive error, the value just skips it.
    */
   export function setTargetParams(target: TextureId, params: ShaderParams): void
   /**
@@ -702,12 +704,12 @@ declare module "flux:gpu" {
    * reads - an environment map, a shadow map, a LUT - bound once per
    * target, with the shared-params rules throughout: an entry's own binding
    * for the same name wins; a name only some entries' programs declare
-   * binds where declared and is skipped elsewhere; shared bindings are
-   * target state that entry add/remove/rebuild cannot lose. Each name must
-   * be an active sampler2D of at least ONE current entry's program (with no
-   * entries yet names are accepted as-is, and a later entry never
-   * retroactively errors), and each entry's effective inputs (its own plus
-   * the applicable shared ones) must fit the device's texture units.
+   * binds where declared and is skipped elsewhere, down to zero coverage
+   * (an undeclared name is stored, joins the sampler graph, and binds when
+   * a declaring entry arrives); shared bindings are target state that entry
+   * add/remove/rebuild cannot lose. Each name must be a sampler2D
+   * everywhere it is declared, and each entry's effective inputs (its own
+   * plus the applicable shared ones) must fit the device's texture units.
    */
   export function setTargetTextures(target: TextureId, textures: Record<string, TextureId>): void
   /**

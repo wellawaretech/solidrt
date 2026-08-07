@@ -33,6 +33,11 @@ There is also an imperative layer underneath (`createScene`, `createMesh`,
 `setTransform`, ...) usable without components, plus a small math module
 (`@solidrt/3d/math`: column-major mat4, perspective, lookAt). For HUD
 overlays, `scene.project(point)` maps a world point to scene pixels.
+Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
+shared `uViewProj`/`uCamPos`, each written once per change - and
+`@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,
+blinn, fresnel, a standard vertex stage) to compose your own lit looks
+from plain template literals.
 
 v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
 GLSL as a first-class material), geometry generators (box, plane, circle,

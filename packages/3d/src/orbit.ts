@@ -8,9 +8,10 @@
 // animation costs nothing). Only `orbiting` is a signal - slow UI state
 // that HUDs read - while the pose moves at frame rate and bypasses
 // reactivity: the package's structure-vs-motion split. update() pushes the
-// pose to the scene camera only when it actually changed, and reports
-// that, so per-frame dependents (a uCamPos uniform) can follow the camera
-// without writing every frame.
+// pose to the scene camera only when it actually changed (one setCamera:
+// the scene's own shared write carries uViewProj and uCamPos), and reports
+// that, so per-frame dependents (reprojecting HUD overlays via
+// scene.project) can follow the camera without recomputing every frame.
 
 import { createSignal } from "@solidjs/signals"
 import type { Scene } from "./scene.ts"

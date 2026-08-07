@@ -110,6 +110,30 @@ export function compose(out: Mat4, position: Vec3, rotation: Vec3, scale: Vec3):
 }
 
 /**
+ * The normal matrix for a world matrix: the inverse-transpose of its upper
+ * 3x3 (the cofactor matrix over the determinant), packed into a mat4 - the
+ * engine's settable uniform set has no mat3, so shaders take `mat3(uNormal)`.
+ * Correct under any transform including non-uniform scale, where
+ * `mat3(uModel)` would bend normals off the surface. A degenerate
+ * (zero-scale) input yields the raw cofactors instead of NaNs.
+ */
+export function normalMatrix(out: Mat4, m: Mat4): Mat4 {
+  let a = m[0], b = m[4], c = m[8]
+  let d = m[1], e = m[5], f = m[9]
+  let g = m[2], h = m[6], i = m[10]
+  let c00 = e * i - f * h
+  let c01 = f * g - d * i
+  let c02 = d * h - e * g
+  let det = a * c00 + b * c01 + c * c02
+  let s = 1 / (det || 1)
+  out[0] = c00 * s; out[1] = (c * h - b * i) * s; out[2] = (b * f - c * e) * s; out[3] = 0
+  out[4] = c01 * s; out[5] = (a * i - c * g) * s; out[6] = (c * d - a * f) * s; out[7] = 0
+  out[8] = c02 * s; out[9] = (b * g - a * h) * s; out[10] = (a * e - b * d) * s; out[11] = 0
+  out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 1
+  return out
+}
+
+/**
  * Right-handed perspective projection with the engine's y-down clip flip
  * BAKED IN (row two is negated): geometry authored y-up displays y-up, and
  * the flip this projection applies is exactly what makes displayed-CCW

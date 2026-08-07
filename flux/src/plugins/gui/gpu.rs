@@ -991,9 +991,10 @@ impl ModuleDef for GpuModule {
     // are the one pass's params, validated strictly. On a draw target they
     // are the SHARED params: values every entry reads (a camera's
     // view-projection), applied before each entry's own params - an entry
-    // naming the same uniform overrides the shared value - with each name
-    // declared by at least one entry's program (partial coverage is fine,
-    // the apply skips undeclared names).
+    // naming the same uniform overrides the shared value - and coverage may
+    // be partial down to zero (the apply skips undeclared names; a name no
+    // entry declares yet is stored for entries added later). Arity is
+    // validated wherever a name IS declared.
     let set_target_params_atx = atx.clone();
     let set_target_params_platform = platform.clone();
     let set_target_params = Function::new(

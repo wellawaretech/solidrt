@@ -12,9 +12,9 @@ blendMode and pointer events like any element. Design rationale:
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
   `setVisible` - plain objects with dirty flags, batched to a microtask,
-  one `setDrawParams` (the uModel matrix) per changed mesh and ONE
-  `setTargetParams` (the shared uViewProj) per camera change, however many
-  meshes. The component
+  one `setDrawParams` (uModel, plus uNormal for materials declaring it)
+  per changed mesh and ONE `setTargetParams` (the shared uViewProj +
+  uCamPos) per camera change, however many meshes. The component
   face (`Scene`/`Group`/`Mesh`/`PerspectiveCamera`) syncs props into that
   core over context and renders nothing itself.
 - Rendering is the runtime's. The target is `render: "auto"`: it
@@ -47,8 +47,8 @@ distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
 zoomSpeed? })` - drag-to-rotate, wheel-to-zoom, optional auto-orbit. Spread
 `orbit.handlers` onto the input-owning element, call `orbit.update(dt)`
 from your onFrame (no frame loop of its own), and use its return - true
-when the pose changed - to gate per-frame dependents like a `uCamPos`
-write. `orbiting()` is reactive (HUD-safe); the pose is plain state via
+when the pose changed - to gate per-frame dependents like reprojecting
+HUD overlays. `orbiting()` is reactive (HUD-safe); the pose is plain state via
 `pose()`/`set()` (also the debug-command shape). It drives position and
 target only; fov/near/far stay on scene.setCamera. In a component tree,
 reach the scene via `<Scene ref>` or useScene().
@@ -90,15 +90,34 @@ Materials:
   internally.
 - `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
   depthWrite?, blend?, cull?, topology?, label? })` - your own GLSL, the
-  custom-look escape hatch. The vertex stage MUST declare and use BOTH
-  `uniform mat4 uModel` (the mesh's world matrix, per entry) and
-  `uniform mat4 uViewProj` (the camera, shared target-level params) -
-  transform with `uViewProj * uModel * vec4(aPos, 1.0)`; attributes come
-  from the shared layout by name; sources without
-  `#version` get the standard pipeline preamble. App-driven uniforms
-  beyond uModel/uViewProj: seed via `params`, then write per mesh with
+  custom-look escape hatch. The STANDARD UNIFORM SET: the vertex stage
+  MUST declare and use `uniform mat4 uModel` (the mesh's world matrix,
+  per entry) and `uniform mat4 uViewProj` (the camera, shared
+  target-level params) - transform with
+  `uViewProj * uModel * vec4(aPos, 1.0)`; a source missing either throws
+  at shaderMaterial() creation. The rest is opt-in by declare-and-use:
+  `uniform vec3 uCamPos` (the camera's world position, shared and written
+  with uViewProj - the specular/fresnel view vector is
+  `normalize(uCamPos - worldPos)`) and `uniform mat4 uNormal` (the world
+  inverse-transpose, written beside uModel for this material's meshes;
+  take `mat3(uNormal)` - correct under non-uniform scale, where
+  mat3(uModel) bends normals off the surface). Attributes come from the
+  shared layout by name; sources without `#version` get the standard
+  pipeline preamble. App-driven uniforms beyond the standard set: seed
+  via `params`, then write per mesh with
   `setMeshParams(mesh, { name: value })` (validated names; values persist
   across entry rebuilds; frame-rate-safe like setTransform).
+
+Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
+into shaderMaterial sources with plain template literals - `LIT_VERTEX`
+(the standard vertex stage: clip position plus vWorldPos/vNormal/vUv
+varyings, normals via mat3(uNormal)) and the pure functions `HEMISPHERE`
+(`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
+`BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
+(`fresnel(n, v, power)`). Lights, colors and exponents are arguments, so
+nothing is pinned but the function names; future lit material classes
+compose from these same constants - customizing never means leaving the
+system.
 
 ## Traps
 
@@ -117,9 +136,10 @@ Materials:
   v1.
 - Transforms have ONE write path: `setTransform`/`setVisible` (or the
   props that call them). Mutating `node.position` directly does not sync.
-- A camera change is ONE `setTargetParams` write (uViewProj is target
-  state), independent of mesh count - never reintroduce per-mesh camera
-  writes. Scene scale honestly: hundreds to a
+- A camera change is ONE `setTargetParams` write (uViewProj + uCamPos are
+  target state), independent of mesh count - never reintroduce per-mesh
+  camera writes (uEye-style per-mesh params are exactly the O(scene) cost
+  the shared channel removed). Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU.
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
   list END. Irrelevant while everything is opaque + depth-tested; revisit
@@ -135,14 +155,12 @@ Materials:
   content-keyed caches are the anti-pattern the GPU layer avoids). Create
   one per look at app scope, share across meshes, `dispose()` when done
   for good.
-- A shaderMaterial vertex stage without `uniform mat4 uModel` (declared
-  AND used) throws at mesh attach - the scene seeds uModel on every entry
-  and the engine rejects unknown uniform names. One without `uViewProj`
-  also throws at attach when it is the scene's ONLY material class: after
-  the first camera sync, _attach re-issues the shared uViewProj (same
-  value, one write) so the coverage error lands at add() instead of
-  inside a later camera-sync microtask. Only the very first attach (no
-  camera sync yet) reports it asynchronously, from the sync that attach
-  schedules. With other declaring materials present it silently ignores
-  the camera instead (partial coverage is legal). Declare and use both,
-  always.
+- The standard-set contract is checked TEXTUALLY at shaderMaterial()
+  creation (uModel and uViewProj must appear in the vertex source) and
+  strictly at add() for the per-entry names: a uModel or uNormal that is
+  declared but never USED compiles out, and the scene's entry seed then
+  throws at attach (the engine rejects unknown entry uniform names). The
+  shared names have no such backstop - a declared-but-unused uViewProj or
+  uCamPos is skipped silently (shared params tolerate zero coverage), so
+  the symptom is an untransformed or unlit render, not an error. Use what
+  you declare.
