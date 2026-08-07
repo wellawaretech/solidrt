@@ -54,6 +54,14 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   null behind the camera) - plus a `scene.viewProj(out?)` copy getter.
   The forward half of picking (item 4); HUD overlays stop rebuilding the
   camera matrices by hand.
+- **Profile kit** (2026-08-07, item 10's profile tier): `extrude` (swept
+  along z, quarter-round bevels via miter inset), `lathe` (solid of
+  revolution about y from a CLOSED profile - watertight by construction,
+  flat caps on partial sweeps), flat `shape`, with `fillet`/`roundRect`
+  profile helpers and exported ear-clip `triangulate`. Real texture UVs
+  throughout; sharp points crease, smooth-tagged points share normals;
+  outputs pick uint16/uint32 indices by vertex count. Verified by
+  manifold/winding/area checks, not just typecheck.
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -125,9 +133,9 @@ append at the list end.
    Silhouette jaggies are the dominant artifact on filled geometry.
 10. **Geometry breadth and the vertex-layout ceiling.** Library. The
     cheap primitives landed 2026-08-07 (cylinder, cone, torus, circle,
-    ring - see landed); still demand-gated: capsule, and the profile
-    tier (lathe/extrude with bevels, 2D profile helpers, triangulation).
-    The real item is the fixed 8-float
+    ring) and the profile tier landed the same day (extrude/lathe/shape
+    with fillet and triangulation - see landed); still demand-gated:
+    capsule. The real item is the fixed 8-float
     layout - vertex colors, tangents and skin weights all need layout
     work; the recorded direction is a small set of named layouts, not an
     open BufferGeometry-style model.

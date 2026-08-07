@@ -36,7 +36,9 @@ overlays, `scene.project(point)` maps a world point to scene pixels.
 
 v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
 GLSL as a first-class material), geometry generators (box, plane, circle,
-ring, sphere, cylinder, cone, torus, torus knot), one perspective camera
+ring, sphere, cylinder, cone, torus, torus knot), a profile kit for custom
+solids (`extrude` with bevels, `lathe`, flat `shape`, with `fillet`/
+`roundRect`/`triangulate` helpers), one perspective camera
 with an orbit control (`createOrbitCamera`: drag, zoom, auto-orbit).
 Lights, transparency, model loading and picking are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full

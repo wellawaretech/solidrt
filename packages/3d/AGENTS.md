@@ -69,6 +69,21 @@ radii taper it) and `cone(radius?, height?, radialSeg?)`;
 `torus(radius?, tube?, radialSeg?, tubularSeg?)` (lying flat, hole on the
 y axis) and `torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)`
 (standing y-up) - both oriented for the y-up world, unlike Three's z-up.
+
+Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a
+closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points
+share an averaged normal - `fillet(points, radius, segs?)` and
+`roundRect(w?, h?, radius?, segs?)` emit those (arc corners smooth).
+Winding is normalized, so either authoring direction works.
+`extrude(profile, depth?, bevel?, bevelSegs?)` sweeps along z, centered,
+with a quarter-round bevel at both rims; `lathe(profile, segs?, angle?,
+start?)` revolves a CLOSED (x = radius, y = height) profile about the y
+axis - watertight by construction, flat caps on partial sweeps;
+`shape(profile)` fills one flat (facing +z, like circle);
+`triangulate(points)` is the ear-clipping core (fan fallback, never drops
+a cap), exported for custom flat work. These pick uint16/uint32 indices
+by vertex count automatically.
+
 Materials:
 
 - `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied
@@ -109,6 +124,10 @@ Materials:
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
   list END. Irrelevant while everything is opaque + depth-tested; revisit
   when transparency lands.
+- `lathe` takes a CLOSED profile (a cross-section with thickness, or run
+  to the axis at x = 0) - it is a solid of revolution, NOT Three's open
+  polyline shell. An "open" outline must be closed by the author;
+  otherwise the shape is simply wrong, there is no open-profile mode.
 - `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
   context).
 - A `shaderMaterial` INSTANCE is the pipeline handle: identical sources
