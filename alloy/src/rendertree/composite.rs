@@ -103,9 +103,10 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
 
 // What a boundary caller applies itself at composite time, and record_node
 // therefore leaves out of the cached content. The record order is matrix,
-// clip, scroll, children; a hoist always covers a prefix of that order (a
-// hoisted scroll requires a hoisted clip, otherwise the composite-time scroll
-// translate would move a recorded clip that must stay put in viewport space).
+// clip, scroll, fit, children; a hoist always covers a prefix of the first
+// three (a hoisted scroll requires a hoisted clip, otherwise the
+// composite-time scroll translate would move a recorded clip that must stay
+// put in viewport space; a viewBox fit is never hoisted - it is content).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hoist {
   /// Record everything (non-boundary nodes, non-View boundaries).
@@ -114,24 +115,29 @@ enum Hoist {
   /// Snapshot boundaries use this: their raster must bake clip and scroll,
   /// since the texture holds only the pixels visible at rasterize time.
   Transform,
-  /// The caller applies matrix, clip and scroll; the cache holds children
-  /// only. Recording boundaries use this, making the cache reusable under
-  /// scroll writes as well as transform writes (see Damage::Scroll).
+  /// The caller applies matrix, clip and scroll; the cache holds the fit and
+  /// children only. Recording boundaries use this, making the cache reusable
+  /// under scroll writes as well as transform writes (see Damage::Scroll).
   Full,
 }
 
-// A boundary View's own transform is hoisted out of its cached content: the
-// recording/texture holds the content in untransformed local space, and the
-// current matrix is applied around the cached draw at composite time. This
-// keeps the cache reusable under transform-only changes, and stops Snapshot
-// mode baking a rotation/scale into the layout-box crop. Non-View kinds paint
-// transform-free content in build(), so there is nothing to hoist.
-fn hoisted_matrix(element: &Element, size: Size) -> Option<Matrix> {
+// A View's own box transform: the user chain only, no viewBox fit (the fit
+// maps children into the box, it never moves the box itself, and it is
+// content - recorded by record_node so caches and captures hold fitted,
+// box-sized output). Resolved against the view's border box - the same frame
+// the hit side passes - NOT ctx.size, which is the content box for kinds'
+// build() (okf/backlog/padding-box-divergence.md); detached views fall back
+// to the inherited frame. record_node applies it under Hoist::None; boundary
+// callers hoist it out of the cached content and apply it at composite time,
+// so the cache stays reusable under transform-only changes and Snapshot mode
+// never bakes a rotation/scale into the layout-box crop. None for non-View
+// kinds, which paint transform-free content in build().
+fn own_matrix(element: &Element, inherited: Size) -> Option<Matrix> {
   match &element.kind {
-    // The user chain only: a viewBox fit is content, recorded into the cache
-    // by record_node, so the composited quad/recording is box-sized and the
-    // fit is never applied twice.
-    ElementKind::View(v) => Some(v.box_matrix(size)),
+    ElementKind::View(v) => {
+      let box_size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+      Some(v.box_matrix(box_size))
+    }
     _ => None,
   }
 }
@@ -186,9 +192,12 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
   }
 }
 
-// Scroll offset: applied after the clip so the clip box stays put in viewport
-// space while children slide under it. Positive scroll shifts content
-// leftward/upward. No-op for non-Views and unscrolled Views.
+// Scroll offset, in box pixels: applied after the clip (the clip box stays
+// put in viewport space while children slide under it) and before any viewBox
+// fit, so one scroll pixel is one box pixel regardless of fit scale - the hit
+// side divides by the fit scale instead (View::content_scroll). Positive
+// scroll shifts content leftward/upward. No-op for non-Views and unscrolled
+// Views.
 fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
   if let ElementKind::View(view) = &element.kind {
     if let Some(s) = view.scroll {
@@ -284,7 +293,7 @@ fn build_recursive<'a>(
   match element.repaint_boundary {
     BoundaryMode::None => record_node(scene, node_id, ctx, builder, Hoist::None),
     BoundaryMode::Recording => {
-      let own = hoisted_matrix(element, ctx.size);
+      let own = own_matrix(element, ctx.size);
       let hoist = if own.is_some() { Hoist::Full } else { Hoist::None };
       let cached = match &*element.paint_cache.borrow() {
         Some(PaintCache::Recording(dl)) => Some(dl.clone()),
@@ -336,7 +345,7 @@ fn snapshot_node<'a>(
     return;
   }
 
-  let own = hoisted_matrix(element, ctx.size);
+  let own = own_matrix(element, ctx.size);
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   // Group opacity rides on the composited quad (white keeps the texture's
@@ -639,7 +648,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
     return;
   }
 
-  let own = hoisted_matrix(element, ctx.size);
+  let own = own_matrix(element, ctx.size);
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   let saved_size = ctx.size;
@@ -677,7 +686,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
 
 // `hoist` names what the boundary caller applies itself at composite time
 // (see Hoist); the content is recorded without those ops. A hoisted matrix is
-// only ever a View's, whose build() is exactly that matrix concat.
+// only ever a View's own box transform (own_matrix).
 fn record_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
@@ -695,7 +704,9 @@ fn record_node<'a>(
   // explicitly). Under Hoist::Full there is normally nothing to restore - a
   // viewBox fit is the exception, recorded below even when hoisted.
   let view_fit = match &element.kind {
-    ElementKind::View(v) => v.fit_matrix(ctx.size),
+    // The fit resolves against the border box, like own_matrix; ctx.size is
+    // the content box (okf/backlog/padding-box-divergence.md).
+    ElementKind::View(v) => v.fit_matrix(element.layout.as_ref().map(|l| l.size()).unwrap_or(ctx.size)),
     _ => None,
   };
   let needs_save =
@@ -704,36 +715,31 @@ fn record_node<'a>(
     builder.save();
   }
 
-  // The overflow clip means the element's layout BOX, so it goes under the
-  // user chain but before the viewBox fit - the same order
-  // draw_cached_recording uses for a hoisted clip. On a fit-carrying View the
-  // composed matrix is therefore split around the clip; emitted after the fit,
-  // the box-sized rect would clip the wrong rectangle in both fit directions
-  // (okf/backlog/overflow-viewbox-clip.md).
+  // Record order: user matrix, clip, scroll, fit, children - a hoist covers a
+  // prefix, and draw_cached_recording applies the same order around a cached
+  // fit+children recording, so the paths cannot diverge. The clip and scroll
+  // both mean the layout BOX - the clip rect in box space, the scroll offset
+  // in box pixels - which is why they sit under the user chain and before any
+  // viewBox fit (okf/backlog/overflow-viewbox-clip.md).
   if hoist == Hoist::None {
-    if let (ElementKind::View(v), Some(fit)) = (&element.kind, &view_fit) {
-      builder.transform(&v.box_matrix(ctx.size));
-      if record_clip {
-        apply_clip(builder, element);
-      }
-      builder.transform(fit);
+    if let Some(own) = own_matrix(element, ctx.size) {
+      builder.transform(&own);
     } else {
       element.build(ctx, builder);
-      if record_clip {
-        apply_clip(builder, element);
-      }
     }
-  } else {
-    if record_clip {
-      apply_clip(builder, element);
-    }
-    if let Some(fit) = &view_fit {
-      // The hoisted matrix is only the user chain (box_matrix); the viewBox
-      // fit belongs to the content, so boundary caches, snapshot textures,
-      // and captures hold fitted content. set_view_box reports Paint damage
-      // to match.
-      builder.transform(fit);
-    }
+  }
+  if record_clip {
+    apply_clip(builder, element);
+  }
+  if hoist != Hoist::Full {
+    apply_scroll(builder, element);
+  }
+  if let Some(fit) = &view_fit {
+    // The fit belongs to the CONTENT, recorded at every hoist level, so
+    // boundary caches, snapshot textures, and captures hold fitted content
+    // and the composited recording stays box-sized. set_view_box reports
+    // Paint damage to match.
+    builder.transform(fit);
   }
 
   // A non-boundary View's group opacity is baked here as a save_layer (the
@@ -747,10 +753,6 @@ fn record_node<'a>(
     paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, opacity));
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     builder.save_layer(&bounds, Some(&paint), None);
-  }
-
-  if hoist != Hoist::Full {
-    apply_scroll(builder, element);
   }
 
   // Text children are Spans - not visual, skip recursion

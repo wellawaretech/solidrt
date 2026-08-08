@@ -370,6 +370,31 @@ fn bounding_box_scaled_ancestor() {
 }
 
 #[test]
+fn bounding_box_scrolled_view_box_ancestor() {
+  // Scroll means box pixels (okf/backlog/overflow-viewbox-clip.md): under a
+  // fit scale of 0.5, a 10 px scroll removes 20 design units before the fit
+  // maps the corners into the box. A raw design-unit subtraction would land
+  // the box 5 px to the right.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(200.0, 200.0);
+  v.set_scroll_x(10.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  place(&mut tree, 3, 100.0, 100.0, 50.0, 50.0);
+
+  // Child corners in design space (100..150), minus 20 design units of
+  // scroll (80..130), through the 0.5 fit: box (40..65, 50..75).
+  let b = tree.bounding_box_viewport(3).expect("laid out");
+  assert_box(b, 40.0, 50.0, 25.0, 25.0);
+}
+
+#[test]
 fn bounding_box_rotated_ancestor() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());

@@ -63,9 +63,11 @@ pub struct View {
   // OriginCoord for the Px/Fraction split.
   pub origin_x: Option<OriginCoord>,
   pub origin_y: Option<OriginCoord>,
-  // Scroll offset applied to children at build time, after the clip is set.
-  // Positive values shift content leftward/upward (web convention: positive
-  // scrollX means scrolled "into" the content from the left).
+  // Scroll offset applied to children, in box pixels, between the overflow
+  // clip and any viewBox fit (content slides under the fixed clip, one scroll
+  // pixel per box pixel regardless of fit scale). Positive values shift
+  // content leftward/upward (web convention: positive scrollX means scrolled
+  // "into" the content from the left).
   pub scroll: Option<Vector>,
   // Group opacity in 0..1 (None = opaque): children are composited together,
   // then faded as a whole. Not part of the matrix; applied at composite time
@@ -136,13 +138,32 @@ impl View {
   // (hoisted to composite time). See composite::hoisted_matrix.
   pub(crate) fn fit_matrix(&self, size: Size) -> Option<Matrix> {
     let vb = self.view_box?;
-    if vb.width <= 0.0 || vb.height <= 0.0 {
-      return None;
-    }
-    let s = (size.width / vb.width).min(size.height / vb.height);
+    let s = self.fit_scale(size)?;
     let tx = (size.width - vb.width * s) / 2.0;
     let ty = (size.height - vb.height * s) / 2.0;
     Some(Matrix::new_2d(s, 0.0, 0.0, s, tx, ty))
+  }
+
+  // The uniform viewBox fit scale `box / design`; None without a
+  // (non-degenerate) view_box.
+  pub(crate) fn fit_scale(&self, size: Size) -> Option<f32> {
+    let vb = self.view_box?;
+    if vb.width <= 0.0 || vb.height <= 0.0 {
+      return None;
+    }
+    Some((size.width / vb.width).min(size.height / vb.height))
+  }
+
+  // The scroll offset expressed in the children's frame. Scroll means box
+  // pixels on every path (it pairs with the box-space overflow clip -
+  // okf/backlog/overflow-viewbox-clip.md); children of a viewBox view live in
+  // design space, so the offset divides by the fit scale there.
+  pub(crate) fn content_scroll(&self, size: Size) -> Vector {
+    let s = self.scroll.unwrap_or_default();
+    match self.fit_scale(size) {
+      Some(scale) => s / scale,
+      None => s,
+    }
   }
 
   // The full paint transform: the viewBox fit (design -> box space), then the
@@ -253,9 +274,11 @@ impl View {
 }
 
 impl Buildable for View {
-  fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    builder.transform(&self.transform(ctx.size).matrix);
-  }
+  // A View paints no content of its own, and its matrices are applied by the
+  // compositor (composite::own_matrix + the recorded fit), which splits the
+  // user chain from the viewBox fit around the overflow clip and scroll - a
+  // single composed transform here could not keep those in box space.
+  fn build<'a>(&'a self, _ctx: &mut BuildContext<'a>, _builder: &mut DisplayListBuilder) {}
 }
 
 impl Bounded for View {

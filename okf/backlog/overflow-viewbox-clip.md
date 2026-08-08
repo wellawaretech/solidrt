@@ -92,6 +92,34 @@ every path.**
   - `flux/src/tests/properties.rs` already pins the overflow+viewBox props
     round-trip from paper-crane (the tooling half).
 
+## Follow-up (2026-08-08, same day): scroll settled, record order linearized
+
+Review of the fix found the identical divergence shape one op over: scroll on
+a viewBox view was applied in box pixels by the Recording-boundary composite
+(before the cached fit) but in design units by the non-boundary and snapshot
+recordings (after the fit) and by the hit descent - so a scrolled viewBox
+view would jump by the fit ratio when gaining or losing
+`repaintBoundary="recording"`.
+
+Settled: **scroll means box pixels on every path** (it pairs with the
+box-space clip; one scroll pixel slides content one box pixel regardless of
+fit scale). Paint applies the raw translate between clip and fit; the hit
+descent, locals projection and bounding-box ascent convert with
+`View::content_scroll` (offset divided by the fit scale, since those walk in
+design space). Pinned at both scales by `scroll_is_box_pixels_under_*` in
+`alloy/src/tests/hit.rs` and `bounding_box_scrolled_view_box_ancestor` in
+`alloy/src/tests/tree.rs`.
+
+With clip and scroll both under the user chain, `record_node` collapsed to
+one linear record order - user matrix, clip, scroll, fit, children - where a
+hoist is always a prefix of the first three and the fit is never hoisted
+(it is content, recorded into caches and captures at every hoist level).
+`View::build` no longer applies any matrix: the compositor owns the split
+(`composite::own_matrix` + the recorded fit), so no composed-transform path
+can put the clip or scroll in the wrong space again. The View matrices also
+now resolve against the border box on every path, closing the View half of
+[[padding-box-divergence]].
+
 ## Adjacent, not tracked here
 
 - The tooling gap that made the bug undiagnosable (`props: true` omitting

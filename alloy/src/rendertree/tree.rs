@@ -366,7 +366,17 @@ impl RenderTree {
         break;
       }
       if let ElementKind::View(v) = &parent.kind {
-        if let Some(s) = v.scroll {
+        if v.scroll.is_some() {
+          let size = parent
+            .layout
+            .as_ref()
+            .map(|l| l.size())
+            .or_else(|| self.content_fallback(parent_id))
+            .unwrap_or_default();
+          // Scroll means box pixels; these corners are in the parent's child
+          // frame (design space under a viewBox fit), so the offset divides
+          // by the fit scale, matching the hit descent and the paint order.
+          let s = v.content_scroll(size);
           for p in corners.iter_mut() {
             *p -= s;
           }

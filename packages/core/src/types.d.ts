@@ -415,8 +415,10 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * transform - it never sizes the element, so give the box its size with
    * layout props. Composed innermost: the transform props still operate in
    * box space, and pointer events on children arrive in design coordinates.
-   * The natural wrapper for parseSvg draws, or any d-* subtree authored in
-   * fixed design units.
+   * The overflow clip and scrollX/scrollY stay box properties too: the clip
+   * rect is the layout box and scroll offsets are box pixels, regardless of
+   * fit scale. The natural wrapper for parseSvg draws, or any d-* subtree
+   * authored in fixed design units.
    */
   viewBox?: [number, number]
   /**

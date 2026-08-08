@@ -201,6 +201,104 @@ fn overflow_gate_is_box_space_under_magnifying_view_box() {
 }
 
 #[test]
+fn scroll_is_box_pixels_under_minifying_view_box() {
+  // scroll + viewBox: the offset means box pixels on every path, settled with
+  // the box-space overflow clip (okf/backlog/overflow-viewbox-clip.md). Fit
+  // scale 0.5, scroll 10 box px = 20 design units: the child's design edge at
+  // 100 lands at window x = 40. An offset added raw in design units would
+  // leave the edge at 45.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(200.0, 200.0);
+  v.set_scroll_x(10.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  place(&mut tree, 3, 0.0, 0.0, 100.0, 100.0);
+
+  // Window (38, 20) is design (76, 40); adding the scroll in the children's
+  // frame (20 design units) puts (96, 40) inside the child.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(38.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  assert_xy(path[2].2, 96.0, 40.0);
+
+  // Window (42, 20) maps to design 104, past the child's edge - a raw
+  // design-unit offset would read 94 and still hit.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(42.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2]);
+}
+
+#[test]
+fn scroll_is_box_pixels_under_magnifying_view_box() {
+  // The opposite direction: fit scale 2, scroll 10 box px = 5 design units.
+  // A raw design-unit offset overshoots by double, dropping content that is
+  // still on screen.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(50.0, 50.0);
+  v.set_scroll_x(10.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  place(&mut tree, 3, 0.0, 0.0, 40.0, 40.0);
+
+  // Window (65, 20) is design (32.5, 10) + 5 scrolled = (37.5, 10), inside
+  // the child's 40-wide design rect; a raw offset would read 42.5 and miss.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(65.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  assert_xy(path[2].2, 37.5, 10.0);
+
+  // Past the scrolled edge ((40 - 5) * 2 = 70) the child misses.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(75.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2]);
+}
+
+#[test]
+fn view_box_fit_resolves_against_the_border_box_when_padded() {
+  // A View's matrices (viewBox fit, transform center) resolve against its
+  // BORDER box on both the paint and hit paths; padding shrinks the content
+  // box that kinds size against, never the fit
+  // (okf/backlog/padding-box-divergence.md). Border box 100 wide with design
+  // 200 is fit scale 0.5; a content-box fit (80 wide, scale 0.4) would map
+  // window x = 95 to design 237.5 and reject the view entirely.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(200.0, 200.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  tree.node_mut(2).layout_data_mut().computed.padding =
+    taffy::Rect { left: 10.0, right: 10.0, top: 10.0, bottom: 10.0 };
+  place(&mut tree, 3, 150.0, 0.0, 50.0, 100.0);
+
+  // Window (95, 49) is design (190, 98) under the border-box fit: inside the
+  // design space and inside the child at design x 150..200.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(95.0, 49.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  assert_xy(path[2].2, 40.0, 98.0);
+}
+
+#[test]
 fn locals_truncate_at_missing_node() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());

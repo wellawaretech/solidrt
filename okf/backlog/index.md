@@ -10,6 +10,13 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Padding makes paint and hit size against different boxes](padding-box-divergence.md)
+  [partial] - Paint hands laid-out elements their content box as ctx.size,
+  hit passes the border box. The View half (transform center, viewBox fit,
+  boundary matrices) is settled and fixed 2026-08-08 - border box on every
+  path; the kinds half (a padded rect paints its content box but hit-tests
+  its border box) is open, likely a per-kind settlement since text wrap must
+  stay content-box.
 - [overflow + viewBox clips the wrong rectangle](overflow-viewbox-clip.md)
   [done] - The overflow clip took the box extent as a raw number applied in
   design (pre-viewBox) space, so a magnifying fit escaped the clip and a
@@ -17,7 +24,8 @@ Sorted by status: open first, then partial, deferred, and closed
   ([[marble-fox]] F1, [[paper-crane]] 1, the unimog postmortem that
   root-caused it) without a dedicated item. Fixed 2026-08-08: the clip is
   emitted in box space before the fit on both paint and hit paths, pinned at
-  both scales.
+  both scales; scroll settled the same day to box pixels on every path, and
+  the record order linearized to matrix, clip, scroll, fit, children.
 - [The MCP verification surface - input, clock, crop, props](mcp-verification-surface.md)
   [done] - Five independent external agent-built app reports named the same
   four gaps; 2026-08-06 landed crop+scale on get_snapshot/get_texture

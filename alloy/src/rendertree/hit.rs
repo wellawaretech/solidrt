@@ -133,8 +133,10 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
       ElementKind::View(v) => v.view_box.unwrap_or(size),
       _ => size,
     };
+    // In the children's frame, like hit_recursive (box pixels divided by any
+    // viewBox fit scale).
     parent_scroll = match &element.kind {
-      ElementKind::View(v) => v.scroll.unwrap_or_default(),
+      ElementKind::View(v) => v.content_scroll(size),
       _ => Vector::default(),
     };
   }
@@ -224,11 +226,13 @@ fn hit_recursive(
     return true;
   }
 
-  // Scroll offset on a View shifts its children's apparent positions by -scroll
-  // in viewport space, so to map a viewport-local point into a child's frame we
-  // add scroll back.
+  // Scroll offset on a View shifts its children's apparent positions by
+  // -scroll (box pixels) in viewport space, so to map a viewport-local point
+  // into a child's frame we add scroll back - expressed in the children's
+  // frame, which under a viewBox fit divides the offset by the fit scale
+  // (View::content_scroll), mirroring the paint side's box-space translate.
   let scroll = match &element.kind {
-    ElementKind::View(v) => v.scroll.unwrap_or_default(),
+    ElementKind::View(v) => v.content_scroll(size),
     _ => Vector::default(),
   };
 
