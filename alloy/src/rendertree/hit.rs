@@ -188,19 +188,27 @@ fn hit_recursive(
   let local_ctx = HitContext { size: local_size };
 
   // Overflow gate: when an axis has non-visible overflow, the layout box clips
-  // both self and any descendants on that axis. Mirrors record_node's clip,
-  // recorded under the already-fit-composed view matrix - box numbers in
-  // design units on a viewBox view, same as here. (What a viewBox view's
-  // overflow clip SHOULD mean is unsettled: draw_cached_recording applies a
-  // Recording boundary's hoisted clip in box space instead. Resolving that is
-  // a paint-side decision; the hit side follows the recorded form.)
+  // both self and any descendants on that axis. The clip means the BOX, so the
+  // gate measures in box space: on a viewBox view `local` is design-space and
+  // is mapped forward through the fit first - mirroring record_node, which
+  // emits the clip under the user chain before the fit
+  // (okf/backlog/overflow-viewbox-clip.md).
   let (overflow_x, overflow_y) = element
     .layout
     .as_ref()
     .map(|l| (l.style.overflow.x, l.style.overflow.y))
     .unwrap_or((Overflow::Visible, Overflow::Visible));
-  let clipped_out = (overflow_x != Overflow::Visible && (local.x < 0.0 || local.x >= size.width))
-    || (overflow_y != Overflow::Visible && (local.y < 0.0 || local.y >= size.height));
+  let box_local = match &element.kind {
+    ElementKind::View(v) => match v.fit_matrix(size) {
+      // The fit is affine (uniform scale + translate), so transform_point2d
+      // cannot fail on it.
+      Some(fit) => fit.transform_point2d(local).unwrap_or(local),
+      None => local,
+    },
+    _ => local,
+  };
+  let clipped_out = (overflow_x != Overflow::Visible && (box_local.x < 0.0 || box_local.x >= size.width))
+    || (overflow_y != Overflow::Visible && (box_local.y < 0.0 || box_local.y >= size.height));
   if clipped_out {
     return false;
   }

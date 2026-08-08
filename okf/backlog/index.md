@@ -10,6 +10,14 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [overflow + viewBox clips the wrong rectangle](overflow-viewbox-clip.md)
+  [done] - The overflow clip took the box extent as a raw number applied in
+  design (pre-viewBox) space, so a magnifying fit escaped the clip and a
+  minifying one cropped early; reported three times over four months
+  ([[marble-fox]] F1, [[paper-crane]] 1, the unimog postmortem that
+  root-caused it) without a dedicated item. Fixed 2026-08-08: the clip is
+  emitted in box space before the fit on both paint and hit paths, pinned at
+  both scales.
 - [The MCP verification surface - input, clock, crop, props](mcp-verification-surface.md)
   [done] - Five independent external agent-built app reports named the same
   four gaps; 2026-08-06 landed crop+scale on get_snapshot/get_texture

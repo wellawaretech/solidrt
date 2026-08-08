@@ -129,6 +129,77 @@ fn view_box_bounds_measured_in_design_space() {
   assert_eq!(ids, vec![1]);
 }
 
+// Sets both overflow axes to Hidden on an already-created node, the way the
+// layout plugin would; unit tests write the style directly.
+fn hide_overflow(tree: &mut RenderTree, id: u64) {
+  let l = tree.node_mut(id).layout_data_mut();
+  l.style.overflow =
+    taffy::Point { x: taffy::style::Overflow::Hidden, y: taffy::style::Overflow::Hidden };
+}
+
+#[test]
+fn overflow_gate_is_box_space_under_minifying_view_box() {
+  // overflow + viewBox on one view, design LARGER than the box (fit scale
+  // 0.5). The overflow clip means the layout box; measured in design units it
+  // would cut at half the box and reject content in the visible bottom-right
+  // quadrant (okf/backlog/overflow-viewbox-clip.md, the paper-crane/unimog
+  // defect - this is the hit-side mirror of the paint fix).
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(200.0, 200.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  hide_overflow(&mut tree, 2);
+  // Child in the design space's bottom-right quadrant: painted at box
+  // (75,75)-(100,100), fully inside the clip box.
+  place(&mut tree, 3, 150.0, 150.0, 50.0, 50.0);
+
+  // Window (80, 80) is design (160, 160): inside the box, inside the child.
+  // A design-unit gate reads 160 >= 100 and drops the whole subtree.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(80.0, 80.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+  assert_xy(path[2].2, 10.0, 10.0);
+}
+
+#[test]
+fn overflow_gate_is_box_space_under_magnifying_view_box() {
+  // The opposite direction: design SMALLER than the box (fit scale 2). A
+  // design-unit gate compares against the box number 100 and lets content a
+  // whole box-width past the clip edge stay hittable.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut v = View::default();
+  v.set_view_box(50.0, 50.0);
+  tree.create_node(2, v.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  hide_overflow(&mut tree, 2);
+  // Child spans design x 0..80 = box 0..160, overhanging the 100-wide box.
+  place(&mut tree, 3, 0.0, 0.0, 80.0, 80.0);
+
+  // Window (120, 20) is design (60, 10): inside the child's design rect but
+  // past the clip box, so the view and its subtree must miss.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(120.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1]);
+
+  // Inside the box the same child still hits.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(90.0, 20.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2, 3]);
+}
+
 #[test]
 fn locals_truncate_at_missing_node() {
   let mut tree = RenderTree::new();

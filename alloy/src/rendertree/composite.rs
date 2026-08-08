@@ -147,8 +147,12 @@ fn overflow_clips(element: &Element) -> (bool, bool) {
 }
 
 // Emits the element's overflow clip (rounded when a View clips both axes) in
-// node-local, pre-scroll space. Shared by record_node and the Recording
-// boundary composite path so the two cannot diverge. No-op without a clip.
+// node-local, pre-scroll BOX space: the rect is the layout box, so it must be
+// applied under the user chain but before any viewBox fit (a box-sized rect
+// emitted in design space clips the wrong rectangle in both fit directions -
+// okf/backlog/overflow-viewbox-clip.md). Shared by record_node and the
+// Recording boundary composite path so the two cannot diverge. No-op without
+// a clip.
 fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
   let (clip_x, clip_y) = overflow_clips(element);
   if !clip_x && !clip_y {
@@ -700,14 +704,36 @@ fn record_node<'a>(
     builder.save();
   }
 
+  // The overflow clip means the element's layout BOX, so it goes under the
+  // user chain but before the viewBox fit - the same order
+  // draw_cached_recording uses for a hoisted clip. On a fit-carrying View the
+  // composed matrix is therefore split around the clip; emitted after the fit,
+  // the box-sized rect would clip the wrong rectangle in both fit directions
+  // (okf/backlog/overflow-viewbox-clip.md).
   if hoist == Hoist::None {
-    element.build(ctx, builder);
-  } else if let Some(fit) = &view_fit {
-    // The hoisted matrix is only the user chain (box_matrix); the viewBox fit
-    // belongs to the content, so boundary caches, snapshot textures, and
-    // captures hold fitted content. set_view_box reports Paint damage to
-    // match.
-    builder.transform(fit);
+    if let (ElementKind::View(v), Some(fit)) = (&element.kind, &view_fit) {
+      builder.transform(&v.box_matrix(ctx.size));
+      if record_clip {
+        apply_clip(builder, element);
+      }
+      builder.transform(fit);
+    } else {
+      element.build(ctx, builder);
+      if record_clip {
+        apply_clip(builder, element);
+      }
+    }
+  } else {
+    if record_clip {
+      apply_clip(builder, element);
+    }
+    if let Some(fit) = &view_fit {
+      // The hoisted matrix is only the user chain (box_matrix); the viewBox
+      // fit belongs to the content, so boundary caches, snapshot textures,
+      // and captures hold fitted content. set_view_box reports Paint damage
+      // to match.
+      builder.transform(fit);
+    }
   }
 
   // A non-boundary View's group opacity is baked here as a save_layer (the
@@ -723,9 +749,6 @@ fn record_node<'a>(
     builder.save_layer(&bounds, Some(&paint), None);
   }
 
-  if record_clip {
-    apply_clip(builder, element);
-  }
   if hoist != Hoist::Full {
     apply_scroll(builder, element);
   }
