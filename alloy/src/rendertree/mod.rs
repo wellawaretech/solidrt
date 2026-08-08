@@ -369,6 +369,10 @@ impl Element {
     self.layout.as_mut().expect("element has no layout data")
   }
 
+  pub fn style(&self) -> Option<&Style> {
+    self.layout.as_ref().map(|l| &l.style)
+  }
+
   pub fn style_mut(&mut self) -> Option<&mut Style> {
     self.layout.as_mut().map(|l| &mut l.style)
   }

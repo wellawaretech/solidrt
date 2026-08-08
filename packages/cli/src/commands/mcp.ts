@@ -42,7 +42,7 @@ async function control(path: string, method: "GET" | "POST" = "GET", payload?: u
 let CLIENT_ARG = z
   .number()
   .int()
-  .describe("Client id from list_clients (default: the only connected client)")
+  .describe("Client id from list_clients (default: the only connected client; required when several are connected)")
   .optional()
 
 let SAVE_TO_ARG = z
@@ -71,7 +71,7 @@ let TOOLS: {
     name: "list_clients",
     readOnly: true,
     description:
-      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `entry` (the app source file this server currently serves and rebuilds - check it matches the app you intend to drive before acting, since the dev port is fixed and a `load` moves the entry mid-session), `projectDir` (the project root the server was started in), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime. Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
+      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `entry` (the app source file this server currently serves and rebuilds - check it matches the app you intend to drive before acting, since the dev port is fixed and a `load` moves the entry mid-session), `projectDir` (the project root the server was started in), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {

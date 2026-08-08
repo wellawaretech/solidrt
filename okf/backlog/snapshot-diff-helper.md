@@ -12,8 +12,8 @@ Split out of [[mcp-input-injection]] when `send_input` landed (2026-08-07):
 the injection half shipped, this companion did not.
 
 The ask: `get_snapshot` compared against the previous capture of the same
-node - mean/max pixel delta plus a coarse changed-region grid (like doom's
-old "p" tool) - turning "does it still render the same after my change"
+node - mean/max pixel delta plus a coarse changed-region grid - turning
+"does it still render the same after my change"
 into one call with a numeric answer. Models routinely miss few-pixel
 regressions when eyeballing two downscaled captures; the original motivation
 (two broken arrowheads shipping past every composition check) is the same

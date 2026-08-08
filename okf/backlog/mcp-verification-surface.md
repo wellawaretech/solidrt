@@ -9,10 +9,9 @@ timestamp: 2026-08-06T00:00:00Z
 # The MCP verification surface - input, clock, crop, props
 
 Source: five external agent-built app reports (2026-08-04 to 2026-08-06,
-`~/solidrt/FEEDBACK-EXTERNAL/`, summarised in `SUMMARY.md` there) - a scrolling
-shooter, a maze arcade game, a paddle game with a pseudo-3D camera, a
-CPU-projected 3D wireframe viewer, and a C engine compiled to JS. Core-only
-apps, all five built end to end by an agent driving the app over `srt mcp`, on
+issues extracted in okf/feedback/: [[cedar-lock]], [[velvet-acre]],
+[[marble-fox]], [[tin-orchard]], [[willow-stamp]]). Core-only apps, all five
+built end to end by an agent driving the app over `srt mcp`, on
 0.0.44/0.0.45.
 
 All five shipped. All five reported the same four gaps, independently. This
@@ -263,3 +262,33 @@ decisions that differ from the proposal above:
   isolating a detached sprite.
 - [[idle-tick-gpu-backlog-runaway]] and demand-driven rendering - the frame-
   signal gate that gap 2's pause/step has to cooperate with.
+
+## External-verification follow-up (2026-08-08)
+
+The first external verification pass ([[paper-crane]], 2026-08-07) confirmed
+the whole surface end to end and produced five fixes, all landed:
+
+- `props: true` now includes overflow/overflowX/Y (off-default; uniform name
+  when the axes agree). The v1 "no layout props" scope line cost the reporter
+  the clip-bug diagnosis - an absent prop read as "never landed". Reader gets
+  the style via the new `Element::style()` accessor; round-trip pinned in
+  flux/src/tests/properties.rs on the report's exact overflow+viewBox combo.
+- The unknown-query-kind reply no longer leaks Rust debug formatting
+  (`Some("input")`); it names the kind and the client's own runtime version
+  so a mixed-version fleet self-diagnoses.
+- The client `info` message advertises `queries` (supported query kinds,
+  QUERY_KINDS const beside the match); /clients and list_clients surface it.
+  Closes the query-planning ask ([[willow-stamp]] item 5, re-raised by
+  [[paper-crane]]); an empty list = a runtime
+  predating the advertisement.
+- `load` with an entry outside projectDir now names the real constraint
+  instead of the bundler's "bun install" advice.
+- The multiple-clients error speaks tool vocabulary (client id +
+  list_clients), and CLIENT_ARG documents that the default only exists with
+  a single client attached.
+
+Still open against this surface: an audio counterpart to
+get_gpu_resources, and a per-subtree kind histogram on get_render_tree.
+send_input's text kind remains unverified end to end (blocked outside this
+surface). The report's remaining findings concern other surfaces and are
+not tracked here.

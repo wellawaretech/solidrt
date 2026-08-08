@@ -120,7 +120,8 @@ fn colors_and_gradients() {
   assert!(err.contains("\"red\""), "{err}");
   assert!(apply("rect", "color", num(0xFF0000FF as u32 as f64)).is_ok());
 
-  let no_stops = map(&[("__gradient", text("linear")), ("x0", num(0.0)), ("y0", num(0.0)), ("x1", num(1.0)), ("y1", num(1.0))]);
+  let no_stops =
+    map(&[("__gradient", text("linear")), ("x0", num(0.0)), ("y0", num(0.0)), ("x1", num(1.0)), ("y1", num(1.0))]);
   let err = apply("rect", "color", no_stops).unwrap_err();
   assert!(err.contains("stops"), "{err}");
 
@@ -162,4 +163,33 @@ fn shader_object_fields_are_strict() {
 
   assert!(apply("view", "shader", PropValue::Null).is_ok());
   assert!(apply("view", "shader", map(&[("program", num(1.0))])).is_ok());
+}
+
+#[test]
+fn overflow_reads_back_including_with_viewbox() {
+  // The layout blind spot from an external report: overflow was set but the
+  // props read-back omitted it, making "my bug" and "a clip bug"
+  // indistinguishable. Lock the round trip, on the exact prop combination
+  // the report used.
+  use crate::plugins::gui::properties::{read_jsx, ReadValue};
+  let mut el = Element::from_kind("view");
+  let (tx, _rx) = channel();
+  apply_jsx(&mut el, "overflow", &text("hidden"), &tx).expect("overflow applies");
+  apply_jsx(&mut el, "viewBox", &PropValue::List(vec![num(100.0), num(40.0)]), &tx).expect("viewBox applies");
+  let props = read_jsx(&el);
+  assert!(
+    props.iter().any(|(n, v)| *n == "overflow" && matches!(v, ReadValue::Str(s) if s == "hidden")),
+    "props must include overflow"
+  );
+}
+
+#[test]
+fn diverging_overflow_axes_read_back_per_axis() {
+  use crate::plugins::gui::properties::{read_jsx, ReadValue};
+  let mut el = Element::from_kind("view");
+  let (tx, _rx) = channel();
+  apply_jsx(&mut el, "overflowY", &text("scroll"), &tx).expect("overflowY applies");
+  let props = read_jsx(&el);
+  assert!(props.iter().any(|(n, v)| *n == "overflowY" && matches!(v, ReadValue::Str(s) if s == "scroll")));
+  assert!(!props.iter().any(|(n, _)| *n == "overflow" || *n == "overflowX"));
 }

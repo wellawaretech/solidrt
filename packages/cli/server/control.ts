@@ -61,6 +61,7 @@ export function clientList(withAddress = false) {
     version: info.version,
     profile: info.profile,
     capabilities: info.capabilities,
+    queries: info.queries,
     ...(withAddress ? { address: ws.remoteAddr ?? null } : {}),
   }))
 }
@@ -72,7 +73,7 @@ function findClient(param: string | undefined): { ws: ServerWebSocket } | { erro
   if (param === undefined) {
     if (entries.length === 1) return { ws: entries[0]![0] }
     if (entries.length === 0) return { error: Response.json({ error: "No connected clients" }, { status: 503 }) }
-    return { error: Response.json({ error: "Multiple clients connected; pass ?client=<id>" }, { status: 400 }) }
+    return { error: Response.json({ error: "Multiple clients connected; pass a client id (list_clients has the ids)" }, { status: 400 }) }
   }
   let id = parseInt(param, 10)
   let entry = entries.find(([, info]) => info.id === id)
@@ -356,6 +357,19 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       }
       if (!(await file(entry).exists())) {
         return Response.json({ error: `Entry not found: ${entry}` }, { status: 400 })
+      }
+      // An entry outside the project root cannot resolve the project's
+      // dependencies, so the bundler would fail with misleading "bun install"
+      // advice; name the real constraint instead.
+      let norm = (p: string) => p.replace(/\\/g, "/")
+      let root = norm(state.projectDir).replace(/\/+$/, "") + "/"
+      if (!norm(entry).startsWith(root)) {
+        return Response.json(
+          {
+            error: `Entry is outside the project root: ${entry} is not under ${state.projectDir}. The dev server can only bundle sources inside the project it was started in - move the file into the project or start srt there.`,
+          },
+          { status: 400 },
+        )
       }
       state.config.entry = entry
       let cut = Math.max(entry.lastIndexOf("/"), entry.lastIndexOf("\\"))

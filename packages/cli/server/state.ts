@@ -38,7 +38,16 @@ export type Config = {
   tunnel: boolean
 }
 
-export type ClientInfo = { platform: string; version: string; profile: string; id: number; capabilities: string[] }
+export type ClientInfo = {
+  platform: string
+  version: string
+  profile: string
+  id: number
+  capabilities: string[]
+  /** Query kinds this client's runtime answers (empty on runtimes that predate
+   * the advertisement); dev tools plan their verification surface from it. */
+  queries: string[]
+}
 
 export let state = {
   config: undefined as unknown as Config,

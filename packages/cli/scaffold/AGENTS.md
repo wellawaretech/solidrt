@@ -375,14 +375,17 @@ its tools over guessing at runtime state:
 - list_clients: connected app clients, their platform and runtime
   capabilities, plus the server's `entry` (the app source it serves) and
   `projectDir` - check entry matches the app you think you are driving; the
-  dev port is fixed, so another project's server answers on the same port
+  dev port is fixed, so another project's server answers on the same port.
+  Each client also lists `queries`, the dev-tool query kinds its runtime
+  answers - check it before planning verification against a mixed-version
+  fleet (no "input" = the client predates send_input)
 - get_logs: console output and runtime errors (seq cursor; `wait_ms` long-poll
   to catch output right after a reload; `level`/`contains` filters; repeated
   lines collapse into one entry with a `repeats` count)
 - get_render_tree: what the app actually rendered - node kinds, text, and
   window-relative boxes. Pass `props: true` for each node's current
-  property values (JSX names, off-default only - "is rotate/color/d applied
-  right now" is one call, not a probe entry) and, on transformed nodes, the
+  property values (JSX names, off-default only - "is rotate/color/overflow/d
+  applied right now" is one call, not a probe entry) and, on transformed nodes, the
   painted `quad` (four corners after transforms; the box is just its
   axis-aligned bounds). Whole trees get large: `query` finds nodes by
   kind/text, then `root` + `depth` inspect just that region

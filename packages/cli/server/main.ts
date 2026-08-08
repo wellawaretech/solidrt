@@ -243,6 +243,7 @@ serve({
             profile: data.profile ?? "unknown",
             id: existing?.id ?? state.nextClientId++,
             capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
+            queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
           })
           console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
         } else if (data.type === "log") {

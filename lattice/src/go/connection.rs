@@ -53,6 +53,13 @@ pub struct QueryHandles {
   pub outbound_tx: UnboundedSender<String>,
 }
 
+/// Query kinds this runtime answers, advertised in the connect-time `info`
+/// message so dev tools can plan against a client's actual surface before
+/// calling (mixed-version fleets are normal). Keep in sync with the query
+/// match in `try_serve`.
+const QUERY_KINDS: &[&str] =
+  &["clock", "input", "stats", "tree", "snapshot", "gpu", "texture", "buffer", "debug_list", "debug_call"];
+
 #[cfg(not(target_os = "android"))]
 const SERVICE_TYPE: &str = "_solidrt._tcp.local.";
 
@@ -449,6 +456,7 @@ async fn try_serve(
     "version": crate::VERSION,
     "profile": crate::PROFILE,
     "capabilities": flux::capabilities(),
+    "queries": QUERY_KINDS,
   });
   let _ = client.send(tokio_websockets::Message::text(info.to_string())).await;
 
@@ -753,7 +761,14 @@ async fn try_serve(
                 }
               }
               other => {
-                let msg = format!("unknown query kind {other:?}");
+                // Self-identifying: mixed-version fleets are normal, and the
+                // usual cause of an unknown kind is a client runtime older
+                // than the dev tool calling it.
+                let kind = other.unwrap_or("<none>");
+                let msg = format!(
+                  "Unknown query kind \"{kind}\": this client (runtime {}) does not support it - the client likely predates the tool",
+                  crate::VERSION
+                );
                 let _ = client.send(tokio_websockets::Message::text(error_reply(id, &msg))).await;
               }
             }

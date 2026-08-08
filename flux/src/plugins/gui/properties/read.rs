@@ -151,6 +151,30 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "h", tex.h);
     }
   }
+  // Overflow is layout style, applicable to any layouted kind. The write side
+  // fans "overflow" out to both axes; read back the uniform name when they
+  // agree and the per-axis names when they differ. Off-default = not Visible.
+  if let Some(style) = element.style() {
+    let name = |o: taffy::style::Overflow| match o {
+      taffy::style::Overflow::Visible => "visible",
+      taffy::style::Overflow::Hidden => "hidden",
+      taffy::style::Overflow::Scroll => "scroll",
+      taffy::style::Overflow::Clip => "clip",
+    };
+    let (x, y) = (style.overflow.x, style.overflow.y);
+    if x == y {
+      if x != taffy::style::Overflow::Visible {
+        out.push(("overflow", ReadValue::Str(name(x).into())));
+      }
+    } else {
+      if x != taffy::style::Overflow::Visible {
+        out.push(("overflowX", ReadValue::Str(name(x).into())));
+      }
+      if y != taffy::style::Overflow::Visible {
+        out.push(("overflowY", ReadValue::Str(name(y).into())));
+      }
+    }
+  }
   if let Some(paint) = element.kind.paint() {
     read_paint(paint, &mut out);
   }
