@@ -95,8 +95,8 @@ export function disposeGeometry(geometry: Geometry): void {
   geometry._index = undefined
 }
 
-/** Per-vertex aColor values for withColors: a flat 4-per-vertex array, or a
- * callback deriving each vertex's vec4 from the source data. */
+/** Per-vertex aColor values for withColors/fillColors: a flat 4-per-vertex
+ * array, or a callback deriving each vertex's vec4 from the vertex data. */
 export type ColorFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => Vec4)
 
 /**
@@ -116,8 +116,7 @@ export function withColors(geometry: Geometry, fill: ColorFill, label?: string):
     throw new Error("withColors: vertex data is not a whole number of standard-layout vertices")
   }
   let count = geometry.vertices.length / FLOATS_PER_VERTEX
-  let fn = typeof fill === "function" ? fill : null
-  if (!fn && fill.length !== count * 4) {
+  if (typeof fill !== "function" && fill.length !== count * 4) {
     throw new Error("withColors: fill has " + fill.length + " floats, expected 4 per vertex (" + count * 4 + ")")
   }
   let src = geometry.vertices
@@ -126,20 +125,54 @@ export function withColors(geometry: Geometry, fill: ColorFill, label?: string):
     let s = i * FLOATS_PER_VERTEX
     let d = i * COLORED_FLOATS
     for (let k = 0; k < FLOATS_PER_VERTEX; k++) out[d + k] = src[s + k]!
-    let c: Vec4 = fn
-      ? fn(i, [src[s]!, src[s + 1]!, src[s + 2]!], [src[s + 3]!, src[s + 4]!, src[s + 5]!], [src[s + 6]!, src[s + 7]!])
-      : [(fill as ArrayLike<number>)[i * 4]!, (fill as ArrayLike<number>)[i * 4 + 1]!, (fill as ArrayLike<number>)[i * 4 + 2]!, (fill as ArrayLike<number>)[i * 4 + 3]!]
-    out[d + 8] = c[0]
-    out[d + 9] = c[1]
-    out[d + 10] = c[2]
-    out[d + 11] = c[3]
   }
+  fillColors(out, fill)
   return {
     vertices: out,
     indices: geometry.indices,
     layout: "colored",
     label: label ?? (geometry.label ? geometry.label + "-colored" : undefined),
   }
+}
+
+/**
+ * The in-place primitive under withColors: write the aColor slots of a
+ * colored-layout interleave you already own - the hook for a merging
+ * builder baking colors over its packed buffer (the pos/normal/uv the
+ * callback receives are read from the buffer itself, so a packer that
+ * bakes transforms while writing hands the baker world-space vertices).
+ * Fills vertices [first, first + count) - count defaults to the rest of
+ * the buffer - and `fill` indexes relative to `first`, so a per-part
+ * callback works unchanged for both APIs. Returns `vertices`.
+ *
+ * This trusts the buffer to BE colored-layout data - a bare array carries
+ * no layout tag, so only the arithmetic is checked. The Geometry-level
+ * withColors stays the checked path.
+ */
+export function fillColors(vertices: Float32Array, fill: ColorFill, first = 0, count?: number): Float32Array {
+  if (vertices.length % COLORED_FLOATS !== 0) {
+    throw new Error("fillColors: vertex data is not a whole number of colored-layout vertices")
+  }
+  let total = vertices.length / COLORED_FLOATS
+  let n = count ?? total - first
+  if (!Number.isInteger(first) || !Number.isInteger(n) || first < 0 || n < 0 || first + n > total) {
+    throw new Error("fillColors: range [" + first + ", " + (first + n) + ") is outside the buffer's " + total + " vertices")
+  }
+  let fn = typeof fill === "function" ? fill : null
+  if (!fn && fill.length !== n * 4) {
+    throw new Error("fillColors: fill has " + fill.length + " floats, expected 4 per vertex (" + n * 4 + ")")
+  }
+  for (let i = 0; i < n; i++) {
+    let d = (first + i) * COLORED_FLOATS
+    let c: Vec4 = fn
+      ? fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], [vertices[d + 3]!, vertices[d + 4]!, vertices[d + 5]!], [vertices[d + 6]!, vertices[d + 7]!])
+      : [(fill as ArrayLike<number>)[i * 4]!, (fill as ArrayLike<number>)[i * 4 + 1]!, (fill as ArrayLike<number>)[i * 4 + 2]!, (fill as ArrayLike<number>)[i * 4 + 3]!]
+    vertices[d + 8] = c[0]
+    vertices[d + 9] = c[1]
+    vertices[d + 10] = c[2]
+    vertices[d + 11] = c[3]
+  }
+  return vertices
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two

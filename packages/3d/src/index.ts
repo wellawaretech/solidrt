@@ -7,7 +7,7 @@
 
 export { add, createGroup, createMesh, createScene, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible } from "./scene.ts"
 export type { CameraUpdate, Mesh as MeshNode, Scene as SceneHandle, SceneNode, SceneOptions, TransformUpdate } from "./scene.ts"
-export { box, circle, cone, cylinder, disposeGeometry, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
+export { box, circle, cone, cylinder, disposeGeometry, fillColors, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"
 export { extrude, fillet, lathe, roundRect, shape, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"

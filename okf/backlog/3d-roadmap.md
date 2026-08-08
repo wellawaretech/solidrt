@@ -69,7 +69,15 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   geometry; a `shaderMaterial` vertex stage reading `aColor` opts into
   the layout automatically, and a geometry/material layout mismatch
   throws at add() (layout is stride - a mismatch renders garbage, so it
-  is an error, not a skip). Demand evidence: with no spare channel, an
+  is an error, not a skip). `@solidrt/3d/glsl` exports
+  `LIT_VERTEX_COLORED` - LIT_VERTEX plus aColor forwarded raw as vColor -
+  so colored geometry with standard lighting rewrites nothing.
+  `fillColors(vertices, fill, first?, count?)` is the in-place primitive
+  under withColors (implemented on top of it): a merging builder bakes
+  colors over its packed buffer without hardcoding layout offsets, and
+  because the callback reads pos/normal/uv from the buffer itself, a
+  transform-baking packer hands the baker world-space vertices.
+  Demand evidence: with no spare channel, an
   app baking per-vertex occlusion and tint had to hijack the uv slot,
   which cost it real UVs and forced re-emitting library geometry by
   hand - the layout channel, not more generators, was the blocker to

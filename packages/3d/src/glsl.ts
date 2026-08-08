@@ -6,11 +6,11 @@
 //
 // The light-model functions are PURE: normals, view vectors, light
 // directions, colors and exponents all arrive as arguments, so these
-// constants pin nothing but function names. LIT_VERTEX is the one
-// deliberate exception - it pins the standard varying interface
-// (vWorldPos, vNormal, vUv) and consumes the standard uniform set
-// (uModel, uViewProj, uNormal); fragments written against those five
-// names compose with it directly. All directions are expected normalized;
+// constants pin nothing but function names. The LIT_VERTEX pair are the
+// deliberate exception - they pin the standard varying interface
+// (vWorldPos, vNormal, vUv, plus vColor on the colored variant) and
+// consume the standard uniform set (uModel, uViewProj, uNormal);
+// fragments written against those names compose with them directly. All directions are expected normalized;
 // every function returns its raw term, weighting and color belong to the
 // caller.
 
@@ -43,6 +43,37 @@ export const LIT_VERTEX = glsl`
     vWorldPos = world.xyz;
     vNormal = mat3(uNormal) * aNormal;
     vUv = aUV;
+  }
+`
+
+/**
+ * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
+ * per-vertex aColor vec4 forwarded raw as `in vec4 vColor` - what it means
+ * (a tint, baked AO in one channel, anything) is the fragment's business.
+ * Using this constant opts the material into the colored layout (its
+ * meshes need withColors() geometry), because shaderMaterial detects
+ * aColor in the vertex source.
+ */
+export const LIT_VERTEX_COLORED = glsl`
+  in vec3 aPos;
+  in vec3 aNormal;
+  in vec2 aUV;
+  in vec4 aColor;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  uniform mat4 uNormal;
+  out vec3 vWorldPos;
+  out vec3 vNormal;
+  out vec2 vUv;
+  out vec4 vColor;
+
+  void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
+    gl_Position = uViewProj * world;
+    vWorldPos = world.xyz;
+    vNormal = mat3(uNormal) * aNormal;
+    vUv = aUV;
+    vColor = aColor;
   }
 `
 

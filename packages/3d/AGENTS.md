@@ -30,7 +30,11 @@ blendMode and pointer events like any element. Design rationale:
   contents). Derive colored geometry with `withColors(geometry, fill)` -
   fill is a flat 4-per-vertex array or a per-vertex callback receiving
   `(index, pos, normal, uv)`. Geometry and material layouts must match
-  (layout is stride); a mismatched pair throws at add().
+  (layout is stride); a mismatched pair throws at add(). The whole layout
+  ships whether a material reads every attribute or not (inactive
+  attributes only keep the stride), so colored vertices cost 12 floats
+  regardless - keep data-light passes (a wireframe reading only aPos) on
+  standard geometry.
   Indices are uint16 or uint32 - the `Geometry.indices` array type picks
   the draw's index format, so hand-built geometry past 64k vertices just
   uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
@@ -79,6 +83,13 @@ y axis) and `torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)`
 `withColors(geometry, fill, label?)` derives a "colored"-layout copy of
 any standard-layout geometry (generator or hand-built), adding the
 `aColor` vec4 channel; the source is untouched.
+`fillColors(vertices, fill, first?, count?)` is the in-place primitive
+under it: writes the aColor slots of a colored-layout interleave you
+already own (a merging builder's packed buffer), reading pos/normal/uv
+from the buffer itself - so a packer that bakes transforms while writing
+hands the baker world-space vertices. `fill` indexes relative to
+`first`. It trusts the buffer's layout (no tag to check); withColors is
+the checked path.
 
 Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a
 closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points
@@ -123,7 +134,9 @@ Materials:
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
 (the standard vertex stage: clip position plus vWorldPos/vNormal/vUv
-varyings, normals via mat3(uNormal)) and the pure functions `HEMISPHERE`
+varyings, normals via mat3(uNormal)), `LIT_VERTEX_COLORED` (the same
+plus the colored layout's aColor forwarded raw as vColor - using it opts
+the material into that layout) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
 (`fresnel(n, v, power)`). Lights, colors and exponents are arguments, so
