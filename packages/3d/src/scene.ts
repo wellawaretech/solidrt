@@ -372,6 +372,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _attach(mesh) {
       if (disposed) return
+      // Layout is stride: a mismatched pair would not miss a channel, it
+      // would read garbage - so it is an error here, like the rest of the
+      // strict entry path.
+      let geoLayout = mesh.geometry.layout ?? "standard"
+      let matLayout = mesh.material.layout ?? "standard"
+      if (geoLayout !== matLayout) {
+        throw new Error(
+          "Mesh geometry layout '" + geoLayout + "' does not match its material's '" + matLayout +
+            "' - a material reading aColor needs withColors() geometry, and colored geometry needs such a material",
+        )
+      }
       let bufs = geometryBuffers(mesh.geometry)
       // The uNormal seed keys off the material flag because entry params
       // validate strictly - and a material declaring uNormal without using

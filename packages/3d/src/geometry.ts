@@ -1,5 +1,8 @@
-// Geometry: interleaved vertex data in the one layout every scene material
-// shares - position vec3, normal vec3, uv vec2 (8 floats per vertex) - plus
+// Geometry: interleaved vertex data in one of two named layouts - the
+// "standard" position vec3, normal vec3, uv vec2 (8 floats per vertex)
+// every generator emits, and "colored", which appends an aColor vec4
+// (12 floats, derived with withColors) as the per-vertex data channel for
+// custom materials (tint, baked AO, any four scalars) - plus
 // indices, uint16 or uint32 (the generators here emit uint16; hand-built
 // geometry past 64k vertices uses a Uint32Array and the draw entry follows
 // the array type). Winding is counter-clockwise seen from outside in the
@@ -18,21 +21,38 @@
 import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat, VertexAttribute } from "@solidrt/core/gpu"
 import { add, cross, normalize, sub } from "./math.ts"
-import type { Vec3 } from "./math.ts"
+import type { Vec2, Vec3, Vec4 } from "./math.ts"
 
-export const VERTEX_LAYOUT: VertexAttribute[] = [
+export type VertexLayout = "standard" | "colored"
+
+const STANDARD_ATTRIBUTES: VertexAttribute[] = [
   { name: "aPos", format: "vec3" },
   { name: "aNormal", format: "vec3" },
   { name: "aUV", format: "vec2" },
 ]
+
+/** The pipeline attribute list for each named layout. A deliberately small
+ * set (not an open per-geometry model): every layout shares the standard
+ * prefix, so one shader vocabulary serves all of them. */
+export const VERTEX_LAYOUTS: Record<VertexLayout, VertexAttribute[]> = {
+  standard: STANDARD_ATTRIBUTES,
+  colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "vec4" }],
+}
+
+/** Floats per vertex in the "standard" layout (what every generator emits). */
 export const FLOATS_PER_VERTEX = 8
+const COLORED_FLOATS = 12
 
 export type Geometry = {
-  /** Interleaved [pos.xyz, normal.xyz, uv.xy] per vertex. */
+  /** Interleaved [pos.xyz, normal.xyz, uv.xy] per vertex, plus color.rgba
+   * in the "colored" layout. */
   vertices: Float32Array
   /** The array type picks the draw's index format: Uint32Array past 64k
    * vertices. */
   indices: Uint16Array | Uint32Array
+  /** Vertex layout; absent means "standard". Must match the material's
+   * layout - the scene rejects a mismatched pair at add(). */
+  layout?: VertexLayout
   /** Debug name for the lazily-created GPU buffers. */
   label?: string
   _buffer?: BufferId
@@ -73,6 +93,53 @@ export function disposeGeometry(geometry: Geometry): void {
   if (geometry._index !== undefined) destroyBuffer(geometry._index)
   geometry._buffer = undefined
   geometry._index = undefined
+}
+
+/** Per-vertex aColor values for withColors: a flat 4-per-vertex array, or a
+ * callback deriving each vertex's vec4 from the source data. */
+export type ColorFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => Vec4)
+
+/**
+ * Derive a "colored"-layout geometry from a standard one: the same
+ * positions, normals, uvs and indices, plus an aColor vec4 per vertex -
+ * the data channel for materials whose vertex stage reads `in vec4 aColor`
+ * (a tint, baked ambient occlusion, any four scalars; the name is the
+ * standard vocabulary, the contents are yours). The callback form receives
+ * each vertex's position, normal and uv - what a baker wants. The source
+ * geometry is untouched and its GPU buffers stay independent.
+ */
+export function withColors(geometry: Geometry, fill: ColorFill, label?: string): Geometry {
+  if (geometry.layout === "colored") {
+    throw new Error("withColors: geometry already carries an aColor channel")
+  }
+  if (geometry.vertices.length % FLOATS_PER_VERTEX !== 0) {
+    throw new Error("withColors: vertex data is not a whole number of standard-layout vertices")
+  }
+  let count = geometry.vertices.length / FLOATS_PER_VERTEX
+  let fn = typeof fill === "function" ? fill : null
+  if (!fn && fill.length !== count * 4) {
+    throw new Error("withColors: fill has " + fill.length + " floats, expected 4 per vertex (" + count * 4 + ")")
+  }
+  let src = geometry.vertices
+  let out = new Float32Array(count * COLORED_FLOATS)
+  for (let i = 0; i < count; i++) {
+    let s = i * FLOATS_PER_VERTEX
+    let d = i * COLORED_FLOATS
+    for (let k = 0; k < FLOATS_PER_VERTEX; k++) out[d + k] = src[s + k]!
+    let c: Vec4 = fn
+      ? fn(i, [src[s]!, src[s + 1]!, src[s + 2]!], [src[s + 3]!, src[s + 4]!, src[s + 5]!], [src[s + 6]!, src[s + 7]!])
+      : [(fill as ArrayLike<number>)[i * 4]!, (fill as ArrayLike<number>)[i * 4 + 1]!, (fill as ArrayLike<number>)[i * 4 + 2]!, (fill as ArrayLike<number>)[i * 4 + 3]!]
+    out[d + 8] = c[0]
+    out[d + 9] = c[1]
+    out[d + 10] = c[2]
+    out[d + 11] = c[3]
+  }
+  return {
+    vertices: out,
+    indices: geometry.indices,
+    layout: "colored",
+    label: label ?? (geometry.label ? geometry.label + "-colored" : undefined),
+  }
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two

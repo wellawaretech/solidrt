@@ -62,6 +62,18 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   throughout; sharp points crease, smooth-tagged points share normals;
   outputs pick uint16/uint32 indices by vertex count. Verified by
   manifold/winding/area checks, not just typecheck.
+- **The "colored" vertex layout** (2026-08-08, item 10's first named
+  layout): `withColors(geometry, fill)` derives a 12-float geometry
+  appending `aColor` vec4 - the per-vertex data channel (tint, baked
+  ambient occlusion, any four scalars) - from any standard-layout
+  geometry; a `shaderMaterial` vertex stage reading `aColor` opts into
+  the layout automatically, and a geometry/material layout mismatch
+  throws at add() (layout is stride - a mismatch renders garbage, so it
+  is an error, not a skip). Demand evidence: with no spare channel, an
+  app baking per-vertex occlusion and tint had to hijack the uv slot,
+  which cost it real UVs and forced re-emitting library geometry by
+  hand - the layout channel, not more generators, was the blocker to
+  consuming library geometry directly.
 - **Standard uniform set + exported lighting GLSL** (2026-08-07, item 2 -
   see the ranked entry below for the contract). Engine prerequisite the
   same day: shared target params and bindings tolerate ZERO coverage
@@ -80,8 +92,8 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   [gpu-pipeline-extensions](gpu-pipeline-extensions.md)).
 
 Known v1 limits, documented as traps in `packages/3d/AGENTS.md`: opaque
-only, Euler-only rotation, fixed 8-float vertex layout, entry rebuilds
-append at the list end.
+only, Euler-only rotation, two vertex layouts only (no tangents or skin
+weights yet), entry rebuilds append at the list end.
 
 ## The ranked list
 
@@ -147,12 +159,13 @@ append at the list end.
    Silhouette jaggies are the dominant artifact on filled geometry.
 10. **Geometry breadth and the vertex-layout ceiling.** Library. The
     cheap primitives landed 2026-08-07 (cylinder, cone, torus, circle,
-    ring) and the profile tier landed the same day (extrude/lathe/shape
-    with fillet and triangulation - see landed); still demand-gated:
-    capsule. The real item is the fixed 8-float
-    layout - vertex colors, tangents and skin weights all need layout
-    work; the recorded direction is a small set of named layouts, not an
-    open BufferGeometry-style model.
+    ring), the profile tier the same day (extrude/lathe/shape with fillet
+    and triangulation), and the first named layout 2026-08-08: "colored"
+    appends `aColor` vec4 via `withColors` (see landed) - vertex colors
+    and per-vertex baked data are covered. Still demand-gated: capsule,
+    and further named layouts (tangents, skin weights) when items 7 and
+    16 force them; the direction stays a small set of named layouts, not
+    an open BufferGeometry-style model.
 11. **Quaternions.** Library. Rotation is Euler x-y-z only; quats unlock
     slerp, gimbal-free tumbling, and glTF node transforms (glTF stores
     rotation as a quaternion, so item 7 will force the representation

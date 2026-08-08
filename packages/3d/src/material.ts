@@ -36,7 +36,8 @@ import type {
   TextureId,
   Topology,
 } from "@solidrt/core/gpu"
-import { VERTEX_LAYOUT } from "./geometry.ts"
+import { VERTEX_LAYOUTS } from "./geometry.ts"
+import type { VertexLayout } from "./geometry.ts"
 
 export type Material = {
   /** The pipeline this material draws with (lazily created). */
@@ -49,6 +50,11 @@ export type Material = {
    * the world matrix's inverse-transpose alongside uModel for meshes using
    * this material (set automatically by shaderMaterial). */
   normalMatrix?: boolean
+  /** The vertex layout the pipeline is built for; absent means "standard".
+   * shaderMaterial sets "colored" when the vertex stage reads `aColor`. A
+   * mesh whose geometry layout differs is rejected at add() - the strides
+   * disagree, so a mismatch would render garbage, not just miss a channel. */
+  layout?: VertexLayout
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -101,7 +107,7 @@ function pipelineFor(kind: "color" | "map"): RenderPipelineId {
   })
   let program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + kind })
   let pipeline = createRenderPipeline(program, {
-    attributes: VERTEX_LAYOUT,
+    attributes: VERTEX_LAYOUTS.standard,
     depth: true,
     cull: "back",
     label: "scene-unlit-" + kind,
@@ -150,9 +156,13 @@ export type ShaderMaterialOptions = {
    * world inverse-transpose beside uModel - take `mat3(uNormal)` for
    * normals, correct under non-uniform scale - and `uniform vec3 uCamPos`
    * the camera's world position, shared like uViewProj (the specular /
-   * fresnel view vector: `uCamPos - worldPos`). Declare any of the shared
+   * fresnel view vector: `uCamPos - worldPos`). Declare any of the
    * layout's `in` attributes (aPos vec3, aNormal vec3, aUV vec2);
-   * undeclared ones are skipped. `@solidrt/3d/glsl` exports a standard
+   * undeclared ones are skipped. Reading `in vec4 aColor` opts the
+   * material into the "colored" 12-float layout - the per-vertex data
+   * channel (tint, baked AO, any four scalars); its meshes then need
+   * withColors() geometry, and a layout mismatch throws at add().
+   * `@solidrt/3d/glsl` exports a standard
    * vertex stage and lighting pieces built on exactly this contract.
    */
   vertex: string
@@ -195,8 +205,12 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
   }
   let program: ProgramId | undefined
   let pipeline: RenderPipelineId | undefined
+  // Attributes live in the vertex stage only, so unlike the uNormal scan
+  // there is nothing to look for in the fragment source.
+  let layout: VertexLayout = /\baColor\b/.test(opts.vertex) ? "colored" : "standard"
   return {
     normalMatrix: /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment),
+    layout,
     pipeline() {
       if (pipeline === undefined) {
         let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
@@ -205,7 +219,7 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
         destroyShader(vs)
         destroyShader(fs)
         pipeline = createRenderPipeline(program, {
-          attributes: VERTEX_LAYOUT,
+          attributes: VERTEX_LAYOUTS[layout],
           depth: opts.depth ?? true,
           depthWrite: opts.depthWrite,
           blend: opts.blend,

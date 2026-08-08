@@ -23,7 +23,14 @@ blendMode and pointer events like any element. Design rationale:
   own `onFrame` writing a signal (declarative) or `setTransform` on a
   `ref`-grabbed node (the frame-rate escape hatch - signals carry
   structure, per-frame motion goes straight to the scene).
-- One vertex layout everywhere: `aPos` vec3 + `aNormal` vec3 + `aUV` vec2.
+- Two named vertex layouts (`Geometry.layout`, absent = "standard"):
+  "standard" is `aPos` vec3 + `aNormal` vec3 + `aUV` vec2 - what every
+  generator emits - and "colored" appends `aColor` vec4, the per-vertex
+  data channel (a tint, baked AO, any four scalars; standard name, your
+  contents). Derive colored geometry with `withColors(geometry, fill)` -
+  fill is a flat 4-per-vertex array or a per-vertex callback receiving
+  `(index, pos, normal, uv)`. Geometry and material layouts must match
+  (layout is stride); a mismatched pair throws at add().
   Indices are uint16 or uint32 - the `Geometry.indices` array type picks
   the draw's index format, so hand-built geometry past 64k vertices just
   uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
@@ -69,6 +76,9 @@ radii taper it) and `cone(radius?, height?, radialSeg?)`;
 `torus(radius?, tube?, radialSeg?, tubularSeg?)` (lying flat, hole on the
 y axis) and `torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)`
 (standing y-up) - both oriented for the y-up world, unlike Three's z-up.
+`withColors(geometry, fill, label?)` derives a "colored"-layout copy of
+any standard-layout geometry (generator or hand-built), adding the
+`aColor` vec4 channel; the source is untouched.
 
 Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a
 closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points
@@ -102,7 +112,9 @@ Materials:
   inverse-transpose, written beside uModel for this material's meshes;
   take `mat3(uNormal)` - correct under non-uniform scale, where
   mat3(uModel) bends normals off the surface). Attributes come from the
-  shared layout by name; sources without `#version` get the standard
+  geometry's layout by name; a vertex stage reading `in vec4 aColor` opts
+  the material into the "colored" layout, and its meshes then need
+  `withColors()` geometry. Sources without `#version` get the standard
   pipeline preamble. App-driven uniforms beyond the standard set: seed
   via `params`, then write per mesh with
   `setMeshParams(mesh, { name: value })` (validated names; values persist
@@ -164,3 +176,7 @@ system.
   uCamPos is skipped silently (shared params tolerate zero coverage), so
   the symptom is an untransformed or unlit render, not an error. Use what
   you declare.
+- The layout scan is textual the same way: any `aColor` token in the
+  vertex source - a comment counts - selects the "colored" layout, and
+  the material then rejects standard geometry at add(). Do not mention
+  aColor you do not read.
