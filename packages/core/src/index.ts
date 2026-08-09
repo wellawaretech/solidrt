@@ -20,6 +20,12 @@ export { parseSvg, svg } from "./svg"
 export type { SvgDocument, SvgDraw } from "./svg"
 export { createScroll } from "./scroll"
 export type { Scroll, ScrollAxis, ScrollOffset, ScrollOptions } from "./scroll"
+export { arena } from "./arena"
+export type { ArenaOwner } from "./arena"
+export { createPan } from "./pan"
+export type { PanAxis, PanOptions } from "./pan"
+export { createTransform } from "./transform"
+export type { TransformDelta, TransformOptions } from "./transform"
 export type {
   LayoutProps,
   TransformProps,

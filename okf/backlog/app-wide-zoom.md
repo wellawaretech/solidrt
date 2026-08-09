@@ -26,10 +26,15 @@ needed.
   design system.
 - Architecture: a root-level recognizer sitting on the gesture arena of
   okf/plans/component-gestures.md, arbitrating with app-level pans and
-  presses below it. This is also the expected motivation for promoting
-  the recognizer core out of the components package into core
-  (runtime-owned, framework-independent).
+  presses below it.
 
-Prerequisites: the component-gestures arena (stage 3) has since shipped
-(stages 1-4 done); what remains blocking is its platform items
-(multi-touch device verification, pinch input per platform).
+Prerequisites: mostly met as of 2026-08-09. The recognizer core was
+promoted out of components into core (the promotion this item predicted
+- @solidrt/3d's pinch-to-zoom got there first): the arena is exported
+from @solidrt/core, and createTransform is the merged pan/pinch/rotate
+recognizer a root zoom would build on. Multi-touch is verified in
+practice (the trails example paints with multiple fingers). Remaining:
+the trackpad-pinch survey (desktop pinch likely arrives as ctrl+wheel,
+which unifies with the desktop convention and needs no recognizer) and
+the root-recognizer design itself (where it attaches, how it feeds the
+env -> policy scaling machinery).

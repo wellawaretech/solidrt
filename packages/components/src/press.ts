@@ -1,6 +1,5 @@
-import { createSignal, createMemo, onSettled, focusedNode, getBoundingBoxViewport } from "@solidrt/core"
+import { arena, createSignal, createMemo, onSettled, focusedNode, getBoundingBoxViewport } from "@solidrt/core"
 import type { PointerEvent, KeyEvent } from "@solidrt/core"
-import { claim, release } from "./arena"
 import { registerNavAction } from "./focus-nav"
 
 // A live view of a recognizer's state, not a snapshot: the fields are getters,
@@ -46,8 +45,9 @@ export interface PressOptions {
 // ref also registers onPress as the node's nav action, the path a
 // controller's south button activates through (see focus-nav.ts). Key
 // activation shows no pressed state - the focus ring is the feedback.
-// Deliberately framework-agnostic (no theme, no styling): a candidate for
-// promotion into core once the recognizer family grows
+// The arena and the movement recognizers (createPan, createTransform) live in
+// core; press stays here because it couples to this package's focus-nav
+// (registerNavAction) and nothing outside components needs it yet
 // (okf/plans/component-gestures.md).
 export function createPress(options: PressOptions) {
   let [pressed, setPressed] = createSignal(false)
@@ -107,7 +107,7 @@ export function createPress(options: PressOptions) {
 
   let disengage = () => {
     if (active != null) {
-      release(active, owner)
+      arena.release(active, owner)
       active = null
     }
   }
@@ -127,7 +127,7 @@ export function createPress(options: PressOptions) {
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
       if (e.button != null && e.button !== 0) return
-      if (active == null && claim(e.pointerId, owner)) {
+      if (active == null && arena.claim(e.pointerId, owner)) {
         active = e.pointerId
         inside = true
         setPressed(true)

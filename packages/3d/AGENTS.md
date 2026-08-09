@@ -55,7 +55,19 @@ blendMode and pointer events like any element. Design rationale:
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
-zoomSpeed? })` - drag-to-rotate, wheel-to-zoom, optional auto-orbit. Spread
+zoomSpeed?, zoomAnchor?, rotateAnchor? })` - drag-to-rotate, pinch- and
+wheel-to-zoom, optional auto-orbit. Input runs on core's `createTransform`
+recognizer, so drag and pinch arbitrate in the app-wide gesture arena (a
+viewport inside a scroller does not double-handle) and rotation starts after
+the recognizer's slop; `zoomSpeed` weights both wheel and pinch. Zoom aims
+at the target unless `zoomAnchor(x, y, {eye, target})` maps the pinch focal
+/ wheel cursor to a world point (ground hit, target-depth plane, ...) - then
+that point stays pinned under the pointer and the target slides toward it;
+only the app can build that mapping, since fov, aspect and element placement
+are app state. Pair it with `rotateAnchor({eye, target})`: called at gesture
+start, its point is projected onto the view axis and re-seats the pivot
+without moving the picture, so a drag after an anchored zoom orbits what the
+camera looks at, not wherever the zoom left the target. Spread
 `orbit.handlers` onto the input-owning element, call `orbit.update(dt)`
 from your onFrame (no frame loop of its own), and use its return - true
 when the pose changed - to gate per-frame dependents like reprojecting

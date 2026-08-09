@@ -1,6 +1,5 @@
-import { createSignal, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
+import { arena, createSignal, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
-import { release, steal } from "./arena"
 import { theme } from "./theme"
 import { densityScale } from "./policy"
 import type { StyleProps } from "./types"
@@ -71,7 +70,7 @@ export function Slider(props: SliderProps) {
 
   let endDrag = () => {
     if (active != null) {
-      release(active, owner)
+      arena.release(active, owner)
       active = null
     }
   }
@@ -84,7 +83,7 @@ export function Slider(props: SliderProps) {
     if (props.disabled || active != null) return
     // A down on the track is unambiguously a slider drag: resolve the arena
     // outright so an ancestor scroller's pan cannot take the pointer over.
-    steal(e.pointerId, owner)
+    arena.steal(e.pointerId, owner)
     active = e.pointerId
     setFromClientX(e.clientX)
   }

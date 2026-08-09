@@ -174,6 +174,17 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   app-global shortcut point; `stopPropagation()` ends the walk. `focusable`
   declares focus-navigation candidacy (enumerate via getFocusables()).
 
+- Gesture recognizers, shared by every package: `createPan` (single-pointer
+  drag, axis-aware slop, per-event dx/dy) and `createTransform` (merged
+  pan + pinch + rotate over the whole pointer set, Flutter-Scale style: streams
+  `{ dx, dy, scale, rotation, x, y }` per event; one finger degrades to a plain
+  pan). Spread the returned `.handlers` onto the receiving element. They
+  arbitrate through the exported `arena` (ONE per app): a press claims its
+  pointer provisionally, movement evidence steals and resolves it, the loser's
+  `cancel()` retracts its feedback. Custom recognizers should join the arena
+  rather than track pointers ad hoc, or they will double-handle against
+  scrollers and pressables.
+
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
   is as you expect, but `createEffect` takes the 2.0 two-function shape: a
   TRACKED compute that reads signals and returns a value, then an UNTRACKED

@@ -46,9 +46,11 @@ Most components group props into two objects, plus top-level event handlers:
 - `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
   Wheel + drag (a pan recognizer: activates on slop along the scroll axis and
   steals the pointer from a pressable the drag started on), no momentum yet.
-  Backed by `createScroll` from `@solidrt/core` (headless offset+clamp
-  geometry) and the internal `createPan`/arena (arena.ts, pan.ts, press.ts:
-  per-pointer claims, innermost press wins, pan steals on slop).
+  Backed by `createScroll` and `createPan` from `@solidrt/core` (headless
+  offset+clamp geometry; the recognizers and their gesture arena live in core
+  so every package arbitrates in the one app-wide arena). The press
+  recognizer (press.ts) stays in this package: per-pointer claims, innermost
+  press wins, pan steals on slop.
 - `Pressable` - pressable box; `onPress` on a primary press released inside,
   `disabled` opts out. `children`/`style` can be functions of `{ pressed,
   hovered }`. Press retention: a drag out retracts the pressed state, a drag

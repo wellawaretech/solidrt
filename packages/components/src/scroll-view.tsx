@@ -1,6 +1,5 @@
-import { createScroll } from "@solidrt/core"
+import { createPan, createScroll } from "@solidrt/core"
 import type { LayoutProps, PointerProps, WheelEvent } from "@solidrt/core"
-import { createPan } from "./pan"
 import type { StyleProps } from "./types"
 
 export interface ScrollViewProps extends PointerProps {

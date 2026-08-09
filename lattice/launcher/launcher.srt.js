@@ -5862,6 +5862,116 @@ ${origin}`);
     scrollTo: (x2, y2) => set(x2, y2)
   };
 }
+// packages/core/src/arena.ts
+var claims = new Map;
+var arena = {
+  claim(pointerId, owner) {
+    if (claims.has(pointerId))
+      return false;
+    claims.set(pointerId, {
+      owner,
+      resolved: false
+    });
+    return true;
+  },
+  steal(pointerId, owner) {
+    let current = claims.get(pointerId);
+    if (current) {
+      if (current.resolved)
+        return false;
+      current.owner.cancel();
+    }
+    claims.set(pointerId, {
+      owner,
+      resolved: true
+    });
+    return true;
+  },
+  release(pointerId, owner) {
+    if (claims.get(pointerId)?.owner === owner)
+      claims.delete(pointerId);
+  }
+};
+// packages/core/src/pan.ts
+var PAN_SLOP = 8;
+function createPan(options) {
+  let origin = null;
+  let active = null;
+  let armed = null;
+  let past = (e3) => {
+    if (!origin)
+      return false;
+    let dx = Math.abs(e3.clientX - origin.x);
+    let dy = Math.abs(e3.clientY - origin.y);
+    let axis = options.axis ?? "both";
+    if (axis === "vertical")
+      return dy >= PAN_SLOP;
+    if (axis === "horizontal")
+      return dx >= PAN_SLOP;
+    return dx * dx + dy * dy >= PAN_SLOP * PAN_SLOP;
+  };
+  let reset = () => {
+    if (active != null) {
+      arena.release(active, owner);
+      active = null;
+    }
+    armed = null;
+    origin = null;
+  };
+  let cancel = reset;
+  let owner = {
+    cancel
+  };
+  onSettled(() => reset);
+  let handlers2 = {
+    onPointerDown: (e3) => {
+      if (e3.button != null && e3.button !== 0)
+        return;
+      if (armed == null && active == null) {
+        armed = e3.pointerId;
+        origin = {
+          x: e3.clientX,
+          y: e3.clientY
+        };
+      }
+    },
+    onPointerMove: (e3) => {
+      if (armed === e3.pointerId && past(e3)) {
+        if (arena.steal(e3.pointerId, owner)) {
+          active = e3.pointerId;
+          armed = null;
+          origin = {
+            x: e3.clientX,
+            y: e3.clientY
+          };
+          options.onPanStart?.();
+        } else {
+          reset();
+        }
+        return;
+      }
+      if (active === e3.pointerId && origin) {
+        options.onPanMove?.(e3.clientX - origin.x, e3.clientY - origin.y);
+        origin = {
+          x: e3.clientX,
+          y: e3.clientY
+        };
+      }
+    },
+    onPointerUp: (e3) => {
+      if (active === e3.pointerId) {
+        reset();
+        options.onPanEnd?.();
+      } else if (armed === e3.pointerId) {
+        reset();
+      }
+    }
+  };
+  return {
+    handlers: handlers2,
+    cancel
+  };
+}
 // packages/components/src/window.tsx
 function Window(props) {
   var _el$ = createElement("window");
@@ -6948,116 +7058,6 @@ function TextInput(props) {
   });
   return _el$;
 }
-// packages/components/src/arena.ts
-var claims = new Map;
-function claim(pointerId, owner) {
-  if (claims.has(pointerId))
-    return false;
-  claims.set(pointerId, {
-    owner,
-    resolved: false
-  });
-  return true;
-}
-function steal(pointerId, owner) {
-  let current = claims.get(pointerId);
-  if (current) {
-    if (current.resolved)
-      return false;
-    current.owner.cancel();
-  }
-  claims.set(pointerId, {
-    owner,
-    resolved: true
-  });
-  return true;
-}
-function release(pointerId, owner) {
-  if (claims.get(pointerId)?.owner === owner)
-    claims.delete(pointerId);
-}
-
-// packages/components/src/pan.ts
-var PAN_SLOP = 8;
-function createPan(options) {
-  let origin = null;
-  let active = null;
-  let armed = null;
-  let past = (e3) => {
-    if (!origin)
-      return false;
-    let dx = Math.abs(e3.clientX - origin.x);
-    let dy = Math.abs(e3.clientY - origin.y);
-    let axis = options.axis ?? "both";
-    if (axis === "vertical")
-      return dy >= PAN_SLOP;
-    if (axis === "horizontal")
-      return dx >= PAN_SLOP;
-    return dx * dx + dy * dy >= PAN_SLOP * PAN_SLOP;
-  };
-  let reset = () => {
-    if (active != null) {
-      release(active, owner);
-      active = null;
-    }
-    armed = null;
-    origin = null;
-  };
-  let cancel = reset;
-  let owner = {
-    cancel
-  };
-  onSettled(() => reset);
-  let handlers2 = {
-    onPointerDown: (e3) => {
-      if (e3.button != null && e3.button !== 0)
-        return;
-      if (armed == null && active == null) {
-        armed = e3.pointerId;
-        origin = {
-          x: e3.clientX,
-          y: e3.clientY
-        };
-      }
-    },
-    onPointerMove: (e3) => {
-      if (armed === e3.pointerId && past(e3)) {
-        if (steal(e3.pointerId, owner)) {
-          active = e3.pointerId;
-          armed = null;
-          origin = {
-            x: e3.clientX,
-            y: e3.clientY
-          };
-          options.onPanStart?.();
-        } else {
-          reset();
-        }
-        return;
-      }
-      if (active === e3.pointerId && origin) {
-        options.onPanMove?.(e3.clientX - origin.x, e3.clientY - origin.y);
-        origin = {
-          x: e3.clientX,
-          y: e3.clientY
-        };
-      }
-    },
-    onPointerUp: (e3) => {
-      if (active === e3.pointerId) {
-        reset();
-        options.onPanEnd?.();
-      } else if (armed === e3.pointerId) {
-        reset();
-      }
-    }
-  };
-  return {
-    handlers: handlers2,
-    cancel
-  };
-}
-
 // packages/components/src/scroll-view.tsx
 function ScrollView(props) {
   let viewport;
@@ -7228,7 +7228,7 @@ function createPress(options) {
   };
   let disengage = () => {
     if (active != null) {
-      release(active, owner);
+      arena.release(active, owner);
       active = null;
     }
   };
@@ -7247,7 +7247,7 @@ function createPress(options) {
     onPointerDown: (e3) => {
       if (e3.button != null && e3.button !== 0)
         return;
-      if (active == null && claim(e3.pointerId, owner)) {
+      if (active == null && arena.claim(e3.pointerId, owner)) {
         active = e3.pointerId;
         inside = true;
         setPressed(true);

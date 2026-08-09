@@ -46,7 +46,7 @@ solids (`extrude` with bevels, `lathe`, flat `shape`, with `fillet`/
 `roundRect`/`triangulate` helpers), a per-vertex data channel
 (`withColors` adds an `aColor` vec4 - tint, baked AO, any four scalars -
 to any geometry, for materials that read it), one perspective camera
-with an orbit control (`createOrbitCamera`: drag, zoom, auto-orbit).
+with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit).
 Lights, transparency, model loading and picking are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
 usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:

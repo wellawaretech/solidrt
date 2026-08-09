@@ -1,6 +1,6 @@
-import { onSettled } from "@solidrt/core"
-import type { PointerEvent } from "@solidrt/core"
-import { release, steal } from "./arena"
+import { onSettled } from "@solidjs/signals"
+import type { PointerEvent } from "./types"
+import { arena } from "./arena"
 
 // Movement in logical pixels before a pan activates. Below this a drag still
 // reads as a press (tap wiggle); crossing it is the positive evidence that the
@@ -33,8 +33,8 @@ export interface PanOptions {
 // activation point on. Moves and the up arrive on the frozen down path, so an
 // active pan keeps streaming when the pointer leaves the node or the window.
 // cancel() is the external-cancel hook; it ends an active pan without
-// onPanEnd. Options are read at event time. Deliberately framework-agnostic:
-// a candidate for promotion into core (okf/plans/component-gestures.md).
+// onPanEnd. Options are read at event time. Single-pointer by design; for
+// multi-pointer pinch/rotate compose createTransform instead.
 export function createPan(options: PanOptions) {
   // Down position while armed; last delivered position while active.
   let origin: { x: number; y: number } | null = null
@@ -53,7 +53,7 @@ export function createPan(options: PanOptions) {
 
   let reset = () => {
     if (active != null) {
-      release(active, owner)
+      arena.release(active, owner)
       active = null
     }
     armed = null
@@ -75,7 +75,7 @@ export function createPan(options: PanOptions) {
     },
     onPointerMove: (e: PointerEvent) => {
       if (armed === e.pointerId && past(e)) {
-        if (steal(e.pointerId, owner)) {
+        if (arena.steal(e.pointerId, owner)) {
           active = e.pointerId
           armed = null
           origin = { x: e.clientX, y: e.clientY }
