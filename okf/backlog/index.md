@@ -153,6 +153,11 @@ Sorted by status: open first, then partial, deferred, and closed
   pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already
   has the capability and alloy already discards the deltas.
+- [Frame-batched multi-pointer delivery (and frame-paced mouse)](frame-batched-pointer-input.md) [done] -
+  all pointer moves (mouse/pen included; pending_moves gate deleted) now
+  dispatch from the resampler's frame slots, one per pointer per frame,
+  followed by a "pointerFrame" terminator; createTransform measures once per
+  frame on it, so the multi-touch span scissor is gone by construction.
 - [Move the image codec to forge behind a flux:image module](flux-image-module.md) [done] -
   decodeImage/encodeImage were inline in a lattice-registered global, so
   headless flux had no image codec; now a forge core marshalled by a thin

@@ -8,8 +8,14 @@
 // scrollable layout, an orbit drag and the ancestor scroller's pan arbitrate
 // instead of both acting, and rotation only starts once the drag crosses the
 // recognizer's slop. One finger (or a mouse drag) rotates; two-finger pinch
-// zooms (the focal translation keeps rotating, pair rotation is ignored);
-// wheel zooms directly - no recognizer needed for a discrete wheel step.
+// zooms (pair rotation is ignored); wheel zooms directly - no recognizer
+// needed for a discrete wheel step. What two-finger translation means
+// depends on `viewport`: with it, two fingers pan - the scene slides under
+// the fingers 1:1 at the target's depth, the touch convention everywhere
+// (three.js DOLLY_PAN, Sketchfab, touch CAD) - which also keeps an
+// imperfect pinch from smearing rotation into the zoom. Without it there
+// is no pixel-to-world mapping, so focal translation falls back to
+// rotating regardless of finger count.
 //
 // Zoom aims at the target by default. With `zoomAnchor` the app maps the
 // pinch focal / wheel cursor to a world point, and the zoom scales the pose
@@ -70,10 +76,24 @@ export type OrbitCameraOptions = {
   /** Multipliers over the built-in drag and zoom (wheel + pinch) sensitivities. */
   rotateSpeed?: number
   zoomSpeed?: number
+  /** Multiplier over the two-finger pan (1 = the scene tracks the fingers
+   * exactly at the target's depth). */
+  panSpeed?: number
+  /** The viewport the pointer coordinates live in: height in the same
+   * logical units as clientX/clientY, and the camera's vertical fov in
+   * degrees. Providing it enables two-finger pan; without it two-finger
+   * translation rotates, as it always did. */
+  viewport?: () => { height: number; fov: number }
+  /** Constrain where a pan may put the target - return the target to use.
+   * The typical use: keep the pivot within a few radii of the subject so
+   * panning cannot strand the camera. Zoom and rotation do not consult it. */
+  clampTarget?: (target: Vec3) => Vec3
   /** Map a screen point (window coordinates, the clientX/clientY frame) to
-   * the world point a zoom there should keep pinned - called with the pinch
-   * focal or wheel cursor and the pose the zoom is about to apply to.
-   * Return null to zoom toward the target as usual (also the default). */
+   * the world point a zoom there should keep pinned. Called once per pinch
+   * gesture (at its first span change - the anchor then holds for the whole
+   * gesture, see the jitter note at `pinchAnchor`) and once per wheel event,
+   * with the pose the zoom is about to apply to. Return null to zoom toward
+   * the target as usual (also the default). */
   zoomAnchor?: (x: number, y: number, view: { eye: Vec3; target: Vec3 }) => Vec3 | null
   /** The world point rotation should pivot about - called when a drag or
    * pinch starts. It is projected onto the view axis and becomes the new
@@ -149,6 +169,26 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
     elevation = clampNum(elevation, minElevation, maxElevation)
     distance = clampNum(distance, minDistance, maxDistance)
   }
+  // Slide eye and target together along the camera's right/up so the scene
+  // tracks the fingers: dragged pixels map to world units through the
+  // frustum height at the target's depth. Screen +y is down, so the up-axis
+  // term is added (fingers down -> camera up -> scene follows down).
+  let pan = (dx: number, dy: number) => {
+    let vp = options.viewport!()
+    let wpp = ((2 * Math.tan((vp.fov * Math.PI) / 360) * distance) / vp.height) * (options.panSpeed ?? 1)
+    let sa = Math.sin(azimuth)
+    let ca = Math.cos(azimuth)
+    let se = Math.sin(elevation)
+    let ce = Math.cos(elevation)
+    // right = (ca, 0, -sa), up = (-sa*se, ce, -ca*se) for this pose - the
+    // camera basis written out for eye() = target + distance * (ce*sa, se, ce*ca).
+    let next: Vec3 = [
+      target[0] - dx * wpp * ca - dy * wpp * sa * se,
+      target[1] + dy * wpp * ce,
+      target[2] + dx * wpp * sa - dy * wpp * ca * se,
+    ]
+    target = options.clampTarget ? options.clampTarget(next) : next
+  }
   let eye = (): Vec3 => {
     let ce = Math.cos(elevation)
     return [
@@ -159,17 +199,13 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
   }
   let apply = () => scene.setCamera({ position: eye(), target })
 
-  // Zoom by `ratio` (new distance over old, before clamping) about the point
-  // under (x, y). The anchor comes from the PRE-zoom pose: scaling eye and
-  // target about it by the distance ratio keeps it projecting to the same
-  // pixel, so the shift below uses the ratio that actually applied after
-  // clamping - once distance pins at a clamp the target stops moving too,
-  // instead of sliding the view sideways under a dead zoom.
-  let zoomAbout = (ratio: number, x?: number, y?: number) => {
-    let anchor =
-      x !== undefined && y !== undefined
-        ? options.zoomAnchor?.(x, y, { eye: eye(), target: [target[0], target[1], target[2]] })
-        : null
+  // Zoom by `ratio` (new distance over old, before clamping) about a world
+  // anchor (null zooms toward the target). Scaling eye and target about the
+  // anchor by the distance ratio keeps it projecting to the same pixel, so
+  // the shift below uses the ratio that actually applied after clamping -
+  // once distance pins at a clamp the target stops moving too, instead of
+  // sliding the view sideways under a dead zoom.
+  let zoomAbout = (ratio: number, anchor: Vec3 | null | undefined) => {
     let prev = distance
     // Bounds widen to the current distance so a pose already outside them
     // (a rotateAnchor re-seat may land anywhere) zooms back toward range
@@ -183,12 +219,31 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
       anchor[2] + (target[2] - anchor[2]) * s,
     ]
   }
+  let anchorAt = (x?: number, y?: number) =>
+    x !== undefined && y !== undefined && options.zoomAnchor
+      ? options.zoomAnchor(x, y, { eye: eye(), target: [target[0], target[1], target[2]] })
+      : null
+
+  // The pinch keeps ONE anchor for its whole gesture, taken at the first
+  // span change. Per-event re-derivation looks equivalent but jitters in
+  // practice: the two fingers' events interleave, so the measured span
+  // oscillates around its true value even while the fingers rest, and every
+  // event zooms slightly in or back out. About a fixed point those pairs
+  // cancel exactly (the ratios telescope); about a fresh anchor each time -
+  // a new raycast against a pose the previous event just moved, or the
+  // app's hit/fallback choice flipping between events - each pair leaves a
+  // residual target slide and the model visibly crawls under resting
+  // fingers. The wheel stays per-event: its notches are discrete, there is
+  // no noise to cancel, and each notch re-aiming at the cursor is the point.
+  let pinchAnchor: Vec3 | null = null
+  let pinchSeen = false
 
   clampPose()
   apply()
 
-  // One finger rotates; a second finger's span change zooms while the focal
-  // point keeps rotating. Pair rotation has no orbit meaning and is ignored.
+  // One finger rotates. With two down, the span change zooms and the focal
+  // translation pans (or, with no viewport to map pixels through, keeps
+  // rotating). Pair rotation has no orbit meaning and is ignored.
   let transform = createTransform({
     onTransformStart: () => {
       interacting = true
@@ -210,18 +265,28 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
       }
     },
     onTransformMove: (t) => {
-      azimuth -= t.dx * dragAzimuth
-      elevation = clampNum(elevation + t.dy * dragElevation, minElevation, maxElevation)
+      if (t.pointers >= 2 && options.viewport) {
+        pan(t.dx, t.dy)
+      } else {
+        azimuth -= t.dx * dragAzimuth
+        elevation = clampNum(elevation + t.dy * dragElevation, minElevation, maxElevation)
+      }
       if (t.scale !== 1) {
         // Fingers spreading (scale > 1) zooms in: the distance shrinks by the
         // span ratio, exponent-weighted by the zoomSpeed multiplier, about
-        // the pinch focal when the app anchors it.
-        zoomAbout(1 / Math.pow(t.scale, options.zoomSpeed ?? 1), t.x, t.y)
+        // the gesture's anchor when the app provides one.
+        if (!pinchSeen) {
+          pinchSeen = true
+          pinchAnchor = anchorAt(t.x, t.y)
+        }
+        zoomAbout(1 / Math.pow(t.scale, options.zoomSpeed ?? 1), pinchAnchor)
       }
       dirty = true
     },
     onTransformEnd: () => {
       interacting = false
+      pinchSeen = false
+      pinchAnchor = null
     },
   })
 
@@ -251,7 +316,7 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
     handlers: {
       ...transform.handlers,
       onWheel(e) {
-        zoomAbout(Math.exp(e.deltaY * wheelZoom), e.clientX, e.clientY)
+        zoomAbout(Math.exp(e.deltaY * wheelZoom), anchorAt(e.clientX, e.clientY))
         dirty = true
       },
     },

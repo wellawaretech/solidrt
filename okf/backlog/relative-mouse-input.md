@@ -53,7 +53,9 @@ do-order notes). It had never been filed. Filed 2026-07-31.
 2. `alloy/src/event.rs` + `alloy/src/app.rs` - an `AlloyCommand` for the
    mode (main-thread window op, exactly like `SetFullscreen`).
 3. `lattice/src/lib.rs` + `lattice/src/runtime.rs` - carry the deltas
-   through the pending-move gate, and a verb to set the mode.
+   through the resampler (all moves are frame-batched through
+   `lattice/src/resample.rs` since frame-batched-pointer-input landed;
+   the pending-move gate is gone), and a verb to set the mode.
 4. `flux/src/plugins/gui/input.rs` - marshal the delta fields onto the
    dispatched event object.
 5. `packages/core/src/window.ts` + `types.d.ts` - the JS surface, and the
@@ -61,13 +63,15 @@ do-order notes). It had never been filed. Filed 2026-07-31.
 
 ## Traps
 
-- **Coalescing eats deltas.** Mouse and pen moves are collapsed to the
-  latest position per pointer before dispatch (`lattice/src/lib.rs:439`,
-  `lattice/src/runtime.rs:184` `pending_moves`). Positions collapse
-  correctly; deltas do not. They must be **summed** into the pending entry,
-  never overwritten, or fast motion silently loses distance - the faster
-  the flick, the more it loses, which is the worst possible failure shape
-  for mouse look.
+- **Coalescing eats deltas.** Moves are collapsed to the latest position
+  per pointer before dispatch, twice: the lattice event batch loop
+  (`lattice/src/lib.rs` coalescing rules) and the resampler's History
+  (`lattice/src/resample.rs`, latest-per-frame-slot for all pointer types).
+  Positions collapse correctly; deltas do not. They must be **summed** into
+  the History entry (and across the batch-loop collapse), never
+  overwritten, or fast motion silently loses distance - the faster the
+  flick, the more it loses, which is the worst possible failure shape for
+  mouse look.
 - **Absolute coordinates go meaningless in relative mode.** SDL keeps
   sending `x`/`y`, but they no longer track a real cursor. The contract has
   to say what `clientX`/`clientY` report while locked (the web freezes them

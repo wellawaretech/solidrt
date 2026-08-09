@@ -1,11 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy::rendertree::PlatformContext;
-use alloy::{AlloyEvent, Modifiers, PointerType};
+use alloy::AlloyEvent;
 use flux::gui::input::InputEvent;
 use flux::{emit_event, ExecHandle};
 
@@ -102,41 +101,32 @@ pub struct FluxRuntime {
   // tokio's Instant so tokio's test clock can drive it.
   wall_start: tokio::time::Instant,
   platform: Arc<PlatformContext>,
-  // At most one move dispatch in flight per pointer (mouse and pen; touch
-  // goes through the resampler below and never dispatches on arrival). A map
-  // entry means a dispatch closure for that pointer is queued on the engine;
-  // arrivals overwrite the entry's position and the closure consumes the
-  // entry when it runs, dispatching the freshest position. Without this
-  // gate, a device delivering moves faster than the engine drains them (a
-  // 1000Hz gaming mouse) grows the exec queue without bound: frame signals
-  // and queries starve behind it, and stale positions keep replaying long
-  // after the input stopped. Down/up/wheel stay ungated: they are rare,
+  // ALL pointer moves are consumed by the frame clock instead of dispatching
+  // on arrival: frame() drains one resampled move per pointer per frame
+  // signal and follows the batch with the "pointerFrame" terminator, so
+  // every move a frame delivers is the same age (see resample.rs for the
+  // slot model). Idle Ticks keep frame signals coming at refresh cadence, so
+  // a buffered move is never more than one period from dispatch even when
+  // nothing is painting - hover needs no arrival path anymore. Frame pacing
+  // also bounds a device delivering moves faster than the engine drains them
+  // (a 1000Hz gaming mouse) to one hit test and JS dispatch per pointer per
+  // frame, instead of letting its backlog starve frame signals and replay
+  // stale positions. Down/up/wheel dispatch on arrival: they are rare,
   // ordering-sensitive, and (for wheel) carry deltas that must not be
-  // dropped.
-  pending_moves: Arc<Mutex<HashMap<(PointerType, u64), PendingMove>>>,
-  // Touch moves are consumed by the frame clock instead of dispatching on
-  // arrival: frame() drains one resampled move per pointer per frame signal
-  // (see resample.rs for the slot model and why). Idle Ticks keep frame
-  // signals coming at refresh cadence, so a buffered move is never more than
-  // one period from dispatch even when nothing is painting. Mouse and pen
-  // keep the arrival path: hover must dispatch without any frame in flight,
-  // and desktop delivery has no batching to smooth.
+  // dropped. A buffered move consequently dispatches after a later-arriving
+  // wheel; wheel deliveries are self-contained (own hit test, own
+  // coordinates), so nothing observes the order.
   resampler: Resampler,
-  // Engine the pending closures were queued on. Queued closures die with
-  // their engine on reload, so a handle change orphans every map entry;
-  // detect it and clear (see event()).
+  // Engine the buffered histories were collected for. The JS listeners (and
+  // the node ids a dispatch would route to) die with their engine on reload,
+  // so a handle change orphans every history; detect it and clear (see
+  // event()).
   gate_engine: Option<ExecHandle>,
   // JS-thread cost of the two per-frame closures (move dispatch, frame
   // work), logged 1/s while input flows. The max column separates a steady
   // dispatch cost from spikes (GC pauses): either can blow the one-period
   // pipeline deadline and slip a frame (see alloy vsync pacing).
   timing: Arc<Mutex<JsTiming>>,
-}
-
-struct PendingMove {
-  x: f32,
-  y: f32,
-  modifiers: Modifiers,
 }
 
 #[derive(Default)]
@@ -202,7 +192,6 @@ impl FluxRuntime {
       clock_control,
       wall_start: tokio::time::Instant::now(),
       platform,
-      pending_moves: Arc::new(Mutex::new(HashMap::new())),
       resampler: Resampler::new(),
       gate_engine: None,
       timing: Arc::new(Mutex::new(JsTiming::default())),
@@ -223,11 +212,9 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
-    // A replaced engine took its queued closures with it; every pending-move
-    // entry is now an orphan that would gate its pointer forever. Touch
-    // histories restart too: the new engine never saw the down.
+    // A replaced engine never saw the downs behind the buffered histories;
+    // restart them so stale positions cannot dispatch into the new engine.
     if !self.gate_engine.as_ref().is_some_and(|g| g.same_engine(eh)) {
-      self.pending_moves.lock().expect("pending moves lock poisoned").clear();
       self.resampler.clear();
       self.gate_engine = Some(eh.clone());
     }
@@ -238,49 +225,20 @@ impl UiRuntime for FluxRuntime {
       return;
     }
     match event {
-      // Pointer events dispatch on arrival (hit test against the last
+      // Downs, ups and wheels dispatch on arrival (hit test against the last
       // computed layout, like Flutter): no frame is needed to deliver them.
       // Handlers that mutate state request the next frame through their ffi
-      // calls. Mouse/pen moves go through the per-pointer gate (see
-      // `pending_moves`); touch moves feed the resampler and dispatch from
-      // frame().
+      // calls. Moves feed the resampler and dispatch frame-batched from
+      // frame() (see `resampler`).
       AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-        let key = (*pointer_type, *pointer_id);
-        if *pointer_type == PointerType::Touch {
-          self.resampler.push(key, *x, *y, *modifiers);
-          return;
-        }
-        let pending = PendingMove { x: *x, y: *y, modifiers: *modifiers };
-        let already_queued =
-          self.pending_moves.lock().expect("pending moves lock poisoned").insert(key, pending).is_some();
-        if !already_queued {
-          let moves = self.pending_moves.clone();
-          let timing = self.timing.clone();
-          eh.exec(move |ctx| {
-            let Some(m) = moves.lock().expect("pending moves lock poisoned").remove(&key) else {
-              return;
-            };
-            let start = std::time::Instant::now();
-            flux::gui::input::dispatch(
-              &ctx,
-              InputEvent::PointerMove {
-                pointer_id: key.1,
-                pointer_type: key.0,
-                x: m.x,
-                y: m.y,
-                modifiers: m.modifiers,
-              },
-            );
-            timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
-          });
-        }
+        self.resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
       }
       AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // Seed the touch history at the contact so the first move already
-        // has a velocity; the down itself dispatches on arrival as always.
-        if *pointer_type == PointerType::Touch {
-          self.resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
-        }
+        // Re-seed the history at the contact: a buffered pre-down move
+        // collapses into the down instead of dispatching stale after it, and
+        // the first touch move already has a velocity. The down itself
+        // dispatches on arrival as always.
+        self.resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
         dispatch(
           eh,
           InputEvent::PointerDown {
@@ -294,9 +252,8 @@ impl UiRuntime for FluxRuntime {
         )
       }
       AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // A gated or buffered move dispatching after this up would be stale;
-        // the up carries the final position, so drop them.
-        self.pending_moves.lock().expect("pending moves lock poisoned").remove(&(*pointer_type, *pointer_id));
+        // A buffered move dispatching after this up would be stale; the up
+        // carries the final position, so drop it.
         self.resampler.remove((*pointer_type, *pointer_id));
         dispatch(
           eh,
@@ -347,8 +304,9 @@ impl UiRuntime for FluxRuntime {
     let platform = self.platform.clone();
     let timing = self.timing.clone();
     eh.exec(move |ctx| {
-      // Resampled touch moves run ahead of the frame work so the frame
-      // consumes the state they dirty; timed as moves, not frame cost.
+      // Resampled moves run ahead of the frame work so the frame consumes
+      // the state they dirty; timed as moves, not frame cost.
+      let has_moves = !moves.is_empty();
       for m in moves {
         let start = std::time::Instant::now();
         flux::gui::input::dispatch(
@@ -362,6 +320,14 @@ impl UiRuntime for FluxRuntime {
           },
         );
         timing.lock().expect("js timing lock poisoned").record_move(start.elapsed().as_secs_f32() * 1000.0);
+      }
+      if has_moves {
+        // The batch terminator: all of this frame's moves have dispatched
+        // and every pointer is the same age, so recognizers measure now. It
+        // fires even if every move was interest-gated away (harmless), and
+        // ahead of the deliver gate below so a paused clock still pairs
+        // moves with their terminator.
+        flux::gui::input::frame_end(&ctx);
       }
       let start = std::time::Instant::now();
       // Publish the present being computed before reading the clock, so in

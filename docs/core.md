@@ -64,7 +64,7 @@ onPointerMove(fn: (e: GlobalPointerEvent) => void): () => void
 
 Observes every pointer move, unattached to any node - for ambient tracking such as cursor followers, idle detection, or debug overlays. The event carries window coordinates (`clientX`/`clientY`), the deepest node id under the pointer (`target`, 0 when nothing is hit), pointer identity (`pointerId`, `pointerType`) and modifier flags. There are no per-node fields.
 
-For element interaction use the per-node `onPointerMove` prop instead: it delivers exact local coordinates, and during a drag, moves keep flowing to the pressed element and its ancestors even off-element. While a global subscriber exists, every move crosses into JS - the runtime otherwise skips moves that no element listens to - so prefer node handlers when the interest is spatial.
+For element interaction use the per-node `onPointerMove` prop instead: it delivers exact local coordinates, and during a drag, moves keep flowing to the pressed element and its ancestors even off-element. Moves are frame-batched: the runtime delivers at most one move per pointer per frame, all of a frame's moves the same age, followed by the `pointerFrame` bus event. While a global subscriber exists, every such move crosses into JS - the runtime otherwise skips moves that no element listens to - so prefer node handlers when the interest is spatial.
 
 Returns a cleanup function. When called inside a reactive scope, cleanup is automatic.
 

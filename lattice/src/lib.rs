@@ -440,13 +440,13 @@ fn ui_thread(
       loop {
         // One batch per cycle: block for the first event, then drain whatever
         // else is queued, with two coalescing rules.
-        // - PointerMove collapses to the latest position per pointer. Each
-        //   move costs a hit-test plus a JS dispatch, and a fast mouse
-        //   produces motion faster than that pipeline drains it. Touch is
-        //   exempt: its moves feed the resampler's history instead of
-        //   dispatching on arrival (see resample.rs), and a paired delivery's
-        //   older sample carries the velocity, so dropping it would corrupt
-        //   the gap-bridging step.
+        // - PointerMove collapses to the latest position per pointer. All
+        //   moves feed the resampler and dispatch frame-batched (see
+        //   resample.rs), which wants only the latest position per slot;
+        //   collapsing here just saves runtime.event() calls. Touch is
+        //   exempt: a paired delivery's older sample carries the velocity
+        //   its gap-bridging extrapolation needs (mouse/pen never
+        //   extrapolate, so dropping their intermediates loses nothing).
         // - Frame signals (FrameRendered / Tick) collapse to the newest one,
         //   dispatched after the batch's input. A frame signal triggers a
         //   full paint + present on this thread; when presents stall (driver

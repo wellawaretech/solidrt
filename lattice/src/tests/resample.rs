@@ -104,3 +104,50 @@ fn clear_resets_all_histories() {
   r.clear();
   assert_eq!(xs(&mut r), vec![]);
 }
+
+const MOUSE: (PointerType, u64) = (PointerType::Mouse, 1);
+
+#[test]
+fn mouse_dispatches_latest_position_per_slot() {
+  let mut r = Resampler::new();
+  // Two arrivals in one slot: only the latest dispatches.
+  push(&mut r, MOUSE, 10.0);
+  push(&mut r, MOUSE, 20.0);
+  assert_eq!(xs(&mut r), vec![(1, 20.0)]);
+  push(&mut r, MOUSE, 30.0);
+  assert_eq!(xs(&mut r), vec![(1, 30.0)]);
+}
+
+#[test]
+fn mouse_never_extrapolates_on_gap() {
+  let mut r = Resampler::new();
+  push(&mut r, MOUSE, 10.0);
+  assert_eq!(xs(&mut r), vec![(1, 10.0)]);
+  push(&mut r, MOUSE, 20.0);
+  assert_eq!(xs(&mut r), vec![(1, 20.0)]);
+  // A stop is a stop: no bridged overshoot, no settle-back bounce.
+  assert_eq!(xs(&mut r), vec![]);
+  assert_eq!(xs(&mut r), vec![]);
+}
+
+#[test]
+fn down_collapses_buffered_move() {
+  let mut r = Resampler::new();
+  push(&mut r, MOUSE, 10.0);
+  r.down(MOUSE, 15.0, 0.0, Modifiers::default());
+  // The down dispatched on arrival with the newest position; the buffered
+  // pre-down move must not dispatch stale after it.
+  assert_eq!(xs(&mut r), vec![]);
+}
+
+#[test]
+fn touch_bridges_while_mouse_holds() {
+  let mouse = (PointerType::Mouse, 2);
+  let mut r = Resampler::new();
+  r.down(KEY, 0.0, 0.0, Modifiers::default());
+  push(&mut r, KEY, 10.0);
+  push(&mut r, mouse, 90.0);
+  assert_eq!(xs(&mut r), vec![(1, 10.0), (2, 90.0)]);
+  // Both go quiet: touch bridges one velocity step, mouse just holds.
+  assert_eq!(xs(&mut r), vec![(1, 20.0)]);
+}

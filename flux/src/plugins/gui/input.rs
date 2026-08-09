@@ -91,6 +91,16 @@ pub fn dispatch(ctx: &Ctx<'_>, event: InputEvent) {
   emit_routed(ctx, events);
 }
 
+/// The frame's move-batch terminator: emitted after all of a frame's
+/// resampled moves have dispatched, before rAF and the render event in the
+/// same job. Every pointer position JS holds is the same age at this point,
+/// so multi-pointer recognizers subscribe to it as their "measure once per
+/// frame" signal instead of measuring per move (which would pair one fresh
+/// position with stale ones). Fires only on frames that had moves.
+pub fn frame_end(ctx: &Ctx<'_>) {
+  emit_event(ctx, "pointerFrame", ());
+}
+
 /// Re-run the hover diff for every live pointer. Called after each produced
 /// frame: layout changes can move elements under a stationary cursor, which
 /// arrival-time dispatch cannot see. `pointers` is the runner's

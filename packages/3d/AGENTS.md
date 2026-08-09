@@ -55,11 +55,16 @@ blendMode and pointer events like any element. Design rationale:
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
-zoomSpeed?, zoomAnchor?, rotateAnchor? })` - drag-to-rotate, pinch- and
-wheel-to-zoom, optional auto-orbit. Input runs on core's `createTransform`
-recognizer, so drag and pinch arbitrate in the app-wide gesture arena (a
-viewport inside a scroller does not double-handle) and rotation starts after
-the recognizer's slop; `zoomSpeed` weights both wheel and pinch. Zoom aims
+zoomSpeed?, zoomAnchor?, rotateAnchor?, panSpeed?, viewport?, clampTarget? })`
+- drag-to-rotate, pinch- and wheel-to-zoom, two-finger pan, optional
+auto-orbit. Input runs on core's `createTransform` recognizer, so drag and
+pinch arbitrate in the app-wide gesture arena (a viewport inside a scroller
+does not double-handle) and rotation starts after the recognizer's slop;
+`zoomSpeed` weights both wheel and pinch. Two-finger translation pans (the
+scene tracks the fingers 1:1 at target depth, weighted by `panSpeed`) when
+`viewport()` supplies `{ height, fov }` for the pixel-to-world mapping -
+without it, it rotates like one finger; `clampTarget(target)` bounds where
+a pan may put the pivot. Zoom aims
 at the target unless `zoomAnchor(x, y, {eye, target})` maps the pinch focal
 / wheel cursor to a world point (ground hit, target-depth plane, ...) - then
 that point stays pinned under the pointer and the target slides toward it;

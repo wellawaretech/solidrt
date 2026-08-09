@@ -2,21 +2,24 @@ use std::collections::HashMap;
 
 use alloy::{Modifiers, PointerType};
 
-/// Touch-move resampling against the frame clock (frame-pacing stage 3).
+/// Pointer-move resampling against the frame clock: ALL pointer types buffer
+/// their moves here and dispatch one position per pointer per frame slot, so
+/// every move a frame delivers is the same age (frame-batched delivery; the
+/// runtime emits the "pointerFrame" terminator after the batch).
 ///
-/// Android batches touch to the display's vsync, so with the frame signal
-/// phase-locked to that same clock (vsync pacing) samples arrive nominally
-/// one per frame signal - except when the platform pairs deliveries: nothing
-/// at one vsync, two samples at the next (~5x/s on device). Under
-/// latest-arrival-wins dispatch that renders as a one-frame stall followed by
-/// a double-step.
+/// Touch additionally bridges delivery gaps. Android batches touch to the
+/// display's vsync, so with the frame signal phase-locked to that same clock
+/// (vsync pacing) samples arrive nominally one per frame signal - except
+/// when the platform pairs deliveries: nothing at one vsync, two samples at
+/// the next (~5x/s on device). Under latest-arrival-wins dispatch that
+/// renders as a one-frame stall followed by a double-step.
 ///
 /// SDL's Android path carries no usable sample times (touch is stamped at
 /// JNI receipt and historical batch samples are dropped), so instead of
 /// timestamp interpolation this models slots: each frame signal is one slot,
 /// and consecutive samples are assumed one slot apart - which for
-/// vsync-batched delivery they really are, pairs included. Per pointer, per
-/// frame:
+/// vsync-batched delivery they really are, pairs included. Per touch
+/// pointer, per frame:
 /// - fresh sample(s) arrived: dispatch the newest. After a bridged gap the
 ///   pair's second sample lands here as one normal step.
 /// - first slot with no fresh sample: bridge the gap by extrapolating one
@@ -26,9 +29,16 @@ use alloy::{Modifiers, PointerType};
 ///   settles truthfully (the bounce is at most the one bridged step), then
 ///   stay silent until new input.
 ///
+/// Mouse and pen never extrapolate: desktop delivery has no paired-vsync gap
+/// to bridge, and a bridged step would fake an overshoot every time the
+/// device stops. They dispatch the latest buffered position per slot, which
+/// also bounds a high-polling-rate mouse to one hit test and JS dispatch per
+/// frame.
+///
 /// Moves feed the history on arrival and dispatch only through sample();
-/// down/up stay on arrival (ordering), with down seeding the history so the
-/// first move already has a velocity.
+/// down/up stay on arrival (ordering), with down re-seeding the history so a
+/// buffered pre-down move collapses into the down instead of dispatching
+/// stale after it (and, for touch, so the first move has a velocity).
 pub struct Resampler {
   pointers: HashMap<(PointerType, u64), History>,
 }
@@ -108,7 +118,8 @@ impl Resampler {
         Some(h.latest)
       } else {
         h.misses = h.misses.saturating_add(1);
-        if h.misses == 1 && h.prev.is_some() {
+        // Touch-only: mouse/pen must not overshoot on stop (see module doc).
+        if h.misses == 1 && h.prev.is_some() && pointer_type == PointerType::Touch {
           let (px, py) = h.prev.expect("prev checked above");
           let (lx, ly) = h.latest;
           h.extrapolated = true;

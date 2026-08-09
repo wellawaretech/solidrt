@@ -5972,6 +5972,8 @@ function createPan(options) {
     cancel
   };
 }
+// packages/core/src/transform.ts
+import { on as on5 } from "srt:events";
 // packages/components/src/window.tsx
 function Window(props) {
   var _el$ = createElement("window");
@@ -9561,12 +9563,12 @@ import { stop } from "srt:dev";
 
 // packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
-import { on as on5 } from "srt:events";
+import { on as on6 } from "srt:events";
 var devicesAccessor2;
 function cameraDevices() {
   if (!devicesAccessor2) {
     let [devices, setDevices] = createSignal(listCameras());
-    on5("cameraDeviceChange", () => setDevices(listCameras()));
+    on6("cameraDeviceChange", () => setDevices(listCameras()));
     devicesAccessor2 = devices;
   }
   return devicesAccessor2();
@@ -10088,7 +10090,7 @@ function SettingsPanel(props) {
 }
 
 // lattice/launcher/parts/dev-connection.ts
-import { on as on6 } from "srt:events";
+import { on as on7 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
 var [state, setState] = createSignal("idle");
@@ -10096,7 +10098,7 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on6("dev", (e3) => {
+  on7("dev", (e3) => {
     setState(e3.state);
     setAddress(e3.address);
     setTunneled(e3.tunneled);

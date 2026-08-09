@@ -21,6 +21,10 @@ const DEFAULT_HZ: f64 = 60.0;
 // Correction gain (0..1): how fast the paced clock pulls toward the raw clock per
 // present. Low gain keeps the cadence smooth; it still converges over many frames.
 const GAIN: f64 = 0.05;
+// A raw-vs-paced gap beyond this is a suspension (app backgrounded, system
+// stall), not drift: frame signals stopped while wall time ran on. An order of
+// magnitude beyond any legitimate swap jitter or GC pause.
+const SUSPEND_MS: f64 = 500.0;
 
 // A present-count paced clock. `tick` is called once per present with the raw
 // wall-clock reading; `now_ms` returns the smoothed time used for the rAF
@@ -33,8 +37,9 @@ pub struct PacedClock {
   // f64 bits: latest known refresh rate in Hz.
   hz: Arc<AtomicU64>,
   // f64 bits: wall time this clock has not lived through (paused or scaled
-  // stretches), subtracted from the raw reading before the correction so
-  // resuming normal speed is jump-free. Zero until the clock is first scaled.
+  // stretches, suspensions), subtracted from the raw reading before the
+  // correction so resuming normal speed is jump-free. Zero until the clock
+  // first skips time.
   offset: Arc<AtomicU64>,
 }
 
@@ -61,6 +66,13 @@ impl PacedClock {
   // the skipped wall time accrues into `offset` instead, so the eventual
   // return to scale 1 resumes exactly where the clock stopped instead of
   // fast-forwarding through the gap at GAIN per frame.
+  //
+  // A suspension (app backgrounded, system stall) creates the same problem
+  // without a scale change: no tick runs while frame signals are stopped, so
+  // nothing accrues, and the first ticks after resume would see a
+  // multi-second gap and fast-forward animations through it at GAIN per
+  // frame. A gap beyond SUSPEND_MS therefore folds into `offset` the same
+  // way: time the app never lived through, skipped rather than replayed.
   pub fn tick(&self, raw_ms: f64, scale: f64) {
     let hz = f64::from_bits(self.hz.load(Ordering::Relaxed));
     let period = 1000.0 / hz;
@@ -68,7 +80,12 @@ impl PacedClock {
     if scale == 1.0 {
       let offset = f64::from_bits(self.offset.load(Ordering::Relaxed));
       clock += period;
-      clock += ((raw_ms - offset) - clock) * GAIN;
+      let gap = (raw_ms - offset) - clock;
+      if gap.abs() > SUSPEND_MS {
+        self.offset.store((offset + gap).to_bits(), Ordering::Relaxed);
+      } else {
+        clock += gap * GAIN;
+      }
     } else {
       clock += period * scale;
       self.offset.store((raw_ms - clock).to_bits(), Ordering::Relaxed);

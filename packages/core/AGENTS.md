@@ -177,8 +177,13 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 - Gesture recognizers, shared by every package: `createPan` (single-pointer
   drag, axis-aware slop, per-event dx/dy) and `createTransform` (merged
   pan + pinch + rotate over the whole pointer set, Flutter-Scale style: streams
-  `{ dx, dy, scale, rotation, x, y }` per event; one finger degrades to a plain
-  pan). Spread the returned `.handlers` onto the receiving element. They
+  `{ dx, dy, scale, rotation, x, y, pointers }` once per FRAME - positions
+  update per event, but the cross-pointer measure waits for the
+  `pointerFrame` batch terminator, when every pointer is the same age; one
+  finger degrades to a plain pan, and `pointers` is how a consumer gives one-
+  and two-finger translation different meanings - dx/dy alone cannot tell
+  them apart).
+  Spread the returned `.handlers` onto the receiving element. They
   arbitrate through the exported `arena` (ONE per app): a press claims its
   pointer provisionally, movement evidence steals and resolves it, the loser's
   `cancel()` retracts its feedback. Custom recognizers should join the arena
