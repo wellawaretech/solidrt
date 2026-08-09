@@ -154,7 +154,9 @@ impl Stats {
   /// Whether the once-per-second overlay sample is due. The overlay's
   /// per-second figures (fps, mem, cpu, drawn/reused/skipped) change on this
   /// cadence, so a due overlay is itself a reason to draw a frame even when the
-  /// app requested none. Pure read: the timer only resets when draw() samples.
+  /// app requested none. Pure read - but record_js's refresh() resets the same
+  /// timer, so the draw loop must latch this before recording the frame's JS
+  /// figures or a due overlay is never observed.
   pub fn overlay_due(&self) -> bool {
     self.last_refresh.elapsed().as_secs_f32() >= REFRESH_INTERVAL
   }

@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: Stats overlay should draw after the window shader pass
-description: The debug overlay is recorded into the same display list as the app, so a window shader warps the HUD too - and it is painted inside the demand-gated pass, so on texture-driven apps that write zero properties per frame it freezes solid while the app animates; draw it post-pass, outside the gate.
+description: The debug overlay is recorded into the same display list as the app, so a window shader warps the HUD too, and its once-per-second refresh forces full rebuilds that defeat clean-tree fast paths; draw it post-pass, outside the gate. The texture-driven freeze half was a dead overlay_due demand source, fixed 2026-08-09.
 status: open
 timestamp: 2026-07-27T00:00:00Z
 ---
@@ -66,3 +66,25 @@ same as the warp problem above: composite the overlay outside the app's
 gated pass (or have it mark itself dirty while enabled). Worth an AGENTS.md
 line on what reusedPerSec means regardless, since it is currently the only
 visible signal of the gate.
+
+## Freeze half resolved: dead overlay_due (2026-08-09)
+
+The draw loop already had the "mark itself dirty while enabled" mechanism -
+overlay_due forces a frame through the demand gate and bypasses the
+present-only reuse path once per second - but it had regressed to dead code.
+The "Introduce MCP" commit (cdff25c) moved the once-per-second refresh()
+into Stats::record_js so cpu/mem stay fresh for get_stats with the overlay
+off. record_js runs at the top of every render() call, a few lines before
+the gate reads overlay_due(), so whenever the sample came due record_js
+consumed it and reset the timer in the same call; overlay_due() then read
+~0 elapsed. Always false, so the overlay froze on texture-driven AND fully
+idle apps (normally-animating apps rebuild every frame anyway, which is why
+it went unnoticed).
+
+Fixed by latching overlay_due before record_js in render() (see the comment
+there); the HUD now refreshes at 1 Hz on reuse-path and idle apps. fps
+counting itself was never wrong - the raster thread reports every present -
+only the painted HUD was stale, which is why get_stats stayed live.
+
+Still open: the post-shader-pass half above (warp legibility + the
+once-per-second full rebuild defeating the clean-tree fast path).

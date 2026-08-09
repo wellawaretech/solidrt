@@ -109,6 +109,15 @@ impl RenderInner {
     let stats_snapshot = &self.stats_snapshot;
     let stats = &self.stats;
     let cache = &self.cache;
+
+    // The stats overlay is its own demand source: its per-second figures keep
+    // changing while the app is idle, so a due overlay forces a frame (and, in
+    // the reuse path below, a rebuild) so the HUD stays live. Only matters when
+    // the overlay is enabled. Latched before record_js below: its refresh()
+    // resets the same once-per-second timer, so a read after it would never
+    // see a due overlay.
+    let stats_on = platform.stats_enabled();
+    let overlay_due = stats_on && stats.borrow().overlay_due();
     {
       // JS render-handler cost (onFrame + flush), measured natively: time since
       // the instant stamped before the "render" event, now that the handler has
@@ -131,13 +140,6 @@ impl RenderInner {
     // is produced, so hover cannot have changed either). Playback mode renders
     // unconditionally: its capture loop blocks waiting for every frame's
     // display list.
-    //
-    // The stats overlay is its own demand source: its per-second figures keep
-    // changing while the app is idle, so a due overlay forces a frame (and, in
-    // the reuse path below, a rebuild) so the HUD stays live. Only matters when
-    // the overlay is enabled.
-    let stats_on = platform.stats_enabled();
-    let overlay_due = stats_on && stats.borrow().overlay_due();
     let requested = platform.take_frame_requested();
     if !requested && !overlay_due && !platform.always_render() {
       stats.borrow_mut().note_skipped();

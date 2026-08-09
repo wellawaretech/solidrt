@@ -178,11 +178,10 @@ Sorted by status: open first, then partial, deferred, and closed
   impellerc, nor the root layer.
 - [Stats overlay should draw after the window shader pass](stats-overlay-post-shader.md) [open] -
   The debug overlay is recorded into the app's display list, so a window
-  shader warps the HUD too, its once-per-second refresh forces full rebuilds
-  that defeat clean-tree fast paths, and it is painted inside the
-  demand-gated pass so it freezes solid on texture-driven apps that write
-  zero properties per frame (games, video, camera); draw it post-pass into
-  FBO 0, outside the gate.
+  shader warps the HUD too, and its once-per-second refresh forces full
+  rebuilds that defeat clean-tree fast paths; draw it post-pass into FBO 0,
+  outside the gate. The texture-driven freeze (overlay solid while the app
+  animates) was a dead overlay_due demand source, fixed 2026-08-09.
 - [parseSvg replaces the svg primitive](parse-svg.md) [done] -
   Removed the `<svg>`/`<d-svg>` element for `parseSvg` (forge core, flux:svg
   module) returning plain draws JS maps to d-path subtrees inside a
