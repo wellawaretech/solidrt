@@ -682,14 +682,15 @@ fn window_samples(gl: &glow::Context) -> i32 {
   })
 }
 
-/// Rasterize a display list into the retained rig at the window's physical
-/// size and resolve it 1:1 into `layer` (a window-sized single-sample FBO,
-/// see `gpu::create_layer_target`): the effect-active variant of
-/// `render_display_list_to_window`. The caller hands a display list already
-/// flipped for sampling - the layer is read as a texture, so it must be
-/// top-left origin (see `flip_for_fbo`) - and the window shader pass's
-/// vertex stage flips back to window orientation. MSAA and the no-MSAA latch
-/// behave exactly like the window path.
+/// Rasterize a display list into the retained rig at `size` and resolve it
+/// 1:1 into `layer` (a single-sample FBO of that size, see
+/// `gpu::create_layer_target`). Orientation is the caller's choice: the
+/// window shader path hands a display list already flipped for sampling (the
+/// layer is read as a top-left-origin texture, see `flip_for_fbo`, and the
+/// pass's vertex stage flips back to window orientation), while the stats
+/// overlay hands its list unflipped so the layer shares FBO 0's bottom-up
+/// convention and composites with no flip anywhere. MSAA and the no-MSAA
+/// latch behave exactly like the window path.
 pub fn render_display_list_to_layer(
   gl: &glow::Context,
   impeller_ctx: &mut ImpellerContext,

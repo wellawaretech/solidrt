@@ -164,6 +164,18 @@ pub struct CaptureInfo {
 /// UI thread, out of the tree walk (see `deliver_captures`).
 pub type CaptureDone = Box<dyn FnOnce(Result<CaptureInfo, String>)>;
 
+/// A stats-overlay declaration (see `Context::set_stats_overlay`): the
+/// overlay's display list, drawn with its content at the origin, plus the
+/// window-space rectangle it composites into - physical pixels, top-left
+/// origin, `width` x `height` also being the rasterized layer's size.
+pub struct StatsOverlay {
+  pub dl: DisplayList,
+  pub x: i32,
+  pub y: i32,
+  pub width: u32,
+  pub height: u32,
+}
+
 // Safety: Context is asserted Send + Sync (its Arc crosses into the closure
 // the UI thread runs), but its interior (Rc entries, RefCell maps) is only
 // ever accessed from the UI thread. The raster thread shares nothing with
@@ -1177,6 +1189,19 @@ impl Context {
     }
     self.send(RasterCmd::SetWindowShader { shader });
     Ok(())
+  }
+
+  /// Install (Some) or clear (None) the stats overlay: a small diagnostics
+  /// quad the raster thread composites over every frame, after the window
+  /// shader pass. Never part of the app's display list, so a window shader
+  /// cannot warp it and updating it invalidates no retained frame state
+  /// (an Impeller surface draw always clears its target, so the overlay is
+  /// rasterized into a small retained layer once per declaration and drawn
+  /// over FBO 0 as a blended copy pass each frame). Retained raster-side;
+  /// send again to refresh the figures. The caller must request a frame for
+  /// a visible change.
+  pub fn set_stats_overlay(&self, overlay: Option<StatsOverlay>) {
+    self.send(RasterCmd::SetStatsOverlay { overlay });
   }
 
   /// Render a manual target (`TargetSpec::manual`) once, now. Fire-and-forget

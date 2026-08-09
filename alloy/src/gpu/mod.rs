@@ -15,7 +15,7 @@ mod vocab;
 
 pub use buffer::{release_buffer, GpuBuffer};
 pub use limits::GpuLimits;
-pub use pass::{render_program_to_fbo, render_program_to_window, PassInput};
+pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput};
 pub use program::{compile_stage, delete_stage, release_pipeline, release_program, RenderPipeline, ShaderProgram};
 pub use resources::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,

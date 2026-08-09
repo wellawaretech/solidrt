@@ -120,6 +120,10 @@ pub struct Stats {
   // raw so an idle app keeps reporting its last rebuild's figures.
   node_count: usize,
   layout_counters: alloy::rendertree::counters::LayoutCounters,
+  // Boundary/snapshot counts of the last full rebuild, latched like the
+  // layout activity: the overlay is built on its own cadence, usually on
+  // frames with no paint walk.
+  paint_stats: alloy::rendertree::composite::PaintStats,
 }
 
 impl Stats {
@@ -146,6 +150,7 @@ impl Stats {
       skipped: 0,
       node_count: 0,
       layout_counters: alloy::rendertree::counters::LayoutCounters::default(),
+      paint_stats: alloy::rendertree::composite::PaintStats::default(),
     };
     stats.sample();
     stats
@@ -237,6 +242,11 @@ impl Stats {
     self.layout_counters = counters;
   }
 
+  /// Latch one rebuild's boundary/snapshot counts (see the field).
+  pub fn record_paint(&mut self, paint_stats: alloy::rendertree::composite::PaintStats) {
+    self.paint_stats = paint_stats;
+  }
+
   /// Plain-data copy of the current figures for readers outside the draw loop.
   /// `fps` and `textures` are owned by the platform/registry, so the caller
   /// supplies them.
@@ -274,15 +284,23 @@ impl Stats {
     self.skipped_acc += 1;
   }
 
-  pub fn draw(
+  /// Build the overlay declaration the raster thread composites over every
+  /// finished frame (after any window shader pass): a display list with the
+  /// HUD drawn at the origin, plus the window-space rectangle it belongs in
+  /// (physical pixels - `scale` is the display scale the app's own lists are
+  /// built with, so the HUD lays out in the same logical coordinates
+  /// `safe_area` is in). None when a paragraph cannot be built.
+  pub fn build_overlay(
     &mut self,
-    b: &mut DisplayListBuilder,
     typography: &TypographyContext,
     safe_area: Rect,
+    scale: f32,
     fps: u32,
-    paint_stats: alloy::rendertree::composite::PaintStats,
     textures: usize,
-  ) {
+  ) -> Option<alloy::StatsOverlay> {
+    let mut b = DisplayListBuilder::new(None);
+    b.scale(scale, scale);
+    let paint_stats = self.paint_stats;
     let mut paint = Paint::default();
     paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, 1.0));
 
@@ -294,7 +312,7 @@ impl Stats {
     style.set_text_alignment(TextAlignment::Right);
 
     let Some(mut pb) = ParagraphBuilder::new(typography) else {
-      return;
+      return None;
     };
     pb.push_style(&style);
 
@@ -345,23 +363,35 @@ impl Stats {
     pb.add_text(&text);
 
     let Some(paragraph) = pb.build(PARA_WIDTH) else {
-      return;
+      return None;
     };
-    let x = safe_area.origin.x + safe_area.size.width - PARA_WIDTH - 10.0;
-    let y = safe_area.origin.y + 10.0;
 
-    // Darkening backdrop so the white text stays legible over light content. The
-    // paragraph is right-aligned in PARA_WIDTH, so its right edge sits at
-    // x + PARA_WIDTH and the box only needs to span the longest line.
+    // Darkening backdrop so the white text stays legible over light content,
+    // drawn at the origin: placement travels as the declaration's rectangle.
     let pad = 10.0;
     let text_w = paragraph.get_longest_line_width();
     let text_h = paragraph.get_height();
-    let bg =
-      Rect::new(Point::new(x + PARA_WIDTH - text_w - pad, y - pad), Size::new(text_w + pad * 2.0, text_h + pad * 2.0));
+    let w = text_w + pad * 2.0;
+    let h = text_h + pad * 2.0;
     let mut bg_paint = Paint::default();
     bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
-    b.draw_rect(&bg, &bg_paint);
+    b.draw_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(w, h)), &bg_paint);
+    // The paragraph is right-aligned in PARA_WIDTH: place it so its right
+    // edge sits one pad inside the backdrop's right edge.
+    b.draw_paragraph(&paragraph, Point::new(pad + text_w - PARA_WIDTH, pad));
 
-    b.draw_paragraph(&paragraph, Point::new(x, y));
+    // Same anchor the in-tree overlay drew at: the backdrop's right edge 10
+    // logical px inside the safe area's top-right corner, its top flush with
+    // the safe area's top.
+    let win_x = safe_area.origin.x + safe_area.size.width - 10.0 - text_w - pad;
+    let win_y = safe_area.origin.y + 10.0 - pad;
+    let dl = b.build()?;
+    Some(alloy::StatsOverlay {
+      dl,
+      x: (win_x * scale).round() as i32,
+      y: (win_y * scale).round() as i32,
+      width: (w * scale).ceil() as u32,
+      height: (h * scale).ceil() as u32,
+    })
   }
 }

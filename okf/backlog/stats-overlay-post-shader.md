@@ -1,7 +1,7 @@
 ---
 type: backlog-item
 title: Stats overlay should draw after the window shader pass
-description: The debug overlay is recorded into the same display list as the app, so a window shader warps the HUD too, and its once-per-second refresh forces full rebuilds that defeat clean-tree fast paths; draw it post-pass, outside the gate. The texture-driven freeze half was a dead overlay_due demand source, fixed 2026-08-09.
+description: The debug overlay was recorded into the app's display list, so a window shader warped the HUD and its once-per-second refresh forced full rebuilds. Both halves addressed 2026-08-09 - freeze was a dead overlay_due demand source; overlay now retained raster-side, drawn over every frame post-pass into FBO 0. Pending visual verification.
 status: open
 timestamp: 2026-07-27T00:00:00Z
 ---
@@ -88,3 +88,46 @@ only the painted HUD was stale, which is why get_stats stayed live.
 
 Still open: the post-shader-pass half above (warp legibility + the
 once-per-second full rebuild defeating the clean-tree fast path).
+
+## Post-pass half implemented (2026-08-09, pending visual verification)
+
+The overlay is now retained raster-thread state, mirroring the window
+shader's own pattern: `RasterCmd::SetStatsOverlay` installs/clears a small
+overlay declaration (display list drawn at origin + the window rectangle it
+belongs in, physical pixels).
+
+First attempt drew the overlay DL straight over FBO 0 via a wrapped
+Impeller surface and blacked out the frame: an Impeller surface draw ALWAYS
+clears its target (documented on `Surface::draw_display_list`, impellers
+0.4.2) - the composite can never be an Impeller draw onto the finished
+frame. Actual mechanism: the declaration is rasterized once into a small
+retained layer texture (`create_layer_target` + the offscreen rig, same
+machinery as snapshot boundaries), deliberately UNFLIPPED so the layer
+shares FBO 0's bottom-up convention, then blended over the finished frame
+each frame with the shared copy program (`composite_program_over_window`:
+viewport-positioned, premultiplied ONE/ONE_MINUS_SRC_ALPHA, no flip
+anywhere). Composited before the capture readback, so playback frames carry
+it. Per-frame cost is one ~200x150 blended quad; the Impeller rasterize
+happens only when the declaration changes.
+
+Lattice rebuilds the declaration once per second (`Stats::build_overlay`,
+figures sampled in the same frame that shows them) - and immediately on
+window-size/scale/safe-area changes, since placement is window-space
+raster-side - and pushes it ahead of that frame's submit on the ordered
+channel. Consequences:
+
+- A window shader can no longer warp the HUD: the pass runs first, the
+  overlay draws after it.
+- The once-per-second full tree rebuild is gone: the reuse path no longer
+  bypasses on a due overlay, and DlCache dropped its stats_enabled key.
+  SetStatsOverlay is exempt from content_dirty, so the shaded clean-tree
+  fast path (pass-only frames) survives overlay refreshes too.
+- PaintStats are latched in Stats (like the layout counters) so an overlay
+  built on a reuse frame has boundary/snapshot figures.
+- The overlay clears with its engine (RenderInner::drop), so an app switch
+  cannot leave a stale HUD.
+
+The reusedPerSec AGENTS.md line landed in the scaffold's get_stats bullet.
+Verify: window-shader example with stats on - HUD crisp over the warp,
+ticking 1/s; click-to-identity indistinguishable from unshaded; on a
+texture-driven app reusedPerSec now sits at ~fps (no 1/s rebuild dip).

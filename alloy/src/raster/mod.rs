@@ -218,6 +218,10 @@ pub(crate) struct RasterState {
   // The declared window shader, with its retained layer texture. None = the
   // frame resolves straight to FBO 0 (the free path).
   window_shader: Option<WindowShaderState>,
+  // The installed stats overlay, composited over every frame after the
+  // window shader pass (never part of the app's display list, so a window
+  // shader cannot warp it and the frame never samples it).
+  stats_overlay: Option<StatsOverlayState>,
   // The shared fullscreen copy program behind CopyTexture (fragColor =
   // texture(uSrc, vUV)), compiled on first use and kept for the thread's
   // life. Rc because ShaderProgram release goes through release_program.
@@ -268,9 +272,33 @@ struct LayerTarget {
   height: u32,
 }
 
+/// The installed stats overlay: the declaration from the UI thread plus the
+/// small retained layer its display list is rasterized into. The layer is
+/// redrawn only when the declaration changes (`stale`), so the per-frame
+/// cost is one blended copy draw; same ownership rules as the window
+/// shader's layer.
+struct StatsOverlayState {
+  decl: crate::context::StatsOverlay,
+  layer: Option<LayerTarget>,
+  stale: bool,
+}
+
 /// Reply to an RPC; a dead requester (UI thread shutting down) is not an error.
 fn reply<T>(tx: mpsc::Sender<T>, value: T) {
   tx.send(value).ok();
+}
+
+/// Get (compiling on first use) the shared fullscreen copy program
+/// (`fragColor = texture(uSrc, vUV)`), used by CopyTexture and the stats
+/// overlay composite. A free function over the slot so callers holding other
+/// field borrows can reach it.
+fn ensure_copy_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>) -> Result<Rc<ShaderProgram>, String> {
+  if slot.is_none() {
+    let program =
+      ShaderProgram::new_fragment(gl, "uniform sampler2D uSrc;\nvoid main() { fragColor = texture(uSrc, vUV); }")?;
+    *slot = Some(Rc::new(program));
+  }
+  Ok(slot.as_ref().expect("copy program just ensured").clone())
 }
 
 /// Rolling once-per-second trace of the interactive frame's native phases
@@ -353,6 +381,7 @@ impl RasterState {
       buffers: HashMap::new(),
       dirty: HashSet::new(),
       window_shader: None,
+      stats_overlay: None,
       copy_program: None,
       content_dirty: true,
       pass_only_frames: 0,
@@ -381,11 +410,15 @@ impl RasterState {
       for (i, cmd) in batch.into_iter().enumerate() {
         // Any command that can change what a frame samples (texture uploads,
         // target renders, program changes, ...) invalidates the clean-tree
-        // fast path until the next real resolve. Frame itself and window
-        // shader redeclarations (the very writes the fast path exists for)
-        // are the only exempt commands; a shader *program* change still
-        // invalidates through its cleared layer.
-        if !matches!(cmd, RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. }) {
+        // fast path until the next real resolve. Frame itself, window shader
+        // redeclarations (the very writes the fast path exists for), and the
+        // stats overlay (drawn post-pass into FBO 0, never sampled by the
+        // frame) are the only exempt commands; a shader *program* change
+        // still invalidates through its cleared layer.
+        if !matches!(
+          cmd,
+          RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. } | RasterCmd::SetStatsOverlay { .. }
+        ) {
           self.content_dirty = true;
         }
         // Frames are excluded from cmd_micros (see RasterStats); everything
@@ -487,6 +520,9 @@ impl RasterState {
           }
           RasterCmd::SetWindowShader { shader } => {
             self.set_window_shader(shader);
+          }
+          RasterCmd::SetStatsOverlay { overlay } => {
+            self.set_stats_overlay(overlay);
           }
           RasterCmd::UpdateShaderParams { id, params } => {
             // A manual target only folds the values (its pixels change on its
@@ -668,6 +704,12 @@ impl RasterState {
     let draw_start = std::time::Instant::now();
     let drawn = self.draw_to_window(&dl, size);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
+    // The stats overlay composites over the finished frame (shaded or not),
+    // before the capture readback so playback frames carry it too. Excluded
+    // from draw_ms: it is diagnostics, not the app's frame cost.
+    if drawn {
+      self.draw_stats_overlay(size);
+    }
     if self.capture_frames {
       let pixels = if drawn { gl::read_fbo0_pixels(&self.gl, size) } else { Vec::new() };
       self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
@@ -878,6 +920,78 @@ impl RasterState {
       state.spec.vertex_count,
     );
     Ok(())
+  }
+
+  /// Apply a SetStatsOverlay command: adopt the new declaration, keeping the
+  /// rasterized layer's storage when the size is unchanged (the once-per-
+  /// second figure refresh redraws into it), and mark it stale so the next
+  /// frame re-rasterizes. None frees everything.
+  fn set_stats_overlay(&mut self, overlay: Option<crate::context::StatsOverlay>) {
+    let mut layer = self.stats_overlay.take().and_then(|old| old.layer);
+    // Free the retained layer on clear, and on a size change (reallocated at
+    // the next frame's rasterize); a same-size redeclaration redraws into it.
+    let free_layer = match &overlay {
+      None => layer.is_some(),
+      Some(decl) => layer.as_ref().is_some_and(|l| l.width != decl.width || l.height != decl.height),
+    };
+    if free_layer {
+      let old = layer.take().expect("checked above");
+      unsafe {
+        glow::HasContext::delete_framebuffer(&self.gl, old.fbo);
+        glow::HasContext::delete_texture(&self.gl, old.tex);
+      }
+    }
+    if let Some(decl) = overlay {
+      self.stats_overlay = Some(StatsOverlayState { decl, layer, stale: true });
+    }
+  }
+
+  /// Composite the installed stats overlay over the finished frame in FBO 0.
+  /// A stale declaration is rasterized into the retained layer first - drawn
+  /// UNFLIPPED on purpose: the wrapped layer FBO is a bottom-up window
+  /// target, so its rows come out in FBO 0's own convention and the plain
+  /// copy draw (vUV = p, see the fullscreen vertex stage) lands the overlay
+  /// upright with no flip anywhere. The composite is a premultiplied-alpha
+  /// blended draw at the declared window rectangle (converted here to GL's
+  /// bottom-up viewport origin). Failures warn and skip: a lost overlay
+  /// frame must never cost the app frame.
+  fn draw_stats_overlay(&mut self, window: ISize) {
+    let Some(ov) = &mut self.stats_overlay else { return };
+    let (width, height) = (ov.decl.width, ov.decl.height);
+    if width == 0 || height == 0 {
+      return;
+    }
+    if ov.stale || ov.layer.is_none() {
+      if ov.layer.is_none() {
+        match crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0]) {
+          Ok((tex, fbo)) => ov.layer = Some(LayerTarget { tex, fbo, width, height }),
+          Err(e) => {
+            log::warn!("[alloy] stats overlay layer: {e}");
+            return;
+          }
+        }
+      }
+      let layer = ov.layer.as_ref().expect("layer ensured above");
+      let size = ISize::new(width as i64, height as i64);
+      if let Err(e) =
+        gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &ov.decl.dl, size, layer.fbo)
+      {
+        log::warn!("[alloy] stats overlay rasterize failed: {e}");
+        return;
+      }
+      ov.stale = false;
+    }
+    let program = match ensure_copy_program(&self.gl, &mut self.copy_program) {
+      Ok(program) => program,
+      Err(e) => {
+        log::warn!("[alloy] stats overlay copy program: {e}");
+        return;
+      }
+    };
+    let layer = ov.layer.as_ref().expect("rasterized above");
+    let origin = (ov.decl.x, window.height as i32 - (ov.decl.y + height as i32));
+    let input: PassInput = ("uSrc".to_string(), layer.tex, None);
+    crate::gpu::composite_program_over_window(&self.gl, &program, origin, width, height, &[input]);
   }
 
   /// Apply a SetWindowShader command. A redeclaration with the same program
@@ -1389,14 +1503,7 @@ impl RasterState {
   /// occupies the thread like one) and seeds dst into the dirty set so
   /// targets sampling it re-render at the next flush.
   fn copy_texture(&mut self, src: u64, dst: u64) -> Result<(), String> {
-    if self.copy_program.is_none() {
-      let program = ShaderProgram::new_fragment(
-        &self.gl,
-        "uniform sampler2D uSrc;\nvoid main() { fragColor = texture(uSrc, vUV); }",
-      )?;
-      self.copy_program = Some(Rc::new(program));
-    }
-    let program = self.copy_program.as_ref().expect("copy program just ensured").clone();
+    let program = ensure_copy_program(&self.gl, &mut self.copy_program)?;
     let gpu = self.textures.get(&src).ok_or_else(|| format!("texture {src} not found"))?;
     let shader = self.shaders.get(&dst).ok_or_else(|| format!("shader texture {dst} not found"))?;
     let input: PassInput = ("uSrc".to_string(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));

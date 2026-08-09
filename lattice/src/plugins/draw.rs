@@ -10,7 +10,7 @@ use flux::{
     Ctx as QuickJsContext, Function, JsLifetime,
   },
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -25,7 +25,6 @@ struct DlCache {
   textures_generation: u64,
   window: (f32, f32),
   scale: f32,
-  stats_enabled: bool,
 }
 
 // The host state the `srt:render` module binds, stashed in userdata by
@@ -46,6 +45,26 @@ struct RenderInner {
   stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
   stats: RefCell<overlay::Stats>,
   cache: RefCell<Option<DlCache>>,
+  // Whether an overlay display list is currently installed on the raster
+  // thread (see Context::set_stats_overlay): drives the enable/disable edges
+  // and the teardown clear in Drop.
+  overlay_installed: Cell<bool>,
+  // The window geometry the installed overlay was placed against: window
+  // size, display scale, safe area. The overlay is positioned in window
+  // space raster-side, so a geometry change refreshes it immediately rather
+  // than waiting out the once-per-second cadence.
+  overlay_key: Cell<(f32, f32, f32, f32, f32, f32, f32)>,
+}
+
+impl Drop for RenderInner {
+  fn drop(&mut self) {
+    // The overlay is this draw loop's state on the raster thread: clear it
+    // with the engine, or an app switch leaves a stale HUD over the next
+    // app's frames.
+    if self.overlay_installed.get() {
+      self.atx.set_stats_overlay(None);
+    }
+  }
 }
 
 /// Stash the draw bridge's host state in userdata, before any import. The
@@ -65,6 +84,8 @@ pub fn store_state(
       stats_snapshot,
       stats: RefCell::new(overlay::Stats::new()),
       cache: RefCell::new(None),
+      overlay_installed: Cell::new(false),
+      overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
     })))
     .expect("store render state");
 }
@@ -111,13 +132,20 @@ impl RenderInner {
     let cache = &self.cache;
 
     // The stats overlay is its own demand source: its per-second figures keep
-    // changing while the app is idle, so a due overlay forces a frame (and, in
-    // the reuse path below, a rebuild) so the HUD stays live. Only matters when
-    // the overlay is enabled. Latched before record_js below: its refresh()
-    // resets the same once-per-second timer, so a read after it would never
-    // see a due overlay.
+    // changing while the app is idle, so a due refresh forces a frame so the
+    // HUD stays live, and an enable/disable edge forces one to show or clear
+    // it. Refreshing costs no rebuild: the overlay is retained raster-side
+    // and drawn over the finished frame (see Context::set_stats_overlay).
+    // Latched before record_js below: its refresh() resets the same
+    // once-per-second timer, so a read after it would never see a due
+    // overlay.
     let stats_on = platform.stats_enabled();
-    let overlay_due = stats_on && stats.borrow().overlay_due();
+    let win = platform.window_size();
+    let sa = platform.safe_area();
+    let overlay_key = (win.0, win.1, platform.display_scale(), sa.origin.x, sa.origin.y, sa.size.width, sa.size.height);
+    let overlay_refresh = stats_on
+      && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
+    let overlay_clear = !stats_on && self.overlay_installed.get();
     {
       // JS render-handler cost (onFrame + flush), measured natively: time since
       // the instant stamped before the "render" event, now that the handler has
@@ -141,27 +169,45 @@ impl RenderInner {
     // unconditionally: its capture loop blocks waiting for every frame's
     // display list.
     let requested = platform.take_frame_requested();
-    if !requested && !overlay_due && !platform.always_render() {
+    if !requested && !overlay_refresh && !overlay_clear && !platform.always_render() {
       stats.borrow_mut().note_skipped();
       return;
     }
 
     let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
 
+    // Push the overlay change ahead of this frame's submit (either path
+    // below): the ordered raster channel then applies it to exactly this
+    // frame. Built from the figures record_js just sampled; the raster
+    // thread retains the list, so nothing is sent while the figures stand.
+    if overlay_refresh {
+      let overlay = stats.borrow_mut().build_overlay(
+        &platform.typography(),
+        platform.safe_area(),
+        platform.display_scale(),
+        platform.fps(),
+        atx.textures.len(),
+      );
+      self.overlay_installed.set(overlay.is_some());
+      self.overlay_key.set(overlay_key);
+      atx.set_stats_overlay(overlay);
+    } else if overlay_clear {
+      atx.set_stats_overlay(None);
+      self.overlay_installed.set(false);
+    }
+
     // Present-only reuse: nothing that feeds the display list changed, so
     // resubmit the cached one instead of rebuilding. Layout, postLayout and
     // hover refresh are skipped too - the tree and window are unchanged.
-    // Bypassed in playback mode to keep its captures identical to a rebuild
-    // (the overlay would otherwise freeze mid-recording), and when captures
-    // are pending: they are serviced by the paint walk, which the reuse
-    // path skips, so reusing would strand them.
-    if !platform.always_render() && !overlay_due && !atx.has_pending_captures() {
+    // Bypassed in playback mode to keep its captures identical to a rebuild,
+    // and when captures are pending: they are serviced by the paint walk,
+    // which the reuse path skips, so reusing would strand them.
+    if !platform.always_render() && !atx.has_pending_captures() {
       if let Some(c) = cache.borrow().as_ref() {
         if c.revision == tree.0.borrow().revision()
           && c.textures_generation == atx.textures.generation()
           && c.window == platform.window_size()
           && c.scale == platform.display_scale()
-          && c.stats_enabled == stats_on
         {
           // A window-shader prop write lands here (Damage::Present bumps no
           // revision): flush it ahead of the frame, the ordering the build
@@ -230,17 +276,7 @@ impl RenderInner {
       // Taken after paint so the counters cover the whole rebuild (paint
       // shapes paragraphs too), plus the writes that led into it.
       s.record_layout_activity(tree.0.borrow().node_count(), rendertree::counters::take());
-    }
-
-    if stats_on {
-      stats.borrow_mut().draw(
-        &mut builder,
-        &platform.typography(),
-        platform.safe_area(),
-        platform.fps(),
-        paint_stats,
-        atx.textures.len(),
-      );
+      s.record_paint(paint_stats);
     }
 
     if let Some(dl) = builder.build() {
@@ -252,7 +288,6 @@ impl RenderInner {
         textures_generation: atx.textures.generation(),
         window: platform.window_size(),
         scale: platform.display_scale(),
-        stats_enabled: stats_on,
       });
       atx.submit(dl).expect("Failed to submit display list");
     }

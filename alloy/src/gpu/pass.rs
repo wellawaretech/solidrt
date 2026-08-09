@@ -36,12 +36,15 @@ pub(super) enum PassDraw<'a> {
   /// Attributeless triangles (vertex fetch via gl_VertexID): the fragment
   /// targets, the window shader, node shader passes, the copy program.
   /// `clear` first when the geometry is not guaranteed to cover the target.
+  /// `blend` composites the draw over the target's existing contents with
+  /// premultiplied alpha (the overlay composite) instead of overwriting.
   Fullscreen {
     program: &'a ShaderProgram,
     params: &'a [(String, ParamValue)],
     textures: &'a [PassInput],
     vertex_count: i32,
     clear: Option<[f32; 4]>,
+    blend: bool,
   },
   /// A mesh target's pass: clear once (color unless loadOp "load"; depth
   /// always, when the target owns storage), then the draw entries in list
@@ -158,8 +161,25 @@ pub fn render_program_to_window(
   textures: &[PassInput],
   vertex_count: i32,
 ) {
-  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]) };
-  run_pass(gl, None, width, height, draw);
+  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]), blend: false };
+  run_pass(gl, None, (0, 0), width, height, draw);
+}
+
+/// Composite `program`'s output over the default framebuffer's existing
+/// contents at the viewport rectangle `origin`/`width` x `height` (GL
+/// bottom-up coordinates): no clear, premultiplied-alpha blending - the
+/// stats overlay draw over the finished frame. A rectangle partly outside
+/// the window is clipped by the viewport transform.
+pub fn composite_program_over_window(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  origin: (i32, i32),
+  width: u32,
+  height: u32,
+  textures: &[PassInput],
+) {
+  let draw = PassDraw::Fullscreen { program, params: &[], textures, vertex_count: 3, clear: None, blend: true };
+  run_pass(gl, None, origin, width, height, draw);
 }
 
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
@@ -177,17 +197,26 @@ pub fn render_program_to_fbo(
   params: &[(String, ParamValue)],
   textures: &[PassInput],
 ) {
-  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count: 3, clear: None };
-  run_pass(gl, fbo, width, height, draw);
+  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count: 3, clear: None, blend: false };
+  run_pass(gl, fbo, (0, 0), width, height, draw);
 }
 
 /// Run one pass into `fbo` (None = the default framebuffer) at viewport
-/// `width` x `height`: neutralize every piece of fixed-function state that
-/// could clip or blend the output away, execute the draw(s), and restore all
-/// of it. The save/restore set must stay exhaustive: Impeller runs full
-/// render passes on this same context (the process's only one) and both
-/// leaves state behind and caches what it set (see the comments below).
-pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width: u32, height: u32, draw: PassDraw) {
+/// `origin` + `width` x `height` (origin is (0, 0) for every whole-target
+/// pass; only the overlay composite positions a sub-rectangle): neutralize
+/// every piece of fixed-function state that could clip or blend the output
+/// away, execute the draw(s), and restore all of it. The save/restore set
+/// must stay exhaustive: Impeller runs full render passes on this same
+/// context (the process's only one) and both leaves state behind and caches
+/// what it set (see the comments below).
+pub(super) fn run_pass(
+  gl: &glow::Context,
+  fbo: Option<glow::Framebuffer>,
+  origin: (i32, i32),
+  width: u32,
+  height: u32,
+  draw: PassDraw,
+) {
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let prev_program_name = gl.get_parameter_i32(glow::CURRENT_PROGRAM);
@@ -200,7 +229,7 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
     let cull = gl.is_enabled(glow::CULL_FACE);
 
     gl.bind_framebuffer(glow::FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, width as i32, height as i32);
+    gl.viewport(origin.0, origin.1, width as i32, height as i32);
 
     // Fixed-function state that could clip or blend the output away is off
     // for both paths; the mesh draws opt depth testing and blending back in
@@ -235,7 +264,7 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
     let mut saved_units: Vec<(u32, i32, i32)> = Vec::new();
 
     match draw {
-      PassDraw::Fullscreen { program, params, textures, vertex_count, clear } => {
+      PassDraw::Fullscreen { program, params, textures, vertex_count, clear, blend: blended } => {
         apply_program(gl, program, width, height, params);
         bind_inputs(gl, program, textures, &mut saved_units, max_units);
         // The covering triangle writes opaque coverage over the whole target,
@@ -249,7 +278,25 @@ pub(super) fn run_pass(gl: &glow::Context, fbo: Option<glow::Framebuffer>, width
           gl.clear(glow::COLOR_BUFFER_BIT);
           gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
         }
-        gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
+        if blended {
+          // Premultiplied-alpha composite over the target's existing
+          // contents. The blend func is Impeller-cached state, same as in
+          // the mesh arm: save and restore it; the enable toggle is already
+          // restored by the outer save.
+          let prev_blend_func = [
+            gl.get_parameter_i32(glow::BLEND_SRC_RGB) as u32,
+            gl.get_parameter_i32(glow::BLEND_DST_RGB) as u32,
+            gl.get_parameter_i32(glow::BLEND_SRC_ALPHA) as u32,
+            gl.get_parameter_i32(glow::BLEND_DST_ALPHA) as u32,
+          ];
+          gl.enable(glow::BLEND);
+          gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+          gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
+          gl.disable(glow::BLEND);
+          gl.blend_func_separate(prev_blend_func[0], prev_blend_func[1], prev_blend_func[2], prev_blend_func[3]);
+        } else {
+          gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
+        }
       }
       PassDraw::Draws { clear, depth: has_depth, shared, draws } => {
         // Mesh pass: geometry does not cover the target, so clear first -

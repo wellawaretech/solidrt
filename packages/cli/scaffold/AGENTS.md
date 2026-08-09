@@ -397,7 +397,11 @@ its tools over guessing at runtime state:
   paraShapes, dirtiedNodes, cacheGets/cacheHits) - when layoutMs looks
   wrong, these say whether the cost is text shaping, invalidation breadth,
   or a defeated layout cache (healthy incremental rebuilds show a near-100%
-  cacheHits rate)
+  cacheHits rate). reusedPerSec/skippedPerSec are the demand gate's visible
+  signal: frames presented from the cached display list without a rebuild
+  (texture content changed, no property writes - expect reusedPerSec near
+  fps on texture-driven apps) and frames skipped entirely (nothing
+  requested one)
 - get_snapshot: PNG capture of any render-tree node's pixels (get node ids
   from get_render_tree; the window node captures everything). A subtree
   capture renders with NO ancestor paint: pixels the subtree does not draw

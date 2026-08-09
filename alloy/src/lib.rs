@@ -29,7 +29,7 @@ pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::{Backend, DisplayContext};
-pub use context::{CaptureDone, CaptureInfo, Context};
+pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, CullMode, DepthState, DrawBounds, DrawRange, DrawSpec, DrawUpdate,
   GpuLimits, IndexFormat, ParamValue, PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, Topology,

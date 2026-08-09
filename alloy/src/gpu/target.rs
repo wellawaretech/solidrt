@@ -1189,8 +1189,8 @@ impl ShaderTexture {
     match &self.kind {
       TargetKind::Fragment { program, params, bindings } => {
         let inputs = resolve(bindings);
-        let draw = PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None };
-        run_pass(gl, Some(self.fbo), self.width, self.height, draw);
+        let draw = PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
+        run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
       }
       TargetKind::Mesh(mesh) => {
         let draws: Vec<ResolvedDraw> = mesh
@@ -1229,7 +1229,7 @@ impl ShaderTexture {
           shared: &mesh.shared_params,
           draws: &draws,
         };
-        run_pass(gl, Some(self.fbo), self.width, self.height, draw);
+        run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
       }
     }
   }
