@@ -37,6 +37,31 @@ Implemented. Decisions against the open questions and shape below:
 - **No timestamps added.** If px/s thresholds are ever needed,
   `performance.now()` read at the terminator is batch-granular already.
 
+## Follow-up: alloy owns the resampler (2026-08-10)
+
+The resampler moved to `alloy/src/resample.rs` and alloy took over the
+feeding. The rule is producer-side: whoever emits pointer events feeds the
+histories at emission - the alloy pump for real input (`app.rs`; moves are
+consumed there and NEVER travel as `AlloyEvent`s, downs seed and ups drop
+the history before their events are sent), the dev connection for `input`
+queries (`DevFlags::resampler`, same triple at the send site). The
+consumer side shrank to two policy calls on `SharedResampler`: `sample()`
+in lattice's frame verb, `clear()` on engine swap (the gate check moved
+from `event()` into `frame()`, where the sampling is). Consequences:
+
+- The batch-loop move coalescing in `lattice/src/lib.rs` is DELETED, touch
+  exemption included - moves never cross the channel, so a stalled drain
+  cannot replay stale positions by construction. Only the frame-signal
+  collapse remains.
+- InputState pointer positions are recorded from the frame verb's samples
+  (frame granularity, exactly what the hover refresh reads); downs/ups
+  keep updating it on arrival.
+- A push design (alloy emitting resampled moves as events) was considered
+  and rejected: piled-up move batches behind collapsed frame signals would
+  reintroduce stale-position replay, forcing the coalescing walk back, and
+  the engine-swap clear would need a cross-thread command. The pull design
+  has neither problem.
+
 # Frame-batched multi-pointer delivery (and frame-paced mouse)
 
 Every mature input stack converges on the same layering: filter at the
@@ -56,7 +81,7 @@ header documents the observed noise).
 
 ## What already exists
 
-- **Touch is frame-slot resampled per pointer.** `lattice/src/resample.rs`:
+- **Touch is frame-slot resampled per pointer.** `alloy/src/resample.rs`:
   moves feed history on arrival, `frame()` drains one resampled move per
   pointer per frame signal (`lattice/src/runtime.rs:342`), with one-step
   velocity extrapolation to bridge Android's paired vsync deliveries. Per

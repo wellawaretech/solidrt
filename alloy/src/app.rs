@@ -18,6 +18,10 @@ pub struct App {
   window: sdl3::video::Window,
   platform: DisplayContext,
   mode: Mode,
+  // Pointer-move resampler the run loop feeds (see resample.rs): moves are
+  // consumed into it at the pump and never travel as events. The embedder
+  // grabs a handle before run() to sample per frame slot.
+  resampler: crate::resample::SharedResampler,
 }
 
 pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
@@ -49,10 +53,11 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // interactive path's hidden window on the real display. The failed attempt
   // dropped its video subsystem handles, so clearing the hint and re-entering
   // setup_video re-initializes video on the platform's default driver.
+  let resampler = crate::resample::SharedResampler::new();
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
     match setup_video(&sdl_context, title, (width, height), &mode) {
-      Ok((window, platform)) => return App { sdl_context, window, platform, mode },
+      Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler },
       Err(e) => {
         log::warn!("[alloy] offscreen video driver unavailable ({e}); falling back to a hidden window");
         sdl3::hint::set("SDL_VIDEO_DRIVER", "");
@@ -61,7 +66,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   }
 
   let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
-  App { sdl_context, window, platform, mode }
+  App { sdl_context, window, platform, mode, resampler }
 }
 
 fn setup_video(
@@ -115,11 +120,19 @@ fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
 struct FrameReady;
 
 impl App {
+  /// Handle onto the resampler the run loop feeds. Grab a clone before
+  /// run(): the UI consumer samples it once per frame signal, and
+  /// synthetic-input producers feed it at their send sites (see
+  /// resample::SharedResampler for the producer-side rule).
+  pub fn resampler(&self) -> crate::resample::SharedResampler {
+    self.resampler.clone()
+  }
+
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
   ) {
-    let App { sdl_context, mut window, platform, mode } = self;
+    let App { sdl_context, mut window, platform, mode, resampler } = self;
     let surface_size = platform.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
@@ -370,10 +383,25 @@ impl App {
           g.handle_event(&sdl_event);
         }
         if let Some(e) = translate_event(sdl_event, &window) {
-          if matches!(e, AlloyEvent::PointerMove { .. }) {
-            pointer_moves += 1;
-          }
           apply_main_thread_effects(&e, &surface_size, &mode);
+          // Producer-side resampler feed (see resample.rs): moves are
+          // consumed here - the UI side samples one position per pointer
+          // per frame slot - while downs seed and ups drop the history
+          // before their events travel.
+          match &e {
+            AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+              pointer_moves += 1;
+              resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
+              continue;
+            }
+            AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+              resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
+            }
+            AlloyEvent::PointerUp { pointer_id, pointer_type, .. } => {
+              resampler.remove((*pointer_type, *pointer_id));
+            }
+            _ => {}
+          }
           event_tx.send(e).ok();
         }
       }

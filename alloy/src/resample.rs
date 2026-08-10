@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use alloy::{Modifiers, PointerType};
+use crate::{Modifiers, PointerType};
 
 /// Pointer-move resampling against the frame clock: ALL pointer types buffer
 /// their moves here and dispatch one position per pointer per frame slot, so
@@ -136,5 +137,45 @@ impl Resampler {
       }
     }
     out
+  }
+}
+
+/// Shared handle onto the process's one Resampler. Feeding is a
+/// producer-side duty: whoever emits pointer events feeds the histories at
+/// emission - the platform loop for real input (moves are consumed there and
+/// never travel as events; downs seed and ups drop the history before their
+/// events are sent), synthetic-input producers at their own send sites,
+/// following the same rule. The single UI consumer samples per frame slot
+/// and clears across engine swaps. Cheap to clone.
+#[derive(Clone)]
+pub struct SharedResampler(Arc<Mutex<Resampler>>);
+
+impl SharedResampler {
+  pub fn new() -> SharedResampler {
+    SharedResampler(Arc::new(Mutex::new(Resampler::new())))
+  }
+
+  fn lock(&self) -> std::sync::MutexGuard<'_, Resampler> {
+    self.0.lock().expect("resampler lock poisoned")
+  }
+
+  pub fn down(&self, key: (PointerType, u64), x: f32, y: f32, modifiers: Modifiers) {
+    self.lock().down(key, x, y, modifiers)
+  }
+
+  pub fn push(&self, key: (PointerType, u64), x: f32, y: f32, modifiers: Modifiers) {
+    self.lock().push(key, x, y, modifiers)
+  }
+
+  pub fn remove(&self, key: (PointerType, u64)) {
+    self.lock().remove(key)
+  }
+
+  pub fn clear(&self) {
+    self.lock().clear()
+  }
+
+  pub fn sample(&self) -> Vec<Sample> {
+    self.lock().sample()
   }
 }

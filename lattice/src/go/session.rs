@@ -57,6 +57,7 @@ impl DevSession {
     connected: Arc<AtomicBool>,
     clock: crate::runtime::ClockControl,
     input_tx: UnboundedSender<alloy::AlloyEvent>,
+    resampler: alloy::resample::SharedResampler,
     outbound_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
     queries: connection::QueryHandles,
     launch_address: Option<String>,
@@ -74,6 +75,7 @@ impl DevSession {
       connected,
       clock,
       input_tx,
+      resampler,
     };
     let dev_server: DevServerCell = Arc::new(std::sync::Mutex::new(None));
     let dev_state = Rc::new(RefCell::new(ConnState::Idle));

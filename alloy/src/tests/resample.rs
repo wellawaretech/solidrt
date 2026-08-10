@@ -1,4 +1,4 @@
-use alloy::{Modifiers, PointerType};
+use crate::{Modifiers, PointerType};
 
 use crate::resample::Resampler;
 

@@ -4,12 +4,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy::rendertree::PlatformContext;
+use alloy::resample::SharedResampler;
 use alloy::AlloyEvent;
 use flux::gui::input::InputEvent;
 use flux::{emit_event, ExecHandle};
 
+use crate::frame::InputState;
 use crate::paced_clock::PacedClock;
-use crate::resample::Resampler;
 
 /// Dev-tool clock control, shared between the dev-server connection (any
 /// thread) and the frame verb: a time scale (0 pauses frame delivery to JS)
@@ -101,27 +102,34 @@ pub struct FluxRuntime {
   // tokio's Instant so tokio's test clock can drive it.
   wall_start: tokio::time::Instant,
   platform: Arc<PlatformContext>,
-  // ALL pointer moves are consumed by the frame clock instead of dispatching
-  // on arrival: frame() drains one resampled move per pointer per frame
-  // signal and follows the batch with the "pointerFrame" terminator, so
-  // every move a frame delivers is the same age (see resample.rs for the
-  // slot model). Idle Ticks keep frame signals coming at refresh cadence, so
-  // a buffered move is never more than one period from dispatch even when
-  // nothing is painting - hover needs no arrival path anymore. Frame pacing
-  // also bounds a device delivering moves faster than the engine drains them
-  // (a 1000Hz gaming mouse) to one hit test and JS dispatch per pointer per
-  // frame, instead of letting its backlog starve frame signals and replay
-  // stale positions. Down/up/wheel dispatch on arrival: they are rare,
-  // ordering-sensitive, and (for wheel) carry deltas that must not be
-  // dropped. A buffered move consequently dispatches after a later-arriving
-  // wheel; wheel deliveries are self-contained (own hit test, own
-  // coordinates), so nothing observes the order.
-  resampler: Resampler,
+  // Sampling handle onto the resampler its producers feed (the alloy pump
+  // for real input, the dev connection for synthetic input; see alloy's
+  // resample.rs for the slot model and the producer-side rule): moves never
+  // arrive as events. frame() drains one resampled move per pointer per
+  // frame signal and follows the batch with the "pointerFrame" terminator,
+  // so every move a frame delivers is the same age. Idle Ticks keep frame
+  // signals coming at refresh cadence, so a buffered move is never more
+  // than one period from dispatch even when nothing is painting - hover
+  // needs no arrival path anymore. Frame pacing also bounds a device
+  // delivering moves faster than the engine drains them (a 1000Hz gaming
+  // mouse) to one hit test and JS dispatch per pointer per frame, instead
+  // of letting its backlog starve frame signals and replay stale positions.
+  // Down/up/wheel dispatch on arrival: they are rare, ordering-sensitive,
+  // and (for wheel) carry deltas that must not be dropped. A buffered move
+  // consequently dispatches after a later-arriving wheel; wheel deliveries
+  // are self-contained (own hit test, own coordinates), so nothing observes
+  // the order.
+  resampler: SharedResampler,
   // Engine the buffered histories were collected for. The JS listeners (and
   // the node ids a dispatch would route to) die with their engine on reload,
   // so a handle change orphans every history; detect it and clear (see
-  // event()).
+  // frame()).
   gate_engine: Option<ExecHandle>,
+  // Device-fact bookkeeping (the per-frame hover refresh reads last pointer
+  // positions): moves surface only as frame()'s samples now, so their
+  // positions are recorded there; downs/ups keep updating it from the batch
+  // loop on arrival.
+  input_state: Arc<InputState>,
   // JS-thread cost of the two per-frame closures (move dispatch, frame
   // work), logged 1/s while input flows. The max column separates a steady
   // dispatch cost from spikes (GC pauses): either can blow the one-period
@@ -184,6 +192,8 @@ impl FluxRuntime {
     paced: Option<PacedClock>,
     clock_control: ClockControl,
     platform: Arc<PlatformContext>,
+    resampler: SharedResampler,
+    input_state: Arc<InputState>,
   ) -> Self {
     Self {
       exec,
@@ -192,8 +202,9 @@ impl FluxRuntime {
       clock_control,
       wall_start: tokio::time::Instant::now(),
       platform,
-      resampler: Resampler::new(),
+      resampler,
       gate_engine: None,
+      input_state,
       timing: Arc::new(Mutex::new(JsTiming::default())),
     }
   }
@@ -212,12 +223,6 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
-    // A replaced engine never saw the downs behind the buffered histories;
-    // restart them so stale positions cannot dispatch into the new engine.
-    if !self.gate_engine.as_ref().is_some_and(|g| g.same_engine(eh)) {
-      self.resampler.clear();
-      self.gate_engine = Some(eh.clone());
-    }
     // flux marshals the engine-agnostic window / keyboard / device events
     // (including the sticky window facts) directly; pointer events remain
     // because their dispatch is hit-testing, not pure marshalling.
@@ -228,17 +233,13 @@ impl UiRuntime for FluxRuntime {
       // Downs, ups and wheels dispatch on arrival (hit test against the last
       // computed layout, like Flutter): no frame is needed to deliver them.
       // Handlers that mutate state request the next frame through their ffi
-      // calls. Moves feed the resampler and dispatch frame-batched from
-      // frame() (see `resampler`).
-      AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-        self.resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
-      }
+      // calls. Moves never arrive here: their producers consume them into
+      // the resampler at emission, and frame() dispatches one position per
+      // pointer per frame signal (see `resampler`).
       AlloyEvent::PointerDown { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // Re-seed the history at the contact: a buffered pre-down move
-        // collapses into the down instead of dispatching stale after it, and
-        // the first touch move already has a velocity. The down itself
-        // dispatches on arrival as always.
-        self.resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
+        // The producer re-seeded the resampler history at the contact (a
+        // buffered pre-down move collapsed into the down); here the down
+        // just dispatches on arrival as always.
         dispatch(
           eh,
           InputEvent::PointerDown {
@@ -252,9 +253,9 @@ impl UiRuntime for FluxRuntime {
         )
       }
       AlloyEvent::PointerUp { pointer_id, pointer_type, button, x, y, modifiers } => {
-        // A buffered move dispatching after this up would be stale; the up
-        // carries the final position, so drop it.
-        self.resampler.remove((*pointer_type, *pointer_id));
+        // The producer dropped the pointer's history (a buffered move
+        // dispatching after this up would be stale); the up carries the
+        // final position.
         dispatch(
           eh,
           InputEvent::PointerUp {
@@ -292,11 +293,22 @@ impl UiRuntime for FluxRuntime {
     let Some(eh) = exec.as_ref() else {
       return;
     };
-    // Sampled at frame-signal time: the alloy loop drains the vsync's input
-    // into the event channel before emitting the signal, and the batch loop
-    // runs events before the signal, so this frame's touch samples are
-    // already in the history.
+    // A replaced engine never saw the downs behind the buffered histories;
+    // restart them so stale positions cannot dispatch into the new engine.
+    if !self.gate_engine.as_ref().is_some_and(|g| g.same_engine(eh)) {
+      self.resampler.clear();
+      self.gate_engine = Some(eh.clone());
+    }
+    // Sampled at frame-signal time: the alloy loop feeds the vsync's input
+    // into the resampler before emitting the signal, so this frame's touch
+    // samples are already in the history.
     let moves = self.resampler.sample();
+    // Pointer-fact bookkeeping from the sampled positions (raw moves never
+    // leave their producers); the per-frame hover refresh reads these.
+    for m in &moves {
+      self.input_state.set_pointer_pos((m.pointer_type, m.pointer_id), m.x, m.y);
+      self.input_state.set_modifiers(m.modifiers);
+    }
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
     let clock_control = self.clock_control.clone();

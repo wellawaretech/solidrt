@@ -56,13 +56,16 @@ Landed as the `send_input` MCP tool, the stage-4 follow-up to
 [[mcp-verification-surface]]. Decisions and traps:
 
 - Seam: `DevFlags::input_tx`, a clone of the UI thread's batch-loop channel
-  (`lattice/src/lib.rs`, next to the bridge thread). Injected `AlloyEvent`s
-  take the ENTIRE real pipeline - batch coalescing, InputState bookkeeping
-  (hover refresh), capture forwarding, touch resampler, PointerRouter hit
-  testing and drag capture, focus + text-session activation - the same
-  top-of-pipeline entry playback mode uses (`alloy/src/playback.rs`).
-  Deliberately no frame_requested latch: real input does not latch either;
-  the app's handlers request whatever frames their reactions need.
+  (`lattice/src/lib.rs`, next to the bridge thread), plus
+  `DevFlags::resampler` since alloy took over the resampler feeding:
+  injected moves are consumed into the resampler at the send site
+  (producer-side, mirroring the alloy pump; they never travel as events)
+  while downs/ups/wheels ride the channel. Injected events still take the
+  ENTIRE real pipeline - resampler frame slots, InputState bookkeeping
+  (hover refresh), capture forwarding, PointerRouter hit testing and drag
+  capture, focus + text-session activation. Deliberately no
+  frame_requested latch: real input does not latch either; the app's
+  handlers request whatever frames their reactions need.
 - Vocabulary (wire JSON, parsed in `connection.rs::parse_input_events`):
   `key` (down/up/tap, `holdMs` on tap, modifier booleans; W3C `key` names
   as the runtime reports them, `code` derived by `alloy::w3c_code_for_key`
@@ -80,7 +83,7 @@ Landed as the `send_input` MCP tool, the stage-4 follow-up to
 - Traps: a synthetic MOUSE pointer persists in InputState and keeps
   hovering at its last position (real-cursor semantics; use touch for
   hover-free gestures). Move bursts without delayMs coalesce to the newest
-  per batch. Text lands only with a focused `onTextInput` node and an
+  per frame slot in the resampler. Text lands only with a focused `onTextInput` node and an
   active session - pointer-tap the field first. Injected keys are recorded
   by `--capture` exactly like real ones. `ScriptEvent` stays keyboard-only;
   extending it with pointer variants is the designed growth path if

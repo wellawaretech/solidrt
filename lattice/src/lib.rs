@@ -5,7 +5,6 @@ pub mod manifest;
 mod overlay;
 mod paced_clock;
 mod plugins;
-mod resample;
 mod runtime;
 #[cfg(feature = "speech")]
 pub mod speech;
@@ -290,6 +289,7 @@ fn ui_thread(
   atx: Arc<alloy::Context>,
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
+  resampler: alloy::resample::SharedResampler,
   opts: RunOptions,
 ) {
   let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
@@ -352,9 +352,10 @@ fn ui_thread(
   // recv on a dedicated thread forwards each event, so the event loop can await
   // events instead of polling on a timer.
   let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<alloy::AlloyEvent>();
-  // The dev connection's input-injection sender: synthetic events from
-  // `input` queries enter the same batch loop as real SDL input, getting the
-  // full pipeline (coalescing, input state, hit testing, capture, focus).
+  // The dev connection's input-injection sender: synthetic downs/ups enter
+  // the same batch loop as real SDL input (hit testing, focus, input
+  // state); synthetic moves feed the resampler at the send site, following
+  // the producer-side rule (see alloy's resample.rs).
   #[cfg(feature = "go")]
   let input_inject_tx = ev_tx.clone();
   std::thread::spawn(move || {
@@ -397,6 +398,8 @@ fn ui_thread(
       paced_clock.clone(),
       clock_control.clone(),
       platform.clone(),
+      resampler.clone(),
+      input_state.clone(),
     );
 
     // Live input capture (see `--capture` in dev-server.ts): set from the
@@ -439,25 +442,21 @@ fn ui_thread(
     local.spawn_local(async move {
       loop {
         // One batch per cycle: block for the first event, then drain whatever
-        // else is queued, with two coalescing rules.
-        // - PointerMove collapses to the latest position per pointer. All
-        //   moves feed the resampler and dispatch frame-batched (see
-        //   resample.rs), which wants only the latest position per slot;
-        //   collapsing here just saves runtime.event() calls. Touch is
-        //   exempt: a paired delivery's older sample carries the velocity
-        //   its gap-bridging extrapolation needs (mouse/pen never
-        //   extrapolate, so dropping their intermediates loses nothing).
-        // - Frame signals (FrameRendered / Tick) collapse to the newest one,
-        //   dispatched after the batch's input. A frame signal triggers a
-        //   full paint + present on this thread; when presents stall (driver
-        //   throttling, an occluded window) the signals pile up in the
-        //   unbounded queue, and each stale one replays another paint into
-        //   the saturated swapchain - the loop falls arbitrarily far behind,
-        //   re-animating old hover states and starving input and dev
-        //   queries. Only the newest signal matters; the dropped ones are
-        //   exactly the catch-up frames a browser skips too. Playback mode
-        //   is lockstep (one FrameRendered in flight, no Ticks), so its
-        //   captures never see a collapse.
+        // else is queued, with one coalescing rule: frame signals
+        // (FrameRendered / Tick) collapse to the newest one, dispatched
+        // after the batch's input. A frame signal triggers a full paint +
+        // present on this thread; when presents stall (driver throttling,
+        // an occluded window) the signals pile up in the unbounded queue,
+        // and each stale one replays another paint into the saturated
+        // swapchain - the loop falls arbitrarily far behind, re-animating
+        // old hover states and starving input and dev queries. Only the
+        // newest signal matters; the dropped ones are exactly the catch-up
+        // frames a browser skips too. Playback mode is lockstep (one
+        // FrameRendered in flight, no Ticks), so its captures never see a
+        // collapse. Pointer moves never appear here: their producers
+        // consume them into the resampler (see alloy's resample.rs) and the
+        // frame verb samples one position per pointer per signal, so a
+        // stalled drain replays no stale positions either.
         let Some(first) = ev_rx.recv().await else { break };
         let mut events: Vec<AlloyEvent> = Vec::new();
         let mut frame_signal: Option<AlloyEvent> = None;
@@ -475,24 +474,7 @@ fn ui_thread(
             event => events.push(event),
           }
         }
-        // Walk from the newest: the first move seen per pointer is its latest
-        // position and stays; earlier ones drop.
-        let mut seen_moves: Vec<(alloy::PointerType, u64)> = Vec::new();
-        let mut keep = vec![true; events.len()];
-        for (i, event) in events.iter().enumerate().rev() {
-          if let AlloyEvent::PointerMove { pointer_id, pointer_type, .. } = event {
-            if *pointer_type == alloy::PointerType::Touch {
-              continue;
-            }
-            let key = (*pointer_type, *pointer_id);
-            if seen_moves.contains(&key) {
-              keep[i] = false;
-            } else {
-              seen_moves.push(key);
-            }
-          }
-        }
-        let batch = events.into_iter().zip(keep).filter_map(|(event, keep)| keep.then_some(event)).chain(frame_signal);
+        let batch = events.into_iter().chain(frame_signal);
         // A rapid resize stream (live drag-resize, rotation transitions) can
         // put several Resize events in one batch; one rebind covers them all.
         let mut resize_rebound = false;
@@ -521,8 +503,10 @@ fn ui_thread(
               platform_events.set_safe_area(*safe_area);
               resize_settle = Some(std::time::Instant::now());
             }
-            AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers }
-            | AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+            // Move positions are recorded by the frame verb from the
+            // resampler's samples; only the arrival-dispatched events pass
+            // through here.
+            AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
               input_state_events.set_pointer_pos((*pointer_type, *pointer_id), *x, *y);
               input_state_events.set_modifiers(*modifiers);
             }
@@ -667,6 +651,7 @@ fn ui_thread(
       dev_connected.clone(),
       clock_control.clone(),
       input_inject_tx,
+      resampler.clone(),
       outbound_rx,
       go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
       dev_server,
@@ -938,7 +923,8 @@ pub fn start(
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
   let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage, args };
+  let resampler = app.resampler();
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, opts);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, opts);
   });
 }

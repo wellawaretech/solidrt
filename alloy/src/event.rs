@@ -154,6 +154,9 @@ pub enum AlloyEvent {
   // Display refresh rate in Hz. Its own event (independent of frames): emitted
   // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).
   DisplayRefreshRate { hz: f32 },
+  // Never emitted by the run loop: the pump consumes moves into the
+  // resampler at translation (see resample.rs), and every other producer of
+  // pointer events must do the same at its send site.
   PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
   PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },

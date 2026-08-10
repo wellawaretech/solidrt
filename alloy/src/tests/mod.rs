@@ -6,6 +6,7 @@ mod hit;
 mod keymap;
 mod layout_cache;
 mod paint;
+mod resample;
 mod router;
 mod texture;
 mod tree;

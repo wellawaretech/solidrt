@@ -52,10 +52,11 @@ do-order notes). It had never been filed. Filed 2026-07-31.
    physical pixels on Android/X11).
 2. `alloy/src/event.rs` + `alloy/src/app.rs` - an `AlloyCommand` for the
    mode (main-thread window op, exactly like `SetFullscreen`).
-3. `lattice/src/lib.rs` + `lattice/src/runtime.rs` - carry the deltas
+3. `alloy/src/app.rs` + `lattice/src/runtime.rs` - carry the deltas
    through the resampler (all moves are frame-batched through
-   `lattice/src/resample.rs` since frame-batched-pointer-input landed;
-   the pending-move gate is gone), and a verb to set the mode.
+   `alloy/src/resample.rs`; the pump feeds it producer-side and moves
+   never travel as events since frame-batched-pointer-input landed and
+   alloy took over the feeding), and a verb to set the mode.
 4. `flux/src/plugins/gui/input.rs` - marshal the delta fields onto the
    dispatched event object.
 5. `packages/core/src/window.ts` + `types.d.ts` - the JS surface, and the
@@ -64,11 +65,11 @@ do-order notes). It had never been filed. Filed 2026-07-31.
 ## Traps
 
 - **Coalescing eats deltas.** Moves are collapsed to the latest position
-  per pointer before dispatch, twice: the lattice event batch loop
-  (`lattice/src/lib.rs` coalescing rules) and the resampler's History
-  (`lattice/src/resample.rs`, latest-per-frame-slot for all pointer types).
-  Positions collapse correctly; deltas do not. They must be **summed** into
-  the History entry (and across the batch-loop collapse), never
+  per pointer before dispatch in the resampler's History
+  (`alloy/src/resample.rs`, latest-per-frame-slot for all pointer types;
+  the old batch-loop collapse in `lattice/src/lib.rs` is gone - moves
+  never cross the channel anymore). Positions collapse correctly; deltas
+  do not. They must be **summed** into the History entry, never
   overwritten, or fast motion silently loses distance - the faster the
   flick, the more it loses, which is the worst possible failure shape for
   mouse look.
@@ -77,9 +78,8 @@ do-order notes). It had never been filed. Filed 2026-07-31.
   to say what `clientX`/`clientY` report while locked (the web freezes them
   at the lock point) and hit-testing/hover has to be considered: there is
   no cursor to hover with.
-- **Mouse and pen only.** Touch moves go through the resampler
-  (`lattice/src/runtime.rs`), a separate path with no notion of relative
-  motion.
+- **Mouse and pen only.** Touch moves go through the resampler's
+  gap-bridging extrapolation, a path with no notion of relative motion.
 - **Per-frame hit-testing.** Whatever the locked contract says about
   coordinates, it has to survive the hit/hover recompute that runs on every
   animation frame.

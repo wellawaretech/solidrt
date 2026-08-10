@@ -17,6 +17,7 @@ mod mode;
 mod playback;
 mod raster;
 pub mod rendertree;
+pub mod resample;
 mod script;
 mod texture;
 mod vsync;

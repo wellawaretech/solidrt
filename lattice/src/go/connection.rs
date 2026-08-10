@@ -35,11 +35,15 @@ pub struct DevFlags {
   /// runtime::ClockControl); written from `clock` queries, reset on
   /// reload/stop so no app starts under a stale pause.
   pub clock: crate::runtime::ClockControl,
-  /// Synthetic-input sender for `input` queries: events pushed here enter the
-  /// UI thread's batch loop through the same channel as real SDL input, so
-  /// injected events get the full pipeline (coalescing, input-state
-  /// bookkeeping, hit testing, capture forwarding, focus).
+  /// Synthetic-input sender for `input` queries: downs/ups pushed here enter
+  /// the UI thread's batch loop through the same channel as real SDL input
+  /// (hit testing, input-state bookkeeping, focus). Moves follow the
+  /// producer-side resampler rule instead (see `resampler`).
   pub input_tx: UnboundedSender<alloy::AlloyEvent>,
+  /// Resampler feed for injected pointer events, mirroring the alloy pump:
+  /// moves are consumed into it (never sent as events), downs seed and ups
+  /// drop the history before their events travel (see alloy's resample.rs).
+  pub resampler: alloy::resample::SharedResampler,
 }
 
 /// Send-safe handles the connection answers dev-server queries from, without a
@@ -575,11 +579,29 @@ async fn try_serve(
                   Ok(seq) => {
                     let delivered = seq.len();
                     let input_tx = flags.input_tx.clone();
+                    let resampler = flags.resampler.clone();
                     let reply_tx = queries.outbound_tx.clone();
                     tokio::spawn(async move {
+                      use alloy::AlloyEvent;
                       for (delay_ms, event) in seq {
                         if delay_ms > 0 {
                           tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        }
+                        // Producer-side resampler feed, mirroring the alloy
+                        // pump (see DevFlags::resampler): moves are consumed
+                        // here and dispatch from the frame verb's samples.
+                        match &event {
+                          AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+                            resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
+                            continue;
+                          }
+                          AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
+                            resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
+                          }
+                          AlloyEvent::PointerUp { pointer_id, pointer_type, .. } => {
+                            resampler.remove((*pointer_type, *pointer_id));
+                          }
+                          _ => {}
                         }
                         if input_tx.send(event).is_err() {
                           // The runtime is shutting down; nobody left to reply to.
