@@ -41,6 +41,10 @@ Rules:
   commit.
 - Short descriptions. No docs-were-updated bullets, no individual test
   file names, no rebuilt bundles.
+- One line per bullet: the bold lead, a dash, one short clause. A reader
+  scans a release, they do not study it - mechanism, rationale and caveats
+  belong in the docs. If a bullet needs two clauses to make sense, it is
+  probably two bullets or the wrong altitude.
 - No per-crate labels. Platform-specific entries DO get a label, leading
   the bullet: [windows], [android], [linux], [macos]. Labels are always
   lowercase, whatever the thing is normally called.
@@ -48,6 +52,54 @@ Rules:
 -->
 
 # Changelog
+
+## 0.0.47 - 2026-08-10
+
+### Fixes
+- **A JavaScript error no longer takes the app down** - handlers, callbacks and property writes report and carry on.
+- **`fetch` silently dropped headers and bodies it could not marshal** - they throw now.
+- **Hit testing** - `viewBox` clip and scroll offsets, and padded views, resolved against the wrong box.
+- **GPU repaint** - texture content changes count as damage, a `params` write re-baked twice, the stats overlay froze on texture-only frames.
+
+### Features
+- **Input: frame-batched multi-pointer delivery** - one same-age batch per frame, ending in a `pointerFrame` event.
+- **Gestures: `createTransform`** - pan, pinch and rotate as one recognizer; core now owns it, `createPan` and the arena.
+- **3D: geometry and profiles** - circle, cone, ring, torus with real UVs, plus `extrude` / `lathe` / `shape` and `withColors`.
+- **3D: custom materials** - a standard uniform set, `@solidrt/3d/glsl` lighting pieces, `<Scene output>`, `scene.project`.
+- **GPU: shared target params tolerate zero coverage** - shared state no longer depends on write order.
+- **Frame-stepped time** - GUI timers and `performance.now()` run on the paced frame timeline (see Breaking changes).
+- **Faster microtasks** - `queueMicrotask` enqueues natively, dropping the promise machinery every reactive flush paid for.
+
+### API
+- `@solidrt/core`: `createTransform`; `createPan` and `arena`, moved from `@solidrt/components`; the `Element` type.
+- `srt:events`: `pointerFrame`. Also `performance.timeOrigin`.
+- `flux:gpu`: `captureSnapshot` resolves `{ width, height, data }` (see Breaking changes).
+- `@solidrt/3d`: `circle`, `cone`, `ring`, `torus`, `withColors`, `fillColors`, `VERTEX_LAYOUTS`, `normalMatrix`.
+- `@solidrt/3d`: `extrude` / `lathe` / `shape` / `fillet` / `roundRect` / `triangulate`, the `/glsl` subpath, `SceneProps.output`, `scene.project`.
+
+### Developer experience
+- **Clock control** - `set_time_scale` and `step_frames` freeze or advance a client, so snapshots stop racing animations.
+- **Input injection** - `send_input` drives pointer and key input into a running client.
+- **Snapshots crop and scale**, and node properties read back through the render-tree query.
+- **`list_clients`** - the server's entry and project dir, per client the platform, version, profile, capabilities and queries.
+
+### Breaking changes
+- **`captureSnapshot` returns pixels, not a texture** - nothing to free; upload with `createTexture` to display it.
+- **GUI timers are frame-stepped** - one-frame resolution, one fire per interval per frame; `Date.now()` stays wall time.
+- **`fetch` and `parseColor` throw** where they used to drop the value or paint black.
+- **`VERTEX_LAYOUT` is now `VERTEX_LAYOUTS`** in `@solidrt/3d`, keyed by layout name.
+- One behavior change: `atob` tolerates missing `=` padding, per WHATWG.
+
+### Agents
+- **Scaffold `AGENTS.md`: what you paint with** - the tiers that replace CSS, and which web reflex maps to which.
+- **`packages/3d/AGENTS.md`** - profiles, vertex layouts, the standard uniform set, the `output` prop.
+- New example: `scene-post-effect`.
+
+### Various
+- Dependencies: flux drops `base64`, since the engine provides `atob` / `btoa`. No other updates.
+- `@solidrt/3d` is marked experimental: expect more API churn there than elsewhere.
+- Tests added across flux, alloy and lattice.
+- Backlog filed: content-damage cost, texture params write path, parallel dev servers, MCP verification surface, and more.
 
 ## 0.0.46 - 2026-08-06
 
