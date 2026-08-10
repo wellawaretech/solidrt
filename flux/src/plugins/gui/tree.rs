@@ -207,6 +207,7 @@ impl ModuleDef for RenderTreeModule {
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();
     let cmd_tx = alloy_cmd_tx.clone();
+    let props_atx = atx.clone();
     let set_property = Function::new(
       ctx.clone(),
       move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
@@ -214,7 +215,11 @@ impl ModuleDef for RenderTreeModule {
         let value = to_prop_value(&value)?;
         tree_ref
           .borrow_mut()
-          .try_edit(node_id, |el| super::properties::apply_jsx(el, &property, &value, &cmd_tx))
+          .try_edit(node_id, |el| {
+            super::properties::apply_jsx(el, &property, &value, &cmd_tx, &|id, params| {
+              props_atx.set_target_params(id, params)
+            })
+          })
           .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
         platform_ref.request_frame();
         Ok(())

@@ -3,7 +3,12 @@ use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Texture, TextureFit};
 
-pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
+pub fn apply(
+  tex: &mut Texture,
+  name: &str,
+  value: &PropValue,
+  gpu_params: &dyn Fn(u64, &[(String, alloy::ParamValue)]) -> Result<(), String>,
+) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
     "src" => {
       // null/undefined clears, number sets the id.
@@ -33,7 +38,20 @@ pub fn apply(tex: &mut Texture, name: &str, value: &PropValue) -> Result<Option<
     "y" => tex.set_y(f32_of(value, "y")?),
     "w" => tex.set_w(f32_of(value, "w")?),
     "h" => tex.set_h(f32_of(value, "h")?),
-    "params" => tex.set_params(decode_params(value)?),
+    // Params are target state, written through the GPU channel like the
+    // imperative setTargetParams (one write path; unknown names, arities,
+    // and non-target ids all error there). Target state is not element
+    // state, so no tree damage - the raster flush renders once per frame
+    // however often a signal writes, and content damage covers any
+    // enclosing snapshot boundary.
+    "params" => {
+      let params = decode_params(value)?;
+      let Some(id) = tex.texture_id else {
+        return Err("params needs a target to write to: set src before params".to_string());
+      };
+      gpu_params(id, &params)?;
+      Damage::None
+    }
     _ => return Ok(None),
   }))
 }

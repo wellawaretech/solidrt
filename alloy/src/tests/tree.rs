@@ -618,20 +618,17 @@ fn boundary_above_the_boundary_still_hits() {
   assert!(tree.texture_content_changed(&ids(&[7])));
 }
 
-#[test]
-fn boundary_shader_input_counts_as_reference() {
-  // The boundary shader samples id 9 as an extra input (not via any texture
-  // element); its baked output goes stale when 9's content changes.
-  let mut tree = RenderTree::new();
-  tree.create_node(1, attached());
-  tree.edit(1, |el| {
+// A snapshot-boundary view whose shader samples `tex` as an extra input.
+fn shaded_boundary(tree: &mut RenderTree, id: u64, tex: u64) {
+  tree.create_node(id, attached());
+  tree.edit(id, |el| {
     el.repaint_boundary = BoundaryMode::Snapshot;
     match &mut el.kind {
       ElementKind::View(v) => {
         v.shader = Some(NodeShader {
           program: 1,
           params: vec![],
-          textures: vec![("uLut".to_string(), 9)],
+          textures: vec![("uLut".to_string(), tex)],
           outset: 0.0,
           previous: false,
         });
@@ -640,9 +637,44 @@ fn boundary_shader_input_counts_as_reference() {
     }
     Damage::None
   });
+}
+
+#[test]
+fn boundary_shader_input_counts_as_reference() {
+  // The boundary shader samples id 9 as an extra input (not via any texture
+  // element); its pass output goes stale when 9's content changes.
+  let mut tree = RenderTree::new();
+  shaded_boundary(&mut tree, 1, 9);
   let before = tree.revision();
   assert!(tree.texture_content_changed(&ids(&[9])));
   assert_ne!(tree.revision(), before);
+  // The narrow path: the pass is flagged to re-run (the field write in setup
+  // did not go through set_shader, so the flag can only come from the hit).
+  match &tree.node(1).kind {
+    ElementKind::View(v) => assert!(v.take_shader_dirty()),
+    _ => unreachable!(),
+  }
+}
+
+#[test]
+fn boundary_shader_input_hit_keeps_the_bake() {
+  // A shader-INPUT content change needs only the pass rerun: the boundary's
+  // own cache must survive (invalidate_paint would take it), while the
+  // parent's recording repaints (Compose - it holds the old composited
+  // quad). The planted Recording on the boundary stands in for the real
+  // Snapshot cache, which needs a GPU texture a unit test cannot allocate.
+  let mut tree = RenderTree::new();
+  tree.create_node(0, attached());
+  shaded_boundary(&mut tree, 1, 9);
+  tree.insert_node(0, 1, None);
+  let dl = || {
+    crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list")
+  };
+  *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
+  *tree.node(1).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
+  assert!(tree.texture_content_changed(&ids(&[9])));
+  assert!(tree.node(1).paint_cache.borrow().is_some(), "the boundary's bake must survive");
+  assert!(tree.node(0).paint_cache.borrow().is_none(), "the parent recording must repaint");
 }
 
 #[test]

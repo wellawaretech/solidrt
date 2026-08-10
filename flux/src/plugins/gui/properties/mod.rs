@@ -43,11 +43,17 @@ use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvent
 // core's renderer (setTreeProperty) to warn-and-continue on name-level
 // rejections; every other Err - a bad VALUE for a known property - is
 // rethrown there, per the throw-in-dev validation policy.
+// `gpu_params` routes a texture `params` write straight to the GPU channel
+// (Context::set_target_params in production; a stub in tests): params are
+// target state, not element state, so the write produces no tree damage and
+// the raster dirty flush paces any number of writes into one render per
+// frame. Content damage covers snapshot consumers.
 pub fn apply_jsx(
   el: &mut Element,
   name: &str,
   value: &PropValue,
   cmd_tx: &Sender<AlloyCommand>,
+  gpu_params: &dyn Fn(u64, &[(String, alloy::ParamValue)]) -> Result<(), String>,
 ) -> Result<Damage, String> {
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
@@ -118,7 +124,7 @@ pub fn apply_jsx(
     ElementKind::Path(path) => path::apply(path, name, value)?,
     ElementKind::Text(text) => text::apply(text, name, value)?,
     ElementKind::Span(span) => text::apply_span(span, name, value)?,
-    ElementKind::Texture(tex) => texture::apply(tex, name, value)?,
+    ElementKind::Texture(tex) => texture::apply(tex, name, value, gpu_params)?,
   };
   if let Some(damage) = handled {
     return Ok(damage);

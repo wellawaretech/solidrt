@@ -75,21 +75,15 @@ ping-pong termination), `tests/tree.rs` (snapshot hit bumps revision +
 clears caches, no-boundary/recording/unrelated/detached all no-ops,
 shader-input reference, SnapshotNoAa).
 
-## Notes and leftovers
+## Notes
 
-- A content hit on a boundary-shader INPUT does a full re-bake
-  (re-rasterize + re-run) where re-running the pass over the retained
-  source would suffice. Correct, just over-work; narrow to a
-  `shader_dirty`-style path if it ever shows up.
-- `texture_content_changed` is O(nodes) per drained frame. Only runs on
-  frames with GPU writes; a maintained reverse index (id -> nodes) is the
-  drop-in optimization if profiling ever asks.
-- The `<texture params>` prop path still returns `Damage::Paint`
-  redundantly (the content channel now covers it); dropping that could
-  extend the reuse path to prop-driven shader animation. Follow-up, not
-  done.
-- `destroy_texture` does not note content (deferred-destroy keeps a
-  mounted texture drawing; nothing changes until reclaim).
+- `destroy_texture` deliberately does not note content (deferred-destroy
+  keeps a mounted texture drawing; nothing changes until reclaim).
+- Open follow-ups were promoted to their own items so this record stays
+  closed: [content-damage-perf](content-damage-perf.md) (the O(nodes)
+  walk and the boundary-shader-input full re-bake, with symptoms) and
+  [texture-params-prop-write-path](texture-params-prop-write-path.md)
+  (the params prop's double re-bake and the one-write-path redesign).
 
 ## Relations
 

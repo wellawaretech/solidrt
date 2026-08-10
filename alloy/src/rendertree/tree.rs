@@ -516,32 +516,55 @@ impl RenderTree {
   /// (Context::take_content_changes is the source). Live texture references
   /// need nothing: the resubmitted display list samples the fresh pixels at
   /// the raster flush. The one consumer that goes stale is baked pixels, so
-  /// this damages exactly the nodes that reference a changed id under a
-  /// snapshot boundary (their subtree bake, or the boundary shader sampling
-  /// the id as an extra input) and leaves everything else alone. Bumps the
-  /// revision only on a hit: a frame whose GPU writes touch no snapshot
-  /// boundary keeps the present-only reuse path. Returns whether anything
-  /// was invalidated.
+  /// this damages exactly the referencing nodes and leaves everything else
+  /// alone. Two reference shapes, two costs: a texture element under a
+  /// snapshot boundary is IN the bake and re-rasterizes
+  /// (`invalidate_paint`); a boundary shader sampling the id as an extra
+  /// input only needs its pass re-run over the still-valid snapshot, so it
+  /// gets the params-write treatment (`mark_shader_dirty` + Compose damage:
+  /// ancestor recordings repaint, the bake survives). Bumps the revision
+  /// only on a hit: a frame whose GPU writes touch no snapshot boundary
+  /// keeps the present-only reuse path. Returns whether anything was
+  /// invalidated.
   pub fn texture_content_changed(&mut self, ids: &HashSet<u64>) -> bool {
     if ids.is_empty() {
       return false;
     }
-    let mut hits: Vec<u64> = Vec::new();
+    let mut bake_hits: Vec<u64> = Vec::new();
+    let mut shader_hits: Vec<u64> = Vec::new();
     for (id, element) in self.nodes.iter() {
-      let references = match &element.kind {
-        ElementKind::Texture(t) => t.texture_id.is_some_and(|t| ids.contains(&t)),
-        ElementKind::View(v) => v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|(_, t)| ids.contains(t))),
-        _ => false,
-      };
-      if references && self.under_snapshot_boundary(*id) {
-        hits.push(*id);
+      match &element.kind {
+        ElementKind::Texture(t) => {
+          if t.texture_id.is_some_and(|t| ids.contains(&t)) && self.under_snapshot_boundary(*id) {
+            bake_hits.push(*id);
+          }
+        }
+        // The shader only runs on the view's OWN snapshot boundary (declared
+        // without one it is ignored with a warning), so ancestor boundaries
+        // are irrelevant here.
+        ElementKind::View(v) => {
+          if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
+            && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|(_, t)| ids.contains(t)))
+          {
+            shader_hits.push(*id);
+          }
+        }
+        _ => {}
       }
     }
-    if hits.is_empty() {
+    if bake_hits.is_empty() && shader_hits.is_empty() {
       return false;
     }
-    for id in &hits {
+    for id in &bake_hits {
       self.invalidate_paint(*id);
+    }
+    for id in shader_hits {
+      if let Some(element) = self.try_node(id) {
+        if let ElementKind::View(v) = &element.kind {
+          v.mark_shader_dirty();
+        }
+      }
+      self.apply_damage(id, Damage::Compose);
     }
     self.bump_revision();
     true

@@ -10,6 +10,21 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Content-damage perf watchpoints](content-damage-perf.md) [open] - The
+  remaining perf pothole in the GPU-content-damage path, recorded
+  symptom-first: the O(nodes) walk in texture_content_changed (matters
+  only at ~50k+ nodes with per-frame GPU writes; symptom = jsMs growth on
+  GPU-writing frames; fix = texture-referencing node index). The
+  boundary-shader-INPUT full re-bake was fixed 2026-08-10 (shader_dirty +
+  Compose keeps the bake, only the pass re-runs).
+- [texture params prop - one write path](texture-params-prop-write-path.md)
+  [done] - The `<texture params>` prop now writes through
+  set_target_params at the properties layer (2026-08-10): no tree
+  damage, prop-driven shader animation keeps the reuse path, prop and
+  imperative writes validate identically, and the kind's
+  pending_params/set_params machinery is deleted. A params write with no
+  src throws ("set src before params").
+
 - [GPU-only redraws never invalidate snapshot boundaries](snapshot-gpu-content-invalidation.md)
   [done] - A texture id whose pixels changed through GPU writes (draw/shader
   targets, uploadTexture, camera frames) froze inside

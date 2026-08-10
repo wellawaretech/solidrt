@@ -584,11 +584,13 @@ export interface TextureProps extends PaintProps, PointerProps {
   srcY?: number
   srcW?: number
   srcH?: number
-  // Shader uniform values, when src names a shader texture. Applied at the
-  // next repaint (not synchronously), so a fast-changing signal stays paced
-  // to real frames rather than triggering a GL render pass per write. A
-  // number drives a scalar (`float`/`int`); a flat number array drives the
-  // declared GLSL type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major)
-  // for `mat4`.
+  // Shader uniform values, when src names a render target: the same channel
+  // setTargetParams drives, written through it directly - prop and
+  // imperative writes validate and error identically (an unknown name
+  // throws, and set src before params: a write with no src to route to
+  // throws). However often a signal writes, the target renders once per
+  // frame at the raster flush. A number drives a scalar (`float`/`int`); a
+  // flat number array drives the declared GLSL type: 2/3/4 for
+  // `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
   params?: Record<string, number | number[]>
 }

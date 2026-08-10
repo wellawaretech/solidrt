@@ -11,8 +11,14 @@ use alloy::rendertree::{Damage, Element};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind);
+  apply_el(&mut el, name, value)
+}
+
+// The variant keeping the element, for multi-write sequences (src then
+// params). The gpu_params stub accepts every write, like a valid target.
+fn apply_el(el: &mut Element, name: &str, value: PropValue) -> Result<Damage, String> {
   let (tx, _rx) = channel();
-  apply_jsx(&mut el, name, &value, &tx)
+  apply_jsx(el, name, &value, &tx, &|_, _| Ok(()))
 }
 
 fn num(n: f64) -> PropValue {
@@ -100,15 +106,19 @@ fn radius_shapes() {
 #[test]
 fn params_reject_non_numeric_entries() {
   // Null clears; a wrong-typed entry errors naming the key (previously it was
-  // silently skipped).
-  assert!(apply("texture", "params", PropValue::Null).is_ok());
+  // silently skipped). Value errors surface before the src/target routing,
+  // so they read the same with or without src - src is set here because a
+  // valid params write needs a target to go to.
+  let mut el = Element::from_kind("texture");
+  apply_el(&mut el, "src", num(7.0)).expect("src applies");
+  assert!(apply_el(&mut el, "params", PropValue::Null).is_ok());
   let ok = map(&[("uTime", num(1.0)), ("uVec", PropValue::List(vec![num(1.0), num(2.0)]))]);
-  assert!(apply("texture", "params", ok).is_ok());
+  assert!(apply_el(&mut el, "params", ok).is_ok());
   let bad = map(&[("uTime", text("now"))]);
-  let err = apply("texture", "params", bad).unwrap_err();
+  let err = apply_el(&mut el, "params", bad).unwrap_err();
   assert!(err.contains("'uTime'"), "{err}");
   let bad_list = map(&[("uVec", PropValue::List(vec![num(1.0), text("x")]))]);
-  let err = apply("texture", "params", bad_list).unwrap_err();
+  let err = apply_el(&mut el, "params", bad_list).unwrap_err();
   assert!(err.contains("'uVec'"), "{err}");
 }
 
@@ -173,9 +183,8 @@ fn overflow_reads_back_including_with_viewbox() {
   // the report used.
   use crate::plugins::gui::properties::{read_jsx, ReadValue};
   let mut el = Element::from_kind("view");
-  let (tx, _rx) = channel();
-  apply_jsx(&mut el, "overflow", &text("hidden"), &tx).expect("overflow applies");
-  apply_jsx(&mut el, "viewBox", &PropValue::List(vec![num(100.0), num(40.0)]), &tx).expect("viewBox applies");
+  apply_el(&mut el, "overflow", text("hidden")).expect("overflow applies");
+  apply_el(&mut el, "viewBox", PropValue::List(vec![num(100.0), num(40.0)])).expect("viewBox applies");
   let props = read_jsx(&el);
   assert!(
     props.iter().any(|(n, v)| *n == "overflow" && matches!(v, ReadValue::Str(s) if s == "hidden")),
@@ -187,9 +196,47 @@ fn overflow_reads_back_including_with_viewbox() {
 fn diverging_overflow_axes_read_back_per_axis() {
   use crate::plugins::gui::properties::{read_jsx, ReadValue};
   let mut el = Element::from_kind("view");
-  let (tx, _rx) = channel();
-  apply_jsx(&mut el, "overflowY", &text("scroll"), &tx).expect("overflowY applies");
+  apply_el(&mut el, "overflowY", text("scroll")).expect("overflowY applies");
   let props = read_jsx(&el);
   assert!(props.iter().any(|(n, v)| *n == "overflowY" && matches!(v, ReadValue::Str(s) if s == "scroll")));
   assert!(!props.iter().any(|(n, _)| *n == "overflow" || *n == "overflowX"));
+}
+
+#[test]
+fn texture_params_route_to_the_gpu_channel() {
+  // Params are target state: the write goes straight to the GPU channel
+  // (production: Context::set_target_params) and produces NO tree damage,
+  // so prop-driven shader animation keeps the present-only reuse path.
+  use std::cell::RefCell;
+  let mut el = Element::from_kind("texture");
+  apply_el(&mut el, "src", num(7.0)).expect("src applies");
+  let (tx, _rx) = channel();
+  let seen: RefCell<Option<(u64, usize, String)>> = RefCell::new(None);
+  let damage = apply_jsx(&mut el, "params", &map(&[("uTime", num(1.5))]), &tx, &|id, params| {
+    *seen.borrow_mut() = Some((id, params.len(), params[0].0.clone()));
+    Ok(())
+  })
+  .expect("params applies");
+  assert_eq!(damage, Damage::None);
+  assert_eq!(*seen.borrow(), Some((7, 1, "uTime".to_string())));
+}
+
+#[test]
+fn texture_params_before_src_name_the_fix() {
+  let err = apply("texture", "params", map(&[("uTime", num(1.0))])).unwrap_err();
+  assert!(err.contains("set src before params"), "{err}");
+}
+
+#[test]
+fn texture_params_gpu_error_propagates() {
+  // An unknown target/uniform errors at the write (the imperative call's
+  // contract), surfacing as a catchable JS throw like every value error.
+  let mut el = Element::from_kind("texture");
+  apply_el(&mut el, "src", num(7.0)).expect("src applies");
+  let (tx, _rx) = channel();
+  let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| {
+    Err("target 7 not found".to_string())
+  })
+  .unwrap_err();
+  assert!(err.contains("not found"), "{err}");
 }

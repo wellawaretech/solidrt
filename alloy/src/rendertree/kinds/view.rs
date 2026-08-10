@@ -399,6 +399,15 @@ impl View {
     Damage::Compose
   }
 
+  /// Flag the pass to re-run without a declaration change: the shader's
+  /// extra texture inputs are sampled at pass time, so when one's CONTENT
+  /// changes (see `RenderTree::texture_content_changed`) a rerun over the
+  /// still-valid snapshot is all that is stale - the same
+  /// dirty-flag-plus-Compose shape as a params write through `set_shader`.
+  pub(crate) fn mark_shader_dirty(&self) {
+    self.shader_dirty.set(true);
+  }
+
   /// Take the pending-shader-write flag; composite consumes it at the paint
   /// walk (running the pass, or warning when the boundary is missing).
   pub(crate) fn take_shader_dirty(&self) -> bool {
