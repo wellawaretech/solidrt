@@ -502,3 +502,177 @@ fn bounding_box_translate_and_scroll_fast_path() {
   let b = tree.bounding_box_viewport(3).expect("laid out");
   assert_box(b, 25.0, 10.0, 10.0, 10.0);
 }
+
+// --- texture_content_changed: GPU content writes as snapshot damage ---------
+
+use std::collections::HashSet;
+
+use crate::gpu::NodeShader;
+
+fn ids(list: &[u64]) -> HashSet<u64> {
+  list.iter().copied().collect()
+}
+
+// A snapshot-boundary view over a texture leaf showing registry id `tex`.
+fn snapshot_over_texture(tree: &mut RenderTree, tex: u64) {
+  tree.create_node(1, attached());
+  tree.create_node(2, Texture::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.edit(1, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    Damage::None
+  });
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(tex)),
+    _ => unreachable!(),
+  });
+}
+
+#[test]
+fn content_change_under_snapshot_bumps_revision() {
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  let before = tree.revision();
+  assert!(tree.texture_content_changed(&ids(&[7])));
+  assert_ne!(tree.revision(), before);
+}
+
+#[test]
+fn content_change_without_snapshot_is_ignored() {
+  // The fast-path guarantee: a plain displayed texture (no baked pixels
+  // anywhere above it) must not bump the revision, or pure-GPU animation
+  // would lose the present-only reuse path.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, Texture::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(7)),
+    _ => unreachable!(),
+  });
+  let before = tree.revision();
+  assert!(!tree.texture_content_changed(&ids(&[7])));
+  assert_eq!(tree.revision(), before);
+}
+
+#[test]
+fn unrelated_id_is_ignored() {
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  let before = tree.revision();
+  assert!(!tree.texture_content_changed(&ids(&[8])));
+  assert_eq!(tree.revision(), before);
+}
+
+#[test]
+fn empty_set_is_ignored() {
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  assert!(!tree.texture_content_changed(&ids(&[])));
+}
+
+#[test]
+fn recording_boundary_is_not_a_bake() {
+  // A recording boundary holds a display list with a LIVE texture
+  // reference, not pixels; the raster flush refreshes it without damage.
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  tree.edit(1, |el| {
+    el.repaint_boundary = BoundaryMode::Recording;
+    Damage::None
+  });
+  let before = tree.revision();
+  assert!(!tree.texture_content_changed(&ids(&[7])));
+  assert_eq!(tree.revision(), before);
+}
+
+#[test]
+fn snapshot_no_aa_counts_as_bake() {
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  tree.edit(1, |el| {
+    el.repaint_boundary = BoundaryMode::SnapshotNoAa;
+    Damage::None
+  });
+  assert!(tree.texture_content_changed(&ids(&[7])));
+}
+
+#[test]
+fn boundary_above_the_boundary_still_hits() {
+  // The texture sits two levels below the snapshot boundary; the inclusive
+  // ancestor probe must still find it.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, Texture::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.edit(1, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    Damage::None
+  });
+  tree.edit(3, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(7)),
+    _ => unreachable!(),
+  });
+  assert!(tree.texture_content_changed(&ids(&[7])));
+}
+
+#[test]
+fn boundary_shader_input_counts_as_reference() {
+  // The boundary shader samples id 9 as an extra input (not via any texture
+  // element); its baked output goes stale when 9's content changes.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.edit(1, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    match &mut el.kind {
+      ElementKind::View(v) => {
+        v.shader = Some(NodeShader {
+          program: 1,
+          params: vec![],
+          textures: vec![("uLut".to_string(), 9)],
+          outset: 0.0,
+          previous: false,
+        });
+      }
+      _ => unreachable!(),
+    }
+    Damage::None
+  });
+  let before = tree.revision();
+  assert!(tree.texture_content_changed(&ids(&[9])));
+  assert_ne!(tree.revision(), before);
+}
+
+#[test]
+fn detached_texture_without_boundary_is_ignored() {
+  // A never-inserted texture node has no ancestors, so no bake references it.
+  let mut tree = RenderTree::new();
+  tree.create_node(5, Texture::default().no_layout());
+  tree.edit(5, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(7)),
+    _ => unreachable!(),
+  });
+  assert!(!tree.texture_content_changed(&ids(&[7])));
+}
+
+#[test]
+fn content_hit_invalidates_the_boundary_cache_path() {
+  // invalidate_paint clears Recording caches from the node up; plant one on
+  // the boundary's parent and confirm a content hit clears it (the snapshot
+  // itself needs a GPU texture, which a unit test cannot allocate).
+  let mut tree = RenderTree::new();
+  tree.create_node(0, attached());
+  snapshot_over_texture(&mut tree, 7);
+  tree.insert_node(0, 1, None);
+  tree.edit(0, |el| {
+    el.repaint_boundary = BoundaryMode::Recording;
+    Damage::None
+  });
+  *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(
+    crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list"),
+  ));
+  assert!(tree.texture_content_changed(&ids(&[7])));
+  assert!(tree.node(0).paint_cache.borrow().is_none());
+}

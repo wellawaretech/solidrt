@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: Stats overlay should draw after the window shader pass
-description: The debug overlay was recorded into the app's display list, so a window shader warped the HUD and its once-per-second refresh forced full rebuilds. Both halves addressed 2026-08-09 - freeze was a dead overlay_due demand source; overlay now retained raster-side, drawn over every frame post-pass into FBO 0. Pending visual verification.
-status: open
+description: The debug overlay was recorded into the app's display list, so a window shader warped the HUD and its once-per-second refresh forced full rebuilds. Both halves fixed and verified 2026-08-09 - freeze was a dead overlay_due demand source; overlay now retained raster-side, rasterized to a small layer and blended over every frame post-pass.
+status: done
 timestamp: 2026-07-27T00:00:00Z
 ---
 
@@ -89,7 +89,7 @@ only the painted HUD was stale, which is why get_stats stayed live.
 Still open: the post-shader-pass half above (warp legibility + the
 once-per-second full rebuild defeating the clean-tree fast path).
 
-## Post-pass half implemented (2026-08-09, pending visual verification)
+## Post-pass half implemented and verified (2026-08-09)
 
 The overlay is now retained raster-thread state, mirroring the window
 shader's own pattern: `RasterCmd::SetStatsOverlay` installs/clears a small
@@ -128,6 +128,10 @@ channel. Consequences:
   cannot leave a stale HUD.
 
 The reusedPerSec AGENTS.md line landed in the scaffold's get_stats bullet.
-Verify: window-shader example with stats on - HUD crisp over the warp,
-ticking 1/s; click-to-identity indistinguishable from unshaded; on a
-texture-driven app reusedPerSec now sits at ~fps (no 1/s rebuild dip).
+Verified live on the window-shader example: HUD crisp and undistorted over
+the warp, updating once per second, app content intact (the first-attempt
+Impeller-over-FBO0 draw blacked it out; the layer+blend mechanism does
+not). Note for anyone reading the HUD there: fps stays ~60 with the warp
+amount at 0 because the example writes uTime into the shader params every
+frame - a standing frame request presenting identical pixels - not because
+the overlay forces frames.

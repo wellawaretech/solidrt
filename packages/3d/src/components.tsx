@@ -7,7 +7,7 @@
 // structure and slow state, per-frame motion goes straight to the scene.
 
 import { createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
-import type { ParentComponent, VoidComponent } from "@solidrt/core"
+import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import {
   add,
   createGroup,
@@ -54,18 +54,29 @@ function syncNode(node: SceneNode, props: TransformProps): void {
 }
 
 export type SceneProps = {
+  /** Target pixels. With `output`, the leaf's own width/height are layout,
+   * so render size and display size separate (supersampling). */
   width: number
   height: number
   clearColor?: [number, number, number, number]
   label?: string
   ref?: (scene: SceneHandle) => void
+  /**
+   * Compose the output yourself: called once (untracked) with the scene's
+   * texture id, and its return renders in place of the built-in `<texture>`
+   * leaf - a `<d-texture>`, a leaf carrying paint/pointer/layout props, or
+   * a post-effect chain (a shader target sampling the id; created in the
+   * callback it disposes with the Scene). Return null to render no leaf.
+   */
+  output?: (texture: TextureId) => Element
 }
 
 /**
  * Owns a draw target and composites it as an ordinary `<texture>` leaf, so
  * the output takes layout, transforms, blendMode, and pointer events like
- * any element. Children (Mesh/Group/PerspectiveCamera) render nothing
- * themselves - they populate the retained scene through context.
+ * any element - or hand `output` the texture id and compose it yourself.
+ * Children (Mesh/Group/PerspectiveCamera) render nothing themselves - they
+ * populate the retained scene through context.
  */
 export let Scene: ParentComponent<SceneProps> = props => {
   let scene = untrack(() =>
@@ -76,9 +87,14 @@ export let Scene: ParentComponent<SceneProps> = props => {
     ([w, h]) => scene.setSize(w, h),
   )
   untrack(() => props.ref)?.(scene)
+  let output = untrack(() => props.output)
   return (
     <SceneContext value={{ scene, parent: scene.root }}>
-      <texture src={scene.texture} width={props.width} height={props.height} />
+      {output ? (
+        untrack(() => output(scene.texture))
+      ) : (
+        <texture src={scene.texture} width={props.width} height={props.height} />
+      )}
       {props.children}
     </SceneContext>
   )

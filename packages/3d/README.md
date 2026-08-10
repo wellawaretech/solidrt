@@ -27,7 +27,11 @@ The scene compiles to one depth-buffered GPU draw target: one draw entry
 per mesh, one shared pipeline per material class, cross-mesh occlusion
 from the shared depth buffer. A static scene costs zero GPU passes - the
 runtime re-renders the target only when something changes - and a moved
-mesh costs one uniform write.
+mesh costs one uniform write. By default `<Scene>` composites the target
+as a plain `<texture>` leaf; the `output` prop receives the texture id
+and replaces that leaf - place a `<d-texture>`, add paint or pointer
+props, chain a post-effect shader target, or return null and composite
+`scene.texture` yourself.
 
 There is also an imperative layer underneath (`createScene`, `createMesh`,
 `setTransform`, ...) usable without components, plus a small math module

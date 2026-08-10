@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::context::samples_transitively;
+use crate::context::{content_closure, samples_transitively};
 use crate::raster::propagation_order;
 
 fn edges(list: &[(u64, &[u64])]) -> HashMap<u64, Vec<u64>> {
@@ -139,4 +139,55 @@ fn pingpong_via_barriers_is_legal() {
   // Binding either direction must not count as a flush cycle.
   let s = sources(&[(10, &[11])]);
   assert!(!samples_transitively(&s, &barriers(&[10, 11]), 10, 11));
+}
+
+// --- content_closure: which targets' pixels change when a source's do -------
+
+fn closure(s: &HashMap<u64, HashMap<(u64, String), u64>>, manual: &[u64], root: u64) -> HashSet<u64> {
+  let mut changes = HashSet::from([root]);
+  content_closure(s, &barriers(manual), root, &mut changes);
+  changes
+}
+
+#[test]
+fn content_reaches_samplers_transitively() {
+  // 2 samples 1, 3 samples 2: content in 1 changes 2 and 3.
+  let s = sources(&[(2, &[1]), (3, &[2])]);
+  assert_eq!(closure(&s, &[], 1), HashSet::from([1, 2, 3]));
+}
+
+#[test]
+fn content_stops_at_manual_targets() {
+  // 2 manual: its pixels hold until an explicit render, so neither it nor
+  // its downstream (3) change when 1 does.
+  let s = sources(&[(2, &[1]), (3, &[2])]);
+  assert_eq!(closure(&s, &[2], 1), HashSet::from([1]));
+}
+
+#[test]
+fn content_resumes_from_a_stepped_manual_root() {
+  // Rendering the manual target explicitly IS its content change; the walk
+  // from it reaches its pure samplers.
+  let s = sources(&[(2, &[1]), (3, &[2])]);
+  assert_eq!(closure(&s, &[2], 2), HashSet::from([2, 3]));
+}
+
+#[test]
+fn content_diamond_collects_each_target_once() {
+  let s = sources(&[(2, &[1]), (3, &[1]), (4, &[2, 3])]);
+  assert_eq!(closure(&s, &[], 1), HashSet::from([1, 2, 3, 4]));
+}
+
+#[test]
+fn content_ignores_unrelated_chains() {
+  let s = sources(&[(2, &[1]), (4, &[3])]);
+  assert_eq!(closure(&s, &[], 1), HashSet::from([1, 2]));
+}
+
+#[test]
+fn content_cycle_terminates() {
+  // A manual ping-pong pair: stepping one side must terminate and not chase
+  // the loop (both are manual, so neither joins as a sampler).
+  let s = sources(&[(10, &[11]), (11, &[10]), (12, &[10])]);
+  assert_eq!(closure(&s, &[10, 11], 10), HashSet::from([10, 12]));
 }

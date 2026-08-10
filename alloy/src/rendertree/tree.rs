@@ -511,6 +511,61 @@ impl RenderTree {
     self.nodes.len()
   }
 
+  /// GPU-side content changed behind these texture ids - target re-renders,
+  /// uploads, copies, camera frames - with no tree damage of their own
+  /// (Context::take_content_changes is the source). Live texture references
+  /// need nothing: the resubmitted display list samples the fresh pixels at
+  /// the raster flush. The one consumer that goes stale is baked pixels, so
+  /// this damages exactly the nodes that reference a changed id under a
+  /// snapshot boundary (their subtree bake, or the boundary shader sampling
+  /// the id as an extra input) and leaves everything else alone. Bumps the
+  /// revision only on a hit: a frame whose GPU writes touch no snapshot
+  /// boundary keeps the present-only reuse path. Returns whether anything
+  /// was invalidated.
+  pub fn texture_content_changed(&mut self, ids: &HashSet<u64>) -> bool {
+    if ids.is_empty() {
+      return false;
+    }
+    let mut hits: Vec<u64> = Vec::new();
+    for (id, element) in self.nodes.iter() {
+      let references = match &element.kind {
+        ElementKind::Texture(t) => t.texture_id.is_some_and(|t| ids.contains(&t)),
+        ElementKind::View(v) => v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|(_, t)| ids.contains(t))),
+        _ => false,
+      };
+      if references && self.under_snapshot_boundary(*id) {
+        hits.push(*id);
+      }
+    }
+    if hits.is_empty() {
+      return false;
+    }
+    for id in &hits {
+      self.invalidate_paint(*id);
+    }
+    self.bump_revision();
+    true
+  }
+
+  /// Whether `node_id` or any ancestor is a snapshot repaint boundary - the
+  /// probe that keeps texture_content_changed off everything else. Boundary
+  /// MODE, not cache presence: a declared boundary that has not baked yet has
+  /// nothing stale (the invalidation is a no-op then), and mode is plain
+  /// element state.
+  fn under_snapshot_boundary(&self, node_id: u64) -> bool {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+      let Some(element) = self.try_node(id) else {
+        return false;
+      };
+      if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
+        return true;
+      }
+      current = element.parent;
+    }
+    false
+  }
+
   /// Texture registry ids referenced by any live element, attached or
   /// detached (a detached node can be re-inserted, so its reference counts).
   /// Texture elements are the only kind holding registry ids. Used by the

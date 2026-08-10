@@ -196,6 +196,17 @@ impl RenderInner {
       self.overlay_installed.set(false);
     }
 
+    // GPU content writes since the last build (target re-renders, uploads,
+    // camera frames) change pixels behind unchanged texture ids and leave no
+    // tree damage of their own; baked snapshot boundaries are the one
+    // consumer that would go stale. Applied before the clean check because
+    // it bumps the revision exactly when such a boundary is hit - pure-GPU
+    // frames with no snapshot consumer keep the reuse path below.
+    let content = atx.take_content_changes();
+    if !content.is_empty() {
+      tree.0.borrow_mut().texture_content_changed(&content);
+    }
+
     // Present-only reuse: nothing that feeds the display list changed, so
     // resubmit the cached one instead of rebuilding. Layout, postLayout and
     // hover refresh are skipped too - the tree and window are unchanged.

@@ -48,10 +48,22 @@ blendMode and pointer events like any element. Design rationale:
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)` |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)`, `output?(texture)` |
 | `Group` | `position?`, `rotation?` (Euler radians, x-y-z order), `scale?` (number = uniform), `visible?`, `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `ref?(mesh)` |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
+
+Output composition: without `output`, `Scene` emits a minimal
+`<texture width height>` leaf and nothing else is forwarded - anything
+more goes through `output(texture)`, which renders in place of that leaf:
+a `<d-texture>`, a leaf with blendMode/fit/pointer/layout props, or a
+post-effect chain (`createShaderTarget` sampling the id with a
+covering-triangle pass; created in the callback it disposes with the
+Scene). Return null for no leaf at all and compose `scene.texture`
+elsewhere. Called once, untracked, inside the scene context. Scene
+`width`/`height` are target pixels and the leaf's own width/height are
+layout, so render and display size separate - render at 2x and display
+smaller for supersampling.
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,

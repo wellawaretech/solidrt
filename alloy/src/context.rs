@@ -39,6 +39,11 @@ struct TargetMirror {
   /// The fetch bounds and range vocabulary for set_draw, captured at create
   /// (see `DrawBounds` for why a captured bound stays correct).
   bounds: DrawBounds,
+  /// The nonzero buffer ids the target's fixed-kind pass reads (vertex,
+  /// instance, index), so a buffer write can name the targets whose pixels
+  /// it changes (see `note_buffer_content`). Empty for draw targets, whose
+  /// buffers live per entry.
+  buffers: Vec<u64>,
   /// Some = a draw target: the mutable ordered draw list, mirrored per entry
   /// (the flat fields above then describe nothing). None for the fixed
   /// kinds, whose one pass the flat fields describe.
@@ -67,6 +72,8 @@ struct EntryMirror {
   draw: DrawRange,
   /// The entry's fetch bounds and range vocabulary (see `TargetMirror::bounds`).
   bounds: DrawBounds,
+  /// The nonzero buffer ids the entry reads (see `TargetMirror::buffers`).
+  buffers: Vec<u64>,
 }
 
 // UI-side mirror of a registered render pipeline: its program's uniforms, the
@@ -110,6 +117,15 @@ pub struct Context {
   // test - the flush never renders a manual target, so a cycle is only a
   // hazard when every member is flush-rendered (see set_target_textures).
   manual_targets: RefCell<HashSet<u64>>,
+  // Texture ids whose pixels changed (or will, at the next dirty flush)
+  // behind an unchanged id since the last drain: target mutations, uploads,
+  // copies, and everything downstream through the sampler graph (see
+  // note_content). GPU writes produce no rendertree damage of their own, and
+  // baked snapshot boundaries are the one consumer that goes stale for it -
+  // the frame build drains this set (take_content_changes) and turns it into
+  // exactly that damage (RenderTree::texture_content_changed). A HashSet, so
+  // a per-frame write burst on one target costs one insert probe per write.
+  content_changes: RefCell<HashSet<u64>>,
   // UI-side mirror of the raster thread's program registry: program id ->
   // active uniforms (from the LinkProgram reply). Programs are their own id
   // space (like buffers), separate from texture ids.
@@ -192,6 +208,7 @@ impl Context {
       targets: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
       manual_targets: RefCell::new(HashSet::new()),
+      content_changes: RefCell::new(HashSet::new()),
       program_uniforms: RefCell::new(HashMap::new()),
       next_program_id: Cell::new(1),
       pipeline_mirrors: RefCell::new(HashMap::new()),
@@ -414,9 +431,16 @@ impl Context {
     label: Option<String>,
   ) -> Result<(), String> {
     self.gpu_limits().check_texture_size(width, height)?;
+    // A create at a fresh id cannot be referenced by anything yet; a replace
+    // at a live id (stream resize, camera format change) is a content change
+    // behind that id like any other.
+    let replace = self.textures.get(id).is_some();
     let impeller = self
       .rpc(|reply| RasterCmd::CreateTexture { id, width, height, pixels: pixels.to_vec(), sampler, format, label, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format });
+    if replace {
+      self.note_content(id);
+    }
     Ok(())
   }
 
@@ -437,6 +461,7 @@ impl Context {
       ));
     }
     self.send(RasterCmd::UpdateTexture { id, pixels: pixels[offset..end].to_vec() });
+    self.note_content(id);
     Ok(())
   }
 
@@ -479,6 +504,9 @@ impl Context {
     let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    // The storage is regenerated whatever the kind, manual included, so this
+    // notes unconditionally (unlike the pure-mutation paths).
+    self.note_content(id);
     Ok(())
   }
 
@@ -516,10 +544,10 @@ impl Context {
       reply,
     })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
-    self
-      .targets
-      .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: None, bounds: DrawBounds::default(), entries: None });
+    self.targets.borrow_mut().insert(
+      id,
+      TargetMirror { uniforms: Rc::new(uniforms), draw: None, bounds: DrawBounds::default(), buffers: Vec::new(), entries: None },
+    );
     self
       .shader_sources
       .borrow_mut()
@@ -590,6 +618,7 @@ impl Context {
       return Err(format!("write of {} bytes at offset {byte_offset} exceeds buffer size {size}", data.len()));
     }
     self.send(RasterCmd::WriteBuffer { id, data: data.to_vec(), byte_offset });
+    self.note_buffer_content(id);
     Ok(())
   }
 
@@ -621,6 +650,7 @@ impl Context {
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
     let draw = spec.entry.draw;
+    let buffers = entry_buffers(&spec.entry);
     let sources: HashMap<(u64, String), u64> =
       spec.entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
@@ -628,7 +658,7 @@ impl Context {
     self
       .targets
       .borrow_mut()
-      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), bounds, entries: None });
+      .insert(id, TargetMirror { uniforms: Rc::new(uniforms), draw: Some(draw), bounds, buffers, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -795,11 +825,12 @@ impl Context {
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
     let draw = entry.draw;
+    let buffers = entry_buffers(&entry);
     let sources: HashMap<(u64, String), u64> =
       entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
-    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, entries: None });
+    self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
@@ -829,6 +860,7 @@ impl Context {
         uniforms: Rc::new(UniformTable::default()),
         draw: None,
         bounds: DrawBounds::default(),
+        buffers: Vec::new(),
         entries: Some(DrawListMirror { depth, next_draw: 1, entries: HashMap::new() }),
       },
     );
@@ -895,7 +927,7 @@ impl Context {
       self.gpu_limits().check_texture_units(entry.textures.len() + shared_extra)?;
     }
     list.next_draw += 1;
-    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds });
+    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry_buffers(&entry) });
     drop(targets);
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -904,6 +936,7 @@ impl Context {
     }
     drop(sources);
     self.send(RasterCmd::AddDraw { target, draw: draw_id, entry, before });
+    self.note_target_content(target);
     Ok(draw_id)
   }
 
@@ -923,6 +956,7 @@ impl Context {
       validate_order(order, list.entries.keys().copied())?;
     }
     self.send(RasterCmd::SetDrawOrder { target, order: order.to_vec() });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -943,6 +977,7 @@ impl Context {
       record.retain(|(d, _), _| *d != draw);
     }
     self.send(RasterCmd::RemoveDraw { target, draw });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -956,6 +991,7 @@ impl Context {
       validate_params(&entry.uniforms, params)?;
     }
     self.send(RasterCmd::UpdateDrawParams { target, draw, params: params.to_vec() });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -993,6 +1029,7 @@ impl Context {
         validate_params(&mirror.uniforms, params)?;
         drop(targets);
         self.send(RasterCmd::UpdateShaderParams { id: target, params: params.to_vec() });
+        self.note_target_content(target);
         return Ok(());
       };
       for (name, value) in params {
@@ -1002,6 +1039,7 @@ impl Context {
       }
     }
     self.send(RasterCmd::UpdateTargetParams { target, params: params.to_vec() });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -1047,6 +1085,7 @@ impl Context {
         }
         drop(sources);
         self.send(RasterCmd::UpdateShaderTextures { id: target, textures: textures.to_vec() });
+        self.note_target_content(target);
         return Ok(());
       };
       for (name, _) in textures {
@@ -1091,6 +1130,7 @@ impl Context {
     }
     drop(sources);
     self.send(RasterCmd::UpdateTargetTextures { target, textures: textures.to_vec() });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -1134,6 +1174,7 @@ impl Context {
     }
     drop(sources);
     self.send(RasterCmd::UpdateDrawTextures { target, draw, textures: textures.to_vec() });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -1153,6 +1194,7 @@ impl Context {
     entry.draw = range;
     drop(targets);
     self.send(RasterCmd::SetDrawRange { target, draw, range });
+    self.note_target_content(target);
     Ok(())
   }
 
@@ -1220,6 +1262,10 @@ impl Context {
       return Err(format!("target {id} is not manual (the runtime renders it; create with render: \"manual\")"));
     }
     self.send(RasterCmd::RenderTarget { id });
+    // A manual target's pixels change exactly here (and at copy_texture), so
+    // this notes directly - note_target_content's manual skip is for the
+    // writes that only stage state for a later render.
+    self.note_content(id);
     Ok(())
   }
 
@@ -1246,6 +1292,7 @@ impl Context {
       return Err(format!("size mismatch: source is {sw}x{sh}, destination is {dw}x{dh}"));
     }
     self.send(RasterCmd::CopyTexture { src, dst });
+    self.note_content(dst);
     Ok(())
   }
 
@@ -1272,6 +1319,7 @@ impl Context {
     mirror.draw = Some(range);
     drop(targets);
     self.send(RasterCmd::SetDraw { id, range });
+    self.note_target_content(id);
     Ok(())
   }
 
@@ -1444,6 +1492,61 @@ impl Context {
   /// reclamation the id stays fully usable; afterwards the registry entry and
   /// raster-side resources (for shaders: GL program and FBO) are gone, while
   /// in-flight display lists keep the Impeller texture alive until they drop.
+  /// Record that texture `id`'s pixels changed (or will, at the next dirty
+  /// flush) behind its unchanged id, plus everything downstream: every
+  /// flush-rendered target sampling it re-renders, transitively (see
+  /// `content_closure`). Inserting an already-noted id is a no-op, so a
+  /// per-frame write burst on one target costs one closure walk. Drained by
+  /// `take_content_changes`.
+  fn note_content(&self, id: u64) {
+    let mut changes = self.content_changes.borrow_mut();
+    if !changes.insert(id) {
+      return;
+    }
+    content_closure(&self.shader_sources.borrow(), &self.manual_targets.borrow(), id, &mut changes);
+  }
+
+  /// `note_content` for a mutated target: a manual target's pixels hold
+  /// until an explicit render or copy steps it (those note then), so a
+  /// params/entry/range write to one is not a content change yet.
+  fn note_target_content(&self, id: u64) {
+    if self.manual_targets.borrow().contains(&id) {
+      return;
+    }
+    self.note_content(id);
+  }
+
+  /// `note_content` for a buffer write: every flush-rendered target drawing
+  /// from the buffer re-renders with the new geometry, so each such target's
+  /// pixels change content.
+  fn note_buffer_content(&self, buffer: u64) {
+    let affected: Vec<u64> = {
+      let targets = self.targets.borrow();
+      let manual = self.manual_targets.borrow();
+      targets
+        .iter()
+        .filter(|(id, mirror)| {
+          !manual.contains(id)
+            && (mirror.buffers.contains(&buffer)
+              || mirror.entries.as_ref().is_some_and(|l| l.entries.values().any(|e| e.buffers.contains(&buffer))))
+        })
+        .map(|(id, _)| *id)
+        .collect()
+    };
+    for id in affected {
+      self.note_content(id);
+    }
+  }
+
+  /// Drain the texture ids whose pixels changed since the last drain. The
+  /// frame build takes these before its clean check and applies them as
+  /// damage on the snapshot boundaries that baked those pixels
+  /// (`RenderTree::texture_content_changed`); everything else keeps live
+  /// texture references and needs no damage for a content change.
+  pub fn take_content_changes(&self) -> HashSet<u64> {
+    std::mem::take(&mut *self.content_changes.borrow_mut())
+  }
+
   pub fn destroy_texture(&self, id: u64) {
     let mut pending = self.pending_destroys.borrow_mut();
     if !pending.contains(&id) {
@@ -1526,4 +1629,50 @@ pub(crate) fn samples_transitively(
     }
   }
   false
+}
+
+/// Collect into `changes` the flush-rendered targets whose pixels change
+/// when `root`'s content does: everything sampling it, transitively, walking
+/// the sampler graph upstream-to-downstream. Manual targets stop the walk -
+/// the flush never renders one, so its pixels hold until an explicit render
+/// steps it (which notes content itself, resuming propagation from there).
+/// `root` itself is the caller's call: a stepped manual target counts, a
+/// written-but-manual one does not. Pure over the id graph, so it unit-tests
+/// without a Context (like `samples_transitively`).
+pub(crate) fn content_closure(
+  sources: &HashMap<u64, HashMap<(u64, String), u64>>,
+  manual: &HashSet<u64>,
+  root: u64,
+  changes: &mut HashSet<u64>,
+) {
+  let mut stack = vec![root];
+  while let Some(id) = stack.pop() {
+    for (target, bindings) in sources.iter() {
+      if manual.contains(target) || changes.contains(target) {
+        continue;
+      }
+      if bindings.values().any(|src| *src == id) {
+        changes.insert(*target);
+        stack.push(*target);
+      }
+    }
+  }
+}
+
+/// The nonzero buffer ids a draw entry reads (vertex, instance, index): what
+/// the mirrors retain so a buffer write can name the targets whose pixels it
+/// changes (see `note_buffer_content`).
+fn entry_buffers(entry: &DrawSpec) -> Vec<u64> {
+  let mut ids = Vec::new();
+  for id in [entry.buffer, entry.instance_buffer] {
+    if id != 0 {
+      ids.push(id);
+    }
+  }
+  if let Some((index, _)) = entry.index {
+    if index != 0 {
+      ids.push(index);
+    }
+  }
+  ids
 }

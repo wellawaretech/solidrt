@@ -27,6 +27,7 @@ export type { PanAxis, PanOptions } from "./pan"
 export { createTransform } from "./transform"
 export type { TransformDelta, TransformOptions } from "./transform"
 export type {
+  Element,
   LayoutProps,
   TransformProps,
   PointerProps,
