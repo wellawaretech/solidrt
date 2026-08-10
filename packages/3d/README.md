@@ -4,6 +4,8 @@ A retained 3D scene graph for SolidRT: meshes, materials and a camera,
 declared as Solid components, rendered by the runtime into an ordinary
 texture in your UI tree.
 
+_@solidrt/3d is experimental: expect more API churn here than in the rest of SolidRT._
+
 ```tsx
 import { createSignal, onFrame, render } from "@solidrt/core"
 import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
