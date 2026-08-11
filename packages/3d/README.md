@@ -40,8 +40,17 @@ There is also an imperative layer underneath (`createScene`, `createMesh`,
 (`@solidrt/3d/math`: column-major mat4, perspective, lookAt). To aim a
 node, `lookAt(node, target, up?)` points its local +z at a world point,
 Three's `Object3D.lookAt`; `worldPosition(node)` is the companion for
-aiming along a direction. For HUD overlays, `scene.project(point)` maps a
-world point to scene pixels.
+aiming along a direction, and `quatFromTo` aims any other axis. For HUD
+overlays, `scene.project(point)` maps a world point to scene pixels.
+
+Rotation is stored as a quaternion (`quaternion` prop, `node.quaternion`),
+so aiming and interpolation are gimbal-free and there is no second
+rotation field to fall out of step. Euler triples stay the easy way to
+author one - the `rotation` prop takes radians in XYZ order, matching
+Three's `Euler` default, and `getRotation(node)` reads one back. The
+verbs: `quatFromAxisAngle`, `quatMultiply`, and `quatSlerp` (smooth
+tracking, damped follows) round out `quatFromTo`; `examples/aim.tsx`
+shows each aiming style live.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
 shared `uViewProj`/`uCamPos`, each written once per change - and
 `@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,

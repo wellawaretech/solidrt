@@ -110,8 +110,8 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   attached - pixel-asserted in `alloy/examples/draw_list.rs`.
 - **Aiming** (2026-08-11, item 11's first tier): `lookAt(node, target,
   up?)` aims a node's local +z at a WORLD point, plus `worldPosition`
-  (Three's `getWorldPosition`) and the `eulerFromFrame` under them on
-  `@solidrt/3d/math`. Library-only, no engine item. Three's
+  (Three's `getWorldPosition`) and the frame-to-rotation step under them
+  on `@solidrt/3d/math`. Library-only, no engine item. Three's
   `Object3D.lookAt` semantics on purpose - a point not a direction,
   world space not parent space, ancestor transforms undone by an
   on-demand chain refresh (the walk recomputes worlds WITHOUT clearing
@@ -122,9 +122,8 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   state, a vector on every node), and degenerate frames pick a stable
   perpendicular instead of Three's epsilon nudge. +z is the library's
   own sweep axis (extrude/sweep/tube), so aiming their output needs no
-  correction; y-axis solids stay awkward until the quaternion tier
-  brings a shortest-arc rotation (Three's `setFromUnitVectors`, the
-  idiom its users actually reach for there). The root `lookAt` is the
+  correction; y-axis solids were the awkward case until the quaternion
+  tier landed `quatFromTo` the same day. The root `lookAt` is the
   scene verb and math's view-matrix `lookAt` moved to the subpath only -
   the Object3D/Matrix4 split under one name, and the rule the Vec3
   helpers already follow. Verified numerically: 40k directions
@@ -137,6 +136,59 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   anything will write it again, differently, and one of them will get
   the order wrong and never notice" (citation: report extraction
   pending, add the [[codename]] when it lands in okf/feedback/).
+- **Quaternion rotation** (2026-08-11, item 11's second tier, same day):
+  the node stores a UNIT quaternion (`node.quaternion`, `[x, y, z, w]` -
+  glTF's and Three's component order), and there is no second rotation
+  field to fall out of step - Euler is a boundary format only.
+  `setTransform` takes `rotation` (Euler, converted on write) or
+  `quaternion` (normalized on write, closing Three's silent
+  |q|^2-scaling trap); both in one call throws. `getRotation(node)`
+  reads a triple back, documented as a debugging convenience, not a peer
+  of the quaternion. Components gained a `quaternion` prop beside
+  `rotation`. Quaternion-only storage is where the post-Three engines
+  converged (Unity's `rotation`/`eulerAngles` split, Bevy's `Quat`-only
+  `Transform`, glTF) - Three's dual live fields need onChange machinery
+  and are the old-engine mistake here, a deliberate divergence.
+  `compose()` is now Three's `Matrix4.compose` signature exactly.
+  THE ORDER FIX rode along in the same breaking pass, as item 11
+  demanded: Euler triples are now Three's `'XYZ'` default (x applied
+  first) at `quatFromEuler`/`eulerFromQuat`, the only places an order
+  exists - the old `compose()` built `'ZYX'` while claiming XYZ. The
+  break cost zero migrations, verified not assumed: every rotation
+  triple then in repo, examples, demos, and projects was single-axis,
+  where all orders agree (old-vs-new matrices match to 3e-16). No order
+  parameter exists on purpose. Also landed: `quatFromFrame` (replacing
+  `eulerFromFrame` under `lookAt`, no gimbal branch needed),
+  `quatFromTo` - the shortest-arc rotation, how y-axis solids
+  (cylinder, cone) get aimed - renamed from Three's `setFromUnitVectors`
+  after Unity's `FromToRotation`/glam's `from_rotation_arc` because the
+  Three name states a precondition ours does not have (inputs are
+  normalized), plus `quat`/`quatNormalize`. One numeric improvement
+  over a straight Three port: `eulerFromQuat` extracts y as
+  `atan2(sin y, |cos y|)` instead of Three's `asin` (which turns 1e-16
+  of matrix noise into 1e-8 of angle at the poles and silently discards
+  roll inside its 0.9999999 cutoff band). Verified numerically (old-vs-
+  new single-axis identity, Rx*Ry*Rz reference matrices on a 15^3 angle
+  grid + 3000 random triples, pole round-trips, 40k-direction sphere
+  sweep, shortest-arc and degenerate cases, the scene write path) and
+  live on Linux via scene-basic (flat floor = single-axis Euler
+  through the quat path, animated group spin = frame-rate Euler
+  writes, non-uniform scale, depth occlusion).
+  The composition set followed the same day, closing item 11 entirely:
+  `quatFromAxisAngle` (radians, axis normalized - the same
+  precondition-closing policy), `quatMultiply` (the mat4 `multiply`
+  order contract, no renormalize - setTransform covers drift on write),
+  `quatSlerp` (shortest path across the double cover, constant angular
+  velocity - verified proportional to 1e-6 - with the damped-follow
+  recipe in its doc). `examples/aim.tsx` exercises every aiming style
+  live and passed on Linux: an orbiting target tracked by a lookAt rod
+  (+z solid), a quatFromTo cone (y-axis solid), and a quatSlerp damped
+  follower that visibly lags. BREAKING, for the changelog at release
+  cut: `node.rotation` is
+  gone (field is `quaternion`; `getRotation` reads Euler), math's
+  `compose` takes a quaternion, `eulerFromFrame` is gone (same-day
+  addition, never released), and a two-axis `rotation` triple changes
+  meaning (none existed).
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -230,25 +282,19 @@ weights yet), entry rebuilds append at the list end.
     separate gates (item 10's shape: one concern, independent statuses).
     **Aiming** was the unblocked half and landed 2026-08-11 (see landed):
     `lookAt(node, target, up?)`, Three's `Object3D.lookAt`.
-    **Quaternions** are now the URGENT half - every scene authored
-    against the current Euler order is a future migration, so the cost
-    grows daily. Rotation is stored as Euler
-    x-y-z, and quats unlock slerp, gimbal-free tumbling, and glTF node
-    transforms (glTF stores rotation as a quaternion, so item 7 will
-    force the representation question anyway). The tiers stay one item
-    because `lookAt` is a node MUTATOR, not a function returning a
-    rotation: it sets whatever the node stores, so its signature survives
-    the Euler-to-quat migration untouched and only its internals
-    (currently a ZYX extraction) get deleted. A lookAt that returned a
-    rotation would have been representation-coupled - do not add one.
-    RIDING ON THIS ITEM, and the reason it is urgent: `compose()` builds
-    `R = Rz*Ry*Rx` and its comment calls that "the common XYZ order",
-    but Three's Euler default `'XYZ'` builds `Rx*Ry*Rz` - our triples
-    are Three's `'ZYX'`. Every `rotation` prop is affected, so a triple
-    copied from a Three scene silently means something else. Fixing the
-    order is breaking for every existing scene with two non-zero
-    rotation axes; settle it WITH the representation change rather than
-    twice.
+    **Representation** was the urgent half and landed 2026-08-11 too (see
+    landed): the node stores a quaternion, Euler is a boundary format,
+    and the order mismatch is fixed. The composition set
+    (`quatFromAxisAngle`, `quatMultiply`, `quatSlerp`) landed the same
+    day, closing the item - DONE apart from on-demand sugar
+    (`rotateOnAxis`-style wrappers are now one-liners over
+    `quatMultiply`; add when an app asks, naming each against Unity,
+    glam and Godot alongside Three per the `quatFromTo` rename).
+    The tiers stayed one item because `lookAt` is a node MUTATOR, not a
+    function returning a rotation: it sets whatever the node stores, so
+    its signature survived the migration untouched and only its internals
+    got deleted. A lookAt that returned a rotation would have been
+    representation-coupled - do not add one.
     Deliberately NOT in this item: `setTransform(node, { matrix })`. A
     raw local matrix bypasses `compose()`, so it needs either a lossy
     decompose or a second matrix-mode node path beside the

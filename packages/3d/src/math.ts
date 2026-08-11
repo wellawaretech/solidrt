@@ -12,6 +12,8 @@
 export type Vec2 = [number, number]
 export type Vec3 = [number, number, number]
 export type Vec4 = [number, number, number, number]
+/** A rotation as [x, y, z, w] - glTF's and Three's component order. */
+export type Quat = [number, number, number, number]
 // prettier-ignore
 export type Mat4 = [
   number, number, number, number,
@@ -85,26 +87,23 @@ export function multiply(out: Mat4, a: Mat4, b: Mat4): Mat4 {
 }
 
 /**
- * Compose translation + rotation + scale into a local matrix. Rotation is
- * Euler angles in radians applied x, then y, then z (R = Rz * Ry * Rx on
- * column vectors) - the common "XYZ" order.
+ * Compose translation + rotation + scale into a local matrix - Three's
+ * `Matrix4.compose` signature, rotation as a quaternion.
+ *
+ * `rotation` must be a UNIT quaternion: a non-unit one scales the geometry
+ * by |q|^2, silently. The scene closes that trap by normalizing on write
+ * (setTransform) rather than paying for a check on every compose.
  */
-export function compose(out: Mat4, position: Vec3, rotation: Vec3, scale: Vec3): Mat4 {
-  let cx = Math.cos(rotation[0]), sx = Math.sin(rotation[0])
-  let cy = Math.cos(rotation[1]), sy = Math.sin(rotation[1])
-  let cz = Math.cos(rotation[2]), sz = Math.sin(rotation[2])
-  let r00 = cz * cy
-  let r01 = cz * sy * sx - sz * cx
-  let r02 = cz * sy * cx + sz * sx
-  let r10 = sz * cy
-  let r11 = sz * sy * sx + cz * cx
-  let r12 = sz * sy * cx - cz * sx
-  let r20 = -sy
-  let r21 = cy * sx
-  let r22 = cy * cx
-  out[0] = r00 * scale[0]; out[1] = r10 * scale[0]; out[2] = r20 * scale[0]; out[3] = 0
-  out[4] = r01 * scale[1]; out[5] = r11 * scale[1]; out[6] = r21 * scale[1]; out[7] = 0
-  out[8] = r02 * scale[2]; out[9] = r12 * scale[2]; out[10] = r22 * scale[2]; out[11] = 0
+export function compose(out: Mat4, position: Vec3, rotation: Quat, scale: Vec3): Mat4 {
+  let x = rotation[0], y = rotation[1], z = rotation[2], w = rotation[3]
+  let x2 = x + x, y2 = y + y, z2 = z + z
+  let xx = x * x2, xy = x * y2, xz = x * z2
+  let yy = y * y2, yz = y * z2, zz = z * z2
+  let wx = w * x2, wy = w * y2, wz = w * z2
+  let sx = scale[0], sy = scale[1], sz = scale[2]
+  out[0] = (1 - (yy + zz)) * sx; out[1] = (xy + wz) * sx; out[2] = (xz - wy) * sx; out[3] = 0
+  out[4] = (xy - wz) * sy; out[5] = (1 - (xx + zz)) * sy; out[6] = (yz + wx) * sy; out[7] = 0
+  out[8] = (xz + wy) * sz; out[9] = (yz - wx) * sz; out[10] = (1 - (xx + yy)) * sz; out[11] = 0
   out[12] = position[0]; out[13] = position[1]; out[14] = position[2]; out[15] = 1
   return out
 }
@@ -150,6 +149,278 @@ export function perspective(out: Mat4, fovy: number, aspect: number, near: numbe
   return out
 }
 
+// Quaternions, the rotation the scene actually stores. Euler triples are a
+// boundary format only - authoring (setTransform's `rotation`, the
+// components' `rotation` prop) and reading back (getRotation) - so the order
+// convention and gimbal lock live at that boundary and nowhere else.
+
+/** A fresh identity rotation. */
+export function quat(): Quat {
+  return [0, 0, 0, 1]
+}
+
+/** Unit quaternion; a zero-length input comes back as the identity. `out`
+ * may alias `q`. */
+export function quatNormalize(out: Quat, q: Quat): Quat {
+  let len = Math.hypot(q[0], q[1], q[2], q[3])
+  if (len === 0) {
+    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1
+    return out
+  }
+  out[0] = q[0] / len; out[1] = q[1] / len; out[2] = q[2] / len; out[3] = q[3] / len
+  return out
+}
+
+/**
+ * Euler radians to a quaternion, in XYZ order: x applied first, then y,
+ * then z (R = Rx * Ry * Rz on column vectors), Three's `Euler` default - a
+ * triple copied from a Three scene means the same thing here.
+ *
+ * ONE order exists, deliberately: a per-call order argument is how the same
+ * triple ends up meaning two different things in two places, and the
+ * quaternion is right there for anything an order was going to express.
+ */
+export function quatFromEuler(out: Quat, euler: Vec3): Quat {
+  let c1 = Math.cos(euler[0] / 2), s1 = Math.sin(euler[0] / 2)
+  let c2 = Math.cos(euler[1] / 2), s2 = Math.sin(euler[1] / 2)
+  let c3 = Math.cos(euler[2] / 2), s3 = Math.sin(euler[2] / 2)
+  out[0] = s1 * c2 * c3 + c1 * s2 * s3
+  out[1] = c1 * s2 * c3 - s1 * c2 * s3
+  out[2] = c1 * c2 * s3 + s1 * s2 * c3
+  out[3] = c1 * c2 * c3 - s1 * s2 * s3
+  return out
+}
+
+/**
+ * A quaternion back to Euler radians in the same XYZ order - the inverse of
+ * quatFromEuler, a convenience for reading and debugging rather than a peer
+ * of the quaternion: the mapping is many-to-one (a triple and that triple
+ * plus a full turn agree), and at the poles (local +z straight up or down)
+ * only the sum of x and z is determined, so this pins z to 0 and folds the
+ * roll into x. Round-tripping the result reproduces the rotation exactly;
+ * it need not reproduce the triple you started from.
+ */
+export function eulerFromQuat(out: Vec3, q: Quat): Vec3 {
+  let x = q[0], y = q[1], z = q[2], w = q[3]
+  let x2 = x + x, y2 = y + y, z2 = z + z
+  let xx = x * x2, xy = x * y2, xz = x * z2
+  let yy = y * y2, yz = y * z2, zz = z * z2
+  let wx = w * x2, wy = w * y2, wz = w * z2
+  // The same matrix entries compose() writes: m02 = sin(y) alone, and the
+  // x/z pair reads off the rest unless cos(y) is 0 (the pole).
+  let m00 = 1 - (yy + zz)
+  let m01 = xy - wz
+  let m02 = xz + wy
+  // cos(y), which both remaining pairs scale with. atan2 against it beats
+  // asin(m02) - Three's form - near the poles, where asin's derivative
+  // blows up and a 1e-16 error in m02 becomes 1e-8 in the angle. It also
+  // lets the pole branch start three orders of magnitude later: the pairs
+  // stay well-conditioned until cos(y) approaches the noise floor.
+  let cy = Math.hypot(m00, m01)
+  out[1] = Math.atan2(m02, cy)
+  if (cy > 1e-7) {
+    out[0] = Math.atan2(wx - yz, 1 - (xx + yy))
+    out[2] = Math.atan2(-m01, m00)
+  } else {
+    // Only x + z (at +y) or x - z (at -y) is determined; pin z and fold
+    // the whole roll into x.
+    out[0] = Math.atan2(yz + wx, 1 - (xx + zz))
+    out[2] = 0
+  }
+  return out
+}
+
+/**
+ * The rotation of `angle` RADIANS about `axis` - Three's `setFromAxisAngle`,
+ * Unity's `AngleAxis` (which takes degrees; this takes radians like
+ * everything else here). The axis need not be normalized - the named
+ * engines all require a unit axis and silently corrupt the rotation
+ * otherwise, the same precondition trap `quatFromTo` closes. A zero axis
+ * yields the identity.
+ */
+export function quatFromAxisAngle(out: Quat, axis: Vec3, angle: number): Quat {
+  let x = axis[0], y = axis[1], z = axis[2]
+  let len = Math.hypot(x, y, z)
+  if (len === 0) {
+    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1
+    return out
+  }
+  let s = Math.sin(angle / 2) / len
+  out[0] = x * s
+  out[1] = y * s
+  out[2] = z * s
+  out[3] = Math.cos(angle / 2)
+  return out
+}
+
+/**
+ * out = a * b - the same order contract as the mat4 `multiply` above: on
+ * column vectors b applies first, so `quatMultiply(q, spin, q)` composes a
+ * further world-frame spin onto q while `quatMultiply(q, q, spin)` spins
+ * about q's own local frame. `out` may alias `a` or `b`.
+ *
+ * The product of unit quaternions is unit up to float drift, so this does
+ * not renormalize; an accumulator composed every frame drifts slowly, and
+ * the scene's setTransform renormalizes on write anyway.
+ */
+export function quatMultiply(out: Quat, a: Quat, b: Quat): Quat {
+  let ax = a[0], ay = a[1], az = a[2], aw = a[3]
+  let bx = b[0], by = b[1], bz = b[2], bw = b[3]
+  out[0] = aw * bx + ax * bw + ay * bz - az * by
+  out[1] = aw * by - ax * bz + ay * bw + az * bx
+  out[2] = aw * bz + ax * by - ay * bx + az * bw
+  out[3] = aw * bw - ax * bx - ay * by - az * bz
+  return out
+}
+
+/**
+ * Spherical interpolation from `a` to `b`: constant angular velocity along
+ * the shortest path (the sign of `b` is flipped when the pair straddles the
+ * quaternion double cover, so it never takes the long way round). t = 0 is
+ * `a`, t = 1 is `b`'s rotation; inputs must be unit and the result is unit.
+ * `out` may alias `a` or `b`.
+ *
+ * The canonical damped follow is
+ * `quatSlerp(q, q, target, 1 - Math.exp(-k * dt))` - frame-rate
+ * independent, k is the tracking speed.
+ */
+export function quatSlerp(out: Quat, a: Quat, b: Quat, t: number): Quat {
+  let ax = a[0], ay = a[1], az = a[2], aw = a[3]
+  let bx = b[0], by = b[1], bz = b[2], bw = b[3]
+  let cos = ax * bx + ay * by + az * bz + aw * bw
+  if (cos < 0) {
+    cos = -cos
+    bx = -bx; by = -by; bz = -bz; bw = -bw
+  }
+  let wa: number
+  let wb: number
+  if (cos < 0.9995) {
+    let theta = Math.acos(cos > 1 ? 1 : cos)
+    let sin = Math.sin(theta)
+    wa = Math.sin((1 - t) * theta) / sin
+    wb = Math.sin(t * theta) / sin
+  } else {
+    // Nearly identical: sin(theta) is noise, and a straight lerp is within
+    // float precision of the arc - normalized below like any other result.
+    wa = 1 - t
+    wb = t
+  }
+  out[0] = wa * ax + wb * bx
+  out[1] = wa * ay + wb * by
+  out[2] = wa * az + wb * bz
+  out[3] = wa * aw + wb * bw
+  return quatNormalize(out, out)
+}
+
+/**
+ * The shortest-arc rotation taking `from` to `to`: Unity's
+ * `Quaternion.FromToRotation`, glam's `Quat::from_rotation_arc`. Three
+ * calls this `setFromUnitVectors`; renamed because that name states a
+ * precondition instead of the operation, and this one has no such
+ * precondition - neither input need be normalized.
+ *
+ * This is how a y-axis solid gets aimed - `quatFromTo(q, [0, 1, 0], dir)`
+ * for a cylinder or cone - where lookAt's +z convention would need a
+ * correction. Opposite vectors have no shortest arc (every half turn is
+ * equally short); a stable perpendicular axis is picked. A zero-length
+ * input yields the identity.
+ */
+export function quatFromTo(out: Quat, from: Vec3, to: Vec3): Quat {
+  let ax = from[0], ay = from[1], az = from[2]
+  let bx = to[0], by = to[1], bz = to[2]
+  let la = Math.hypot(ax, ay, az)
+  let lb = Math.hypot(bx, by, bz)
+  if (la === 0 || lb === 0) {
+    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1
+    return out
+  }
+  ax /= la; ay /= la; az /= la
+  bx /= lb; by /= lb; bz /= lb
+  let r = ax * bx + ay * by + az * bz + 1
+  if (r < 1e-6) {
+    // Antiparallel: the cross product vanishes, so take any perpendicular
+    // axis - crossing with the smaller of from's x/z components cannot
+    // vanish too, and picking off from alone keeps the choice stable.
+    r = 0
+    if (Math.abs(ax) > Math.abs(az)) {
+      out[0] = -ay; out[1] = ax; out[2] = 0
+    } else {
+      out[0] = 0; out[1] = -az; out[2] = ay
+    }
+  } else {
+    out[0] = ay * bz - az * by
+    out[1] = az * bx - ax * bz
+    out[2] = ax * by - ay * bx
+  }
+  out[3] = r
+  return quatNormalize(out, out)
+}
+
+/**
+ * The rotation that points the local +z axis along `forward`, with `up`
+ * choosing the roll about it - the object-aiming counterpart of lookAt(),
+ * which builds the camera's inverse frame. Neither input need be
+ * normalized. Degenerate inputs (zero forward, up parallel to forward) fall
+ * back to a stable perpendicular instead of producing NaNs.
+ */
+export function quatFromFrame(out: Quat, forward: Vec3, up: Vec3): Quat {
+  let zx = forward[0], zy = forward[1], zz = forward[2]
+  let len = Math.hypot(zx, zy, zz)
+  if (len === 0) {
+    zx = 0; zy = 0; zz = 1
+  } else {
+    zx /= len; zy /= len; zz /= len
+  }
+  let xx = up[1] * zz - up[2] * zy
+  let xy = up[2] * zx - up[0] * zz
+  let xz = up[0] * zy - up[1] * zx
+  len = Math.hypot(xx, xy, xz)
+  if (len === 0) {
+    // up is parallel to forward: cross with a world axis that cannot be,
+    // picked off z's own components so the choice is stable per direction.
+    let ax = Math.abs(zx) < 0.9 ? 1 : 0
+    let ay = ax === 1 ? 0 : 1
+    xx = ay * zz
+    xy = -ax * zz
+    xz = ax * zy - ay * zx
+    len = Math.hypot(xx, xy, xz)
+  }
+  xx /= len; xy /= len; xz /= len
+  let yx = zy * xz - zz * xy
+  let yy = zz * xx - zx * xz
+  let yz = zx * xy - zy * xx
+  // X | Y | Z are the rotation's columns, so its diagonal is xx, yy, zz.
+  // Branching on the largest diagonal entry keeps the divisor away from
+  // zero; the basis is orthonormal, so the result is already unit.
+  let trace = xx + yy + zz
+  if (trace > 0) {
+    let s = 0.5 / Math.sqrt(trace + 1)
+    out[0] = (yz - zy) * s
+    out[1] = (zx - xz) * s
+    out[2] = (xy - yx) * s
+    out[3] = 0.25 / s
+  } else if (xx > yy && xx > zz) {
+    let s = 2 * Math.sqrt(1 + xx - yy - zz)
+    out[0] = 0.25 * s
+    out[1] = (yx + xy) / s
+    out[2] = (zx + xz) / s
+    out[3] = (yz - zy) / s
+  } else if (yy > zz) {
+    let s = 2 * Math.sqrt(1 + yy - xx - zz)
+    out[0] = (yx + xy) / s
+    out[1] = 0.25 * s
+    out[2] = (zy + yz) / s
+    out[3] = (zx - xz) / s
+  } else {
+    let s = 2 * Math.sqrt(1 + zz - xx - yy)
+    out[0] = (zx + xz) / s
+    out[1] = (zy + yz) / s
+    out[2] = 0.25 * s
+    out[3] = (xy - yx) / s
+  }
+  return out
+}
+
 // Vec3 helpers for geometry construction. These allocate (unlike the matrix
 // functions above): they serve generation-time code - curve frames, normals -
 // not the per-frame path. Exposed on the /math subpath only, so `add` does
@@ -179,60 +450,6 @@ export function scale(v: Vec3, s: number): Vec3 {
 export function normalize(v: Vec3): Vec3 {
   let len = Math.hypot(v[0], v[1], v[2]) || 1
   return [v[0] / len, v[1] / len, v[2] / len]
-}
-
-/**
- * Euler angles (in compose()'s x-y-z order) for the rotation that points
- * the local +z axis along `forward`, with `up` choosing the roll about it -
- * the object-aiming counterpart of lookAt, which builds the camera's
- * inverse frame. Neither input need be normalized. Degenerate inputs (zero
- * forward, up parallel to forward) fall back to a stable perpendicular
- * instead of producing NaNs.
- *
- * This is the Euler-specific half of `orient()`: when rotation becomes a
- * quaternion the frame-to-rotation step replaces this function, while
- * orient's own signature does not change.
- */
-export function eulerFromFrame(out: Vec3, forward: Vec3, up: Vec3): Vec3 {
-  let zx = forward[0], zy = forward[1], zz = forward[2]
-  let len = Math.hypot(zx, zy, zz)
-  if (len === 0) {
-    zx = 0; zy = 0; zz = 1
-  } else {
-    zx /= len; zy /= len; zz /= len
-  }
-  let xx = up[1] * zz - up[2] * zy
-  let xy = up[2] * zx - up[0] * zz
-  let xz = up[0] * zy - up[1] * zx
-  len = Math.hypot(xx, xy, xz)
-  if (len === 0) {
-    // up is parallel to forward: cross with a world axis that cannot be,
-    // picked off z's own components so the choice is stable per direction.
-    let ax = Math.abs(zx) < 0.9 ? 1 : 0
-    let ay = ax === 1 ? 0 : 1
-    xx = ay * zz
-    xy = -ax * zz
-    xz = ax * zy - ay * zx
-    len = Math.hypot(xx, xy, xz)
-  }
-  xx /= len; xy /= len; xz /= len
-  let yx = zy * xz - zz * xy
-  let yy = zz * xx - zx * xz
-  let yz = zx * xy - zy * xx
-  // Extract from R = [X | Y | Z] as columns, matching compose()'s
-  // R = Rz * Ry * Rx: r20 = -sin(y), and the x/z pair reads off the
-  // remaining entries unless cos(y) is 0 (gimbal lock), where only their
-  // sum or difference is determined - resolved by pinning z to 0.
-  let r20 = xz
-  out[1] = Math.asin(r20 < -1 ? -1 : r20 > 1 ? 1 : -r20)
-  if (Math.abs(r20) < 0.999999) {
-    out[0] = Math.atan2(yz, zz)
-    out[2] = Math.atan2(xy, xx)
-  } else {
-    out[0] = Math.atan2(-r20 * yx, yy)
-    out[2] = 0
-  }
-  return out
 }
 
 /**

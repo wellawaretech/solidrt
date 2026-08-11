@@ -22,7 +22,7 @@ import {
 import type { Mesh as MeshNode, Scene as SceneHandle, SceneNode } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
-import type { Vec3 } from "./math.ts"
+import type { Quat, Vec3 } from "./math.ts"
 
 type SceneCtx = { scene: SceneHandle; parent: SceneNode }
 let SceneContext = createContext<SceneCtx>()
@@ -37,17 +37,20 @@ export function useScene(): SceneCtx {
 
 export type TransformProps = {
   position?: Vec3
-  /** Euler radians, applied x then y then z. */
+  /** Euler radians in XYZ order (x first), Three's `Euler` default. */
   rotation?: Vec3
+  /** The rotation as a quaternion - what the node stores. Pass this or
+   * `rotation`, not both. */
+  quaternion?: Quat
   scale?: Vec3 | number
   visible?: boolean
 }
 
 function syncNode(node: SceneNode, props: TransformProps): void {
   createEffect(
-    () => [props.position, props.rotation, props.scale, props.visible] as const,
-    ([position, rotation, scale, visible]) => {
-      setTransform(node, { position, rotation, scale })
+    () => [props.position, props.rotation, props.quaternion, props.scale, props.visible] as const,
+    ([position, rotation, quaternion, scale, visible]) => {
+      setTransform(node, { position, rotation, quaternion, scale })
       setVisible(node, visible !== false)
     },
   )

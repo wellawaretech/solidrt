@@ -22,15 +22,15 @@ import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@sol
 import { getOwner, onCleanup } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromFrame, identity, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, transformPoint } from "./math.ts"
-import type { Mat4, Vec3, Vec4 } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quatFromEuler, quatFromFrame, quatNormalize, transformPoint } from "./math.ts"
+import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
-// lookAt()'s default roll reference. Read-only: eulerFromFrame never
+// lookAt()'s default roll reference. Read-only: quatFromFrame never
 // writes its inputs, so one shared vector is safe.
 const WORLD_UP: Vec3 = [0, 1, 0]
 // Param values are snapshotted at the FFI boundary (addDraw shares
@@ -62,8 +62,10 @@ export type SceneNode = {
   children: SceneNode[]
   /** Read freely; write through setTransform/setVisible so changes sync. */
   position: Vec3
-  /** Euler radians, applied x then y then z. */
-  rotation: Vec3
+  /** The stored rotation, always a UNIT quaternion. Euler triples convert
+   * on the way in (setTransform's `rotation`) and out (getRotation) - there
+   * is no second rotation field to fall out of step with this one. */
+  quaternion: Quat
   scale: Vec3
   visible: boolean
   _localDirty: boolean
@@ -133,7 +135,7 @@ function makeNode(kind: "group" | "mesh"): SceneNode {
     parent: null,
     children: [],
     position: [0, 0, 0],
-    rotation: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
     scale: [1, 1, 1],
     visible: true,
     _localDirty: true,
@@ -195,7 +197,13 @@ function leaveScene(node: SceneNode): void {
 
 export type TransformUpdate = {
   position?: Vec3
+  /** Euler radians in XYZ order (x first), Three's `Euler` default -
+   * converted to the node's quaternion on write. */
   rotation?: Vec3
+  /** The rotation itself. Normalized on write, so a hand-built or
+   * drifted quaternion cannot silently scale the geometry. Passing this
+   * together with `rotation` is an error, not a precedence question. */
+  quaternion?: Quat
   /** A number is uniform scale. */
   scale?: Vec3 | number
 }
@@ -214,11 +222,12 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
     node.position[2] = p[2]
   }
   let r = update.rotation
-  if (r) {
-    node.rotation[0] = r[0]
-    node.rotation[1] = r[1]
-    node.rotation[2] = r[2]
+  let q = update.quaternion
+  if (r !== undefined && q !== undefined) {
+    throw new Error("Pass rotation or quaternion to setTransform, not both")
   }
+  if (r !== undefined) quatFromEuler(node.quaternion, r)
+  else if (q !== undefined) quatNormalize(node.quaternion, q)
   let s = update.scale
   if (s !== undefined) {
     if (typeof s === "number") {
@@ -243,14 +252,14 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
  * up to date on the spot rather than waiting for the pending sync.
  *
  * +z because that is the library's own sweep axis (`extrude`, `sweep`,
- * `tube` run along z), so aiming their output needs no correction; y-axis
- * solids (`cylinder`, `cone`) are the awkward case until quaternions bring
- * a shortest-arc rotation.
+ * `tube` run along z), so aiming their output needs no correction. For a
+ * y-axis solid (`cylinder`, `cone`) reach for `quatFromTo` instead, which
+ * takes the axis to aim as an argument.
  *
- * Writes `node.rotation` - an ordinary Euler triple afterwards, readable
- * and overwritable by setTransform. To aim along a DIRECTION rather than
- * at a point, add it to the node's world position (`worldPosition`), the
- * same conversion Three asks for.
+ * Writes `node.quaternion` - an ordinary rotation afterwards, readable and
+ * overwritable by setTransform. To aim along a DIRECTION rather than at a
+ * point, add it to the node's world position (`worldPosition`), the same
+ * conversion Three asks for.
  *
  * Exact for rotation and uniform scale in the ancestor chain; a
  * non-uniformly scaled ancestor shears the frame and the aim is
@@ -265,7 +274,7 @@ export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void
     aimScratch[0] = target[0] - node.position[0]
     aimScratch[1] = target[1] - node.position[1]
     aimScratch[2] = target[2] - node.position[2]
-    eulerFromFrame(node.rotation, aimScratch, up)
+    quatFromFrame(node.quaternion, aimScratch, up)
   } else {
     let world = worldInto(worldScratch, parent)
     transformPoint(pointScratch, world, node.position)
@@ -277,10 +286,22 @@ export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void
     // as converting the resulting rotation, and needs no matrix inverse.
     unrotate(aimScratch, world, aimScratch)
     unrotate(upScratch, world, up)
-    eulerFromFrame(node.rotation, aimScratch, upScratch)
+    quatFromFrame(node.quaternion, aimScratch, upScratch)
   }
   node._localDirty = true
   node._scene?._schedule()
+}
+
+/**
+ * A node's rotation as Euler radians in XYZ order, copied into `out` (or a
+ * fresh Vec3). A convenience for reading and debugging, NOT a peer of
+ * `node.quaternion`: the conversion is lossy in the sense that it cannot
+ * recover the triple that was written (see eulerFromQuat), only a triple
+ * that means the same rotation. Anything composing or interpolating
+ * rotations should work with the quaternion.
+ */
+export function getRotation(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
+  return eulerFromQuat(out, node.quaternion)
 }
 
 /**
@@ -306,7 +327,7 @@ function worldInto(out: Mat4, node: SceneNode): Mat4 {
   if (node.parent === null) identity(out)
   else worldInto(out, node.parent)
   let local = node._localDirty
-    ? compose(localScratch, node.position, node.rotation, node.scale)
+    ? compose(localScratch, node.position, node.quaternion, node.scale)
     : node._local
   return multiply(out, out, local)
 }
@@ -429,7 +450,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
       let changed = parentChanged
       if (node._localDirty) {
-        compose(node._local, node.position, node.rotation, node.scale)
+        compose(node._local, node.position, node.quaternion, node.scale)
         node._localDirty = false
         changed = true
       }

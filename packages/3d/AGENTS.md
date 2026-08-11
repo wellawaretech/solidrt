@@ -11,7 +11,7 @@ blendMode and pointer events like any element. Design rationale:
 
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
-  `lookAt`, `setVisible` - plain objects with dirty flags, batched to a
+  `lookAt`, `getRotation`, `setVisible` - plain objects with dirty flags, batched to a
   microtask,
   one `setDrawParams` (uModel, plus uNormal for materials declaring it)
   per changed mesh and ONE `setTargetParams` (the shared uViewProj +
@@ -50,7 +50,7 @@ blendMode and pointer events like any element. Design rationale:
 | Component | Props |
 | --- | --- |
 | `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)`, `output?(texture)` |
-| `Group` | `position?`, `rotation?` (Euler radians, x-y-z order), `scale?` (number = uniform), `visible?`, `ref?(node)` |
+| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `ref?(mesh)` |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
@@ -198,26 +198,65 @@ system.
 - Alpha does not blend in v1: pipelines are opaque (`blend: "none"`), a
   translucent color overwrites. Transparency waits on blend factors +
   sorting (research note, staging step 4).
-- Rotation is Euler radians applied x, then y, then z. No quaternions in
-  v1.
-- Aim with `lookAt(node, target, up?)`, never by extracting Euler angles
-  by hand - hand-rolled extraction has to match `compose()`'s exact x-y-z
-  order and its gimbal-lock branch, and gets it silently wrong otherwise.
-  Three's `Object3D.lookAt` semantics deliberately: `target` and `up` are
-  WORLD space (ancestor transforms are undone, and the ancestor chain is
-  refreshed on the spot rather than waiting for the sync), and local +z
-  ends up pointing at the target. To aim along a DIRECTION, add it to
-  `worldPosition(node)` - the same conversion Three asks for.
+- Rotation is stored as a QUATERNION (`node.quaternion`, `[x, y, z, w]`,
+  always unit). There is exactly one rotation field: no `node.rotation`
+  shadowing it, because a second field is a second thing to go stale (an
+  aimed node whose Euler triple still reads as the old pose is the bug
+  this model deletes). Euler triples are a boundary format only -
+  `setTransform({ rotation })` and the `rotation` prop convert in,
+  `getRotation(node, out?)` converts out.
+- Euler triples are XYZ order (x applied first: `R = Rx * Ry * Rz`),
+  Three's `Euler` default, so a triple copied from a Three scene means the
+  same thing here. This CHANGED 2026-08-11: the old `compose()` built
+  `Rz * Ry * Rx` (Three's `'ZYX'`) while its comment claimed XYZ. Every
+  rotation triple then in the repo, examples, demos and projects was
+  single-axis, which is order-independent, so the fix moved no pixels -
+  verified, not assumed. There is ONE order and no order argument: a
+  per-call order is how one triple ends up meaning two things.
+- `getRotation` cannot recover the triple that was written, only a triple
+  meaning the same rotation (and at the poles it pins z to 0 and folds the
+  roll into x). It is for reading and debugging; anything composing or
+  interpolating rotations works with the quaternion.
+- `eulerFromQuat` extracts y with `atan2(m02, cos(y))`, NOT Three's
+  `asin(m02)`: asin's derivative blows up at the poles, turning 1e-16 of
+  matrix error into 1e-8 of angle. Same reason its pole branch starts at
+  `cos(y) < 1e-7` rather than Three's `|m02| > 0.9999999` (which is
+  `cos(y) ~ 4.5e-4` - three orders early, and inside that band Three
+  silently discards real roll). Do not "restore parity" here.
+- Aim with `lookAt(node, target, up?)`, never by extracting angles by
+  hand. Three's `Object3D.lookAt` semantics deliberately: `target` and
+  `up` are WORLD space (ancestor transforms are undone, and the ancestor
+  chain is refreshed on the spot rather than waiting for the sync), and
+  local +z ends up pointing at the target. To aim along a DIRECTION, add
+  it to `worldPosition(node)` - the same conversion Three asks for.
   +z is the library's own sweep axis, so `extrude`/`sweep`/`tube` output
-  needs no correction; y-axis solids (`cylinder`, `cone`) are the awkward
-  case until quaternions bring a shortest-arc rotation. Divergences from
-  Three, both deliberate: `up` is an argument, NOT a per-node field
-  (Three's `object.up` is hidden state that costs a vector on every node),
-  and degenerate frames pick a stable perpendicular instead of Three's
-  epsilon nudge of the eye.
+  needs no correction. For a y-axis solid (`cylinder`, `cone`) use
+  `quatFromTo(q, [0, 1, 0], dir)` instead of correcting lookAt's +z.
+  Divergences from Three, both deliberate: `up` is an argument, NOT a
+  per-node field (Three's `object.up` is hidden state that costs a vector
+  on every node), and degenerate frames pick a stable perpendicular
+  instead of Three's epsilon nudge of the eye.
   There is no `setTransform(node, { matrix })`, and lookAt is a MUTATOR,
-  not a rotation-returning function: both shapes would pin the API to the
-  current Euler representation.
+  not a rotation-returning function.
+- `quatFromTo` is Three's `setFromUnitVectors`, renamed after Unity's
+  `FromToRotation` / glam's `from_rotation_arc`: the Three name states a
+  precondition instead of the operation, and ours has no such
+  precondition (it normalizes). Check Unity/glam/Godot too before copying
+  a Three name that reads as an artifact of its class layout.
+- The composition set: `quatFromAxisAngle` (radians; normalizes the axis -
+  Three/Unity/glam all require a unit axis and silently corrupt
+  otherwise), `quatMultiply` (same order contract as the mat4 `multiply`:
+  `a * b`, b applies first; does NOT renormalize - the unit product only
+  drifts under long accumulation, and setTransform renormalizes on
+  write), `quatSlerp` (shortest path across the double cover, constant
+  angular velocity, unit output; the damped follow is
+  `quatSlerp(q, q, target, 1 - Math.exp(-k * dt))`). All aim/verb usage
+  live in `examples/aim.tsx`.
+- `setTransform` NORMALIZES an incoming quaternion, and passing `rotation`
+  and `quaternion` in one call throws. A non-unit quaternion scales
+  geometry by `|q|^2` through `compose()` - Three leaves that trap open
+  and documents it; we close it at the one write path instead of paying
+  for a check in every compose.
 - `lookAt` is exact for rotation and uniform scale up the chain. A
   non-uniformly scaled ancestor shears the frame, so the aim is
   approximate - Three has the identical limitation (both read the parent's
