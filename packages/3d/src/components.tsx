@@ -16,9 +16,11 @@ import {
   remove,
   setGeometry,
   setMaterial,
+  setMeshParams,
   setTransform,
   setVisible,
 } from "./scene.ts"
+import type { ShaderParams } from "@solidrt/core/gpu"
 import type { Mesh as MeshNode, Scene as SceneHandle, SceneNode } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
@@ -117,6 +119,12 @@ export let Group: ParentComponent<TransformProps & { ref?: (node: SceneNode) => 
 export type MeshProps = TransformProps & {
   geometry: Geometry
   material: Material
+  /** Per-mesh uniforms for a custom material (setMeshParams as a prop).
+   * Keys merge - a key that disappears keeps its old value; there is no
+   * unset. Names must be declared by the material's shaders. For values
+   * changing every frame prefer `ref` + setMeshParams from onFrame, the
+   * same split as setTransform. */
+  params?: ShaderParams
   ref?: (mesh: MeshNode) => void
 }
 
@@ -134,6 +142,12 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     () => props.material,
     m => setMaterial(mesh, m),
     { defer: true },
+  )
+  createEffect(
+    () => props.params,
+    p => {
+      if (p !== undefined) setMeshParams(mesh, p)
+    },
   )
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)

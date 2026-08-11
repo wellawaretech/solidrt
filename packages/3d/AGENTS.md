@@ -51,7 +51,7 @@ blendMode and pointer events like any element. Design rationale:
 | --- | --- |
 | `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)`, `output?(texture)` |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, `ref?(node)` |
-| `Mesh` | `geometry`, `material`, transforms as Group, `ref?(mesh)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `ref?(mesh)` |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
 Output composition: without `output`, `Scene` emits a minimal
@@ -170,7 +170,10 @@ Materials:
   pipeline preamble. App-driven uniforms beyond the standard set: seed
   via `params`, then write per mesh with
   `setMeshParams(mesh, { name: value })` (validated names; values persist
-  across entry rebuilds; frame-rate-safe like setTransform).
+  across entry rebuilds; frame-rate-safe like setTransform) or declaratively
+  with the `Mesh` `params` prop (same merge semantics - a key that
+  disappears from the object keeps its old value; for per-frame values
+  prefer `ref` + setMeshParams from onFrame, the setTransform split).
 
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`

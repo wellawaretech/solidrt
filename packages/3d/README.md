@@ -52,7 +52,9 @@ verbs: `quatFromAxisAngle`, `quatMultiply`, and `quatSlerp` (smooth
 tracking, damped follows) round out `quatFromTo`; `examples/aim.tsx`
 shows each aiming style live.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
-shared `uViewProj`/`uCamPos`, each written once per change - and
+shared `uViewProj`/`uCamPos`, each written once per change - plus your own
+uniforms per mesh, declaratively via the `params` prop on `<Mesh>` or
+imperatively via `setMeshParams` - and
 `@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,
 blinn, fresnel, a standard vertex stage) to compose your own lit looks
 from plain template literals.
