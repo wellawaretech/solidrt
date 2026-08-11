@@ -68,10 +68,9 @@ impl ExitPolicy {
 
 use alloy::impellers::ISize;
 use alloy::rendertree::{FontPayload, PlatformContext, RenderTree};
-use alloy::AlloyEvent;
+use alloy::{AlloyEvent, InputState};
 use flux::gui::AlloyContext;
 use flux::{ExecHandle, FluxEngine};
-use frame::InputState;
 use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -1,99 +1,79 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-// KNOWN ISSUE (frame pacing): this is a MODEL of the display's frame cadence, not
-// a real vsync/vblank signal. We advance one refresh period per present and then
-// slowly correct toward the raw wall-clock sample, which stays smooth under the
-// jittery swap-return times produced by Wayland/Mesa mailbox/triple-buffering
-// (where the swap call does not block per-vblank) while still tracking real time
-// over the long run. The compositor presents exactly one frame per vblank, so the
-// present COUNT is the steady signal even when the present TIMESTAMP is not.
-//
-// The correct fix is to read the platform's actual presentation timing (Wayland
-// presentation-time, DRM vblank, macOS CVDisplayLink, Windows DWM, Android
-// Choreographer). There is currently no cross-platform Rust crate that unifies
-// these; winit's frame-pacing API (rust-windowing/winit#2412) is still open. When
-// such a source exists, replace this whole struct with it: the run-mode clock
-// closure in lib.rs is the only caller, so it is a single-file swap.
+use alloy::PresentClock;
 
-// Refresh period assumed before the first DisplayRefreshRate event arrives.
-const DEFAULT_HZ: f64 = 60.0;
-// Correction gain (0..1): how fast the paced clock pulls toward the raw clock per
-// present. Low gain keeps the cadence smooth; it still converges over many frames.
-const GAIN: f64 = 0.05;
-// A raw-vs-paced gap beyond this is a suspension (app backgrounded, system
-// stall), not drift: frame signals stopped while wall time ran on. An order of
-// magnitude beyond any legitimate swap jitter or GC pause.
+// An expected-vs-observed jump beyond this is a suspension (app backgrounded,
+// system stall), not drift: presents stopped while time ran on. Time the app
+// never lived through is skipped rather than replayed - the app advances one
+// period across it. Same magnitude as alloy's stall threshold, different
+// meaning: there it is timestamp fidelity, here it is timeline policy.
 const SUSPEND_MS: f64 = 500.0;
 
-// A present-count paced clock. `tick` is called once per present with the raw
-// wall-clock reading; `now_ms` returns the smoothed time used for the rAF
-// timestamp and the render event. Cloneable and thread-safe so it can back the
-// flux::Clock closure (state is shared, not copied).
+// The app's animation timeline over alloy's per-present timestamps (see
+// alloy::PresentClock, which models the display cadence until real
+// presentation timing exists). `tick` is called once per present with the raw
+// wall-clock reading; `now_ms` returns the app-time reading used for the rAF
+// timestamp and the render event. This layer owns the timeline policy: the
+// dev clock's pause/step/scale semantics and suspension skipping. Cloneable
+// and thread-safe so it can back the flux::Clock closure (state is shared,
+// not copied).
 #[derive(Clone)]
 pub struct PacedClock {
-  // f64 bits: latest paced time in ms.
+  present: PresentClock,
+  // f64 bits: latest app-time reading in ms.
   now_ms: Arc<AtomicU64>,
-  // f64 bits: latest known refresh rate in Hz.
-  hz: Arc<AtomicU64>,
-  // f64 bits: wall time this clock has not lived through (paused or scaled
-  // stretches, suspensions), subtracted from the raw reading before the
-  // correction so resuming normal speed is jump-free. Zero until the clock
-  // first skips time.
+  // f64 bits: presentation time this clock has not lived through (paused or
+  // scaled stretches, suspensions), subtracted from the present timestamp so
+  // the eventual return to scale 1 resumes exactly where the clock stopped
+  // instead of jumping through the gap. Zero until the clock first skips
+  // time.
   offset: Arc<AtomicU64>,
 }
 
 impl PacedClock {
   pub fn new() -> Self {
     Self {
+      present: PresentClock::new(),
       now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
-      hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())),
       offset: Arc::new(AtomicU64::new(0.0f64.to_bits())),
     }
   }
 
-  // Update the refresh rate used to derive the per-present period. Ignored if not
-  // positive so a bogus report cannot stall or reverse the clock.
+  // Update the refresh rate the presentation model derives its period from.
   pub fn set_hz(&self, hz: f32) {
-    if hz > 0.0 {
-      self.hz.store((hz as f64).to_bits(), Ordering::Relaxed);
-    }
+    self.present.set_hz(hz);
   }
 
-  // Advance one refresh period scaled by `scale`, then (at normal speed) nudge
-  // toward the raw wall-clock reading. Called once per frame signal. At any
-  // other scale - including 0, a paused frame - the correction is skipped and
-  // the skipped wall time accrues into `offset` instead, so the eventual
-  // return to scale 1 resumes exactly where the clock stopped instead of
-  // fast-forwarding through the gap at GAIN per frame.
-  //
-  // A suspension (app backgrounded, system stall) creates the same problem
-  // without a scale change: no tick runs while frame signals are stopped, so
-  // nothing accrues, and the first ticks after resume would see a
-  // multi-second gap and fast-forward animations through it at GAIN per
-  // frame. A gap beyond SUSPEND_MS therefore folds into `offset` the same
-  // way: time the app never lived through, skipped rather than replayed.
+  // Consume one present: fetch its timestamp from the presentation model,
+  // then apply the timeline policy for `scale`. At scale 1 the clock follows
+  // the presentation timeline (minus the accrued offset); a jump beyond
+  // SUSPEND_MS is a suspension, folded into `offset` while the app advances
+  // exactly one period. At any other scale - including 0, a paused frame -
+  // the clock advances period * scale on its own and re-anchors `offset` to
+  // the presentation timeline, so resuming normal speed is jump-free.
   pub fn tick(&self, raw_ms: f64, scale: f64) {
-    let hz = f64::from_bits(self.hz.load(Ordering::Relaxed));
-    let period = 1000.0 / hz;
-    let mut clock = f64::from_bits(self.now_ms.load(Ordering::Relaxed));
+    let t = self.present.on_present(raw_ms);
+    let period = self.present.period_ms();
+    let mut now = f64::from_bits(self.now_ms.load(Ordering::Relaxed));
     if scale == 1.0 {
       let offset = f64::from_bits(self.offset.load(Ordering::Relaxed));
-      clock += period;
-      let gap = (raw_ms - offset) - clock;
-      if gap.abs() > SUSPEND_MS {
-        self.offset.store((offset + gap).to_bits(), Ordering::Relaxed);
+      let expected = now + period;
+      let observed = t - offset;
+      if (observed - expected).abs() > SUSPEND_MS {
+        self.offset.store((t - expected).to_bits(), Ordering::Relaxed);
+        now = expected;
       } else {
-        clock += gap * GAIN;
+        now = observed;
       }
     } else {
-      clock += period * scale;
-      self.offset.store((raw_ms - clock).to_bits(), Ordering::Relaxed);
+      now += period * scale;
+      self.offset.store((t - now).to_bits(), Ordering::Relaxed);
     }
-    self.now_ms.store(clock.to_bits(), Ordering::Relaxed);
+    self.now_ms.store(now.to_bits(), Ordering::Relaxed);
   }
 
-  // The smoothed time in ms. Stepped: it only advances on `tick` (once per
+  // The app-time reading in ms. Stepped: it only advances on `tick` (once per
   // present), which is what an animation timestamp wants.
   pub fn now_ms(&self) -> f64 {
     f64::from_bits(self.now_ms.load(Ordering::Relaxed))

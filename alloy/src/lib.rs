@@ -10,11 +10,13 @@ mod context;
 mod event;
 mod gamepad;
 mod gpu;
+mod input;
 mod keymap;
 mod logging;
 pub mod microphone;
 mod mode;
 mod playback;
+mod present;
 mod raster;
 pub mod rendertree;
 pub mod resample;
@@ -39,10 +41,12 @@ pub use gpu::{
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
 };
+pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
 pub use mode::Mode;
 pub use playback::PlaybackConfig;
+pub use present::PresentClock;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use texture::{GpuTexture, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
 

@@ -1,5 +1,5 @@
-use crate::frame::InputState;
 use crate::overlay;
+use alloy::InputState;
 use alloy::impellers::{DisplayList, DisplayListBuilder};
 use alloy::rendertree::{self, PlatformContext};
 use flux::gui::AlloyContext;

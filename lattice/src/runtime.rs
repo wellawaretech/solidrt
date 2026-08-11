@@ -5,11 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use alloy::rendertree::PlatformContext;
 use alloy::resample::SharedResampler;
-use alloy::AlloyEvent;
+use alloy::{AlloyEvent, InputState};
 use flux::gui::input::InputEvent;
 use flux::{emit_event, ExecHandle};
 
-use crate::frame::InputState;
 use crate::paced_clock::PacedClock;
 
 /// Dev-tool clock control, shared between the dev-server connection (any
