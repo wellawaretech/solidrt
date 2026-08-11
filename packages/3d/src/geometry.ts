@@ -43,6 +43,12 @@ export const VERTEX_LAYOUTS: Record<VertexLayout, VertexAttribute[]> = {
 export const FLOATS_PER_VERTEX = 8
 const COLORED_FLOATS = 12
 
+/** Uint16 indices when they fit, Uint32Array past 64k vertices - the draw
+ * entry follows the array type. The tail of every unbounded generator. */
+export function packIndices(indices: number[], vertexCount: number): Uint16Array | Uint32Array {
+  return vertexCount > 65535 ? new Uint32Array(indices) : new Uint16Array(indices)
+}
+
 export type Geometry = {
   /** Interleaved [pos.xyz, normal.xyz, uv.xy] per vertex, plus color.rgba
    * in the "colored" layout. */

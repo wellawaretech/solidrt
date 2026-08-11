@@ -129,10 +129,21 @@ Winding is normalized, so either authoring direction works.
 with a quarter-round bevel at both rims; `lathe(profile, segs?, angle?,
 start?)` revolves a CLOSED (x = radius, y = height) profile about the y
 axis - watertight by construction, flat caps on partial sweeps;
-`shape(profile)` fills one flat (facing +z, like circle);
-`triangulate(points)` is the ear-clipping core (fan fallback, never drops
-a cap), exported for custom flat work. These pick uint16/uint32 indices
-by vertex count automatically.
+`sweep(profile, path)` runs the profile along an open 3D polyline with
+MITRED joints (each cross-section sits on its bend's bisector plane, so
+bends never gape or overlap) and flat caps at both ends. The path
+mirrors the profile convention: bare `[x, y, z]` points crease (a strap
+folding over an edge), `{ p, smooth }` points shade continuous (tag a
+sampled curve's points); the profile's y starts as close to world up as
+the first segment allows, then parallel-transports without spinning.
+Closed loops are NOT supported yet - overlap the ends by a segment to
+fake one. `tube(path, radius?, radialSegs?)` is the round-profile
+shorthand (wire, rope, pipe), and `pathFrames(path)` exports the
+per-segment frames (tangents, cross-section axes, arc lengths) for
+custom work along a path. `shape(profile)` fills one flat (facing +z,
+like circle); `triangulate(points)` is the ear-clipping core (fan
+fallback, never drops a cap), exported for custom flat work. These pick
+uint16/uint32 indices by vertex count automatically.
 
 Materials:
 

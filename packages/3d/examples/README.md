@@ -7,3 +7,7 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   texture leaf, `<PerspectiveCamera>`, a ground plane, a spinning
   `<Group>` of unlit meshes with real depth-buffer occlusion, geometry
   and pipeline sharing, and the one-signal onFrame drive.
+- `sweep-paths.tsx` - swept solids along polylines: a flat strap folding
+  over a crate (bare path points crease on the mitred bends) and a coiled
+  tube (smooth-tagged helix, one continuous mesh), lit via the exported
+  GLSL so the creased-vs-smooth normals actually show.

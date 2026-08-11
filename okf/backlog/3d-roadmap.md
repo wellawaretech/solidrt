@@ -62,6 +62,25 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   throughout; sharp points crease, smooth-tagged points share normals;
   outputs pick uint16/uint32 indices by vertex count. Verified by
   manifold/winding/area checks, not just typecheck.
+- **Path sweep** (2026-08-11, item 10's path tier): `sweep(profile,
+  path)` - a profile along an open 3D polyline with parallel-transported
+  frames and MITRED joints (each cross-section on its bend's bisector
+  plane); path points mirror the profile convention (bare = creased,
+  smooth-tagged = averaged normals), flat caps, real UVs (u around the
+  profile, v along the path). Plus `tube(path, radius?)` sugar and
+  exported `pathFrames`. Library-only, no engine item; verified by
+  byte-equivalence with extrude on a straight path, welded-edge
+  manifoldness, exact prism volume, bisector-plane placement, and
+  zero-twist on planar paths. The generator family (extrude/lathe/sweep/
+  tube) moved to `packages/3d/src/sweep.ts` over shared band/cap
+  helpers; profile.ts keeps the 2D vocabulary. Closed loops deferred
+  (twist reconciliation around a loop); overlap the ends to fake one.
+  Demand evidence: an app whose central modelling fact is the polyline
+  (straps wrapping cargo) had to build one box mesh per segment - five
+  straps became 27 meshes with unmitred joints at every bend, and a
+  14-segment wrap around a coil that should be one mesh (citation:
+  report extraction pending, add the [[codename]] when it lands in
+  okf/feedback/).
 - **The "colored" vertex layout** (2026-08-08, item 10's first named
   layout): `withColors(geometry, fill)` derives a 12-float geometry
   appending `aColor` vec4 - the per-vertex data channel (tint, baked
@@ -168,12 +187,16 @@ weights yet), entry rebuilds append at the list end.
 10. **Geometry breadth and the vertex-layout ceiling.** Library. The
     cheap primitives landed 2026-08-07 (cylinder, cone, torus, circle,
     ring), the profile tier the same day (extrude/lathe/shape with fillet
-    and triangulation), and the first named layout 2026-08-08: "colored"
+    and triangulation), the first named layout 2026-08-08: "colored"
     appends `aColor` vec4 via `withColors` (see landed) - vertex colors
-    and per-vertex baked data are covered. Still demand-gated: capsule,
-    and further named layouts (tangents, skin weights) when items 7 and
-    16 force them; the direction stays a small set of named layouts, not
-    an open BufferGeometry-style model.
+    and per-vertex baked data are covered - and the path tier 2026-08-11
+    (sweep/tube with mitred polyline joints, see landed; demand arrived
+    that day from a report whose apps model straps as polylines). Still
+    demand-gated: closed sweep loops (twist reconciliation around a
+    loop), capsule (a tube special case now that sweep exists), and
+    further named layouts (tangents, skin weights) when items 7 and 16
+    force them; the direction stays a small set of named layouts, not an
+    open BufferGeometry-style model.
 11. **Quaternions.** Library. Rotation is Euler x-y-z only; quats unlock
     slerp, gimbal-free tumbling, and glTF node transforms (glTF stores
     rotation as a quaternion, so item 7 will force the representation
