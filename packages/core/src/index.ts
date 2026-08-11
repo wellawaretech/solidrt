@@ -84,6 +84,13 @@ export {
 } from "@solidjs/signals"
 export type { Accessor, Setter, Signal, Store, StoreSetter } from "@solidjs/signals"
 
+// Owner and lifecycle (from @solidjs/signals). `createRoot` above is the fourth
+// member of this group - it creates an owned scope, these reach the owner it
+// established. Capture an owner to restore it across an async boundary
+// (`runWithOwner(owner, ...)`), or pass null to detach.
+export { getOwner, runWithOwner, createOwner, isDisposed } from "@solidjs/signals"
+export type { Owner } from "@solidjs/signals"
+
 // Control flow, components, and context (from solid-js).
 export {
   For,

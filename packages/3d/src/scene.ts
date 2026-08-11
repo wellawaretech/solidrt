@@ -19,7 +19,7 @@
 
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
-import { getOwner, onCleanup } from "@solidjs/signals"
+import { getOwner, onCleanup } from "@solidrt/core"
 import { compose, copy, lookAt, mat4, multiply, normalMatrix, perspective, transformPoint } from "./math.ts"
 import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { geometryBuffers } from "./geometry.ts"
