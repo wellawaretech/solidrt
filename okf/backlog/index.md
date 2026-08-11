@@ -290,12 +290,29 @@ Sorted by status: open first, then partial, deferred, and closed
 - [fontStretch / width axis](font-stretch-axis.md) [deferred] - The bundled Noto
   variables carry a wdth axis the text API cannot reach; whether to expose a
   CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
-- [GPU pipeline extensions](gpu-pipeline-extensions.md) [deferred] - Typed
-  uniforms and the additive blend/depthWrite toggles landed 2026-07-29, draw
-  range and instancing (setDraw) 2026-07-30, multi-pass targets 2026-08-04
-  (spun off as gpu-draw-list), index buffers, cull mode and per-instance
-  attributes 2026-08-04; still deferred: float data textures, sampleable
-  depth, depth func, and alpha translucency.
+- [GPU pipeline extensions](gpu-pipeline-extensions.md) [done] - The record
+  of the landed createPipeline extensions: typed uniforms and the additive
+  blend/depthWrite toggles 2026-07-29, draw range and instancing (setDraw)
+  2026-07-30, multi-pass targets (spun off as gpu-draw-list), index buffers,
+  cull mode and per-instance attributes 2026-08-04. Its four remaining opens
+  were split into their own items 2026-08-11 (next four entries).
+- [Float texture formats (R32F/RGBA32F)](gpu-float-texture-formats.md)
+  [open] - Data textures are RGBA8-only, so float payloads sampled in a
+  shader (heightfields via texelFetch, bone matrices at scale) need
+  fixed-point encode/decode; also the overflow path past uniform-array
+  limits.
+- [Sampleable depth](gpu-sampleable-depth.md) [open] - A target's depth is a
+  private renderbuffer, so shadow maps, depth-of-field and SSAO have no
+  path; storage swap is small, the open question is giving depth an id of
+  its own to bind in another target's textures.
+- [Alpha translucency (sorted blending)](gpu-alpha-translucency.md) [open] -
+  Blending within a draw is additive-only; the mode is trivial but needs a
+  sorted-geometry story and the straight-vs-premultiplied answer against
+  Impeller's compositing (first step: gpu-pixel-contract-docs).
+- [Depth func option](gpu-depth-func.md) [deferred] - Depth comparison is
+  fixed at LESS; a WebGPU-style depthCompare on createRenderPipeline is
+  additive when demand arrives, likely alongside sampleable depth for
+  shadow maps.
 - [stdin/tty support in flux](stdin-tty-support.md) [deferred] - A flux:stdin
   (or flux:tty) module for cross-platform raw-mode keystroke reading, the
   missing piece for any interactive terminal UI under flux, not just the CLI

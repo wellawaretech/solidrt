@@ -66,7 +66,7 @@ Three facts to state, and where they live today:
   filtering and additive blending operate on non-linear values. Not fixable
   cheaply and not worth fixing now - but stating it keeps shaders written
   against the real contract correct if a format vocabulary ever arrives
-  ([[gpu-pipeline-extensions]] float formats).
+  ([[gpu-float-texture-formats]]).
 
 Sites: the pipeline/preamble section of `packages/flux-types/gui/gpu.d.ts`
 and `packages/core/src/gpu.ts` doc comments, `docs/core.md`'s GPU section -

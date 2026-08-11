@@ -314,8 +314,9 @@ weights yet), entry rebuilds append at the list end.
     side is already paid: a shared target-level sampler
     (`setTargetTextures`, landed 2026-08-06) binds an environment map once
     per scene target; cube maps are the remaining engine gap.
-15. **Shadow maps.** Engine: sampleable depth and a depth-func option,
-    both deferred in [gpu-pipeline-extensions](gpu-pipeline-extensions.md);
+15. **Shadow maps.** Engine: sampleable depth
+    ([gpu-sampleable-depth](gpu-sampleable-depth.md)) and a depth-func
+    option ([gpu-depth-func](gpu-depth-func.md));
     the map itself binds through the shared target-level sampler channel
     (landed 2026-08-06).
 16. **Skinning and morph targets.** Engine: float texture formats (same

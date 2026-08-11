@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: GPU pipeline extensions
-description: Extensions on top of the minimal createPipeline. Typed uniforms and additive blend/depthWrite landed 2026-07-29, draw range + instancing (setDraw) 2026-07-30, multi-pass draw targets, index buffers + cull mode, and per-instance attributes 2026-08-04; float data textures, depth func, alpha translucency and sampleable depth remain deferred.
-status: deferred
+description: "Done as a container 2026-08-11: every decided extension landed (typed uniforms + additive blend/depthWrite 2026-07-29, draw range + instancing 2026-07-30, multi-pass draw targets, index buffers, cull mode, per-instance attributes 2026-08-04) and the four remaining opens were split into their own items - gpu-float-texture-formats, gpu-sampleable-depth, gpu-alpha-translucency, gpu-depth-func. This file is the record of what landed."
+status: done
 timestamp: 2026-07-15T00:00:00Z
 ---
 
@@ -11,7 +11,21 @@ timestamp: 2026-07-15T00:00:00Z
 createPipeline (flux:gpu / alloy shader.rs) shipped with the bare minimum a
 mesh renderer needs: custom vertex+fragment GLSL, one interleaved float vertex
 buffer per pipeline, name-resolved attributes, optional depth buffer, mutable
-draw count. Deliberately deferred, in rough order of expected demand:
+draw count. This item collected the deliberately deferred extensions; every
+decided one has landed (records below), and on 2026-08-11 the four still-open
+bullets were split into their own items, because this one file kept being the
+destination for unrelated asks:
+
+- [gpu-float-texture-formats](gpu-float-texture-formats.md) - R32F/RGBA32F
+  data textures (was the float-formats bullet).
+- [gpu-sampleable-depth](gpu-sampleable-depth.md) - depth as a sampleable,
+  nameable texture (was the sampleable-depth bullet).
+- [gpu-alpha-translucency](gpu-alpha-translucency.md) - sorted alpha
+  blending (was the open half of the blending bullet).
+- [gpu-depth-func](gpu-depth-func.md) - depthCompare option (was the open
+  half of the raster-state bullet).
+
+The landed extensions, in the order demand arrived:
 
 - **Typed uniforms (vecN/mat4).** DONE 2026-07-29. A param value is `number |
   number[]` end to end (`alloy::ParamValue` Scalar/Array), dispatched by the
@@ -79,17 +93,6 @@ draw count. Deliberately deferred, in rough order of expected demand:
   alloy/examples/draw_instanced.rs (20 assertions incl. attributeless +
   instanced and index + instance combined); gpu-instancing.tsx converted to
   records.
-- **Float texture formats** (`R32F`/`RGBA32F`) for data textures sampled in
-  the vertex stage (e.g. per-sector heights via texelFetch). Workaround:
-  fixed-point encode into RGBA8 channels and decode in the shader.
-- **Sampleable depth** (from [gpu-review](../analysis/gpu-review.md) lesson
-  16): a pipeline's depth is a private renderbuffer, unsampleable by
-  construction; both standards make depth a texture (ES 3.0 has depth
-  textures and `sampler2DShadow` in core) - the entry ticket to shadow
-  maps, depth-of-field, SSAO. The storage swap is small; the open question
-  is currency, because a target's id names its colour - its depth needs a
-  name of its own to appear in another target's `textures`, after which the
-  dependency graph tracks the edge like any other.
 - **Blending toggle.** Additive half DONE 2026-07-29: `blend: "add"`
   (`glBlendFunc(ONE, ONE)`) plus the independent `depthWrite: boolean`
   (default true; requires `depth`) on createPipeline/createShaderTarget.
@@ -97,12 +100,8 @@ draw count. Deliberately deferred, in rough order of expected demand:
   "add", depthWrite: false }`, written by the app, never inferred (blend does
   NOT imply depth-write off). The clear always writes depth; only the draw
   honors depthWrite. Both reported by get_gpu_resources when off their
-  defaults. Still open: true alpha translucency (sorted geometry plus the
-  straight-vs-premultiplied question against Impeller's compositing of the
-  target). First step regardless: document the target pixel contract
-  (premultiplied, non-linear RGBA8 - [gpu-review](../analysis/gpu-review.md)
-  lesson 12), which answers the straight-vs-premultiplied half by declaring
-  it.
+  defaults. The open half - true alpha translucency - split to
+  [gpu-alpha-translucency](gpu-alpha-translucency.md).
 - **Raster state**: cull mode DONE 2026-08-04 - `cull: "none" | "back" |
   "front"` on createRenderPipeline, per entry in `run_pass` with cull
   face/winding in the save/restore set. The winding rule is deliberately
@@ -115,8 +114,8 @@ draw count. Deliberately deferred, in rough order of expected demand:
   left-handed DIY rig - camera looking toward +z without mirroring x, which
   gpu-pipeline.tsx originally did - mirrors the winding and shows the mesh
   interior; the fix is the rig, and the example now carries the textbook
-  one. Depth func remains fixed at LESS - no demand signal yet, additive
-  when one arrives.
+  one. The open half - the depth comparison - split to
+  [gpu-depth-func](gpu-depth-func.md).
 - **Multiple draw passes into one target.** DONE 2026-08-04 (stages 1+2) as
   [gpu-draw-list](gpu-draw-list.md): `createDrawTarget` holds a retained,
   ordered, mutable draw list (addDraw/removeDraw with stable DrawIds,

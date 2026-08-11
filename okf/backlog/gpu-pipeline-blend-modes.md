@@ -35,7 +35,7 @@ Order-dependent, the big one:
   trivial; what defers it is correctness: it needs sorted geometry (which the
   pipeline API has no story for) and an answer to straight-vs-premultiplied
   against how Impeller composites the target. Tracked as the remaining
-  blending piece in [gpu-pipeline-extensions](gpu-pipeline-extensions.md);
+  blending piece in [gpu-alpha-translucency](gpu-alpha-translucency.md);
   do not add the mode without deciding those two. The premultiplied half now
   has a first step that costs nothing: document the target pixel contract
   ([gpu-review](../analysis/gpu-review.md) lesson 12 - premultiplied,
