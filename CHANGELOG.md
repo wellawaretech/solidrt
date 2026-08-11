@@ -53,6 +53,42 @@ Rules:
 
 # Changelog
 
+## 0.0.48 - 2026-08-11
+
+### Fixes
+- None.
+
+### Features
+- **3D: quaternion rotation** - nodes store a quaternion, so aiming and interpolation are gimbal-free.
+- **3D: aiming verbs** - `lookAt` points a node at a world point, `quatFromTo` aims any other axis, `quatSlerp` damps a follow.
+- **3D: swept solids** - `sweep` and `tube` run a profile along a polyline with mitred joints and per-point creasing.
+- **3D: per-mesh uniforms as a prop** - `<Mesh params>` writes a custom material's uniforms, the declarative face of `setMeshParams`.
+- **GPU: array uniforms** - `vec3 uLight[4]` takes one flat array under its bare name, so a light list or palette is one write.
+
+### API
+- `@solidrt/3d`: `lookAt`, `worldPosition`, `getRotation`; `TransformProps.quaternion`, `MeshProps.params`.
+- `@solidrt/3d`: `sweep`, `tube`, `pathFrames`, and the `PathPoint` / `SweepPath` / `PathFrames` types.
+- `@solidrt/3d`: `quat`, `quatFromEuler`, `eulerFromQuat`, `quatFromAxisAngle`, `quatFromTo`, `quatFromFrame`, `quatMultiply`, `quatNormalize`, `quatSlerp`, the `Quat` type.
+- `@solidrt/core`: `getOwner`, `runWithOwner`, `createOwner`, `isDisposed` and the `Owner` type, re-exported from SolidJS.
+
+### Developer experience
+- **`srt render` fails a short capture** - writing fewer frames than asked for now exits non-zero instead of reporting success.
+- **`--duration` takes fractions** - a sub-second render no longer needs a whole second.
+- A bad runtime flag reports a usage error instead of panicking.
+
+### Breaking changes
+- **`rotation` follows Three's `Euler` XYZ order** - multi-axis triples rotate differently than before.
+- **`lookAt` from `@solidrt/3d` is the scene verb** - the view-matrix builder stays on the `/math` subpath.
+
+### Agents
+- **`packages/3d/AGENTS.md`** - quaternion storage, the Euler boundary, the sweep path model.
+- New examples: `aim`, `sweep-paths`.
+
+### Various
+- Dependencies: no updates.
+- **alloy owns the platform facts** - input state and the present clock move down out of lattice, leaving the paced timeline above.
+- Backlog filed: float texture formats, sampleable depth, alpha translucency, depth func; GPU pipeline extensions closed.
+
 ## 0.0.47 - 2026-08-10
 
 ### Fixes
