@@ -2,11 +2,15 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, DrawBounds, DrawRange,
-  DrawUpdate, GpuLimits, ParamValue, UniformKind, UniformTable,
+  DrawUpdate, GpuLimits, ParamValue, UniformKind, UniformSlot, UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
-  entries.iter().map(|(name, kind)| (name.to_string(), *kind)).collect()
+  entries.iter().map(|(name, kind)| (name.to_string(), UniformSlot { kind: *kind, count: 1 })).collect()
+}
+
+fn array_table(entries: &[(&str, UniformKind, usize)]) -> UniformTable {
+  entries.iter().map(|(name, kind, count)| (name.to_string(), UniformSlot { kind: *kind, count: *count })).collect()
 }
 
 fn scalar(name: &str, v: f32) -> (String, ParamValue) {
@@ -63,8 +67,20 @@ fn params_component_mismatch_errors() {
 }
 
 #[test]
+fn params_array_uniforms_take_flat_arrays() {
+  // vec3 uLight[4] expects 12 components flat; mat4 uBones[2] expects 32.
+  let t = array_table(&[("uLight", UniformKind::Vec3, 4), ("uBones", UniformKind::Mat4, 2)]);
+  assert_eq!(validate_params(&t, &[array("uLight", 12), array("uBones", 32)]), Ok(()));
+  // A single element, or an off-by-one, errors with the array spelling.
+  let err = validate_params(&t, &[array("uLight", 3)]).expect_err("one element for vec3[4] must error");
+  assert!(err.contains("vec3[4]") && err.contains("expects 12"), "{err}");
+  let err = validate_params(&t, &[array("uBones", 16)]).expect_err("one mat4 for mat4[2] must error");
+  assert!(err.contains("mat4[2]") && err.contains("expects 32"), "{err}");
+}
+
+#[test]
 fn params_sampler_and_unsupported_kinds_error() {
-  let t = table(&[("uTex", UniformKind::Sampler2D), ("uIvec", UniformKind::Other)]);
+  let t = table(&[("uTex", UniformKind::Sampler2D), ("uIvec", UniformKind::Other(glow::INT_VEC2))]);
   let err = validate_params(&t, &[scalar("uTex", 1.0)]).expect_err("sampler via params must error");
   assert!(err.contains("bind it via textures"), "{err}");
   let err = validate_params(&t, &[scalar("uIvec", 1.0)]).expect_err("unsupported kind must error");
@@ -79,6 +95,13 @@ fn texture_bindings_require_active_sampler2d() {
   assert!(err.contains("uColor") && err.contains("not a sampler2D"), "{err}");
   let err = validate_texture_bindings(&t, &[("uTx".to_string(), 7)]).expect_err("typo must error");
   assert!(err.contains("no active uniform named 'uTx'"), "{err}");
+}
+
+#[test]
+fn texture_bindings_reject_sampler_arrays() {
+  let t = array_table(&[("uTexes", UniformKind::Sampler2D, 4)]);
+  let err = validate_texture_bindings(&t, &[("uTexes".to_string(), 7)]).expect_err("sampler array must error");
+  assert!(err.contains("sampler2D[4]") && err.contains("not a sampler2D"), "{err}");
 }
 
 fn range(first: i32, count: i32, instances: i32) -> DrawRange {

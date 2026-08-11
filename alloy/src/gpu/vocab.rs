@@ -279,10 +279,10 @@ pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
   attributes.iter().map(|(_, f)| f.components() * 4).sum()
 }
 
-/// The GLSL type of one active uniform, reflected once at link time and
-/// mirrored UI-side (see `UniformTable`) so uniform writes validate at the
-/// call site. The settable set matches the dispatch in `pass::apply_uniform`;
-/// everything else reflects as `Other` and errors when named.
+/// The GLSL element type of one active uniform, reflected once at link time
+/// (see `UniformSlot`, which pairs it with the declared array size). The
+/// settable set matches the dispatch in `pass::apply_uniform`; everything
+/// else reflects as `Other` and errors when named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UniformKind {
   Float,
@@ -295,8 +295,9 @@ pub enum UniformKind {
   /// Bound via texture bindings, never via params.
   Sampler2D,
   /// A reflected type outside the settable set (int vectors, matrices other
-  /// than mat4, other sampler dimensions, ...).
-  Other,
+  /// than mat4, other sampler dimensions, ...), carrying the raw GL type
+  /// enum for diagnostics.
+  Other(u32),
 }
 
 impl UniformKind {
@@ -310,12 +311,12 @@ impl UniformKind {
       glow::FLOAT_VEC4 => UniformKind::Vec4,
       glow::FLOAT_MAT4 => UniformKind::Mat4,
       glow::SAMPLER_2D => UniformKind::Sampler2D,
-      _ => UniformKind::Other,
+      _ => UniformKind::Other(utype),
     }
   }
 
-  /// Component count a param value must supply; None for kinds params cannot
-  /// set (samplers, unsupported types).
+  /// Component count of one element of this kind; None for kinds params
+  /// cannot set (samplers, unsupported types).
   pub fn components(self) -> Option<usize> {
     match self {
       UniformKind::Float | UniformKind::Int | UniformKind::Bool => Some(1),
@@ -323,7 +324,7 @@ impl UniformKind {
       UniformKind::Vec3 => Some(3),
       UniformKind::Vec4 => Some(4),
       UniformKind::Mat4 => Some(16),
-      UniformKind::Sampler2D | UniformKind::Other => None,
+      UniformKind::Sampler2D | UniformKind::Other(_) => None,
     }
   }
 
@@ -338,18 +339,49 @@ impl UniformKind {
       UniformKind::Vec4 => "vec4",
       UniformKind::Mat4 => "mat4",
       UniformKind::Sampler2D => "sampler2D",
-      UniformKind::Other => "an unsupported type",
+      UniformKind::Other(_) => "an unsupported type",
+    }
+  }
+}
+
+/// One active uniform as reflected at link time: its element kind and its
+/// declared array size (1 for a non-array declaration; GL reports a declared
+/// `vec3 u[4]` as element type vec3 with size 4 under the name `u[0]`, and
+/// reflection strips the suffix). The single currency both call-site
+/// validation and the raster-side dispatch compute from, so the two cannot
+/// disagree on what a value must look like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UniformSlot {
+  pub kind: UniformKind,
+  pub count: usize,
+}
+
+impl UniformSlot {
+  /// Total component count a param value must supply: element components
+  /// times array size, as one flat array. None for kinds params cannot set.
+  pub fn components(self) -> Option<usize> {
+    self.kind.components().map(|per| per * self.count)
+  }
+
+  /// The GLSL spelling with the array suffix when declared as one, for
+  /// error messages: `vec3` or `vec3[4]`.
+  pub fn glsl_name(self) -> String {
+    if self.count > 1 {
+      format!("{}[{}]", self.kind.glsl_name(), self.count)
+    } else {
+      self.kind.glsl_name().to_string()
     }
   }
 }
 
 /// A program's active uniforms by name: the plain-data half of the reflection
 /// `ShaderProgram` holds, crossing to the UI thread in create/link replies so
-/// `Context` can validate uniform writes without an RPC. Note the caveat this
-/// inherits from GL reflection: a uniform that is declared but optimized out
-/// (inactive) is absent here, so setting it reports "no active uniform" -
-/// remove the write or use the uniform.
-pub type UniformTable = HashMap<String, UniformKind>;
+/// `Context` can validate uniform writes without an RPC. Array uniforms
+/// appear under their bare name (the reflected `[0]` suffix is stripped).
+/// Note the caveat this inherits from GL reflection: a uniform that is
+/// declared but optimized out (inactive) is absent here, so setting it
+/// reports "no active uniform" - remove the write or use the uniform.
+pub type UniformTable = HashMap<String, UniformSlot>;
 
 fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
   let mut names: Vec<&str> = uniforms.keys().map(|s| s.as_str()).collect();
@@ -368,21 +400,21 @@ fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
 /// unsupported type), and carries exactly the component count its declared
 /// type dispatches on; Err when it is active but fails either check.
 pub fn validate_param_if_declared(uniforms: &UniformTable, name: &str, value: &ParamValue) -> Result<bool, String> {
-  let Some(kind) = uniforms.get(name) else { return Ok(false) };
-  match kind.components() {
+  let Some(slot) = uniforms.get(name) else { return Ok(false) };
+  match slot.components() {
     Some(expected) => {
       let got = value.components().len();
       if got != expected {
         return Err(format!(
           "param '{name}' has {got} component(s), but uniform is {} (expects {expected})",
-          kind.glsl_name()
+          slot.glsl_name()
         ));
       }
     }
     None => {
-      return Err(match kind {
+      return Err(match slot.kind {
         UniformKind::Sampler2D => format!("param '{name}' is a sampler2D; bind it via textures"),
-        _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4)"),
+        _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4, and arrays of these)"),
       })
     }
   }
@@ -404,13 +436,14 @@ pub fn validate_params(uniforms: &UniformTable, params: &[(String, ParamValue)])
 }
 
 /// Check a sampler-binding list against a program's active uniforms: every
-/// name must be an active `sampler2D`. Same boundary rule as
+/// name must be an active non-array `sampler2D` (a binding names one texture
+/// unit; sampler arrays are outside the settable set). Same boundary rule as
 /// `validate_params`.
 pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u64)]) -> Result<(), String> {
   for (name, _) in textures {
-    let kind = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
-    if *kind != UniformKind::Sampler2D {
-      return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
+    let slot = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
+    if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
+      return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
     }
   }
   Ok(())

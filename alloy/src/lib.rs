@@ -36,7 +36,7 @@ pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, CullMode, DepthState, DrawBounds, DrawRange, DrawSpec, DrawUpdate,
   GpuLimits, IndexFormat, ParamValue, PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, Topology,
-  UniformKind, UniformTable, WindowShader,
+  UniformKind, UniformSlot, UniformTable, WindowShader,
 };
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,

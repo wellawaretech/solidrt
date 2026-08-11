@@ -1,8 +1,8 @@
 ---
 type: backlog-item
 title: Uniform arrays (vecN[], mat4[])
-description: Array uniforms have no path - the typed-uniform dispatch is single-element only - so a light list or palette becomes N scalar uniforms or a data texture; glUniform*v dispatch by reflected array size is a small extension of the existing path. First consumer is the scene-graph light model.
-status: open
+description: "Done 2026-08-11: a declared array uniform takes one flat count*components param under its bare name via the glUniform*v forms; reflection unified on one typed UniformSlot (kind + count) driving validation and dispatch alike. Sampler arrays deliberately unsupported; large data stays with float textures."
+status: done
 timestamp: 2026-08-04T00:00:00Z
 ---
 
@@ -35,3 +35,17 @@ Consumers: the scene-graph light model
 is `vec3[N]` positions and colors - with palettes and small per-object
 tables adjacent. Filed 2026-08-04 from that note; no field report asks
 yet.
+
+Implemented 2026-08-11, one step more global than the sketch above: the
+raw-utype half of reflection was deleted rather than extended. A single
+`UniformSlot { kind, count }` (vocab.rs) is now the reflection currency
+on both sides - `ShaderProgram.uniforms` stores `(location, slot)`,
+`UniformKind::from_gl` runs once at reflection, and `pass::apply_uniform`
+dispatches on the slot through the `v` slice forms, so validation and
+dispatch compute the expected length from the same place. The `[0]`
+suffix is stripped at reflection; a param supplies `count * components`
+floats flat; errors spell arrays as `vec3[4] (expects 12)`.
+Deliberately unsupported: sampler2D arrays (a texture binding names one
+unit; rejected when named), int vectors, non-mat4 matrices. Large data
+(bone matrices at scale) stays with the float-formats bullet in
+[gpu-pipeline-extensions](gpu-pipeline-extensions.md).

@@ -7,7 +7,7 @@
 use glow::HasContext;
 
 use super::program::ShaderProgram;
-use super::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc};
+use super::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
 use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, and
@@ -55,23 +55,37 @@ pub(super) enum PassDraw<'a> {
   Draws { clear: Option<[f32; 4]>, depth: bool, shared: &'a [(String, ParamValue)], draws: &'a [ResolvedDraw<'a>] },
 }
 
-/// Set one uniform from a param value, dispatching on the reflected GL type.
-/// A component count that does not match the declaration is skipped with a
-/// warning (renders run on the raster thread after fire-and-forget commands,
-/// so there is no JS call site left to throw at), as is a type outside the
+/// Set one uniform from a param value, dispatching on the reflected slot
+/// (element kind + declared array size) through the `v` slice forms, which
+/// serve a single value and a flat array with the same call. A component
+/// count that does not match the declaration is skipped with a warning
+/// (renders run on the raster thread after fire-and-forget commands, so
+/// there is no JS call site left to throw at), as is a kind outside the
 /// supported set - notably samplers, which are bound via `textures`, not
 /// params.
-fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, utype: u32, value: &ParamValue) {
+fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, slot: UniformSlot, value: &ParamValue) {
   let c = value.components();
+  if slot.components() != Some(c.len()) {
+    let declared = match slot.kind {
+      UniformKind::Other(utype) => format!("type {utype:#x}"),
+      _ => slot.glsl_name(),
+    };
+    log::warn!("[shader] param '{name}' has {} component(s), which does not fit uniform {declared}; skipped", c.len());
+    return;
+  }
   unsafe {
-    match (utype, c.len()) {
-      (glow::FLOAT, 1) => gl.uniform_1_f32(Some(loc), c[0]),
-      (glow::INT | glow::BOOL, 1) => gl.uniform_1_i32(Some(loc), c[0] as i32),
-      (glow::FLOAT_VEC2, 2) => gl.uniform_2_f32(Some(loc), c[0], c[1]),
-      (glow::FLOAT_VEC3, 3) => gl.uniform_3_f32(Some(loc), c[0], c[1], c[2]),
-      (glow::FLOAT_VEC4, 4) => gl.uniform_4_f32(Some(loc), c[0], c[1], c[2], c[3]),
-      (glow::FLOAT_MAT4, 16) => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
-      _ => log::warn!("[shader] param '{name}' has {} component(s), which does not fit uniform type {utype:#x}; skipped", c.len()),
+    match slot.kind {
+      UniformKind::Float => gl.uniform_1_f32_slice(Some(loc), c),
+      UniformKind::Int | UniformKind::Bool => {
+        let ints: Vec<i32> = c.iter().map(|v| *v as i32).collect();
+        gl.uniform_1_i32_slice(Some(loc), &ints);
+      }
+      UniformKind::Vec2 => gl.uniform_2_f32_slice(Some(loc), c),
+      UniformKind::Vec3 => gl.uniform_3_f32_slice(Some(loc), c),
+      UniformKind::Vec4 => gl.uniform_4_f32_slice(Some(loc), c),
+      UniformKind::Mat4 => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
+      // No component count, so the guard above already returned.
+      UniformKind::Sampler2D | UniformKind::Other(_) => {}
     }
   }
 }
@@ -81,8 +95,8 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, ut
 /// whose program declares it).
 fn apply_params(gl: &glow::Context, program: &ShaderProgram, params: &[(String, ParamValue)]) {
   for (name, value) in params {
-    if let Some((loc, utype)) = program.uniforms.get(name) {
-      apply_uniform(gl, name, loc, *utype, value);
+    if let Some((loc, slot)) = program.uniforms.get(name) {
+      apply_uniform(gl, name, loc, *slot, value);
     }
   }
 }
@@ -95,8 +109,12 @@ fn apply_program(gl: &glow::Context, program: &ShaderProgram, width: u32, height
   unsafe {
     gl.use_program(Some(program.program));
     match program.uniforms.get("iResolution") {
-      Some((loc, glow::FLOAT_VEC2)) => gl.uniform_2_f32(Some(loc), width as f32, height as f32),
-      Some((loc, glow::FLOAT_VEC3)) => gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0),
+      Some((loc, UniformSlot { kind: UniformKind::Vec2, .. })) => {
+        gl.uniform_2_f32(Some(loc), width as f32, height as f32)
+      }
+      Some((loc, UniformSlot { kind: UniformKind::Vec3, .. })) => {
+        gl.uniform_3_f32(Some(loc), width as f32, height as f32, 1.0)
+      }
       _ => {}
     }
   }

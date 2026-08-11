@@ -147,10 +147,12 @@ fn link_program(gl: &glow::Context, vertex_full: &str, fragment_full: &str) -> R
 /// program is held only by its target.
 pub struct ShaderProgram {
   pub(super) program: glow::Program,
-  /// Active uniform name -> (location, GL type), reflected once at link time.
-  /// JS params are matched to locations by name and dispatched by the
-  /// reflected type; iResolution is filled from the target size at render.
-  pub(super) uniforms: HashMap<String, (glow::UniformLocation, u32)>,
+  /// Active uniform name -> (location, typed slot), reflected once at link
+  /// time. JS params are matched to locations by name and dispatched by the
+  /// slot (element kind + array size); iResolution is filled from the target
+  /// size at render. Array uniforms are keyed by their bare name (GL's
+  /// reported `[0]` suffix is stripped).
+  pub(super) uniforms: HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
@@ -219,10 +221,10 @@ impl ShaderProgram {
     self.pipeline
   }
 
-  /// The active uniforms as a plain-data table (name -> kind), for the
+  /// The active uniforms as a plain-data table (name -> slot), for the
   /// UI-side mirror and call-site validation (see `vocab::UniformTable`).
   pub fn uniform_table(&self) -> super::vocab::UniformTable {
-    self.uniforms.iter().map(|(name, (_, utype))| (name.clone(), super::vocab::UniformKind::from_gl(*utype))).collect()
+    self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).collect()
   }
 
   pub(crate) fn delete(self, gl: &glow::Context) {
@@ -231,15 +233,27 @@ impl ShaderProgram {
 }
 
 /// Reflect active uniforms so JS params can be matched to locations by name
-/// and dispatched by the declared GL type.
-fn reflect_uniforms(gl: &glow::Context, program: glow::Program) -> HashMap<String, (glow::UniformLocation, u32)> {
+/// and dispatched by the declared GL type and array size. GL reports an
+/// array uniform as `name[0]` with the element type and its size; the entry
+/// is keyed by the bare name (suffix stripped), and the location - queried
+/// with the reported name, so it is element 0's - takes the whole flat array
+/// through the `v` dispatch forms.
+fn reflect_uniforms(
+  gl: &glow::Context,
+  program: glow::Program,
+) -> HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)> {
   let mut uniforms = HashMap::new();
   unsafe {
     let count = gl.get_active_uniforms(program);
     for i in 0..count {
       if let Some(u) = gl.get_active_uniform(program, i) {
         if let Some(loc) = gl.get_uniform_location(program, &u.name) {
-          uniforms.insert(u.name, (loc, u.utype));
+          let name = u.name.strip_suffix("[0]").unwrap_or(&u.name).to_string();
+          let slot = super::vocab::UniformSlot {
+            kind: super::vocab::UniformKind::from_gl(u.utype),
+            count: u.size.max(1) as usize,
+          };
+          uniforms.insert(name, (loc, slot));
         }
       }
     }

@@ -97,11 +97,11 @@ Sorted by status: open first, then partial, deferred, and closed
   sample it; vending it as an ordinary TextureId that updates as the
   subtree repaints makes any UI subtree live content for the GPU stack -
   the load-bearing piece of UI mapped onto 3D geometry.
-- [Uniform arrays (vecN[], mat4[])](gpu-uniform-arrays.md) [open] - Array
-  uniforms have no path (the typed-uniform dispatch is single-element
-  only), so a light list or palette becomes N scalar uniforms or a data
-  texture; glUniform*v dispatch by reflected array size is a small
-  extension, first wanted by the scene-graph light model.
+- [Uniform arrays (vecN[], mat4[])](gpu-uniform-arrays.md) [done] - A
+  declared array uniform takes one flat `count * components` param under
+  its bare name, dispatched through the glUniform*v forms; reflection
+  unified on one typed slot (kind + count) for validation and dispatch
+  both. Sampler arrays stay unsupported by design.
 - [Cube map textures](gpu-cube-maps.md) [open] - No TEXTURE_CUBE_MAP
   support anywhere (upload, sampling, or render target), so skyboxes,
   environment/reflection mapping and cube shadow maps have no path; ES

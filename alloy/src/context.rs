@@ -919,7 +919,7 @@ impl Context {
         c.keys()
           .filter(|(e, name)| {
             *e == 0
-              && uniforms.get(name.as_str()) == Some(&UniformKind::Sampler2D)
+              && uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
               && !entry.textures.iter().any(|(n, _)| n == name)
           })
           .count()
@@ -1090,9 +1090,9 @@ impl Context {
       };
       for (name, _) in textures {
         for entry in list.entries.values() {
-          if let Some(kind) = entry.uniforms.get(name) {
-            if *kind != UniformKind::Sampler2D {
-              return Err(format!("uniform '{name}' is {}, not a sampler2D", kind.glsl_name()));
+          if let Some(slot) = entry.uniforms.get(name) {
+            if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
+              return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
             }
           }
         }
@@ -1115,7 +1115,7 @@ impl Context {
         let extra = shared
           .iter()
           .filter(|n| {
-            entry.uniforms.get(**n) == Some(&UniformKind::Sampler2D)
+            entry.uniforms.get(**n).is_some_and(|s| s.kind == UniformKind::Sampler2D)
               && record.is_none_or(|c| !c.contains_key(&(*draw_id, (**n).to_string())))
           })
           .count();
@@ -1159,7 +1159,7 @@ impl Context {
         c.keys()
           .filter(|(e, name)| {
             *e == 0
-              && entry_uniforms.get(name.as_str()) == Some(&UniformKind::Sampler2D)
+              && entry_uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
               && !c.contains_key(&(draw, name.clone()))
               && !textures.iter().any(|(n, _)| n == name)
           })

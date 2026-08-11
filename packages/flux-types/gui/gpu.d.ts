@@ -95,7 +95,10 @@ declare module "flux:gpu" {
    * Shader uniform values by name. A number drives a scalar uniform (`float`,
    * or `int`/`bool`, truncated); a flat number array drives a typed uniform
    * whose declared GLSL type sets the expected length: 2/3/4 for
-   * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. Dispatch follows the
+   * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. An array uniform
+   * (`vec3 uLight[4]`) goes by its bare name and takes one flat array of
+   * element length times array size (12 here; a light list or palette is one
+   * write). Dispatch follows the
    * shader's own declaration, and every write is validated against it at the
    * call site: a name with no active uniform, a value whose length does not
    * fit the declared type, a `sampler2D` named here (samplers bind via
