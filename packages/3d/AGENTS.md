@@ -11,7 +11,8 @@ blendMode and pointer events like any element. Design rationale:
 
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
-  `setVisible` - plain objects with dirty flags, batched to a microtask,
+  `lookAt`, `setVisible` - plain objects with dirty flags, batched to a
+  microtask,
   one `setDrawParams` (uModel, plus uNormal for materials declaring it)
   per changed mesh and ONE `setTargetParams` (the shared uViewProj +
   uCamPos) per camera change, however many meshes. The component
@@ -199,8 +200,36 @@ system.
   sorting (research note, staging step 4).
 - Rotation is Euler radians applied x, then y, then z. No quaternions in
   v1.
-- Transforms have ONE write path: `setTransform`/`setVisible` (or the
-  props that call them). Mutating `node.position` directly does not sync.
+- Aim with `lookAt(node, target, up?)`, never by extracting Euler angles
+  by hand - hand-rolled extraction has to match `compose()`'s exact x-y-z
+  order and its gimbal-lock branch, and gets it silently wrong otherwise.
+  Three's `Object3D.lookAt` semantics deliberately: `target` and `up` are
+  WORLD space (ancestor transforms are undone, and the ancestor chain is
+  refreshed on the spot rather than waiting for the sync), and local +z
+  ends up pointing at the target. To aim along a DIRECTION, add it to
+  `worldPosition(node)` - the same conversion Three asks for.
+  +z is the library's own sweep axis, so `extrude`/`sweep`/`tube` output
+  needs no correction; y-axis solids (`cylinder`, `cone`) are the awkward
+  case until quaternions bring a shortest-arc rotation. Divergences from
+  Three, both deliberate: `up` is an argument, NOT a per-node field
+  (Three's `object.up` is hidden state that costs a vector on every node),
+  and degenerate frames pick a stable perpendicular instead of Three's
+  epsilon nudge of the eye.
+  There is no `setTransform(node, { matrix })`, and lookAt is a MUTATOR,
+  not a rotation-returning function: both shapes would pin the API to the
+  current Euler representation.
+- `lookAt` is exact for rotation and uniform scale up the chain. A
+  non-uniformly scaled ancestor shears the frame, so the aim is
+  approximate - Three has the identical limitation (both read the parent's
+  upper 3x3 as if it were a rotation), and the fix is not to special-case
+  it here but to not shear parents of things you aim.
+- The package root's `lookAt` is the scene verb; `@solidrt/3d/math` keeps
+  its own `lookAt` (the camera view matrix) on the SUBPATH ONLY, the same
+  collision rule the Vec3 helpers follow - and the same Object3D/Matrix4
+  split Three makes under one name. Do not re-export math's from the root.
+- Transforms have ONE write path: `setTransform`/`lookAt`/`setVisible` (or
+  the props that call them). Mutating `node.position` directly does not
+  sync. Components have no `lookAt` prop - aim through a `ref`.
 - A camera change is ONE `setTargetParams` write (uViewProj + uCamPos are
   target state), independent of mesh count - never reintroduce per-mesh
   camera writes (uEye-style per-mesh params are exactly the O(scene) cost

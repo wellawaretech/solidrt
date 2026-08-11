@@ -182,9 +182,67 @@ export function normalize(v: Vec3): Vec3 {
 }
 
 /**
+ * Euler angles (in compose()'s x-y-z order) for the rotation that points
+ * the local +z axis along `forward`, with `up` choosing the roll about it -
+ * the object-aiming counterpart of lookAt, which builds the camera's
+ * inverse frame. Neither input need be normalized. Degenerate inputs (zero
+ * forward, up parallel to forward) fall back to a stable perpendicular
+ * instead of producing NaNs.
+ *
+ * This is the Euler-specific half of `orient()`: when rotation becomes a
+ * quaternion the frame-to-rotation step replaces this function, while
+ * orient's own signature does not change.
+ */
+export function eulerFromFrame(out: Vec3, forward: Vec3, up: Vec3): Vec3 {
+  let zx = forward[0], zy = forward[1], zz = forward[2]
+  let len = Math.hypot(zx, zy, zz)
+  if (len === 0) {
+    zx = 0; zy = 0; zz = 1
+  } else {
+    zx /= len; zy /= len; zz /= len
+  }
+  let xx = up[1] * zz - up[2] * zy
+  let xy = up[2] * zx - up[0] * zz
+  let xz = up[0] * zy - up[1] * zx
+  len = Math.hypot(xx, xy, xz)
+  if (len === 0) {
+    // up is parallel to forward: cross with a world axis that cannot be,
+    // picked off z's own components so the choice is stable per direction.
+    let ax = Math.abs(zx) < 0.9 ? 1 : 0
+    let ay = ax === 1 ? 0 : 1
+    xx = ay * zz
+    xy = -ax * zz
+    xz = ax * zy - ay * zx
+    len = Math.hypot(xx, xy, xz)
+  }
+  xx /= len; xy /= len; xz /= len
+  let yx = zy * xz - zz * xy
+  let yy = zz * xx - zx * xz
+  let yz = zx * xy - zy * xx
+  // Extract from R = [X | Y | Z] as columns, matching compose()'s
+  // R = Rz * Ry * Rx: r20 = -sin(y), and the x/z pair reads off the
+  // remaining entries unless cos(y) is 0 (gimbal lock), where only their
+  // sum or difference is determined - resolved by pinning z to 0.
+  let r20 = xz
+  out[1] = Math.asin(r20 < -1 ? -1 : r20 > 1 ? 1 : -r20)
+  if (Math.abs(r20) < 0.999999) {
+    out[0] = Math.atan2(yz, zz)
+    out[2] = Math.atan2(xy, xx)
+  } else {
+    out[0] = Math.atan2(-r20 * yx, yy)
+    out[2] = 0
+  }
+  return out
+}
+
+/**
  * View matrix (world -> camera) for a camera at `eye` looking at `target`
  * with the given `up`. Degenerate inputs (eye == target, up parallel to the
  * view direction) fall back to axis defaults instead of producing NaNs.
+ *
+ * On the /math subpath ONLY - the package root's `lookAt` is the scene verb
+ * that aims a node (the Matrix4/Object3D split Three makes under the same
+ * name), the same collision rule the Vec3 helpers follow.
  */
 export function lookAt(out: Mat4, eye: Vec3, target: Vec3, up: Vec3): Mat4 {
   let zx = eye[0] - target[0]

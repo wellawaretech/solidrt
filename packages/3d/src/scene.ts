@@ -20,7 +20,9 @@
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
-import { compose, copy, lookAt, mat4, multiply, normalMatrix, perspective, transformPoint } from "./math.ts"
+// The scene's lookAt() aims a node; math's builds a camera's view matrix -
+// the same pairing (and the same name) as Three's Object3D/Matrix4.
+import { compose, copy, eulerFromFrame, identity, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, transformPoint } from "./math.ts"
 import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -28,9 +30,19 @@ import type { Material } from "./material.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
+// lookAt()'s default roll reference. Read-only: eulerFromFrame never
+// writes its inputs, so one shared vector is safe.
+const WORLD_UP: Vec3 = [0, 1, 0]
 // Param values are snapshotted at the FFI boundary (addDraw shares
 // IDENTITY the same way), so one scratch serves every uNormal write.
 let normalScratch = mat4()
+// lookAt()/worldPosition() scratch: the ancestor walk recomputes worlds
+// without touching node state, so nothing here outlives a single call.
+let worldScratch = mat4()
+let localScratch = mat4()
+let pointScratch: Vec4 = [0, 0, 0, 0]
+let aimScratch: Vec3 = [0, 0, 0]
+let upScratch: Vec3 = [0, 0, 0]
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
@@ -223,6 +235,97 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
   node._scene?._schedule()
 }
 
+/**
+ * Aim a node at a WORLD-space point, Three's `Object3D.lookAt`: the node's
+ * local +z ends up pointing at `target`, with `up` (world space, default
+ * +y) choosing the roll about that axis. Ancestor transforms are undone,
+ * so the aim holds under a rotated group - the ancestor chain is brought
+ * up to date on the spot rather than waiting for the pending sync.
+ *
+ * +z because that is the library's own sweep axis (`extrude`, `sweep`,
+ * `tube` run along z), so aiming their output needs no correction; y-axis
+ * solids (`cylinder`, `cone`) are the awkward case until quaternions bring
+ * a shortest-arc rotation.
+ *
+ * Writes `node.rotation` - an ordinary Euler triple afterwards, readable
+ * and overwritable by setTransform. To aim along a DIRECTION rather than
+ * at a point, add it to the node's world position (`worldPosition`), the
+ * same conversion Three asks for.
+ *
+ * Exact for rotation and uniform scale in the ancestor chain; a
+ * non-uniformly scaled ancestor shears the frame and the aim is
+ * approximate, exactly as in Three (both read the parent's upper 3x3 as
+ * if it were a rotation).
+ */
+export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void {
+  let parent = node.parent
+  if (parent === null) {
+    // No ancestors: parent space IS world space, aim straight from the
+    // node's own position.
+    aimScratch[0] = target[0] - node.position[0]
+    aimScratch[1] = target[1] - node.position[1]
+    aimScratch[2] = target[2] - node.position[2]
+    eulerFromFrame(node.rotation, aimScratch, up)
+  } else {
+    let world = worldInto(worldScratch, parent)
+    transformPoint(pointScratch, world, node.position)
+    aimScratch[0] = target[0] - pointScratch[0]
+    aimScratch[1] = target[1] - pointScratch[1]
+    aimScratch[2] = target[2] - pointScratch[2]
+    // World -> parent space for both vectors: rotating forward and up
+    // rotates the frame they build, so converting the inputs is the same
+    // as converting the resulting rotation, and needs no matrix inverse.
+    unrotate(aimScratch, world, aimScratch)
+    unrotate(upScratch, world, up)
+    eulerFromFrame(node.rotation, aimScratch, upScratch)
+  }
+  node._localDirty = true
+  node._scene?._schedule()
+}
+
+/**
+ * A node's position in world space, copied into `out` (or a fresh Vec3) -
+ * Three's `getWorldPosition`. Brings the ancestor chain up to date first,
+ * so it is exact before the pending sync has run.
+ */
+export function worldPosition(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
+  let world = worldInto(worldScratch, node)
+  out[0] = world[12]
+  out[1] = world[13]
+  out[2] = world[14]
+  return out
+}
+
+/**
+ * `out` = node's world matrix, composing any dirty locals up the chain
+ * WITHOUT clearing their flags: the pending sync still has to see them to
+ * write uModel. One shared local scratch serves any depth - each frame
+ * uses it only after its recursive call has returned.
+ */
+function worldInto(out: Mat4, node: SceneNode): Mat4 {
+  if (node.parent === null) identity(out)
+  else worldInto(out, node.parent)
+  let local = node._localDirty
+    ? compose(localScratch, node.position, node.rotation, node.scale)
+    : node._local
+  return multiply(out, out, local)
+}
+
+/**
+ * `out` = v with m's rotation undone: the transpose of m's upper 3x3 with
+ * its columns normalized, so uniform scale divides out. out may alias v.
+ */
+function unrotate(out: Vec3, m: Mat4, v: Vec3): Vec3 {
+  let x = v[0], y = v[1], z = v[2]
+  let l0 = Math.hypot(m[0], m[1], m[2]) || 1
+  let l1 = Math.hypot(m[4], m[5], m[6]) || 1
+  let l2 = Math.hypot(m[8], m[9], m[10]) || 1
+  out[0] = (m[0] * x + m[1] * y + m[2] * z) / l0
+  out[1] = (m[4] * x + m[5] * y + m[6] * z) / l1
+  out[2] = (m[8] * x + m[9] * y + m[10] * z) / l2
+  return out
+}
+
 /** Show or hide a node and its whole subtree (a hidden mesh costs one
  * `instanceCount: 0` draw range - the entry stays, drawing nothing). */
 export function setVisible(node: SceneNode, visible: boolean): void {
@@ -308,7 +411,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     cameraDirty = false
     cameraPending = true
     perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
-    lookAt(view, eye, target, up)
+    lookAtMatrix(view, eye, target, up)
     multiply(viewProj, proj, view)
   }
 

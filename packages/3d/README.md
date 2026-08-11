@@ -37,8 +37,11 @@ props, chain a post-effect shader target, or return null and composite
 
 There is also an imperative layer underneath (`createScene`, `createMesh`,
 `setTransform`, ...) usable without components, plus a small math module
-(`@solidrt/3d/math`: column-major mat4, perspective, lookAt). For HUD
-overlays, `scene.project(point)` maps a world point to scene pixels.
+(`@solidrt/3d/math`: column-major mat4, perspective, lookAt). To aim a
+node, `lookAt(node, target, up?)` points its local +z at a world point,
+Three's `Object3D.lookAt`; `worldPosition(node)` is the companion for
+aiming along a direction. For HUD overlays, `scene.project(point)` maps a
+world point to scene pixels.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
 shared `uViewProj`/`uCamPos`, each written once per change - and
 `@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,

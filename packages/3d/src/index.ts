@@ -5,7 +5,7 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createGroup, createMesh, createScene, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible } from "./scene.ts"
+export { add, createGroup, createMesh, createScene, lookAt, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible, worldPosition } from "./scene.ts"
 export type { CameraUpdate, Mesh as MeshNode, Scene as SceneHandle, SceneNode, SceneOptions, TransformUpdate } from "./scene.ts"
 export { box, circle, cone, cylinder, disposeGeometry, fillColors, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"
@@ -19,5 +19,7 @@ export { Group, Mesh, PerspectiveCamera, Scene, useScene } from "./components.ts
 export type { MeshProps, PerspectiveCameraProps, SceneProps, TransformProps } from "./components.tsx"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
-export { compose, copy, identity, lookAt, mat4, multiply, normalMatrix, perspective } from "./math.ts"
+// math's lookAt (the camera view matrix) stays on the /math subpath: the
+// root's lookAt is the scene verb, the same split as `add`.
+export { compose, copy, eulerFromFrame, identity, mat4, multiply, normalMatrix, perspective } from "./math.ts"
 export type { Mat4, Vec2, Vec3 } from "./math.ts"

@@ -108,6 +108,35 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   validated wherever declared, single-program targets stay strict), so
   the scene publishes uCamPos beside uViewProj whatever materials are
   attached - pixel-asserted in `alloy/examples/draw_list.rs`.
+- **Aiming** (2026-08-11, item 11's first tier): `lookAt(node, target,
+  up?)` aims a node's local +z at a WORLD point, plus `worldPosition`
+  (Three's `getWorldPosition`) and the `eulerFromFrame` under them on
+  `@solidrt/3d/math`. Library-only, no engine item. Three's
+  `Object3D.lookAt` semantics on purpose - a point not a direction,
+  world space not parent space, ancestor transforms undone by an
+  on-demand chain refresh (the walk recomputes worlds WITHOUT clearing
+  dirty flags, which the pending sync still needs to write uModel). It
+  is exact for rotation and uniform scale and approximate under a
+  sheared ancestor, the same limitation Three has. Two divergences kept:
+  `up` is an argument rather than Three's per-object `up` field (hidden
+  state, a vector on every node), and degenerate frames pick a stable
+  perpendicular instead of Three's epsilon nudge. +z is the library's
+  own sweep axis (extrude/sweep/tube), so aiming their output needs no
+  correction; y-axis solids stay awkward until the quaternion tier
+  brings a shortest-arc rotation (Three's `setFromUnitVectors`, the
+  idiom its users actually reach for there). The root `lookAt` is the
+  scene verb and math's view-matrix `lookAt` moved to the subpath only -
+  the Object3D/Matrix4 split under one name, and the rule the Vec3
+  helpers already follow. Verified numerically: 40k directions
+  round-tripped through `compose()`, both gimbal-lock poles (aiming
+  along +/-x locks this Euler order), up parallel/antiparallel to
+  forward, zero forward, and world-space aim under rotated, uniformly
+  scaled, and three-deep ancestor chains. Demand evidence: an app aiming
+  meshes along polyline segments had to hand-derive the ZYX extraction
+  against compose()'s exact order - the note that "every app that aims
+  anything will write it again, differently, and one of them will get
+  the order wrong and never notice" (citation: report extraction
+  pending, add the [[codename]] when it lands in okf/feedback/).
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -197,10 +226,34 @@ weights yet), entry rebuilds append at the list end.
     further named layouts (tangents, skin weights) when items 7 and 16
     force them; the direction stays a small set of named layouts, not an
     open BufferGeometry-style model.
-11. **Quaternions.** Library. Rotation is Euler x-y-z only; quats unlock
-    slerp, gimbal-free tumbling, and glTF node transforms (glTF stores
-    rotation as a quaternion, so item 7 will force the representation
-    question anyway).
+11. **Rotation: aiming and quaternions.** Library, two tiers with
+    separate gates (item 10's shape: one concern, independent statuses).
+    **Aiming** was the unblocked half and landed 2026-08-11 (see landed):
+    `lookAt(node, target, up?)`, Three's `Object3D.lookAt`.
+    **Quaternions** are now the URGENT half - every scene authored
+    against the current Euler order is a future migration, so the cost
+    grows daily. Rotation is stored as Euler
+    x-y-z, and quats unlock slerp, gimbal-free tumbling, and glTF node
+    transforms (glTF stores rotation as a quaternion, so item 7 will
+    force the representation question anyway). The tiers stay one item
+    because `lookAt` is a node MUTATOR, not a function returning a
+    rotation: it sets whatever the node stores, so its signature survives
+    the Euler-to-quat migration untouched and only its internals
+    (currently a ZYX extraction) get deleted. A lookAt that returned a
+    rotation would have been representation-coupled - do not add one.
+    RIDING ON THIS ITEM, and the reason it is urgent: `compose()` builds
+    `R = Rz*Ry*Rx` and its comment calls that "the common XYZ order",
+    but Three's Euler default `'XYZ'` builds `Rx*Ry*Rz` - our triples
+    are Three's `'ZYX'`. Every `rotation` prop is affected, so a triple
+    copied from a Three scene silently means something else. Fixing the
+    order is breaking for every existing scene with two non-zero
+    rotation axes; settle it WITH the representation change rather than
+    twice.
+    Deliberately NOT in this item: `setTransform(node, { matrix })`. A
+    raw local matrix bypasses `compose()`, so it needs either a lossy
+    decompose or a second matrix-mode node path beside the
+    position/rotation/scale dirty-flag model - its own judgement, and
+    aiming was the demand behind the request.
 12. **Instanced mesh sugar.** Library only; the engine half
     (per-instance attributes) landed 2026-08-04. One draw entry and one
     params write covering N instances is also the standing answer to the
