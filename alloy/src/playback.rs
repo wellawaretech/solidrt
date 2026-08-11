@@ -29,6 +29,7 @@ pub(crate) fn run_playback_loop(
   let width = w_px as usize;
   let height = h_px as usize;
 
+  let mut written: u64 = 0;
   for frame in 0..playback.frames {
     let rgba = match rx.recv() {
       Ok(FrameOutput::Captured(rgba)) => rgba,
@@ -38,6 +39,7 @@ pub(crate) fn run_playback_loop(
     };
     if rgba.len() == width * height * 4 {
       write_png(&playback.output_prefix, frame, width, height, &rgba);
+      written += 1;
     } else {
       // A skipped draw (wrap_fbo failure) sends an empty readback to keep the
       // lockstep alive; drop the frame rather than encode garbage.
@@ -60,7 +62,15 @@ pub(crate) fn run_playback_loop(
     }
   }
 
-  log::info!("[alloy] recording complete ({} frames)", playback.frames);
+  log::info!("[alloy] recording complete ({written} of {} frames)", playback.frames);
+  // An incomplete capture means the app failed to produce some frame (threw
+  // at startup, raster thread died, readbacks failed). Headless callers use
+  // this exit code as a verification gate, so only a full capture reads as
+  // success.
+  if written < playback.frames {
+    log::error!("[alloy] only {written} of {} frames were written", playback.frames);
+    std::process::exit(1);
+  }
   std::process::exit(0);
 }
 

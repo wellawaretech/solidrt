@@ -134,6 +134,13 @@ fn load_adjacent_folder() -> Option<FactoryPayload> {
   Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Dir(dir) })
 }
 
+// Flag mistakes are usage errors: report and exit instead of panicking with a
+// backtrace note. Exit code 2 matches the "no app to run" path below.
+fn usage(msg: &str) -> ! {
+  eprintln!("{msg}");
+  std::process::exit(2);
+}
+
 fn main() {
   // A distribution owns its entire command line (fluxrt parity): when this
   // binary carries a packed payload - embedded trailer or adjacent folder -
@@ -154,7 +161,7 @@ fn main() {
   let mut playback = false;
   let mut script_path: Option<String> = None;
   let mut fps: u32 = 60;
-  let mut duration: u32 = 1;
+  let mut duration: f64 = 1.0;
   let mut size: (u32, u32) = (1280, 720);
   let mut stats = false;
   let mut out: Option<String> = None;
@@ -167,34 +174,45 @@ fn main() {
     if arg == "--playback" {
       playback = true;
     } else if arg == "--data-root" {
-      data_root = Some(args.next().expect("--data-root requires a directory path"));
+      data_root = Some(args.next().unwrap_or_else(|| usage("--data-root requires a directory path")));
     } else if arg == "--client" {
       client = Some(
         args
           .next()
-          .expect("--client requires a number")
+          .unwrap_or_else(|| usage("--client requires a number"))
           .parse()
-          .expect("--client value must be a non-negative integer"),
+          .unwrap_or_else(|_| usage("--client value must be a non-negative integer")),
       );
     } else if arg == "--script" {
-      script_path = Some(args.next().expect("--script requires a file path"));
+      script_path = Some(args.next().unwrap_or_else(|| usage("--script requires a file path")));
     } else if arg == "--stats" {
       stats = true;
     } else if arg == "--out" {
-      out = Some(args.next().expect("--out requires a directory or path prefix"));
+      out = Some(args.next().unwrap_or_else(|| usage("--out requires a directory or path prefix")));
     } else if arg == "--dev-server" {
-      dev_server = Some(args.next().expect("--dev-server requires a value"));
+      dev_server = Some(args.next().unwrap_or_else(|| usage("--dev-server requires a value")));
     } else if arg == "--fps" {
-      fps = args.next().expect("--fps requires a value").parse().expect("--fps value must be a positive integer");
+      fps = args
+        .next()
+        .unwrap_or_else(|| usage("--fps requires a value"))
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| usage("--fps value must be a positive integer"));
     } else if arg == "--duration" {
-      duration =
-        args.next().expect("--duration requires a value").parse().expect("--duration value must be a positive integer");
+      duration = args
+        .next()
+        .unwrap_or_else(|| usage("--duration requires a value"))
+        .parse()
+        .ok()
+        .filter(|d: &f64| d.is_finite() && *d > 0.0)
+        .unwrap_or_else(|| usage("--duration value must be a positive number of seconds"));
     } else if arg == "--size" {
-      let val = args.next().expect("--size requires a value");
-      let (w, h) = val.split_once('x').expect("--size must be in WxH format, e.g. 1920x1080");
+      let val = args.next().unwrap_or_else(|| usage("--size requires a value"));
+      let (w, h) = val.split_once('x').unwrap_or_else(|| usage("--size must be in WxH format, e.g. 1920x1080"));
       size = (
-        w.parse().expect("--size width must be a positive integer"),
-        h.parse().expect("--size height must be a positive integer"),
+        w.parse().unwrap_or_else(|_| usage("--size width must be a positive integer")),
+        h.parse().unwrap_or_else(|_| usage("--size height must be a positive integer")),
       );
     } else {
       // The first non-flag argument is the source path; everything after it
@@ -226,7 +244,9 @@ fn main() {
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,
-      frames: (duration * fps) as u64,
+      // Round to the nearest whole frame; any positive duration renders at
+      // least one.
+      frames: (duration * fps as f64).round().max(1.0) as u64,
       output_prefix: out.map(frame_prefix).unwrap_or_else(|| "frame".to_string()),
       script: script_path.map(load_script).unwrap_or_default(),
     })
