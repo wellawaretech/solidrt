@@ -144,6 +144,43 @@ function needsHeader(source: string): boolean {
   return !source.trimStart().startsWith("#version")
 }
 
+// The scene-background pass (scene.setBackground). The vertex stage is the
+// engine's own attributeless fullscreen triangle (gl_VertexID, no vertex
+// buffer), emitting the SAME vUV the shader-target contract provides: 0..1
+// with origin at the displayed top-left - so a backdrop fragment written
+// for createShaderTexture ports verbatim.
+const BACKGROUND_VERTEX = glsl`
+  out vec2 vUV;
+  void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    vUV = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  }
+`
+
+// Pipeline fragments get no vUV from the engine preamble (a pipeline's
+// varyings are its own), so the background slot injects the full
+// shader-target fragment contract itself: vUV, fragColor, iResolution.
+const BACKGROUND_FRAGMENT_PREAMBLE =
+  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
+
+/** The scene's background pipeline (internal - reached via
+ * scene.setBackground): depth-free, attributeless, drawn as entry zero of
+ * the scene pass. */
+export function backgroundPipeline(fragment: string, label: string): { pipeline: RenderPipelineId; program: ProgramId } {
+  let vs = compileShader("vertex", BACKGROUND_VERTEX, { header: true })
+  let fs = compileShader(
+    "fragment",
+    needsHeader(fragment) ? BACKGROUND_FRAGMENT_PREAMBLE + fragment : fragment,
+    { header: false },
+  )
+  let program = linkProgram(vs, fs, { label })
+  destroyShader(vs)
+  destroyShader(fs)
+  let pipeline = createRenderPipeline(program, { label })
+  return { pipeline, program }
+}
+
 export type ShaderMaterialOptions = {
   /**
    * Vertex stage GLSL. MUST declare and use `uniform mat4 uModel` (the

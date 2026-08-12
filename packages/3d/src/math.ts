@@ -57,6 +57,48 @@ export function transformPoint(out: Vec4, m: Mat4, p: Vec3): Vec4 {
   return out
 }
 
+/**
+ * Transform a DIRECTION by m's upper 3x3 (w = 0: rotation and scale apply,
+ * translation does not). The ray-direction counterpart of transformPoint.
+ */
+export function transformVector(out: Vec3, m: Mat4, v: Vec3): Vec3 {
+  let x = v[0], y = v[1], z = v[2]
+  out[0] = m[0] * x + m[4] * y + m[8] * z
+  out[1] = m[1] * x + m[5] * y + m[9] * z
+  out[2] = m[2] * x + m[6] * y + m[10] * z
+  return out
+}
+
+/**
+ * Invert an AFFINE matrix - a world or local matrix whose bottom row is
+ * 0,0,0,1, NOT a projection: the upper 3x3 inverts by cofactors and the
+ * translation is pulled back through it. Picking's world-to-local step.
+ * `out` may alias `m`. A degenerate (zero-scale) matrix yields the raw
+ * cofactors instead of NaNs, the same policy as normalMatrix.
+ */
+export function invertAffine(out: Mat4, m: Mat4): Mat4 {
+  let a = m[0], b = m[4], c = m[8]
+  let d = m[1], e = m[5], f = m[9]
+  let g = m[2], h = m[6], i = m[10]
+  let tx = m[12], ty = m[13], tz = m[14]
+  let c00 = e * i - f * h
+  let c01 = f * g - d * i
+  let c02 = d * h - e * g
+  let det = a * c00 + b * c01 + c * c02
+  let s = 1 / (det || 1)
+  let r00 = c00 * s, r01 = (c * h - b * i) * s, r02 = (b * f - c * e) * s
+  let r10 = c01 * s, r11 = (a * i - c * g) * s, r12 = (c * d - a * f) * s
+  let r20 = c02 * s, r21 = (b * g - a * h) * s, r22 = (a * e - b * d) * s
+  out[0] = r00; out[1] = r10; out[2] = r20; out[3] = 0
+  out[4] = r01; out[5] = r11; out[6] = r21; out[7] = 0
+  out[8] = r02; out[9] = r12; out[10] = r22; out[11] = 0
+  out[12] = -(r00 * tx + r01 * ty + r02 * tz)
+  out[13] = -(r10 * tx + r11 * ty + r12 * tz)
+  out[14] = -(r20 * tx + r21 * ty + r22 * tz)
+  out[15] = 1
+  return out
+}
+
 /** out = a * b (column vectors: b applies first). out may alias a or b. */
 export function multiply(out: Mat4, a: Mat4, b: Mat4): Mat4 {
   let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3]

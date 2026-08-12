@@ -51,6 +51,16 @@ Three's `Euler` default, and `getRotation(node)` reads one back. The
 verbs: `quatFromAxisAngle`, `quatMultiply`, and `quatSlerp` (smooth
 tracking, damped follows) round out `quatFromTo`; `examples/aim.tsx`
 shows each aiming style live.
+
+Meshes take pointer events like elements do: `onPointerDown/Move/Up/
+Enter/Leave` props on `<Mesh>` and `<Group>`, with bubbling, capture on
+drag, and hover enter/leave pairs - hit testing runs over a BVH the
+scene maintains incrementally, so events put no ceiling on scene size.
+Underneath sit `scene.pick(x, y)` (the camera ray through a pixel,
+`project()`'s inverse) and `scene.raycast(origin, direction)`; hits are
+bounding-box accurate in v1. A scene also takes a `background` - fragment
+GLSL drawn inside its own pass behind the meshes, replacing the stacked
+backdrop-texture pattern.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
 shared `uViewProj`/`uCamPos`, each written once per change - plus your own
 uniforms per mesh, declaratively via the `params` prop on `<Mesh>` or
@@ -67,8 +77,9 @@ mitred joints, flat `shape`, with `fillet`/`roundRect`/`triangulate`
 helpers), a per-vertex data channel
 (`withColors` adds an `aColor` vec4 - tint, baked AO, any four scalars -
 to any geometry, for materials that read it), one perspective camera
-with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit).
-Lights, transparency, model loading and picking are
+with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit),
+mesh picking with pointer events, and scene backgrounds.
+Lights, transparency and model loading are
 staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
 usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:
 [examples/](examples/).

@@ -63,6 +63,35 @@ export type Geometry = {
   label?: string
   _buffer?: BufferId
   _index?: BufferId
+  _bounds?: Float32Array
+}
+
+/**
+ * The geometry's LOCAL axis-aligned bounds as [minX, minY, minZ, maxX,
+ * maxY, maxZ], computed from the vertices on first use and cached (like
+ * the GPU buffers, geometry is treated as immutable after creation).
+ * Picking's narrowphase volume; a flat geometry legitimately has zero
+ * extent on an axis. An empty geometry yields a zero box at the origin.
+ */
+export function geometryBounds(geometry: Geometry): Float32Array {
+  let bounds = geometry._bounds
+  if (bounds === undefined) {
+    bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
+    let v = geometry.vertices
+    let stride = geometry.layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+    for (let i = 0; i + 2 < v.length; i += stride) {
+      let x = v[i]!, y = v[i + 1]!, z = v[i + 2]!
+      if (x < bounds[0]!) bounds[0] = x
+      if (y < bounds[1]!) bounds[1] = y
+      if (z < bounds[2]!) bounds[2] = z
+      if (x > bounds[3]!) bounds[3] = x
+      if (y > bounds[4]!) bounds[4] = y
+      if (z > bounds[5]!) bounds[5] = z
+    }
+    if (bounds[0]! > bounds[3]!) bounds.fill(0)
+    geometry._bounds = bounds
+  }
+  return bounds
 }
 
 /** The geometry's GPU buffers, created on first use and cached on it,

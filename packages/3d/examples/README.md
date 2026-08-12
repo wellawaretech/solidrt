@@ -15,3 +15,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   target: `lookAt` for a +z solid, `quatFromTo` for aiming a y-axis cone,
   and a `quatSlerp` damped follow that visibly lags; all driven from
   onFrame through refs, no per-frame signals.
+- `pick.tsx` - mesh pointer events: hover tints (enter/leave), click
+  pops (down), a Group hearing its children's clicks through bubbling
+  and one mesh stopping the walk; a STATIC scene rendered only when an
+  event changes something, with hit testing over the scene's BVH.
+- `scene-background.tsx` - a fragment-GLSL background drawn inside the
+  scene's own pass (`<Scene background>`): one target, no stacked
+  backdrop texture, no resize plumbing; the source is shader-target
+  compatible verbatim.

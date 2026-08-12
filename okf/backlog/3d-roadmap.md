@@ -189,6 +189,40 @@ Linux. Usage and traps: `packages/3d/AGENTS.md`; runnable examples:
   `compose` takes a quaternion, `eulerFromFrame` is gone (same-day
   addition, never released), and a two-axis `rotation` triple changes
   meaning (none existed).
+- **Picking + mesh pointer events** (2026-08-12, item 4): the element
+  pointer vocabulary one tree deeper - `onPointerDown/Move/Up/Enter/
+  Leave` on nodes and as Mesh/Group props, nearest hit wins, down/move/
+  up bubble mesh -> ancestors with stopPropagation, pointer-down
+  captures until up (the platform's captured-drag rule), enter/leave
+  pair on hover changes. Wired by spreading `scene.handlers` on the
+  element showing the texture (the built-in Scene leaf does it; opt out
+  events={false}); localX arrives in the leaf's LAYOUT frame, so
+  handlers assume leaf layout == target and `handlersFor(layout)` covers
+  the supersampling split - getBoundingBox would double-correct under a
+  viewBox and is deliberately not used. Underneath: `scene.pick(x, y)`
+  (project()'s exact inverse via the camera frame - no matrix inversion
+  in the API) and `scene.raycast(origin, direction)` returning
+  `{ mesh, distance, point }[]` nearest-first. The volume tier: local
+  AABB per geometry (lazy-cached), ray transformed by the world's affine
+  inverse so any transform is exact; no face/uv until a triangle tier.
+  Broadphase is a dynamic fat-AABB BVH (Box2D lineage, flat arrays)
+  maintained by the sync walk's own dirty set - O(changed) upkeep,
+  O(log n) queries, no O(meshes) pointer-move ceiling (user requirement:
+  no hard scale ceiling from events). Verified by a differential rig
+  (checks/pick-check.ts: BVH vs linear oracle through moves/removals,
+  2000 affine-inverse round-trips, slab edge cases) - r3f/Bevy converged
+  on per-object events as the picking API, adopted here over Three's
+  manual-Raycaster-plus-NDC shape.
+- **Scene background** (2026-08-12, item 18): `background` on
+  createScene/Scene + `scene.setBackground(source | null)` - fragment
+  GLSL drawn as the FIRST entry of the scene's own pass (attributeless
+  gl_VertexID fullscreen triangle, depth off, pinned via addDraw
+  `before`), replacing the second-target-plus-stacked-leaf backdrop
+  pattern and its resize plumbing. The source gets the shader-target
+  fragment contract verbatim (vUV top-left, iResolution, fragColor);
+  Three's background-color form maps to clearColor; the texture-id form
+  is a reserved non-breaking widening. Translucent-ground fade-over-
+  backdrop still needs two layers until item 6's blend factors.
 - **Materials**: `unlit({ color?, map? })`, and `shaderMaterial` - user
   GLSL as a first-class material (uMVP contract, params/textures,
   depth/blend/cull/topology options).
@@ -234,18 +268,21 @@ weights yet), entry rebuilds append at the list end.
    updates as the subtree repaints - the load-bearing piece of the
    one-tree differentiator (real UI on 3D geometry), and the capability
    the browser architecturally forbids.
-4. **Picking.** Library only, no backlog file (staged in scene-graph-3d,
-   deliberately deferred past v1). Raycast against bounding volumes,
-   driven from the `<texture>` element's pointer events (localX/localY
-   arrive with ancestor transforms undone). Three's Raycaster equivalent,
-   and the interaction half of item 3. The forward direction landed
-   2026-08-07 (`scene.project`, see landed); what remains is the inverse:
-   pixel to ray to hit.
+4. **Picking.** DONE 2026-08-12 at the volume tier (see landed): mesh
+   pointer events over `scene.pick`/`scene.raycast`, BVH broadphase
+   maintained from the sync walk. Library only, as staged. Still
+   demand-gated within the item: the triangle-accurate tier (`face`/`uv`
+   on hits, correct concave silhouettes) - per the differentiators
+   ladder that is CORE work (per-triangle rays in JS are
+   interpreter-hostile), and it should ride the scene-walk descent
+   (item 19) rather than grow a JS implementation. Routing events into
+   a UI subtree mapped onto a mesh stays with item 3.
 5. **Lights and lit materials (lambert/phong).** Engine:
-   [gpu-uniform-arrays](gpu-uniform-arrays.md) [open] - light lists
-   without baking a cap into shader source (the agreed answer; the
-   fixed-scalar workaround was rejected in scene-graph-3d). Library: light
-   scene nodes plus material classes built per item 2's policy.
+   [gpu-uniform-arrays](gpu-uniform-arrays.md) [done 2026-08-11] - light
+   lists without baking a cap into shader source (the agreed answer; the
+   fixed-scalar workaround was rejected in scene-graph-3d). What remains
+   is library-only: light scene nodes plus material classes built per
+   item 2's policy.
 6. **Transparency.** Engine: the blend factor vocabulary,
    [gpu-pipeline-blend-modes](gpu-pipeline-blend-modes.md) [deferred] -
    the old "sorting plus premultiplied" blocker inverted once the library
@@ -325,7 +362,17 @@ weights yet), entry rebuilds append at the list end.
 17. **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel
     contract currently answers with "non-linear RGBA8 everywhere".
-18. **Scene scale.** Frustum culling in the library when a consumer
+18. **Scene background.** DONE 2026-08-12 (see landed): `background`
+    opt/prop + `scene.setBackground`, fragment-GLSL form with the
+    shader-target contract, drawn depth-off as the pass's first entry.
+    Deferred within the item: the texture-id form (a reserved
+    non-breaking union widening - decide fit semantics when a consumer
+    arrives), and the boundary with item 14 stands - a camera-linked
+    background (skybox) is the cube-map case, this was the screen-space
+    one. Note for the proving-ground demo: its ground FADES over the
+    backdrop, which needs item 6's blend factors before the two layers
+    can merge.
+19. **Scene scale.** Frustum culling in the library when a consumer
     needs it (scenes under a few thousand nodes will not), and the
     recorded escape hatch behind everything above: the draw-list design
     deliberately allows the scene walk to move into core without an

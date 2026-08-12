@@ -49,9 +49,9 @@ blendMode and pointer events like any element. Design rationale:
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `label?`, `ref?(scene)`, `output?(texture)` |
-| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, `ref?(node)` |
-| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `ref?(mesh)` |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
 Output composition: without `output`, `Scene` emits a minimal
@@ -101,6 +101,40 @@ at or behind the camera plane. It reflects a pending `setCamera`
 immediately, so set-then-project in one tick is exact. `scene.viewProj(out?)`
 copies the view-projection matrix for batch work. Never rebuild the
 camera matrices by hand for a HUD.
+
+Picking: `scene.pick(x, y)` is project()'s inverse - the camera ray
+through a scene pixel, returning `Hit[]` (`{ mesh, distance, point }`,
+world units, nearest first; every hit along the ray, not just the front
+one). `scene.raycast(origin, direction)` is the world-space primitive
+under it. The volume tier: hits test each mesh's local bounding box,
+transformed exactly under any node transform (non-uniform scale
+included), so results are conservative - a ray through a knot's hole
+still hits (no `face`/`uv` fields until a triangle tier exists).
+Broadphase is a dynamic AABB tree (BVH) the sync walk keeps current from
+its own dirty set - maintenance is O(changed), a query O(log meshes) -
+so per-pointer-move picking puts no ceiling on scene size. Both methods
+flush pending writes first (the lookAt/project immediacy contract), and
+both skip invisible meshes.
+
+Mesh pointer events - the element vocabulary one tree deeper:
+`onPointerDown/Move/Up/Enter/Leave` as plain fields on any node (and as
+Mesh/Group props). The nearest hit mesh is the target; down/move/up
+bubble mesh -> ancestor groups (`stopPropagation()` stops the walk);
+enter/leave fire on the mesh alone, pairing on hover changes. A
+pointer-down CAPTURES its mesh until the up: moves and the up keep
+dispatching to it off-mesh (the platform's captured-drag rule), with
+`point`/`distance` null while the ray misses it. The event carries the
+element fields (pointerId, pointerType, button, modifiers) plus `mesh`,
+`currentTarget`, `point`, `distance`, and `x`/`y` in scene pixels.
+Wiring: the built-in `<Scene>` leaf carries `scene.handlers`
+automatically (opt out: `events={false}`); an `output` leaf or
+imperative composition spreads `{...scene.handlers}` onto the element
+showing the texture. `scene.handlers` assumes that leaf is LAID OUT at
+the target size - true for the built-in leaf and a d-texture at natural
+size, under any ancestor transforms or viewBox fits (the hit test
+undoes them; localX/localY arrive in the leaf's layout frame). A leaf
+laid out at a different size (the supersampling pattern) uses
+`scene.handlersFor(() => ({ width, height }))` with its layout size.
 
 Geometry: `box(w?, h?, d?)`; `plane(w?, h?)`, `circle(radius?, seg?)` and
 `ring(inner?, outer?, seg?)` (XY, facing +z - rotate `[-Math.PI/2, 0, 0]`
@@ -174,6 +208,21 @@ Materials:
   with the `Mesh` `params` prop (same merge semantics - a key that
   disappears from the object keeps its old value; for per-frame values
   prefer `ref` + setMeshParams from onFrame, the setTransform split).
+
+Background: `scene.setBackground(source | null)`, the `background` option
+on createScene, and the reactive `Scene` prop. Fragment GLSL drawn as the
+FIRST entry of the scene's own pass (attributeless fullscreen triangle,
+depth off) - one target instead of a backdrop texture stacked under the
+scene, with no separate resize plumbing. The source gets the
+shader-target fragment contract exactly (vUV 0..1 top-left origin,
+iResolution, fragColor; no `#version` line = the standard preamble), so
+a `createShaderTexture` backdrop ports verbatim. Three's
+`scene.background = color` is `clearColor` here; a texture-id form can
+widen the signature later (a branded TextureId is a number, so
+`string | TextureId` disambiguates at runtime). No app-driven uniforms:
+a background is static art - anything animated is a mesh's own
+shaderMaterial (or, until blend factors land, a separate shader texture
+underneath, which translucent grounds also still need).
 
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
@@ -307,3 +356,33 @@ system.
   vertex source - a comment counts - selects the "colored" layout, and
   the material then rejects standard geometry at add(). Do not mention
   aColor you do not read.
+- Picking is the VOLUME tier: a hit means the ray crossed the mesh's
+  transformed bounding box, not its surface. Never present `point` as a
+  surface point (it is the box-entry point), and never add a
+  triangle-accurate path in JS - per-triangle rays at mesh scale are
+  interpreter-hostile; that tier is core work (BVH descent per the
+  differentiators ladder).
+- `scene.handlers` vs `handlersFor`: localX/localY arrive in the leaf's
+  LAYOUT frame (every ancestor transform and viewBox fit is already
+  undone by the element hit test). `handlers` therefore assumes leaf
+  layout == target pixels; scaling by `getBoundingBox` would be WRONG -
+  the box composes transforms, and it would double-correct the built-in
+  leaf under a viewBox. Only a leaf whose layout size deliberately
+  differs from the target (supersampling) needs `handlersFor`, fed the
+  layout size the app itself set.
+- Hover (enter/leave) reacts to pointer MOTION only: a mesh animating
+  under a still pointer fires nothing until the next move - the same
+  limit the element hit test has (hit-test-per-frame is an open platform
+  item). Do not poll pick() per frame to fake it.
+- Geometry local bounds cache on the Geometry (like its GPU buffers):
+  geometry is immutable after creation. Mutating `vertices` after a mesh
+  used them leaves stale bounds AND a stale GPU buffer - make a new
+  Geometry instead.
+- The background covers the whole target with depth off, drawn first: it
+  REPLACES the clearColor visually (the clear still runs; you just never
+  see it), and a translucent mesh does not blend over it in-pass (blend
+  is none|add today - the fade-over-backdrop look still needs the
+  two-layer composition until blend factors land).
+- The background pipeline/program are SCENE-OWNED (unlike shared
+  material pipelines): setBackground(null), replacement, and dispose()
+  destroy them. Do not hand the background's pipeline to anything else.

@@ -17,16 +17,19 @@
 // each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { DrawId, FilterMode, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
+import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
+import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quatFromEuler, quatFromFrame, quatNormalize, transformPoint } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quatFromEuler, quatFromFrame, quatNormalize, transformPoint, transformVector } from "./math.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
-import { geometryBuffers } from "./geometry.ts"
+import { geometryBounds, geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
+import { backgroundPipeline } from "./material.ts"
 import type { Material } from "./material.ts"
+import { createBvh, rayBoxDistance } from "./bvh.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
@@ -43,6 +46,11 @@ let localScratch = mat4()
 let pointScratch: Vec4 = [0, 0, 0, 0]
 let aimScratch: Vec3 = [0, 0, 0]
 let upScratch: Vec3 = [0, 0, 0]
+// Picking narrowphase scratch: one candidate is tested at a time, so one
+// set serves every raycast.
+let pickInv = mat4()
+let pickOrigin: Vec4 = [0, 0, 0, 0]
+let pickDir: Vec3 = [0, 0, 0]
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
@@ -68,6 +76,17 @@ export type SceneNode = {
   quaternion: Quat
   scale: Vec3
   visible: boolean
+  /** Pointer event handlers - plain fields, assign freely (they touch no
+   * GPU state, so they need no setTransform-style write path; components
+   * sync their props here). Down/move/up dispatch on the hit mesh and
+   * bubble through its ancestors (stopPropagation stops the walk);
+   * enter/leave fire on the mesh alone. Events flow once the element
+   * showing the scene carries `scene.handlers`. */
+  onPointerDown?: (event: ScenePointerEvent) => void
+  onPointerMove?: (event: ScenePointerEvent) => void
+  onPointerUp?: (event: ScenePointerEvent) => void
+  onPointerEnter?: (event: ScenePointerEvent) => void
+  onPointerLeave?: (event: ScenePointerEvent) => void
   _localDirty: boolean
   _local: Mat4
   _world: Mat4
@@ -82,6 +101,57 @@ export type Mesh = SceneNode & {
   _hidden: boolean
   _fresh: boolean
   _params: ShaderParams | null
+  _pickLeaf: number | null
+}
+
+/** One picking intersection: the mesh, the camera-ray distance in world
+ * units, and the world-space point - Three's intersect result minus the
+ * triangle fields (`face`, `uv`), which cannot exist at the volume tier. */
+export type Hit = {
+  mesh: Mesh
+  distance: number
+  point: Vec3
+}
+
+/**
+ * The event a mesh (or ancestor group) handler receives: the element
+ * pointer vocabulary carried over, plus the 3D fields. `point`/`distance`
+ * are null exactly when the ray misses the dispatch mesh - which happens
+ * only during a captured drag or on a leave.
+ */
+export type ScenePointerEvent = {
+  /** The mesh the event is about (the hit, or the captured mesh during a
+   * drag) - constant while the event bubbles. */
+  mesh: Mesh
+  /** Node whose handler is running; changes as the event bubbles. */
+  currentTarget: SceneNode
+  /** World-space hit point on `mesh`, or null when the ray misses it. */
+  point: Vec3 | null
+  /** Camera-ray distance to `point` in world units, or null with it. */
+  distance: number | null
+  /** Pointer position in scene pixels - project()'s coordinate space. */
+  x: number
+  y: number
+  pointerId: number
+  pointerType: string
+  button?: number
+  shiftKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  metaKey: boolean
+  /** Stops the bubble walk after the current handler. */
+  stopPropagation(): void
+}
+
+/** Element handlers wiring a scene's pointer events: spread onto whatever
+ * element shows `scene.texture` (the built-in `<Scene>` leaf wires them
+ * automatically). `scene.handlers` expects the leaf laid out at the target
+ * size; a split-resolution leaf (supersampling) uses scene.handlersFor. */
+export type SceneHandlers = {
+  onPointerDown(event: ElementPointerEvent): void
+  onPointerMove(event: ElementPointerEvent): void
+  onPointerUp(event: ElementPointerEvent): void
+  onPointerLeave(event: ElementPointerEvent): void
 }
 
 export type CameraUpdate = {
@@ -96,6 +166,9 @@ export type CameraUpdate = {
 
 export type SceneOptions = {
   clearColor?: [number, number, number, number]
+  /** Fragment GLSL drawn behind the meshes, inside the scene's own pass -
+   * see setBackground. */
+  background?: string
   label?: string
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
@@ -112,6 +185,20 @@ export type Scene = {
   setCamera(update: CameraUpdate): void
   setSize(width: number, height: number): void
   /**
+   * Set, replace, or remove (null) the scene's background: fragment GLSL
+   * drawn as the FIRST entry of the scene's own pass - one target, no
+   * second texture layer, no separate resize plumbing. The fragment gets
+   * the shader-target contract exactly (vUV 0..1 top-left origin,
+   * iResolution, fragColor; no `#version` line means the standard
+   * preamble), so a source written for createShaderTexture ports verbatim.
+   * It draws with depth off before every mesh and covers the whole target,
+   * so the clearColor stops being visible. Three's `scene.background =
+   * color` is `clearColor` here; the texture form can arrive later as a
+   * non-breaking widening. No app-driven uniforms in v1 - a background is
+   * static art (anything animated is a mesh's own shaderMaterial).
+   */
+  setBackground(source: string | null): void
+  /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
    * markers, labels). `w` is the clip-space w, the point's camera-forward
@@ -123,6 +210,45 @@ export type Scene = {
   /** The camera's view-projection matrix, copied into `out` (or a fresh
    * mat4). The batch escape hatch; for single points use project(). */
   viewProj(out?: Mat4): Mat4
+  /**
+   * Cast the camera ray through a scene pixel (top-left origin, y down -
+   * project()'s space, the inverse direction) and return every visible
+   * mesh it hits, nearest first. The volume tier: hits test the mesh's
+   * bounding box, transformed exactly (any node transform, including
+   * non-uniform scale), so a hit through a concave gap - a knot's hole -
+   * still reports. Broadphase runs over a BVH kept in step by the sync
+   * walk: a query costs O(log meshes), not O(meshes). Reflects pending
+   * setTransform/add writes immediately (the sync is flushed).
+   */
+  pick(x: number, y: number): Hit[]
+  /** pick()'s world-space half: the same query along an arbitrary ray.
+   * `direction` need not be normalized; distances are world units. */
+  raycast(origin: Vec3, direction: Vec3): Hit[]
+  /**
+   * Element pointer handlers driving the mesh event fields
+   * (onPointerDown/Move/Up/Enter/Leave on nodes): spread onto the element
+   * that shows `scene.texture`. The `<Scene>` component's built-in leaf
+   * carries them automatically; with `output` (or imperative use), spread
+   * them yourself: `<texture src={scene.texture} {...scene.handlers} />`.
+   * Semantics mirror element pointer events: nearest hit wins, down/move/
+   * up bubble mesh -> ancestors, pointer-down captures the mesh until up
+   * (moves keep flowing to it off-mesh, the platform's captured-drag
+   * rule), enter/leave pair on hover changes. Hover reacts to pointer
+   * MOTION - a mesh animating under a still pointer fires nothing until
+   * the pointer moves (the element hit-test has the same limit).
+   *
+   * Coordinates assume the leaf is LAID OUT at the target size - true for
+   * the built-in leaf and a d-texture at natural size, under any ancestor
+   * transforms or viewBox fits (the hit test undoes them). A leaf laid out
+   * at a different size needs handlersFor instead.
+   */
+  handlers: SceneHandlers
+  /** handlers for a leaf whose LAYOUT size differs from the target size -
+   * the supersampling pattern, where the target renders larger than the
+   * box showing it. `layout` is read per event, so a resize-reactive
+   * layout just works: `scene.handlersFor(() => ({ width: w(), height:
+   * h() }))`. */
+  handlersFor(layout: () => { width: number; height: number }): SceneHandlers
   /** Destroy the target (entries die with it). Idempotent. Geometry
    * buffers and material pipelines are shared and survive - they are
    * app-lifetime (see geometry.ts / material.ts). */
@@ -157,6 +283,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._hidden = false
   mesh._fresh = false
   mesh._params = null
+  mesh._pickLeaf = null
   return mesh
 }
 
@@ -411,6 +538,44 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let disposed = false
   let scheduled = false
 
+  // Picking state: the broadphase tree over world boxes, kept current by
+  // the sync walk (the meshes it touches are exactly the leaves to move),
+  // and the pointer bookkeeping behind scene.handlers.
+  let bvh = createBvh<Mesh>()
+  let capture = new Map<number, Mesh>()
+  let hover = new Map<number, Mesh>()
+
+  // Live mesh entries in list (draw) order, so a background set after
+  // meshes exist can insert BEFORE the first one. Mesh entries append;
+  // rebuilds re-append; the background entry never joins this list.
+  let entryOrder: DrawId[] = []
+  let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId } | null = null
+
+  // Reinsert or refit a mesh's broadphase leaf from its fresh world matrix:
+  // the local box's center/extents carried through the absolute matrix (the
+  // standard tight-AABB-of-a-transformed-AABB construction).
+  let updateLeaf = (mesh: Mesh): void => {
+    let b = geometryBounds(mesh.geometry)
+    let m = mesh._world
+    let cx = (b[0]! + b[3]!) / 2
+    let cy = (b[1]! + b[4]!) / 2
+    let cz = (b[2]! + b[5]!) / 2
+    let ex = (b[3]! - b[0]!) / 2
+    let ey = (b[4]! - b[1]!) / 2
+    let ez = (b[5]! - b[2]!) / 2
+    let wx = m[0] * cx + m[4] * cy + m[8] * cz + m[12]
+    let wy = m[1] * cx + m[5] * cy + m[9] * cz + m[13]
+    let wz = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
+    let rx = Math.abs(m[0]) * ex + Math.abs(m[4]) * ey + Math.abs(m[8]) * ez
+    let ry = Math.abs(m[1]) * ex + Math.abs(m[5]) * ey + Math.abs(m[9]) * ez
+    let rz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez
+    if (mesh._pickLeaf === null) {
+      mesh._pickLeaf = bvh.insert(mesh, wx - rx, wy - ry, wz - rz, wx + rx, wy + ry, wz + rz)
+    } else {
+      bvh.update(mesh._pickLeaf, wx - rx, wy - ry, wz - rz, wx + rx, wy + ry, wz + rz)
+    }
+  }
+
   let fov = 60
   let near = 0.1
   let far = 100
@@ -481,6 +646,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             // Moved while hidden: write the fresh matrix on unhide.
             mesh._fresh = true
           }
+          // The broadphase leaf follows the world matrix - hidden meshes
+          // included (they stay in the tree and are skipped at query time,
+          // so unhiding never picks against a stale box).
+          if (changed || mesh._pickLeaf === null) updateLeaf(mesh)
         }
       }
       for (let c of node.children) walk(c, changed, shown)
@@ -526,13 +695,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         textures: mesh.material.textures,
         instanceCount: 0,
       })
+      entryOrder.push(mesh._entry)
       mesh._hidden = true
       mesh._fresh = true
       this._schedule()
     },
     _detach(mesh) {
-      if (mesh._entry !== null && !disposed) removeDraw(texture, mesh._entry)
+      if (mesh._entry !== null) {
+        if (!disposed) removeDraw(texture, mesh._entry)
+        let i = entryOrder.indexOf(mesh._entry)
+        if (i >= 0) entryOrder.splice(i, 1)
+      }
       mesh._entry = null
+      // The leaf goes with the entry: a geometry swap rebuilds the entry,
+      // and re-inserting is what picks up the new local bounds.
+      if (mesh._pickLeaf !== null) {
+        bvh.remove(mesh._pickLeaf)
+        mesh._pickLeaf = null
+      }
     },
     _setParams(mesh, params) {
       if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
@@ -541,6 +721,127 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
 
   let root = makeNode("group")
   root._scene = hooks
+
+  // --- Pointer event dispatch (behind scene.handlers) ---
+
+  type BubbleName = "onPointerDown" | "onPointerMove" | "onPointerUp"
+  type InternalEvent = ScenePointerEvent & { _stopped: boolean }
+
+  let makeEvent = (e: ElementPointerEvent, mesh: Mesh, x: number, y: number, point: Vec3 | null, distance: number | null): InternalEvent => {
+    let event: InternalEvent = {
+      mesh,
+      currentTarget: mesh,
+      point,
+      distance,
+      x,
+      y,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      button: e.button,
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      _stopped: false,
+      stopPropagation() {
+        event._stopped = true
+      },
+    }
+    return event
+  }
+
+  let bubble = (name: BubbleName, event: InternalEvent): void => {
+    for (let n: SceneNode | null = event.mesh; n !== null && !event._stopped; n = n.parent) {
+      let handler = n[name]
+      if (handler) {
+        event.currentTarget = n
+        handler(event)
+      }
+    }
+  }
+
+  // The captured mesh's own hit, if the ray still strikes it.
+  let hitOn = (mesh: Mesh, x: number, y: number): Hit | null => {
+    for (let h of scene.pick(x, y)) if (h.mesh === mesh) return h
+    return null
+  }
+
+  // localX/localY arrive in the leaf's LAYOUT frame (the hit test undoes
+  // every transform above it, viewBox fits included), so a leaf laid out at
+  // the target size - the built-in <Scene> leaf, a d-texture at natural
+  // size - is already in scene pixels. Only a leaf deliberately laid out at
+  // a DIFFERENT size (the supersampling pattern) needs the ratio, and only
+  // the app knows that layout: handlersFor takes it.
+  let makeHandlers = (layout: (() => { width: number; height: number }) | null): SceneHandlers => {
+    let eventX = 0
+    let eventY = 0
+    let toScene = (e: ElementPointerEvent): void => {
+      if (layout === null) {
+        eventX = e.localX
+        eventY = e.localY
+        return
+      }
+      let l = layout()
+      eventX = e.localX * (l.width > 0 ? width / l.width : 1)
+      eventY = e.localY * (l.height > 0 ? height / l.height : 1)
+    }
+    return {
+      onPointerDown(e) {
+        toScene(e)
+        let hit = scene.pick(eventX, eventY)[0]
+        if (hit === undefined) return
+        capture.set(e.pointerId, hit.mesh)
+        bubble("onPointerDown", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
+      },
+      onPointerMove(e) {
+        toScene(e)
+        let captured = capture.get(e.pointerId)
+        if (captured !== undefined) {
+          let hit = hitOn(captured, eventX, eventY)
+          bubble("onPointerMove", makeEvent(e, captured, eventX, eventY, hit ? hit.point : null, hit ? hit.distance : null))
+          return
+        }
+        let hit = scene.pick(eventX, eventY)[0]
+        let prev = hover.get(e.pointerId)
+        if (prev !== hit?.mesh) {
+          if (prev !== undefined) {
+            hover.delete(e.pointerId)
+            prev.onPointerLeave?.(makeEvent(e, prev, eventX, eventY, null, null))
+          }
+          if (hit !== undefined) {
+            hover.set(e.pointerId, hit.mesh)
+            hit.mesh.onPointerEnter?.(makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
+          }
+        }
+        if (hit !== undefined) {
+          bubble("onPointerMove", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
+        }
+      },
+      onPointerUp(e) {
+        toScene(e)
+        let captured = capture.get(e.pointerId)
+        if (captured !== undefined) {
+          capture.delete(e.pointerId)
+          let hit = hitOn(captured, eventX, eventY)
+          bubble("onPointerUp", makeEvent(e, captured, eventX, eventY, hit ? hit.point : null, hit ? hit.distance : null))
+          return
+        }
+        let hit = scene.pick(eventX, eventY)[0]
+        if (hit !== undefined) {
+          bubble("onPointerUp", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
+        }
+      },
+      onPointerLeave(e) {
+        let prev = hover.get(e.pointerId)
+        if (prev !== undefined) {
+          hover.delete(e.pointerId)
+          toScene(e)
+          prev.onPointerLeave?.(makeEvent(e, prev, eventX, eventY, null, null))
+        }
+      },
+    }
+  }
+  let handlers = makeHandlers(null)
 
   let scene: Scene = {
     texture,
@@ -563,6 +864,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       cameraDirty = true
       hooks._schedule()
     },
+    setBackground(source) {
+      if (disposed) return
+      if (background !== null) {
+        removeDraw(texture, background.entry)
+        destroyRenderPipeline(background.pipeline)
+        destroyProgram(background.program)
+        background = null
+      }
+      if (source === null) return
+      let built = backgroundPipeline(source, (opts?.label ?? "scene") + "-background")
+      // First in list order: meshes append behind it forever (rebuilds
+      // re-append too), so pinning happens once, here.
+      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: entryOrder[0] })
+      background = { entry, pipeline: built.pipeline, program: built.program }
+    },
     project(point) {
       ensureCamera()
       transformPoint(clip, viewProj, point)
@@ -576,12 +892,79 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ensureCamera()
       return copy(out ?? mat4(), viewProj)
     },
+    pick(x, y) {
+      ensureCamera()
+      // The camera-frame ray through the pixel, inverting project()'s
+      // mapping: the baked y-down clip flip is why pixel y converts with
+      // no negation there and one here.
+      let f = 1 / Math.tan(((fov * Math.PI) / 180) / 2)
+      let cx = (((x / width) * 2 - 1) * (width / height)) / f
+      let cy = -((y / height) * 2 - 1) / f
+      // The view's upper 3x3 rows are the camera axes, so its transpose
+      // carries the camera-space direction (cx, cy, -1) to world.
+      pickDir[0] = cx * view[0] + cy * view[1] - view[2]
+      pickDir[1] = cx * view[4] + cy * view[5] - view[6]
+      pickDir[2] = cx * view[8] + cy * view[9] - view[10]
+      return scene.raycast(eye, pickDir)
+    },
+    raycast(origin, direction) {
+      // Flush pending writes: picking sees the tree as the app just wrote
+      // it, the same immediacy contract as lookAt()/project(). (The queued
+      // microtask still runs and finds nothing dirty - harmless.)
+      if (scheduled) sync()
+      let dx = direction[0]
+      let dy = direction[1]
+      let dz = direction[2]
+      let len = Math.hypot(dx, dy, dz)
+      if (len === 0 || disposed) return []
+      dx /= len
+      dy /= len
+      dz /= len
+      let ox = origin[0]
+      let oy = origin[1]
+      let oz = origin[2]
+      let hits: Hit[] = []
+      bvh.raycast(ox, oy, oz, dx, dy, dz, mesh => {
+        if (mesh._hidden || mesh._entry === null) return
+        // Narrowphase: the ray in the mesh's local frame against its tight
+        // local box - exact under any affine world transform. The local
+        // direction stays unnormalized on purpose: an affine map preserves
+        // the ray parameter, so t is world units as-is.
+        invertAffine(pickInv, mesh._world)
+        transformPoint(pickOrigin, pickInv, origin)
+        pickDir[0] = dx
+        pickDir[1] = dy
+        pickDir[2] = dz
+        transformVector(pickDir, pickInv, pickDir)
+        let b = geometryBounds(mesh.geometry)
+        let t = rayBoxDistance(
+          pickOrigin[0], pickOrigin[1], pickOrigin[2],
+          pickDir[0], pickDir[1], pickDir[2],
+          b[0]!, b[1]!, b[2]!, b[3]!, b[4]!, b[5]!,
+        )
+        if (t >= 0) hits.push({ mesh, distance: t, point: [ox + dx * t, oy + dy * t, oz + dz * t] })
+      })
+      hits.sort((a, b) => a.distance - b.distance)
+      return hits
+    },
+    handlers,
+    handlersFor(layout) {
+      return makeHandlers(layout)
+    },
     dispose() {
       if (disposed) return
       disposed = true
       destroyTexture(texture)
+      if (background !== null) {
+        // The entry died with the target; the pipeline and program are the
+        // scene's own (unlike shared material pipelines), so they go too.
+        destroyRenderPipeline(background.pipeline)
+        destroyProgram(background.program)
+        background = null
+      }
     },
   }
+  if (opts?.background !== undefined) scene.setBackground(opts.background)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())
   return scene
 }

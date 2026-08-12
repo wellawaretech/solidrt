@@ -6,7 +6,7 @@
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
 export { add, createGroup, createMesh, createScene, getRotation, lookAt, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible, worldPosition } from "./scene.ts"
-export type { CameraUpdate, Mesh as MeshNode, Scene as SceneHandle, SceneNode, SceneOptions, TransformUpdate } from "./scene.ts"
+export type { CameraUpdate, Hit, Mesh as MeshNode, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
 export { box, circle, cone, cylinder, disposeGeometry, fillColors, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"
 export { fillet, roundRect, shape, triangulate } from "./profile.ts"
@@ -16,7 +16,7 @@ export type { PathFrames, PathPoint, SweepPath } from "./sweep.ts"
 export { shaderMaterial, unlit } from "./material.ts"
 export type { Material, ShaderMaterialOptions, UnlitOptions } from "./material.ts"
 export { Group, Mesh, PerspectiveCamera, Scene, useScene } from "./components.tsx"
-export type { MeshProps, PerspectiveCameraProps, SceneProps, TransformProps } from "./components.tsx"
+export type { MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, TransformProps } from "./components.tsx"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the

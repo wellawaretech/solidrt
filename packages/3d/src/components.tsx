@@ -21,7 +21,7 @@ import {
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { Mesh as MeshNode, Scene as SceneHandle, SceneNode } from "./scene.ts"
+import type { Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -48,12 +48,39 @@ export type TransformProps = {
   visible?: boolean
 }
 
-function syncNode(node: SceneNode, props: TransformProps): void {
+/**
+ * Mesh pointer events, the element vocabulary one tree deeper: the nearest
+ * hit mesh receives the event, down/move/up bubble to ancestor Groups
+ * (stopPropagation stops the walk), enter/leave pair on the mesh alone.
+ * Events flow while the element showing the scene carries scene.handlers -
+ * the built-in <Scene> leaf does (opt out with events={false}); an `output`
+ * leaf spreads them itself.
+ */
+export type PointerEventProps = {
+  onPointerDown?: (event: ScenePointerEvent) => void
+  onPointerMove?: (event: ScenePointerEvent) => void
+  onPointerUp?: (event: ScenePointerEvent) => void
+  /** Meshes only: a Group never receives enter/leave. */
+  onPointerEnter?: (event: ScenePointerEvent) => void
+  onPointerLeave?: (event: ScenePointerEvent) => void
+}
+
+function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): void {
   createEffect(
     () => [props.position, props.rotation, props.quaternion, props.scale, props.visible] as const,
     ([position, rotation, quaternion, scale, visible]) => {
       setTransform(node, { position, rotation, quaternion, scale })
       setVisible(node, visible !== false)
+    },
+  )
+  createEffect(
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave] as const,
+    ([down, move, up, enter, leave]) => {
+      node.onPointerDown = down
+      node.onPointerMove = move
+      node.onPointerUp = up
+      node.onPointerEnter = enter
+      node.onPointerLeave = leave
     },
   )
 }
@@ -64,6 +91,12 @@ export type SceneProps = {
   width: number
   height: number
   clearColor?: [number, number, number, number]
+  /** Fragment GLSL drawn behind the meshes, inside the scene's own pass
+   * (scene.setBackground): vUV/iResolution/fragColor contract, so a
+   * createShaderTexture backdrop ports verbatim. Reactive - swapping the
+   * source replaces the background; undefined removes it. Three's
+   * `scene.background = color` is `clearColor` here. */
+  background?: string
   label?: string
   ref?: (scene: SceneHandle) => void
   /**
@@ -72,8 +105,16 @@ export type SceneProps = {
    * leaf - a `<d-texture>`, a leaf carrying paint/pointer/layout props, or
    * a post-effect chain (a shader target sampling the id; created in the
    * callback it disposes with the Scene). Return null to render no leaf.
+   * Mesh pointer events then need the scene's handlers on your leaf:
+   * `<texture src={texture} {...useScene().scene.handlers} />`.
    */
   output?: (texture: TextureId) => Element
+  /**
+   * Mesh pointer events (default on): the built-in leaf carries
+   * scene.handlers, so Mesh/Group onPointer* props receive events. `false`
+   * detaches them - the leaf then costs no pointer routing at all.
+   */
+  events?: boolean
 }
 
 /**
@@ -91,14 +132,27 @@ export let Scene: ParentComponent<SceneProps> = props => {
     () => [props.width, props.height] as const,
     ([w, h]) => scene.setSize(w, h),
   )
+  createEffect(
+    () => props.background,
+    b => scene.setBackground(b ?? null),
+  )
   untrack(() => props.ref)?.(scene)
   let output = untrack(() => props.output)
+  let events = untrack(() => props.events) !== false
   return (
     <SceneContext value={{ scene, parent: scene.root }}>
       {output ? (
         untrack(() => output(scene.texture))
       ) : (
-        <texture src={scene.texture} width={props.width} height={props.height} />
+        <texture
+          src={scene.texture}
+          width={props.width}
+          height={props.height}
+          onPointerDown={events ? scene.handlers.onPointerDown : undefined}
+          onPointerMove={events ? scene.handlers.onPointerMove : undefined}
+          onPointerUp={events ? scene.handlers.onPointerUp : undefined}
+          onPointerLeave={events ? scene.handlers.onPointerLeave : undefined}
+        />
       )}
       {props.children}
     </SceneContext>
@@ -106,7 +160,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
 }
 
 /** A transform node: children inherit its position/rotation/scale. */
-export let Group: ParentComponent<TransformProps & { ref?: (node: SceneNode) => void }> = props => {
+export let Group: ParentComponent<TransformProps & PointerEventProps & { ref?: (node: SceneNode) => void }> = props => {
   let ctx = useContext(SceneContext)
   let node = createGroup()
   add(ctx.parent, node)
@@ -116,7 +170,7 @@ export let Group: ParentComponent<TransformProps & { ref?: (node: SceneNode) => 
   return <SceneContext value={{ scene: ctx.scene, parent: node }}>{props.children}</SceneContext>
 }
 
-export type MeshProps = TransformProps & {
+export type MeshProps = TransformProps & PointerEventProps & {
   geometry: Geometry
   material: Material
   /** Per-mesh uniforms for a custom material (setMeshParams as a prop).
