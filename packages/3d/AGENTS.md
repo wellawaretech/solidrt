@@ -197,7 +197,10 @@ system.
   and show mesh interiors.
 - `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
   cheap off switch). Hidden meshes skip uModel writes; the fresh matrix is
-  written on unhide.
+  written on unhide. A freshly attached entry starts off the same way and
+  sync() turns it on when it writes uModel - never add one live: it has no
+  world matrix yet, and drawn before the sync microtask it flashes at the
+  world origin for a frame.
 - Alpha does not blend in v1: pipelines are opaque (`blend: "none"`), a
   translucent color overwrites. Transparency waits on blend factors +
   sorting (research note, staging step 4).

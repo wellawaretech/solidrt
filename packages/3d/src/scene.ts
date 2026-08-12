@@ -514,13 +514,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let seed: ShaderParams = mesh.material.normalMatrix
         ? { uModel: IDENTITY, uNormal: IDENTITY, ...mesh.material.params, ...mesh._params }
         : { uModel: IDENTITY, ...mesh.material.params, ...mesh._params }
+      // The entry starts switched off: it has no world matrix yet - the walk
+      // in sync() computes one - and _schedule() defers that to a microtask,
+      // so added live it would draw at the seeded identity until then. The
+      // mismatch branch in sync() turns it on in the same pass that writes
+      // uModel.
       mesh._entry = addDraw(texture, mesh.material.pipeline(), seed, {
         buffer: bufs.buffer,
         indexBuffer: bufs.index,
         indexFormat: bufs.indexFormat,
         textures: mesh.material.textures,
+        instanceCount: 0,
       })
-      mesh._hidden = false
+      mesh._hidden = true
       mesh._fresh = true
       this._schedule()
     },
