@@ -15,6 +15,7 @@ use crate::gpu::{
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterSender, RasterStats};
 use crate::texture::{SamplerState, TextureEntry, TextureFormat, TextureRegistry};
+use crate::yuv::{self, YuvLayout, YuvMatrix, YuvRange};
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
 // compositing, present - runs on the raster thread, which owns the process's
@@ -163,6 +164,17 @@ pub struct Context {
   // happens in reclaim_destroyed, once the live render tree no longer
   // references the id (see destroy_texture for why deferral is the contract).
   pending_destroys: RefCell<Vec<u64>>,
+  // Planar YUV textures (see yuv.rs): app-visible output id -> its plane
+  // textures with their byte offsets in a packed frame, for update_yuv, and
+  // for destroy_texture to take the planes down with the output.
+  yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
+}
+
+// The composition behind one YUV texture id: the plane ids in frame order
+// with each plane's byte offset, and the packed frame size for validation.
+struct YuvGroup {
+  planes: Vec<(u64, usize)>,
+  frame_size: usize,
 }
 
 /// The successful outcome of a node capture: the RGBA8 pixels the node's
@@ -224,6 +236,7 @@ impl Context {
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
       pending_destroys: RefCell::new(Vec::new()),
+      yuv_groups: RefCell::new(HashMap::new()),
     }
   }
 
@@ -488,6 +501,103 @@ impl Context {
       return Err(format!("need {frame_size} bytes for {width}x{height} {}, buffer has {}", format.name(), pixels.len()));
     }
     self.create_texture_at(id, width, height, &pixels[..frame_size], sampler, format, None)
+  }
+
+  /// Create a planar YUV texture (see yuv.rs): one plane texture per plane of
+  /// `layout` plus a conversion shader target sampling them, whose RGBA
+  /// output id is returned - usable anywhere a texture id is. Feed packed
+  /// frames with `update_yuv`; the output re-renders at the next dirty flush
+  /// like any shader target. Color constants are baked at creation (fixed per
+  /// stream; a standard change means a new texture), `sampler` is the
+  /// OUTPUT's sampling (planes always sample linear/clamp for chroma
+  /// upscaling), and the content starts black until the first frame.
+  /// Destroying the returned id takes the planes down with it. There is no
+  /// id-stable resize: a size change is a new texture (stream dimension
+  /// changes replace the player's texture anyway).
+  pub fn create_yuv_texture(
+    &self,
+    width: u32,
+    height: u32,
+    layout: YuvLayout,
+    matrix: YuvMatrix,
+    range: YuvRange,
+    sampler: SamplerState,
+    label: Option<String>,
+  ) -> Result<u64, String> {
+    if width == 0 || height == 0 {
+      return Err(format!("yuv texture size {width}x{height} must be non-zero"));
+    }
+    self.gpu_limits().check_texture_size(width, height)?;
+    let planes = yuv::planes(layout, width, height);
+    let frame_size: usize = planes.iter().map(|p| p.byte_len()).sum();
+    // Seed planes with black (Y floor, chroma midpoint; NV12's interleaved
+    // UV seeds both bytes 128) - zeroed chroma would start the output green.
+    let y_black = if range == YuvRange::Limited { 16u8 } else { 0u8 };
+    let mut ids: Vec<(u64, usize)> = Vec::with_capacity(planes.len());
+    let mut bindings: Vec<(String, u64)> = Vec::with_capacity(planes.len());
+    let mut failure: Option<String> = None;
+    for plane in &planes {
+      let value = if plane.name == "uY" { y_black } else { 128u8 };
+      let plane_label = label.as_ref().map(|l| format!("{l}.{}", plane.name[1..].to_lowercase()));
+      match self.create_texture_from_pixels(
+        plane.width,
+        plane.height,
+        &vec![value; plane.byte_len()],
+        SamplerState::default(),
+        plane.format,
+        plane_label,
+      ) {
+        Ok(id) => {
+          ids.push((id, plane.offset));
+          bindings.push((plane.name.to_string(), id));
+        }
+        Err(e) => {
+          failure = Some(e);
+          break;
+        }
+      }
+    }
+    let result = match failure {
+      Some(e) => Err(e),
+      None => self.create_shader_texture(
+        width,
+        height,
+        &yuv::fragment_src(layout, matrix, range),
+        &[],
+        &bindings,
+        sampler,
+        label,
+      ),
+    };
+    match result {
+      Ok(out) => {
+        self.yuv_groups.borrow_mut().insert(out, YuvGroup { planes: ids, frame_size });
+        Ok(out)
+      }
+      Err(e) => {
+        for (id, _) in ids {
+          self.destroy_texture(id);
+        }
+        Err(e)
+      }
+    }
+  }
+
+  /// Upload one tightly packed frame (every plane, laid out per
+  /// `yuv::planes`) into a YUV texture. `frame` may be larger than one frame;
+  /// the planes read from their fixed offsets. The conversion target
+  /// re-renders and content damage propagates exactly as for
+  /// `update_texture` on each plane.
+  pub fn update_yuv(&self, id: u64, frame: &[u8]) -> Result<(), String> {
+    let groups = self.yuv_groups.borrow();
+    let group = groups.get(&id).ok_or_else(|| format!("yuv texture {id} not found"))?;
+    if frame.len() < group.frame_size {
+      return Err(format!("need {} bytes for a packed frame, buffer has {}", group.frame_size, frame.len()));
+    }
+    for &(plane, offset) in &group.planes {
+      self.update_texture(plane, frame, offset)?;
+    }
+    Ok(())
   }
 
   /// Recreate a render target of any kind at a new size under the same id:
@@ -1551,6 +1661,17 @@ impl Context {
     let mut pending = self.pending_destroys.borrow_mut();
     if !pending.contains(&id) {
       pending.push(id);
+    }
+    // A YUV output takes its planes with it. They are never referenced by
+    // the render tree, so they reclaim at the next sweep; the group is
+    // removed now, so a late update_yuv errs instead of dirtying a target
+    // whose planes are going away.
+    if let Some(group) = self.yuv_groups.borrow_mut().remove(&id) {
+      for (plane, _) in group.planes {
+        if !pending.contains(&plane) {
+          pending.push(plane);
+        }
+      }
     }
   }
 

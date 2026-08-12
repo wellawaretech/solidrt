@@ -330,8 +330,9 @@ pub fn camera_close(camera: *mut SDL_Camera) {
 
 use sdl3::sys::audio::{
   SDL_AudioDeviceID, SDL_AudioSpec, SDL_AudioStream, SDL_DestroyAudioStream, SDL_GetAudioDeviceName,
-  SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData, SDL_OpenAudioDeviceStream,
-  SDL_ResumeAudioStreamDevice, SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
+  SDL_GetAudioRecordingDevices, SDL_GetAudioStreamAvailable, SDL_GetAudioStreamData, SDL_GetAudioStreamQueued,
+  SDL_OpenAudioDeviceStream, SDL_PauseAudioStreamDevice, SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice,
+  SDL_SetAudioStreamGain, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_DEVICE_DEFAULT_RECORDING, SDL_AUDIO_F32,
 };
 use sdl3::sys::init::SDL_INIT_AUDIO;
 
@@ -368,8 +369,37 @@ pub fn audio_open_recording_stream(device: Option<u32>, sample_rate: u32) -> *mu
   unsafe { SDL_OpenAudioDeviceStream(devid, &spec, None, std::ptr::null_mut()) }
 }
 
+/// Open the default playback device bound to a new stream taking interleaved
+/// f32 at `sample_rate`/`channels` on the app side (SDL converts to the
+/// device format and mixes all bound streams natively). The stream starts
+/// paused; destroying it also closes the device it opened.
+pub fn audio_open_playback_stream(sample_rate: u32, channels: u16) -> *mut SDL_AudioStream {
+  let spec =
+    SDL_AudioSpec { format: SDL_AUDIO_F32, channels: channels as std::ffi::c_int, freq: sample_rate as std::ffi::c_int };
+  unsafe { SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, None, std::ptr::null_mut()) }
+}
+
 pub fn audio_stream_resume(stream: *mut SDL_AudioStream) -> bool {
   unsafe { SDL_ResumeAudioStreamDevice(stream) }
+}
+
+pub fn audio_stream_pause(stream: *mut SDL_AudioStream) -> bool {
+  unsafe { SDL_PauseAudioStreamDevice(stream) }
+}
+
+/// Queue interleaved f32 samples for playback (non-blocking; SDL buffers).
+pub fn audio_stream_put_f32(stream: *mut SDL_AudioStream, samples: &[f32]) -> bool {
+  unsafe { SDL_PutAudioStreamData(stream, samples.as_ptr() as *const std::ffi::c_void, (samples.len() * 4) as std::ffi::c_int) }
+}
+
+/// Bytes queued on the stream's input side, not yet consumed by the device
+/// (in the app-side spec's format).
+pub fn audio_stream_queued_bytes(stream: *mut SDL_AudioStream) -> i32 {
+  unsafe { SDL_GetAudioStreamQueued(stream) }
+}
+
+pub fn audio_stream_set_gain(stream: *mut SDL_AudioStream, gain: f32) -> bool {
+  unsafe { SDL_SetAudioStreamGain(stream, gain) }
 }
 
 /// Bytes buffered in the stream, already converted to the app-side spec.

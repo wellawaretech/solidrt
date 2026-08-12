@@ -70,6 +70,27 @@ usvg = { version = "0.47", default-features = false }
 # dependency), see okf/backlog/avif-decode.md.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 
+# forge::video (see okf/backlog/video-playback.md). mp4 parses the container:
+# probed 2026-08-12, symphonia's isomp4 delivers the H.264 packets but not
+# the avcC extra data, and the SPS/PPS live only there in MP4. symphonia
+# decodes AAC (pure Rust, patents expired) and later grows into the
+# SDL3_mixer replacement.
+mp4 = "0.14"
+symphonia = { version = "0.5", default-features = false, features = ["aac"] }
+
+# openh264 is the PoC/dev software decoder ONLY (no B-slice support;
+# per-platform hardware decoders are the shipped path). Android already has
+# its hardware decoder, so the C++ openh264 build is skipped there entirely.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+openh264 = "0.9"
+
+# forge::video's Android decoder: AMediaCodec in buffer mode. Same ndk crate
+# alloy uses; api-level-26 matches the oldest target (the Philips TV), so no
+# 28+ gated calls. ndk-sys only for the AMEDIACODEC_BUFFER_FLAG_* constants.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false, features = ["media", "api-level-26"] }
+ndk-sys = "0.6"
+
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.

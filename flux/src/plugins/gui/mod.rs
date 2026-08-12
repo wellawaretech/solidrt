@@ -14,6 +14,7 @@ pub mod raf;
 pub mod gpu;
 pub mod tree;
 pub mod value;
+pub mod video;
 
 // The read half of the property adapter, for inspection surfaces (the dev
 // connection's tree query); the write half stays crate-internal behind
@@ -71,6 +72,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let gpu_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy.clone());
+  let video_atx = AlloyContext(alloy.clone());
   // Stored as standalone userdata (below) so the runner can reach the alloy
   // context off the JS thread's `Ctx` - e.g. to service a dev-server snapshot
   // query - the way it reaches `SharedRenderTree` for a tree query.
@@ -90,6 +92,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(move |ctx| gpu::store_state(&ctx, gpu_atx, gpu_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
+    .plugin(move |ctx| video::store_state(&ctx, video_atx))
     .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
@@ -97,10 +100,11 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:audio", audio::AudioModule)
     .module_override("flux:gpu", gpu::GpuModule)
+    .module_override("flux:video", video::VideoModule)
 }
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu"];
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "video"];
 
 /// Append the gui capability names to `Flux.capabilities` so availability checks
 /// are uniform with the other modules (`Flux.capabilities.includes("camera")`).

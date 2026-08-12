@@ -45,6 +45,10 @@ pub enum TextureFormat {
   #[default]
   Rgba8,
   R8,
+  /// Two channels, one byte each, sampled as `(r, g, 0, 1)`. Exists for the
+  /// interleaved UV plane of NV12 YUV textures (see `yuv`); not offered in
+  /// the app-facing `parse` until an app-level consumer exists.
+  Rg8,
 }
 
 impl TextureFormat {
@@ -61,6 +65,7 @@ impl TextureFormat {
     match self {
       TextureFormat::Rgba8 => 4,
       TextureFormat::R8 => 1,
+      TextureFormat::Rg8 => 2,
     }
   }
 
@@ -69,6 +74,7 @@ impl TextureFormat {
     match self {
       TextureFormat::Rgba8 => "rgba8",
       TextureFormat::R8 => "r8",
+      TextureFormat::Rg8 => "rg8",
     }
   }
 }
@@ -255,6 +261,7 @@ impl GpuTexture {
     let internal = match format {
       TextureFormat::Rgba8 => glow::RGBA8,
       TextureFormat::R8 => glow::R8,
+      TextureFormat::Rg8 => glow::RG8,
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
@@ -270,6 +277,7 @@ impl GpuTexture {
         match format {
           TextureFormat::Rgba8 => glow::RGBA,
           TextureFormat::R8 => glow::RED,
+          TextureFormat::Rg8 => glow::RG,
         },
         glow::UNSIGNED_BYTE,
         glow::PixelUnpackData::Slice(None),
@@ -293,9 +301,11 @@ impl GpuTexture {
     // alignment holds. R8 rows are width*1 and must unpack at alignment 1 or
     // any width not divisible by 4 reads rows off by their padding - the
     // whole reason the format exists is to avoid that per-frame repacking.
+    // RG8 rows are width*2; alignment 1 is correct for every width.
     let (gl_format, alignment) = match self.format {
       TextureFormat::Rgba8 => (glow::RGBA, 4),
       TextureFormat::R8 => (glow::RED, 1),
+      TextureFormat::Rg8 => (glow::RG, 1),
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);

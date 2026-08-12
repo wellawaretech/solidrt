@@ -386,6 +386,10 @@ impl UiRuntime for FluxRuntime {
         // even though the tree did not.
         platform.request_frame();
       }
+      if flux::gui::video::tick(&ctx) {
+        // Same for a video frame uploaded into its player's texture.
+        platform.request_frame();
+      }
       // Settle any captureSnapshot promises whose captures alloy rendered on the
       // previous paint pass.
       flux::gui::gpu::tick(&ctx);

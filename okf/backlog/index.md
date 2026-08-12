@@ -10,6 +10,13 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Video playback](video-playback.md) [open] - One decode-to-YUV pipeline
+  on every platform: software decoders on desktop, MediaCodec buffer mode
+  on Android (punch-through rejected), planar YUV textures + shader
+  conversion in alloy, player core in forge, no video primitive
+  (texture/d-texture display the player's texture id). Fluency target is
+  the Philips MT5891 TV; probed 2026-08-12: buffer mode = honest NV12 at
+  3x realtime, AImageReader tap unsupported on device (not needed).
 - [Content-damage perf watchpoints](content-damage-perf.md) [open] - The
   remaining perf pothole in the GPU-content-damage path, recorded
   symptom-first: the O(nodes) walk in texture_content_changed (matters

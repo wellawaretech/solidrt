@@ -24,6 +24,7 @@ pub mod resample;
 mod script;
 mod texture;
 mod vsync;
+pub mod yuv;
 
 #[cfg(test)]
 mod tests;
@@ -51,6 +52,7 @@ pub use playback::PlaybackConfig;
 pub use present::PresentClock;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use texture::{GpuTexture, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
+pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 

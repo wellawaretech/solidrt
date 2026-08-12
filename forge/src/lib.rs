@@ -25,6 +25,7 @@ pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
 pub mod svg;
+pub mod video;
 pub mod wasm;
 pub mod websocket;
 

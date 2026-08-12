@@ -5,4 +5,5 @@ mod image;
 mod mdns;
 mod net;
 mod svg;
+mod video;
 mod wasm;
