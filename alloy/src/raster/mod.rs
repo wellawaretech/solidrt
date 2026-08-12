@@ -95,8 +95,11 @@ impl RasterStats {
   }
 }
 
-/// The UI thread's half of the raster command channel, paired with the shared
+/// A producer's half of the raster command channel, paired with the shared
 /// counters for the queue-depth bookkeeping (see `RasterStats::queue_depth`).
+/// The UI thread's Context holds one; the platform loop holds a clone for
+/// surface-liveness rebinds (see liveness.rs).
+#[derive(Clone)]
 pub(crate) struct RasterSender {
   tx: mpsc::Sender<RasterCmd>,
   stats: Arc<RasterStats>,

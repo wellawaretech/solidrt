@@ -1025,11 +1025,14 @@ pub fn run_context(
   wake: Option<Box<dyn Fn() + Send + Sync>>,
   capture_frames: bool,
   stats: Arc<crate::raster::RasterStats>,
-) {
+) -> crate::raster::RasterSender {
   let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
   let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
   let raster_tx = crate::raster::RasterSender::new(raster_tx, stats.clone());
+  // The platform loop's clone, for surface-liveness rebinds (liveness.rs):
+  // same ordered channel and queue-depth bookkeeping as the Context's half.
+  let main_tx = raster_tx.clone();
   let raster_stats = stats.clone();
 
   // The raster thread: sole owner of the process's single GL context and
@@ -1091,6 +1094,7 @@ pub fn run_context(
     closure(Arc::new(Context::new(raster_tx, stats)));
   });
   spawn_ui.expect("failed to spawn UI thread");
+  main_tx
 }
 
 /// Must be called before window creation so SDL selects ANGLE (EGL) on macOS.

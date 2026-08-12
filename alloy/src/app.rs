@@ -10,8 +10,10 @@ use crate::event::{
   playback_resize_event, translate_event, AlloyCommand, AlloyEvent,
 };
 use crate::gl;
+use crate::liveness::SurfaceLiveness;
 use crate::mode::Mode;
 use crate::playback::run_playback_loop;
+use crate::raster::RasterCmd;
 
 pub struct App {
   sdl_context: sdl3::Sdl,
@@ -155,10 +157,19 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       }))
     };
-    platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
+    let raster =
+      platform.run_context(move |ctx| dl_producer(ctx, cmd_tx, event_rx), tx, wake, mode.is_playback(), stats.clone());
+
+    // Surface-liveness policy (rebind + repaint across the surface
+    // lifecycle; see liveness.rs). The latch half arrives later via
+    // AlloyCommand::SetFrameRequestLatch.
+    let mut liveness = SurfaceLiveness::new();
 
     let initial = if mode.is_playback() { playback_resize_event(&window) } else { current_resize_event(&window) };
     apply_main_thread_effects(&initial, &surface_size, &mode);
+    if liveness.on_event(&initial, Instant::now()) {
+      raster.send(RasterCmd::RebindWindowSurface).ok();
+    }
     event_tx.send(initial).ok();
 
     if let Mode::Playback(playback) = mode {
@@ -311,6 +322,7 @@ impl App {
                 event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
+                liveness.on_frame_signal(last_frame_signal);
               }
             }
           }
@@ -365,9 +377,11 @@ impl App {
         if stats.queue_depth.load(Ordering::Acquire) == 0 {
           event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
+          liveness.on_frame_signal(Instant::now());
         }
         last_frame_signal = Instant::now();
       }
+      liveness.begin_pump();
       for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
           use sdl3::event::DisplayEvent;
@@ -384,6 +398,9 @@ impl App {
         }
         if let Some(e) = translate_event(sdl_event, &window) {
           apply_main_thread_effects(&e, &surface_size, &mode);
+          if liveness.on_event(&e, Instant::now()) {
+            raster.send(RasterCmd::RebindWindowSurface).ok();
+          }
           // Producer-side resampler feed (see resample.rs): moves are
           // consumed here - the UI side samples one position per pointer
           // per frame slot - while downs seed and ups drop the history
@@ -436,6 +453,7 @@ impl App {
               frame += 1;
             }
             last_frame_signal = Instant::now();
+            liveness.on_frame_signal(last_frame_signal);
             signal_emitted = Some(Instant::now());
             // Pre-arm the signal for the next vsync while this frame is
             // being built: the signal timing must not depend on when the
@@ -466,6 +484,9 @@ impl App {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
             apply_main_thread_effects(&e, &surface_size, &mode);
+            if liveness.on_event(&e, Instant::now()) {
+              raster.send(RasterCmd::RebindWindowSurface).ok();
+            }
             event_tx.send(e).ok();
             event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
             event_tx.send(current_system_theme_event()).ok();
@@ -475,6 +496,7 @@ impl App {
               event_tx.send(g.snapshot_event()).ok();
             }
           }
+          AlloyCommand::SetFrameRequestLatch(latch) => liveness.set_latch(latch),
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {
               log::warn!("set_title failed: {e}");

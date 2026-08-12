@@ -75,14 +75,14 @@ impl DisplayContext {
     }
   }
 
-  pub fn run_context(
+  pub(crate) fn run_context(
     &self,
     closure: impl FnOnce(Arc<Context>) + Send + 'static,
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
     capture_frames: bool,
     stats: Arc<crate::raster::RasterStats>,
-  ) {
+  ) -> crate::raster::RasterSender {
     match self {
       DisplayContext::Gl { window_raw, gl_context, surface_size } => {
         gl::run_context(*window_raw, gl_context, surface_size.clone(), closure, tx, wake, capture_frames, stats)

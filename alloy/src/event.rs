@@ -6,6 +6,13 @@ use crate::sdl_utils;
 
 pub enum AlloyCommand {
   EmitInitEvents,
+  // Register the demand gate's frame-request latch (rendertree
+  // Platform::frame_request_handle) so the platform loop can self-schedule
+  // the repaints its surface lifecycle requires (expose, resize settling,
+  // return to visibility; see liveness.rs). Send once at startup. Without
+  // it, lifecycle rebinds still happen but the resume/expose repaint
+  // degrades to the raster thread's present-failure fallback.
+  SetFrameRequestLatch(std::sync::Arc<std::sync::atomic::AtomicBool>),
   SetTitle(String),
   // Window icon from straight-alpha RGBA8 pixels (width * height * 4 bytes).
   // Platforms without window icons (macOS) ignore it.

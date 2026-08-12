@@ -12,6 +12,7 @@ mod gamepad;
 mod gpu;
 mod input;
 mod keymap;
+mod liveness;
 mod logging;
 pub mod microphone;
 mod mode;

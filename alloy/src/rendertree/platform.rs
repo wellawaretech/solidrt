@@ -114,6 +114,14 @@ impl PlatformContext {
     (self.stats_enabled.clone(), self.frame_requested.clone())
   }
 
+  /// Shared handle to the frame-request latch, for
+  /// AlloyCommand::SetFrameRequestLatch: the platform loop latches it on
+  /// surface lifecycle events (expose, resize settling, return to
+  /// visibility) so the demand gate repaints without embedder glue.
+  pub fn frame_request_handle(&self) -> Arc<AtomicBool> {
+    self.frame_requested.clone()
+  }
+
   /// Latch a frame request (Flutter's scheduleFrame). Idempotent; callable
   /// from any thread. The draw gate consumes it via take_frame_requested:
   /// no request, no frame.

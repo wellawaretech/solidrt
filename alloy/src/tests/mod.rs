@@ -5,6 +5,7 @@ mod gpu_validate;
 mod hit;
 mod keymap;
 mod layout_cache;
+mod liveness;
 mod paint;
 mod present;
 mod resample;
