@@ -1,5 +1,6 @@
 pub mod composite;
 pub mod counters;
+pub mod frame;
 pub mod hit;
 pub(crate) mod kinds;
 pub mod layout;
@@ -7,6 +8,7 @@ pub mod platform;
 pub mod router;
 mod tree;
 
+pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{

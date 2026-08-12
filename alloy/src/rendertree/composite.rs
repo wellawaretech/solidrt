@@ -89,6 +89,17 @@ pub fn paint_phase(
 /// calls each frame to put the current tree on screen. Returns the frame's paint
 /// stats.
 pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> PaintStats {
+  // GPU content writes since the last frame (target re-renders, uploads,
+  // camera frames) change pixels behind unchanged texture ids and leave no
+  // tree damage of their own; a baked snapshot boundary over one would keep
+  // replaying stale pixels. The runner's frame loop drains this itself,
+  // ahead of its display-list reuse check; this path is the frame producer
+  // for everything else, so it must apply them too.
+  let content = alloy.take_content_changes();
+  if !content.is_empty() {
+    tree.texture_content_changed(&content);
+  }
+
   let mut builder = DisplayListBuilder::new(None);
   let scale = platform.display_scale();
   builder.scale(scale, scale);

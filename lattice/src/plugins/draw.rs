@@ -1,7 +1,6 @@
 use crate::overlay;
 use alloy::InputState;
-use alloy::impellers::{DisplayList, DisplayListBuilder};
-use alloy::rendertree::{self, PlatformContext};
+use alloy::rendertree::{self, Commit, FrameDriver, PlatformContext};
 use flux::gui::AlloyContext;
 use flux::{
   emit_event,
@@ -14,18 +13,6 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-// The last built display list together with the inputs it was built from.
-// While all of these are unchanged, a requested frame is present-only (texture
-// content changed, e.g. a camera upload): re-rendering the same display list
-// samples the new texture contents, so the build can be skipped.
-struct DlCache {
-  dl: DisplayList,
-  revision: u64,
-  textures_generation: u64,
-  window: (f32, f32),
-  scale: f32,
-}
 
 // The host state the `srt:render` module binds, stashed in userdata by
 // `store_state` before any import so the module's `evaluate` can build
@@ -44,7 +31,10 @@ struct RenderInner {
   // loop (the dev server's stats query answers from here).
   stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
   stats: RefCell<overlay::Stats>,
-  cache: RefCell<Option<DlCache>>,
+  // The engine-free frame protocol (demand gate, retained-list reuse, the
+  // capture/destroy/content interlocks) lives in alloy; this bridge sequences
+  // it and runs the JS hooks between the phases.
+  driver: RefCell<FrameDriver>,
   // Whether an overlay display list is currently installed on the raster
   // thread (see Context::set_stats_overlay): drives the enable/disable edges
   // and the teardown clear in Drop.
@@ -83,7 +73,7 @@ pub fn store_state(
       input_state,
       stats_snapshot,
       stats: RefCell::new(overlay::Stats::new()),
-      cache: RefCell::new(None),
+      driver: RefCell::new(FrameDriver::new()),
       overlay_installed: Cell::new(false),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
     })))
@@ -129,7 +119,6 @@ impl RenderInner {
     let input_state = &*self.input_state;
     let stats_snapshot = &self.stats_snapshot;
     let stats = &self.stats;
-    let cache = &self.cache;
 
     // The stats overlay is its own demand source: its per-second figures keep
     // changing while the app is idle, so a due refresh forces a frame so the
@@ -165,14 +154,13 @@ impl RenderInner {
 
     // Demand-driven gate: when nothing requested a frame, skip it entirely
     // (layout, paint, submit, hover refresh - elements only move when a frame
-    // is produced, so hover cannot have changed either). Playback mode renders
-    // unconditionally: its capture loop blocks waiting for every frame's
-    // display list.
-    let requested = platform.take_frame_requested();
-    if !requested && !overlay_refresh && !overlay_clear && !platform.always_render() {
+    // is produced, so hover cannot have changed either). The overlay is the
+    // bridge's own demand (see above); playback mode never gates.
+    let mut driver = self.driver.borrow_mut();
+    let Some(frame) = driver.begin(platform, overlay_refresh || overlay_clear) else {
       stats.borrow_mut().note_skipped();
       return;
-    }
+    };
 
     let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
 
@@ -196,82 +184,38 @@ impl RenderInner {
       self.overlay_installed.set(false);
     }
 
-    // GPU content writes since the last build (target re-renders, uploads,
-    // camera frames) change pixels behind unchanged texture ids and leave no
-    // tree damage of their own; baked snapshot boundaries are the one
-    // consumer that would go stale. Applied before the clean check because
-    // it bumps the revision exactly when such a boundary is hit - pure-GPU
-    // frames with no snapshot consumer keep the reuse path below.
-    let content = atx.take_content_changes();
-    if !content.is_empty() {
-      tree.0.borrow_mut().texture_content_changed(&content);
-    }
-
-    // Present-only reuse: nothing that feeds the display list changed, so
-    // resubmit the cached one instead of rebuilding. Layout, postLayout and
+    // Content damage, then present-only reuse or the build handle: the
+    // driver's interlocks (captures, deferred destroys, the window-shader
+    // flush) run on whichever path resolves. On reuse, layout, postLayout and
     // hover refresh are skipped too - the tree and window are unchanged.
-    // Bypassed in playback mode to keep its captures identical to a rebuild,
-    // and when captures are pending: they are serviced by the paint walk,
-    // which the reuse path skips, so reusing would strand them.
-    if !platform.always_render() && !atx.has_pending_captures() {
-      if let Some(c) = cache.borrow().as_ref() {
-        if c.revision == tree.0.borrow().revision()
-          && c.textures_generation == atx.textures.generation()
-          && c.window == platform.window_size()
-          && c.scale == platform.display_scale()
-        {
-          // A window-shader prop write lands here (Damage::Present bumps no
-          // revision): flush it ahead of the frame, the ordering the build
-          // path gets from the paint walk.
-          if let Some(change) = tree.0.borrow_mut().take_pending_window_shader() {
-            if let Err(e) = atx.set_window_shader(change) {
-              log::warn!("[render] window shader: {e}");
-            }
-          }
-          stats.borrow_mut().note_reused();
-          // Clean resubmit: the raster side may run only the shader pass
-          // over its retained layer (see Context::submit_clean).
-          atx.submit_clean(c.dl.clone()).expect("Failed to submit display list");
-          // The reuse path skips paint_phase, whose end-of-frame sweep
-          // reclaims deferred destroys - run it here too so a destroy with
-          // no other tree change (its requested frame lands in this path)
-          // is not stranded until the next rebuild. The cached list's Rc'd
-          // Impeller handles keep its textures alive regardless.
-          if atx.has_pending_destroys() {
-            atx.reclaim_destroyed(&tree.0.borrow().referenced_texture_ids());
-          }
-          return;
-        }
+    let mut b = match frame
+      .commit(&mut tree.0.borrow_mut(), platform, atx)
+      .expect("Failed to submit display list")
+    {
+      Commit::Reused => {
+        stats.borrow_mut().note_reused();
+        return;
       }
-    }
-
-    let mut builder = DisplayListBuilder::new(None);
-    let scale = platform.display_scale();
-    builder.scale(scale, scale);
+      Commit::Build(b) => b,
+    };
 
     let mut phases = overlay::FramePhases::default();
 
-    // Layout phase: scope the mut borrow so onLayout handlers (which may
-    // call setProperty etc.) don't trip the RefCell.
+    // Layout phase: the mut borrow is scoped to the call so onLayout handlers
+    // (which may call setProperty etc.) don't trip the RefCell.
     let t = Instant::now();
-    {
-      let mut tree_b = tree.0.borrow_mut();
-      rendertree::composite::layout_phase(&mut tree_b, platform, atx);
-    }
+    b.layout(&mut tree.0.borrow_mut(), platform, atx);
     phases.layout = t.elapsed();
 
     // Post-layout hook. Handlers run synchronously and may invalidate the
-    // layout cache via setProperty; paint_phase re-runs layout to absorb
+    // layout cache via setProperty; the paint phase re-runs layout to absorb
     // those changes.
     let t = Instant::now();
     emit_event(qtx, "postLayout", ());
     phases.post = t.elapsed();
 
     let t = Instant::now();
-    let paint_stats = {
-      let mut tree_b = tree.0.borrow_mut();
-      rendertree::composite::paint_phase(&mut builder, &mut tree_b, platform, atx)
-    };
+    let paint_stats = b.paint(&mut tree.0.borrow_mut(), platform, atx);
     phases.paint = t.elapsed();
 
     // Input dispatch happens on event arrival (flux::gui::input::dispatch);
@@ -290,17 +234,6 @@ impl RenderInner {
       s.record_paint(paint_stats);
     }
 
-    if let Some(dl) = builder.build() {
-      // Sample the cache key after building: postLayout handlers may have
-      // mutated the tree, and a first build can itself create textures.
-      *cache.borrow_mut() = Some(DlCache {
-        dl: dl.clone(),
-        revision: tree.0.borrow().revision(),
-        textures_generation: atx.textures.generation(),
-        window: platform.window_size(),
-        scale: platform.display_scale(),
-      });
-      atx.submit(dl).expect("Failed to submit display list");
-    }
+    b.finish(&tree.0.borrow(), platform, atx).expect("Failed to submit display list");
   }
 }

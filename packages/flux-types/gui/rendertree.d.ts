@@ -61,9 +61,11 @@ declare module "flux:rendertree" {
   /** Request that a frame be rendered soon (coalesced by the demand-driven loop). */
   export function requestFrame(): void
   /**
-   * Lay out, paint and submit the whole tree to the screen now (one frame). The
-   * direct draw path for a flux + alloy app; requestFrame only schedules a
-   * future frame and leaves the actual draw to the runner.
+   * Put the current tree on screen now (one frame). The direct draw path for
+   * a flux + alloy app; requestFrame only schedules a future frame and leaves
+   * the actual draw to the runner. When nothing changed since the last call
+   * the retained frame is re-presented instead of laid out and painted again;
+   * changed texture contents (uploads, camera frames) still show either way.
    */
   export function render(): void
   /**

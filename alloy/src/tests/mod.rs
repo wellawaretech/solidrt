@@ -1,5 +1,6 @@
 mod audio;
 mod fonts;
+mod frame;
 mod gpu_graph;
 mod gpu_validate;
 mod hit;

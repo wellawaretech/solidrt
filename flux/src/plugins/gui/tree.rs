@@ -10,7 +10,8 @@ use taffy::prelude::*;
 use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::{
-  Damage, Element, EventInterest, Measurable, MeasureContext, PlatformContext, Rect, RenderTree, Text, Window,
+  Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, PlatformContext, Rect,
+  RenderTree, Text, Window,
 };
 
 thread_local! {
@@ -246,13 +247,31 @@ impl ModuleDef for RenderTreeModule {
     let platform_ref = platform.clone();
     let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame())?;
 
-    // The direct draw path: lay out, paint and submit the whole tree now. Lets a
-    // flux + alloy app put its tree on screen without the runner's frame loop.
+    // The direct draw path: put the current tree on screen now. Lets a
+    // flux + alloy app render without the runner's frame loop. Runs alloy's
+    // frame protocol, so when nothing changed since the last call the retained
+    // display list is re-presented instead of rebuilt (fresh texture contents
+    // are still sampled at the raster flush); the call itself is the demand,
+    // so the driver's gate never skips it.
     let tree_ref = tree.clone();
     let render_platform = platform.clone();
     let render_atx = atx.clone();
+    let render_driver = RefCell::new(FrameDriver::new());
     let render = Function::new(ctx.clone(), move || {
-      alloy::rendertree::composite::render(&mut tree_ref.borrow_mut(), &render_platform, &render_atx);
+      let mut driver = render_driver.borrow_mut();
+      let Some(frame) = driver.begin(&render_platform, true) else { return };
+      match frame.commit(&mut tree_ref.borrow_mut(), &render_platform, &render_atx) {
+        Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
+        Ok(Commit::Reused) => {}
+        Ok(Commit::Build(mut b)) => {
+          // The paint phase runs layout itself; the direct path has no
+          // between-phase hooks to sequence.
+          b.paint(&mut tree_ref.borrow_mut(), &render_platform, &render_atx);
+          if b.finish(&tree_ref.borrow(), &render_platform, &render_atx).is_err() {
+            log::warn!("render: render thread unavailable, dropping frame");
+          }
+        }
+      }
     })?;
 
     let tree_ref = tree.clone();
