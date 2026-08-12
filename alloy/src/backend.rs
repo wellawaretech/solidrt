@@ -28,15 +28,9 @@ pub fn unpack_size(packed: u64) -> (u32, u32) {
   ((packed >> 32) as u32, (packed & 0xffff_ffff) as u32)
 }
 
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-pub enum Backend {
-  Gl,
-  Vulkan,
-  Metal,
-}
-
-#[allow(dead_code)]
+/// The display context behind the raster thread. GL (through ANGLE where the
+/// platform has no native GL) is the single backend by design - see
+/// okf/research/graphics-backend-strategy.md.
 pub enum DisplayContext {
   Gl {
     /// The SDL window handle the raster thread presents to. Raw because the
@@ -47,32 +41,18 @@ pub enum DisplayContext {
     /// See `pack_size`.
     surface_size: Arc<AtomicU64>,
   },
-  Vulkan {},
-  Metal {},
 }
 
-#[allow(dead_code)]
 impl DisplayContext {
   pub fn new_opengl(window: &sdl3::video::Window) -> Result<Self, Box<dyn std::error::Error>> {
     gl::setup_opengl_platform(window)
   }
 
-  pub fn backend(&self) -> Backend {
-    match self {
-      DisplayContext::Gl { .. } => Backend::Gl,
-      DisplayContext::Vulkan { .. } => Backend::Vulkan,
-      DisplayContext::Metal { .. } => Backend::Metal,
-    }
-  }
-
   /// The main thread's handle for publishing the physical framebuffer size on
   /// resize.
   pub fn surface_size_handle(&self) -> Arc<AtomicU64> {
-    match self {
-      DisplayContext::Gl { surface_size, .. } => surface_size.clone(),
-      DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
-      DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
-    }
+    let DisplayContext::Gl { surface_size, .. } = self;
+    surface_size.clone()
   }
 
   pub(crate) fn run_context(
@@ -83,12 +63,7 @@ impl DisplayContext {
     capture_frames: bool,
     stats: Arc<crate::raster::RasterStats>,
   ) -> crate::raster::RasterSender {
-    match self {
-      DisplayContext::Gl { window_raw, gl_context, surface_size } => {
-        gl::run_context(*window_raw, gl_context, surface_size.clone(), closure, tx, wake, capture_frames, stats)
-      }
-      DisplayContext::Vulkan { .. } => unimplemented!("Vulkan backend not yet implemented"),
-      DisplayContext::Metal { .. } => unimplemented!("Metal backend not yet implemented"),
-    }
+    let DisplayContext::Gl { window_raw, gl_context, surface_size } = self;
+    gl::run_context(*window_raw, gl_context, surface_size.clone(), closure, tx, wake, capture_frames, stats)
   }
 }

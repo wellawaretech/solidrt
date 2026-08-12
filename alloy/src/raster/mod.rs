@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
 use capture::flip_for_fbo;
-use crate::backend::{Backend, FrameOutput};
+use crate::backend::FrameOutput;
 use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec,
@@ -150,7 +150,6 @@ const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 const PRESENT_FENCE_DEPTH: usize = 2;
 
 pub(crate) struct RasterState {
-  backend: Backend,
   gl: glow::Context,
   impeller_ctx: ImpellerContext,
   // The window's raw SDL handle, for presenting; the Window itself lives on
@@ -347,7 +346,6 @@ impl FrameTiming {
 impl RasterState {
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn new(
-    backend: Backend,
     gl: glow::Context,
     impeller_ctx: ImpellerContext,
     window: *mut sdl3::sys::video::SDL_Window,
@@ -360,7 +358,6 @@ impl RasterState {
     let samplers = SamplerCache::new(&gl);
     let limits = GpuLimits::query(&gl);
     RasterState {
-      backend,
       gl,
       impeller_ctx,
       window,
@@ -1137,7 +1134,7 @@ impl RasterState {
     label: Option<String>,
   ) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    let mut gpu = GpuTexture::new(&self.gl, self.backend, size, sampler, format);
+    let mut gpu = GpuTexture::new(&self.gl, size, sampler, format);
     // A replace-at-id with no new label is an id-stable resize: labels are
     // create-time state and follow the id through it.
     gpu.label = label.or_else(|| self.textures.get(&id).and_then(|old| old.label.clone()));
@@ -1217,7 +1214,6 @@ impl RasterState {
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture {
       gl_texture: shader.gl_texture(),
-      backend: self.backend,
       width,
       height,
       sampler: shader.sampler(),
@@ -1473,7 +1469,6 @@ impl RasterState {
     let size = ISize::new(width as i64, height as i64);
     let gpu = GpuTexture {
       gl_texture: shader.gl_texture(),
-      backend: self.backend,
       width,
       height,
       sampler: shader.sampler(),

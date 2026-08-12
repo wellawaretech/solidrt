@@ -9,7 +9,6 @@ use glow::HasContext;
 use impellers::{DisplayList, ISize, Texture};
 
 use super::RasterState;
-use crate::backend::Backend;
 use crate::gl;
 use crate::gpu::{NodeShader, PassInput};
 use crate::texture::SamplerState;
@@ -19,21 +18,8 @@ impl RasterState {
   /// size, ready for sampling.
   pub(super) fn rasterize(&mut self, dl: &DisplayList, width: u32, height: u32, aa: bool) -> Result<Texture, String> {
     let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => {
-        let flipped = flip_for_fbo(dl, height)?;
-        gl::render_display_list_to_texture(
-          &self.gl,
-          &mut self.impeller_ctx,
-          &mut self.offscreen_rig,
-          &flipped,
-          size,
-          aa,
-        )
-      }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
+    let flipped = flip_for_fbo(dl, height)?;
+    gl::render_display_list_to_texture(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, aa)
   }
 
   /// Re-rasterize a display list into an existing adopted texture whose
@@ -48,22 +34,16 @@ impl RasterState {
     aa: bool,
   ) -> Result<(), String> {
     let size = ISize::new(width as i64, height as i64);
-    match self.backend {
-      Backend::Gl => {
-        let flipped = flip_for_fbo(dl, height)?;
-        gl::render_display_list_into_texture(
-          &self.gl,
-          &mut self.impeller_ctx,
-          &mut self.offscreen_rig,
-          &flipped,
-          texture,
-          size,
-          aa,
-        )
-      }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
-    }
+    let flipped = flip_for_fbo(dl, height)?;
+    gl::render_display_list_into_texture(
+      &self.gl,
+      &mut self.impeller_ctx,
+      &mut self.offscreen_rig,
+      &flipped,
+      texture,
+      size,
+      aa,
+    )
   }
 
   /// Rasterize a shaded snapshot boundary and run its node shader pass in
@@ -85,34 +65,28 @@ impl RasterState {
     history: Option<Texture>,
   ) -> Result<(Texture, Texture, Option<Texture>), String> {
     let size = ISize::new(width as i64, height as i64);
-    let source = match self.backend {
-      Backend::Gl => {
-        let flipped = flip_for_fbo(dl, height)?;
-        match source {
-          Some(texture) => {
-            gl::render_display_list_into_texture(
-              &self.gl,
-              &mut self.impeller_ctx,
-              &mut self.offscreen_rig,
-              &flipped,
-              &texture,
-              size,
-              aa,
-            )?;
-            texture
-          }
-          None => gl::render_display_list_to_texture(
-            &self.gl,
-            &mut self.impeller_ctx,
-            &mut self.offscreen_rig,
-            &flipped,
-            size,
-            aa,
-          )?,
-        }
+    let flipped = flip_for_fbo(dl, height)?;
+    let source = match source {
+      Some(texture) => {
+        gl::render_display_list_into_texture(
+          &self.gl,
+          &mut self.impeller_ctx,
+          &mut self.offscreen_rig,
+          &flipped,
+          &texture,
+          size,
+          aa,
+        )?;
+        texture
       }
-      Backend::Vulkan => panic!("Vulkan backend not yet implemented"),
-      Backend::Metal => panic!("Metal backend not yet implemented"),
+      None => gl::render_display_list_to_texture(
+        &self.gl,
+        &mut self.impeller_ctx,
+        &mut self.offscreen_rig,
+        &flipped,
+        size,
+        aa,
+      )?,
     };
     let history = match (shader.previous, history) {
       (false, _) => None,

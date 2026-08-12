@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use crate::backend::Backend;
-
 /// How a texture is sampled, everywhere it is sampled: magnification filter
 /// and wrap mode, declared at creation as a property of the texture id. One
 /// state for both consumers - shader passes (applied via a bound GL sampler
@@ -237,7 +235,6 @@ impl TextureRegistry {
 /// Raster-thread-only: creation and uploads are GL work.
 pub struct GpuTexture {
   pub gl_texture: glow::Texture,
-  pub backend: Backend,
   pub width: u32,
   pub height: u32,
   /// Declared sampling for this id; shader passes resolve it to a sampler
@@ -253,7 +250,7 @@ pub struct GpuTexture {
 }
 
 impl GpuTexture {
-  pub fn new(gl: &glow::Context, backend: Backend, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
+  pub fn new(gl: &glow::Context, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
     let (width, height) = (size.width as u32, size.height as u32);
     let internal = match format {
       TextureFormat::Rgba8 => glow::RGBA8,
@@ -286,7 +283,7 @@ impl GpuTexture {
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      GpuTexture { gl_texture, backend, width, height, sampler, format, label: None }
+      GpuTexture { gl_texture, width, height, sampler, format, label: None }
     }
   }
 

@@ -32,7 +32,7 @@ pub use impellers;
 pub use sdl3;
 
 pub use app::{setup, App};
-pub use backend::{Backend, DisplayContext};
+pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, CullMode, DepthState, DrawBounds, DrawRange, DrawSpec, DrawUpdate,

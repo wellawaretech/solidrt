@@ -1,6 +1,6 @@
 use crate::backend::FrameOutput;
 use crate::raster::{RasterCmd, RasterState};
-use crate::{Backend, Context, DisplayContext, GpuTexture};
+use crate::{Context, DisplayContext, GpuTexture};
 use glow::HasContext;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
 use std::num::NonZeroU32;
@@ -1068,7 +1068,6 @@ pub fn run_context(
     }
 
     let state = RasterState::new(
-      Backend::Gl,
       gl,
       impeller_ctx,
       window,
