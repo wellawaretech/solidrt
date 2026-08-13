@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
+use crate::plugins::marshal::OptArg;
 use super::AlloyContext;
 use alloy::rendertree::PlatformContext;
 use alloy::CaptureInfo;
@@ -559,7 +559,7 @@ impl ModuleDef for GpuModule {
     let create_atx = atx.clone();
     let create_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createTexture: detached buffer"))?;
         let format = collect_format(&ctx, &opts.0, "createTexture")?;
         let expected = (width as usize) * (height as usize) * format.bytes_per_pixel();
@@ -589,7 +589,7 @@ impl ModuleDef for GpuModule {
     let mutable_atx = atx.clone();
     let create_mutable_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
         let format = collect_format(&ctx, &opts.0, "createMutableTexture")?;
         let frame_size = (width as usize) * (height as usize) * format.bytes_per_pixel();
@@ -619,7 +619,7 @@ impl ModuleDef for GpuModule {
     let upload_platform = platform.clone();
     let upload_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> rquickjs::Result<()> {
+      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<usize>| -> rquickjs::Result<()> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "uploadTexture: detached buffer"))?;
         let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
         upload_atx
@@ -662,7 +662,7 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            opts: Opt<Object<'_>>|
+            opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
         let params = match &params {
           Some(o) => collect_params(&ctx, o, "createShaderTexture")?,
@@ -700,7 +700,7 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            opts: Opt<Object<'_>>|
+            opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
         let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipelineTexture")?;
         let (target, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
@@ -719,7 +719,7 @@ impl ModuleDef for GpuModule {
     // creating one compiles nothing.
     let create_render_pipeline_atx = atx.clone();
     let create_render_pipeline =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, program: u64, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, program: u64, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let desc = collect_pipeline_desc(&ctx, &opts.0, "createRenderPipeline")?;
         let label = collect_label(&opts.0)?;
         let id = create_render_pipeline_atx
@@ -745,7 +745,7 @@ impl ModuleDef for GpuModule {
     let compile_shader_atx = atx.clone();
     let compile_shader = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, stage: String, source: String, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, stage: String, source: String, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let stage = alloy::ShaderStage::parse(&stage).map_err(|e| throw_str(&ctx, &format!("compileShader: {e}")))?;
         let header = match &opts.0 {
           Some(o) => o.get::<_, Option<bool>>("header")?.unwrap_or(false),
@@ -766,7 +766,7 @@ impl ModuleDef for GpuModule {
     let link_program_atx = atx.clone();
     let link_program = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, vertex: u64, fragment: u64, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, vertex: u64, fragment: u64, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let label = collect_label(&opts.0)?;
         let id = link_program_atx
           .link_shader_program(vertex, fragment, label)
@@ -797,7 +797,7 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            opts: Opt<Object<'_>>|
+            opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
         reject_pipeline_keys(&ctx, &opts.0, "createShaderTarget")?;
         let (spec, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createShaderTarget")?;
@@ -822,7 +822,7 @@ impl ModuleDef for GpuModule {
     let create_buffer_atx = atx.clone();
     let create_buffer = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, opts: Opt<Object<'_>>| -> rquickjs::Result<u64> {
+      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
         let label = collect_label(&opts.0)?;
         let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
@@ -841,7 +841,7 @@ impl ModuleDef for GpuModule {
     let write_buffer_platform = platform.clone();
     let write_buffer = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: Opt<usize>| -> rquickjs::Result<()> {
+      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<usize>| -> rquickjs::Result<()> {
         let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "writeBuffer: detached buffer"))?;
         let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
         write_buffer_atx
@@ -892,7 +892,7 @@ impl ModuleDef for GpuModule {
             width: u32,
             height: u32,
             params: Option<Object<'_>>,
-            opts: Opt<Object<'_>>|
+            opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
         let (spec, depth, textures) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
         let params = match &params {
@@ -932,7 +932,7 @@ impl ModuleDef for GpuModule {
             target: u64,
             pipeline: u64,
             params: Option<Object<'_>>,
-            opts: Opt<Object<'_>>|
+            opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
         reject_pipeline_keys(&ctx, &opts.0, "addDraw")?;
         let entry = collect_entry_half(&ctx, pipeline, &params, &opts.0, "addDraw")?;

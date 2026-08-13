@@ -4,7 +4,7 @@ use http_body_util::BodyExt;
 use hyper::header::{HeaderName, HeaderValue};
 use hyper::Request as HyperRequest;
 use rquickjs::class::{Trace, Tracer};
-use rquickjs::function::{IntoArgs, Opt};
+use rquickjs::function::IntoArgs;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,6 +12,7 @@ use tokio::sync::{watch, Notify};
 
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::standards::body::{extract_body_value, JsBytes};
 use forge::http::{Remote, ResBody};
 use forge::websocket::{
@@ -140,7 +141,7 @@ impl<'js> Trace<'js> for ServerWebSocket<'js> {
 impl<'js> ServerWebSocket<'js> {
   /// Extract an optional control-frame payload (string or Uint8Array) and
   /// enforce the RFC 6455 control-frame size limit.
-  fn control_payload(ctx: &Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<Vec<u8>> {
+  fn control_payload(ctx: &Ctx<'js>, data: OptArg<Value<'js>>) -> rquickjs::Result<Vec<u8>> {
     let payload = match data.0 {
       Some(v) => extract_body_value(&v, "ServerWebSocket")?,
       None => Vec::new(),
@@ -165,12 +166,12 @@ impl<'js> ServerWebSocket<'js> {
 
   /// Send a ping control frame (the peer's reply surfaces in the `pong`
   /// callback). Same return values as `send`.
-  pub fn ping(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
+  pub fn ping(&self, ctx: Ctx<'js>, data: OptArg<Value<'js>>) -> rquickjs::Result<i32> {
     Ok(self.sink.enqueue(OpCode::Ping, Self::control_payload(&ctx, data)?))
   }
 
   /// Send an unsolicited pong control frame. Same return values as `send`.
-  pub fn pong(&self, ctx: Ctx<'js>, data: Opt<Value<'js>>) -> rquickjs::Result<i32> {
+  pub fn pong(&self, ctx: Ctx<'js>, data: OptArg<Value<'js>>) -> rquickjs::Result<i32> {
     Ok(self.sink.enqueue(OpCode::Pong, Self::control_payload(&ctx, data)?))
   }
 
@@ -199,7 +200,7 @@ impl<'js> ServerWebSocket<'js> {
 
   /// Send a close frame (default 1000). The connection finishes once the peer
   /// echoes the close (or the grace period expires).
-  pub fn close(&self, code: Opt<u16>, reason: Opt<String>) {
+  pub fn close(&self, code: OptArg<u16>, reason: OptArg<String>) {
     if self.sink.begin_close(code.0.unwrap_or(1000), reason.0.unwrap_or_default()) {
       self.closing.notify_one();
     }

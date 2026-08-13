@@ -10,11 +10,41 @@
 
 use std::future::Future;
 
+use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor};
 use rquickjs::promise::Promised;
-use rquickjs::{Ctx, Function, IntoJs, Object, Value};
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Value};
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
+
+/// An optional argument: `opts: OptArg<Object>`, `code: OptArg<u16>`, ...
+///
+/// rquickjs `Opt<T>` only tolerates an ABSENT argument; an explicit
+/// `undefined` is still converted into `T` and fails ("Error converting from
+/// js 'undefined' into type ..."). Passing `undefined` for "not given" is
+/// ordinary JS - wrappers forward their own optional parameter verbatim, and
+/// the web platform reads `undefined` as "use the default" everywhere - so
+/// binding params take `OptArg<T>` instead, which treats absent, `undefined`,
+/// and `null` alike as `None`. Any other value must convert into `T`.
+pub struct OptArg<T>(pub Option<T>);
+
+impl<'js, T: FromJs<'js>> FromParam<'js> for OptArg<T> {
+  fn param_requirement() -> ParamRequirement {
+    ParamRequirement::optional()
+  }
+
+  fn from_param<'a>(params: &mut ParamsAccessor<'a, 'js>) -> rquickjs::Result<Self> {
+    if params.is_empty() {
+      return Ok(OptArg(None));
+    }
+    let ctx = params.ctx().clone();
+    let value = params.arg();
+    if value.is_undefined() || value.is_null() {
+      return Ok(OptArg(None));
+    }
+    Ok(OptArg(Some(T::from_js(&ctx, value)?)))
+  }
+}
 
 /// Bridge a fallible native async op to a JS promise. Holds a `PendingOps` for
 /// the op's whole duration (so the engine loop stays alive until it resolves)

@@ -1,5 +1,5 @@
+use crate::plugins::marshal::OptArg;
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::{ArrayBuffer, Class, Ctx, Exception, JsLifetime, Object, TypedArray, Value};
 use std::cell::RefCell;
 
@@ -27,7 +27,7 @@ impl TextEncoder {
 
   /// Encode `input` (default "") to a `Uint8Array` of its UTF-8 bytes. A Rust
   /// `String` is already valid UTF-8, so this is a direct byte copy.
-  pub fn encode<'js>(&self, ctx: Ctx<'js>, input: Opt<String>) -> rquickjs::Result<TypedArray<'js, u8>> {
+  pub fn encode<'js>(&self, ctx: Ctx<'js>, input: OptArg<String>) -> rquickjs::Result<TypedArray<'js, u8>> {
     TypedArray::new(ctx, input.0.unwrap_or_default().into_bytes())
   }
 }
@@ -64,7 +64,7 @@ impl<'js> Trace<'js> for TextDecoder {
 #[rquickjs::methods]
 impl TextDecoder {
   #[qjs(constructor)]
-  pub fn new<'js>(ctx: Ctx<'js>, label: Opt<String>, options: Opt<Object<'js>>) -> rquickjs::Result<Self> {
+  pub fn new<'js>(ctx: Ctx<'js>, label: OptArg<String>, options: OptArg<Object<'js>>) -> rquickjs::Result<Self> {
     let label = label.0.unwrap_or_default();
     let normalized = label.trim().to_ascii_lowercase();
     // The set of UTF-8 labels the WHATWG Encoding Standard maps to "utf-8".
@@ -103,8 +103,8 @@ impl TextDecoder {
   pub fn decode<'js>(
     &self,
     ctx: Ctx<'js>,
-    input: Opt<Value<'js>>,
-    options: Opt<Object<'js>>,
+    input: OptArg<Value<'js>>,
+    options: OptArg<Object<'js>>,
   ) -> rquickjs::Result<String> {
     let stream = options.0.as_ref().and_then(|o| o.get::<_, Option<bool>>("stream").ok().flatten()).unwrap_or(false);
     let bytes = match input.0 {

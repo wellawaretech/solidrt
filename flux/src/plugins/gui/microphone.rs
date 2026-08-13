@@ -5,10 +5,10 @@
 
 use std::rc::Rc;
 
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
 
+use crate::plugins::marshal::OptArg;
 use super::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -54,7 +54,7 @@ fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
   Ok(arr)
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let mut device: Option<u32> = None;
   let mut sample_rate: Option<u32> = None;
   if let Some(opts) = options.0 {

@@ -1,5 +1,6 @@
+use crate::plugins::marshal::OptArg;
 use rquickjs::class::Trace;
-use rquickjs::function::{Opt, This};
+use rquickjs::function::This;
 use rquickjs::{Class, Ctx, Function, JsLifetime, Value};
 use std::cell::RefCell;
 
@@ -19,7 +20,7 @@ impl<'js> Trace<'js> for Headers {
 #[rquickjs::methods]
 impl Headers {
   #[qjs(constructor)]
-  pub fn new<'js>(init: Opt<Value<'js>>) -> rquickjs::Result<Self> {
+  pub fn new<'js>(init: OptArg<Value<'js>>) -> rquickjs::Result<Self> {
     let entries = match init.0 {
       Some(v) => header_pairs_from_init(&v)?,
       None => Vec::new(),
@@ -68,7 +69,7 @@ impl Headers {
   pub fn for_each<'js>(
     this: This<Class<'js, Headers>>,
     callback: Function<'js>,
-    this_arg: Opt<Value<'js>>,
+    this_arg: OptArg<Value<'js>>,
   ) -> rquickjs::Result<()> {
     // Snapshot so the callback may mutate the Headers without holding the borrow.
     let entries = this.0.borrow().entries();

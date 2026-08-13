@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::logger::CtxLogger;
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, OptArg};
 use crate::plugins::standards::body::{is_async_iterable, pump_async_iterable};
 use crate::plugins::standards::headers::header_pairs_from_init;
 use crate::plugins::standards::http::HttpClient;
@@ -34,7 +34,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let fetch_fn = Function::new(
     ctx.clone(),
     MutFn::from(
-      move |ctx: Ctx<'_>, url: String, opts: rquickjs::function::Opt<Object<'_>>| -> rquickjs::Result<Promised<_>> {
+      move |ctx: Ctx<'_>, url: String, opts: OptArg<Object<'_>>| -> rquickjs::Result<Promised<_>> {
         let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
 
         let cache_mode: Option<CacheMode> =

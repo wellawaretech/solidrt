@@ -1,5 +1,4 @@
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 use std::future::Future;
@@ -7,6 +6,7 @@ use std::pin::Pin;
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::standards::body::{
   collect_array_buffer, collect_bytes, collect_json, collect_text, extract_streaming_body, throw_msg, BodySource,
   ByteStream, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
@@ -45,7 +45,7 @@ impl<'js> Trace<'js> for Response<'js> {
 #[rquickjs::methods]
 impl<'js> Response<'js> {
   #[qjs(constructor)]
-  pub fn new(ctx: Ctx<'js>, body: Opt<Value<'js>>, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
+  pub fn new(ctx: Ctx<'js>, body: OptArg<Value<'js>>, init: OptArg<Object<'js>>) -> rquickjs::Result<Self> {
     let (body_bytes, stream) = match body.0 {
       Some(v) => extract_streaming_body(&ctx, &v)?,
       None => (Vec::new(), None),
@@ -57,7 +57,7 @@ impl<'js> Response<'js> {
   }
 
   #[qjs(static, rename = "json")]
-  pub fn json_static(ctx: Ctx<'js>, val: Value<'js>, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
+  pub fn json_static(ctx: Ctx<'js>, val: Value<'js>, init: OptArg<Object<'js>>) -> rquickjs::Result<Self> {
     let json = ctx.json_stringify(val)?.map(|s| s.to_string()).transpose()?.unwrap_or_else(|| "null".to_string());
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;
     let headers = headers_from_init(&ctx, headers_val.as_ref())?;

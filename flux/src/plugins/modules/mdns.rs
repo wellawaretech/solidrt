@@ -20,13 +20,12 @@
 
 use std::future::Future;
 
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Ctx, Function, IntoJs, Object, Value};
 
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, OptArg};
 
 /// Default window (ms) a query waits for multicast answers.
 const DEFAULT_TIMEOUT_MS: u64 = 1500;
@@ -38,7 +37,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 1500;
 fn mdns_resolve<'js>(
   ctx: Ctx<'js>,
   ips: Vec<String>,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ResolveResult>>>> {
   let timeout_ms = opt_timeout(&opts)?;
   Ok(with_pending(&ctx, async move { forge::mdns::resolve(ips, timeout_ms).await.map(ResolveResult) }))
@@ -49,7 +48,7 @@ fn mdns_resolve<'js>(
 fn mdns_browse<'js>(
   ctx: Ctx<'js>,
   service: String,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<BrowseResult>>>> {
   let timeout_ms = opt_timeout(&opts)?;
   Ok(with_pending(&ctx, async move { forge::mdns::browse(service, timeout_ms).await.map(BrowseResult) }))
@@ -58,7 +57,7 @@ fn mdns_browse<'js>(
 /// `services({ timeoutMs? })` -> `Promise<string[]>`: the service types on the LAN.
 fn mdns_services<'js>(
   ctx: Ctx<'js>,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Vec<String>>>>> {
   let timeout_ms = opt_timeout(&opts)?;
   Ok(with_pending(&ctx, async move { forge::mdns::services(timeout_ms).await }))
@@ -134,7 +133,7 @@ impl ModuleDef for MdnsModule {
 }
 
 /// Read `timeoutMs` from the optional options object, defaulting to 1500 ms.
-fn opt_timeout(opts: &Opt<Object<'_>>) -> rquickjs::Result<u64> {
+fn opt_timeout(opts: &OptArg<Object<'_>>) -> rquickjs::Result<u64> {
   match opts.0.as_ref() {
     Some(obj) => Ok(obj.get::<_, Option<f64>>("timeoutMs")?.map(|v| v.max(0.0) as u64).unwrap_or(DEFAULT_TIMEOUT_MS)),
     None => Ok(DEFAULT_TIMEOUT_MS),

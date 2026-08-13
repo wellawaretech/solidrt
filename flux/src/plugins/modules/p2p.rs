@@ -30,7 +30,6 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
@@ -40,7 +39,7 @@ use iroh::endpoint::{Connection, RecvStream, SendStream};
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg};
 use crate::plugins::standards::body::extract_body_value;
 use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
 
@@ -83,7 +82,7 @@ impl P2pEndpoint {
   #[qjs(static)]
   pub fn create<'js>(
     ctx: Ctx<'js>,
-    opts: Opt<Object<'js>>,
+    opts: OptArg<Object<'js>>,
   ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<P2pEndpoint>>>> {
     let (secret, relay_url, alpns, local, port) = parse_create_opts(&ctx, opts.0)?;
     Ok(with_pending(&ctx, async move {

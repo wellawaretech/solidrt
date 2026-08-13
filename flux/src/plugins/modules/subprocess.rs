@@ -1,4 +1,4 @@
-use rquickjs::function::{MutFn, Opt};
+use rquickjs::function::MutFn;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
@@ -6,7 +6,7 @@ use std::rc::Rc;
 use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, OptArg};
 use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
 use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 
@@ -140,8 +140,8 @@ fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>>
 fn build_command<'js>(
   ctx: Ctx<'js>,
   cmd: String,
-  args: Opt<Vec<String>>,
-  opts: Opt<Object<'js>>,
+  args: OptArg<Vec<String>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let spec = Rc::new(parse_spec(&ctx, cmd, args.0, opts.0)?);
 

@@ -1,6 +1,5 @@
 use hyper::upgrade::OnUpgrade;
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
 use std::cell::RefCell;
@@ -9,6 +8,7 @@ use std::pin::Pin;
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::modules::websocket::ServeUpgrade;
 use crate::plugins::standards::body::{
   collect_array_buffer, collect_bytes, collect_json, collect_text, extract_body_value, BodySource, ByteStream,
@@ -56,7 +56,7 @@ impl<'js> Trace<'js> for Request<'js> {
 #[rquickjs::methods]
 impl<'js> Request<'js> {
   #[qjs(constructor)]
-  pub fn new(ctx: Ctx<'js>, url: String, init: Opt<Object<'js>>) -> rquickjs::Result<Self> {
+  pub fn new(ctx: Ctx<'js>, url: String, init: OptArg<Object<'js>>) -> rquickjs::Result<Self> {
     let method: String = init
       .0
       .as_ref()

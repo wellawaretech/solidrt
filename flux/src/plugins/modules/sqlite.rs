@@ -62,13 +62,12 @@
 //! - `close()` is async (returns a promise); Bun's is synchronous.
 
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, IntoJs, JsLifetime, Object, TypedArray, Value};
 
 use crate::plugins::js_error::{err_message, JsResult};
-use crate::plugins::marshal::with_pending;
+use crate::plugins::marshal::{with_pending, OptArg};
 use forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
 
 #[derive(Trace, JsLifetime)]
@@ -92,7 +91,7 @@ impl Database {
   pub fn open<'js>(
     ctx: Ctx<'js>,
     path: String,
-    mode: Opt<String>,
+    mode: OptArg<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
     Ok(with_pending(&ctx, async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
   }
@@ -110,7 +109,7 @@ impl Database {
     &self,
     ctx: Ctx<'js>,
     sql: String,
-    params: Opt<Array<'js>>,
+    params: OptArg<Array<'js>>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
     let conn = self.conn.clone();
     let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
@@ -170,7 +169,7 @@ impl Statement {
   pub fn all<'js>(
     &self,
     ctx: Ctx<'js>,
-    params: Opt<Array<'js>>,
+    params: OptArg<Array<'js>>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRows>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
@@ -182,7 +181,7 @@ impl Statement {
   pub fn get<'js>(
     &self,
     ctx: Ctx<'js>,
-    params: Opt<Array<'js>>,
+    params: OptArg<Array<'js>>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsFirstRow>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
@@ -194,7 +193,7 @@ impl Statement {
   pub fn run<'js>(
     &self,
     ctx: Ctx<'js>,
-    params: Opt<Array<'js>>,
+    params: OptArg<Array<'js>>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();

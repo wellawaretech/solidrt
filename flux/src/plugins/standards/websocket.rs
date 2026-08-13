@@ -4,7 +4,6 @@ use http_body_util::Empty;
 use hyper::header::{CONNECTION, HOST, UPGRADE};
 use hyper::Request as HyperRequest;
 use rquickjs::class::{Trace, Tracer};
-use rquickjs::function::Opt;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -15,6 +14,7 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::logger::{CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::modules::websocket::{call_callback, message_payload};
 use crate::plugins::standards::body::JsBytes;
 use forge::websocket::{parse_close, OutMsg, CLOSE_GRACE};
@@ -122,7 +122,7 @@ impl<'js> WebSocket<'js> {
 
   /// Start the closing handshake (default code 1000). During CONNECTING this
   /// aborts the attempt; the close event then reports an unclean 1006.
-  pub fn close(&self, ctx: Ctx<'js>, code: Opt<u16>, reason: Opt<String>) -> rquickjs::Result<()> {
+  pub fn close(&self, ctx: Ctx<'js>, code: OptArg<u16>, reason: OptArg<String>) -> rquickjs::Result<()> {
     if let Some(c) = code.0 {
       if c != 1000 && !(3000..=4999).contains(&c) {
         return Err(Exception::throw_message(&ctx, "close code must be 1000 or in the range 3000-4999"));

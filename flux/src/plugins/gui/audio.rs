@@ -6,11 +6,11 @@
 use std::rc::Rc;
 
 use alloy::audio::PcmFormat;
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, FromJs, Function, JsLifetime, Object, TypedArray, Value};
 
 use super::AlloyContext;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::seekable::SeekableSource;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -55,13 +55,13 @@ impl ModuleDef for AudioModule {
 /// `Object` (see flux/CLAUDE.md "Ctx and the 'js lifetime").
 fn object_builder<F>(f: F) -> F
 where
-  F: for<'js> Fn(Ctx<'js>, Opt<Object<'js>>) -> rquickjs::Result<Object<'js>>,
+  F: for<'js> Fn(Ctx<'js>, OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>>,
 {
   f
 }
 
 /// Read the shared `{ loop?, gain?, pan? }` play options.
-fn read_options(ctx: &Ctx<'_>, options: &Opt<Object<'_>>) -> rquickjs::Result<(bool, f32, Option<f32>)> {
+fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<(bool, f32, Option<f32>)> {
   let mut looping = false;
   let mut gain = 1.0f32;
   let mut pan = None;
@@ -120,7 +120,7 @@ fn playback_handle<'js>(ctx: &Ctx<'js>, track_id: u64) -> rquickjs::Result<Objec
 fn play_impl<'js>(
   ctx: Ctx<'js>,
   data: TypedArray<'js, u8>,
-  options: Opt<Object<'js>>,
+  options: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let (looping, gain, pan) = read_options(&ctx, &options)?;
   let bytes = typed_bytes(&ctx, &data, "play")?;
@@ -165,7 +165,7 @@ fn load_pcm_impl<'js>(
   ctx: Ctx<'js>,
   data: Value<'js>,
   sample_rate: f64,
-  options: Opt<Object<'js>>,
+  options: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
   let data = if let Ok(a) = TypedArray::<u8>::from_js(&ctx, data.clone()) {
     PcmData::U8(a)
@@ -213,7 +213,7 @@ fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Obje
   clip_handle(&ctx, sound_id)
 }
 
-fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: Opt<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let (looping, gain, pan) = read_options(&ctx, &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
   let id = state.0.play_sound(sound_id, looping, gain, pan).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;

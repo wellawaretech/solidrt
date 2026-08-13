@@ -1,6 +1,7 @@
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
+
+use crate::plugins::marshal::OptArg;
 
 // Marshalling for `flux:image`: adapt JS typed arrays and the options object
 // to the engine-free `forge::image` codec. Quality is web-style 0..1 on this
@@ -34,12 +35,10 @@ fn decode_image<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> rquickjs::Res
   Ok(result)
 }
 
-// `opts` is Opt<Value> rather than Opt<Object> so an explicit `undefined`
-// second argument (normal JS for "no options") is accepted like a missing one.
 fn encode_image<'js>(
   ctx: Ctx<'js>,
   img: Object<'js>,
-  opts: Opt<Value<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<TypedArray<'js, u8>> {
   let data: TypedArray<'js, u8> = img
     .get("data")
@@ -51,25 +50,20 @@ fn encode_image<'js>(
 
   let mut format = String::from("png");
   let mut quality = 0.9f64;
-  if let Some(v) = opts.0 {
-    if !v.is_undefined() && !v.is_null() {
-      let Some(o) = v.as_object() else {
-        return Err(Exception::throw_message(&ctx, "encodeImage: options must be an object"));
+  if let Some(o) = opts.0 {
+    let f: Value = o.get("format")?;
+    if !f.is_undefined() && !f.is_null() {
+      let Some(s) = f.as_string() else {
+        return Err(Exception::throw_message(&ctx, "encodeImage: format must be a string"));
       };
-      let f: Value = o.get("format")?;
-      if !f.is_undefined() && !f.is_null() {
-        let Some(s) = f.as_string() else {
-          return Err(Exception::throw_message(&ctx, "encodeImage: format must be a string"));
-        };
-        format = s.to_string()?;
-      }
-      let q: Value = o.get("quality")?;
-      if !q.is_undefined() && !q.is_null() {
-        let Some(n) = q.as_number() else {
-          return Err(Exception::throw_message(&ctx, "encodeImage: quality must be a number"));
-        };
-        quality = n;
-      }
+      format = s.to_string()?;
+    }
+    let q: Value = o.get("quality")?;
+    if !q.is_undefined() && !q.is_null() {
+      let Some(n) = q.as_number() else {
+        return Err(Exception::throw_message(&ctx, "encodeImage: quality must be a number"));
+      };
+      quality = n;
     }
   }
   if !(0.0..=1.0).contains(&quality) {

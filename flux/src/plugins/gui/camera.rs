@@ -11,11 +11,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use alloy::camera::{CameraFacing, CameraStatus};
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
+use crate::plugins::marshal::OptArg;
 use super::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -94,7 +94,7 @@ fn list_impl(ctx: Ctx<'_>) -> rquickjs::Result<Array<'_>> {
   Ok(arr)
 }
 
-fn open_impl<'js>(ctx: Ctx<'js>, options: Opt<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
+fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<Promise<'js>> {
   let mut device: Option<u32> = None;
   let mut facing: Option<CameraFacing> = None;
   let mut width: Option<u32> = None;

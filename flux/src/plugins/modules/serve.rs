@@ -5,7 +5,7 @@ use hyper::service::service_fn;
 use hyper::upgrade::OnUpgrade;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use rquickjs::class::Trace;
-use rquickjs::function::{Opt, This};
+use rquickjs::function::This;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
+use crate::plugins::marshal::OptArg;
 use crate::plugins::modules::p2p::P2pEndpoint;
 use crate::plugins::modules::websocket::{
   message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
@@ -401,7 +402,7 @@ impl Server {
   /// the handler can serve a normal response instead. Options: `data` becomes
   /// `ws.data` on the socket handle; `headers` (object or Headers) are added to
   /// the 101 response (e.g. Set-Cookie).
-  pub fn upgrade<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>, opts: Opt<Object<'js>>) -> bool {
+  pub fn upgrade<'js>(&self, ctx: Ctx<'js>, req: Class<'js, Request<'js>>, opts: OptArg<Object<'js>>) -> bool {
     let logger = ctx.logger();
     if !self.has_websocket {
       logger.warn("[flux] serve: upgrade() requires a websocket option on serve()");

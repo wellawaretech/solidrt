@@ -1,6 +1,6 @@
 use alloy::impellers::{FontStyle, FontWeight};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{function::Opt, Ctx, Function, IntoJs, JsLifetime, Object, Value};
+use rquickjs::{Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
@@ -9,6 +9,7 @@ use taffy::prelude::*;
 
 use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
+use crate::plugins::marshal::OptArg;
 use alloy::rendertree::{
   Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, PlatformContext, Rect,
   RenderTree, Text, Window,
@@ -200,7 +201,7 @@ impl ModuleDef for RenderTreeModule {
 
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();
-    let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: Opt<u64>| {
+    let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: OptArg<u64>| {
       tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
       platform_ref.request_frame();
     })?;
@@ -285,7 +286,7 @@ impl ModuleDef for RenderTreeModule {
     })?;
 
     let cmd_tx = alloy_cmd_tx.clone();
-    let set_text_input_active = Function::new(ctx.clone(), move |active: bool, hints: Opt<Object<'_>>| {
+    let set_text_input_active = Function::new(ctx.clone(), move |active: bool, hints: OptArg<Object<'_>>| {
       let mut options = alloy::TextInputOptions::default();
       if let Some(h) = hints.0 {
         if let Ok(v) = h.get::<_, String>("type") {
@@ -321,7 +322,7 @@ impl ModuleDef for RenderTreeModule {
 
     let measure_platform = platform.clone();
     let measure_atx = atx.clone();
-    let measure_text = Function::new(ctx.clone(), move |text: String, options: Opt<Object<'_>>| -> TextSize {
+    let measure_text = Function::new(ctx.clone(), move |text: String, options: OptArg<Object<'_>>| -> TextSize {
       let mut node = Text::default();
       node.computed_text = text;
 

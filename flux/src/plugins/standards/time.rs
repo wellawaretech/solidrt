@@ -1,5 +1,5 @@
 use rquickjs::{
-  function::{MutFn, Opt},
+  function::MutFn,
   Ctx, Exception, Function, JsLifetime, Object, Persistent, Value,
 };
 use std::cell::{Cell, RefCell};
@@ -12,6 +12,7 @@ use tokio::time::Instant;
 
 use crate::logger::report_uncaught;
 use crate::pending::PendingOps;
+use crate::plugins::marshal::OptArg;
 
 // ----- Virtual time: embedder-driven timers -----
 
@@ -279,9 +280,9 @@ fn schedule_microtask<'js>(cb: Function<'js>) -> rquickjs::Result<()> {
 // browser ignore anything that isn't a live id - a missing argument, undefined,
 // null, a non-number, or a number that was never handed out - so any value we
 // can't read as a positive integer yields None and the caller does nothing.
-// Typing the argument as a raw Value (rather than u32) is what keeps an undefined
-// argument from blowing up in numeric conversion before we ever get to decide.
-fn timer_id(arg: Opt<Value<'_>>) -> Option<u32> {
+// Typing the argument as a raw Value (rather than u32) is what keeps a
+// non-number argument from blowing up in conversion before we ever get to decide.
+fn timer_id(arg: OptArg<Value<'_>>) -> Option<u32> {
   let v = arg.0?;
   let n = v.as_int().map(|i| i as f64).or_else(|| v.as_float())?;
   if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
@@ -311,7 +312,7 @@ fn init_timers(ctx: &Ctx<'_>) {
     ctx.clone(),
     MutFn::from({
       let timers = timers.clone();
-      move |ctx: Ctx<'_>, id: Opt<Value<'_>>| {
+      move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
         if let Some(id) = timer_id(id) {
           timers.cancel(&ctx, id);
         }
@@ -334,7 +335,7 @@ fn init_timers(ctx: &Ctx<'_>) {
 
   let clear_interval = Function::new(
     ctx.clone(),
-    MutFn::from(move |ctx: Ctx<'_>, id: Opt<Value<'_>>| {
+    MutFn::from(move |ctx: Ctx<'_>, id: OptArg<Value<'_>>| {
       if let Some(id) = timer_id(id) {
         timers.cancel(&ctx, id);
       }

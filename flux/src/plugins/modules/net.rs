@@ -35,14 +35,13 @@ use std::net::Ipv4Addr;
 use std::rc::Rc;
 
 use rquickjs::class::Trace;
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Array, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending};
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg};
 use crate::plugins::standards::body::extract_body_value;
 
 // ---- free functions ---------------------------------------------------------
@@ -53,7 +52,7 @@ fn net_probe<'js>(
   ctx: Ctx<'js>,
   host: String,
   port: u16,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<String>>>> {
   let timeout_ms = opt_u64(&opts, "timeoutMs", 1000)?;
   Ok(with_pending(&ctx, async move {
@@ -66,7 +65,7 @@ fn net_connect<'js>(
   ctx: Ctx<'js>,
   host: String,
   port: u16,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetConn>>> + 'js>> {
   let timeout_ms = opt_u64(&opts, "timeoutMs", 10_000)?;
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
@@ -86,7 +85,7 @@ fn net_connect<'js>(
 fn net_listen<'js>(
   ctx: Ctx<'js>,
   port: u16,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetListener>>> + 'js>> {
   let host = opt_string(&opts, "host")?.unwrap_or_else(|| "0.0.0.0".to_string());
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
@@ -106,7 +105,7 @@ fn net_listen<'js>(
 /// `reuse` sets `SO_REUSEADDR`/`REUSEPORT` so several sockets can share the port.
 fn net_udp<'js>(
   ctx: Ctx<'js>,
-  opts: Opt<Object<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = rquickjs::Result<Class<'js, NetUdp>>> + 'js>> {
   let port = opt_u64(&opts, "port", 0)? as u16;
   let reuse = opt_bool(&opts, "reuse")?.unwrap_or(false);
@@ -129,12 +128,12 @@ fn net_udp<'js>(
 fn net_icmp_echo<'js>(
   ctx: Ctx<'js>,
   host: String,
-  payload: Opt<Value<'js>>,
-  opts: Opt<Object<'js>>,
+  payload: OptArg<Value<'js>>,
+  opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<IcmpMsg>>>> {
   let bytes = match payload.0 {
-    Some(v) if !v.is_undefined() && !v.is_null() => extract_body_value(&v, "icmpEcho")?,
-    _ => Vec::new(),
+    Some(v) => extract_body_value(&v, "icmpEcho")?,
+    None => Vec::new(),
   };
   let timeout_ms = opt_u64(&opts, "timeoutMs", 1000)?;
   Ok(with_pending(&ctx, async move {
@@ -338,14 +337,14 @@ impl NetUdp {
   /// Join multicast `group` on the interface with address `iface` (default
   /// `0.0.0.0`, OS-chosen). Required to receive that group's datagrams.
   #[qjs(rename = "joinMulticast")]
-  pub fn join_multicast(&self, ctx: Ctx<'_>, group: String, iface: Opt<String>) -> rquickjs::Result<()> {
+  pub fn join_multicast(&self, ctx: Ctx<'_>, group: String, iface: OptArg<String>) -> rquickjs::Result<()> {
     let (group, iface) = parse_group_iface(&ctx, &group, &iface)?;
     self.inner.join_multicast(group, iface).map_err(|m| Exception::throw_message(&ctx, &m))
   }
 
   /// Leave a multicast group previously joined with `joinMulticast`.
   #[qjs(rename = "leaveMulticast")]
-  pub fn leave_multicast(&self, ctx: Ctx<'_>, group: String, iface: Opt<String>) -> rquickjs::Result<()> {
+  pub fn leave_multicast(&self, ctx: Ctx<'_>, group: String, iface: OptArg<String>) -> rquickjs::Result<()> {
     let (group, iface) = parse_group_iface(&ctx, &group, &iface)?;
     self.inner.leave_multicast(group, iface).map_err(|m| Exception::throw_message(&ctx, &m))
   }
@@ -465,7 +464,7 @@ fn iface_to_js<'js>(ctx: &Ctx<'js>, iface: forge::net::NetInterface) -> rquickjs
 
 /// Parse a multicast `group` and optional `iface` IPv4 string into addresses,
 /// defaulting `iface` to `0.0.0.0` (OS-chosen). Throws on an unparseable address.
-fn parse_group_iface(ctx: &Ctx<'_>, group: &str, iface: &Opt<String>) -> rquickjs::Result<(Ipv4Addr, Ipv4Addr)> {
+fn parse_group_iface(ctx: &Ctx<'_>, group: &str, iface: &OptArg<String>) -> rquickjs::Result<(Ipv4Addr, Ipv4Addr)> {
   let group = group
     .parse::<Ipv4Addr>()
     .map_err(|_| Exception::throw_message(ctx, &format!("invalid multicast group: {group}")))?;
@@ -479,21 +478,21 @@ fn parse_group_iface(ctx: &Ctx<'_>, group: &str, iface: &Opt<String>) -> rquickj
 }
 
 /// Read `key` from an optional options object, absent -> `None`.
-fn opt_get<'js, V: FromJs<'js>>(opts: &Opt<Object<'js>>, key: &str) -> rquickjs::Result<Option<V>> {
+fn opt_get<'js, V: FromJs<'js>>(opts: &OptArg<Object<'js>>, key: &str) -> rquickjs::Result<Option<V>> {
   match opts.0.as_ref() {
     Some(obj) => obj.get::<_, Option<V>>(key),
     None => Ok(None),
   }
 }
 
-fn opt_u64(opts: &Opt<Object<'_>>, key: &str, default: u64) -> rquickjs::Result<u64> {
+fn opt_u64(opts: &OptArg<Object<'_>>, key: &str, default: u64) -> rquickjs::Result<u64> {
   Ok(opt_get::<f64>(opts, key)?.map(|v| v.max(0.0) as u64).unwrap_or(default))
 }
 
-fn opt_string(opts: &Opt<Object<'_>>, key: &str) -> rquickjs::Result<Option<String>> {
+fn opt_string(opts: &OptArg<Object<'_>>, key: &str) -> rquickjs::Result<Option<String>> {
   opt_get::<String>(opts, key)
 }
 
-fn opt_bool(opts: &Opt<Object<'_>>, key: &str) -> rquickjs::Result<Option<bool>> {
+fn opt_bool(opts: &OptArg<Object<'_>>, key: &str) -> rquickjs::Result<Option<bool>> {
   opt_get::<bool>(opts, key)
 }

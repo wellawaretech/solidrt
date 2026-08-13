@@ -1,8 +1,9 @@
-use rquickjs::function::Opt;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Exception, Function, IntoJs, Object, Value};
 
 use forge::svg::{SvgDocument, SvgDraw, SvgDrawStyle, SvgFillRule, SvgPaint, SvgSpread, SvgStrokeCap, SvgStrokeJoin};
+
+use crate::plugins::marshal::OptArg;
 
 // Marshalling for `flux:svg`: adapt JS args to the engine-free `forge::svg`
 // parser and shape its plain draw data into the objects the render tree
@@ -24,22 +25,15 @@ impl ModuleDef for SvgModule {
   }
 }
 
-// `opts` is Opt<Value> rather than Opt<Object> so an explicit `undefined`
-// second argument (normal JS for "no options") is accepted like a missing one.
-fn parse_svg<'js>(ctx: Ctx<'js>, src: String, opts: Opt<Value<'js>>) -> rquickjs::Result<Object<'js>> {
+fn parse_svg<'js>(ctx: Ctx<'js>, src: String, opts: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let mut color: Option<u32> = None;
-  if let Some(v) = opts.0 {
-    if !v.is_undefined() && !v.is_null() {
-      let Some(o) = v.as_object() else {
-        return Err(Exception::throw_message(&ctx, "parseSvg opts must be an object"));
+  if let Some(o) = opts.0 {
+    let c: Value = o.get("color")?;
+    if !c.is_undefined() && !c.is_null() {
+      let Some(n) = c.as_number() else {
+        return Err(Exception::throw_message(&ctx, "parseSvg color must be a packed 0xRRGGBBAA number"));
       };
-      let c: Value = o.get("color")?;
-      if !c.is_undefined() && !c.is_null() {
-        let Some(n) = c.as_number() else {
-          return Err(Exception::throw_message(&ctx, "parseSvg color must be a packed 0xRRGGBBAA number"));
-        };
-        color = Some(n as u32);
-      }
+      color = Some(n as u32);
     }
   }
 
