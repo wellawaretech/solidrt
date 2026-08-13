@@ -257,7 +257,7 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
       None => entry.base_us + entry.origin.map(|o| o.elapsed().as_micros() as i64).unwrap_or(0),
     };
     if let Some(frame) = entry.player.advance(clock_us) {
-      match state.0.atx.update_yuv(entry.texture, &frame.data) {
+      match state.0.atx.update_yuv(entry.texture, frame.data) {
         Ok(()) => uploaded = true,
         Err(e) => log::warn!("[video] {e}"),
       }

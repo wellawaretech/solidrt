@@ -246,6 +246,14 @@ AV1/VP9 recommended for app-bundled content on codec-less devices.
    something consumes it.
 5. Only if measured insufficient: staging-buffer upload via
    [[texture-upload-staging]], and/or the opt-in surface-import rung.
+   PICKED UP 2026-08-13 (the 1080p TV raster bound made it
+   measured-needed): that item's stages 1+2 are implemented - update_yuv
+   moves the owned frame across the raster channel (no per-plane copies)
+   and uploads into double-buffered plane sets so no in-flight conversion
+   pass is written under. TV re-measured 2026-08-13: raster busy -25%,
+   correctness holds, but fps UNCHANGED at 17-19/25 - the limiter is
+   critical-path latency against the 50 Hz vsync grid (details and the
+   stage-3 rationale in that item), not raster capacity.
 6. Audio unification (after the video PCM path is proven on desktop and
    the TV): replace SDL3_mixer with symphonia decode (Vorbis + WAV, and
    MP3/FLAC/AAC clips become feature flags) feeding one SDL3 audio

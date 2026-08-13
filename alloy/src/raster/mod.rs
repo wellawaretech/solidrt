@@ -453,6 +453,27 @@ impl RasterState {
               log::warn!("[alloy] texture update failed: {e}");
             }
           }
+          RasterCmd::UpdateYuv { planes, frame } => {
+            for (id, offset) in planes {
+              let len = match self.textures.get(&id) {
+                Some(gpu) => (gpu.width as usize) * (gpu.height as usize) * gpu.format.bytes_per_pixel(),
+                None => {
+                  log::warn!("[alloy] yuv plane {id} not found");
+                  continue;
+                }
+              };
+              match frame.get(offset..offset.saturating_add(len)) {
+                Some(plane) => {
+                  if let Err(e) = self.update_texture(id, plane) {
+                    log::warn!("[alloy] yuv plane update failed: {e}");
+                  }
+                }
+                None => {
+                  log::warn!("[alloy] yuv plane {id} needs {len} bytes at offset {offset}, frame has {}", frame.len());
+                }
+              }
+            }
+          }
           RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, sampler, label, reply: tx } => {
             reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler, label));
           }

@@ -4,13 +4,15 @@
 // producer of packed YUV frames (video decoder, camera) can feed one.
 //
 // A YUV texture is a composition of existing texture-system primitives, wired
-// by Context::create_yuv_texture: one registry texture per plane (R8/RG8)
-// plus a shader target that samples them into the app-visible RGBA output.
-// Plane uploads ride update_texture, so re-render on upload and content
-// damage propagation are the ordinary sampler-graph behavior, nothing
-// YUV-specific. The planes being real registry ids is deliberate: exposing
-// them (with the color constants) to app shaders is the designed-for
-// postprocessing extension.
+// by Context::create_yuv_texture: registry textures for the planes (R8/RG8,
+// two sets, double buffered - see YuvGroup in context.rs) plus a shader
+// target that samples them into the app-visible RGBA output. An upload moves
+// one owned frame buffer to the raster thread (RasterCmd::UpdateYuv, no
+// per-plane copies) and rebinds the target to the freshly written set, so
+// re-render on upload and content damage propagation are the ordinary
+// sampler-graph behavior, nothing YUV-specific. The planes being real
+// registry ids is deliberate: exposing them (with the color constants) to
+// app shaders is the designed-for postprocessing extension.
 //
 // Frames are TIGHTLY PACKED: plane rows are exactly the plane width, planes
 // follow each other with no padding. Producers with padded output (decoder

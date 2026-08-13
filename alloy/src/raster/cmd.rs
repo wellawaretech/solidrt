@@ -45,6 +45,11 @@ pub(crate) enum RasterCmd {
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },
+  /// Upload one packed YUV frame into its plane textures: each (id, byte
+  /// offset) plane slices its bytes out of the shared `frame`, which is MOVED
+  /// from the caller - one multi-plane frame crosses the channel with no copy
+  /// (see `Context::update_yuv`).
+  UpdateYuv { planes: Vec<(u64, usize)>, frame: Vec<u8> },
   /// Compile a fragment shader into a new target texture and adopt it; the
   /// first render happens at the next dirty flush. Compile and validation
   /// errors must reach JS, hence the reply, which also carries the program's

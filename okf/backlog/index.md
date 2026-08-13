@@ -10,6 +10,14 @@ timestamp: 2026-07-13T00:00:00Z
 Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
+- [Frame pacing - motion on the TV is not fluent](frame-pacing-fluency.md)
+  [open] - Even a trivially cheap full-rate 360p bar clip visibly stutters
+  on the 50 Hz TV at both 50 and 25 fps; engine stats suggest a ~27 ms base
+  frame-loop latency and uneven 1-vs-2-vsync cadence, but those stats are
+  known liars there. Handoff brief for a dedicated trace session: SF
+  --latency baseline, pre-refactor A/B (PacedClock/frame-driver moves are
+  the suspect), and the open is-the-video-path-still-on-the-fast-path MSAA
+  question.
 - [Video playback](video-playback.md) [open] - One decode-to-YUV pipeline
   on every platform: software decoders on desktop, MediaCodec buffer mode
   on Android (punch-through rejected), planar YUV textures + shader
@@ -143,11 +151,13 @@ Sorted by status: open first, then partial, deferred, and closed
   and a command buffer whose props land in a shared buffer Rust reads
   directly, drained once per flush. Generic before the animation-specific
   finding-b work.
-- [Zero-copy texture upload staging](texture-upload-staging.md) [open] - The
-  steady state of any texture-driven app is one full-frame copy per frame to
-  cross onto the raster thread; begin/endTextureUpload over raster-owned
+- [Zero-copy texture upload staging](texture-upload-staging.md) [in-progress] -
+  The steady state of any texture-driven app is one full-frame copy per frame
+  to cross onto the raster thread; begin/endTextureUpload over raster-owned
   staging buffers is the only honestly zero-copy shape - matters when
-  video/camera frames arrive.
+  video/camera frames arrive. Stages 1+2 (owned-frame YUV upload,
+  double-buffered plane sets) done 2026-08-13; TV measurement decides the
+  PBO-pool stage.
 - [Owner-scoped registerDebug](owner-scoped-register-debug.md) [open] -
   Reload-reset registrations force any state a debug command touches up to
   module scope; an owner-scoped variant auto-cleaned like onFrame lets it

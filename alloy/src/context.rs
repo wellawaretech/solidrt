@@ -165,15 +165,23 @@ pub struct Context {
   // references the id (see destroy_texture for why deferral is the contract).
   pending_destroys: RefCell<Vec<u64>>,
   // Planar YUV textures (see yuv.rs): app-visible output id -> its plane
-  // textures with their byte offsets in a packed frame, for update_yuv, and
-  // for destroy_texture to take the planes down with the output.
+  // sets, for update_yuv, and for destroy_texture to take the planes down
+  // with the output.
   yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
 }
 
-// The composition behind one YUV texture id: the plane ids in frame order
-// with each plane's byte offset, and the packed frame size for validation.
+// The composition behind one YUV texture id: TWO full plane sets, each plane
+// as (uniform name, texture id, byte offset in a packed frame), plus the
+// packed frame size for validation. The conversion shader samples the
+// `front` set; update_yuv uploads into the other set and swaps. The double
+// buffering exists for the raster thread: on a pipelined (tile-based) GPU
+// the previous frame's conversion pass may still be sampling its planes when
+// the next upload lands, and writing a texture with reads in flight makes
+// the driver stall or ghost it. Alternating sets keeps every upload
+// hazard-free.
 struct YuvGroup {
-  planes: Vec<(u64, usize)>,
+  sets: [Vec<(&'static str, u64, usize)>; 2],
+  front: usize,
   frame_size: usize,
 }
 
@@ -503,11 +511,11 @@ impl Context {
     self.create_texture_at(id, width, height, &pixels[..frame_size], sampler, format, None)
   }
 
-  /// Create a planar YUV texture (see yuv.rs): one plane texture per plane of
-  /// `layout` plus a conversion shader target sampling them, whose RGBA
-  /// output id is returned - usable anywhere a texture id is. Feed packed
-  /// frames with `update_yuv`; the output re-renders at the next dirty flush
-  /// like any shader target. Color constants are baked at creation (fixed per
+  /// Create a planar YUV texture (see yuv.rs): plane textures for `layout`
+  /// (two double-buffered sets, see YuvGroup) plus a conversion shader
+  /// target sampling them, whose RGBA output id is returned - usable
+  /// anywhere a texture id is. Feed packed frames with `update_yuv`; the
+  /// output re-renders at the next dirty flush like any shader target. Color constants are baked at creation (fixed per
   /// stream; a standard change means a new texture), `sampler` is the
   /// OUTPUT's sampling (planes always sample linear/clamp for chroma
   /// upscaling), and the content starts black until the first frame.
@@ -533,49 +541,52 @@ impl Context {
     // Seed planes with black (Y floor, chroma midpoint; NV12's interleaved
     // UV seeds both bytes 128) - zeroed chroma would start the output green.
     let y_black = if range == YuvRange::Limited { 16u8 } else { 0u8 };
-    let mut ids: Vec<(u64, usize)> = Vec::with_capacity(planes.len());
-    let mut bindings: Vec<(String, u64)> = Vec::with_capacity(planes.len());
+    // Two full plane sets, double buffered (see YuvGroup); the shader starts
+    // bound to set 0.
+    let mut sets: [Vec<(&'static str, u64, usize)>; 2] = [Vec::new(), Vec::new()];
     let mut failure: Option<String> = None;
-    for plane in &planes {
-      let value = if plane.name == "uY" { y_black } else { 128u8 };
-      let plane_label = label.as_ref().map(|l| format!("{l}.{}", plane.name[1..].to_lowercase()));
-      match self.create_texture_from_pixels(
-        plane.width,
-        plane.height,
-        &vec![value; plane.byte_len()],
-        SamplerState::default(),
-        plane.format,
-        plane_label,
-      ) {
-        Ok(id) => {
-          ids.push((id, plane.offset));
-          bindings.push((plane.name.to_string(), id));
-        }
-        Err(e) => {
-          failure = Some(e);
-          break;
+    'create: for (set, ids) in sets.iter_mut().enumerate() {
+      for plane in &planes {
+        let value = if plane.name == "uY" { y_black } else { 128u8 };
+        let plane_label = label.as_ref().map(|l| format!("{l}.{}{set}", plane.name[1..].to_lowercase()));
+        match self.create_texture_from_pixels(
+          plane.width,
+          plane.height,
+          &vec![value; plane.byte_len()],
+          SamplerState::default(),
+          plane.format,
+          plane_label,
+        ) {
+          Ok(id) => ids.push((plane.name, id, plane.offset)),
+          Err(e) => {
+            failure = Some(e);
+            break 'create;
+          }
         }
       }
     }
     let result = match failure {
       Some(e) => Err(e),
-      None => self.create_shader_texture(
-        width,
-        height,
-        &yuv::fragment_src(layout, matrix, range),
-        &[],
-        &bindings,
-        sampler,
-        label,
-      ),
+      None => {
+        let bindings: Vec<(String, u64)> = sets[0].iter().map(|&(name, id, _)| (name.to_string(), id)).collect();
+        self.create_shader_texture(
+          width,
+          height,
+          &yuv::fragment_src(layout, matrix, range),
+          &[],
+          &bindings,
+          sampler,
+          label,
+        )
+      }
     };
     match result {
       Ok(out) => {
-        self.yuv_groups.borrow_mut().insert(out, YuvGroup { planes: ids, frame_size });
+        self.yuv_groups.borrow_mut().insert(out, YuvGroup { sets, front: 0, frame_size });
         Ok(out)
       }
       Err(e) => {
-        for (id, _) in ids {
+        for (_, id, _) in sets.into_iter().flatten() {
           self.destroy_texture(id);
         }
         Err(e)
@@ -584,20 +595,35 @@ impl Context {
   }
 
   /// Upload one tightly packed frame (every plane, laid out per
-  /// `yuv::planes`) into a YUV texture. `frame` may be larger than one frame;
-  /// the planes read from their fixed offsets. The conversion target
-  /// re-renders and content damage propagates exactly as for
-  /// `update_texture` on each plane.
-  pub fn update_yuv(&self, id: u64, frame: &[u8]) -> Result<(), String> {
-    let groups = self.yuv_groups.borrow();
-    let group = groups.get(&id).ok_or_else(|| format!("yuv texture {id} not found"))?;
-    if frame.len() < group.frame_size {
-      return Err(format!("need {} bytes for a packed frame, buffer has {}", group.frame_size, frame.len()));
+  /// `yuv::planes`) into a YUV texture. Takes the frame BY VALUE: the buffer
+  /// crosses to the raster thread as-is - no per-plane copies - and the
+  /// planes slice it there at their fixed offsets. The upload lands in the
+  /// back plane set and the conversion target rebinds to it (double
+  /// buffering, see YuvGroup), so planes a still-in-flight conversion pass
+  /// samples are never written under it. The conversion target re-renders
+  /// and content damage propagates exactly as for `update_texture`.
+  pub fn update_yuv(&self, id: u64, frame: Vec<u8>) -> Result<(), String> {
+    let (planes, bindings) = {
+      let mut groups = self.yuv_groups.borrow_mut();
+      let group = groups.get_mut(&id).ok_or_else(|| format!("yuv texture {id} not found"))?;
+      if frame.len() < group.frame_size {
+        return Err(format!("need {} bytes for a packed frame, buffer has {}", group.frame_size, frame.len()));
+      }
+      let back = 1 - group.front;
+      group.front = back;
+      let set = &group.sets[back];
+      let planes: Vec<(u64, usize)> = set.iter().map(|&(_, plane, offset)| (plane, offset)).collect();
+      let bindings: Vec<(String, u64)> = set.iter().map(|&(name, plane, _)| (name.to_string(), plane)).collect();
+      (planes, bindings)
+    };
+    for &(plane, _) in &planes {
+      self.note_content(plane);
     }
-    for &(plane, offset) in &group.planes {
-      self.update_texture(plane, frame, offset)?;
-    }
-    Ok(())
+    self.send(RasterCmd::UpdateYuv { planes, frame });
+    // Rebinding through the ordinary path keeps the sampler-graph mirror
+    // honest and re-renders the conversion output at the next dirty flush;
+    // channel order puts the rebind after the upload.
+    self.set_target_textures(id, &bindings)
   }
 
   /// Recreate a render target of any kind at a new size under the same id:
@@ -1667,7 +1693,7 @@ impl Context {
     // removed now, so a late update_yuv errs instead of dirtying a target
     // whose planes are going away.
     if let Some(group) = self.yuv_groups.borrow_mut().remove(&id) {
-      for (plane, _) in group.planes {
+      for (_, plane, _) in group.sets.into_iter().flatten() {
         if !pending.contains(&plane) {
           pending.push(plane);
         }
