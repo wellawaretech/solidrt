@@ -29,7 +29,7 @@ export type Config = {
   cache: boolean
   /** Directory holding the proxy cache db (the project-local .srt-data). */
   cacheDir: string
-  /** Directory holding .srt-tunnel-key (the project root). */
+  /** Directory holding tunnel.key (the server's ~/.solidrt/servers/<port>/ folder). */
   keyDir: string
   /** Destination for captured key events, or unset when off. */
   capture?: string

@@ -4,7 +4,7 @@ import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, sendWatch, showBuildFailure } from "./dev-server"
 import { bundle } from "./bundler"
-import { buildManifest, projectDirFor } from "./project"
+import { buildManifest } from "./project"
 import { startWatcher, stopWatcher } from "./watcher"
 
 // Resolve repl client indexes ("0 2") against the server's client list,
@@ -101,6 +101,15 @@ async function cmdLoad(file: string) {
     return
   }
   let path = resolve(file)
+  // Same rule as /__control__/load (control.ts): a server run serves the
+  // project it started in, and an entry outside the project root cannot
+  // resolve the project's dependencies anyway.
+  let norm = (p: string) => p.replace(/\\/g, "/")
+  let root = norm(state.projectDir).replace(/\/+$/, "") + "/"
+  if (!norm(path).startsWith(root)) {
+    printErr(`[cli] Entry is outside the project root: ${path} is not under ${state.projectDir}. Restart srt in that project to work on it.`)
+    return
+  }
   if (file.endsWith(".tsx")) {
     let result = await bundle(path)
     if (!result) {
@@ -126,15 +135,14 @@ async function cmdLoad(file: string) {
   }
   state.source = path
   state.sourceDir = dirname(path)
-  state.projectDir = projectDirFor(path)
   startWatcher()
-  // The load also moves the server's file-serving root to the new source dir,
-  // its /assets/ root to the new project dir, and its rebuild entry to the
-  // new file (for a later MCP reload).
+  // The load also moves the server's file-serving root to the new source dir
+  // and its rebuild entry to the new file (for a later MCP reload). The
+  // project root - and with it the /assets/ root - is fixed for the life of
+  // the run.
   await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
     latch: true,
     sourceDir: state.sourceDir,
-    projectDir: state.projectDir,
     entry: file.endsWith(".tsx") ? path : undefined,
     map: state.currentMap,
   })

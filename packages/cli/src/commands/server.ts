@@ -16,7 +16,10 @@ export async function runServerCommand() {
   // Initialize state from args
   state.source = source
   state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
-  state.projectDir = source ? projectDirFor(resolve(source)) : process.cwd()
+  // With no entry the project is wherever srt was started: walk up to the
+  // nearest package.json exactly like an entry would, so the projectDir the
+  // MCP bridge derives for its registry match agrees with ours.
+  state.projectDir = projectDirFor(source ? resolve(source) : resolve("package.json"))
   state.stats = values.stats
   state.capture = values.capture ? resolve(values.capture) : undefined
 

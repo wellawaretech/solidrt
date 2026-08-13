@@ -74,16 +74,16 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
 
   switch (path) {
     case "/__internal__/reload": {
-      // { message, clients?, latch?, sourceDir?, projectDir?, map? }: send
-      // `message` (a full client-protocol message, built by srt) to the listed
-      // client ids, or to all when omitted. `latch` keeps it for late-joining
-      // clients (code reloads latch, one-shot bytecode loads do not);
-      // `sourceDir` moves the file-serving root and `projectDir` the /assets/
-      // root (repl `load`); `map` is the bundle's sourcemap for log remapping,
-      // replaced on every reload (absent means none).
+      // { message, clients?, latch?, sourceDir?, map? }: send `message` (a
+      // full client-protocol message, built by srt) to the listed client ids,
+      // or to all when omitted. `latch` keeps it for late-joining clients
+      // (code reloads latch, one-shot bytecode loads do not); `sourceDir`
+      // moves the file-serving root (repl `load`; the project root - and with
+      // it the /assets/ root - is fixed for the life of the run); `map` is
+      // the bundle's sourcemap for log remapping, replaced on every reload
+      // (absent means none).
       let body = await req.json()
       if (typeof body.sourceDir === "string") state.sourceDir = body.sourceDir
-      if (typeof body.projectDir === "string") state.projectDir = body.projectDir
       // Keep the rebuild entry in sync when `load` moves it, so a later MCP
       // reload bundles the newly loaded file, not the launch-time one.
       if (typeof body.entry === "string") state.config.entry = body.entry

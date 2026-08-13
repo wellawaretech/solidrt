@@ -9,14 +9,116 @@ import { z } from "zod"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { values } from "../args"
 import { DEV_PORT } from "../dev-server"
+import { devDir } from "../dev-dir"
 
-const CONTROL_BASE = `http://127.0.0.1:${DEV_PORT}/__control__`
+// An explicit -s/--port pins the port for the bridge's lifetime. Otherwise
+// the port is resolved per tool call from the server registry, so one bridge
+// (started when the workspace opens, kept alive across server restarts)
+// follows whichever server is currently serving this project - and the
+// scaffold's mcp.json never carries a port.
+const FIXED_PORT = values.port !== undefined || values.session !== undefined ? DEV_PORT : null
+
+// The projectDir the bridge is working in: the nearest package.json above its
+// own cwd, the same rule srt applies to an entry (project.ts projectDirFor),
+// so both sides derive the same string.
+function findProjectDir(): string | null {
+  let dir = process.cwd()
+  while (true) {
+    if (existsSync(join(dir, "package.json"))) return dir
+    let parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+type LiveRecord = { pid: number; port: number; projectDir: string }
+
+// The global server registry: every running dev server keeps a live.json in
+// ~/.solidrt/servers/<port>/ (see dev-server.ts writeLiveRecord). Unreadable or
+// malformed records are skipped, not fatal - the registry is a hint.
+function liveRecords(): LiveRecord[] {
+  let root = devDir("servers")
+  let names: string[]
+  try {
+    names = readdirSync(root)
+  } catch {
+    return []
+  }
+  let records: LiveRecord[] = []
+  for (let name of names) {
+    try {
+      let record = JSON.parse(readFileSync(join(root, name, "live.json"), "utf8"))
+      if (typeof record?.pid === "number" && typeof record?.port === "number" && typeof record?.projectDir === "string") {
+        records.push(record)
+      }
+    } catch {}
+  }
+  return records
+}
+
+type PortResult = { ok: true; port: number } | { ok: false; message: string }
+
+async function resolvePort(): Promise<PortResult> {
+  if (FIXED_PORT !== null) return { ok: true, port: FIXED_PORT }
+  let project = findProjectDir()
+  if (!project) {
+    return {
+      ok: false,
+      message: `No package.json found above ${process.cwd()}, so no dev server can be resolved by project. Pass -s <N> or --port <N> to srt mcp.`,
+    }
+  }
+  let matches = liveRecords().filter((r) => r.projectDir === project && pidAlive(r.pid))
+  if (matches.length > 1) {
+    let ports = matches
+      .map((r) => r.port)
+      .sort((a, b) => a - b)
+      .join(", ")
+    return { ok: false, message: `${matches.length} dev servers are serving this project (ports ${ports}); pass -s <N> to srt mcp` }
+  }
+  if (matches.length === 0) {
+    return { ok: false, message: `No dev server for ${project}. Start one with srt run, or pass -s <N> to srt mcp.` }
+  }
+  let port = matches[0]!.port
+  // The record is a hint; the server is authoritative. The probe catches a
+  // stale record whose pid was reused by an unrelated process.
+  try {
+    let probe = await fetch(`http://127.0.0.1:${port}/__control__/clients`)
+    let body: any = await probe.json().catch(() => null)
+    if (!probe.ok || body?.projectDir !== project) {
+      return {
+        ok: false,
+        message: `The server on port ${port} is not serving ${project}${
+          typeof body?.projectDir === "string" ? ` (it serves ${body.projectDir})` : ""
+        }. Start one with srt run, or pass -s <N> to srt mcp.`,
+      }
+    }
+  } catch {
+    return {
+      ok: false,
+      message: `No dev server for ${project}: the registry lists port ${port} but nothing answers there. Start one with srt run.`,
+    }
+  }
+  return { ok: true, port }
+}
 
 type ControlResult = { ok: true; body: any } | { ok: false; message: string }
 
 async function control(path: string, method: "GET" | "POST" = "GET", payload?: unknown): Promise<ControlResult> {
+  let resolved = await resolvePort()
+  if (!resolved.ok) return resolved
   let resp
   try {
     let init: RequestInit = { method }
@@ -24,7 +126,7 @@ async function control(path: string, method: "GET" | "POST" = "GET", payload?: u
       init.headers = { "content-type": "application/json" }
       init.body = JSON.stringify(payload)
     }
-    resp = await fetch(CONTROL_BASE + path, init)
+    resp = await fetch(`http://127.0.0.1:${resolved.port}/__control__${path}`, init)
   } catch {
     return {
       ok: false,

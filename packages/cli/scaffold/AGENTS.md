@@ -374,8 +374,11 @@ its tools over guessing at runtime state:
 
 - list_clients: connected app clients, their platform and runtime
   capabilities, plus the server's `entry` (the app source it serves) and
-  `projectDir` - check entry matches the app you think you are driving; the
-  dev port is fixed, so another project's server answers on the same port.
+  `projectDir` - check entry matches the app you think you are driving. Each
+  tool call finds the dev server currently serving this project (by its
+  project root), so a server restarted on another port/session is followed
+  automatically; no server serving this project is an error, not a wrong
+  server.
   Each client also lists `queries`, the dev-tool query kinds its runtime
   answers - check it before planning verification against a mixed-version
   fleet (no "input" = the client predates send_input)

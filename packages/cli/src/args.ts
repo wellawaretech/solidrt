@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
+import { clientsRoot } from "./dev-dir"
 
 // Everything after a bare "--" is the app's argument vector, kept out of
 // parseArgs (which would fold it into positionals) and forwarded verbatim to
@@ -14,8 +15,9 @@ export let { values, positionals } = parseArgs({
   options: {
     dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
-    compile: { type: "boolean", short: "c", default: false },
+    compile: { type: "boolean", default: false },
     flux: { type: "boolean", short: "f", default: false },
+    session: { type: "string", short: "s" },
     folder: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
@@ -28,7 +30,7 @@ export let { values, positionals } = parseArgs({
     tunnel: { type: "boolean", default: false },
     stats: { type: "boolean", default: false },
     "data-root": { type: "string" },
-    client: { type: "string" },
+    client: { type: "string", short: "c" },
     server: { type: "string" },
     port: { type: "string" },
     android: { type: "boolean", default: false },
@@ -38,23 +40,41 @@ export let { values, positionals } = parseArgs({
   allowPositionals: true,
 })
 
-// Storage flags for a locally spawned client, forwarded only when given: with
-// no --data-root the client resolves its platform pref path (see
-// lattice/src/storage.rs); --client <N> selects the client<N>/ tree under
-// either root. An explicit root is passed absolute because the client chdirs
-// into its app sandbox at startup.
-export function clientStorageArgs(): string[] {
-  let args: string[] = []
-  let root = values["data-root"]
-  if (root) args.push("--data-root", resolve(root))
-  let client = values.client
-  if (client !== undefined) {
-    if (!/^\d+$/.test(client)) {
-      console.error(`Invalid --client value "${client}": expected a non-negative integer`)
-      process.exit(1)
-    }
-    args.push("--client", client)
+export const DEFAULT_DEV_PORT = 0x8844
+
+// The session number: -s/--session <N> selects the dev server (port
+// DEFAULT_DEV_PORT + N, see dev-server.ts resolveDevPort) and the default
+// client slot. Resolved at load, like the port.
+function resolveSession(): number {
+  let raw = values.session
+  if (raw === undefined) return 0
+  let n = Number(raw)
+  if (!/^\d+$/.test(raw) || DEFAULT_DEV_PORT + n > 65535) {
+    console.error(
+      `Invalid --session value "${raw}": expected a non-negative integer with ${DEFAULT_DEV_PORT} + N at most 65535`,
+    )
+    process.exit(1)
   }
+  return n
+}
+export let session = resolveSession()
+
+// Storage flags for a locally spawned client. Dev client trees live in
+// ~/.solidrt/clients/client<M>/, reached through --data-root so the client
+// runtime keeps its single pref-path default rule (see lattice/src/storage.rs
+// and okf/backlog/parallel-dev-servers.md); an explicit --data-root wins. The
+// client slot defaults to the session number, so each session gets its own
+// tree with a single flag. Roots are passed absolute because the client
+// chdirs into its app sandbox at startup.
+export function clientStorageArgs(): string[] {
+  let root = values["data-root"]
+  let args = ["--data-root", root ? resolve(root) : clientsRoot()]
+  let client = values.client ?? String(session)
+  if (!/^\d+$/.test(client)) {
+    console.error(`Invalid --client value "${client}": expected a non-negative integer`)
+    process.exit(1)
+  }
+  args.push("--client", client)
   return args
 }
 
@@ -111,6 +131,17 @@ export function validateArgs() {
   if (values.port !== undefined && command !== "run" && command !== "server" && command !== "mcp") {
     usage("srt <run|server|mcp> --port <N>  (--port is only valid with the run, server and mcp commands)")
   }
+  // --session selects a dev server (and the default client slot), so it is
+  // valid wherever a dev server is started, attached to, or resolved.
+  if (
+    values.session !== undefined &&
+    command !== "run" &&
+    command !== "server" &&
+    command !== "client" &&
+    command !== "mcp"
+  ) {
+    usage("srt <run|server|client|mcp> -s <N>  (--session is only valid with the run, server, client and mcp commands)")
+  }
 }
 
 export function printUsage() {
@@ -131,7 +162,8 @@ init options:
   -t, --template <name>  Start from a named template (skips the interactive picker)
 
 run/server options:
-      --port <N>         Dev server port (default: 34884)
+  -s, --session <N>      Session number: dev server on port 34884+N, client slot N (default: 0)
+      --port <N>         Dev server port (default: 34884 + session)
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel
@@ -140,22 +172,24 @@ run/server options:
 run/client options:
       --size <WxH>       Window size (default: 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
-      --data-root <dir>  Client data root (default: the platform pref path)
-      --client <N>       Client number: its own data tree under the data root (default: 0)
+      --data-root <dir>  Client data root (default: ~/.solidrt/clients)
+  -c, --client <N>       Client number: its own data tree under the data root (default: the session)
 
 client options:
-      --server <host[:port]>  Connect to a dev server at this address (default port: 34884)
+  -s, --session <N>      Session of the dev server to connect to (default: 0)
+      --server <host[:port]>  Connect to a dev server at this address (default port: 34884 + session)
       --android          Install and launch the client on a connected Android device
       --device <serial>  Target a specific adb device by serial or unique prefix
 
 mcp options:
-      --port <N>         Port of the dev server to attach to (default: 34884)
+  -s, --session <N>      Attach to the dev server of this session (default: resolve by project)
+      --port <N>         Port of the dev server to attach to (default: resolve by project)
 
 bundle options:
   -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
   -d, --dev              Use development build of SolidJS (default: production)
   -m, --minify           Minify the output
-  -c, --compile          Compile to bytecode
+      --compile          Compile to bytecode
   -o, --output <name>    Output filename
       --stdout           Write bundle to stdout
 

@@ -64,19 +64,51 @@ Sorted by status: open first, then partial, deferred, and closed
   consumers keep the reuse path. Camera frames and id-stable resizes ride
   the same channel.
 - [Several dev servers on one machine, each with its own clients and MCP
-  route](parallel-dev-servers.md) [open] - Inventory of the pieces: `--port`
-  already threads through server, local/Android client and MCP bridge,
-  servers already hold many clients, numbered client data trees already
-  exist, and the control API already reports `entry`/`projectDir`. Missing
-  is identity - concurrent clients all default to `client0/` (sharing
-  identity and app data, against two explicit storage decisions), ports are
-  picked by hand, and MCP config is static per workspace so the agent cannot
-  be pointed at the right server. Scoped 2026-08-08 to one server per project
-  folder (a folder with two servers is out of scope), which makes the project
-  root the routing key: leading candidate is a `.srt-data/server.json` marker
-  the server writes and the bridge finds by walking up from its own cwd, so
-  two editor windows on two projects need identical config and no `--port`
-  anywhere. Data-folder half still open.
+  route](parallel-dev-servers.md) [open] - Design decided 2026-08-13; all
+  three stages implemented and verified the same day (leads remain in its
+  Open section). Two numbers: `--session`/`-s N` picks the dev
+  server (port 34884 + N), `--client`/`-c M` picks the client data tree and
+  defaults to the session number, so one flag covers the common case (`-c`
+  taken from `--compile`, which keeps only its long form). State splits three
+  ways by ownership: server state keyed by **port** in
+  `~/.solidrt/servers/<port>/` (tunnel key + a `live.json` registry record),
+  project state in the project's `.srt-data/` (HTTP cache, transient
+  typecheck config), and client state in `~/.solidrt/clients/client<M>/`,
+  reached through the `--data-root` flag that already exists - so the client
+  runtime needs no change, dev and production storage stop sharing a root,
+  and `rm -rf ~/.solidrt` resets every bit of dev state. One rule on every
+  platform (XDG deferred, reasons recorded). What is left under the SDL pref
+  path is only the launcher and installed packed apps, which is
+  [A shipped app stores its data under its own vendor](app-storage-vendor-path.md).
+  A server run serves the project it started in - `load` outside the project
+  root is refused, since a cross-project load today retargets only half the
+  system (assets and appId follow, cache and watcher do not) - but the server
+  itself is independent of any project: switching means exiting and starting
+  again anywhere, and the same session keeps the same tunnel identity because
+  the key is keyed by port, not by project. The MCP bridge resolves per tool
+  call: walk up from its cwd for the project root, match it against
+  `projectDir` in the global registry, probe the winner. The scaffold's
+  `mcp.json` never carries a port. Stages 1 and 2 are CLI-only; stage 3
+  (Rust) drops the launcher's client level and makes `--client`
+  data-root-only. Supersedes the 2026-08-08 scoping and its project-local
+  marker file.
+- [A shipped app stores its data under its own vendor, not under
+  solidrt](app-storage-vendor-path.md) [open] - A packed app currently lands
+  in `<pref>/SolidRT/<app-id>/`, putting the engine's name in an end user's
+  filesystem; no shipped game files itself under `unreal/`. Rule:
+  `<pref>/<org>/<app-id>/` when `solidrt.org` is declared,
+  `<pref>/<app-id>/` when it is not, never a forced vendor level - and the
+  launcher takes the same rule as `<pref>/solidrt-go/`, which finally
+  removes the `SolidRT/go/` split (an artifact of SDL's `get_pref_path(org,
+  app)` signature, not a decision) along with the whole shared-namespace
+  collision question. The config key already exists but is display metadata
+  only: `org` reaches neither the manifest nor the pack payload, so the
+  plumbing is the work, plus an optional org in `StorageSpec`. Open: app id
+  or display name for the directory (preference: the id, since it is stable
+  and path-safe), and whether the installed-base migration needs anything
+  beyond "just change it". Independent of
+  [parallel dev servers](parallel-dev-servers.md), whose dev clients move to
+  `~/.solidrt/clients/`.
 - [Padding makes paint and hit size against different boxes](padding-box-divergence.md)
   [partial] - Paint hands laid-out elements their content box as ctx.size,
   hit passes the border box. The View half (transform center, viewBox fit,

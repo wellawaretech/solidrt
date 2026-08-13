@@ -15,15 +15,16 @@ import { printQr } from "./qr"
 // the handshake instead of desyncing.
 export const TUNNEL_PROTOCOL = "solidrt-dev/0"
 
-// The persisted identity file, at the project root. Delete it to rotate the
-// tunnel's identity (which invalidates any old ticket).
-const KEY_FILE = ".srt-tunnel-key"
+// The persisted identity file, in the server's ~/.solidrt/servers/<port>/ folder
+// (keyDir): the tunnel identity belongs to the server, not to any project it
+// serves. Delete it to rotate the identity (which invalidates any old ticket).
+const KEY_FILE = "tunnel.key"
 
 /**
  * Bind the tunnel endpoint and print its ticket (text + QR). The endpoint is
  * kept stable across restarts so a paired client can re-dial the old ticket
  * without re-scanning: the UDP port is pinned to the dev server's port, and the
- * secret key is persisted in <keyDir>/.srt-tunnel-key (generated on first
+ * secret key is persisted in <keyDir>/tunnel.key (generated on first
  * run). Both are needed - a moving port or a fresh key each start would change
  * the ticket. Stable across restarts on the same network only; a new machine IP
  * still stales the ticket's addresses (that is the discovery/off-LAN story).

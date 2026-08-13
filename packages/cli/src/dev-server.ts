@@ -1,18 +1,21 @@
-import { resolve } from "path"
+import { resolve, join } from "path"
 import { tmpdir, networkInterfaces } from "node:os"
 import { fileURLToPath } from "node:url"
+import { mkdirSync, writeFileSync, unlinkSync } from "node:fs"
 import { state, print, printErr, requireBinary, pipeAbovePrompt, shutdown } from "./util"
-import { appArgs, values } from "./args"
+import { appArgs, values, session, DEFAULT_DEV_PORT } from "./args"
+import { serverDir } from "./dev-dir"
 
 export const DEV_HOST = "127.0.0.1"
-export const DEFAULT_DEV_PORT = 0x8844
 
 // The port every dev-server consumer dials: the spawned server, the local and
 // Android clients' --dev-server address, and the MCP bridge's control base.
-// Resolved once here, so --port needs no threading through those call sites.
+// Resolved once here, so --port/--session need no threading through those
+// call sites. An explicit --port wins over the session; the server folder is
+// keyed by the port actually bound either way.
 function resolveDevPort(): number {
   let raw = values.port
-  if (raw === undefined) return DEFAULT_DEV_PORT
+  if (raw === undefined) return DEFAULT_DEV_PORT + session
   let port = Number(raw)
   if (!/^\d+$/.test(raw) || port < 1 || port > 65535) {
     console.error(`Invalid --port value "${raw}": expected a port number between 1 and 65535`)
@@ -58,10 +61,10 @@ async function post(path: string, body: object) {
  * Send a client-protocol message through the server: to the given client ids,
  * or to every client when omitted. `latch` keeps the message for late-joining
  * clients (code reloads latch, one-shot bytecode loads do not); `sourceDir`
- * moves the server's file-serving root and `projectDir` its /assets/ root
- * (repl `load`); `map` is the bundle's sourcemap, kept server-side for
- * stack-trace remapping (omitting it clears the server's map, so a mapless
- * reload never remaps against a stale one).
+ * moves the server's file-serving root (repl `load`; the project root is
+ * fixed for the life of the run); `map` is the bundle's sourcemap, kept
+ * server-side for stack-trace remapping (omitting it clears the server's map,
+ * so a mapless reload never remaps against a stale one).
  */
 export async function sendReload(
   message: object,
@@ -69,7 +72,6 @@ export async function sendReload(
     clients?: number[]
     latch?: boolean
     sourceDir?: string
-    projectDir?: string
     entry?: string
     map?: string | null
   } = {},
@@ -185,15 +187,41 @@ function requireFreePort(port: number) {
     let probe = Bun.serve({ port, fetch: () => new Response() })
     probe.stop(true)
   } catch {
-    printErr(`[cli] Port ${port} is already in use; start on another port with --port <N>`)
+    printErr(`[cli] Port ${port} is already in use; start on another session with -s <N> (or --port <P>)`)
     process.exit(1)
   }
+}
+
+// The server's registry record: written once the server answers, removed at
+// exit, so MCP bridges can resolve a project to a port without any per-project
+// config (okf/backlog/parallel-dev-servers.md). The pid is the flux server's
+// (the process owning the port), so a record left behind by a crash fails the
+// bridge's liveness check; the record is a hint either way - the bridge's
+// /__control__/clients probe is authoritative.
+function writeLiveRecord() {
+  let record = {
+    pid: state.serverProc?.pid,
+    port: DEV_PORT,
+    projectDir: state.projectDir,
+    entry: state.source ?? null,
+    started: new Date().toISOString(),
+  }
+  writeFileSync(join(serverDir(DEV_PORT), "live.json"), JSON.stringify(record))
+}
+
+function removeLiveRecord() {
+  try {
+    unlinkSync(join(serverDir(DEV_PORT), "live.json"))
+  } catch {}
 }
 
 export async function startServer() {
   let flux = requireBinary("flux")
   requireFreePort(DEV_PORT)
   let script = await bundleServer()
+  // The server's own folder (tunnel.key lands there, written by the flux
+  // process, which does not create directories).
+  mkdirSync(serverDir(DEV_PORT), { recursive: true })
 
   let lanAddress = Object.values(networkInterfaces())
     .flat()
@@ -220,8 +248,8 @@ export async function startServer() {
     minify: values.minify,
     bundlerCmd: [process.execPath, bundleCli],
     cache: values["proxy-http"],
-    cacheDir: resolve(".srt-data"),
-    keyDir: process.cwd(),
+    cacheDir: resolve(state.projectDir, ".srt-data"),
+    keyDir: serverDir(DEV_PORT),
     capture: state.capture,
     stats: state.stats,
     tunnel: values.tunnel,
@@ -256,6 +284,11 @@ export async function startServer() {
       await Bun.sleep(100)
     }
   }
+
+  writeLiveRecord()
+  // shutdown() exits via process.exit, so the exit hook covers every orderly
+  // path; only a kill -9 leaves the record behind, for the pid check to catch.
+  process.on("exit", removeLiveRecord)
 
   // mDNS advertise (dropped, code kept for future use - see
   // docs/flux-dev-server-plan.md): the p2p ticket is the cross-device connect

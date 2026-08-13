@@ -1,10 +1,16 @@
 // Client storage: data-root resolution and the on-disk tree
-// (okf/plans/client-storage-updates.md, stage 1 + layout revision 2026-07-21).
+// (okf/plans/client-storage-updates.md, stage 1 + layout revision 2026-07-21;
+// launcher layout + run marker: okf/backlog/parallel-dev-servers.md stage 3).
 //
-// Three layouts, picked by how the process was launched:
+// Three layouts, picked by how the process was launched. Two independent
+// facts distinguish them: is there a client level (only under an explicit
+// --data-root, where several numbered clients coexist), and is there an
+// apps/ level (everywhere except a packed app, which is exactly one app).
+// The fourth combination (one app, many clients) is meaningless.
 //
-// Explicit --data-root (opt-in; the CLI forwards it only when the user passes
-// one). Multiple numbered clients, multiple apps:
+// Dev client (--data-root; srt forwards one for every client it spawns,
+// pointing at the dev dotdir's clients/ folder). Many numbered clients,
+// many apps:
 //
 //   <data-root>/client<N>/
 //     identity/          client identity (persisted iroh key)
@@ -22,19 +28,23 @@
 //   <pref SolidRT/app-id>/    e.g. ~/.local/share/SolidRT/com.example.app/
 //     identity/  data/  cache/  logs/
 //
-// Generic go client (neither): many numbered clients, many apps, sharing the
-// same vendor level:
+// Launcher (neither): one install is one client, so there is no client
+// level, but it installs many apps:
 //
-//   <pref SolidRT/go>/client<N>/
+//   <pref SolidRT/go>/
 //     identity/  apps/<app-id>/data/  apps/<app-id>/cache/  logs/
 //
-// --client <N> selects a tree under an explicit --data-root or the generic go
-// client (default 0; the number is chosen by the user, never auto-allocated,
-// so a client's data and identity stay put across runs). A packed app has
-// exactly one client, so there it is ignored with a warning. Data always
-// lives on the machine the client process runs on; remote dev clients
-// resolve their own local root, never the dev server's project dir.
+// --client <N> selects a tree under an explicit --data-root (default 0; the
+// number is chosen by the user, never auto-allocated, so a client's data and
+// identity stay put across runs). The other layouts have exactly one client,
+// so there it is ignored with a warning. Data always lives on the machine
+// the client process runs on; remote dev clients resolve their own local
+// root, never the dev server's project dir.
+//
+// Each client tree also carries run.pid, a marker claiming the tree for one
+// live client process (see claim_run_marker).
 
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 /// Startup inputs the resolution runs on: CLI flags plus the packed app id
@@ -54,6 +64,12 @@ pub struct Storage {
   pub data_dir: PathBuf,
   // Packed flat layout: the root is the single app's dir, no apps/ level.
   pub(crate) flat: bool,
+  // The claimed run marker: holding the file keeps its OS lock for the life
+  // of the process (a keep-alive, only ever read by tests). None when
+  // another live client owns the tree (warned at resolve) or the marker
+  // could not be opened.
+  #[cfg_attr(not(test), allow(dead_code))]
+  pub(crate) run_marker: Option<std::fs::File>,
 }
 
 impl Storage {
@@ -129,15 +145,17 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
         return None;
       }
     },
-    None => match &spec.app_id {
-      Some(app_id) => {
-        if spec.client.is_some() {
-          log::warn!("[srt] --client does not apply to a packed app, ignoring");
-        }
-        (pref(&checked_component(Some(app_id), "app id"))?, true)
+    None => {
+      // Both pref-path layouts have exactly one client per install, so
+      // --client is data-root-only.
+      if spec.client.is_some() {
+        log::warn!("[srt] --client only applies with --data-root, ignoring");
       }
-      None => (pref("go")?.join(client()), false),
-    },
+      match &spec.app_id {
+        Some(app_id) => (pref(&checked_component(Some(app_id), "app id"))?, true),
+        None => (pref("go")?, false),
+      }
+    }
   };
 
   let data_dir = if flat {
@@ -146,14 +164,58 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
     let app_id = checked_component(spec.app_id.as_deref(), "app id");
     client_dir.join("apps").join(app_id).join("data")
   };
-  let storage = Storage { data_dir, client_dir, flat };
-  for dir in [&storage.data_dir, &storage.client_dir.join("identity"), &storage.client_dir.join("logs")] {
+  for dir in [&data_dir, &client_dir.join("identity"), &client_dir.join("logs")] {
     if let Err(e) = std::fs::create_dir_all(dir) {
       log::warn!("[srt] cannot create storage dir {}: {e}", dir.display());
       return None;
     }
   }
-  Some(storage)
+  // Dev trees only: the pref-path layouts (packed app, launcher, Android)
+  // have one client per install by construction, so no marker is claimed and
+  // nothing dev-shaped is written there.
+  let run_marker = if spec.data_root.is_some() { claim_run_marker(&client_dir) } else { None };
+  Some(Storage { data_dir, client_dir, flat, run_marker })
+}
+
+// Two live clients on one tree share one identity key and one data sandbox
+// per app, and corrupt them silently; claim a marker so the second one warns
+// loudly instead. Liveness is the OS file lock itself, held for the life of
+// the process and released by the OS on any exit including kill -9, so a
+// marker is never stale; the pid written inside only names the holder in the
+// warning. A warning, not a lock: the client still runs
+// (okf/plans/client-storage-updates.md deliberately dropped the
+// running-instance lock).
+fn claim_run_marker(client_dir: &PathBuf) -> Option<std::fs::File> {
+  let path = client_dir.join("run.pid");
+  let mut file = match std::fs::OpenOptions::new().read(true).write(true).create(true).open(&path) {
+    Ok(file) => file,
+    Err(e) => {
+      log::warn!("[srt] cannot open run marker {}: {e}", path.display());
+      return None;
+    }
+  };
+  match file.try_lock() {
+    Ok(()) => {
+      let _ = file.set_len(0);
+      let _ = file.write_all(std::process::id().to_string().as_bytes());
+      Some(file)
+    }
+    Err(std::fs::TryLockError::WouldBlock) => {
+      let mut holder = String::new();
+      let _ = file.read_to_string(&mut holder);
+      let holder = holder.trim();
+      let holder = if holder.is_empty() { String::new() } else { format!(" (pid {holder})") };
+      log::warn!(
+        "[srt] another client{holder} is already using {}; two clients on one tree corrupt each other's data - give each its own --client number",
+        client_dir.display()
+      );
+      None
+    }
+    Err(std::fs::TryLockError::Error(e)) => {
+      log::warn!("[srt] cannot lock run marker {}: {e}", path.display());
+      None
+    }
+  }
 }
 
 static STORAGE: std::sync::OnceLock<Option<Storage>> = std::sync::OnceLock::new();

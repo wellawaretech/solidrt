@@ -47,20 +47,39 @@ fn resolve_rejects_unsafe_components() {
   let _ = std::fs::remove_dir_all(&root);
 }
 
-// The generic go layout resolves through the real pref path; pointing SDL's
+// The launcher layout resolves through the real pref path; pointing SDL's
 // XDG base at a temp dir keeps the test out of the user's data dir. Linux
 // only: the base env var is platform-specific. No other test reads it.
 #[cfg(target_os = "linux")]
 #[test]
-fn go_client_tree_is_numbered() {
+fn launcher_tree_has_no_client_level() {
   let root = temp_root("go");
   std::env::set_var("XDG_DATA_HOME", &root);
+  // --client is data-root-only: one install is one client, so the number is
+  // ignored (with a warning) and no client<N> level appears.
   let spec = StorageSpec { data_root: None, client: Some(1), app_id: None };
   let store = resolve(&spec).expect("resolves");
   std::env::remove_var("XDG_DATA_HOME");
-  let client_dir = root.join("SolidRT").join("go").join("client1");
+  let client_dir = root.join("SolidRT").join("go");
   assert_eq!(store.client_dir, client_dir);
   assert_eq!(store.data_dir, client_dir.join("apps").join("default").join("data"));
+  let _ = std::fs::remove_dir_all(&root);
+}
+
+// The run marker warns about, but does not prevent, a second live client on
+// the same tree; dropping the first (its lock dies with the process) frees
+// the tree for the next claim.
+#[test]
+fn second_client_on_one_tree_is_detected() {
+  let root = temp_root("marker");
+  let spec = StorageSpec { data_root: Some(root.clone()), client: None, app_id: None };
+  let first = resolve(&spec).expect("resolves");
+  assert!(first.run_marker.is_some());
+  let second = resolve(&spec).expect("a warning, not a lock: still resolves");
+  assert!(second.run_marker.is_none());
+  drop(first);
+  let third = resolve(&spec).expect("resolves");
+  assert!(third.run_marker.is_some());
   let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -111,7 +130,7 @@ fn anchor_dir_recovers_from_deleted_cwd() {
 #[test]
 fn flat_app_dir_is_the_root() {
   let root = std::path::PathBuf::from("/packed-app");
-  let store = Storage { client_dir: root.clone(), data_dir: root.join("data"), flat: true };
+  let store = Storage { client_dir: root.clone(), data_dir: root.join("data"), flat: true, run_marker: None };
   assert_eq!(store.app_dir("com.example.app"), root);
   assert_eq!(store.app_dir("anything-else"), root);
   // The single app's cache sits at the root, like every other app dir.

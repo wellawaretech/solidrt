@@ -16,9 +16,35 @@ The dev server watches your source files, transpiles them and distributes them t
 
 The common workflow is to use the `run` command which will start both the dev server and a local runtime. Next, start clients on other devices and connect them to the dev server. Change your code and see all devices update instantly.
 
+## Sessions
+
+Several dev servers can run on one machine at once, each with its own clients.
+A session is one number that picks both: `srt run -s1` starts a dev server on
+port `34884 + 1` with a client using data tree 1, in whatever project you run
+it from. The default session is 0, so single-server use needs no flags.
+
+- `-s, --session <N>` selects the dev server (port `34884 + N`). Valid on
+  `run`, `server`, `client` and `mcp`.
+- `-c, --client <M>` selects the client data tree, defaulting to the session
+  number. Pass it to attach a second client to the same session:
+  `srt client -s1 -c2`.
+- `--port <P>` still wins where valid; the session then only supplies the
+  client slot.
+
+Dev state lives in `~/.solidrt/`: `servers/<port>/` holds each server's identity
+(its p2p tunnel key, stable across restarts on the same port) and a record of
+the running server, and `clients/client<M>/` holds the client data trees.
+Deleting `~/.solidrt` resets all of it.
+
+A server run serves the project it was started in; to work on another
+project, start a server there (another session runs both at once). The MCP
+bridge (`srt mcp`) needs no port configuration: each tool call finds the
+server currently serving the project the bridge runs in, so agent config
+never changes per session.
+
 ## Proxies
 
-- `--proxy-http` - routes `fetch` calls through the dev server. HTTP responses are cached automatically in an SQLite file at `.srt-data/http-cache.db`. To clear the cache, delete that file.
+- `--proxy-http` - routes `fetch` calls through the dev server. HTTP responses are cached automatically in an SQLite file at `.srt-data/http-cache.db` in the project root. To clear the cache, delete that file.
 
 With multiple devices connected, caching is especially useful: a resource fetched once is served from cache on every subsequent reload across all clients.
 
@@ -53,6 +79,8 @@ When running, a REPL is started. See section Dev server REPL.
 
 | Flag             | Description                                              |
 | ---------------- | -------------------------------------------------------- |
+| `-s, --session <N>` | Session number: port `34884 + N` (default: 0)         |
+| `--port <N>`     | Dev server port (default: `34884` + session)             |
 | `--proxy-http`   | Route fetch calls through the dev server (cache enabled) |
 | `--capture <file>` | Record connected clients' key events to a script file  |
 | `-- <args...>`   | App arguments, pushed to every client with the app       |
@@ -83,6 +111,9 @@ bunx srt client [flags]
 
 | Flag     | Description          |
 | -------- | -------------------- |
+| `-s, --session <N>` | Session of the dev server to connect to (default: 0) |
+| `-c, --client <N>` | Client number: its own data tree under the data root (default: the session) |
+| `--data-root <dir>` | Client data root (default: `~/.solidrt/clients`) |
 | `--size` | Window size as `WxH` |
 
 ### Command `run`
@@ -158,7 +189,7 @@ When starting the development server, an interactive REPL opens. The REPL lets y
 
 | Command         | Description                                      |
 | --------------- | ------------------------------------------------ |
-| `load <file>`   | Load and push a `.tsx`, `.srt.js`, or `.srt.bin` |
+| `load <file>`   | Load and push a `.tsx`, `.srt.js`, or `.srt.bin` (inside the project root) |
 | `reload`        | Rebuild and push to all clients                  |
 | `stop`          | Stop all clients                                 |
 | `list`          | List connected clients with platform and version |

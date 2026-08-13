@@ -50,11 +50,29 @@ behavior in isolation.
   (display scale is pinned to 1), so frames are identical on every machine.
 - Run from the project directory. There is no `bunx --cwd` flag.
 
+## Sessions (parallel dev servers on one machine)
+
+- `-s <N>` / `--session <N>` (default 0) picks the dev server: port
+  `34884 + N`. Valid on `run`, `server`, `client`, `mcp`. `srt run -s1` is a
+  second, fully independent dev setup; `srt client -s1 -c2` attaches another
+  client to it.
+- `-c <N>` / `--client <N>` picks the client data tree, defaulting to the
+  session number. (`--compile` gave its short to `--client`.)
+- Dev state lives in `~/.solidrt/`: `servers/<port>/` holds each server's tunnel
+  key and `live.json` (the registry record MCP resolution reads, removed at
+  exit), `clients/client<M>/` the client trees (srt passes
+  `--data-root ~/.solidrt/clients` to every locally spawned client).
+- A server run serves the project it was started in; `load` outside the
+  project root is refused. Restart the server in another project to switch.
+- `srt mcp` needs no port: each tool call resolves the server serving the
+  project the bridge runs in (registry match + probe); `-s`/`--port` pin it.
+
 ## Dev server proxies (when clients on other devices need your machine's data)
 
 - `--proxy-http` - route `fetch` through the dev server; responses cached in
-  `.srt-data/http-cache.db` (delete the file to clear).
+  `.srt-data/http-cache.db` in the project root (delete the file to clear).
 
 ## REPL (opened by `run`/`server`)
 
 `load <file>`, `reload [n]`, `stop [n]`, `list`, `!<cmd>`, `quit`/`exit`.
+`load` is bound to the project root the server was started in.
