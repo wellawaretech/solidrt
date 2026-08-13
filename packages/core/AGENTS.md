@@ -94,7 +94,7 @@ tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 ```
 
 Peer deps @solidjs/signals and @solidjs/universal must match (currently
-2.0.0-beta.31); bun resolves them from peerDependencies.
+2.0.0-rc.0); bun resolves them from peerDependencies.
 
 ## Element model (the parts that are easy to get wrong)
 
