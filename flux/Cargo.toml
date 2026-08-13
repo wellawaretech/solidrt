@@ -30,6 +30,12 @@ compile = []
 # default so the headless flux runtime and its bins stay GUI-free; lattice turns
 # it on.
 gui = ["dep:alloy", "dep:taffy"]
+# Video frame scheduling on the engine timeline (paced clock) with standing
+# frame demand while a player is mid-playback, instead of wall-clock selection
+# with demand only on upload. Measured on a 50 Hz TV: missed present slots
+# 11% -> 0.13%, content locked frame-for-frame. Off by default until the
+# residual ~1/s idle-tick hitch is resolved; see okf/backlog/video-playback.md.
+video-timeline-pacing = []
 
 [dependencies]
 forge = { workspace = true }

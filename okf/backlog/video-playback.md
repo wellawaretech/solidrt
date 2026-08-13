@@ -190,6 +190,67 @@ AV1/VP9 recommended for app-bundled content on codec-less devices.
   load [[texture-upload-staging]] anticipated; that item is the fix, not
   a new design here.
 
+## Frame scheduling (2026-08-13): timeline clock + standing demand, behind `video-timeline-pacing`
+
+Session findings on the TV (rebased on the [[frame-pacing-fluency]] fix,
+SwapPaced active), traced with examples/video/src/probe/pacing.tsx (rebuilt
+this session: 50fps/25fps synthetic bar clips, remote dpad switching via
+gamepads() - the TV remote is joystick-classified, onKeyDown never sees it -
+plus "pump"/"cadence" debug commands):
+
+- Baseline: a 640x360 50fps clip on the 50Hz panel missed ~11% of present
+  slots (SF census: mean 22.5ms with exact-40ms holes; engine: fps 42,
+  skippedPerSec 19, 61 signals/s). Two stacked causes.
+- Cause 1, demand: video produced frames only on its own uploads, so the
+  loop free-ran off the vsync grid (ticks faster than 50/s with idle-tick
+  gaps). Proven by a standing onFrame ("pump"): presents snapped to
+  20.02ms / 0.04% drops - but content still stuttered.
+- Cause 2, clock: the silent-stream master clock was Instant::now() read
+  inside the tick. The tick's JS work executes at bursty wall moments
+  (7.4% of gaps >30ms, pairs ~0ms apart; runtime frame counter never
+  skips) even when presents are metronomic, so pts<=clock selection
+  inherited the jitter: 11% held + 9% double-stepped frames measured by
+  per-tick currentTime() sampling while presents were clean.
+- Fix shipped behind `video-timeline-pacing` (flux feature, lattice
+  passthrough, default OFF): silent streams clock on the engine timeline
+  (flux::Clock = paced frame clock; new timeline_now_ms in
+  standards/time.rs), selection gets a half-period lookahead (play()
+  anchors the pts grid in phase with the tick grid; without the offset
+  every comparison sits on a boundary where sub-ms timeline noise flips
+  it), and video::tick returns VideoTick{uploaded, playing} so lattice
+  keeps a standing frame request while any player is mid-playback
+  (playing && !finished; a finished clip stops demanding). PacedClock
+  gained period_ms(). Audio-clocked streams untouched (sink position
+  stays master; needs the same treatment later - see below).
+- Measured with the flag on: presents 20.05ms / 0.13% drops (from 11%);
+  content steps per vsync 98.2% exact-20ms in a restart-free window.
+- RESIDUAL, why the flag defaults OFF: user still sees ~1 hitch/s on the
+  TV. Correlates with the known idle-tick oddity ([[frame-pacing-fluency]]
+  flagged "~1.1 idle Ticks/s during continuous animation, should never
+  happen"): idleTicks climbs ~1.1/s during playback, the loop runs 51-52
+  iterations/s on the 50Hz panel (reusedPerSec 52 vs fps 50, cadence
+  meanMs 19.69), and each stray idle tick runs an extra loop iteration
+  that advances the paced clock one extra period (its one-period-per-call
+  model) and presents duplicate content, shoving the next real frame a
+  slot late. Invisible to the SF census (latch grid stays 20ms) and to
+  position sampling (records a 0-step); visible to the eye.
+- Next steps, in order: (1) alloy idle-tick gate - no idle tick while a
+  standing frame request is in flight (suspect: race between the JS
+  executor's request_frame and the loop's idle decision; alloy app.rs /
+  vsync.rs). (2) Re-measure with the flag on; if a residual flap remains
+  at pts-grid boundary crossings (~0.6% hold/jump pairs from paced-vs-pts
+  phase drift), the prepared refinement is a per-player clock that
+  advances exactly one period per tick and re-syncs to the timeline only
+  when drift exceeds 1.5 periods (one clean slip instead of a flapping
+  stretch; also keeps realtime under raster-bound ticking). (3) Stage 3:
+  audio-clocked streams - smooth the PCM sink position onto the same
+  timeline (it quantizes in audio-callback chunks).
+- Measurement traps: the pacing probe's clip-restart remount freezes
+  position ~1.3s every 60s (probe artifact, not pipeline); sum-of-steps
+  deficit arithmetic is meaningless across a restart; engine stats fps
+  and the SF census are both structurally blind to duplicate-content
+  presents - only per-tick position sampling or the eye catches them.
+
 ## Staging
 
 1. Bare minimum, desktop: forge::video (mp4 demux + openh264 + player),
@@ -254,7 +315,11 @@ AV1/VP9 recommended for app-bundled content on codec-less devices.
    correctness holds, but fps UNCHANGED at 17-19/25 - the limiter is
    critical-path latency against the 50 Hz vsync grid (details and the
    stage-3 rationale in that item), not raster capacity.
-6. Audio unification (after the video PCM path is proven on desktop and
+6. Frame scheduling: timeline clock + standing demand IMPLEMENTED
+   2026-08-13 behind `video-timeline-pacing`, default OFF until the
+   idle-tick residual is resolved (see the Frame scheduling section
+   above for measurements, the residual chain, and next steps).
+7. Audio unification (after the video PCM path is proven on desktop and
    the TV): replace SDL3_mixer with symphonia decode (Vorbis + WAV, and
    MP3/FLAC/AAC clips become feature flags) feeding one SDL3 audio
    stream per voice, SDL3 device mixing, per-stream gain via

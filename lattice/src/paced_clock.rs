@@ -78,4 +78,10 @@ impl PacedClock {
   pub fn now_ms(&self) -> f64 {
     f64::from_bits(self.now_ms.load(Ordering::Relaxed))
   }
+
+  // The presentation period backing the timeline, for consumers scheduling
+  // against it (video frame selection's half-period lookahead).
+  pub fn period_ms(&self) -> f64 {
+    self.present.period_ms()
+  }
 }

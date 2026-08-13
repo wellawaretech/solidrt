@@ -7,13 +7,27 @@
 //! `tick`, the per-frame hook driven by the FrameRendered handler (the
 //! camera precedent), does the plumbing per player: feed the PCM sink up to
 //! a lookahead, read the master clock (the sink position when the stream
-//! has audio, a wall-clock accumulator otherwise), ask the forge player for
-//! the frame due, and upload it into the YUV texture.
+//! has audio, an engine-timeline accumulator otherwise), ask the forge
+//! player for the frame due, and upload it into the YUV texture.
+//!
+//! Behind `video-timeline-pacing` (default OFF, see the flux Cargo.toml and
+//! okf/backlog/video-playback.md): silent streams clock on the engine
+//! timeline (`timeline_now_ms`: the paced frame clock in a lattice run)
+//! instead of wall time, frame selection gets a half-period lookahead, and a
+//! mid-playback player reports standing frame demand. Wall time is the wrong
+//! master clock because the tick's JS work executes at jittery wall moments
+//! even when presents are metronomic - a wall read inside the tick inherits
+//! that jitter and frame selection holds and double-steps (measured ~11% of
+//! frames on a 50 Hz TV while presents were clean). The paced timeline
+//! advances one period per frame whatever the execution jitter. The
+//! lookahead keeps comparisons off the pts boundary that play() anchors the
+//! grids in phase on; without it sub-ms timeline noise flips them. With the
+//! feature off, behavior is the previous one: wall-clock selection, frame
+//! demand only on upload.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use forge::video::{PixelLayout, VideoPlayer};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
@@ -21,6 +35,21 @@ use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object};
 
 use super::AlloyContext;
+
+// The silent-stream master clock reading in us: the engine timeline behind
+// `video-timeline-pacing`, a process-monotonic wall origin otherwise.
+#[cfg(feature = "video-timeline-pacing")]
+fn clock_now_us(ctx: &Ctx<'_>) -> i64 {
+  (crate::plugins::standards::time::timeline_now_ms(ctx) * 1000.0) as i64
+}
+
+#[cfg(not(feature = "video-timeline-pacing"))]
+fn clock_now_us(_ctx: &Ctx<'_>) -> i64 {
+  use std::sync::OnceLock;
+  use std::time::Instant;
+  static ORIGIN: OnceLock<Instant> = OnceLock::new();
+  ORIGIN.get_or_init(Instant::now).elapsed().as_micros() as i64
+}
 
 // How much decoded audio the sink holds ahead of the device. Small enough
 // to keep pause latency low (queued audio still plays out after the video
@@ -33,10 +62,10 @@ struct PlayerEntry {
   texture: u64,
   sink: Option<u64>,
   // Master clock for silent streams: played time accumulated in `base_us`,
-  // running since `origin` while playing. Audio streams read the sink
-  // position instead and never touch these.
+  // running since the `clock_now_us` instant `origin_us` while playing.
+  // Audio streams read the sink position instead and never touch these.
   base_us: i64,
-  origin: Option<Instant>,
+  origin_us: Option<i64>,
 }
 
 struct Inner {
@@ -153,7 +182,7 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     *next += 1;
     *next
   };
-  state.0.players.borrow_mut().insert(id, PlayerEntry { player, texture, sink, base_us: 0, origin: None });
+  state.0.players.borrow_mut().insert(id, PlayerEntry { player, texture, sink, base_us: 0, origin_us: None });
 
   let build = || -> rquickjs::Result<Object<'js>> {
     let obj = Object::new(ctx.clone())?;
@@ -182,13 +211,14 @@ fn play_impl(ctx: Ctx<'_>, id: u64, play: bool) {
   if play == entry.player.playing() {
     return;
   }
+  let now_us = clock_now_us(&ctx);
   if play {
     entry.player.play();
-    entry.origin = Some(Instant::now());
+    entry.origin_us = Some(now_us);
   } else {
     entry.player.pause();
-    if let Some(origin) = entry.origin.take() {
-      entry.base_us += origin.elapsed().as_micros() as i64;
+    if let Some(origin) = entry.origin_us.take() {
+      entry.base_us += now_us - origin;
     }
   }
   if let Some(sink) = entry.sink {
@@ -227,14 +257,25 @@ fn close_impl(ctx: Ctx<'_>, id: u64) {
   }
 }
 
+/// What one tick did, for the caller's frame-demand decision.
+pub struct VideoTick {
+  /// A player uploaded a new frame into its texture: the screen content
+  /// changed and a redraw is needed.
+  pub uploaded: bool,
+  /// A player is mid-playback (playing and not finished): the next frame's
+  /// tick is needed even if this one uploaded nothing, so playback acts as
+  /// standing frame demand instead of free-running on its own uploads.
+  pub playing: bool,
+}
+
 /// Per-frame hook, called from the FrameRendered handler alongside
-/// `camera::tick`. Returns true when a player uploaded a new frame into its
-/// texture, so the caller can request a redraw.
-pub fn tick(ctx: &Ctx<'_>) -> bool {
+/// `camera::tick`. `period_us` is the display refresh period (0 when the
+/// caller has none); silent-stream frame selection looks ahead half of it.
+pub fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
+  let mut result = VideoTick { uploaded: false, playing: false };
   let Some(state) = ctx.userdata::<VideoPluginState>() else {
-    return false;
+    return result;
   };
-  let mut uploaded = false;
   for entry in state.0.players.borrow_mut().values_mut() {
     // Keep the sink fed up to the lookahead whatever the play state (a
     // paused sink holds its queue), so play() starts with audio ready.
@@ -252,16 +293,23 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
     if !entry.player.playing() {
       continue;
     }
+    if cfg!(feature = "video-timeline-pacing") {
+      result.playing = result.playing || !entry.player.finished();
+    }
+    let lookahead_us = if cfg!(feature = "video-timeline-pacing") { period_us / 2 } else { 0 };
     let clock_us = match entry.sink {
       Some(sink) => state.0.atx.pcm_sink_position_us(sink).unwrap_or(0),
-      None => entry.base_us + entry.origin.map(|o| o.elapsed().as_micros() as i64).unwrap_or(0),
+      None => {
+        let now_us = clock_now_us(ctx);
+        entry.base_us + entry.origin_us.map(|o| now_us - o).unwrap_or(0) + lookahead_us
+      }
     };
     if let Some(frame) = entry.player.advance(clock_us) {
       match state.0.atx.update_yuv(entry.texture, frame.data) {
-        Ok(()) => uploaded = true,
+        Ok(()) => result.uploaded = true,
         Err(e) => log::warn!("[video] {e}"),
       }
     }
   }
-  uploaded
+  result
 }

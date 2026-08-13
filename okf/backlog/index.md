@@ -11,13 +11,12 @@ Sorted by status: open first, then partial, deferred, and closed
 (decided/promoted/done) at the bottom.
 
 - [Frame pacing - motion on the TV is not fluent](frame-pacing-fluency.md)
-  [open] - Even a trivially cheap full-rate 360p bar clip visibly stutters
-  on the 50 Hz TV at both 50 and 25 fps; engine stats suggest a ~27 ms base
-  frame-loop latency and uneven 1-vs-2-vsync cadence, but those stats are
-  known liars there. Handoff brief for a dedicated trace session: SF
-  --latency baseline, pre-refactor A/B (PacedClock/frame-driver moves are
-  the suspect), and the open is-the-video-path-still-on-the-fast-path MSAA
-  question.
+  [resolved] - Fixed 2026-08-13 by the FramePacing policy switch (SwapPaced
+  for touchless devices, VsyncLocked kept for touch) plus the InputDevices
+  touch fact gated on Android's touchscreen feature; 0.00-0.04% drops vs
+  ~1.4% baseline on the 50 Hz TV. One flagged oddity remains open and now
+  has a visible victim: ~1.1 stray idle Ticks/s during continuous
+  animation - see the frame-scheduling section of [Video playback](video-playback.md).
 - [Video playback](video-playback.md) [open] - One decode-to-YUV pipeline
   on every platform: software decoders on desktop, MediaCodec buffer mode
   on Android (punch-through rejected), planar YUV textures + shader
@@ -25,6 +24,16 @@ Sorted by status: open first, then partial, deferred, and closed
   (texture/d-texture display the player's texture id). Fluency target is
   the Philips MT5891 TV; probed 2026-08-12: buffer mode = honest NV12 at
   3x realtime, AImageReader tap unsupported on device (not needed).
+  Frame scheduling (timeline clock + standing demand) implemented
+  2026-08-13 behind `video-timeline-pacing`, default OFF: missed slots
+  11% -> 0.13%, residual ~1/s hitch traced to stray idle ticks (next:
+  alloy idle-tick gate).
+- [Runtime policies - tracked, app-readable, app-overridable](runtime-policy-registry.md)
+  [open] - The registry of behavior policies the runtime selects from
+  device facts (frame pacing first: SwapPaced on touchless vs VsyncLocked
+  on touch). Policies must be enumerable, readable, and app-overridable
+  or they are implicit magic; the surface design is deliberately deferred
+  to the backlog-rework session.
 - [Content-damage perf watchpoints](content-damage-perf.md) [open] - The
   remaining perf pothole in the GPU-content-damage path, recorded
   symptom-first: the O(nodes) walk in texture_content_changed (matters

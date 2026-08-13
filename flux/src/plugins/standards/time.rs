@@ -393,6 +393,15 @@ fn perf_now(ctx: Ctx<'_>) -> f64 {
   }
 }
 
+// The engine timeline in ms for native consumers (video sync): the injected
+// Clock when present - the embedder's paced/virtual timeline, immune to
+// jitter in when a frame's JS work executes - the process-wide monotonic
+// origin otherwise. Same reading performance.now() reports to JS.
+#[cfg(feature = "video-timeline-pacing")]
+pub(crate) fn timeline_now_ms(ctx: &Ctx<'_>) -> f64 {
+  perf_now(ctx.clone())
+}
+
 fn init_performance(ctx: &Ctx<'_>) {
   // The engine's performance object can't be patched in place (its now() is
   // wall-clock and its properties are non-configurable), so it is replaced
