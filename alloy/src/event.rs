@@ -18,6 +18,11 @@ pub enum AlloyCommand {
   // Platforms without window icons (macOS) ignore it.
   SetIcon { width: u32, height: u32, rgba: Vec<u8> },
   SetFullscreen(bool),
+  // Frame-release policy (see vsync::FramePacing). The embedder derives it
+  // from the input-modality facts (InputDevices) and re-sends on hotplug;
+  // the loop applies it immediately, releasing any vsync-deferred presents
+  // when leaving VsyncLocked.
+  SetFramePacing(crate::vsync::FramePacing),
   SetCursor(sdl3::mouse::SystemCursor),
   SetCursorVisible(bool),
   SetTextInputActive(bool, TextInputOptions),
@@ -218,10 +223,17 @@ pub(crate) fn current_system_theme_event() -> AlloyEvent {
 }
 
 pub(crate) fn current_input_devices_event() -> AlloyEvent {
+  // On Android the SDL touch list over-reports (TV boxes with virtual input
+  // drivers claiming pointer sources), so the fact is gated on the
+  // platform's own touchscreen feature declaration.
+  #[cfg(target_os = "android")]
+  let touch = !sdl3::touch::num_touch_devices().is_empty() && sdl_utils::has_touchscreen_feature();
+  #[cfg(not(target_os = "android"))]
+  let touch = !sdl3::touch::num_touch_devices().is_empty();
   AlloyEvent::InputDevices {
     keyboard: sdl_utils::physical_keyboard(),
     mouse: sdl_utils::has_mouse(),
-    touch: !sdl3::touch::num_touch_devices().is_empty(),
+    touch,
     screen_keyboard: sdl_utils::has_screen_keyboard_support(),
   }
 }

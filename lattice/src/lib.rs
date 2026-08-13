@@ -430,6 +430,9 @@ fn ui_thread(
     #[cfg(not(feature = "go"))]
     let _ = (capture_enabled, outbound_rx, &dev_connected, &outbound_tx, &clock_control);
 
+    // Pacing policy sender for the event loop below (see the InputDevices
+    // arm); the original stays with this thread for later commands.
+    let alloy_cmd_events = alloy_cmd_tx.clone();
     local.spawn_local(async move {
       loop {
         // One batch per cycle: block for the first event, then drain whatever
@@ -508,6 +511,21 @@ fn ui_thread(
             AlloyEvent::Wheel { modifiers, .. } => input_state_events.set_modifiers(*modifiers),
             AlloyEvent::FrameRendered { fps, .. } | AlloyEvent::Tick { fps, .. } => {
               platform_events.set_fps(*fps);
+            }
+            // Frame-pacing policy from the input-modality fact, re-evaluated
+            // on hotplug: touch devices get the latency-first vsync
+            // phase-lock (finger-to-glass drag latency), everything else
+            // (TV remotes, keyboards, pointers) gets fluency-first swap
+            // pacing - a saturated buffer queue presents metronomically
+            // where the vsync release chain's jitter drops latches (see
+            // okf/backlog/frame-pacing-fluency.md; measured 0 drops vs
+            // ~1.4 percent on a 50Hz Android TV).
+            AlloyEvent::InputDevices { keyboard, mouse, touch, screen_keyboard } => {
+              let pacing = if *touch { alloy::FramePacing::VsyncLocked } else { alloy::FramePacing::SwapPaced };
+              log::info!(
+                "[srt] input devices: keyboard={keyboard} mouse={mouse} touch={touch} screen_keyboard={screen_keyboard} -> pacing {pacing:?}"
+              );
+              alloy_cmd_events.send(alloy::AlloyCommand::SetFramePacing(pacing)).ok();
             }
             _ => {}
           }

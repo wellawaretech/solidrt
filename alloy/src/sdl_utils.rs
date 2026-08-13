@@ -581,6 +581,61 @@ pub fn surface_rotation_degrees(frame: *mut SDL_Surface) -> u32 {
   }
 }
 
+/// Android's own answer to "does this device have a touchscreen"
+/// (PackageManager.hasSystemFeature). SDL's touch-device enumeration
+/// over-reports on TV boxes whose virtual input drivers claim pointer
+/// sources (measured: a Philips TPM171E lists a touch device while the
+/// platform declares no android.hardware.touchscreen feature), so the
+/// InputDevices touch fact gates on the platform feature too. Cached:
+/// hardware features cannot change at runtime. Errors default to true so a
+/// JNI hiccup can only ever fail toward the touch-device default, never
+/// strip a real touchscreen of its policy.
+#[cfg(target_os = "android")]
+pub fn has_touchscreen_feature() -> bool {
+  use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};
+  use std::sync::OnceLock;
+  static FEATURE: OnceLock<bool> = OnceLock::new();
+  *FEATURE.get_or_init(|| {
+    let env_ptr = unsafe { SDL_GetAndroidJNIEnv() } as *mut jni::sys::JNIEnv;
+    let activity_ptr = unsafe { SDL_GetAndroidActivity() } as jni::sys::jobject;
+    if env_ptr.is_null() || activity_ptr.is_null() {
+      log::warn!("[alloy] no JNI env/activity for touchscreen feature query; assuming touch");
+      return true;
+    }
+    let mut unowned = unsafe { jni::EnvUnowned::from_raw(env_ptr) };
+    let outcome = unowned
+      .with_env(|env| -> Result<bool, jni::errors::Error> {
+        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_ptr) };
+        let pm = env
+          .call_method(
+            &activity,
+            jni::jni_str!("getPackageManager"),
+            jni::jni_sig!("()Landroid/content/pm/PackageManager;"),
+            &[],
+          )?
+          .l()?;
+        let feature = env.new_string("android.hardware.touchscreen")?;
+        env
+          .call_method(
+            &pm,
+            jni::jni_str!("hasSystemFeature"),
+            jni::jni_sig!("(Ljava/lang/String;)Z"),
+            &[jni::objects::JValue::Object(&feature)],
+          )?
+          .z()
+      })
+      .into_outcome();
+    match outcome {
+      jni::Outcome::Ok(has) => has,
+      jni::Outcome::Err(e) => {
+        log::warn!("[alloy] touchscreen feature query failed ({e}); assuming touch");
+        true
+      }
+      jni::Outcome::Panic(payload) => std::panic::resume_unwind(payload),
+    }
+  })
+}
+
 /// Publish SDL's JNI env + activity into the process-wide `ndk-context` so
 /// JNI-using dependencies can reach the Android `JavaVM` and `Context`. iroh's
 /// network monitoring (reached via `flux:p2p`) reads this; without it the first

@@ -42,6 +42,7 @@ pub use gpu::{
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
 };
+pub use vsync::FramePacing;
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;

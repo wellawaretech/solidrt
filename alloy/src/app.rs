@@ -209,11 +209,25 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       })
     };
-    // Presents whose FrameRendered awaits the vsync signal. pending_since
-    // drives the fallback: if the vsync source stays silent, emit after two
-    // refresh periods instead of stalling frame production.
+    // Headroom on the vsync-signal deadline beyond its latest legitimate
+    // arrival (request + period + delay): sleep overshoot on the vsync thread
+    // plus channel/wake latency into the main loop.
+    const VSYNC_SLACK: Duration = Duration::from_millis(4);
+    // Presents whose FrameRendered awaits the vsync signal. vsync_deadline
+    // drives the fallback: if the armed request's signal has not arrived by
+    // the latest instant it legitimately could (request time + one period to
+    // the next choreographer vsync + the armed delay + slack), release the
+    // pending present instead of stalling frame production. Anchoring on the
+    // request keeps the fallback tight - a lost signal costs a ~1.6-period
+    // production gap instead of the 2-3 the old present-return anchor allowed
+    // - while never firing before a healthy signal could still arrive. Racing
+    // a merely-late one is harmless anyway: the fallback supersedes it (new
+    // request generation) and the chain re-locks at the next vsync.
     let mut pending_presents: u32 = 0;
-    let mut pending_since = Instant::now();
+    let mut vsync_deadline = Instant::now();
+    // Frame-release policy (see vsync::FramePacing). VsyncLocked until the
+    // embedder's policy arrives; only consulted where a vsync backend exists.
+    let mut frame_pacing = crate::vsync::FramePacing::VsyncLocked;
     // Whether a vsync request is outstanding (at most one ever is). Armed at
     // signal emission for the NEXT vsync - not at present-return, which lands
     // near the vsync boundary after the full build+draw pipeline and loses
@@ -277,7 +291,7 @@ impl App {
         // A present awaits its vsync signal: Ticks are suppressed and the
         // wake comes from the vsync thread, so wait until the fallback
         // deadline instead (neither spinning nor sleeping through it).
-        (pending_since + tick_period * 2).saturating_duration_since(Instant::now())
+        vsync_deadline.saturating_duration_since(Instant::now())
       } else {
         tick_period.saturating_sub(last_frame_signal.elapsed())
       };
@@ -300,12 +314,9 @@ impl App {
           Ok(FrameOutput::Presented) => {
             fps_frame_count += 1;
             match &vsync {
-              Some(v) => {
+              Some(v) if frame_pacing == crate::vsync::FramePacing::VsyncLocked => {
                 if let Some(emitted) = signal_emitted.take() {
                   pacing.record(emitted.elapsed().as_secs_f32() * 1000.0, tick_period);
-                }
-                if pending_presents == 0 {
-                  pending_since = Instant::now();
                 }
                 pending_presents += 1;
                 // Normally the signal releasing this present is already
@@ -313,11 +324,15 @@ impl App {
                 // request only starts the chain on the first present out of
                 // idle.
                 if !vsync_armed {
-                  v.request(pacing.delay(tick_period));
+                  let delay = pacing.delay(tick_period);
+                  vsync_deadline = Instant::now() + tick_period + delay + VSYNC_SLACK;
+                  v.request(delay);
                   vsync_armed = true;
                 }
               }
-              None => {
+              // No vsync backend, or SwapPaced policy: the frame signal
+              // follows the present directly and the blocking swap paces.
+              _ => {
                 let time = start_time.elapsed().as_secs_f64();
                 event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
                 frame += 1;
@@ -351,7 +366,7 @@ impl App {
           pointer_moves = 0;
         }
         if vsync.is_some() && fps > 0 {
-          let delay_ms = pacing.delay(tick_period).as_secs_f32() * 1000.0;
+          let delay_ms = pacing.current_ms();
           log::debug!("[alloy] pacing: signal delay {delay_ms:.1}ms");
         }
         // Safety net: report a refresh-rate change the display event might miss.
@@ -427,23 +442,26 @@ impl App {
       // the UI batch runs it before this frame signal (a signal processed
       // ahead of its vsync's input finds nothing dirty and wastes the frame).
       // One signal releases all pending (at most one in practice: the UI
-      // thread builds the next frame only after this emission). Signals are
-      // drained even with nothing pending so a late one, arriving after its
-      // present was released by the fallback, cannot release a future present
-      // early.
+      // thread builds the next frame only after this emission). try_take
+      // drains superseded-generation signals internally, so a late one,
+      // arriving after its present was released by the fallback, cannot
+      // release a future present early.
       if let Some(v) = &vsync {
-        let mut due = false;
-        while v.try_take() {
-          due = true;
+        let mut due = v.try_take();
+        if due {
           vsync_armed = false;
         }
         if pending_presents > 0 {
-          if !due && pending_since.elapsed() >= tick_period * 2 {
+          if !due && Instant::now() >= vsync_deadline {
             // Debug, not warn: a GPU-saturated device (Android TV) misses
             // vsyncs in steady state, one line per missed frame. SRT_LOG=debug
             // surfaces them when diagnosing the vsync source itself.
             log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
             due = true;
+            // The armed signal did not make it in time; disarm so the pre-arm
+            // below sends a fresh request, superseding it - when it lands it
+            // will be discarded instead of releasing the next present early.
+            vsync_armed = false;
           }
           if due {
             while pending_presents > 0 {
@@ -461,7 +479,9 @@ impl App {
             // emission triggers has until that signal - a full period plus
             // the delay - to present, or it slips a frame.
             if !vsync_armed {
-              v.request(pacing.delay(tick_period));
+              let delay = pacing.delay(tick_period);
+              vsync_deadline = Instant::now() + tick_period + delay + VSYNC_SLACK;
+              v.request(delay);
               vsync_armed = true;
             }
           }
@@ -497,6 +517,26 @@ impl App {
             }
           }
           AlloyCommand::SetFrameRequestLatch(latch) => liveness.set_latch(latch),
+          AlloyCommand::SetFramePacing(p) => {
+            if frame_pacing != p {
+              log::info!("[alloy] frame pacing: {p:?}");
+              frame_pacing = p;
+              // Presents already deferred to a vsync signal must not strand
+              // when leaving VsyncLocked; release them now. The outstanding
+              // vsync request stays armed and its signal drains harmlessly
+              // with nothing pending.
+              if p == crate::vsync::FramePacing::SwapPaced {
+                while pending_presents > 0 {
+                  pending_presents -= 1;
+                  let time = start_time.elapsed().as_secs_f64();
+                  event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
+                  frame += 1;
+                }
+                last_frame_signal = Instant::now();
+                liveness.on_frame_signal(last_frame_signal);
+              }
+            }
+          }
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {
               log::warn!("set_title failed: {e}");
