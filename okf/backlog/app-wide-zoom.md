@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: App-wide zoom
 description: Browser-style whole-UI zoom (pinch, ctrl+wheel) as a root-level runtime affordance that re-lays out at scale instead of magnifying raster output, needing no app cooperation.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # App-wide zoom

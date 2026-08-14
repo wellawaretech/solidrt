@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: "FFI write batching: interned keys, batched creation, command buffer"
 description: Every property write is one string-keyed FFI call (mount fans a props object into per-prop calls; update bursts pay per-call overhead N times); three stages reduce it - intern prop names to ids, createNode with a props object, and a command buffer whose props land in a shared buffer Rust reads directly, drained once per flush.
-status: open
-timestamp: 2026-08-05T00:00:00Z
+created: 2026-08-05
 ---
 
 # FFI write batching: interned keys, batched creation, command buffer
@@ -11,7 +9,7 @@ timestamp: 2026-08-05T00:00:00Z
 ## Problem
 
 Ranked the top structural cost in the app-structure review
-(okf/analysis/app-structure-performance.md, finding a): every `setProperty`
+(okf/notes/app-structure-performance.md, finding a): every `setProperty`
 marshals the property name as a fresh Rust String, then `apply_jsx`
 (flux/src/plugins/gui/properties/mod.rs) walks chained string matches.
 Mounting a node with 10 props is 11 FFI calls; a 200-item list with 5 nodes

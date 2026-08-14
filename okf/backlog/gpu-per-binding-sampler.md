@@ -1,14 +1,12 @@
 ---
-type: backlog-item
 title: Per-binding sampler override
 description: filter/wrap are fused into the texture id, which is the right default and makes display and shader sampling agree by construction, but it leaves no escape hatch - a nearest pixel-art atlas cannot be blurred linearly and a clamped target cannot be tiled by one consumer; a per-binding override costs little because the sampler cache is already keyed by state.
-status: deferred
-timestamp: 2026-07-31T00:00:00Z
+created: 2026-07-31
 ---
 
 # Per-binding sampler override
 
-From [gpu-review](../analysis/gpu-review.md) (lesson 8), filed 2026-07-31
+From [gpu-review](../notes/gpu-review.md) (lesson 8), filed 2026-07-31
 when the review's shortlist closed and this was one of two ranked lessons
 with no home.
 

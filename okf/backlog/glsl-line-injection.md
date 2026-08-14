@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Shader compile errors on .tsx lines via #line injection
 description: A shader compile error reports the line inside the string plus the injected preamble (offset 19 in the trails example), leaving the author to hand-count; a bundler pass that injects a #line directive into glsl-tagged template literals would make the driver report the .tsx line itself, closing the last unmapped diagnostic in the dev loop.
-status: open
-timestamp: 2026-07-30T00:00:00Z
+created: 2026-07-30
 ---
 
 # Shader compile errors on .tsx lines via #line injection

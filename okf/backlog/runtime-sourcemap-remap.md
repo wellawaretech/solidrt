@@ -1,10 +1,8 @@
 ---
-type: feature-proposal
 title: Runtime-side sourcemap remapping
 description: Remap stack frames in the runtime itself so the local terminal and logcat show tsx positions too; explicitly not to be done unless server-only remapping proves insufficient.
-status: deferred
 tags: [flux, lattice, sourcemaps, dev-tooling, logging]
-timestamp: 2026-07-15T00:00:00Z
+created: 2026-07-15
 ---
 
 # Runtime-side sourcemap remapping

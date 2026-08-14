@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Relative mouse input (mouse look)
 description: No pointer-lock / relative-motion path exists anywhere in the surface, so first-person control is impossible however good the GPU gets; SDL already has the capability and alloy already drops the deltas on the floor.
-status: open
-timestamp: 2026-07-31T00:00:00Z
+created: 2026-07-31
 ---
 
 # Relative mouse input (mouse look)
@@ -16,7 +14,7 @@ feature.
 
 The claim is old and has been carried across analyses since the day vertex
 pipelines shipped ([gpu-stack-maturity, 2026-07-15](
-../analysis/gpu-review.md) - the file was replaced by gpu-review.md on
+../notes/gpu-review.md) - the file was replaced by gpu-review.md on
 07-30, which restates it at "First-person anything" and again in the
 do-order notes). It had never been filed. Filed 2026-07-31.
 

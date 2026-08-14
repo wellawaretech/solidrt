@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Generate the docs/core.md props reference from the types
 description: Hand-copied prop lists are how core.md drifted (fill/background/imageWidth); jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element props reference from, killing that drift class. Prose stays hand-written.
-status: open
-timestamp: 2026-08-06T00:00:00Z
+created: 2026-08-06
 ---
 
 # Generate the docs/core.md props reference from the types
@@ -72,7 +70,7 @@ prose-heavy and flux-types parity already guards it.
 2. Optional: CI drift gate that regenerates and diffs, like the examples
    types gate.
 
-Related: the core package review (okf/analysis/core-package-review.md)
+Related: the core package review (okf/notes/core-package-review.md)
 carries this as improvement point 1; its AGENTS.md-drift point 4 is
 adjacent but separate (AGENTS.md is prose by design and stays
 hand-written).

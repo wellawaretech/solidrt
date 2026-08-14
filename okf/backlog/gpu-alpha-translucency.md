@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Alpha translucency (sorted blending)
 description: Blending within a draw is additive-only, so non-convex transparent meshes and per-particle-colored accumulation have no path (the convex workaround splits front/back faces into two composited targets). The mode itself is trivial; what defers it is sorted geometry and the straight-vs-premultiplied answer against Impeller's compositing. Split from gpu-pipeline-extensions 2026-08-11.
-status: open
-timestamp: 2026-08-11T00:00:00Z
+created: 2026-08-11
 ---
 
 # Alpha translucency
@@ -16,7 +14,7 @@ split into two targets composited with `<texture blendMode="plus">`, which
 works only because a convex object has exactly one front and one back face
 per pixel. Non-convex transparent meshes and many-particle accumulation
 with per-particle colour still have no path (demand recorded 2026-07-29 in
-[gpu-pipeline-extensions](gpu-pipeline-extensions.md)).
+[gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md)).
 
 Adding the blend mode is trivial; what defers it is correctness, per
 [gpu-pipeline-blend-modes](gpu-pipeline-blend-modes.md) (the fuller design
@@ -28,9 +26,9 @@ those two.
 
 First step regardless, and it costs nothing: document the target pixel
 contract (premultiplied, non-linear RGBA8 -
-[gpu-pixel-contract-docs](gpu-pixel-contract-docs.md)), which answers the
+[gpu-pixel-contract-docs](../done/gpu-pixel-contract-docs.md)), which answers the
 straight-vs-premultiplied half by declaring it.
 
 History: the remaining half of the blending bullet in
-[gpu-pipeline-extensions](gpu-pipeline-extensions.md) (additive half done
+[gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md) (additive half done
 2026-07-29); split out 2026-08-11.

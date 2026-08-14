@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: GPU example gaps
 description: A multi-pass shader chain example, formerly blocked on target dependency propagation - which landed 2026-07-29, so the example is now unblocked and simply unwritten. The points-topology particle field shipped 2026-07-29 once the blend toggle landed.
-status: open
-timestamp: 2026-07-29T00:00:00Z
+created: 2026-07-29
 ---
 
 # GPU example gaps

@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Focus navigation (spatial/D-pad, tab order) on the focusable registry
 description: Stage 3 of the focus/key-routing work - move focus across getFocusables() candidates from bubbled arrow keys, activate with select/Enter, and fold the launcher's parallel spatial nav onto real focus.
-status: open
-timestamp: 2026-08-01T00:00:00Z
+created: 2026-08-01
 ---
 
 # Focus navigation on the focusable registry

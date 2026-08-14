@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: fontStretch / width axis
 description: The bundled Noto variables carry a wdth axis the text API cannot reach; whether to expose a CSS-style font-stretch, pending an Impeller ParagraphStyle capability check.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # fontStretch / width axis

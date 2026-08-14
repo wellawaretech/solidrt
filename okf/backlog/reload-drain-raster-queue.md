@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Reload does not drain the raster queue
 description: A client whose raster thread is backed up stays backed up through load/reload, because the backlog lives in the raster command channel rather than in the app; the dev has no way out short of restarting the process, and no reason to suspect the runtime.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Reload does not drain the raster queue

@@ -1,14 +1,12 @@
 ---
-type: backlog-item
 title: Mipmaps
 description: "No mipmaps exist" is a documented axiom, so any minified texture aliases (the Doom port's distant surfaces, 4x supersampled targets); GL gives generateMipmap for free and the dirty flush makes render-target regeneration automatic, so the shape is a mipmap option on the sampler state.
-status: deferred
-timestamp: 2026-07-30T00:00:00Z
+created: 2026-07-30
 ---
 
 # Mipmaps
 
-From [gpu-review](../analysis/gpu-review.md) (lesson 15). Minification
+From [gpu-review](../notes/gpu-review.md) (lesson 15). Minification
 without mipmaps is aliasing, not a style: the 07-15 maturity assessment
 recorded it from the Doom port ("distant surfaces alias"), and the
 supersampling path in [[gpu-target-antialiasing]] is capped at 2x for the

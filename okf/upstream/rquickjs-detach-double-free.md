@@ -1,12 +1,11 @@
 ---
-type: upstream-issue
 title: rquickjs external ArrayBuffer callbacks double-invoked on detach
 description: QuickJS invokes an external ArrayBuffer's free callback on detach AND again at finalization (with data == NULL); rquickjs's shims ignore the data pointer and consume their opaque unconditionally, so safe from_source + detach() - or pure JS transfer(0) on any Rust-minted buffer - is a double free.
 project: rquickjs (github.com/DelSkayn/rquickjs)
 versions: rquickjs 0.12.1 (rquickjs-core 0.12.1, rquickjs-sys 0.12.1 vendoring quickjs-ng 0.15.1)
 status: unfiled
 link:
-timestamp: 2026-08-03T00:00:00Z
+created: 2026-08-03
 ---
 
 # rquickjs: external ArrayBuffer callbacks double-invoked on detach

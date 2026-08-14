@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Dev-state KV across reloads
 description: A host-owned per-client store (flux:dev devState) so apps can restore pose and UI state after a hot reload instead of resetting to start.
-status: deferred
-timestamp: 2026-07-15T00:00:00Z
+created: 2026-07-15
 ---
 
 # Dev-state KV across reloads

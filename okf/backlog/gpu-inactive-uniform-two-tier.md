@@ -1,14 +1,12 @@
 ---
-type: backlog-item
 title: Two-tier handling for declared-but-inactive uniforms
 description: Uniform validation throws on any name absent from the reflected table, but GL reflection only sees active uniforms - a declared uniform the compiler optimized out counts as a typo. A compile-time scan of the source for declared uniform names would let that sub-case warn instead of throw.
-status: open
-timestamp: 2026-07-30T00:00:00Z
+created: 2026-07-30
 ---
 
 # Two-tier handling for declared-but-inactive uniforms
 
-Split out of [gpu-callsite-validation](gpu-callsite-validation.md), which
+Split out of [gpu-callsite-validation](../done/gpu-callsite-validation.md), which
 landed the strict variant: every param/texture name is checked against the
 program's reflected (active) uniform table and an absent name throws. The
 wrinkle is GL's: a uniform that is declared but optimized out reflects as

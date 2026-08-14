@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Refactor the fused creates over the raw shading layer
 description: The naming collision and the iTime trap were resolved 2026-07-31 (createShaderTexture/createPipelineTexture/createShaderTextureMemo, hard rename; iTime dropped from all preambles - the preamble now declares exactly what the runtime fills). Still open - the composition questions - whether the fused paths become thin compositions of the raw layer, whether a mid-level program shorthand is wanted, and the two-dialect preamble story.
-status: partial
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Refactor the fused creates over the raw shading layer
@@ -18,7 +16,7 @@ with an explicit `header` opt-in.
 
 ## Resolved 2026-07-31: the names and iTime
 
-Both naming findings from [gpu-review](../analysis/gpu-review.md) landed as
+Both naming findings from [gpu-review](../notes/gpu-review.md) landed as
 one hard rename (no aliases, no compat, matching the setDrawCount -> setDraw
 precedent):
 

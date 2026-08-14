@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Statically detect layout elements inside detached views
 description: A <view> nested inside a <d-view> typechecks and fails only at runtime, and TypeScript cannot catch it (every JSX expression is the one Element type, so children cannot be constrained per tag); the place to prevent this coding error is the bundler's JSX pass, where tags are static.
-status: open
-timestamp: 2026-08-02T00:00:00Z
+created: 2026-08-02
 ---
 
 # Statically detect layout elements inside detached views

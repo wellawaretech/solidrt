@@ -1,19 +1,18 @@
 ---
-type: upstream-issue
 title: taffy measure cache evicts entries it can still hit
 description: Cache::store picks a slot from the input shape alone (9 slots) while Cache::get matches on shape AND parent width, so the same-shape/different-parent-width probes a single flex pass makes evict each other; the cache is defeated frame-internally and one dirty node re-measures the whole tree.
 project: taffy (github.com/DioxusLabs/taffy)
 versions: taffy 0.12.1
 status: unfiled
 link:
-timestamp: 2026-08-03T00:00:00Z
+created: 2026-08-03
 ---
 
 # taffy: measure cache evicts entries it can still hit
 
 Found 2026-07-17 during the layout-perf design session (the "184 rows =
 seconds of layout" problem); written up here 2026-08-03. Full local
-history in okf/plans/layout-cache.md.
+history in okf/done/layout-cache.md.
 
 ## Draft report
 

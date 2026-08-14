@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: GPU context loss
 description: A lost GL context used to leave the app running against a dead swapchain; swap-result checking and exit after two failed presents shipped, real recreation still open.
-status: partial
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # GPU context loss
@@ -54,7 +52,7 @@ still Remaining #2.
    context-loss-on-background needs, so it should be designed against the
    Android lifecycle, not as a Windows special case.
 
-   Scoping note from [gpu-review](../analysis/gpu-review.md) (lesson 10):
+   Scoping note from [gpu-review](../notes/gpu-review.md) (lesson 10):
    recovery here can be *transparent* in a way neither WebGL nor WebGPU can
    offer, because apps hold registry ids rather than device-bound handles,
    and the registries already retain what recreation needs - each target's

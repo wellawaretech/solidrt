@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Snapshot diff helper
 description: A numeric pixel-delta mode on get_snapshot against the previous capture of the same node, so "does it still render the same" is one call with a number instead of two images an agent has to eyeball.
-status: deferred
-timestamp: 2026-08-07T00:00:00Z
+created: 2026-08-07
 ---
 
 # Snapshot diff helper

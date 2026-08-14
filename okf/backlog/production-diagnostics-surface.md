@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Production diagnostics surface
 description: Layout counters are latched into Stats but only dev-client queries read them; wanted a production consumer so field bug reports carry the numbers.
-status: deferred
-timestamp: 2026-07-17T00:00:00Z
+created: 2026-07-17
 ---
 
 # Production diagnostics surface

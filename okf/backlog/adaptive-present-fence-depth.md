@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Adaptive present-fence depth
 description: Fallback design if unconditional two-deep present fencing ever shows up as desktop drag latency - allow the second in-flight frame only when observed fence waits show the GPU is over budget.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Adaptive present-fence depth

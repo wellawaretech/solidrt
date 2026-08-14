@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Anti-aliasing for GPU pipeline targets
 description: createPipeline targets are single-sample, so any filled geometry has hard jaggies; wanted a sample count (MSAA + resolve) or a documented supersample path with known-good minification.
-status: open
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Anti-aliasing for GPU pipeline targets
@@ -24,7 +22,7 @@ at varying density read as a soft gradient. It becomes the dominant artifact
 the moment a pipeline draws filled triangles. A rotating mesh silhouette
 against a dark background crawls badly, and `discard`-based alpha cutouts
 (the sanctioned translucency workaround in
-[gpu-pipeline-extensions](gpu-pipeline-extensions.md)) have binary coverage,
+[gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md)) have binary coverage,
 so they alias exactly as hard as the geometric edge does.
 
 Evidence: projects/organism draws its flower as 233k one-pixel points
@@ -43,7 +41,7 @@ Candidate answers, cheapest first:
   TextureSampling::Linear. So 2x supersample downsamples cleanly via
   bilinear; 4x undersamples (skips texels) for lack of mips. The technique
   works, but only document 2x as the known-good factor unless mip
-  generation is added ([gpu-review](../analysis/gpu-review.md) lesson 15 now
+  generation is added ([gpu-review](../notes/gpu-review.md) lesson 15 now
   proposes the shape: `mipmap?: boolean` on SamplerOptions, auto-regen for
   targets off the dirty flush - which would make 4x supersample minify
   correctly too).
@@ -60,7 +58,7 @@ Candidate answers, cheapest first:
   `PipelineDesc` (`createRenderPipeline`; the fused `createPipeline`
   forwards), with each target allocating matching MSAA storage - the same
   auto-provisioned pattern as `depth: true`, which
-  [gpu-review](../analysis/gpu-review.md) (lesson 7) singles out as the
+  [gpu-review](../notes/gpu-review.md) (lesson 7) singles out as the
   mismatch-proof shape: WebGPU makes the app declare `multisample.count` on
   the pipeline AND match it on the attachment, and validates; here the
   target derives its storage from the pipeline, so the mismatch cannot be

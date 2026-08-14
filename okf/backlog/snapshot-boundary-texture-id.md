@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: A snapshot boundary's retained texture as a texture id
 description: repaintBoundary="snapshot" already keeps its subtree's rasterization in an adopted texture, but only the boundary shader can sample it; exposing it as an ordinary TextureId that updates as the subtree repaints would make any UI subtree usable as live content in the GPU stack - the load-bearing piece of UI-on-3D-geometry.
-status: open
-timestamp: 2026-08-05T00:00:00Z
+created: 2026-08-05
 ---
 
 # A snapshot boundary's retained texture as a texture id
@@ -27,7 +25,7 @@ running screen - available as live content to shader targets, draw targets
 and 3D materials, at the cost of a boundary that already exists.
 
 The motivating consumer is UI mapped onto 3D geometry (see
-../research/3d-differentiators.md, section 3): real interactive panels on
+../notes/3d-differentiators.md, section 3): real interactive panels on
 curved or animated meshes, sharing the scene's depth buffer. That is a
 capability the browser stack cannot offer at all, and the damage model makes
 it cheap here - the boundary re-rasterizes only when its subtree changes, so
@@ -49,7 +47,7 @@ Shape questions to settle when picked up, in rough order:
   error (the format-as-id-state precedent), or hand out a retaining handle.
   Whatever is chosen must survive the boundary being unmounted while a draw
   entry still references the id - the deferred-destroy work
-  ([gpu-deferred-texture-destroy](gpu-deferred-texture-destroy.md)) is the
+  ([gpu-deferred-texture-destroy](../done/gpu-deferred-texture-destroy.md)) is the
   relevant machinery.
 - **Acquisition API.** A node-id function mirroring `captureSnapshot`
   (`boundaryTexture(nodeId)`), or a reactive primitive in the `createX`
@@ -61,7 +59,7 @@ Shape questions to settle when picked up, in rough order:
   second keeps consumers synchronous but needs a documented contract.
 - **Ordering within a frame.** A target sampling the boundary must render
   after that boundary re-rasterizes. This is the same hazard as
-  [gpu-target-dependency-propagation](gpu-target-dependency-propagation.md)
+  [gpu-target-dependency-propagation](../done/gpu-target-dependency-propagation.md)
   (pixel-observing commands flush first) and should reuse that mechanism
   rather than grow a second one.
 - **Declaring intent.** Only boundaries someone asked for should keep a
@@ -74,9 +72,9 @@ Shape questions to settle when picked up, in rough order:
 
 Out of scope here: routing pointer events back through a mesh into the
 mapped subtree. That is the picking half of the same feature and belongs
-with the scene-graph raycast work (../research/scene-graph-3d.md).
+with the scene-graph raycast work (../notes/scene-graph-3d.md).
 
-Related: [gpu-deferred-texture-destroy](gpu-deferred-texture-destroy.md),
-[gpu-target-dependency-propagation](gpu-target-dependency-propagation.md),
-[capture-detached-nodes](capture-detached-nodes.md),
-../research/3d-differentiators.md.
+Related: [gpu-deferred-texture-destroy](../done/gpu-deferred-texture-destroy.md),
+[gpu-target-dependency-propagation](../done/gpu-target-dependency-propagation.md),
+[capture-detached-nodes](../done/capture-detached-nodes.md),
+../notes/3d-differentiators.md.

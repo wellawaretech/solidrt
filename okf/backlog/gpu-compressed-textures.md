@@ -1,14 +1,12 @@
 ---
-type: backlog-item
 title: Compressed texture uploads (ETC2)
 description: ES 3.0 mandates ETC2/EAC in core, a free 4-8x texture memory cut on every GL target, but uploadTexture is RGBA8-only; demand-gated, with the honest caveat that ANGLE on Windows may software-expand it - the same split that made both web standards gate the feature.
-status: deferred
-timestamp: 2026-07-30T00:00:00Z
+created: 2026-07-30
 ---
 
 # Compressed texture uploads (ETC2)
 
-From [gpu-review](../analysis/gpu-review.md) (lesson 17). OpenGL ES 3.0
+From [gpu-review](../notes/gpu-review.md) (lesson 17). OpenGL ES 3.0
 requires ETC2/EAC in core, so every GPU at alloy's minimum spec decompresses
 it in the sampler for free - 4-8x less texture memory than RGBA8. Both web
 standards expose compressed formats but gate them (WebGL2 behind an

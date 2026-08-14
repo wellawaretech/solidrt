@@ -1,15 +1,13 @@
 ---
-type: backlog-item
 title: More pipeline blend modes
 description: The blend vocabulary on createPipeline stops at "none" and "add"; the rest of GL's fixed-function space (multiply, screen, subtract, min/max, and the order-dependent alpha-over) is unexposed.
-status: deferred
-timestamp: 2026-07-29T00:00:00Z
+created: 2026-07-29
 ---
 
 # More pipeline blend modes
 
 The `blend` option on createPipeline/createShaderTarget
-([gpu-pipeline-extensions](gpu-pipeline-extensions.md)) shipped 2026-07-29
+([gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md)) shipped 2026-07-29
 with exactly two values: `"none"` and `"add"` (`glBlendFunc(ONE, ONE)`),
 because additive was the mode with three independent field requesters.
 GL's fixed-function blend stage (glBlendEquation x glBlendFunc factors)
@@ -38,7 +36,7 @@ Order-dependent, the big one:
   blending piece in [gpu-alpha-translucency](gpu-alpha-translucency.md);
   do not add the mode without deciding those two. The premultiplied half now
   has a first step that costs nothing: document the target pixel contract
-  ([gpu-review](../analysis/gpu-review.md) lesson 12 - premultiplied,
+  ([gpu-review](../notes/gpu-review.md) lesson 12 - premultiplied,
   non-linear RGBA8), which decides the factor pair by declaration.
 
 Out of scope on ES 3.0: the fancy end of the tree-level `<texture blendMode>`

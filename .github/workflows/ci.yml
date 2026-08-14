@@ -67,3 +67,18 @@ jobs:
             echo "== $app"
             bun packages/cli/src/main.ts check "$app"src/index.tsx
           done
+
+  # okf/index.md is generated, so it is a lie the moment a note is added or
+  # moved by hand. This fails the build instead: stale index, missing
+  # title/description/created, or a status field outside upstream/ (state is
+  # the directory - see okf/README.md). No dependencies, so no js-install.
+  okf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Check okf index
+        run: bun scripts/build-okf-index.ts --check

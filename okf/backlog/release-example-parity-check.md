@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Guard that every referenced example ships
 description: A committed examples README can name an example file that is untracked, so the doc ships and the file does not; a release-time parity check would catch it.
-status: open
-timestamp: 2026-07-29T00:00:00Z
+created: 2026-07-29
 ---
 
 # Guard that every referenced example ships

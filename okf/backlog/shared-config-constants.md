@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Home for cross-crate constants
 description: One defined home for cross-crate constants that today live as per-site literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps); collects sites until designed.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Home for cross-crate constants

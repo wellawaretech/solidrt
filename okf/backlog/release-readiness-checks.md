@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Release readiness and pre-publish checks
 description: A pre-build readiness gate (types and runtime in lockstep, srt check, tests, version placeholders) plus post-build artifact checks before the irreversible npm publish.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Release readiness and pre-publish checks
@@ -29,8 +27,9 @@ release is attempted:
   4.3 second half) so dependency errors are not hiding app-relevant ones.
   CI covers the examples apps but not the scaffold itself.
 - Rust test suites and JS tests green across the workspace.
-- No product names or private notes in anything that ships (okf/product is
-  gitignored, but artifacts should be scanned too).
+- No product names or private notes in anything that ships (the private notes
+  live outside the repository entirely now, but artifacts should be scanned
+  anyway).
 - Versioning preconditions: all versions still `0.0.0` placeholders as
   release.yml expects (do not hand-bump), changelog/release notes exist.
 
@@ -55,3 +54,27 @@ Open questions for when this is picked up: where the automation lives (CI
 only, or an `srt release-check` runnable locally), what is blocking vs
 advisory, and how the checklist stays in sync with new surfaces (same
 lockstep problem as 5.2 itself, one level up).
+
+## Harden the publish job against the dependency graph
+
+Separate from "are the artifacts good": `NPM_CONFIG_TOKEN` is live in the
+publish job, and that job also runs `bun install`. A malicious or compromised
+package anywhere in the dependency graph runs with the token in the
+environment and can exfiltrate it. A publish token is worth more than
+anything else in this repo - it is the one credential that lets someone ship
+code to every consumer.
+
+Options, in rough order of value per effort:
+
+- isolate publish from build: build and pack in a job with no token, hand the
+  tarballs to a second job that installs nothing and only publishes
+- scope and time-limit the token (granular, per-package, short-lived) so a
+  leak has a small blast radius
+- audit the graph harder before publish - lockfile diff review, or a
+  provenance/trusted-publisher setup if npm's supports what we need
+
+The first one is the real fix; the others reduce the damage rather than the
+exposure. Worth deciding before the first real publish, since the flow is
+being defined now anyway.
+
+Source: root TODO.md, migrated 2026-08-14.

@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Dev/prod signal for validation
 description: The missing runtime signal and shared helper behind the agreed convention of throwing in dev and warning in prod; today everything is dev, so validation sites throw.
-status: deferred
-timestamp: 2026-07-17T00:00:00Z
+created: 2026-07-17
 ---
 
 # Dev/prod signal for validation

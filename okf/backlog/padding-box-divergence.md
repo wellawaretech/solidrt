@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Padding makes paint and hit size against different boxes
 description: Paint hands every laid-out element its content box (border box minus its own padding) as ctx.size, while hit testing passes the border box. For a View's own matrices (transform center, viewBox fit) that made paint and hit disagree whenever padding combined with a transform or viewBox - settled and fixed 2026-08-08, border box on every path. For non-View kinds the divergence is still open, a padded rect paints its content box but hit-tests its border box.
-status: partial
-timestamp: 2026-08-08T00:00:00Z
+created: 2026-08-08
 ---
 
 # Padding makes paint and hit size against different boxes

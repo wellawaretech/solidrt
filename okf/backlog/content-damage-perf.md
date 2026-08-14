@@ -1,15 +1,13 @@
 ---
-type: backlog-item
 title: Content-damage perf watchpoints
 description: One remaining perf pothole in the GPU-content-damage path (the O(nodes) walk, unrealistic at current app scales; symptom and drop-in fix recorded); the boundary-shader-input full re-bake was fixed 2026-08-10 (shader_dirty + Compose instead of invalidate_paint).
-status: open
-timestamp: 2026-08-10T00:00:00Z
+created: 2026-08-10
 ---
 
 # Content-damage perf watchpoints
 
 Correctness landed in
-[snapshot-gpu-content-invalidation](snapshot-gpu-content-invalidation.md);
+[snapshot-gpu-content-invalidation](../done/snapshot-gpu-content-invalidation.md);
 this holds its known perf potholes. Not worth fixing speculatively - the
 open one has a crisp symptom and a contained fix.
 

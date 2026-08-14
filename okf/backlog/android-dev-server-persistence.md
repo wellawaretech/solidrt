@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Android client forgets its dev-server address
 description: The dev-server address only reaches the client as a launch-intent extra, so any relaunch that does not come from the CLI (the device's own launcher, a crash, a reboot) starts into apps/default and never reconnects; recovery needs adb.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Android client forgets its dev-server address

@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Per-node event-interest mask for pointer dispatch
 description: Rust marshals the full root-to-leaf hit path into JS for every pointer event because only the JS handler registry knows which nodes listen; a per-element event-kind bitmask lets dispatch deliver only listening nodes and (staged) skip empty emissions entirely, making input over handler-free regions free.
-status: open
-timestamp: 2026-08-01T00:00:00Z
+created: 2026-08-01
 ---
 
 # Per-node event-interest mask for pointer dispatch

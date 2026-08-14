@@ -1,10 +1,8 @@
 ---
-type: feature-proposal
 title: Move the srt CLI fully into flux
 description: Collapse the repl/dev-server split into one flux process so there is exactly one rebuild-and-push path, leaving Bun only as a bundler subprocess.
-status: deferred
 tags: [cli, flux, dev-server, mcp, bundler, repl]
-timestamp: 2026-07-13T00:00:00Z
+created: 2026-07-13
 ---
 
 # Move the srt CLI fully into flux

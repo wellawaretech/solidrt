@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Move the fetch disk cache out of forge?
 description: Lattice is now the only cache configurer, so should the mechanism follow the policy out of forge, and which of the three candidate shapes pays for itself?
-status: deferred
-timestamp: 2026-07-24T00:00:00Z
+created: 2026-07-24
 ---
 
 # Move the fetch disk cache out of forge?

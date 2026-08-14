@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Video playback
 description: One decode-to-YUV pipeline on every platform (software decoders on desktop, MediaCodec buffer mode on Android), planar YUV textures + shader conversion in alloy, player core in forge, no video primitive - texture/d-texture display the player's texture id. Fluency target is the Philips MT5891 TV; punch-through rejected. Probed 2026-08-12: the MTK decoder emits honest NV12 in buffer mode at 3x realtime for 1080p; the AImageReader fallback tap is unsupported on the device (not needed).
-status: open
-timestamp: 2026-08-12T00:00:00Z
+created: 2026-08-12
 ---
 
 # Video playback

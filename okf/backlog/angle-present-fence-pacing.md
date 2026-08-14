@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Present-fence pacing on ANGLE (never-blocking waits)
 description: ANGLE/D3D11's glClientWaitSync returns immediately instead of blocking, so depth-capped present pacing degrades to check-and-proceed there; a GetSynciv-spin fallback would restore blocking pacing if Windows drag latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
-status: deferred
-timestamp: 2026-08-04T00:00:00Z
+created: 2026-08-04
 ---
 
 # Present-fence pacing on ANGLE (never-blocking waits)

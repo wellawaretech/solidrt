@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: onFrame tick reset on reload
 description: The tick timebase resets across hot reload after the new instance's first frame, handing apps one enormous negative delta; apps clamp dt as a workaround.
-status: deferred
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # onFrame tick reset on reload

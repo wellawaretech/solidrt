@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Runtime policies - tracked, app-readable, app-overridable
 description: The runtime is accumulating behavior policies it selects on the app's behalf from device facts (frame pacing being the first with real consequences). That is implicit magic unless the policies are enumerable, their chosen values readable, and the choice overridable by the app. Track them here until a policy surface exists.
-status: open
-timestamp: 2026-08-13T00:00:00Z
+created: 2026-08-13
 ---
 
 # Runtime policies - tracked, app-readable, app-overridable

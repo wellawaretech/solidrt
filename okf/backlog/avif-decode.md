@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: AVIF decoding in decodeImage
 description: The one practical web image format decodeImage lacks; pure-Rust decode does not exist in the image crate, so it needs the dav1d C system dependency.
-status: open
-timestamp: 2026-07-19T00:00:00Z
+created: 2026-07-19
 ---
 
 # AVIF decoding in decodeImage

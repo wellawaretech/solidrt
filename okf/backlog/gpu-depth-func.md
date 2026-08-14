@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Depth func option
 description: The depth comparison is fixed at LESS with no override, which blocks equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option on createRenderPipeline is additive when a demand signal arrives. Wanted together with sampleable depth for shadow maps. Split from gpu-pipeline-extensions 2026-08-11.
-status: deferred
-timestamp: 2026-08-11T00:00:00Z
+created: 2026-08-11
 ---
 
 # Depth func
@@ -19,10 +17,10 @@ to `depth`/`depthWrite`, WebGPU's vocabulary
 stays `"less"`.
 
 Likely first consumer: shadow maps (roadmap item 15 in
-[3d-roadmap](3d-roadmap.md)) name it together with
+[3d-roadmap](../notes/3d-roadmap.md)) name it together with
 [gpu-sampleable-depth](gpu-sampleable-depth.md); depth-func alone is not
 the blocker there.
 
 History: deferred raster-state remainder of
-[gpu-pipeline-extensions](gpu-pipeline-extensions.md) (cull mode landed
+[gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md) (cull mode landed
 2026-08-04); split out 2026-08-11.

@@ -1,10 +1,8 @@
 ---
-type: feature-proposal
 title: stdin/tty support in flux
 description: A flux:stdin (or flux:tty) module for cross-platform raw-mode keystroke reading, the missing piece for any interactive terminal UI under flux, not just the CLI repl.
-status: deferred
 tags: [flux, tty, stdin, terminal]
-timestamp: 2026-07-13T00:00:00Z
+created: 2026-07-13
 ---
 
 # stdin/tty support in flux

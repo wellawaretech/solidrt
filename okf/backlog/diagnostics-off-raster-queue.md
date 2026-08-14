@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Diagnostics queue behind the thing they diagnose
 description: get_gpu_resources queues behind the raster backlog it exists to explain, and get_stats/get_snapshot need a JS-thread slice, so they time out on a busy (healthy) app with a message that says "wedged"; serve inventory and stats off published state, and name the real timeout.
-status: open
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Diagnostics queue behind the thing they diagnose

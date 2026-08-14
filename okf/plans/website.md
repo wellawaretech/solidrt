@@ -1,8 +1,7 @@
 ---
-type: plan
-title: Documentation website (structure, generator, content strategy)
-status: active
-timestamp: 2026-07-16T00:00:00Z
+title: Documentation website
+description: "A monorepo website/ generated statically by a flux script: section nav, a Core-first Start page, and generate-what-we-can content (API reference from types, examples from the repo)."
+created: 2026-07-16
 ---
 
 # Documentation website
@@ -100,9 +99,15 @@ fifteen pages of prose). Generated:
 
 - API reference from `packages/core` types (+ `packages/flux-types` for
   Runtime); this is also the agent-facing surface (feeds `llms.txt`).
-- Examples pages from `examples/` source. Upgrade path: `srt playback`
-  deterministic frame capture + captureSnapshot can generate real
-  screenshots/recordings of every example at build time.
+- Examples pages from `examples/` source. Scope per
+  okf/plans/examples-rescope.md (2026-07-25): the corpus is the flat set
+  of realistic, scaffold-shaped apps in root `examples/<app>/` - the
+  human-facing tier. `packages/*/examples` are agent-facing concept
+  isolations and are NOT harvested for the site. Section attribution
+  (Core vs a framework's section) is derived from each app's
+  package.json dependencies, not from folder structure. Upgrade path:
+  `srt playback` deterministic frame capture + captureSnapshot can
+  generate real screenshots/recordings of every example at build time.
 - CLI reference from command definitions / help output.
 - Changelog from releases (deferred with News).
 
@@ -121,12 +126,58 @@ section.
    through the converter, `*.html` wrapped as pre-rendered fragments (the
    landing page), everything else copied. Titles from the first h1. Content
    pages are `<dir>/index.md` for clean URLs. `website` joined the bun
-   workspace. All pages are stubs marked as such.
+   workspace.
+   Content filled 2026-07-26: landing plus all six top-level pages are real
+   prose, no stubs, every command and API name verified against the shipped
+   CLI and packages. Sub-pages (Concepts, Guides, per-crate Architecture)
+   are still to write, and they need in-section navigation first: the
+   generator has only the top nav, so a sidebar (cheapest version: derived
+   from the directory tree, title from each page's first h1) is a
+   prerequisite for any section with more than one page.
+   Content and styling are separate tracks from here on; the sidebar belongs
+   to the styling track, so section indexes link their sub-pages in prose
+   until it lands.
 2. **Examples generator**: pages from `examples/` (cheapest generator,
    highest visibility).
 3. **API reference generation** from types (its own project, especially
    type extraction).
 4. **Screenshot/recording capture** for example pages via playback.
+
+## Styling track (decided 2026-07-26, not yet built)
+
+The site must look exactly like an app built with `@solidrt/components`, the
+launcher being the reference. Its visual signature: borderless filled
+surfaces (card fill on window fill, no rules or underlines anywhere), radius
+12 / padding 20 / gap 16, one text color with muted for secondary rows,
+headings separated by size and weight rather than tone, flat accent buttons
+(primary fill, white label, hover tint, press scale), NotoSans.
+
+Decisions:
+
+- **Pico goes.** Colors mapped onto it cleanly (`--pico-*` overrides are its
+  documented path, and `content/css/theme.css` does that today), but every
+  geometry and typography item above is a Pico default we would override
+  rather than use, and we ship 71 KB to use a tenth of it. Replace with our
+  own classless stylesheet, roughly 200 lines, over what the markdown
+  actually emits.
+- **One token source, no hand-copying.** `theme.css` currently pastes the
+  palette with a keep-in-sync comment, which will drift. Extract the pure
+  token data from `packages/components/src/theme.ts` into a
+  dependency-free `tokens.ts` (both color presets, spacing, radius,
+  borderWidth, type scale); `theme.ts` imports it and keeps the store, and
+  the website build imports it and emits `tokens.css`. The build cannot
+  import `theme.ts` directly: it reaches `@solidrt/core`, whose index pulls
+  `flux:rendertree`, absent on the plain flux binary. `textMuted` is a
+  `mixColors` derivation, so keeping it live wants a `./color` subpath
+  export on `@solidrt/core` (that file only imports colord).
+- **Type scale: structure matched, relative sizes kept, body one step up**
+  for long-form reading. The framework's 14px body is right for app UI and
+  small for prose; the ratios between caption/label/body/title/heading stay
+  as they are.
+- **Font parity costs something.** `NotoSans.ttf` is 2 MB, too heavy to
+  serve raw. Preferred fix is a self-hosted woff2 subset, which needs
+  fonttools installed; alternatives are a Google Fonts link (external
+  dependency on a page we otherwise control) or a lookalike system stack.
 
 ## Findings from stage 1
 
@@ -135,6 +186,13 @@ section.
   (core-only: window + text). So a bare-Core onboarding template already
   exists as `minimal`; the open question is only whether `default` should
   stay Components-flavored. The Start stub scaffolds `minimal`.
+  Superseded 2026-07-26 while writing the content: the public entry point is
+  `bun create solidrt <dir>` (create-solidrt forwards to `srt init`), which
+  installs dependencies itself, and the run command is `bun run dev`
+  (`srt run <entry>`) - bare `srt` only prints usage. Templates are now
+  `default` (core level, animated logo), `minimal` (core, blank),
+  `components` (blank) and `gallery` (widget tour), so `default` already
+  went core-first and that open question is closed.
 - Dogfooding gap, FIXED 2026-07-16: `flux:fs` had no mkdir, so the build
   could not create output directories. Added `dir().create()`
   (create_dir_all semantics) across forge/fs + the dir plugin + flux-types

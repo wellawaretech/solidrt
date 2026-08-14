@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Deep links
 description: "Opening the app at a URL from outside: an OS registration half (scheme declaration in srt pack and the Android manifest) and an app half that is just onOpenUrl."
-status: deferred
-timestamp: 2026-07-26T00:00:00Z
+created: 2026-07-26
 ---
 
 # Deep links

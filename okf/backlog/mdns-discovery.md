@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Fix mDNS discovery (Discover finds nothing)
 description: The go client's mDNS browse is intact but nothing advertises _solidrt._tcp anymore since the dev server moved into flux and advertise was deliberately dropped, so Discover searches forever; restoring it means a forge::mdns responder (advertise) exposed as a flux capability, and its feasibility next to system responders is unproven.
-status: open
-timestamp: 2026-08-01T00:00:00Z
+created: 2026-08-01
 ---
 
 # Fix mDNS discovery (Discover finds nothing)

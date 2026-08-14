@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Owner-scoped registerDebug
 description: Registrations reset on hot reload, so commands must register at module init - which forces any app state a command touches up to module scope; an owner-scoped variant auto-cleaned like onFrame lets both live in the component they belong to.
-status: open
-timestamp: 2026-08-02T00:00:00Z
+created: 2026-08-02
 ---
 
 # Owner-scoped registerDebug

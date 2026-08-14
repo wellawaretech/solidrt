@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: App icons
 description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the launcher, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms.
-status: partial
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # App icons

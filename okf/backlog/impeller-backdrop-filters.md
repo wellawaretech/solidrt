@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Backdrop filters through Impeller (blur, glass)
 description: save_layer already takes a backdrop ImageFilter and we already call it with None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives frosted panels with correct see-through semantics, no GLSL and no root layer.
-status: open
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # Backdrop filters through Impeller (blur, glass)

@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: Cube map textures
 description: No TEXTURE_CUBE_MAP support anywhere (upload, sampling, or render target), so environment/reflection mapping, skyboxes and cube shadow maps have no path; ES 3.0 has cube maps in core, seamless filtering included. Demand-gated on the scene-graph environment tier.
-status: open
-timestamp: 2026-08-04T00:00:00Z
+created: 2026-08-04
 ---
 
 # Cube map textures
@@ -38,5 +36,5 @@ Shape questions to settle when a consumer arrives, in rough order:
   and IBL sampling wants the mip chain; this item leans on
   [gpu-mipmaps](gpu-mipmaps.md) landing first or together.
 
-Filed 2026-08-04 from ../research/scene-graph-3d.md (stage 5,
+Filed 2026-08-04 from ../notes/scene-graph-3d.md (stage 5,
 demand-gated); no field report asks yet.

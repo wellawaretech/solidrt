@@ -1,9 +1,7 @@
 ---
-type: backlog-item
 title: ANGLE textures and teardown crash
 description: "The two Windows client killers (a snapshot boundary's cross-context texture blacking the window under ANGLE, and the engine-restart GL teardown race) are both fixed by the single-context + raster-thread architecture; stage 2 non-blocking creates/readbacks and an unexplained two-client dev-query timeout remain."
-status: partial
-timestamp: 2026-07-27T00:00:00Z
+created: 2026-07-27
 ---
 
 # ANGLE textures and teardown crash

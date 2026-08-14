@@ -1,10 +1,8 @@
 ---
-type: feature-proposal
 title: APK packaging for flux:ffi libraries
 description: Ship an app's ffi libraries in an asset folder, packaged into the APK's native-lib dir and opened by path automatically, since byte-loading is blocked by Android W^X policy.
-status: deferred
 tags: [flux, ffi, android, packaging]
-timestamp: 2026-07-15T00:00:00Z
+created: 2026-07-15
 ---
 
 # APK packaging for flux:ffi libraries
