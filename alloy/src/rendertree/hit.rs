@@ -79,7 +79,7 @@ impl Hittable for ElementKind {
   fn is_in_bounds(&self, point: Point, ctx: &HitContext) -> bool {
     match self {
       ElementKind::Rectangle(n) => n.is_in_bounds(point, ctx),
-      // ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
+      ElementKind::Oval(n) => n.is_in_bounds(point, ctx),
       ElementKind::Path(n) => n.is_in_bounds(point, ctx),
       ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
       ElementKind::Span(_) => false,

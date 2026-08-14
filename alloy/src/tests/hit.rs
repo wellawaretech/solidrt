@@ -313,3 +313,24 @@ fn locals_truncate_at_missing_node() {
   assert_eq!(locals.len(), 1);
   assert_xy(locals[0], 50.0, 50.0);
 }
+
+#[test]
+fn oval_hits_as_ellipse_not_box() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, Oval::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 50.0, 50.0, 100.0, 100.0);
+
+  // The box corner is outside the inscribed ellipse: only the root hits.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(55.0, 55.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1]);
+
+  // The center is inside the ellipse.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(100.0, 100.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2]);
+}

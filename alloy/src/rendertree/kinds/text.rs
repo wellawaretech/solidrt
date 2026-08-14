@@ -49,6 +49,10 @@ impl Default for Text {
       font_family: "sans".to_string(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
+      // Medium, not Regular: Impeller antialiases text in grayscale only, so
+      // small type on a 1x desktop display renders as hairlines that bleed
+      // into dark backgrounds. Costs a little extra weight on 2-3x screens
+      // that never needed it; see okf/backlog/dpi-aware-default-font-weight.md.
       font_weight: FontWeight::Medium,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
