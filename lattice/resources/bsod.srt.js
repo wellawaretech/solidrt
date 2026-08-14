@@ -3750,7 +3750,7 @@ var svg = String.raw;
 var claims = new Map;
 // packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
-// lattice/launcher/bsod.tsx
+// apps/launcher/src/bsod.tsx
 function Bsod() {
   var _el$ = createElement("window", {
     title: "solidrt"

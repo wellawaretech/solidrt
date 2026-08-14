@@ -3,6 +3,17 @@ node_modules/
 dist/
 .srt-data/
 *.db
+# Dev sandbox: contents are personal scratch, only the folder convention
+# (its tsconfig) is committed. See okf/done/examples-rescope.md.
+sandbox/*
+!sandbox/tsconfig.json
+# Repo tooling lives in scripts/; personal one-offs stay out of git, as do the
+# bundles srt writes next to a script it renders.
+scripts/personal/
+scripts/**/*.srt.js
+# srt render writes the bundle next to the entry and PNG frames into the cwd.
+examples/**/*.srt.js
+examples/**/frame-*.png
 # Default fonts staged into the CLI package at release time (release.yml);
 # in-repo the CLI resolves them from alloy/assets/fonts instead.
 packages/cli/fonts/

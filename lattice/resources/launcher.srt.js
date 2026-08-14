@@ -9618,7 +9618,7 @@ function Icon(props) {
   }));
   return _el$;
 }
-// lattice/launcher/parts/home-screen.tsx
+// apps/launcher/src/parts/home-screen.tsx
 import { stop } from "srt:dev";
 
 // packages/core/src/camera.ts
@@ -9669,10 +9669,10 @@ function createCamera(options = {}) {
   };
 }
 
-// lattice/launcher/parts/home-screen.tsx
+// apps/launcher/src/parts/home-screen.tsx
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
-// lattice/launcher/parts/puzzle.tsx
+// apps/launcher/src/parts/puzzle.tsx
 var PUZZLE_SEGMENTS = [{
   light: "#3f5494",
   dark: "#162b6c",
@@ -9745,7 +9745,7 @@ function PuzzleMark(props) {
   });
 }
 
-// lattice/launcher/parts/app-icon.tsx
+// apps/launcher/src/parts/app-icon.tsx
 function AppIcon(props) {
   let doc = createMemo2(() => {
     let src = props.app.icon;
@@ -9835,7 +9835,7 @@ function AppIcon(props) {
   });
 }
 
-// lattice/launcher/parts/detail-card.tsx
+// apps/launcher/src/parts/detail-card.tsx
 function DetailRow(props) {
   return createComponent2(View, {
     get layout() {
@@ -9884,7 +9884,7 @@ function DetailCard(props) {
   });
 }
 
-// lattice/launcher/parts/types.ts
+// apps/launcher/src/parts/types.ts
 function focusRing(focused, radius) {
   if (!focused || !policy.focusRing)
     return {};
@@ -9908,7 +9908,7 @@ function normalizeAddress(raw) {
   return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
 }
 
-// lattice/launcher/parts/back-button.tsx
+// apps/launcher/src/parts/back-button.tsx
 var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
 function BackButton(props) {
   return createComponent2(Pressable, {
@@ -9936,7 +9936,7 @@ function BackButton(props) {
   });
 }
 
-// lattice/launcher/parts/scan-button.tsx
+// apps/launcher/src/parts/scan-button.tsx
 var QR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>`;
 function ScanButton(props) {
   return createComponent2(Pressable, {
@@ -9964,7 +9964,7 @@ function ScanButton(props) {
   });
 }
 
-// lattice/launcher/parts/settings-panel.tsx
+// apps/launcher/src/parts/settings-panel.tsx
 import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
 var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
 var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
@@ -10149,7 +10149,7 @@ function SettingsPanel(props) {
   });
 }
 
-// lattice/launcher/parts/dev-connection.ts
+// apps/launcher/src/parts/dev-connection.ts
 import { on as on7 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
@@ -10179,7 +10179,7 @@ function connect(addr) {
   devConnect(normalizeAddress(addr));
 }
 
-// lattice/launcher/parts/connect-panel.tsx
+// apps/launcher/src/parts/connect-panel.tsx
 var DEFAULT_PORT = "34884";
 function recentLabel(entry) {
   if (!entry.includes("|"))
@@ -10336,7 +10336,7 @@ function ConnectPanel(props) {
   });
 }
 
-// lattice/launcher/parts/home-screen.tsx
+// apps/launcher/src/parts/home-screen.tsx
 var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
 var PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
 function formatStamp(ms) {
@@ -11209,7 +11209,7 @@ function HomeScreen(props) {
   });
 }
 
-// lattice/launcher/parts/scan-screen.tsx
+// apps/launcher/src/parts/scan-screen.tsx
 var RETICLE_STROKE = 10;
 var RETICLE_RADIUS = 20;
 var CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
@@ -11395,7 +11395,7 @@ function ScanScreen(props) {
   });
 }
 
-// lattice/launcher/launcher.tsx
+// apps/launcher/src/index.tsx
 function App() {
   let [themeMode, setThemeMode] = createSignal("system");
   let dark = () => {

@@ -45,13 +45,16 @@ endif
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
+# The launcher app sources live in apps/launcher like any regular app; the
+# generated bundles land here in resources/ because lattice is what embeds
+# them (include_str! in src/lib.rs).
 LAUNCHER_DIR = $(SRT_HOME)/apps/launcher
-LAUNCHER_SRC = $(LAUNCHER_DIR)/launcher.tsx
-LAUNCHER_JS  = $(LAUNCHER_DIR)/launcher.srt.js
+LAUNCHER_SRC = $(LAUNCHER_DIR)/src/index.tsx
+LAUNCHER_JS  = $(CURDIR)/resources/launcher.srt.js
 
 # The BSOD screen shown when an app fails to start.
-BSOD_SRC = $(LAUNCHER_DIR)/bsod.tsx
-BSOD_JS  = $(LAUNCHER_DIR)/bsod.srt.js
+BSOD_SRC = $(LAUNCHER_DIR)/src/bsod.tsx
+BSOD_JS  = $(CURDIR)/resources/bsod.srt.js
 
 include $(SRT_HOME)/platform.mk
 
@@ -76,13 +79,13 @@ all: client runtime
 # export that no longer exists, failing at module link on engine start.
 BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*)
 
-$(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/*.tsx) $(wildcard $(LAUNCHER_DIR)/parts/*.tsx) $(BUNDLE_DEPS)
-	@echo "Bundling launcher (launcher.tsx -> launcher.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC)
+$(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/src/*.tsx) $(wildcard $(LAUNCHER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
+	@echo "Bundling launcher (index.tsx -> resources/launcher.srt.js)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC) -o $(LAUNCHER_JS:.srt.js=)
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
-	@echo "Bundling BSOD screen (bsod.tsx -> bsod.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC)
+	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod.srt.js)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC) -o $(BSOD_JS:.srt.js=)
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -108,7 +111,7 @@ help:
 	@echo "dist-* targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
 	@echo "Launcher:"
-	@echo "  launcher-bundle      Regenerate launcher.srt.js from launcher.tsx"
+	@echo "  launcher-bundle      Regenerate the launcher and BSOD bundles"
 	@echo ""
 	@echo "Clean:"
 	@echo "  clean                Remove all build artifacts"
@@ -116,9 +119,9 @@ help:
 
 # -- Launcher -----------------------------------------
 #
-# SolidRT Go embeds apps/launcher/launcher.srt.js at compile time via include_str!.
-# The file target rebuilds launcher.srt.js when any .tsx source changes.
-# Run `make launcher-bundle` to force a rebuild.
+# SolidRT Go embeds resources/launcher.srt.js at compile time via
+# include_str!. The file target rebuilds it when any .tsx source in
+# apps/launcher changes. Run `make launcher-bundle` to force a rebuild.
 
 launcher-bundle: $(LAUNCHER_JS) $(BSOD_JS)
 

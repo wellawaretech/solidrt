@@ -1,0 +1,5 @@
+node_modules/
+*.srt.js
+*.srt.bin
+.srt-data/
+dist/

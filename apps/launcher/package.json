@@ -1,0 +1,21 @@
+{
+  "name": "launcher",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "srt run src/index.tsx",
+    "pack": "srt pack -o out src/index.tsx",
+    "server": "srt server",
+    "client": "srt client",
+    "android": "srt client --android"
+  },
+  "dependencies": {
+    "@solidrt/core": "workspace:*",
+    "@solidrt/components": "workspace:*"
+  },
+  "devDependencies": {
+    "@solidrt/cli": "workspace:*",
+    "@solidrt/flux-types": "workspace:*",
+    "typescript": "^7"
+  }
+}

@@ -151,8 +151,8 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeHardwareKeyboard(
 // The launcher is the go client's home; the production runtime never
 // shows it (it always boots a provided app source), so only go builds embed it.
 #[cfg(feature = "go")]
-const LAUNCHER_SOURCE: &str = include_str!("../../apps/launcher/launcher.srt.js");
-const BSOD_SOURCE: &str = include_str!("../../apps/launcher/bsod.srt.js");
+const LAUNCHER_SOURCE: &str = include_str!("../resources/launcher.srt.js");
+const BSOD_SOURCE: &str = include_str!("../resources/bsod.srt.js");
 
 /// The dev client's built-in fonts: the three Noto role defaults, matching what
 /// a default packed app carries in its trailer. The dev loop (launcher,

@@ -27,6 +27,18 @@
         "typescript": "^7",
       },
     },
+    "apps/launcher": {
+      "name": "launcher",
+      "dependencies": {
+        "@solidrt/components": "workspace:*",
+        "@solidrt/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@solidrt/cli": "workspace:*",
+        "@solidrt/flux-types": "workspace:*",
+        "typescript": "^7",
+      },
+    },
     "packages/3d": {
       "name": "@solidrt/3d",
       "version": "0.0.0",
@@ -437,6 +449,8 @@
     "json-schema-typed": ["json-schema-typed@8.0.2", "", {}, "sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA=="],
 
     "json5": ["json5@2.2.3", "", { "bin": { "json5": "lib/cli.js" } }, "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg=="],
+
+    "launcher": ["launcher@workspace:apps/launcher"],
 
     "lru-cache": ["lru-cache@5.1.1", "", { "dependencies": { "yallist": "^3.0.2" } }, "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w=="],
 
