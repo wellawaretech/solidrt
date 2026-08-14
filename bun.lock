@@ -15,6 +15,18 @@
         "typescript": "^7",
       },
     },
+    "apps/inspector": {
+      "name": "inspector",
+      "dependencies": {
+        "@solidrt/components": "workspace:*",
+        "@solidrt/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@solidrt/cli": "workspace:*",
+        "@solidrt/flux-types": "workspace:*",
+        "typescript": "^7",
+      },
+    },
     "packages/3d": {
       "name": "@solidrt/3d",
       "version": "0.0.0",
@@ -403,6 +415,8 @@
     "iconv-lite": ["iconv-lite@0.7.3", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3.0.0" } }, "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ=="],
 
     "inherits": ["inherits@2.0.4", "", {}, "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ=="],
+
+    "inspector": ["inspector@workspace:apps/inspector"],
 
     "ip-address": ["ip-address@10.2.0", "", {}, "sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA=="],
 

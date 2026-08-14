@@ -43,14 +43,15 @@ GO_FEATURES      = --features go,speech
 RUNTIME_FEATURES = --features speech
 endif
 
-LAUNCHER_SRC = $(CURDIR)/launcher/launcher.tsx
-LAUNCHER_JS  = $(CURDIR)/launcher/launcher.srt.js
+SRT_HOME ?= $(abspath $(CURDIR)/..)
+
+LAUNCHER_DIR = $(SRT_HOME)/apps/launcher
+LAUNCHER_SRC = $(LAUNCHER_DIR)/launcher.tsx
+LAUNCHER_JS  = $(LAUNCHER_DIR)/launcher.srt.js
 
 # The BSOD screen shown when an app fails to start.
-BSOD_SRC = $(CURDIR)/launcher/bsod.tsx
-BSOD_JS  = $(CURDIR)/launcher/bsod.srt.js
-
-SRT_HOME ?= $(abspath $(CURDIR)/..)
+BSOD_SRC = $(LAUNCHER_DIR)/bsod.tsx
+BSOD_JS  = $(LAUNCHER_DIR)/bsod.srt.js
 
 include $(SRT_HOME)/platform.mk
 
@@ -75,7 +76,7 @@ all: client runtime
 # export that no longer exists, failing at module link on engine start.
 BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*)
 
-$(LAUNCHER_JS): $(wildcard $(CURDIR)/launcher/*.tsx) $(wildcard $(CURDIR)/launcher/parts/*.tsx) $(BUNDLE_DEPS)
+$(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/*.tsx) $(wildcard $(LAUNCHER_DIR)/parts/*.tsx) $(BUNDLE_DEPS)
 	@echo "Bundling launcher (launcher.tsx -> launcher.srt.js)..."
 	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC)
 
@@ -115,7 +116,7 @@ help:
 
 # -- Launcher -----------------------------------------
 #
-# SolidRT Go embeds launcher/launcher.srt.js at compile time via include_str!.
+# SolidRT Go embeds apps/launcher/launcher.srt.js at compile time via include_str!.
 # The file target rebuilds launcher.srt.js when any .tsx source changes.
 # Run `make launcher-bundle` to force a rebuild.
 

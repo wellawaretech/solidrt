@@ -17,7 +17,7 @@ ticket became the single cross-device connect story). The advertise code
 survives as a comment in packages/cli/src/dev-server.ts. So pressing Discover
 put the client into "Searching..." with nothing on the LAN that could ever
 answer; the launcher's Discover button was commented out on 2026-08-01
-(lattice/launcher/parts/connect-panel.tsx) to remove the dead end.
+(apps/launcher/parts/connect-panel.tsx) to remove the dead end.
 
 Note the plan explicitly accepted this gap and said "do not bolt advertise
 back on to bridge it". This item is a deliberate revisit of that decision,
