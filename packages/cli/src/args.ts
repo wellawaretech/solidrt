@@ -176,7 +176,8 @@ run/client options:
   -c, --client <N>       Client number: its own data tree under the data root (default: the session)
 
 client options:
-  -s, --session <N>      Session of the dev server to connect to (default: 0)
+  -s, --session <N>      Connect to this session's dev server on this machine
+                         (127.0.0.1:34884+N); without it, start on the connect screen
       --server <host[:port]>  Connect to a dev server at this address (default port: 34884 + session)
       --android          Install and launch the client on a connected Android device
       --device <serial>  Target a specific adb device by serial or unique prefix

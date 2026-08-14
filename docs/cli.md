@@ -111,10 +111,16 @@ bunx srt client [flags]
 
 | Flag     | Description          |
 | -------- | -------------------- |
-| `-s, --session <N>` | Session of the dev server to connect to (default: 0) |
+| `-s, --session <N>` | Connect to this session's dev server on this machine (`127.0.0.1:34884+N`) |
+| `--server <host[:port]>` | Connect to a dev server at this address (default port: 34884 + session) |
 | `-c, --client <N>` | Client number: its own data tree under the data root (default: the session) |
 | `--data-root <dir>` | Client data root (default: `~/.solidrt/clients`) |
 | `--size` | Window size as `WxH` |
+
+`-s` and `--server` are two spellings of the one address the client dials:
+`-s <N>` is shorthand for the loopback server of that session, `--server`
+reaches any host, and an explicit `--server` wins. With neither, the client
+starts on its connect screen (recents, QR, or a p2p ticket).
 
 ### Command `run`
 
