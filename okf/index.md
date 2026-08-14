@@ -16,6 +16,10 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
   assets in the manifest, then signed OTA."
+- **[Inspector - a visual devtool app over the dev-server control API](plans/inspector.md)** [2026-08-14]
+  A packed SolidRT app presenting live runtime introspection (stats, logs,
+  tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
+  both clients of /__control__. Never a dev-server client.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -111,6 +115,10 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[Guarantee a microtask checkpoint between event dispatches](backlog/event-burst-stale-signal-reads.md)** [2026-08-14]
+  Events dispatched in one run-loop drain run without a microtask flush
+  between them, so a handler reads stale signal values written by the previous
+  event - lost edits, intermittent state corruption.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for

@@ -63,14 +63,19 @@ export type TextBuffer = {
  * source. Without one it holds the text itself. The selection is always
  * buffer-owned state and is clamped to the current text length on read, so an
  * external truncation of a controlled value cannot leave the caret dangling.
- * Every edit is clamped to `maxLength`.
+ * Every edit is clamped to `maxLength`. Mutations commit synchronously
+ * (flush), so consecutive edits in one task observe each other - required for
+ * burst input, where several handlers run with no microtask between them.
  */
 export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
   let initial = options.defaultValue ?? ""
   let [internalValue, setInternalValue] = createSignal(initial)
+  // The caret starts at the end of the current text: for a controlled buffer
+  // that is the owner's value, which defaultValue does not reflect.
+  let initialCaret = (options.value?.() ?? initial).length
   let [selectionState, setSelectionState] = createSignal<Selection>({
-    anchor: initial.length,
-    focus: initial.length,
+    anchor: initialCaret,
+    focus: initialCaret,
   })
 
   let value = () => options.value?.() ?? internalValue()
@@ -89,7 +94,12 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
 
   let setCaret = (offset: number) => setSelectionState({ anchor: offset, focus: offset })
 
-  // Apply a text edit and place the caret, clamping to maxLength.
+  // Apply a text edit and place the caret, clamping to maxLength. The flush
+  // commits the writes (including a controlled owner's from onInput) before
+  // returning: edits must observe each other within one task, because event
+  // bursts can dispatch several handlers with no microtask between them
+  // (Android IME input arrives as backspace+commit bursts; see
+  // okf/backlog/event-burst-stale-signal-reads.md).
   let apply = (next: string, caret: number) => {
     let max = options.maxLength?.()
     if (max != null && next.length > max) next = next.slice(0, max)
@@ -97,6 +107,7 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
     if (options.value?.() == null) setInternalValue(next)
     setCaret(caret)
     options.onInput?.(next)
+    flush()
   }
 
   return {
@@ -131,6 +142,7 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
       // A non-extending left/right on a range collapses to the near edge.
       if (!extend && anchor !== focus && (direction === "left" || direction === "right")) {
         setCaret(direction === "left" ? Math.min(anchor, focus) : Math.max(anchor, focus))
+        flush()
         return
       }
       let next = focus
@@ -139,11 +151,13 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
       else if (direction === "start") next = 0
       else if (direction === "end") next = len
       setSelectionState({ anchor: extend ? anchor : next, focus: next })
+      flush()
     },
 
     setSelection: (anchor, focus) => {
       let len = value().length
       setSelectionState({ anchor: Math.min(anchor, len), focus: Math.min(focus, len) })
+      flush()
     },
 
     setValue: (next) => apply(next, next.length),
