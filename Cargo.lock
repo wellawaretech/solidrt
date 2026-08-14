@@ -2367,6 +2367,7 @@ dependencies = [
  "futures-util",
  "half",
  "http",
+ "libloading 0.9.0",
  "livekit-wakeword",
  "log",
  "mdns-sd",

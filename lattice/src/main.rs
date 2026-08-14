@@ -12,9 +12,11 @@
 // u32 LE][magic]. Table entry: [kind u32 LE][offset u64 LE][len u64 LE]
 // [name len u16 LE][name bytes]. Offsets are absolute file offsets. Sections:
 // 1 = the canonical manifest JSON, 2 = a manifest-listed file (name = its
-// manifest path). The CLI and runners ship pinned together, so there is no
-// format version; every offset/length is bounds-checked and any mismatch
-// degrades to "no payload" instead of misparsing.
+// manifest path), 3 = a GL library (name = its filename; extracted and
+// preloaded before window setup, see gl_libs.rs). The CLI and runners ship
+// pinned together, so there is no format version; every offset/length is
+// bounds-checked and any mismatch degrades to "no payload" instead of
+// misparsing.
 #[cfg(not(feature = "go"))]
 const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
 #[cfg(not(feature = "go"))]
@@ -23,6 +25,8 @@ const EMBED_TAIL_LEN: usize = 8 + 4 + EMBED_MAGIC.len(); // table offset + entry
 const SECTION_MANIFEST: u32 = 1;
 #[cfg(not(feature = "go"))]
 const SECTION_FILE: u32 = 2;
+#[cfg(not(feature = "go"))]
+const SECTION_GL_LIB: u32 = 3;
 
 #[cfg(not(feature = "go"))]
 struct FactoryPayload {
@@ -30,6 +34,9 @@ struct FactoryPayload {
   fonts: Vec<alloy::rendertree::FontPayload>,
   app_id: String,
   base: forge::fs::AssetsBase,
+  // (filename, bytes) in section order; only the single-file trailer carries
+  // these (a folder pack ships the libraries next to the runner instead).
+  gl_libs: Vec<(String, Vec<u8>)>,
 }
 
 // A plain filename, as the manifest's bundle entry must be: it cannot reach
@@ -69,6 +76,7 @@ fn load_embedded_payload() -> Option<FactoryPayload> {
   let mut cursor = table_offset as usize;
   let mut manifest: Option<lattice::manifest::Manifest> = None;
   let mut index: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+  let mut gl_libs: Vec<(String, (u64, u64))> = Vec::new();
   for _ in 0..count {
     if cursor + 22 > tail {
       return None;
@@ -95,6 +103,9 @@ fn load_embedded_payload() -> Option<FactoryPayload> {
       SECTION_FILE if !name.is_empty() => {
         index.insert(name.to_string(), (offset, len));
       }
+      SECTION_GL_LIB if !name.is_empty() => {
+        gl_libs.push((name.to_string(), (offset, len)));
+      }
       // Unknown kinds are skipped; pinned CLI/runner versions make this unreachable today.
       _ => {}
     }
@@ -115,7 +126,8 @@ fn load_embedded_payload() -> Option<FactoryPayload> {
       Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
     })
     .collect();
-  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Packed { exe, index } })
+  let gl_libs = gl_libs.into_iter().map(|(name, range)| (name, slice(&range))).collect();
+  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Packed { exe, index }, gl_libs })
 }
 
 // A folder distribution next to this runner: manifest.json + the bundle it
@@ -131,7 +143,7 @@ fn load_adjacent_folder() -> Option<FactoryPayload> {
     .into_iter()
     .map(|(alias, bytes)| alloy::rendertree::FontPayload { alias: Some(alias), bytes: std::borrow::Cow::Owned(bytes) })
     .collect();
-  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Dir(dir) })
+  Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Dir(dir), gl_libs: Vec::new() })
 }
 
 // Flag mistakes are usage errors: report and exit instead of panicking with a
@@ -149,6 +161,9 @@ fn main() {
   // shape.
   #[cfg(not(feature = "go"))]
   if let Some(payload) = load_embedded_payload().or_else(load_adjacent_folder) {
+    // Before lattice::start: alloy's window setup runs inside it, and the GL
+    // libraries must be loaded by then.
+    lattice::gl_libs::provision(&payload.app_id, &payload.gl_libs);
     forge::fs::set_assets_base(Some(payload.base));
     let app_args: Vec<String> = std::env::args().skip(1).collect();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");

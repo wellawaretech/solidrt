@@ -70,6 +70,12 @@ livekit-wakeword = { version = "0.1", optional = true }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 cpu-time = "1"
 
+# Preloading the packed-in GL libraries (ANGLE) after extraction, so SDL's
+# later load-by-name resolves to them (src/gl_libs.rs). Same crate forge
+# already uses for flux:ffi.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+libloading = "0.9"
+
 # mDNS / DNS-SD dev-server discovery for the go client (see src/go/connection.rs).
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.

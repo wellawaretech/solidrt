@@ -10,6 +10,7 @@ import {
   type ManifestFont,
 } from "./project"
 import { resolvePackFonts } from "./fonts"
+import { runnerGlLibs } from "./packer"
 
 // The canonical flat pack folder (okf/plans/client-storage-updates.md, Pack
 // output): runner + manifest.json + bundle.bin + assets/. The manifest
@@ -93,9 +94,10 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
   }
 
   let runnerName = "solidrt" + (process.platform === "win32" ? ".exe" : "")
+  let glLibs = runnerGlLibs(runnerPath)
   mkdirSync(outDir, { recursive: true })
   rmSync(join(outDir, "assets"), { recursive: true, force: true })
-  for (let name of ["manifest.json", "bundle.bin", runnerName]) {
+  for (let name of ["manifest.json", "bundle.bin", runnerName, ...glLibs.map((lib) => lib.name)]) {
     rmSync(join(outDir, name), { force: true })
   }
 
@@ -104,6 +106,11 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
   cpSync(runnerPath, join(outDir, runnerName), { dereference: true })
   if (process.platform !== "win32") {
     Bun.spawnSync(["chmod", "+x", join(outDir, runnerName)])
+  }
+  // The runner loads its GL libraries from next to itself; a folder pack must
+  // carry them like the platform package does.
+  for (let lib of glLibs) {
+    cpSync(lib.path, join(outDir, lib.name), { dereference: true })
   }
   writeFileSync(join(outDir, "bundle.bin"), bytecode)
   writeFileSync(join(outDir, "manifest.json"), folder.manifest)

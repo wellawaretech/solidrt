@@ -141,6 +141,12 @@ Shaped, not started.
   The bundled Noto variables carry a wdth axis the text API cannot reach;
   whether to expose a CSS-style font-stretch, pending an Impeller
   ParagraphStyle capability check.
+- **[Frame driver pacing contract](backlog/frame-driver-pacing-contract.md)** [2026-08-14]
+  Pacing verdicts cost 90s on-device censuses because there is no way to run
+  the frame driver against a synthetic vsync grid, and frames carry no
+  deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
+  instead of degrading to a stable cadence. Harness first, then
+  deadline-scheduled frames.
 - **[Shader compile errors on .tsx lines via #line injection](backlog/glsl-line-injection.md)** [2026-07-30]
   A shader compile error reports the line inside the string plus the injected
   preamble (offset 19 in the trails example), leaving the author to

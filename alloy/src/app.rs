@@ -71,6 +71,35 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   App { sdl_context, window, platform, mode, resampler }
 }
 
+// On platforms where GLES comes from ANGLE's shipped libraries, SDL's "Could
+// not initialize OpenGL / GLES library" almost always means those libraries
+// were not found. Name them and where they were expected, instead of leaving
+// the raw SDL error as the only clue.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn gl_library_hint(err: &str) -> String {
+  if !err.contains("Could not initialize OpenGL / GLES library") {
+    return String::new();
+  }
+  #[cfg(target_os = "windows")]
+  let names = ["libEGL.dll", "libGLESv2.dll"];
+  #[cfg(target_os = "macos")]
+  let names = ["libEGL.dylib", "libGLESv2.dylib"];
+  let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)) else {
+    return String::new();
+  };
+  let missing: Vec<&str> = names.iter().filter(|name| !dir.join(name).exists()).copied().collect();
+  if missing.is_empty() {
+    format!(" ({} are present next to the executable but failed to load)", names.join(" and "))
+  } else {
+    format!(" ({} not found next to the executable; the runtime needs ANGLE's GL libraries)", missing.join(" and "))
+  }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn gl_library_hint(_err: &str) -> String {
+  String::new()
+}
+
 fn setup_video(
   sdl_context: &sdl3::Sdl,
   title: &str,
@@ -89,7 +118,7 @@ fn setup_video(
   if !mode.is_playback() {
     builder.resizable();
   }
-  let mut window = builder.build().map_err(|e| format!("window creation: {e}"))?;
+  let mut window = builder.build().map_err(|e| format!("window creation: {e}{}", gl_library_hint(&e.to_string())))?;
   if mode.is_playback() {
     window.hide();
   }

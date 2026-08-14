@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { requireBinary } from "./util"
 import { compileToBytecode } from "./bundler"
 import type { PackFolder } from "./pack-folder"
@@ -14,6 +15,33 @@ const MAGIC = {
 // Section kinds in the solidrt trailer. Must match lattice/src/main.rs.
 const SECTION_MANIFEST = 1
 const SECTION_FILE = 2
+const SECTION_GL_LIB = 3
+
+// The GL libraries the runner needs next to it (or, single-file, embedded as
+// kind-3 sections it extracts at boot): ANGLE's libraries on Windows and
+// macOS, nothing on platforms with a system GL. Order matters and the runner
+// preloads in section order: libGLESv2 must load before libEGL so libEGL's
+// import of it resolves against the already-loaded module instead of a
+// directory search.
+const GL_LIB_NAMES: Partial<Record<NodeJS.Platform, string[]>> = {
+  win32: ["libGLESv2.dll", "libEGL.dll"],
+  darwin: ["libGLESv2.dylib", "libEGL.dylib"],
+}
+
+// The GL libraries shipped next to the runner binary, resolved to their paths.
+// Missing files are fatal: a pack without them cannot create a window.
+export function runnerGlLibs(runnerPath: string): Array<{ name: string; path: string }> {
+  let names = GL_LIB_NAMES[process.platform] ?? []
+  let dir = dirname(runnerPath)
+  return names.map((name) => {
+    let path = join(dir, name)
+    if (!existsSync(path)) {
+      console.error(`Could not find ${name} next to the runner (${dir}); the packed app needs it to create a GL context.`)
+      process.exit(1)
+    }
+    return { name, path }
+  })
+}
 
 type Section = { kind: number; bytes: Buffer; name?: string }
 
@@ -48,13 +76,17 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
 // section form - the canonical manifest verbatim, then every manifest-listed
 // file named by its manifest path. Bundle, fonts, and identity all come from
 // the manifest; assets are read in place via ranged reads at their section
-// offsets, so nothing is unpacked at runtime.
+// offsets, so nothing is unpacked at runtime. GL libraries ride along as
+// kind-3 sections (runtime freight, deliberately outside the manifest); the
+// runner extracts those to its cache and preloads them before window setup.
 export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
-  let runnerBytes = readFileSync(requireBinary("solidrt"))
+  let runnerPath = requireBinary("solidrt")
+  let runnerBytes = readFileSync(runnerPath)
   let sections: Section[] = [
     { kind: SECTION_MANIFEST, bytes: Buffer.from(folder.manifest, "utf8") },
     { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
     ...folder.copies.map((c) => ({ kind: SECTION_FILE, bytes: readFileSync(c.from), name: c.to })),
+    ...runnerGlLibs(runnerPath).map((lib) => ({ kind: SECTION_GL_LIB, bytes: readFileSync(lib.path), name: lib.name })),
   ]
   return packSections(runnerBytes, sections, MAGIC.solidrt)
 }

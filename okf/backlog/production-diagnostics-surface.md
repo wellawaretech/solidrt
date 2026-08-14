@@ -27,3 +27,18 @@ undecided:
 Whichever shape, it reads the existing latched Stats; no new collection.
 The gating line is documented in counters.rs: bump-an-integer stays ungated,
 anything heavier must be gated or must not ship.
+
+## Second payload: the platform facts policy routes on (2026-08-14)
+
+Counters say what the runtime did. They do not say what the runtime thinks
+the device is, and that is the other half of a field report. [[frame-pacing-fluency]] burned a session on a policy that was
+correct over an input that was false: SDL enumerates a touch device on the
+Philips TV, so lattice picked `VsyncLocked` on a device that wanted
+`SwapPaced`. Nothing in any dump would have shown that, because the facts
+feeding the decision are not reported anywhere.
+
+So the same surface should carry the facts with their provenance: touch and
+keyboard presence and where each came from (SDL enumeration vs the Android
+PackageManager feature query), refresh rate, display scale, the selected
+frame pacing. These are read-once-and-cached values, so this is a dump of
+existing state, not new collection - same gating line as above.

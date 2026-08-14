@@ -249,6 +249,67 @@ plus "pump"/"cadence" debug commands):
   and the SF census are both structurally blind to duplicate-content
   presents - only per-tick position sampling or the eye catches them.
 
+### Amendment 2026-08-14: measure first, and make the advance idempotent
+
+Discussion of why this class of bug is expensive, re-reading the code. The
+next-steps list above stands, with two changes ahead of it and one
+reframing. The harness and deadline halves of the same discussion went to
+[[frame-driver-pacing-contract]], since they are frame-driver properties
+that outlive video.
+
+1. **Present ledger in alloy, first.** The trap above ("both structurally
+   blind to duplicate-content presents") is the reason this trace keeps
+   costing device sessions: the only reliable detector is the eye, and
+   `reusedPerSec > fps` is an inference. alloy already knows the tuple at
+   each present - frame index, the modeled paced timestamp, the raw wall
+   reading at present return, and which content generation went out. A
+   small lock-free ring of the last N presents, drained on read, makes a
+   duplicate-content present a directly readable fact and gives the actual
+   1-vs-2 vsync cadence instead of a reconstruction. Lock-free is the
+   point, not an optimization: MCP debug calls run on the JS thread and
+   cause the very drops being counted ([[diagnostics-off-raster-queue]] is
+   the same asymmetry). This is also the assertion surface the harness in
+   [[frame-driver-pacing-contract]] needs, so it is built once and used
+   from both sides.
+
+2. **Make the timeline advance idempotent, rather than gating the tick.**
+   The mechanism, now traced: lattice/src/runtime.rs ticks `PacedClock` for
+   idle Ticks as well as for presents, deliberately ("Idle Ticks arrive at
+   the refresh cadence, so ticking the paced clock for them preserves its
+   one-period-per-call model"). That is correct only while Tick and
+   FrameRendered are mutually exclusive at the refresh cadence, which is
+   what the gate in alloy/src/app.rs is supposed to guarantee (no Tick
+   while `pending_presents > 0`, none while the raster queue is non-empty).
+   It does not hold: ~1.1 stray Ticks/s. So the clock's one-period-per-call
+   model is load-bearing on an invariant enforced in another crate, and
+   every future source of an extra call is another instance of this bug.
+
+   Structural version: `PresentClock::on_present` (alloy/src/present.rs)
+   advances by `round((raw_ms - clock) / period)` periods instead of
+   exactly one, clamped at zero or more, keeping the GAIN correction and
+   the STALL_MS snap as they are. A second call inside the same refresh
+   period then advances ~0, a genuinely skipped present advances 2, and
+   both are what the timeline wants. The mutual-exclusion invariant stops
+   being load-bearing for correctness.
+
+   Risk to settle before shipping it: quantization flap near a boundary
+   when the raw reading is noisy (0 / 1 / 0 / 2 instead of a steady 1).
+   GAIN smoothing should hold it, but that is precisely a synthetic-vsync
+   harness question, not a TV question.
+
+   The idle-tick gate stays worth doing - an idle Tick during continuous
+   animation is still wrong, and it costs a wasted loop iteration plus a
+   duplicate present - but it becomes an efficiency fix rather than the
+   thing correctness rests on. Note also why the symptom is duplicate
+   content and not a harmless no-op: with the standing frame request a
+   mid-playback player holds, an "idle" tick is never idle. It consumes
+   the standing request and paints.
+
+3. Then re-measure with the flag on, and only then the per-player
+   quantized clock (item 2 of the list above) and audio-clock smoothing
+   (item 3). Both keep their places; the point of the reordering is that
+   neither can be evaluated honestly until the ledger exists.
+
 ## Staging
 
 1. Bare minimum, desktop: forge::video (mp4 demux + openh264 + player),
