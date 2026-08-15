@@ -247,6 +247,17 @@ Shaped, not started.
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
   frosted panels with correct see-through semantics, no GLSL and no root
   layer.
+- **[Isolates and ports (compute off the JS thread)](backlog/isolates-and-ports.md)** [2026-08-15]
+  A synchronous native call through flux:ffi or flux:wasm stalls the whole
+  runtime (dropped frames in a GUI app, unanswered requests in a flux:http
+  server) and there is no worker or thread primitive to move it to; build
+  spawn + ports per okf/notes/channels-concurrency.md, with forge::Value as
+  the neutral message type.
+- **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
+  The runtime exposes camera, microphone, speech-recognition and sound as
+  @solidrt/core subpath modules but has no geolocation API, so apps fall back
+  to a coarse IP lookup over fetch; add flux:location and
+  @solidrt/core/location in the established device-module shape.
 - **[get_render_tree reports useless boxes for detached nodes](backlog/mcp-detached-node-bounds.md)** [2026-08-02]
   A d-* node has no layout entry, so the tree reports the box it inherits from
   its nearest layout ancestor - a d-line spanning (10,120)-(200,120) came back
@@ -498,6 +509,16 @@ Finished, kept for the reasoning.
   Explicit opt-in caching in the forge fetch core (server cache headers
   ignored) with a per-app store and an LRU size cap, then GET coalescing and
   per-host limits.
+- **["flux:ffi: pass a JS buffer as a ptr argument"](done/ffi-buffer-args.md)** [2026-08-15]
+  Signatures are scalar-only and a Uint8Array cannot be handed to a ptr
+  parameter, so every out-parameter or buffer call first loads libc as a
+  second Library for malloc/free plus writeMemory/readMemory; accept
+  Uint8Array/ArrayBuffer for ptr args, pinned for the call.
+- **["flux:ffi polish: typed memory reads, optional symbols"](done/ffi-typed-reads-optional-symbols.md)** [2026-08-15]
+  readMemory returns raw bytes so every numeric result goes through
+  hand-rolled DataView reinterpretation, and every declared symbol must
+  resolve so one absent symbol takes down a whole binding; add typed read
+  helpers and a per-symbol optional flag.
 - **[flux:audio live voice control (pan, gain, ended, raw PCM)](done/flux-audio-voice-control.md)** [2026-08-03]
   A playing SoundHandle is stop-only - no pan anywhere, gain fixed at play()
   time, no finished signal, encoded input only - so a 2D game port cannot

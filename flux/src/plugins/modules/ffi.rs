@@ -6,7 +6,8 @@
 //! callback trampolines, and raw memory access live in `forge::ffi`.
 //!
 //! This is the native counterpart of `flux:wasm` and follows the same shape:
-//! declare what you need up front, every declared symbol must resolve, host
+//! declare what you need up front, every declared symbol must resolve (unless
+//! marked optional), host
 //! functions are JS functions the guest code calls back into during a call.
 //! Unlike wasm there is NO sandbox: a library runs with full process rights,
 //! declared signatures must match the real ABI, and callbacks may only fire
@@ -19,15 +20,20 @@
 //! let lib = new Library(bytesOrPath, {       // Uint8Array | ArrayBuffer | path string
 //!   cart_new:  { args: [] },                 // returns defaults to "void"
 //!   cart_eval: { args: ["ptr", "i32"], returns: "i32" },
+//!   cart_extra: { args: [], optional: true }, // undefined in symbols if absent
 //! });
 //! let { cart_new, cart_eval } = lib.symbols; // bound JS functions
 //! let cb = lib.callback((a, b) => a + b, { args: ["i32", "i32"], returns: "i32" });
 //! lib.readMemory(ptr, len);                  // Uint8Array
-//! lib.writeMemory(ptr, bytes);               // void
+//! lib.readMemory(ptr, count, "f64");         // Float64Array (typed, native order)
+//! lib.writeMemory(ptr, typedArrayOrBuffer);  // void
 //! ```
 //!
 //! Value marshalling: i32/f32/f64 <-> JS number; i64 and ptr <-> JS BigInt (a
-//! number is also accepted where one is expected). A callback's JS return
+//! number is also accepted where one is expected). A ptr argument also
+//! accepts an ArrayBuffer or typed array: its data address is passed and the
+//! buffer stays valid for the duration of the call, so it doubles as an
+//! out-parameter (native writes land in it). A callback's JS return
 //! value is coerced to its declared result type; "void" ignores it. An error
 //! thrown by a callback cannot abort the native frame - the callback returns
 //! zeroes, the call runs to completion, and the exception is rethrown after.
@@ -43,7 +49,9 @@ use rquickjs::{
   ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
 };
 
-use forge::ffi::{FfiLibrary, FfiSig, FfiType, FfiValue};
+use crate::plugins::marshal::OptArg;
+
+use forge::ffi::{FfiLibrary, FfiSig, FfiType, FfiValue, SymbolDecl};
 
 // Per-library callback functions live in context userdata, NOT in the
 // `Library` class, for the same reason as flux:wasm's WasmHandlers: a
@@ -94,18 +102,19 @@ pub struct Library {
 impl Library {
   /// Load a shared library from bytes (`Uint8Array`/`ArrayBuffer`, e.g. a
   /// bundled binary import) or a filesystem path, resolving every declared
-  /// symbol: `{ name: { args: ["i32", ...], returns?: "i32" } }`. A missing
-  /// symbol or an invalid declaration throws. Loading runs the library's
+  /// symbol: `{ name: { args: ["i32", ...], returns?: "i32", optional?: bool } }`.
+  /// A missing non-optional symbol or an invalid declaration throws. Loading runs the library's
   /// constructors - only load trusted code.
   #[qjs(constructor)]
   pub fn new<'js>(ctx: Ctx<'js>, source: Value<'js>, decls: Object<'js>) -> rquickjs::Result<Library> {
-    let mut declared: Vec<(String, FfiSig)> = Vec::new();
+    let mut declared: Vec<SymbolDecl> = Vec::new();
     for prop in decls.props::<String, Object>() {
       let (name, decl) = prop?;
       let sig = parse_sig(&ctx, &decl)?;
-      declared.push((name, sig));
+      let optional = decl.get::<_, Option<bool>>("optional")?.unwrap_or(false);
+      declared.push(SymbolDecl { name, sig, optional });
     }
-    let names = declared.iter().map(|(n, _)| SymbolName(n.clone())).collect();
+    let names = declared.iter().map(|d| SymbolName(d.name.clone())).collect();
 
     let lib = if let Some(path) = source.as_string() {
       FfiLibrary::open(&path.to_string()?, declared)
@@ -126,12 +135,18 @@ impl Library {
     Ok(Library { inner: Rc::new(inner), id, names: Rc::new(names), cb_results: Rc::new(RefCell::new(Vec::new())) })
   }
 
-  /// The declared symbols as bound JS functions, keyed by name. Destructure
-  /// once and reuse: the object is rebuilt on each access.
+  /// The declared symbols as bound JS functions, keyed by name; an optional
+  /// symbol the library lacks is `undefined`. Destructure once and reuse: the
+  /// object is rebuilt on each access.
   #[qjs(get)]
   pub fn symbols<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     let obj = Object::new(ctx.clone())?;
+    let infos = self.inner.symbols();
     for (index, name) in self.names.iter().enumerate() {
+      if !infos.get(index).map(|i| i.resolved).unwrap_or(false) {
+        obj.set(name.0.as_str(), Value::new_undefined(ctx.clone()))?;
+        continue;
+      }
       let inner = self.inner.clone();
       let id = self.id;
       let cb_results = self.cb_results.clone();
@@ -158,16 +173,41 @@ impl Library {
     Value::new_big_int(ctx, code as i64)
   }
 
-  /// Copy `len` bytes out of process memory at `ptr`, as a `Uint8Array`.
-  /// No bounds checking is possible: a bad pointer is undefined behavior.
+  /// Copy `count` elements out of process memory at `ptr`. Without `ty` (or
+  /// with "u8") that is `count` bytes as a `Uint8Array`; with an ffi type name
+  /// it is `count` elements of that type in native byte order, as the matching
+  /// typed array (i32 -> Int32Array, i64 -> BigInt64Array, f32 -> Float32Array,
+  /// f64 -> Float64Array). No bounds checking is possible: a bad pointer is
+  /// undefined behavior.
   #[qjs(rename = "readMemory")]
-  pub fn read_memory<'js>(&self, ctx: Ctx<'js>, ptr: Value<'js>, len: usize) -> rquickjs::Result<Value<'js>> {
+  pub fn read_memory<'js>(
+    &self,
+    ctx: Ctx<'js>,
+    ptr: Value<'js>,
+    count: usize,
+    ty: OptArg<String>,
+  ) -> rquickjs::Result<Value<'js>> {
     let ptr = value_to_ptr(&ctx, &ptr)?;
-    let bytes = self.inner.memory_read(ptr, len).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(TypedArray::new(ctx.clone(), bytes)?.into_value())
+    let ty = match ty.0.as_deref() {
+      None | Some("u8") => None,
+      Some(name) => {
+        Some(parse_type(name).ok_or_else(|| Exception::throw_message(&ctx, &format!("unknown ffi type {name}")))?)
+      }
+    };
+    let width = ty.map(type_width).unwrap_or(1);
+    let bytes = self.inner.memory_read(ptr, count * width).map_err(|m| Exception::throw_message(&ctx, &m))?;
+    let value = match ty {
+      None => TypedArray::new(ctx.clone(), bytes)?.into_value(),
+      Some(FfiType::I32) => TypedArray::new(ctx.clone(), reinterpret(&bytes, i32::from_ne_bytes))?.into_value(),
+      Some(FfiType::I64) => TypedArray::new(ctx.clone(), reinterpret(&bytes, i64::from_ne_bytes))?.into_value(),
+      Some(FfiType::F32) => TypedArray::new(ctx.clone(), reinterpret(&bytes, f32::from_ne_bytes))?.into_value(),
+      Some(FfiType::F64) => TypedArray::new(ctx.clone(), reinterpret(&bytes, f64::from_ne_bytes))?.into_value(),
+      Some(FfiType::Ptr) => TypedArray::new(ctx.clone(), reinterpret(&bytes, u64::from_ne_bytes))?.into_value(),
+    };
+    Ok(value)
   }
 
-  /// Copy `bytes` (a `Uint8Array` or `ArrayBuffer`) into process memory at
+  /// Copy the bytes of a typed array or `ArrayBuffer` into process memory at
   /// `ptr`. Same caveat as `readMemory`.
   #[qjs(rename = "writeMemory")]
   pub fn write_memory<'js>(&self, ctx: Ctx<'js>, ptr: Value<'js>, bytes: Value<'js>) -> rquickjs::Result<()> {
@@ -222,6 +262,11 @@ fn call_symbol<'js>(
         return Err("ffi callback threw".to_string());
       }
     };
+    // A buffer's address is only pinned while the JS value is on the stack;
+    // a callback's return value is not, so it would be a dangling pointer.
+    if buffer_address(&ret).is_some() {
+      return Err("ffi callback returned a buffer; return an address instead".to_string());
+    }
     match cb_results.borrow().get(cb_index) {
       Some(Some(ty)) => Ok(Some(js_to_ffi(&ret, *ty)?)),
       Some(None) => Ok(None),
@@ -283,15 +328,31 @@ fn parse_type(name: &str) -> Option<FfiType> {
 
 // ---- value marshalling ------------------------------------------------------
 
-/// Decode a JS `Uint8Array` or `ArrayBuffer` into owned bytes.
+/// Decode the bytes of a JS typed array (any element type, view offset
+/// respected) or `ArrayBuffer` into an owned copy.
 fn value_to_bytes(ctx: &Ctx<'_>, value: &Value<'_>) -> rquickjs::Result<Vec<u8>> {
-  if let Ok(ta) = TypedArray::<u8>::from_value(value.clone()) {
-    Ok(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
-  } else if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
-    Ok(ab.as_bytes().map(|b| b.to_vec()).unwrap_or_default())
-  } else {
-    Err(Exception::throw_message(ctx, "expected a Uint8Array or ArrayBuffer"))
+  match buffer_raw(value) {
+    Some(Ok((ptr, len))) => {
+      // SAFETY: the raw view is valid while `value` is alive, which it is
+      // for this call; we copy out immediately.
+      Ok(unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec())
+    }
+    Some(Err(m)) => Err(Exception::throw_message(ctx, &m)),
+    None => Err(Exception::throw_message(ctx, "expected a typed array or ArrayBuffer")),
   }
+}
+
+/// Byte width of an ffi type as a memory element.
+fn type_width(ty: FfiType) -> usize {
+  match ty {
+    FfiType::I32 | FfiType::F32 => 4,
+    FfiType::I64 | FfiType::F64 | FfiType::Ptr => 8,
+  }
+}
+
+/// Reinterpret native-order bytes as a vector of `N`-byte elements.
+fn reinterpret<T, const N: usize>(bytes: &[u8], from: fn([u8; N]) -> T) -> Vec<T> {
+  bytes.chunks_exact(N).map(|c| from(c.try_into().expect("chunk is N bytes"))).collect()
 }
 
 /// Decode a pointer argument: BigInt or number.
@@ -316,8 +377,46 @@ fn js_to_ffi(value: &Value<'_>, ty: FfiType) -> Result<FfiValue, String> {
     FfiType::F32 => number(value).map(|n| FfiValue::F32(n as f32)),
     FfiType::F64 => number(value).map(FfiValue::F64),
     FfiType::I64 => big(value).map(FfiValue::I64),
-    FfiType::Ptr => big(value).map(|n| FfiValue::Ptr(n as u64)),
+    FfiType::Ptr => match buffer_address(value) {
+      Some(addr) => addr.map(FfiValue::Ptr),
+      None => big(value).map(|n| FfiValue::Ptr(n as u64)),
+    },
   }
+}
+
+/// The data address of an `ArrayBuffer` or typed array (view offset
+/// respected), or `None` if `value` is neither. A detached buffer is an
+/// error. The address is only valid while the JS value is alive and the
+/// buffer is not detached or resized; the synchronous call path guarantees
+/// that for the duration of a `symbols.*` call because the argument list
+/// keeps the value alive.
+fn buffer_address(value: &Value<'_>) -> Option<Result<u64, String>> {
+  buffer_raw(value).map(|r| r.map(|(ptr, _)| ptr as u64))
+}
+
+/// The raw (pointer, byte length) view of an `ArrayBuffer` or typed array,
+/// `None` if `value` is neither, an error if the buffer is detached.
+fn buffer_raw(value: &Value<'_>) -> Option<Result<(*const u8, usize), String>> {
+  const DETACHED: &str = "buffer argument is detached";
+  // rquickjs does not export RawArrayBuffer, so unpack it inline.
+  macro_rules! raw {
+    ($e:expr) => {
+      $e.map(|r| (r.ptr.as_ptr() as *const u8, r.len)).ok_or_else(|| DETACHED.to_string())
+    };
+  }
+  if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
+    return Some(raw!(ab.as_raw()));
+  }
+  let obj = value.as_object()?;
+  macro_rules! try_typed {
+    ($($t:ty),*) => {
+      $(if let Some(ta) = obj.as_typed_array::<$t>() {
+        return Some(raw!(ta.as_raw()));
+      })*
+    };
+  }
+  try_typed!(u8, i8, u16, i16, u32, i32, f32, f64, i64, u64);
+  None
 }
 
 fn number(value: &Value<'_>) -> Result<f64, String> {

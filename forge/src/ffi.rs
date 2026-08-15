@@ -67,10 +67,21 @@ pub struct FfiSig {
   pub result: Option<FfiType>,
 }
 
-/// A resolved exported function.
+/// A symbol to resolve at load time. An `optional` symbol that the library
+/// does not export is carried as unresolved instead of failing the load.
+#[derive(Clone, Debug)]
+pub struct SymbolDecl {
+  pub name: String,
+  pub sig: FfiSig,
+  pub optional: bool,
+}
+
+/// A declared exported function; `resolved` is false only for an optional
+/// symbol the library did not export.
 pub struct SymbolInfo {
   pub name: String,
   pub sig: FfiSig,
+  pub resolved: bool,
 }
 
 /// The host dispatcher: receives (callback index, decoded arguments), returns
@@ -188,7 +199,7 @@ struct CallbackData {
 struct Symbol {
   info: SymbolInfo,
   cif: Cif,
-  code: CodePtr,
+  code: Option<CodePtr>,
 }
 
 struct CallbackEntry {
@@ -220,9 +231,10 @@ impl Drop for FfiLibrary {
 }
 
 impl FfiLibrary {
-  /// Load a shared library from a path and resolve every declared symbol.
-  /// Loading runs the library's constructors: only open trusted code.
-  pub fn open(path: &str, decls: Vec<(String, FfiSig)>) -> Result<FfiLibrary, String> {
+  /// Load a shared library from a path and resolve every declared symbol
+  /// (a missing non-optional symbol fails the load). Loading runs the
+  /// library's constructors: only open trusted code.
+  pub fn open(path: &str, decls: Vec<SymbolDecl>) -> Result<FfiLibrary, String> {
     let lib = unsafe { libloading::Library::new(path) }.map_err(|e| format!("dlopen {path}: {e}"))?;
     Self::resolve(lib, decls, None)
   }
@@ -234,7 +246,7 @@ impl FfiLibrary {
   /// from executing native code out of any app-writable storage, so the
   /// write-then-dlopen route is a dead end there by OS policy. Android
   /// libraries must ship inside the APK and be opened by path.
-  pub fn open_bytes(bytes: &[u8], decls: Vec<(String, FfiSig)>) -> Result<FfiLibrary, String> {
+  pub fn open_bytes(bytes: &[u8], decls: Vec<SymbolDecl>) -> Result<FfiLibrary, String> {
     if cfg!(target_os = "android") {
       return Err(
         "Loading a library from bytes is not supported on Android: the OS forbids executing \
@@ -258,19 +270,19 @@ impl FfiLibrary {
 
   fn resolve(
     lib: libloading::Library,
-    decls: Vec<(String, FfiSig)>,
+    decls: Vec<SymbolDecl>,
     temp_path: Option<std::path::PathBuf>,
   ) -> Result<FfiLibrary, String> {
     let mut symbols = Vec::with_capacity(decls.len());
-    for (name, sig) in decls {
-      let addr = unsafe {
-        lib
-          .get::<unsafe extern "C" fn()>(name.as_bytes())
-          .map(|s| *s as *mut c_void)
-          .map_err(|e| format!("missing symbol {name}: {e}"))?
+    for SymbolDecl { name, sig, optional } in decls {
+      let found = unsafe { lib.get::<unsafe extern "C" fn()>(name.as_bytes()).map(|s| *s as *mut c_void) };
+      let code = match found {
+        Ok(addr) => Some(CodePtr(addr)),
+        Err(_) if optional => None,
+        Err(e) => return Err(format!("missing symbol {name}: {e}")),
       };
       let cif = make_cif(&sig);
-      symbols.push(Symbol { info: SymbolInfo { name, sig }, cif, code: CodePtr(addr) });
+      symbols.push(Symbol { info: SymbolInfo { name, sig, resolved: code.is_some() }, cif, code });
     }
     Ok(FfiLibrary {
       symbols,
@@ -298,6 +310,7 @@ impl FfiLibrary {
   /// module doc).
   pub fn call(&self, index: usize, args: Vec<FfiValue>, host: &mut HostFn<'_>) -> Result<Option<FfiValue>, String> {
     let symbol = self.symbols.get(index).ok_or_else(|| format!("no symbol at index {index}"))?;
+    let code = symbol.code.ok_or_else(|| format!("{} was not found in the library", symbol.info.name))?;
     let sig = &symbol.info.sig;
     if args.len() != sig.params.len() {
       return Err(format!("{} expects {} argument(s), got {}", symbol.info.name, sig.params.len(), args.len()));
@@ -315,8 +328,8 @@ impl FfiLibrary {
     let mut ret = ZERO_SLOT;
     unsafe {
       match sig.result {
-        Some(_) => symbol.cif.call_return_into(symbol.code, &ffi_args, Ret::new(&mut ret)),
-        None => symbol.cif.call_return_into(symbol.code, &ffi_args, Ret::void()),
+        Some(_) => symbol.cif.call_return_into(code, &ffi_args, Ret::new(&mut ret)),
+        None => symbol.cif.call_return_into(code, &ffi_args, Ret::void()),
       }
     }
     drop(guard);
