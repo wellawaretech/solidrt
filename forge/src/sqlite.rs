@@ -56,7 +56,7 @@ impl From<SqlValue> for Value {
       SqlValue::Int(i) => Value::Int(i),
       SqlValue::Real(f) => Value::Float(f),
       SqlValue::Text(s) => Value::String(s),
-      SqlValue::Blob(b) => Value::Bytes(b),
+      SqlValue::Blob(b) => Value::bytes(b),
     }
   }
 }
@@ -73,7 +73,7 @@ impl TryFrom<Value> for SqlValue {
       Value::Int(i) => Ok(SqlValue::Int(i)),
       Value::Float(f) => Ok(SqlValue::Real(f)),
       Value::String(s) => Ok(SqlValue::Text(s)),
-      Value::Bytes(b) => Ok(SqlValue::Blob(b)),
+      Value::Bytes { data, .. } => Ok(SqlValue::Blob(data)),
       Value::List(_) | Value::Map(_) => Err("unsupported SQL parameter type".to_string()),
     }
   }

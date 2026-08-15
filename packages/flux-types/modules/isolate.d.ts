@@ -1,7 +1,8 @@
 declare module "flux:isolate" {
   /**
    * A value that can cross to or from an isolate: null (undefined becomes
-   * null), boolean, number, string, ArrayBuffer or any typed-array view
+   * null), boolean, number, string, any typed-array view (arrives as a copy
+   * of the same kind: a Float32Array stays a Float32Array) or ArrayBuffer
    * (arrives as a Uint8Array copy), arrays and plain objects of these.
    * Anything else (functions, class instances, Date/Map/Set, BigInt, symbols)
    * throws a TypeError as an argument and rejects the call as a result.

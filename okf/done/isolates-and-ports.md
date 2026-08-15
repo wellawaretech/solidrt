@@ -129,6 +129,12 @@ wanted (pushing to a main that has not subscribed).
    - JS -> Value contract (documented in `plugins/value.rs`): `undefined`
      -> `Null`, buffers and typed-array views -> `Bytes`, plain objects only,
      everything else a `TypeError`, depth cap instead of cycle detection.
+   - `Bytes` carries its element type (`Elem`: the typed-array set, native
+     byte order, `U8` for plain bytes and `ArrayBuffer`), so a `Float32Array`
+     result comes back as a `Float32Array` rather than bytes to re-view. One
+     tagged variant, not a second one: sqlite blobs and subprocess output are
+     `U8`, and a blob parameter accepts any kind. Added after streams, when
+     numeric results turned out to be the natural isolate payload.
 2. **spawn + ports over source text** (DONE, then superseded by stage 3):
    `spawn(source, { args? }) -> Port`, `port` in the child. What survives
    as the substrate:
@@ -150,8 +156,8 @@ wanted (pushing to a main that has not subscribed).
      `FluxEngineBuilder::from_config`), so host config is inherited by
      construction rather than re-derived.
    - `ArrayBuffer` transfer is NOT in: bytes are copied in and out. Zero-copy
-     needs the buffer allocated with a flux-owned free hook; do it when a
-     payload size makes it show up.
+     needs the buffer allocated with a flux-owned free hook; see
+     okf/backlog/isolate-follow-ups.md.
 3. **Calls: runtime half (flux)** (DONE): `isolate<T>(id, opts?)` is a
    `Proxy` built natively (the `Proxy` constructor from globals with a
    native `get` trap; no JS glue is evaluated) over `forge::isolate::Msg`
@@ -219,10 +225,9 @@ wanted (pushing to a main that has not subscribed).
      `[Symbol.asyncIterator]` closure and tripped `gc_obj_list` at
      `JS_FreeRuntime`. Hence no iterator object and a capture-free
      "return this".
-   Not done, on demand: `AbortSignal` on plain calls (can only mean "stop
-   waiting": a running sync export is uninterruptible short of `terminate()`),
-   `instances` on a handle (shape undecided), sync generators, zero-copy
-   buffers.
+   What was left for a consumer to ask for (zero-copy transfer, errors as
+   data, observable exit, memory limit, `AbortSignal`, `instances`, sync
+   generators) is okf/backlog/isolate-follow-ups.md.
 
 ## Deliberately out of scope
 

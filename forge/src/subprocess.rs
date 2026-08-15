@@ -76,7 +76,7 @@ impl From<CommandOutput> for Value {
   fn from(o: CommandOutput) -> Value {
     let stream = |bytes: Vec<u8>| {
       if o.as_bytes {
-        Value::Bytes(bytes)
+        Value::bytes(bytes)
       } else {
         Value::String(String::from_utf8_lossy(&bytes).into_owned())
       }

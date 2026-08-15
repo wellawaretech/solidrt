@@ -6,7 +6,7 @@
 use rquickjs::{CatchResultExt, Context, Ctx, Function, Runtime, Value as JsValue};
 
 use crate::plugins::value::{from_js, Neutral};
-use forge::Value;
+use forge::{Elem, Value};
 
 fn with_ctx(f: impl FnOnce(&Ctx<'_>)) {
   let rt = Runtime::new().expect("js runtime");
@@ -51,11 +51,11 @@ fn scalars_decode_to_the_documented_variants() {
 #[test]
 fn buffers_and_views_decode_to_bytes() {
   with_ctx(|ctx| {
-    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3])"), Value::Bytes(vec![1, 2, 3]));
-    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3]).buffer"), Value::Bytes(vec![1, 2, 3]));
-    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3, 4]).subarray(1, 3)"), Value::Bytes(vec![2, 3]));
-    assert_eq!(decode(ctx, "new Uint16Array([258])"), Value::Bytes(vec![2, 1]));
-    assert_eq!(decode(ctx, "new Float64Array(1)"), Value::Bytes(vec![0; 8]));
+    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3])"), Value::bytes(vec![1, 2, 3]));
+    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3]).buffer"), Value::bytes(vec![1, 2, 3]));
+    assert_eq!(decode(ctx, "new Uint8Array([1, 2, 3, 4]).subarray(1, 3)"), Value::bytes(vec![2, 3]));
+    assert_eq!(decode(ctx, "new Uint16Array([258])"), Value::Bytes { elem: Elem::U16, data: 258u16.to_ne_bytes().to_vec() });
+    assert_eq!(decode(ctx, "new Float64Array(1)"), Value::Bytes { elem: Elem::F64, data: vec![0; 8] });
   });
 }
 
@@ -115,6 +115,10 @@ fn round_trip_through_js_preserves_shape() {
           Object.keys(v).join(","),
           v.bytes instanceof Uint8Array,
           echo(new Uint8Array([1, 2]).buffer) instanceof Uint8Array,
+          echo(new Float32Array([1.5, -2])) instanceof Float32Array,
+          echo(new Float32Array([1.5, -2])).join(","),
+          echo(new BigInt64Array([-5n])) instanceof BigInt64Array,
+          echo(new Int16Array([1, 2, 3, 4]).subarray(1, 3)).join(","),
           Object.getPrototypeOf(echo({})) === Object.prototype,
           Array.isArray(echo([])),
         ].join("|")
@@ -123,7 +127,7 @@ fn round_trip_through_js_preserves_shape() {
       .expect("round trip");
     assert_eq!(
       out,
-      r#"{"n":1.5,"i":7,"s":"x","b":true,"z":null,"u":null,"l":[1,[2]],"bytes":{"0":9,"1":8}}|n,i,s,b,z,u,l,bytes|true|true|true|true"#
+      r#"{"n":1.5,"i":7,"s":"x","b":true,"z":null,"u":null,"l":[1,[2]],"bytes":{"0":9,"1":8}}|n,i,s,b,z,u,l,bytes|true|true|true|1.5,-2|true|2,3|true|true"#
     );
   });
 }

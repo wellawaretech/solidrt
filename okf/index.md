@@ -20,13 +20,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
   both clients of /__control__. Never a dev-server client.
-- **[Isolates (compute off the JS thread)](plans/isolates-and-ports.md)** [2026-08-15]
-  A synchronous native call through flux:ffi or flux:wasm stalls the whole
-  runtime (dropped frames in a GUI app, unanswered requests in a flux:http
-  server) and there is no worker or thread primitive to move it to; the
-  mechanism is a second flux runtime per "use isolate" module, addressed by
-  ordinary typed function calls, with forge::Value as the neutral message
-  type.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -254,6 +247,11 @@ Shaped, not started.
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
   frosted panels with correct see-through semantics, no GLSL and no root
   layer.
+- **[Isolate follow-ups](backlog/isolate-follow-ups.md)** [2026-08-15]
+  The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
+  kept in one place so none vanishes with the done record; each is small and
+  independent, none has a consumer yet. Zero-copy buffer transfer first when a
+  payload size makes copying show up.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
@@ -678,6 +676,13 @@ Finished, kept for the reasoning.
   equally true when the raster thread was too far behind to have returned a
   frame, closing a positive feedback loop that diverged without bound; fixed
   and TV-verified, with the adjacent findings split into their own items.
+- **[Isolates (compute off the JS thread)](done/isolates-and-ports.md)** [2026-08-15]
+  A synchronous native call through flux:ffi or flux:wasm stalls the whole
+  runtime (dropped frames in a GUI app, unanswered requests in a flux:http
+  server) and there is no worker or thread primitive to move it to; the
+  mechanism is a second flux runtime per "use isolate" module, addressed by
+  ordinary typed function calls, with forge::Value as the neutral message
+  type.
 - **[Launcher remote navigation](done/launcher-remote-nav.md)** [2026-07-28]
   "Pointer-free control of the launcher for TV: a launcher-local spatial focus
   registry driven by arrow/Select key events and gamepad dpad edges, plus a

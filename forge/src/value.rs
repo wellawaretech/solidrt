@@ -10,7 +10,8 @@
 
 /// A neutral value. `Int` covers what a JS `number` holds exactly (and what
 /// SQLite / JSON distinguish); the host maps both `Int` and `Float` to its
-/// number type. `Bytes` is an owned byte buffer, never a view.
+/// number type. `Bytes` is an owned byte buffer, never a view, tagged with the
+/// element type it is meant to be read as (`Elem::U8` for plain bytes).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
   Null,
@@ -18,12 +19,47 @@ pub enum Value {
   Int(i64),
   Float(f64),
   String(String),
-  Bytes(Vec<u8>),
+  Bytes { elem: Elem, data: Vec<u8> },
   List(Vec<Value>),
   Map(Vec<(String, Value)>),
 }
 
+/// The element type of a `Bytes` buffer: the typed-array set. The bytes are
+/// in native order (values only cross between hosts in one process), and
+/// `data.len()` is a multiple of `size()`. A host without typed views reads
+/// the bytes as they are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Elem {
+  U8,
+  I8,
+  U16,
+  I16,
+  U32,
+  I32,
+  F32,
+  F64,
+  U64,
+  I64,
+}
+
+impl Elem {
+  /// Size of one element in bytes.
+  pub fn size(self) -> usize {
+    match self {
+      Elem::U8 | Elem::I8 => 1,
+      Elem::U16 | Elem::I16 => 2,
+      Elem::U32 | Elem::I32 | Elem::F32 => 4,
+      Elem::F64 | Elem::U64 | Elem::I64 => 8,
+    }
+  }
+}
+
 impl Value {
+  /// Plain bytes (`Elem::U8`).
+  pub fn bytes(data: Vec<u8>) -> Value {
+    Value::Bytes { elem: Elem::U8, data }
+  }
+
   /// A `List` from anything that yields values.
   pub fn list<I, T>(items: I) -> Value
   where
@@ -102,7 +138,7 @@ impl From<&str> for Value {
 
 impl From<Vec<u8>> for Value {
   fn from(v: Vec<u8>) -> Value {
-    Value::Bytes(v)
+    Value::bytes(v)
   }
 }
 

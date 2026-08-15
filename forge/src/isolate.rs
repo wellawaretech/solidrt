@@ -10,7 +10,7 @@
 //! results are neutral `Value`s (copied, shared-nothing). `Link::pair` makes
 //! the two ends; the host hands one to each runtime. Which runtime a link
 //! belongs to and how the peer runs (a thread, an engine) is the host's
-//! business (see okf/plans/isolates-and-ports.md).
+//! business (see okf/done/isolates-and-ports.md).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

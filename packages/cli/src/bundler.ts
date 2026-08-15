@@ -111,7 +111,7 @@ function solidPlugin(babelMaps?: Map<string, object>, isolateEntry?: string): Bu
   }
 }
 
-// Isolate modules (okf/plans/isolates-and-ports.md): a source file whose first
+// Isolate modules (okf/done/isolates-and-ports.md): a source file whose first
 // statement is the "use isolate" directive is the entry of its own bundle,
 // run by flux:isolate in a second runtime. Its id is its path relative to
 // the source root (the entry's directory) without extension; the bundle

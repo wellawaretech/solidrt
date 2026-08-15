@@ -294,8 +294,9 @@ worker.terminate()                           // kill now, even mid-computation
 ```
 
 Arguments and results are copied across (shared-nothing): null, booleans,
-numbers, strings, byte buffers (any typed-array view arrives as a
-`Uint8Array`), arrays and plain objects; anything else throws a `TypeError`
+numbers, strings, typed arrays (a copy of the same kind: a `Float32Array`
+stays a `Float32Array`; an `ArrayBuffer` arrives as a `Uint8Array`), arrays
+and plain objects; anything else throws a `TypeError`
 as an argument and rejects the call as a result. Calls start in order and run
 concurrently, as the same functions would in-process: the child is one
 thread, so a sync export runs to completion before anything else, while an

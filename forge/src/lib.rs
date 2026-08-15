@@ -35,4 +35,4 @@ pub mod websocket;
 mod tests;
 
 pub use seek::{SeekableRead, SeekableReader};
-pub use value::Value;
+pub use value::{Elem, Value};

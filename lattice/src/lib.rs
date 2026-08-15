@@ -230,7 +230,7 @@ fn mount_assets(app_id: &str) {
 }
 
 // The app's isolate modules are manifest assets under isolates/ (see
-// okf/plans/isolates-and-ports.md): `srt pack` ships bytecode as
+// okf/done/isolates-and-ports.md): `srt pack` ships bytecode as
 // isolates/<id>.bin, a dev push ships source as isolates/<id>.js. Both read
 // through the assets mount, so the installed version dir, a pack folder, and
 // the packed executable resolve alike; nothing mounted means no isolates.
