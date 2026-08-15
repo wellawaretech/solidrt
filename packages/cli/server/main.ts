@@ -211,6 +211,12 @@ serve({
     if (path === "/assets" || path.startsWith("/assets/")) {
       return handleFiles(req, path, state.projectDir)
     }
+    // Isolate bundles are build outputs, not project files: srt (and the
+    // rebuild here) write them under .srt-data/isolates/, and the manifest
+    // lists them as isolates/<id>.js.
+    if (path.startsWith("/isolates/")) {
+      return handleFiles(req, path, config.cacheDir)
+    }
     return handleFiles(req, path, state.sourceDir)
   },
   websocket: {

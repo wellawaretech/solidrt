@@ -11,6 +11,7 @@ import {
 } from "./project"
 import { resolvePackFonts } from "./fonts"
 import { runnerGlLibs } from "./packer"
+import { isolateAssetPath } from "./bundler"
 
 // The canonical flat pack folder (okf/plans/client-storage-updates.md, Pack
 // output): runner + manifest.json + bundle.bin + assets/. The manifest
@@ -33,13 +34,20 @@ export type PackFolder = {
   manifest: string
   /** Files to place in the folder: absolute source -> folder-relative path. */
   copies: Array<{ from: string; to: string }>
+  /** Build outputs to place in the folder (isolate bytecode): folder-relative path + bytes. */
+  files: Array<{ to: string; bytes: Buffer }>
 }
 
-export function buildPackFolder(entry: string, bytecode: Buffer): PackFolder {
+// `isolates` are the app's isolate bundles compiled to bytecode; they ship as
+// the manifest assets isolates/<id>.bin (the production runtime has no
+// compiler, so pack never ships isolate source).
+export function buildPackFolder(entry: string, bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[]): PackFolder {
   let identity = loadAppIdentity(entry)
   let projectDir = projectDirFor(resolve(entry))
   let { assets, icon } = collectAssets(entry)
   let copies = assets.map((a) => ({ from: join(projectDir, a.path), to: a.path }))
+  let files = isolates.map((i) => ({ to: isolateAssetPath(i.id, "bin"), bytes: i.bytecode }))
+  for (let f of files) assets.push({ path: f.to, sha256: hashHex(f.bytes), size: f.bytes.length })
 
   // The full resolved font set: custom fonts are already collected assets;
   // defaults materialize under assets/fonts/ (a user file already at that
@@ -78,7 +86,7 @@ export function buildPackFolder(entry: string, bytecode: Buffer): PackFolder {
     ...(assets.length ? { assets } : {}),
     ...(fonts.length ? { fonts } : {}),
   })
-  return { manifest, copies }
+  return { manifest, copies, files }
 }
 
 /**
@@ -97,6 +105,7 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
   let glLibs = runnerGlLibs(runnerPath)
   mkdirSync(outDir, { recursive: true })
   rmSync(join(outDir, "assets"), { recursive: true, force: true })
+  rmSync(join(outDir, "isolates"), { recursive: true, force: true })
   for (let name of ["manifest.json", "bundle.bin", runnerName, ...glLibs.map((lib) => lib.name)]) {
     rmSync(join(outDir, name), { force: true })
   }
@@ -118,5 +127,10 @@ export function writePackFolder(outDir: string, runnerPath: string, bytecode: Bu
     let dest = join(outDir, to)
     mkdirSync(dirname(dest), { recursive: true })
     cpSync(from, dest)
+  }
+  for (let { to, bytes } of folder.files) {
+    let dest = join(outDir, to)
+    mkdirSync(dirname(dest), { recursive: true })
+    writeFileSync(dest, bytes)
   }
 }

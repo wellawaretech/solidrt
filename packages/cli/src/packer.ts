@@ -86,6 +86,7 @@ export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
     { kind: SECTION_MANIFEST, bytes: Buffer.from(folder.manifest, "utf8") },
     { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
     ...folder.copies.map((c) => ({ kind: SECTION_FILE, bytes: readFileSync(c.from), name: c.to })),
+    ...folder.files.map((f) => ({ kind: SECTION_FILE, bytes: f.bytes, name: f.to })),
     ...runnerGlLibs(runnerPath).map((lib) => ({ kind: SECTION_GL_LIB, bytes: readFileSync(lib.path), name: lib.name })),
   ]
   return packSections(runnerBytes, sections, MAGIC.solidrt)

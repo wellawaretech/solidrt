@@ -6550,9 +6550,10 @@ function SafeArea(props) {
 function createTextBuffer(options = {}) {
   let initial = options.defaultValue ?? "";
   let [internalValue, setInternalValue] = createSignal(initial);
+  let initialCaret = (options.value?.() ?? initial).length;
   let [selectionState, setSelectionState] = createSignal({
-    anchor: initial.length,
-    focus: initial.length
+    anchor: initialCaret,
+    focus: initialCaret
   });
   let value = () => options.value?.() ?? internalValue();
   let selection = () => {
@@ -6583,6 +6584,7 @@ function createTextBuffer(options = {}) {
       setInternalValue(next);
     setCaret(caret);
     options.onInput?.(next);
+    flush();
   };
   return {
     value,
@@ -6618,6 +6620,7 @@ function createTextBuffer(options = {}) {
       let len = value().length;
       if (!extend && anchor !== focus && (direction === "left" || direction === "right")) {
         setCaret(direction === "left" ? Math.min(anchor, focus) : Math.max(anchor, focus));
+        flush();
         return;
       }
       let next = focus;
@@ -6633,6 +6636,7 @@ function createTextBuffer(options = {}) {
         anchor: extend ? anchor : next,
         focus: next
       });
+      flush();
     },
     setSelection: (anchor, focus) => {
       let len = value().length;
@@ -6640,6 +6644,7 @@ function createTextBuffer(options = {}) {
         anchor: Math.min(anchor, len),
         focus: Math.min(focus, len)
       });
+      flush();
     },
     setValue: (next) => apply(next, next.length),
     clear: () => apply("", 0)

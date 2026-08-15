@@ -71,10 +71,13 @@ export const RUNTIME_VERSION = 1
 let pkgVersion = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version
 export const SOLIDRT_VERSION: string = pkgVersion === "0.0.0" ? "unknown" : pkgVersion
 
-export function buildManifest(code: string, entry: string): string {
+// `extra` are build outputs that ship as assets too (isolate bundles); they
+// follow the assets/ tree in the list, in the order given.
+export function buildManifest(code: string, entry: string, extra: ManifestAsset[] = []): string {
   let identity = loadAppIdentity(entry)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
   let { assets, fonts, icon } = collectAssets(entry)
+  assets.push(...extra)
   return JSON.stringify({
     appId: identity.appId,
     displayName: identity.displayName,
@@ -89,6 +92,11 @@ export function buildManifest(code: string, entry: string): string {
 
 export type ManifestAsset = { path: string; sha256: string; size: number }
 export type ManifestFont = { path: string; alias: string }
+
+/** The manifest entry for in-memory asset bytes at `path`. */
+export function manifestAssetFor(path: string, bytes: Uint8Array): ManifestAsset {
+  return { path, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: bytes.length }
+}
 
 // The project root the assets/ convention hangs off: the nearest package.json
 // dir, or the entry's own dir when there is none.

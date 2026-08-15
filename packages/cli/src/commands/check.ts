@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { source } from "../args"
-import { bundleWith } from "../bundler"
+import { bundleWith, findIsolateModules } from "../bundler"
 
 // srt check: verify the app without side effects. Bundles in memory (nothing
 // written, so no dev-server reload fires and no build outputs land in the
@@ -86,7 +86,11 @@ export async function typecheck(root: string, entry: string): Promise<{ app: Dia
   // applies precisely because nothing imports it, so entry-only rooting would
   // silently drop it and every asset import would fail with TS2307. The
   // pattern is relative to this config, which sits one level under the root.
-  await Bun.write(config, JSON.stringify({ extends: tsconfig, include: ["../**/*.d.ts"], files: [resolve(entry)] }))
+  // Isolate modules are program roots of their own: main reaches them by
+  // `import type` at most, and one nothing imports would otherwise go
+  // unchecked.
+  let files = [resolve(entry), ...findIsolateModules(dirname(resolve(entry))).map((m) => m.path)]
+  await Bun.write(config, JSON.stringify({ extends: tsconfig, include: ["../**/*.d.ts"], files }))
   try {
     let proc = Bun.spawn([tsc, "-p", config, "--noEmit", "--pretty", "false"], {
       cwd: root,

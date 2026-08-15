@@ -64,10 +64,11 @@ pub(crate) fn unknown_version() -> String {
 }
 
 /// Manifest paths land on disk as-is, so only plain forward-slash relative
-/// paths inside assets/ are acceptable; anything else means a malformed or
-/// hostile manifest.
+/// paths inside assets/ (the project's asset folder) or isolates/ (isolate
+/// bundles) are acceptable; anything else means a malformed or hostile
+/// manifest.
 pub fn safe_asset_path(path: &str) -> bool {
-  path.starts_with("assets/")
+  (path.starts_with("assets/") || path.starts_with("isolates/"))
     && !path.contains('\\')
     && path.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
 }

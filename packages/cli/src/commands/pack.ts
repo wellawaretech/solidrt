@@ -41,8 +41,12 @@ export async function runPackCommand() {
   let fonts = resolvePackFonts(source!)
   console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
 
-  let bytecode = await compileToBytecode(await bundleSolid())
-  let folder = buildPackFolder(source!, bytecode)
+  let bundled = await bundleSolid()
+  let bytecode = await compileToBytecode(bundled.code)
+  let isolates = []
+  for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code) })
+  if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
+  let folder = buildPackFolder(source!, bytecode, isolates)
 
   if (values.folder) {
     let outDir = values.output ?? "dist"

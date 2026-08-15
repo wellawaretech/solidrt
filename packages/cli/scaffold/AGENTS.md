@@ -281,6 +281,37 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    to get_snapshot and every other MCP tool; `srt render` is the only way to
    see it (Run / verify below).
 
+### Isolates: heavy work off the JS thread
+
+A long synchronous computation (a big parse, a simulation step, a blocking
+`flux:ffi`/`flux:wasm` call) freezes rendering and input for its duration.
+Move it into an isolate module: a file whose first statement is the
+`"use isolate"` directive runs in a second runtime on its own thread, and
+main calls its exports as async functions.
+
+```ts
+// src/worker.ts
+"use isolate"
+export function crunch(data: Uint8Array): number { /* ... */ }
+```
+
+```ts
+// src/index.tsx
+import { isolate } from "flux:isolate"
+import type * as Worker from "./worker"
+let worker = isolate<typeof Worker>("worker")   // id = path from src/, no extension
+let n = await worker.crunch(bytes)              // main keeps rendering meanwhile
+```
+
+The bundler builds each such module as its own bundle and ships it with the
+app (dev pushes and `srt pack` alike). Rules: main may only `import type`
+from an isolate module (a value import is a build error); arguments and
+results are copies (numbers, strings, byte buffers, arrays, plain objects -
+no functions, no class instances); the child has the non-gui `flux:*`
+modules only, so it never touches the render tree; module state persists
+between calls and each `isolate()` call is its own instance. Full contract:
+node_modules/@solidrt/flux-types/modules/isolate.d.ts.
+
 ### Where GPU work stops being free
 
 "GPU work is nearly free" is a property of the hardware, not of the engine, and

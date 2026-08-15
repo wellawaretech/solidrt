@@ -103,6 +103,7 @@ wanted (pushing to a main that has not subscribed).
 
 - `flux:isolate` exports `isolate<T>(id, opts?)`; a `"use isolate"` module
   in a SolidRT project is callable from main as above, in dev and packed.
+  (Both hold as of stage 4.)
 - Uncaught errors in the isolate surface on the caller: a failed module load
   or a throw rejects the pending calls with the error; an exited instance
   rejects later calls with a message that names the cause.
@@ -164,11 +165,30 @@ wanted (pushing to a main that has not subscribed).
    (whoever holds the link reads for everyone) rather than a spawned loop,
    because a `ctx.spawn` task never lets the runtime go idle. Types, docs,
    `flux/examples/isolate.js` + `isolate_worker.js`.
-4. **Calls: toolchain half (srt + lattice)**: `"use isolate"` detection,
-   extra bundler entries, delivery as manifest assets `isolates/<id>.js`
-   (dev: source; pack: bytecode, the production runtime has no compiler),
-   lattice's resolver reads through the assets mount, `Isolated<T>` in the
-   typecheck, by-value import of an isolate module is a build error.
+4. **Calls: toolchain half (srt + lattice)** (DONE): verified dev push,
+   watcher and MCP reload, packed executable and pack folder. Decisions:
+   - Detection is a scan of the entry's directory tree for files whose first
+     statement is the directive (`findIsolateModules` in `bundler.ts`), not
+     the main build: `import type` never loads the file. Each module is its
+     own `Bun.build` (splitting stays off, so a helper both import is
+     duplicated). Loading a directive module by value inside any build (main
+     or another isolate) fails that build with a message naming the file.
+   - Delivery rides the manifest asset rail unchanged: `isolates/<id>.js`
+     (dev source) / `isolates/<id>.bin` (pack bytecode) are ordinary
+     manifest `assets` entries. The rail was `assets/`-gated in three places
+     (`lattice::manifest::safe_asset_path`, the `forge::fs` mount, the dev
+     server's route) and now also admits `isolates/`; nothing else in the
+     store, fetch or pack path knows about isolates.
+   - Dev bundles are written to `<project>/.srt-data/isolates/` by srt
+     (`bundle()`) and by the server-side rebuild; the dev server serves
+     `/isolates/` from there and clients install them like any asset.
+   - lattice's resolver (`resolve_isolate` in `lib.rs`, set on every engine
+     build) reads `isolates/<id>.bin` then `.js` through the mount via
+     `forge::fs::read_sync`, so the installed version dir, a pack folder and
+     the packed image resolve alike; unmounted (no store) means no isolates.
+   - `srt check`/the startup typecheck add every isolate module to `files`,
+     so one nothing `import type`s is still checked. `srt bundle` and
+     `srt pack --flux` do not carry isolates (no manifest to ride).
 5. **Only on demand**: async-generator exports (yield/return/next/cancel
    messages; a never-ending generator is a subscription), `AbortSignal` on
    calls, `instances` on a handle.

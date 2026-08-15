@@ -62,7 +62,8 @@ pub enum AssetsBase {
   },
 }
 
-// The assets mount: when set, relative paths under "assets/" resolve through
+// The assets mount: when set, relative paths under "assets/" and "isolates/"
+// (the app's isolate bundles, delivered as manifest assets) resolve through
 // the AssetsBase instead of the process cwd; the app's cwd stays its mutable
 // data sandbox. Unset (plain scripts, dev proxy), paths resolve as-is.
 static ASSETS_BASE: RwLock<Option<AssetsBase>> = RwLock::new(None);
@@ -72,8 +73,11 @@ pub fn set_assets_base(base: Option<AssetsBase>) {
   *ASSETS_BASE.write().expect("assets base lock") = base;
 }
 
-fn is_asset_path(path: &str) -> bool {
-  path == "assets" || path.starts_with("assets/")
+/// The manifest-delivered trees: `assets/` (the project's asset folder) and
+/// `isolates/` (isolate bundles). Both are immutable and read through the
+/// mount while one is set.
+pub fn is_asset_path(path: &str) -> bool {
+  ["assets", "isolates"].iter().any(|root| path == *root || path.starts_with(&format!("{root}/")))
 }
 
 // A mounted asset path resolves to a plain file, a byte range inside the
@@ -123,6 +127,24 @@ async fn read_slice(file: &PathBuf, offset: u64, length: u64, path: &str) -> Res
 
 fn missing(path: &str, what: &str) -> String {
   format!("{what} {path}: no such packed asset")
+}
+
+/// Read a file's whole contents, blocking. For callers that hold no async
+/// context (a module resolver called from a synchronous binding); everything
+/// else uses `read`.
+pub fn read_sync(path: &str) -> Result<Vec<u8>, String> {
+  match resolve(path) {
+    Resolved::Plain(p) => std::fs::read(p).map_err(|e| format!("read {path}: {e}")),
+    Resolved::Slice(file, offset, len) => {
+      let err = |e| format!("read {path}: {e}");
+      let mut f = std::fs::File::open(&file).map_err(err)?;
+      f.seek(SeekFrom::Start(offset)).map_err(err)?;
+      let mut buf = vec![0u8; usize::try_from(len).map_err(|_| format!("read {path}: too large"))?];
+      f.read_exact(&mut buf).map_err(err)?;
+      Ok(buf)
+    }
+    Resolved::Missing => Err(missing(path, "read")),
+  }
 }
 
 /// Read a file's whole contents.

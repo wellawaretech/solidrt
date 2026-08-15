@@ -1,4 +1,5 @@
 import { command } from "flux:subprocess"
+import { dir, file } from "flux:fs"
 import { state } from "./state"
 
 // Server-owned "rebuild and push": the single place the running app is rebuilt
@@ -45,12 +46,19 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     return `Rebuild failed:\n${stderr.trim()}`
   }
 
-  // bundle-cli writes one JSON object { code, map, manifest } to stdout.
-  let bundle: { code?: string; map?: string | null; manifest?: string }
+  // bundle-cli writes one JSON object { code, map, manifest, isolates } to stdout.
+  let bundle: { code?: string; map?: string | null; manifest?: string; isolates?: { id: string; code: string }[] }
   try {
     bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
   } catch {
     return "Rebuild failed: unreadable bundler output"
+  }
+  // Isolate bundles are manifest assets clients fetch from our /isolates/
+  // route (served from cacheDir), so they must be on disk before the push.
+  for (let isolate of bundle.isolates ?? []) {
+    let path = `${config.cacheDir}/isolates/${isolate.id}.js`
+    await dir(path.slice(0, path.lastIndexOf("/"))).create()
+    await file(path).write(isolate.code)
   }
   state.currentMap = bundle.map ?? null
   let text = JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest))

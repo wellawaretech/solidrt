@@ -229,6 +229,26 @@ fn mount_assets(app_id: &str) {
   forge::fs::set_assets_base(go::store::current_version_dir(app_id).map(forge::fs::AssetsBase::Dir));
 }
 
+// The app's isolate modules are manifest assets under isolates/ (see
+// okf/plans/isolates-and-ports.md): `srt pack` ships bytecode as
+// isolates/<id>.bin, a dev push ships source as isolates/<id>.js. Both read
+// through the assets mount, so the installed version dir, a pack folder, and
+// the packed executable resolve alike; nothing mounted means no isolates.
+fn resolve_isolate(id: &str) -> Result<flux::ModuleCode, String> {
+  if id.is_empty() || id.starts_with('/') || id.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+    return Err(format!("isolate '{id}': not a module id"));
+  }
+  if let Ok(bytes) = forge::fs::read_sync(&format!("isolates/{id}.bin")) {
+    return Ok(flux::ModuleCode::Bytecode(bytes));
+  }
+  match forge::fs::read_sync(&format!("isolates/{id}.js")) {
+    Ok(bytes) => {
+      String::from_utf8(bytes).map(flux::ModuleCode::Source).map_err(|_| format!("isolate '{id}': not UTF-8"))
+    }
+    Err(_) => Err(format!("isolate '{id}': no such isolate module in this app")),
+  }
+}
+
 // Register the font set for `app_id`: the client's base fonts plus the
 // current installed version's manifest fonts, replacing whatever the previous
 // app registered. Rebuilt from scratch on every app switch so fonts are
@@ -676,7 +696,10 @@ fn ui_thread(
       let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
       let speech_atx = AlloyContext(atx.clone());
-      let builder = FluxEngine::builder().stack_size(JS_STACK_SIZE).user_agent(format!("SolidRT/{VERSION}"));
+      let builder = FluxEngine::builder()
+        .stack_size(JS_STACK_SIZE)
+        .user_agent(format!("SolidRT/{VERSION}"))
+        .isolate_resolver(resolve_isolate);
       let builder = match &fetch_cache_dir {
         Some(dir) => builder.cache_dir(dir.clone()),
         None => builder,
