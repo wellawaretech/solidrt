@@ -30,6 +30,7 @@ use iroh::endpoint::{presets, Connection, RecvStream, RelayMode, SendStream, Tra
 use iroh::{Endpoint as IrohEndpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 
 use crate::logger::Logger;
+use crate::Value;
 
 /// Read granularity: each `read_chunk` pulls at most this many bytes off a stream.
 const READ_CHUNK: usize = 64 * 1024;
@@ -189,6 +190,19 @@ pub struct AddrEntry {
 pub struct ConnInfo {
   pub path: &'static str,
   pub addrs: Vec<AddrEntry>,
+}
+
+impl From<AddrEntry> for Value {
+  fn from(e: AddrEntry) -> Value {
+    Value::map([("kind", Value::from(e.kind)), ("addr", Value::from(e.addr)), ("active", Value::from(e.active))])
+  }
+}
+
+/// `{ path, addrs: [{ kind, addr, active }] }`.
+impl From<ConnInfo> for Value {
+  fn from(c: ConnInfo) -> Value {
+    Value::map([("path", Value::from(c.path)), ("addrs", Value::list(c.addrs))])
+  }
 }
 
 /// A single bidirectional p2p stream: a byte duplex. Reads are pull-based; writes

@@ -360,7 +360,7 @@ pub struct JsBytes(pub Vec<u8>);
 
 impl<'js> IntoJs<'js> for JsBytes {
   fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    TypedArray::<u8>::new(ctx.clone(), self.0).map(|ta| ta.into_value())
+    crate::plugins::value::bytes_into_js(ctx, self.0)
   }
 }
 

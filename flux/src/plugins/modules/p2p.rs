@@ -32,7 +32,7 @@ use std::rc::Rc;
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 
@@ -41,7 +41,8 @@ use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg};
 use crate::plugins::standards::body::extract_body_value;
-use forge::p2p::{decode_hex32, run_writer, ConnInfo, Endpoint, Stream};
+use crate::plugins::value::Neutral;
+use forge::p2p::{decode_hex32, run_writer, Endpoint, Stream};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -172,9 +173,9 @@ impl P2pEndpoint {
     &self,
     ctx: Ctx<'js>,
     id: String,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<JsConnInfo>>>> {
+  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.conn_info(id).await.map(JsConnInfo) }))
+    Ok(with_pending(&ctx, async move { inner.conn_info(id).await.map(|c| Neutral(c.into())) }))
   }
 
   /// Close the endpoint, ending any `accept` iteration.
@@ -270,31 +271,6 @@ impl<'js> IntoJs<'js> for ReadStep {
       None => None,
     };
     Ok(iter_result(ctx, value)?.into_value())
-  }
-}
-
-// Marshalling newtype over the engine-free `forge::p2p::ConnInfo`, so its
-// `IntoJs` stays in this crate once forge is split out (a foreign `IntoJs` on a
-// foreign type would otherwise trip the orphan rule). The `connInfo` call site
-// `.map(JsConnInfo)`s the bare forge result.
-// `pub` (not re-exported) only to satisfy `private_interfaces`: it appears in the
-// rquickjs `#[methods]` return type of `conn_info`, which is a `pub fn`.
-pub struct JsConnInfo(ConnInfo);
-
-impl<'js> IntoJs<'js> for JsConnInfo {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    let addrs = Array::new(ctx.clone())?;
-    for (i, entry) in self.0.addrs.into_iter().enumerate() {
-      let e = Object::new(ctx.clone())?;
-      e.set("kind", entry.kind)?;
-      e.set("addr", entry.addr)?;
-      e.set("active", entry.active)?;
-      addrs.set(i, e)?;
-    }
-    obj.set("path", self.0.path)?;
-    obj.set("addrs", addrs)?;
-    Ok(obj.into_value())
   }
 }
 

@@ -29,6 +29,7 @@ use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
 
 use crate::net;
+use crate::Value;
 
 /// The link-local mDNS multicast group (RFC 6762).
 const MDNS_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -53,10 +54,37 @@ pub struct ServiceInstance {
   pub txt: Vec<(String, String)>,
 }
 
+/// `{ instance, service, host, port, addrs, txt }` with `txt` as a map.
+impl From<ServiceInstance> for Value {
+  fn from(i: ServiceInstance) -> Value {
+    Value::map([
+      ("instance", Value::from(i.instance)),
+      ("service", Value::from(i.service)),
+      ("host", Value::from(i.host)),
+      ("port", Value::from(i.port)),
+      ("addrs", Value::list(i.addrs)),
+      ("txt", Value::map(i.txt)),
+    ])
+  }
+}
+
+/// A `resolve` answer: the address that was asked about and the host name it
+/// resolved to.
+pub struct ResolvedHost {
+  pub ip: String,
+  pub host: String,
+}
+
+impl From<ResolvedHost> for Value {
+  fn from(r: ResolvedHost) -> Value {
+    Value::map([("ip", r.ip), ("host", r.host)])
+  }
+}
+
 /// Reverse-resolve each IPv4 address to its mDNS `.local` hostname (a PTR query
 /// against `in-addr.arpa`). Returns the `(ip, host)` pairs that answered within
 /// `timeout_ms`. IPv6 inputs are skipped (the immediate consumer scans v4 subnets).
-pub async fn resolve(ips: Vec<String>, timeout_ms: u64) -> Result<Vec<(String, String)>, String> {
+pub async fn resolve(ips: Vec<String>, timeout_ms: u64) -> Result<Vec<ResolvedHost>, String> {
   let mut questions = Vec::new();
   // (reverse-name lowercased, original ip): correlate answers back to the input.
   let mut wanted: Vec<(String, String)> = Vec::new();
@@ -75,7 +103,7 @@ pub async fn resolve(ips: Vec<String>, timeout_ms: u64) -> Result<Vec<(String, S
     return Ok(Vec::new());
   }
   let messages = query(questions, timeout_ms).await?;
-  Ok(correlate_resolve(&messages, &wanted))
+  Ok(correlate_resolve(&messages, &wanted).into_iter().map(|(ip, host)| ResolvedHost { ip, host }).collect())
 }
 
 /// Browse a DNS-SD service type (e.g. `"_http._tcp"`) for the instances on the

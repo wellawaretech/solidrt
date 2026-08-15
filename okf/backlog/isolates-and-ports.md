@@ -61,10 +61,21 @@ considered and is now dropped:
 
 ## Stages
 
-1. **`forge::Value`**: engine-free neutral value (null, bool, number,
-   string, bytes, list, map) plus JS marshalling both ways in flux. Useful
-   regardless of ports (wasm guests, any future engine, the marshalling
-   toolkit keeps re-deriving this set).
+1. **`forge::Value`** (DONE): engine-free neutral value plus JS marshalling
+   both ways in flux. Decisions taken:
+   - The set is `Null, Bool, Int(i64), Float(f64), String, Bytes, List,
+     Map` (ordered pairs), i.e. the CBOR/msgpack vocabulary rather than the
+     pure JS one, so SQLite values and JSON are strict subsets. JS numbers
+     that are integral and within the safe range decode as `Int`.
+   - forge result types describe themselves as a `Value` (`impl From<T> for
+     Value` in forge: fs stat/dir entries, sqlite rows/results, subprocess
+     output/status, mdns instances/hosts, p2p connInfo) and flux marshals `Value` in one
+     place (`plugins/value.rs`, `Neutral` newtype). That replaced the
+     per-type `IntoJs` impls those plugins carried; wasm/ffi coercion
+     (signature-driven) and streaming byte chunks stay as they are.
+   - JS -> Value contract (documented in `plugins/value.rs`): `undefined`
+     -> `Null`, buffers and typed-array views -> `Bytes`, plain objects only,
+     everything else a `TypeError`, depth cap instead of cycle detection.
 2. **spawn + ports, minimal**: one isolate per `spawn`, one port pair,
    send/recv/terminate, error propagation, `ArrayBuffer` transfer. Module
    addressing: a bundled module path in dev; how a packed app carries an

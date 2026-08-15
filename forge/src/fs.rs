@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use crate::seek::SeekableReader;
+use crate::Value;
 
 /// A file's metadata, as returned by `stat`. `file_type` is `"file"`,
 /// `"directory"`, `"symlink"`, or `"other"`; `mtime_ms` is the modification time
@@ -21,6 +22,31 @@ pub struct StatInfo {
   pub size: u64,
   pub file_type: &'static str,
   pub mtime_ms: Option<i64>,
+}
+
+/// `{ size, type, mtime? }`; `mtime` is omitted (not null) when the platform
+/// has none.
+impl From<StatInfo> for Value {
+  fn from(s: StatInfo) -> Value {
+    let mut m = vec![("size".to_string(), Value::from(s.size)), ("type".to_string(), Value::from(s.file_type))];
+    if let Some(mtime) = s.mtime_ms {
+      m.push(("mtime".to_string(), Value::from(mtime)));
+    }
+    Value::Map(m)
+  }
+}
+
+/// One `read_dir` entry: the file name and its type string (`"file"`,
+/// `"directory"`, ...).
+pub struct DirEntry {
+  pub name: String,
+  pub kind: &'static str,
+}
+
+impl From<DirEntry> for Value {
+  fn from(e: DirEntry) -> Value {
+    Value::map([("name", Value::from(e.name)), ("type", Value::from(e.kind))])
+  }
 }
 
 /// Where an app's immutable assets live (okf/plans/client-storage-updates.md,
@@ -212,9 +238,9 @@ pub async fn dir_exists(path: &str) -> bool {
   }
 }
 
-/// List a directory's entries as `(name, type)` pairs, where type is the same
-/// set as `StatInfo::file_type`.
-pub async fn read_dir(path: &str) -> Result<Vec<(String, &'static str)>, String> {
+/// List a directory's entries; `DirEntry::kind` is the same set as
+/// `StatInfo::file_type`.
+pub async fn read_dir(path: &str) -> Result<Vec<DirEntry>, String> {
   match resolve(path) {
     Resolved::Plain(p) => {
       let mut entries = tokio::fs::read_dir(p).await.map_err(|e| format!("read dir {path}: {e}"))?;
@@ -222,13 +248,15 @@ pub async fn read_dir(path: &str) -> Result<Vec<(String, &'static str)>, String>
       while let Some(entry) = entries.next_entry().await.map_err(|e| format!("read dir {path}: {e}"))? {
         let name = entry.file_name().to_string_lossy().into_owned();
         let ft = entry.file_type().await.map_err(|e| format!("read dir {path}: {e}"))?;
-        out.push((name, type_str(ft)));
+        out.push(DirEntry { name, kind: type_str(ft) });
       }
       Ok(out)
     }
     Resolved::Slice(..) => Err(format!("read dir {path}: not a directory")),
     Resolved::Missing => match packed_dir_entries(path) {
-      Some(entries) if !entries.is_empty() => Ok(entries),
+      Some(entries) if !entries.is_empty() => {
+        Ok(entries.into_iter().map(|(name, kind)| DirEntry { name, kind }).collect())
+      }
       _ => Err(missing(path, "read dir")),
     },
   }

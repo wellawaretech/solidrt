@@ -64,11 +64,12 @@
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Array, Class, Ctx, Exception, IntoJs, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Array, Class, Ctx, Exception, JsLifetime, Value};
 
-use crate::plugins::js_error::{err_message, JsResult};
+use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{with_pending, OptArg};
-use forge::sqlite::{FirstRow, Rows, RunResult, SqlValue, SqliteConnection, TxResults};
+use crate::plugins::value::{self, Neutral};
+use forge::sqlite::{SqlValue, SqliteConnection};
 
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "Database")]
@@ -110,10 +111,10 @@ impl Database {
     ctx: Ctx<'js>,
     sql: String,
     params: OptArg<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
     let conn = self.conn.clone();
-    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, false).await.map(JsRunResult) }))
+    let bound = extract_params(&ctx, params.0)?;
+    Ok(with_pending(&ctx, async move { conn.run(sql, bound, false).await.map(|r| Neutral(r.into())) }))
   }
 
   /// Run a batch of statements (separated by `;`) with no parameters. Intended
@@ -134,10 +135,10 @@ impl Database {
     &self,
     ctx: Ctx<'js>,
     statements: Array<'js>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsTxResults>>>> {
-    let parsed = extract_statements(statements).map_err(|m| Exception::throw_message(&ctx, &m))?;
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
+    let parsed = extract_statements(&ctx, statements)?;
     let conn = self.conn.clone();
-    Ok(with_pending(&ctx, async move { conn.transaction(parsed).await.map(JsTxResults) }))
+    Ok(with_pending(&ctx, async move { conn.transaction(parsed).await.map(|t| Neutral(t.into())) }))
   }
 
   /// Close the connection, releasing it. Safe to call more than once; later
@@ -170,11 +171,11 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: OptArg<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRows>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.query(sql, bound, true).await.map(JsRows) }))
+    let bound = extract_params(&ctx, params.0)?;
+    Ok(with_pending(&ctx, async move { conn.query(sql, bound, true).await.map(|r| Neutral(r.into())) }))
   }
 
   /// The first matching row as a plain object, or `undefined` if there are none.
@@ -182,11 +183,11 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: OptArg<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsFirstRow>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Option<Neutral>>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.get(sql, bound, true).await.map(JsFirstRow) }))
+    let bound = extract_params(&ctx, params.0)?;
+    Ok(with_pending(&ctx, async move { conn.get(sql, bound, true).await.map(|r| r.into_value().map(Neutral)) }))
   }
 
   /// Execute as a write. Resolves to `{ changes, lastInsertRowid }`.
@@ -194,132 +195,43 @@ impl Statement {
     &self,
     ctx: Ctx<'js>,
     params: OptArg<Array<'js>>,
-  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<JsRunResult>>>> {
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Neutral>>>> {
     let conn = self.conn.clone();
     let sql = self.sql.clone();
-    let bound = extract_params(params.0).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    Ok(with_pending(&ctx, async move { conn.run(sql, bound, true).await.map(JsRunResult) }))
+    let bound = extract_params(&ctx, params.0)?;
+    Ok(with_pending(&ctx, async move { conn.run(sql, bound, true).await.map(|r| Neutral(r.into())) }))
   }
 }
 
 // ---- JS <-> SqlValue marshalling -------------------------------------------
 
-/// Convert a JS array of bind parameters into owned SqlValues.
-fn extract_params(params: Option<Array<'_>>) -> Result<Vec<SqlValue>, String> {
+/// Convert a JS array of bind parameters into owned SqlValues: each element
+/// decodes as a neutral value, then `SqlValue::try_from` restricts it to what
+/// SQLite can bind (lists/maps reject).
+fn extract_params<'js>(ctx: &Ctx<'js>, params: Option<Array<'js>>) -> rquickjs::Result<Vec<SqlValue>> {
   let Some(arr) = params else {
     return Ok(Vec::new());
   };
   let mut out = Vec::with_capacity(arr.len());
   for v in arr.iter::<Value>() {
-    let v = v.map_err(err_message)?;
-    out.push(js_to_sql(v)?);
+    let neutral = value::from_js(ctx, v?)?;
+    out.push(SqlValue::try_from(neutral).map_err(|m| Exception::throw_message(ctx, &m))?);
   }
   Ok(out)
 }
 
 /// Convert a JS array of `[sql, params]` entries into owned statements.
-fn extract_statements(arr: Array<'_>) -> Result<Vec<(String, Vec<SqlValue>)>, String> {
+fn extract_statements<'js>(ctx: &Ctx<'js>, arr: Array<'js>) -> rquickjs::Result<Vec<(String, Vec<SqlValue>)>> {
   let mut out = Vec::with_capacity(arr.len());
   for entry in arr.iter::<Value>() {
-    let entry = entry.map_err(err_message)?;
-    let Some(pair) = entry.into_array() else {
-      return Err("each transaction statement must be an array [sql, params?]".to_string());
+    let Some(pair) = entry?.into_array() else {
+      return Err(Exception::throw_message(ctx, "each transaction statement must be an array [sql, params?]"));
     };
-    let sql: String = pair.get(0).map_err(err_message)?;
+    let sql: String = pair.get(0)?;
     let params = pair.get::<Array>(1).ok();
-    out.push((sql, extract_params(params)?));
+    out.push((sql, extract_params(ctx, params)?));
   }
   Ok(out)
-}
-
-fn js_to_sql(v: Value<'_>) -> Result<SqlValue, String> {
-  if v.is_null() || v.is_undefined() {
-    Ok(SqlValue::Null)
-  } else if let Some(b) = v.as_bool() {
-    Ok(SqlValue::Int(b as i64))
-  } else if let Some(i) = v.as_int() {
-    Ok(SqlValue::Int(i as i64))
-  } else if let Some(f) = v.as_float() {
-    Ok(SqlValue::Real(f))
-  } else if let Some(s) = v.as_string() {
-    Ok(SqlValue::Text(s.to_string().map_err(err_message)?))
-  } else if let Ok(ta) = TypedArray::<u8>::from_value(v.clone()) {
-    Ok(SqlValue::Blob(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default()))
-  } else {
-    Err("unsupported SQL parameter type".to_string())
-  }
-}
-
-// Marshalling newtypes over the engine-free `forge::sqlite` result types. The
-// `IntoJs` impls live on these wrappers, not on the forge types directly, so
-// that once forge is its own crate, converting its types to JS stays inside this
-// crate rather than tripping the orphan rule (a foreign `IntoJs` on a foreign
-// type). The forge methods return the bare types; call sites `.map(JsX)` them.
-struct JsSqlValue(SqlValue);
-// `pub` (not re-exported) only to satisfy `private_interfaces`: these appear in
-// the rquickjs `#[methods]` return types, which are `pub fn`s.
-pub struct JsRows(Rows);
-pub struct JsFirstRow(FirstRow);
-pub struct JsRunResult(RunResult);
-pub struct JsTxResults(TxResults);
-
-impl<'js> IntoJs<'js> for JsSqlValue {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self.0 {
-      SqlValue::Null => Ok(Value::new_null(ctx.clone())),
-      SqlValue::Int(i) => i.into_js(ctx),
-      SqlValue::Real(f) => f.into_js(ctx),
-      SqlValue::Text(s) => s.into_js(ctx),
-      SqlValue::Blob(b) => TypedArray::new(ctx.clone(), b).map(|ta| ta.into_value()),
-    }
-  }
-}
-
-/// Build a plain object from a row's (name, value) cells.
-fn row_to_object<'js>(ctx: &Ctx<'js>, cells: Vec<(String, SqlValue)>) -> rquickjs::Result<Object<'js>> {
-  let obj = Object::new(ctx.clone())?;
-  for (name, val) in cells {
-    obj.set(name, JsSqlValue(val))?;
-  }
-  Ok(obj)
-}
-
-impl<'js> IntoJs<'js> for JsRows {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let arr = Array::new(ctx.clone())?;
-    for (idx, row) in self.0 .0.into_iter().enumerate() {
-      arr.set(idx, row_to_object(ctx, row)?)?;
-    }
-    Ok(arr.into_value())
-  }
-}
-
-impl<'js> IntoJs<'js> for JsFirstRow {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    match self.0 .0 {
-      Some(cells) => Ok(row_to_object(ctx, cells)?.into_value()),
-      None => Ok(Value::new_undefined(ctx.clone())),
-    }
-  }
-}
-
-impl<'js> IntoJs<'js> for JsRunResult {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    obj.set("changes", self.0.changes)?;
-    obj.set("lastInsertRowid", self.0.last_insert_rowid)?;
-    Ok(obj.into_value())
-  }
-}
-
-impl<'js> IntoJs<'js> for JsTxResults {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let arr = Array::new(ctx.clone())?;
-    for (idx, r) in self.0 .0.into_iter().enumerate() {
-      arr.set(idx, JsRunResult(r))?;
-    }
-    Ok(arr.into_value())
-  }
 }
 
 pub struct SqliteModule;

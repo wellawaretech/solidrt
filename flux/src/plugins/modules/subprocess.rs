@@ -1,14 +1,15 @@
 use rquickjs::function::MutFn;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
+use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
 use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_pending, OptArg};
 use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
-use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
+use crate::plugins::value::Neutral;
+use forge::subprocess::{self, CommandSpec, Spawned};
 
 // flux:subprocess - spawn child processes and collect their output.
 //
@@ -36,58 +37,6 @@ use forge::subprocess::{self, CommandOutput, CommandSpec, Spawned, StatusData};
 //   stdin     string | Uint8Array written to the child's stdin, then closed
 //   timeoutMs kill the child if it has not exited within this many ms
 //   encoding  "buffer" -> stdout/stderr as Uint8Array; default utf8 strings
-
-// Marshalling newtypes over the engine-free `forge::subprocess` result types,
-// so the `IntoJs` conversions stay in this crate once forge is split out (a
-// foreign `IntoJs` on a foreign type would otherwise trip the orphan rule). Call
-// sites `.map(JsX)` the bare forge results.
-struct JsStatusData(StatusData);
-struct JsCommandOutput(CommandOutput);
-
-impl<'js> IntoJs<'js> for JsStatusData {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    set_status(&obj, ctx, self.0.code, self.0.signal)?;
-    Ok(obj.into_value())
-  }
-}
-
-impl<'js> IntoJs<'js> for JsCommandOutput {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    set_status(&obj, ctx, self.0.code, self.0.signal)?;
-    obj.set("stdout", bytes_to_js(ctx, self.0.stdout, self.0.as_bytes)?)?;
-    obj.set("stderr", bytes_to_js(ctx, self.0.stderr, self.0.as_bytes)?)?;
-    Ok(obj.into_value())
-  }
-}
-
-// Set the { code, signal, success } fields shared by output() and status().
-fn set_status<'js>(
-  obj: &Object<'js>,
-  ctx: &Ctx<'js>,
-  code: Option<i32>,
-  signal: Option<String>,
-) -> rquickjs::Result<()> {
-  match code {
-    Some(c) => obj.set("code", c)?,
-    None => obj.set("code", Value::new_null(ctx.clone()))?,
-  }
-  match signal {
-    Some(s) => obj.set("signal", s)?,
-    None => obj.set("signal", Value::new_null(ctx.clone()))?,
-  }
-  obj.set("success", code == Some(0))?;
-  Ok(())
-}
-
-fn bytes_to_js<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>, as_bytes: bool) -> rquickjs::Result<Value<'js>> {
-  if as_bytes {
-    Ok(TypedArray::new(ctx.clone(), bytes)?.into_value())
-  } else {
-    String::from_utf8_lossy(&bytes).into_owned().into_js(ctx)
-  }
-}
 
 fn parse_spec<'js>(
   ctx: &Ctx<'js>,
@@ -155,7 +104,7 @@ fn build_command<'js>(
       let spec = spec.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let spec = spec.clone();
-        Ok(with_pending(&ctx, async move { spec.run_output().await.map(JsCommandOutput) }))
+        Ok(with_pending(&ctx, async move { spec.run_output().await.map(|o| Neutral(o.into())) }))
       }
     }),
   )
@@ -274,7 +223,7 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
       let child = child.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let child = child.clone();
-        Ok(with_pending(&ctx, async move { Ok::<JsStatusData, String>(JsStatusData(child.status().await)) }))
+        Ok(with_pending(&ctx, async move { Ok::<Neutral, String>(Neutral(child.status().await.into())) }))
       }
     }),
   )

@@ -22,6 +22,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use rusqlite::{Connection, OpenFlags};
 use tokio::sync::oneshot;
 
+use crate::Value;
+
 /// An owned SQLite value, used both for bound parameters (JS -> SQL) and for
 /// decoded result cells (SQL -> JS). Owned so it can cross the channel.
 pub enum SqlValue {
@@ -46,6 +48,68 @@ pub struct RunResult {
 
 /// One RunResult per statement in a transaction batch.
 pub struct TxResults(pub Vec<RunResult>);
+
+impl From<SqlValue> for Value {
+  fn from(v: SqlValue) -> Value {
+    match v {
+      SqlValue::Null => Value::Null,
+      SqlValue::Int(i) => Value::Int(i),
+      SqlValue::Real(f) => Value::Float(f),
+      SqlValue::Text(s) => Value::String(s),
+      SqlValue::Blob(b) => Value::Bytes(b),
+    }
+  }
+}
+
+/// A bind parameter from a neutral value: scalars and bytes only. `Bool`
+/// binds as 0/1 (SQLite has no boolean); lists and maps are not bindable.
+impl TryFrom<Value> for SqlValue {
+  type Error = String;
+
+  fn try_from(v: Value) -> Result<SqlValue, String> {
+    match v {
+      Value::Null => Ok(SqlValue::Null),
+      Value::Bool(b) => Ok(SqlValue::Int(b as i64)),
+      Value::Int(i) => Ok(SqlValue::Int(i)),
+      Value::Float(f) => Ok(SqlValue::Real(f)),
+      Value::String(s) => Ok(SqlValue::Text(s)),
+      Value::Bytes(b) => Ok(SqlValue::Blob(b)),
+      Value::List(_) | Value::Map(_) => Err("unsupported SQL parameter type".to_string()),
+    }
+  }
+}
+
+fn row_value(cells: Vec<(String, SqlValue)>) -> Value {
+  Value::map(cells)
+}
+
+/// A list of row objects, one map per row.
+impl From<Rows> for Value {
+  fn from(r: Rows) -> Value {
+    Value::list(r.0.into_iter().map(row_value))
+  }
+}
+
+/// `{ changes, lastInsertRowid }`.
+impl From<RunResult> for Value {
+  fn from(r: RunResult) -> Value {
+    Value::map([("changes", r.changes), ("lastInsertRowid", r.last_insert_rowid)])
+  }
+}
+
+impl From<TxResults> for Value {
+  fn from(t: TxResults) -> Value {
+    Value::list(t.0)
+  }
+}
+
+impl FirstRow {
+  /// The row as a value, or `None` when the query matched nothing (the host
+  /// decides how "no row" is spelled).
+  pub fn into_value(self) -> Option<Value> {
+    self.0.map(row_value)
+  }
+}
 
 /// A command sent from a JS call to the connection thread. Each variant carries
 /// a oneshot sender the thread replies on.
@@ -149,6 +213,12 @@ impl SqliteConnection {
 }
 
 /// Map a `mode` string to open flags. Default (`None`/`"ro"`) is read-only.
+///
+/// `SQLITE_OPEN_URI` stays on, so a path may also be a URI filename
+/// (`file:app.db?mode=ro&cache=shared`) whose query parameters override the
+/// mode chosen here. Deliberate: the app supplies its own paths, so this is
+/// expressiveness rather than an injection surface. Drop the flag from `base`
+/// if a path should ever be treated as a literal filename only.
 fn open_flags(mode: Option<String>) -> Result<OpenFlags, String> {
   let base = OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
   let access = match mode.as_deref() {

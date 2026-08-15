@@ -15,12 +15,3 @@ impl<'js, T: IntoJs<'js>> IntoJs<'js> for JsResult<T> {
     }
   }
 }
-
-/// Collapse an rquickjs error into a plain message, dropping the "IO Error:"
-/// prefix that `rquickjs::Error::Io` renders.
-pub fn err_message(e: rquickjs::Error) -> String {
-  match e {
-    rquickjs::Error::Io(io) => io.to_string(),
-    other => other.to_string(),
-  }
-}

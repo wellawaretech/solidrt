@@ -22,8 +22,11 @@ Three plugin layers under `flux/src/plugins/`:
   bindings. The runner (lattice) supplies the host instances via `gui::install`;
   flux owns which plugins exist and their registration order.
 
-`js_error.rs` + `marshal.rs` at the `plugins/` root are the shared marshalling
-toolkit used across all three layers.
+`js_error.rs` + `marshal.rs` + `value.rs` at the `plugins/` root are the shared
+marshalling toolkit used across all three layers. `value.rs` is where
+`forge::Value` meets JS: a forge result type implements `From<T> for Value` in
+forge and the plugin returns `Neutral(result.into())`; do not hand-write a
+per-type `IntoJs` for plain data results.
 
 ## Module surface
 
@@ -108,8 +111,6 @@ runs on the JS thread with `ctx` in hand, so the rejection is a plain `Error`.
 
 - Sync argument validation (where you already hold `Ctx`) throws directly with
   `Exception::throw_message(&ctx, msg)`.
-- When bridging an existing `rquickjs::Error` into a message string, use
-  `err_message` from `crate::plugins::js_error` (it drops the `IO Error:` prefix).
 - Hold/release `PendingOps` around the awaited work so the engine stays alive
   while the async op is in flight.
 

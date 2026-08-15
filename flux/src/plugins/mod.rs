@@ -6,6 +6,7 @@
 pub mod js_error;
 pub mod marshal;
 pub mod seekable;
+pub mod value;
 
 #[cfg(feature = "gui")]
 pub mod gui;

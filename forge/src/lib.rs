@@ -25,6 +25,7 @@ pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
 pub mod svg;
+pub mod value;
 pub mod video;
 pub mod wasm;
 pub mod websocket;
@@ -33,3 +34,4 @@ pub mod websocket;
 mod tests;
 
 pub use seek::{SeekableRead, SeekableReader};
+pub use value::Value;

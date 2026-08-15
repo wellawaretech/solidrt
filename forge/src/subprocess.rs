@@ -24,6 +24,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child as TokioChild, ChildStderr, ChildStdin, ChildStdout, Command as TokioCommand};
 use tokio::sync::{watch, Mutex, Notify};
 
+use crate::Value;
+
 /// A parsed, reusable command spec. Shared (`Rc`) into each `output()`/`spawn()`
 /// so the same reference can be run more than once, like a re-readable `file()`.
 pub struct CommandSpec {
@@ -51,6 +53,39 @@ pub struct CommandOutput {
 pub struct StatusData {
   pub code: Option<i32>,
   pub signal: Option<String>,
+}
+
+/// The `{ code, signal, success }` fields shared by `output()` and `status()`.
+fn status_fields(code: Option<i32>, signal: Option<String>) -> Vec<(String, Value)> {
+  vec![
+    ("code".to_string(), Value::from(code)),
+    ("signal".to_string(), Value::from(signal)),
+    ("success".to_string(), Value::from(code == Some(0))),
+  ]
+}
+
+impl From<StatusData> for Value {
+  fn from(s: StatusData) -> Value {
+    Value::Map(status_fields(s.code, s.signal))
+  }
+}
+
+/// `{ code, signal, success, stdout, stderr }`; the streams are bytes when the
+/// spec asked for `"buffer"` encoding, otherwise lossy UTF-8 strings.
+impl From<CommandOutput> for Value {
+  fn from(o: CommandOutput) -> Value {
+    let stream = |bytes: Vec<u8>| {
+      if o.as_bytes {
+        Value::Bytes(bytes)
+      } else {
+        Value::String(String::from_utf8_lossy(&bytes).into_owned())
+      }
+    };
+    let mut m = status_fields(o.code, o.signal);
+    m.push(("stdout".to_string(), stream(o.stdout)));
+    m.push(("stderr".to_string(), stream(o.stderr)));
+    Value::Map(m)
+  }
 }
 
 impl CommandSpec {

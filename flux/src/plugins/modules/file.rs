@@ -1,32 +1,15 @@
-use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, Object, TypedArray, Value};
+use rquickjs::{function::MutFn, promise::Promised, Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::seekable::SeekableSource;
 use crate::plugins::standards::body::{attach_body, JsBytes};
+use crate::plugins::value::Neutral;
 use forge::fs;
 
 // Marshalling for the `file()` reference: forward to the engine-free
 // `forge::fs` disk operations and encode their results back to JS.
-
-// Marshalling newtype over the engine-free `forge::fs::StatInfo`, so its
-// `IntoJs` stays in this crate once forge is split out (a foreign `IntoJs` on a
-// foreign type would otherwise trip the orphan rule). The `stat` call site
-// `.map(JsStatInfo)`s the bare forge result.
-struct JsStatInfo(fs::StatInfo);
-
-impl<'js> IntoJs<'js> for JsStatInfo {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let obj = Object::new(ctx.clone())?;
-    obj.set("size", self.0.size)?;
-    obj.set("type", self.0.file_type)?;
-    if let Some(m) = self.0.mtime_ms {
-      obj.set("mtime", m)?;
-    }
-    Ok(obj.into_value())
-  }
-}
 
 /// Decode a write/append payload: a string (UTF-8 bytes) or a Uint8Array.
 fn data_bytes<'js, 'v>(ctx: &Ctx<'js>, data: &Value<'v>, what: &str) -> rquickjs::Result<Vec<u8>> {
@@ -84,7 +67,7 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
       let path = path.clone();
       move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
         let path = path.clone();
-        Ok(with_pending(&ctx, async move { fs::stat(&path).await.map(JsStatInfo) }))
+        Ok(with_pending(&ctx, async move { fs::stat(&path).await.map(|s| Neutral(s.into())) }))
       }
     }),
   )
