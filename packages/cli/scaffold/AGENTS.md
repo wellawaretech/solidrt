@@ -309,7 +309,10 @@ from an isolate module (a value import is a build error); arguments and
 results are copies (numbers, strings, byte buffers, arrays, plain objects -
 no functions, no class instances); the child has the non-gui `flux:*`
 modules only, so it never touches the render tree; module state persists
-between calls and each `isolate()` call is its own instance. Full contract:
+between calls and each `isolate()` call is its own instance. An
+`async function*` export is a stream: `for await (let p of worker.progress())`
+pulls one item per step (progress, ticks, a subscription), `break` ends it in
+the isolate, and streams never block plain calls. Full contract:
 node_modules/@solidrt/flux-types/modules/isolate.d.ts.
 
 ### Where GPU work stops being free

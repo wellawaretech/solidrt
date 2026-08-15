@@ -189,9 +189,33 @@ wanted (pushing to a main that has not subscribed).
    - `srt check`/the startup typecheck add every isolate module to `files`,
      so one nothing `import type`s is still checked. `srt bundle` and
      `srt pack --flux` do not carry isolates (no manifest to ride).
-5. **Only on demand**: async-generator exports (yield/return/next/cancel
-   messages; a never-ending generator is a subscription), `AbortSignal` on
-   calls, `instances` on a handle.
+5. **Streams** (DONE): an `async function*` export is pulled item by item.
+   Protocol: `Stream{id}` (child announces an async-iterable result),
+   `Next{id}` -> `Yield{id,value}`, `Return{id}`, and `Reply` still ends the
+   call (completed or threw). Parent: every call still returns a real
+   Promise, now carrying `next`/`return`/`[Symbol.asyncIterator]` (returns
+   itself); awaiting a stream rejects (pre-observed, so silent unless
+   awaited), iterating a plain call rejects. Types: generator exports map to
+   `AsyncIterableIterator<Y>`. Decisions and traps:
+   - Pump only while someone reads: the initial per-call task drives the
+     call until the child says plain-or-stream (settling the promise; it owns
+     the resolvers), then only while readers are queued; each `next()` pumps
+     for itself. A stream that is awaited and never iterated therefore does
+     not hold the runtime open; an open, read stream does (like an interval).
+   - Child serves `Next`/`Return` as spawned tasks (a subscription never
+     blocks the loop); plain calls keep the one-at-a-time contract. Async
+     generators queue concurrent `next()`s themselves, so parent-side steps
+     just answer in order.
+   - TRAP: native closures alive at teardown must capture no JS values (the
+     Persistent trap in flux/CLAUDE.md applies to captures): the first cut
+     leaked the promise's iterator object through its own
+     `[Symbol.asyncIterator]` closure and tripped `gc_obj_list` at
+     `JS_FreeRuntime`. Hence no iterator object and a capture-free
+     "return this".
+   Not done, on demand: `AbortSignal` on plain calls (can only mean "stop
+   waiting": a running sync export is uninterruptible short of `terminate()`),
+   `instances` on a handle (shape undecided), sync generators, zero-copy
+   buffers.
 
 ## Deliberately out of scope
 

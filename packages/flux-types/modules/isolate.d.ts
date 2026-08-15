@@ -25,12 +25,18 @@ declare module "flux:isolate" {
 
   /**
    * The isolate view of a module's exports: every function returns a Promise
-   * of what it returns in the isolate (an async function stays as it is), plus
+   * of what it returns in the isolate (an async function stays as it is); an
+   * async generator returns a stream to iterate with `for await` (one item is
+   * pulled per step; `break` ends the generator in the isolate); plus
    * `terminate()`. Non-function exports are not reachable.
    */
   type Isolated<T> = {
     [K in keyof T as T[K] extends (...args: any[]) => any ? K : never]: T[K] extends (...args: infer A) => infer R
-      ? (...args: A) => Promise<Awaited<R>>
+      ? 0 extends 1 & R // an `any` result (untyped module) is a plain call, not a stream
+        ? (...args: A) => Promise<any>
+        : R extends AsyncIterable<infer Y>
+          ? (...args: A) => AsyncIterableIterator<Y>
+          : (...args: A) => Promise<Awaited<R>>
       : never
   } & {
     /**
@@ -51,10 +57,14 @@ declare module "flux:isolate" {
    *
    * The child starts on the first call and lives until `terminate()` or the
    * parent's end; module state persists between calls; each `isolate()` call
-   * is its own instance. Calls run one at a time in call order. A throw in
-   * the export rejects that call; an uncaught error that ends the child
-   * rejects pending and later calls with a message naming it. Reserved
-   * names: `terminate`, `then`.
+   * is its own instance. Plain calls run one at a time in call order; streams
+   * (async generator exports) are served alongside them, so an open
+   * subscription never blocks a call. A throw in the export rejects that
+   * call (a throw in a generator rejects the pending step); an uncaught error
+   * that ends the child rejects pending and later calls with a message naming
+   * it. Awaiting a stream call rejects; iterating a plain call rejects. An
+   * open stream keeps both runtimes alive until it ends, `break`s, or the
+   * child is terminated. Reserved names: `terminate`, `then`.
    */
   export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>
 }

@@ -102,6 +102,13 @@ just as fatally. Userdata drops with the context, before the runtime is
 freed, so everything releases in order. See `WasmHandlers` (flux:wasm) and
 `FfiHandlers` (flux:ffi) for the worked pattern.
 
+The same holds for `Function::new` closures that stay reachable from JS at
+teardown (a method set on a long-lived object): a captured `Object`/`Value`
+is released by the closure's finalizer, too late, and trips the same
+assertion. Capture only Rust state; reach the object through `This`. See
+`attach_iterator` (flux:isolate), where `[Symbol.asyncIterator]` returns
+`this` instead of a captured iterator.
+
 ## Async results and errors
 
 Fallible async work returns a `Promised` future whose `Output` is

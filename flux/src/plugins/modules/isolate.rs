@@ -14,14 +14,22 @@
 //!   or the parent's end (exit, reload: dropping the parent context fires
 //!   every child's kill switch, transitively). Module state in the child
 //!   persists between calls; each `isolate()` call is its own instance.
-//! - Calls run one at a time in call order (the child is single-threaded); an
-//!   `async` export is awaited before the next call starts.
+//! - Plain calls run one at a time in call order (the child is
+//!   single-threaded); an `async` export is awaited before the next call
+//!   starts.
+//! - Streams: an export whose result is async-iterable (an `async function*`)
+//!   is pulled item by item. What the call returns is still a Promise, but one
+//!   that is also an async iterator: `for await (let x of handle.ticks())`
+//!   sends `Next` per item and `Return` on break; awaiting it instead rejects.
+//!   Items are values like results; a never-ending generator is a subscription
+//!   (an open stream keeps both runtimes alive until it is closed). Streams are
+//!   served alongside plain calls, so a subscription never blocks them.
 //! - A throw (or rejection) in the called export rejects that call with its
 //!   message. An uncaught error elsewhere in the child (a failed module load,
 //!   a throw out of a timer) is logged; when it ends the child, pending and
 //!   later calls reject with a message naming it.
 //! - `terminate()` kills the child now: busy JS is interrupted, the child
-//!   runtime is dropped, pending calls reject.
+//!   runtime is dropped, pending calls reject and open streams end.
 //! - Reserved names: `terminate` (the method) and `then` (so a handle is not a
 //!   thenable). Symbol properties are looked up on the handle itself.
 //!
@@ -30,25 +38,25 @@
 //!
 //! Marshalling only: the link, call protocol, and kill switch are
 //! `forge::isolate`; this layer spawns the thread and engine, routes replies to
-//! promises on the parent's end, and dispatches calls to the module namespace
-//! on the child's end.
+//! promises and iterators on the parent's end, and dispatches calls to the
+//! module namespace on the child's end.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::future::Future;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use rquickjs::atom::PredefinedAtom;
 use rquickjs::class::Trace;
-use rquickjs::function::{Args, Constructor, Rest};
+use rquickjs::function::{Args, Constructor, Rest, This};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::promise::{MaybePromise, Promised};
-use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value as JsValue};
-use tokio::sync::oneshot;
+use rquickjs::promise::MaybePromise;
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Promise, Value as JsValue};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
 use crate::logger::Logger;
-use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{mark_observed, with_pending, OptArg};
 use crate::plugins::value::{self, Neutral};
 use forge::isolate::{Kill, Link, Msg};
@@ -69,13 +77,20 @@ impl Drop for Isolates {
 
 type Reply = Result<Value, String>;
 
+/// What the child sends back about one call, routed to that call's slot.
+enum Event {
+  Stream,
+  Yield(Value),
+  Reply(Reply),
+}
+
 /// The parent's end of one running child.
 struct Instance {
   id: String,
   link: Link,
   kill: Arc<Kill>,
   next_call: AtomicU64,
-  pending: Mutex<HashMap<u64, oneshot::Sender<Reply>>>,
+  pending: Mutex<HashMap<u64, mpsc::UnboundedSender<Event>>>,
   /// Set once the child is gone (exited or terminated): the message every
   /// later call rejects with.
   exited: Mutex<Option<String>>,
@@ -84,16 +99,21 @@ struct Instance {
 }
 
 impl Instance {
-  fn deliver(&self, id: u64, result: Reply) {
-    if let Some(tx) = self.pending.lock().expect("pending lock poisoned").remove(&id) {
-      let _ = tx.send(result);
+  fn deliver(&self, id: u64, event: Event) {
+    let mut pending = self.pending.lock().expect("pending lock poisoned");
+    if matches!(event, Event::Reply(_)) {
+      if let Some(tx) = pending.remove(&id) {
+        let _ = tx.send(event);
+      }
+    } else if let Some(tx) = pending.get(&id) {
+      let _ = tx.send(event);
     }
   }
 
   fn exit(&self, reason: String) {
     *self.exited.lock().expect("exited lock poisoned") = Some(reason.clone());
     for (_, tx) in self.pending.lock().expect("pending lock poisoned").drain() {
-      let _ = tx.send(Err(reason.clone()));
+      let _ = tx.send(Event::Reply(Err(reason.clone())));
     }
   }
 
@@ -101,18 +121,20 @@ impl Instance {
     self.exited.lock().expect("exited lock poisoned").clone()
   }
 
-  /// Wait for call `id`'s reply. Whoever holds the link reads for everyone:
-  /// replies are routed to their call's slot, so a caller may return because
-  /// another caller delivered its reply.
-  async fn await_reply(&self, mut rx: oneshot::Receiver<Reply>) -> Reply {
+  /// Wait for the next event of one call. Whoever holds the link reads for
+  /// everyone: events are routed to their call's slot, so a caller may return
+  /// because another caller delivered its event.
+  async fn recv_event(&self, rx: &mut mpsc::UnboundedReceiver<Event>) -> Event {
     loop {
       tokio::select! {
         biased;
-        r = &mut rx => return r.unwrap_or_else(|_| Err(self.exited().unwrap_or_else(|| "isolate call dropped".to_string()))),
+        e = rx.recv() => return e.unwrap_or_else(|| Event::Reply(Err(self.exited().unwrap_or_else(|| "isolate call dropped".to_string())))),
         m = self.link.recv() => match m {
-          Some(Msg::Reply { id, result }) => self.deliver(id, result),
+          Some(Msg::Reply { id, result }) => self.deliver(id, Event::Reply(result)),
+          Some(Msg::Stream { id }) => self.deliver(id, Event::Stream),
+          Some(Msg::Yield { id, value }) => self.deliver(id, Event::Yield(value)),
           Some(Msg::Error(e)) => *self.last_error.lock().expect("last error lock poisoned") = Some(e),
-          Some(Msg::Call { .. }) => {}
+          Some(Msg::Call { .. } | Msg::Next { .. } | Msg::Return { .. }) => {}
           None => {
             let cause = self.last_error.lock().expect("last error lock poisoned").take();
             self.exit(match cause {
@@ -121,6 +143,90 @@ impl Instance {
             });
           }
         },
+      }
+    }
+  }
+}
+
+/// What a call turned out to be, as far as the parent knows.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+  /// No answer yet.
+  Unknown,
+  /// A plain value call (settled or about to settle the promise).
+  Plain,
+  /// A stream: items arrive per `next()`.
+  Stream,
+  /// A stream that has ended.
+  Ended,
+}
+
+/// One outstanding call on the parent, shared by whoever drives it: the
+/// initial pump (until the child says plain-or-stream, then while readers are
+/// queued) and each `next()`/`return()`. Nothing pumps a stream nobody is
+/// reading, so a stream that is awaited and never iterated does not hold the
+/// runtime open. Holds no JS values: the promise's iterator closures own this,
+/// so a JS reference here would be an untraceable cycle.
+struct CallState {
+  instance: Arc<Instance>,
+  id: u64,
+  name: String,
+  mode: Cell<Mode>,
+  /// The call's event slot; taken (`None`) once the call is over.
+  rx: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<Event>>>,
+  /// `next()`/`return()` callers waiting for an item (`Some`), the end
+  /// (`None`), or an error; answered in order, as the child answers.
+  waiters: RefCell<VecDeque<oneshot::Sender<Result<Option<Value>, String>>>>,
+}
+
+/// What one pumped event means for the call's promise (only the initial pump
+/// acts on it; readers pump only once the call is known to be a stream).
+enum Outcome {
+  Continue,
+  Settle(Reply),
+  Stream,
+  Over,
+}
+
+impl CallState {
+  fn answer(&self, r: Result<Option<Value>, String>) {
+    if let Some(w) = self.waiters.borrow_mut().pop_front() {
+      let _ = w.send(r);
+    }
+  }
+
+  fn answer_all(&self, r: Result<Option<Value>, String>) {
+    let mut waiters = self.waiters.borrow_mut();
+    let mut first = Some(r);
+    for w in waiters.drain(..) {
+      let _ = w.send(first.take().unwrap_or(Ok(None)));
+    }
+  }
+
+  /// Receive and apply one event of this call.
+  async fn pump_one(&self) -> Outcome {
+    let mut slot = self.rx.lock().await;
+    let Some(rx) = slot.as_mut() else { return Outcome::Over };
+    match self.instance.recv_event(rx).await {
+      Event::Stream => {
+        self.mode.set(Mode::Stream);
+        Outcome::Stream
+      }
+      Event::Yield(value) => {
+        self.answer(Ok(Some(value)));
+        Outcome::Continue
+      }
+      Event::Reply(result) => {
+        *slot = None;
+        if self.mode.get() == Mode::Stream {
+          self.mode.set(Mode::Ended);
+          self.answer_all(result.map(|_| None));
+          Outcome::Over
+        } else {
+          self.mode.set(Mode::Plain);
+          self.answer_all(Err(not_a_stream(&self.name)));
+          Outcome::Settle(result)
+        }
       }
     }
   }
@@ -143,24 +249,62 @@ pub struct Isolate {
 
 impl Isolate {
   /// Call export `name` in the child with `args`: what `handle.name(...args)`
-  /// does.
-  fn call<'js>(
-    &self,
-    ctx: Ctx<'js>,
-    name: String,
-    args: Vec<Neutral>,
-  ) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Neutral>>>> {
+  /// does. Returns the call's promise, which doubles as an async iterator for
+  /// stream results (see `attach_iterator`).
+  fn call<'js>(&self, ctx: Ctx<'js>, name: String, args: Vec<Neutral>) -> rquickjs::Result<JsValue<'js>> {
     let instance = self.instance(&ctx).map_err(|m| Exception::throw_message(&ctx, &m))?;
-    let (tx, rx) = oneshot::channel();
+    let (tx, rx) = mpsc::unbounded_channel();
     let id = instance.next_call.fetch_add(1, Ordering::Relaxed);
     instance.pending.lock().expect("pending lock poisoned").insert(id, tx);
-    let sent = instance.link.send(Msg::Call { id, name, args: args.into_iter().map(|a| a.0).collect() });
-    Ok(with_pending(&ctx, async move {
-      if let Err(e) = sent {
-        instance.deliver(id, Err(e));
+    let sent = instance.link.send(Msg::Call { id, name: name.clone(), args: args.into_iter().map(|a| a.0).collect() });
+    if let Err(e) = sent {
+      instance.deliver(id, Event::Reply(Err(e)));
+    }
+    let state = Rc::new(CallState {
+      instance,
+      id,
+      name,
+      mode: Cell::new(Mode::Unknown),
+      rx: tokio::sync::Mutex::new(Some(rx)),
+      waiters: RefCell::default(),
+    });
+    let (promise, resolve, reject) = Promise::new(&ctx)?;
+    // The initial pump: drives the call until the child says what it is (a
+    // plain call is settled here), then keeps going only while readers that
+    // queued before that answer are waiting. Owns the resolvers, so they die
+    // with the task, not with the (JS-owned) state.
+    let (pump_ctx, pump_state, pump_promise) = (ctx.clone(), state.clone(), promise.clone());
+    ctx.spawn(async move {
+      let reject_with = |msg: String| {
+        if let Ok(err) = Exception::from_message(pump_ctx.clone(), &msg) {
+          let _ = reject.call::<_, ()>((err,));
+        }
+      };
+      loop {
+        if pump_state.mode.get() != Mode::Unknown && pump_state.waiters.borrow().is_empty() {
+          return;
+        }
+        match pump_state.pump_one().await {
+          Outcome::Continue => {}
+          Outcome::Over => return,
+          Outcome::Settle(Ok(v)) => {
+            let _ = resolve.call::<_, ()>((Neutral(v),));
+            return;
+          }
+          Outcome::Settle(Err(e)) => {
+            reject_with(e);
+            return;
+          }
+          Outcome::Stream => {
+            // Only a caller who awaits the stream sees this; a reader does not.
+            mark_observed(pump_promise.as_value());
+            reject_with(format!("export '{}' returned a stream: iterate it with for await", pump_state.name));
+          }
+        }
       }
-      instance.await_reply(rx).await.map(Neutral)
-    }))
+    });
+    attach_iterator(&ctx, &promise, state)?;
+    Ok(promise.into_value())
   }
 
   /// Kill the child now. Later calls reject; a handle that never called
@@ -206,6 +350,87 @@ impl Isolate {
     *self.instance.borrow_mut() = Some(instance.clone());
     Ok(instance)
   }
+}
+
+fn not_a_stream(name: &str) -> String {
+  format!("export '{name}' is not a stream")
+}
+
+/// One `{ value, done }` iterator result.
+struct IterResult(Option<Value>);
+
+impl<'js> IntoJs<'js> for IterResult {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("done", self.0.is_none())?;
+    match self.0 {
+      Some(v) => obj.set("value", Neutral(v))?,
+      None => obj.set("value", JsValue::new_undefined(ctx.clone()))?,
+    }
+    Ok(obj.into_value())
+  }
+}
+
+/// Make the call's promise its own async iterator: `next()` pulls one item
+/// from the child, `return()` ends the stream early, `[Symbol.asyncIterator]`
+/// returns the promise itself. Iterating a plain call rejects. The closures
+/// capture no JS values (a capture alive at teardown is released too late,
+/// see the Persistent trap in flux/CLAUDE.md), which is also why there is no
+/// separate iterator object.
+fn attach_iterator<'js>(ctx: &Ctx<'js>, promise: &Promise<'js>, state: Rc<CallState>) -> rquickjs::Result<()> {
+  let s = state.clone();
+  promise.set(
+    "next",
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<JsValue<'js>> {
+      stream_step(ctx, &s, Msg::Next { id: s.id })
+    })?,
+  )?;
+  let s = state;
+  promise.set(
+    "return",
+    Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<JsValue<'js>> {
+      stream_step(ctx, &s, Msg::Return { id: s.id })
+    })?,
+  )?;
+  promise.set(PredefinedAtom::SymbolAsyncIterator, Function::new(ctx.clone(), |this: This<JsValue<'js>>| this.0)?)
+}
+
+/// One `next()`/`return()`: ask the child (unless the call is known not to be
+/// a stream, or the stream is over), then wait for the answer, pumping the
+/// call's events once it is known to be a stream (before that the initial
+/// pump does, and it settles the promise). Steps are answered in order.
+fn stream_step<'js>(ctx: Ctx<'js>, state: &Rc<CallState>, msg: Msg) -> rquickjs::Result<JsValue<'js>> {
+  match state.mode.get() {
+    Mode::Plain => return Err(Exception::throw_message(&ctx, &not_a_stream(&state.name))),
+    Mode::Ended => return IterResult(None).into_js(&ctx),
+    Mode::Unknown | Mode::Stream => {}
+  }
+  let (tx, mut rx) = oneshot::channel();
+  state.waiters.borrow_mut().push_back(tx);
+  if let Err(e) = state.instance.link.send(msg) {
+    state.answer(Err(e));
+  }
+  let state = state.clone();
+  with_pending(&ctx, async move {
+    let done = |r: Result<Result<Option<Value>, String>, oneshot::error::RecvError>| match r {
+      Ok(r) => r.map(IterResult),
+      Err(_) => Err(format!("stream '{}' dropped", state.name)),
+    };
+    loop {
+      if state.mode.get() == Mode::Unknown {
+        // The initial pump answers us (it runs until we are answered).
+        return done(rx.await);
+      }
+      tokio::select! {
+        biased;
+        r = &mut rx => return done(r),
+        outcome = state.pump_one() => if matches!(outcome, Outcome::Over) {
+          return done(rx.await);
+        },
+      }
+    }
+  })
+  .into_js(&ctx)
 }
 
 /// `isolate(id, { args? })`: a handle whose properties call the exports of the
@@ -294,20 +519,71 @@ fn spawn_thread(
     .map_err(|e| format!("isolate: failed to start thread: {e}"))
 }
 
-/// The child's dispatcher: one call at a time from the link, each looked up
-/// on the module namespace, awaited, and answered. Ends when the parent closes
-/// the link, after which nothing holds the child's loop open.
+/// The child's dispatcher. Plain calls run one at a time from the link, each
+/// looked up on the module namespace, awaited, and answered. A call whose
+/// result is async-iterable becomes a stream: its iterator is kept by call id
+/// and each `Next`/`Return` is served as its own task, so an open stream never
+/// holds up the loop. Ends when the parent closes the link, after which
+/// nothing holds the child's loop open.
 fn serve<'js>(ctx: Ctx<'js>, ns: Object<'js>, link: Link) {
+  let streams: Rc<RefCell<HashMap<u64, Object<'js>>>> = Rc::default();
   ctx.clone().spawn(async move {
     while let Some(msg) = link.recv().await {
-      let Msg::Call { id, name, args } = msg else { continue };
-      let result = call_export(&ctx, &ns, &name, args).await;
-      let _ = link.send(Msg::Reply { id, result });
+      match msg {
+        Msg::Call { id, name, args } => match start_call(&ctx, &ns, &name, args) {
+          Ok(Started::Stream(iter)) => {
+            streams.borrow_mut().insert(id, iter);
+            let _ = link.send(Msg::Stream { id });
+          }
+          Ok(Started::Value(returned)) => {
+            let result = settle(&ctx, returned).await;
+            let _ = link.send(Msg::Reply { id, result });
+          }
+          Err(e) => {
+            let _ = link.send(Msg::Reply { id, result: Err(e) });
+          }
+        },
+        Msg::Next { id } => {
+          let Some(iter) = streams.borrow().get(&id).cloned() else { continue };
+          let (ctx, link, streams) = (ctx.clone(), link.clone(), streams.clone());
+          ctx.clone().spawn(async move {
+            match iter_step(&ctx, &iter, "next").await {
+              Ok(Some(value)) => {
+                let _ = link.send(Msg::Yield { id, value });
+              }
+              Ok(None) => {
+                streams.borrow_mut().remove(&id);
+                let _ = link.send(Msg::Reply { id, result: Ok(Value::Null) });
+              }
+              Err(e) => {
+                streams.borrow_mut().remove(&id);
+                let _ = link.send(Msg::Reply { id, result: Err(e) });
+              }
+            }
+          });
+        }
+        Msg::Return { id } => {
+          let Some(iter) = streams.borrow_mut().remove(&id) else { continue };
+          let (ctx, link) = (ctx.clone(), link.clone());
+          ctx.clone().spawn(async move {
+            let result = iter_step(&ctx, &iter, "return").await.map(|_| Value::Null);
+            let _ = link.send(Msg::Reply { id, result });
+          });
+        }
+        Msg::Reply { .. } | Msg::Stream { .. } | Msg::Yield { .. } | Msg::Error(_) => {}
+      }
     }
   });
 }
 
-async fn call_export<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Vec<Value>) -> Reply {
+/// A call's immediate outcome on the child: a stream's iterator, or the value
+/// (possibly a promise) to settle and send back.
+enum Started<'js> {
+  Stream(Object<'js>),
+  Value(JsValue<'js>),
+}
+
+fn start_call<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Vec<Value>) -> Result<Started<'js>, String> {
   let export: JsValue<'js> = ns.get(name).map_err(|e| call_error(ctx, e))?;
   let f = export.into_function().ok_or_else(|| format!("no exported function '{name}'"))?;
   let mut call_args = Args::new(ctx.clone(), args.len());
@@ -315,10 +591,41 @@ async fn call_export<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Ve
     call_args.push_arg(Neutral(arg)).map_err(|e| call_error(ctx, e))?;
   }
   let returned: JsValue<'js> = f.call_arg(call_args).map_err(|e| call_error(ctx, e))?;
+  // Async-iterable (an async generator object, or anything with the symbol):
+  // a stream. A promise or plain value settles as before.
+  if let Some(obj) = returned.as_object() {
+    let factory: Option<Function<'js>> =
+      obj.get(PredefinedAtom::SymbolAsyncIterator).map_err(|e| call_error(ctx, e))?;
+    if let Some(factory) = factory {
+      let iter: Object<'js> = factory.call((This(obj.clone()),)).map_err(|e| call_error(ctx, e))?;
+      return Ok(Started::Stream(iter));
+    }
+  }
+  Ok(Started::Value(returned))
+}
+
+async fn settle<'js>(ctx: &Ctx<'js>, returned: JsValue<'js>) -> Reply {
   mark_observed(&returned);
   let settled =
     MaybePromise::from_value(returned).into_future::<JsValue<'js>>().await.map_err(|e| call_error(ctx, e))?;
   value::from_js(ctx, settled).map_err(|e| call_error(ctx, e))
+}
+
+/// One iterator method call (`next`/`return`) on a stream's iterator, awaited:
+/// `Some(value)` for an item, `None` when done. A missing `return` is done.
+async fn iter_step<'js>(ctx: &Ctx<'js>, iter: &Object<'js>, method: &str) -> Result<Option<Value>, String> {
+  let f: Option<Function<'js>> = iter.get(method).map_err(|e| call_error(ctx, e))?;
+  let Some(f) = f else { return Ok(None) };
+  let returned: JsValue<'js> = f.call((This(iter.clone()),)).map_err(|e| call_error(ctx, e))?;
+  mark_observed(&returned);
+  let result: Object<'js> =
+    MaybePromise::from_value(returned).into_future::<Object<'js>>().await.map_err(|e| call_error(ctx, e))?;
+  let done: bool = result.get::<_, Option<bool>>("done").map_err(|e| call_error(ctx, e))?.unwrap_or(false);
+  if done {
+    return Ok(None);
+  }
+  let value: JsValue<'js> = result.get("value").map_err(|e| call_error(ctx, e))?;
+  value::from_js(ctx, value).map(Some).map_err(|e| call_error(ctx, e))
 }
 
 /// The rejection message for a failed call: the thrown exception's message

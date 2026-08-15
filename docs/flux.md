@@ -305,8 +305,32 @@ parent runtime, so an exit or reload never leaks a background thread. In
 TypeScript, `isolate<typeof import("./worker")>("worker")` types the handle
 (`import type` keeps the module out of the main bundle).
 
+Streams: an `async function*` export is pulled item by item with `for await`.
+Each step is one round trip (backpressure by construction), `break` runs the
+generator's `finally` in the isolate, a throw in the generator rejects the
+pending step, and a never-ending generator is a subscription. Streams are
+served alongside plain calls, so an open subscription never blocks one. What
+the call returns is still a Promise, but one that is also an async iterator;
+awaiting a stream call rejects, iterating a plain call rejects.
+
+```js
+// worker.js
+export async function* progress(total) {
+  for (let done = 0; done < total; done++) {
+    await step()
+    yield { done, total }
+  }
+}
+
+// main.js
+for await (let p of worker.progress(100)) console.log(p.done)
+```
+
+An open stream keeps both runtimes alive until it ends, is broken out of, or
+the child is terminated, like an uncleared interval.
+
 Not yet: zero-copy `ArrayBuffer` transfer (bytes are copied in and out),
-async-generator exports (streaming results), cancellation of a running call.
+cancellation of a running plain call (`terminate()` is the only interrupt).
 
 ### flux:process
 

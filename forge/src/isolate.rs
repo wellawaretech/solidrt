@@ -3,7 +3,10 @@
 //!
 //! A `Link` is one end of a bidirectional, unbounded message queue. Calls go
 //! parent -> child (`Msg::Call`), replies child -> parent (`Msg::Reply`), and
-//! a child's uncaught errors child -> parent (`Msg::Error`). Arguments and
+//! a child's uncaught errors child -> parent (`Msg::Error`). A call whose
+//! result is a stream (an async iterable) is announced with `Msg::Stream` and
+//! then pulled item by item (`Msg::Next` -> `Msg::Yield`) until a `Reply` ends
+//! it, or `Msg::Return` ends it early. Arguments and
 //! results are neutral `Value`s (copied, shared-nothing). `Link::pair` makes
 //! the two ends; the host hands one to each runtime. Which runtime a link
 //! belongs to and how the peer runs (a thread, an engine) is the host's
@@ -22,8 +25,18 @@ pub enum Msg {
   /// a `Reply` carrying the same `id`.
   Call { id: u64, name: String, args: Vec<Value> },
   /// Child -> parent: the outcome of the call `id` (a thrown error as its
-  /// message).
+  /// message). For a stream this is the end of it: `Ok` when the iterator
+  /// completed, `Err` when it threw.
   Reply { id: u64, result: Result<Value, String> },
+  /// Child -> parent: call `id` returned an async iterable; its items follow
+  /// as `Yield`s, one per `Next`.
+  Stream { id: u64 },
+  /// Parent -> child: pull the next item of stream `id`.
+  Next { id: u64 },
+  /// Parent -> child: end stream `id` early (the iterator's `return()`).
+  Return { id: u64 },
+  /// Child -> parent: one item of stream `id`.
+  Yield { id: u64, value: Value },
   /// Child -> parent: an uncaught error not tied to a call (already logged on
   /// the child's side).
   Error(String),
