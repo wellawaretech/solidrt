@@ -9,7 +9,9 @@ mod tests;
 #[cfg(feature = "gui")]
 pub use plugins::gui;
 
-pub use engine::{on_shutdown, EngineConfig, ExecHandle, FluxEngine, FluxEngineBuilder, ShutdownHooks};
+pub use engine::{
+  on_shutdown, EngineConfig, ExecHandle, FluxEngine, FluxEngineBuilder, IsolateResolver, ModuleCode, ShutdownHooks,
+};
 pub use forge::fetch::{do_fetch, ResponseData};
 pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};

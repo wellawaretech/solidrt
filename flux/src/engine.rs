@@ -61,6 +61,21 @@ impl ExecHandle {
   }
 }
 
+/// A JS module ready to evaluate: source text (dev, standalone `flux`) or
+/// QuickJS bytecode (packed apps; the production runtime has no compiler).
+#[derive(Clone)]
+pub enum ModuleCode {
+  Source(String),
+  Bytecode(Vec<u8>),
+}
+
+/// The embedder's answer to "where is isolate `<id>`": the module a
+/// `"use isolate"` entry compiles to, by the id `isolate(id)` was called
+/// with. `Err` is the message the caller's promise rejects with. Standalone
+/// `flux` reads `<entry dir>/<id>.js`; lattice resolves through the app's
+/// assets.
+pub type IsolateResolver = Arc<dyn Fn(&str) -> Result<ModuleCode, String> + Send + Sync>;
+
 /// The host-describing part of an engine's configuration: what a runtime
 /// passes on unchanged to the runtimes it spawns (`flux:isolate`). Stored in
 /// context userdata so a child can be built from `FluxEngine::config(&ctx)`.
@@ -75,6 +90,8 @@ pub struct EngineConfig {
   pub user_agent: Option<String>,
   #[qjs(skip_trace)]
   pub stack_size: Option<usize>,
+  #[qjs(skip_trace)]
+  pub isolate_resolver: Option<IsolateResolver>,
 }
 
 pub struct FluxEngineBuilder {
@@ -85,6 +102,7 @@ pub struct FluxEngineBuilder {
   cache_dir: Option<PathBuf>,
   user_agent: Option<String>,
   stack_size: Option<usize>,
+  isolate_resolver: Option<IsolateResolver>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
 }
@@ -98,6 +116,7 @@ impl FluxEngineBuilder {
     b.cache_dir = config.cache_dir;
     b.user_agent = config.user_agent;
     b.stack_size = config.stack_size;
+    b.isolate_resolver = config.isolate_resolver;
     b
   }
 
@@ -145,6 +164,16 @@ impl FluxEngineBuilder {
     self
   }
 
+  /// How `flux:isolate` finds the module for `isolate(id)`. Without one every
+  /// `isolate()` call rejects. Inherited by spawned runtimes, so isolates nest.
+  pub fn isolate_resolver<F>(mut self, f: F) -> Self
+  where
+    F: Fn(&str) -> Result<ModuleCode, String> + Send + Sync + 'static,
+  {
+    self.isolate_resolver = Some(Arc::new(f));
+    self
+  }
+
   /// A kill switch: while `flag` is set, running JS is interrupted (an
   /// uncatchable error unwinds it) so the engine's loop regains control. Used
   /// by isolates so `terminate()` can stop a busy child; the flag alone does
@@ -185,6 +214,7 @@ impl FluxEngineBuilder {
       cache_dir: self.cache_dir,
       user_agent: self.user_agent,
       stack_size: self.stack_size,
+      isolate_resolver: self.isolate_resolver,
     };
     // The config lands in userdata whole (for children) and split into the
     // per-plugin userdata fetch/http read.
@@ -240,6 +270,7 @@ impl FluxEngine {
       cache_dir: None,
       user_agent: None,
       stack_size: None,
+      isolate_resolver: None,
       interrupt: None,
       on_uncaught: None,
     }
@@ -287,6 +318,42 @@ impl FluxEngine {
           Ok(promise) => report_rejection(&ctx, promise),
           Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
         }
+      })
+      .await;
+  }
+
+  /// Evaluate a module and, once its top level has finished (including any
+  /// top-level `await`), hand its namespace to `on_ready`; then run the event
+  /// loop. A failed evaluation is reported like the entry module's; `on_ready`
+  /// is not called. This is how an isolate serves its exports.
+  pub async fn eval_module<F>(self, code: ModuleCode, on_ready: F)
+  where
+    F: for<'js> FnOnce(Ctx<'js>, rquickjs::Object<'js>) + Send + 'static,
+  {
+    self
+      .run(move |ctx| {
+        use rquickjs::{CatchResultExt, Module};
+        let declared = match code {
+          ModuleCode::Bytecode(bytes) => {
+            unsafe { Module::load(ctx.clone(), &bytes) }.map_err(|e| format!("bytecode load error: {e}"))
+          }
+          #[cfg(feature = "compile")]
+          ModuleCode::Source(source) => {
+            Module::declare(ctx.clone(), "main", source).catch(&ctx).map_err(|e| format!("module error: {e:?}"))
+          }
+          #[cfg(not(feature = "compile"))]
+          ModuleCode::Source(_) => Err("this build cannot evaluate source (compile feature off)".to_string()),
+        };
+        let evaluated = declared.and_then(|m| m.eval().catch(&ctx).map_err(|e| format!("module error: {e:?}")));
+        let (module, promise) = match evaluated {
+          Ok(pair) => pair,
+          Err(msg) => return report_error(&ctx, &msg),
+        };
+        report_rejection(&ctx, promise.clone());
+        on_fulfilled(&ctx, promise, move |ctx| match module.namespace() {
+          Ok(ns) => on_ready(ctx, ns),
+          Err(e) => report_error(&ctx, &format!("module namespace error: {e}")),
+        });
       })
       .await;
   }
@@ -348,6 +415,27 @@ fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger, on_unca
     if let Some(hook) = on_uncaught {
       hook.call(&message);
     }
+  }
+}
+
+/// Run `f` once `promise` fulfills (a rejection is somebody else's report).
+fn on_fulfilled<'js, F>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>, f: F)
+where
+  F: FnOnce(Ctx<'js>) + 'js,
+{
+  use rquickjs::function::{OnceFn, This};
+  use rquickjs::Function;
+
+  let handler = match Function::new(ctx.clone(), OnceFn::from(move |ctx: Ctx<'js>| f(ctx))) {
+    Ok(f) => f,
+    Err(e) => return ctx.logger().error(&format!("failed to build fulfillment handler: {e}")),
+  };
+  let then = match promise.then() {
+    Ok(then) => then,
+    Err(e) => return ctx.logger().error(&format!("failed to attach fulfillment handler: {e}")),
+  };
+  if let Err(e) = then.call::<_, ()>((This(promise), handler)) {
+    ctx.logger().error(&format!("failed to attach fulfillment handler: {e}"));
   }
 }
 

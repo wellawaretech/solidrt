@@ -1,10 +1,10 @@
 declare module "flux:isolate" {
   /**
-   * A value that can cross a port: null (undefined becomes null), boolean,
-   * number, string, ArrayBuffer or any typed-array view (arrives as a
-   * Uint8Array copy), arrays and plain objects of these. Anything else
-   * (functions, class instances, Date/Map/Set, BigInt, symbols) throws a
-   * TypeError at `send`.
+   * A value that can cross to or from an isolate: null (undefined becomes
+   * null), boolean, number, string, ArrayBuffer or any typed-array view
+   * (arrives as a Uint8Array copy), arrays and plain objects of these.
+   * Anything else (functions, class instances, Date/Map/Set, BigInt, symbols)
+   * throws a TypeError as an argument and rejects the call as a result.
    */
   type Sendable =
     | null
@@ -17,51 +17,44 @@ declare module "flux:isolate" {
     | Sendable[]
     | { [key: string]: Sendable }
 
-  /** Options for {@link spawn}. */
-  type SpawnOptions = {
+  /** Options for {@link isolate}. */
+  type IsolateOptions = {
     /** The child's `flux:process` `argv`. Default `[]`. */
     args?: string[]
   }
 
   /**
-   * One end of a port between two runtimes. Messages are copied
-   * (shared-nothing). A pending `recv()` keeps its own runtime alive; two ends
-   * both waiting forever is a program bug nothing detects. `Promise.race`
-   * over several `recv()`s is not a select: the losing calls still consume
-   * their messages.
+   * The isolate view of a module's exports: every function returns a Promise
+   * of what it returns in the isolate (an async function stays as it is), plus
+   * `terminate()`. Non-function exports are not reachable.
    */
-  export class Port implements AsyncIterable<any> {
-    private constructor()
-    /** Copy `value` to the peer. Throws for unsendable values and once this end is closed. */
-    send(value: Sendable): void
+  type Isolated<T> = {
+    [K in keyof T as T[K] extends (...args: any[]) => any ? K : never]: T[K] extends (...args: infer A) => infer R
+      ? (...args: A) => Promise<Awaited<R>>
+      : never
+  } & {
     /**
-     * The next message, or `undefined` once the peer has closed (or exited)
-     * and the queue is drained. Rejects with the peer's uncaught error
-     * (module throw, unhandled rejection, a throw out of a callback) when one
-     * happens; later calls keep receiving.
-     */
-    recv(): Promise<any>
-    /** Stop sending from this end. The peer's `recv()` drains, then reports `undefined`. */
-    close(): void
-    /**
-     * Kill the child now (parent's end only; a no-op on the child's): busy JS
-     * is interrupted, the child runtime is dropped, this end's `recv()`
-     * reports `undefined`.
+     * Kill the child now: busy JS is interrupted, the child runtime is
+     * dropped, pending and later calls reject. A handle that never called
+     * anything never spawned.
      */
     terminate(): void
-    /** `recv()` in a loop, ending when the peer closes. */
-    [Symbol.asyncIterator](): AsyncIterator<any>
   }
 
   /**
-   * Run `source` as a JS module in a new runtime on its own thread (own heap,
-   * own event loop, the non-gui `flux:*` modules) and return this end of the
-   * port to it. The child reaches the other end as `port` from this module.
-   * Children die with their parent runtime. Errors starting the child surface
-   * on `recv()`.
+   * A handle on an isolate module: a `"use isolate"` module in a SolidRT
+   * project (id = its path relative to the source root, without extension),
+   * or `<id>.js` next to the entry under standalone flux. Each property is
+   * an async function that runs the export of that name in a second runtime
+   * on its own thread (own heap, own event loop, the non-gui `flux:*`
+   * modules). Arguments and results are copied ({@link Sendable}).
+   *
+   * The child starts on the first call and lives until `terminate()` or the
+   * parent's end; module state persists between calls; each `isolate()` call
+   * is its own instance. Calls run one at a time in call order. A throw in
+   * the export rejects that call; an uncaught error that ends the child
+   * rejects pending and later calls with a message naming it. Reserved
+   * names: `terminate`, `then`.
    */
-  export function spawn(source: string, opts?: SpawnOptions): Port
-
-  /** The port to the parent inside a spawned runtime; `undefined` in a runtime that was not spawned. */
-  export const port: Port | undefined
+  export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>
 }

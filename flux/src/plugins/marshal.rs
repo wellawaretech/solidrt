@@ -10,7 +10,7 @@
 
 use std::future::Future;
 
-use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor};
+use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor, This};
 use rquickjs::promise::Promised;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Value};
 
@@ -120,4 +120,24 @@ where
   let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
   attach.call::<_, ()>((obj.clone(),))?;
   Ok(())
+}
+
+/// Mark a returned promise as handled at the JS-engine level before its result is
+/// read natively through `MaybePromise`/`into_future`. `PromiseFuture::poll`
+/// takes a fast path: when the promise has already settled (e.g. a handler
+/// synchronously returns `Promise.reject(e)`), it reads the result via
+/// `JS_PromiseResult` directly and never calls `.then()`/`.catch()`. QuickJS's
+/// unhandled-rejection tracker only clears when a reaction is attached, so
+/// without this a rejection we genuinely route to `error()` is still reported by
+/// `engine::flush_rejections` as if nobody looked at it.
+///
+/// The reaction must be a real no-op rejection handler, not `Undefined`:
+/// `.then(_, undefined)` marks this promise handled but yields a derived promise
+/// that re-rejects with the same reason and is itself unhandled, so the rejection
+/// simply reappears. A no-op `onRejected` lets the derived promise resolve.
+pub fn mark_observed<'js>(val: &Value<'js>) {
+  let Some(promise) = val.as_promise() else { return };
+  let Ok(noop) = Function::new(promise.ctx().clone(), || {}) else { return };
+  let Ok(catch) = promise.catch() else { return };
+  let _ = catch.call::<_, Value<'_>>((This(promise.clone()), noop));
 }

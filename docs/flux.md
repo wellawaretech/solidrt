@@ -265,41 +265,48 @@ let jpg = encodeImage(img, { format: "jpeg", quality: 0.8 })
 
 ### flux:isolate
 
-Run a JS module on another thread and talk to it over a port. Each isolate is
-a second flux runtime: its own heap, its own event loop, the non-gui `flux:*`
-modules and standard globals. Messages are copied across (shared-nothing):
-null, booleans, numbers, strings, byte buffers (any typed-array view arrives
-as a `Uint8Array`), arrays and plain objects; anything else throws a
-`TypeError` at `send`. This is where a long synchronous `flux:ffi` or
+Call a module's exports on another thread. `isolate(id)` is a handle on an
+isolate module (in a SolidRT project a module with the `"use isolate"`
+directive, id = its path relative to the source root without extension; under
+standalone `flux` the file `<id>.js` next to the entry). Every property of the
+handle is an async function that runs the export of that name in a second
+flux runtime: its own heap, its own event loop, the non-gui `flux:*` modules
+and standard globals. This is where a long synchronous `flux:ffi` or
 `flux:wasm` call, or a heavy JS computation, goes so it does not stall the
 main loop.
 
 ```js
-import { spawn } from "flux:isolate"
+// worker.js ("use isolate" in a SolidRT project)
+import { open } from "flux:ffi"
+let lib = open("libfoo.so", { ... })          // module state lives in the isolate
+export function decode(buf) { return lib.symbols.decode(buf) }
+export function sum(n) { let s = 0; for (let i = 0; i < n; i++) s += i; return s }
+```
 
-let worker = spawn(`
-  import { port } from "flux:isolate"       // the child's end
-  for await (let req of port) port.send(crunch(req))
-`, { args: ["--fast"] })                     // the child's flux:process argv
+```js
+// main.js
+import { isolate } from "flux:isolate"
+let worker = isolate("worker", { args: ["--fast"] })   // args: the child's flux:process argv
 
-worker.send({ n: 42 })                       // copy a value to the child
-let result = await worker.recv()             // next message; undefined once the child is closed/exited
-for await (let msg of worker) { ... }        // the same, as a loop
-worker.close()                               // no more sends; the child's loop ends after draining
+let s = await worker.sum(1_000_000)          // first call spawns the child; main stays free
+let out = await worker.decode(bytes)         // same instance, calls run one at a time in order
 worker.terminate()                           // kill now, even mid-computation
 ```
 
-An uncaught error in the child (module throw, unhandled rejection, a throw
-out of a timer) is logged and rejects the parent's pending or next `recv()`;
-later calls keep receiving. Children die with their parent runtime, so an
-exit or reload never leaks a background thread. A pending `recv()` holds its
-own runtime alive; two ends both waiting forever is a program bug, like Go's
-"all goroutines are asleep". `Promise.race` over several `recv()`s is not a
-select: the losing calls still consume their messages, so read one port per
-loop.
+Arguments and results are copied across (shared-nothing): null, booleans,
+numbers, strings, byte buffers (any typed-array view arrives as a
+`Uint8Array`), arrays and plain objects; anything else throws a `TypeError`
+as an argument and rejects the call as a result. Async exports are awaited
+in the child. A throw in the export rejects that call and the isolate keeps
+running; an uncaught error that ends the child (a failed module load) rejects
+pending and later calls with a message naming it. Each `isolate()` call is
+its own instance, so two handles are two runtimes. Children die with their
+parent runtime, so an exit or reload never leaks a background thread. In
+TypeScript, `isolate<typeof import("./worker")>("worker")` types the handle
+(`import type` keeps the module out of the main bundle).
 
-Not yet: zero-copy `ArrayBuffer` transfer (bytes are copied in and out) and
-spawning from a path or bytecode (read the file and pass its text).
+Not yet: zero-copy `ArrayBuffer` transfer (bytes are copied in and out),
+async-generator exports (streaming results), cancellation of a running call.
 
 ### flux:process
 

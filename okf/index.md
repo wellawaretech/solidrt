@@ -20,6 +20,13 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   A packed SolidRT app presenting live runtime introspection (stats, logs,
   tree over snapshot, clock transport) as a peer front-end to the MCP bridge,
   both clients of /__control__. Never a dev-server client.
+- **[Isolates (compute off the JS thread)](plans/isolates-and-ports.md)** [2026-08-15]
+  A synchronous native call through flux:ffi or flux:wasm stalls the whole
+  runtime (dropped frames in a GUI app, unanswered requests in a flux:http
+  server) and there is no worker or thread primitive to move it to; the
+  mechanism is a second flux runtime per "use isolate" module, addressed by
+  ordinary typed function calls, with forge::Value as the neutral message
+  type.
 - **[Fonts as pack-time payload](plans/packaged-fonts.md)** [2026-07-20]
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
@@ -247,12 +254,6 @@ Shaped, not started.
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
   frosted panels with correct see-through semantics, no GLSL and no root
   layer.
-- **[Isolates and ports (compute off the JS thread)](backlog/isolates-and-ports.md)** [2026-08-15]
-  A synchronous native call through flux:ffi or flux:wasm stalls the whole
-  runtime (dropped frames in a GUI app, unanswered requests in a flux:http
-  server) and there is no worker or thread primitive to move it to; build
-  spawn + ports per okf/notes/channels-concurrency.md, with forge::Value as
-  the neutral message type.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back

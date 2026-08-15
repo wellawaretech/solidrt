@@ -1,6 +1,8 @@
 // flux - run a JS source file via FluxEngine
 
-use flux::{FluxEngine, LogLevel, ProcessArgs};
+use std::path::{Path, PathBuf};
+
+use flux::{FluxEngine, LogLevel, ModuleCode, ProcessArgs};
 
 fn log_fn(_level: LogLevel, msg: &str) {
   println!("{msg}");
@@ -30,6 +32,21 @@ async fn main() {
     }),
   };
 
-  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
+  // `isolate("worker")` is `<entry dir>/worker.js`; a stdin script has no
+  // directory, so its isolates live under the working directory.
+  let base: PathBuf = match path.as_deref() {
+    Some("-") | None => PathBuf::from("."),
+    Some(p) => Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
+  };
+  let engine = FluxEngine::builder()
+    .logger(log_fn)
+    .userdata(ProcessArgs(argv))
+    .isolate_resolver(move |id| {
+      let file = base.join(format!("{id}.js"));
+      std::fs::read_to_string(&file)
+        .map(ModuleCode::Source)
+        .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))
+    })
+    .build();
   engine.eval_source(&source).await;
 }

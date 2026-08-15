@@ -5,7 +5,6 @@ use hyper::service::service_fn;
 use hyper::upgrade::OnUpgrade;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use rquickjs::class::Trace;
-use rquickjs::function::This;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -15,7 +14,7 @@ use std::sync::Arc;
 
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{mark_observed, OptArg};
 use crate::plugins::modules::p2p::P2pEndpoint;
 use crate::plugins::modules::websocket::{
   message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
@@ -145,26 +144,6 @@ struct Handlers<'js> {
   routes: Option<Rc<RouteTable<RouteHandler<'js>>>>,
   websocket: Option<Rc<WsHandlers<'js>>>,
   server: Class<'js, Server>,
-}
-
-/// Mark a returned promise as handled at the JS-engine level before its result is
-/// read natively through `MaybePromise`/`into_future`. `PromiseFuture::poll`
-/// takes a fast path: when the promise has already settled (e.g. a handler
-/// synchronously returns `Promise.reject(e)`), it reads the result via
-/// `JS_PromiseResult` directly and never calls `.then()`/`.catch()`. QuickJS's
-/// unhandled-rejection tracker only clears when a reaction is attached, so
-/// without this a rejection we genuinely route to `error()` is still reported by
-/// `engine::flush_rejections` as if nobody looked at it.
-///
-/// The reaction must be a real no-op rejection handler, not `Undefined`:
-/// `.then(_, undefined)` marks this promise handled but yields a derived promise
-/// that re-rejects with the same reason and is itself unhandled, so the rejection
-/// simply reappears. A no-op `onRejected` lets the derived promise resolve.
-fn mark_observed<'js>(val: &Value<'js>) {
-  let Some(promise) = val.as_promise() else { return };
-  let Ok(noop) = Function::new(promise.ctx().clone(), || {}) else { return };
-  let Ok(catch) = promise.catch() else { return };
-  let _ = catch.call::<_, Value<'_>>((This(promise.clone()), noop));
 }
 
 /// Invoke a JS request handler `(req, server)`, await a promise result, and turn

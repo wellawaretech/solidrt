@@ -1,11 +1,13 @@
-//! Engine-free half of isolates: the port link between two runtimes and the
-//! kill switch that ends one.
+//! Engine-free half of isolates: the link between two runtimes, the call
+//! protocol that travels on it, and the kill switch that ends one.
 //!
-//! A `Link` is one end of a bidirectional, unbounded message queue carrying
-//! neutral `Value`s (copied, shared-nothing) plus the peer's uncaught errors.
-//! `Link::pair` makes the two ends; the host hands one to each runtime. Which
-//! runtime a link belongs to and how the peer runs (a thread, an engine) is the
-//! host's business (see okf/backlog/isolates-and-ports.md).
+//! A `Link` is one end of a bidirectional, unbounded message queue. Calls go
+//! parent -> child (`Msg::Call`), replies child -> parent (`Msg::Reply`), and
+//! a child's uncaught errors child -> parent (`Msg::Error`). Arguments and
+//! results are neutral `Value`s (copied, shared-nothing). `Link::pair` makes
+//! the two ends; the host hands one to each runtime. Which runtime a link
+//! belongs to and how the peer runs (a thread, an engine) is the host's
+//! business (see okf/plans/isolates-and-ports.md).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,8 +18,14 @@ use crate::Value;
 
 /// One message on a link.
 pub enum Msg {
-  Value(Value),
-  /// The peer reported an uncaught error (already logged on its side).
+  /// Parent -> child: call the module export `name` with `args`; answer with
+  /// a `Reply` carrying the same `id`.
+  Call { id: u64, name: String, args: Vec<Value> },
+  /// Child -> parent: the outcome of the call `id` (a thrown error as its
+  /// message).
+  Reply { id: u64, result: Result<Value, String> },
+  /// Child -> parent: an uncaught error not tied to a call (already logged on
+  /// the child's side).
   Error(String),
 }
 
@@ -57,7 +65,7 @@ impl Link {
     self.rx.lock().await.recv().await
   }
 
-  /// Stop sending. The peer's `recv` reports `Closed` once it has drained
+  /// Stop sending. The peer's `recv` reports `None` once it has drained
   /// what was already queued. Idempotent.
   pub fn close(&self) {
     self.tx.lock().expect("link sender poisoned").take();
