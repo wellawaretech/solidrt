@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use rquickjs::{Ctx, JsLifetime};
 
 // The logging sink itself is engine-free and lives in forge; flux adds the
 // rquickjs glue: storing it in JS context userdata, fetching it via `ctx`, and
 // formatting JS exceptions for it.
-pub use forge::logger::{default_logger, LogFn, LogLevel, Logger};
+pub use forge::logger::{default_logger, LogLevel, Logger};
 
 /// Userdata wrapper so the engine-free `forge::logger::Logger` can be stored in
 /// the JS context. rquickjs userdata must impl `JsLifetime`, which forge's type
@@ -14,6 +16,32 @@ struct LoggerUd(#[qjs(skip_trace)] Logger);
 /// Store the logger in the JS context as userdata, so `ctx.logger()` can reach it.
 pub(crate) fn store_logger(ctx: &Ctx<'_>, logger: Logger) {
   ctx.store_userdata(LoggerUd(logger)).expect("store logger userdata");
+}
+
+/// Optional observer of uncaught errors (see `FluxEngineBuilder::on_uncaught`),
+/// stored in context userdata next to the logger.
+#[derive(Clone, JsLifetime)]
+pub struct UncaughtHook(#[qjs(skip_trace)] pub Arc<dyn Fn(&str) + Send + Sync>);
+
+impl UncaughtHook {
+  pub fn call(&self, msg: &str) {
+    (self.0)(msg);
+  }
+}
+
+pub(crate) fn store_uncaught_hook(ctx: &Ctx<'_>, hook: UncaughtHook) {
+  ctx.store_userdata(hook).expect("store uncaught hook userdata");
+}
+
+/// Report an uncaught error: log it at error level and, if the engine has an
+/// `on_uncaught` hook, hand it the same message. Every "nobody caught this"
+/// site (module error, unhandled rejection, fire-and-forget callback throw)
+/// goes through here so an isolate's parent sees exactly what the log sees.
+pub(crate) fn report_error(ctx: &Ctx<'_>, msg: &str) {
+  ctx.logger().error(msg);
+  if let Some(hook) = ctx.userdata::<UncaughtHook>() {
+    hook.call(msg);
+  }
 }
 
 pub trait CtxLogger {
@@ -46,5 +74,5 @@ pub fn format_js_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
 /// not silently swallowed.
 pub fn report_uncaught(ctx: &Ctx<'_>, err: rquickjs::Error, context: &str) {
   let msg = format_js_error(ctx, err);
-  ctx.logger().error(&format!("[flux] uncaught exception in {context}: {msg}"));
+  report_error(ctx, &format!("[flux] uncaught exception in {context}: {msg}"));
 }

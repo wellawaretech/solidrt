@@ -14,6 +14,7 @@ pub mod ffi;
 pub mod fs;
 pub mod http;
 pub mod image;
+pub mod isolate;
 pub mod logger;
 pub mod mdns;
 pub mod net;

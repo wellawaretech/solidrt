@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result};
+use crate::plugins::marshal::{attach_async_iterator, Step};
 
 // Re-exported so existing `crate::plugins::standards::body::{ByteStream, to_byte_stream}`
 // importers (response, request, serve, subprocess) stay unchanged; the
@@ -158,27 +158,8 @@ pub(crate) async fn collect_json(source: BodySource, pending: PendingOps) -> JsR
   JsResult(collect_text_raw(source, pending).await.map(JsonValue))
 }
 
-/// One step of a Rust-backed byte async-iterator. Returned owned (not as a JS
-/// `Object` tied to a borrowed `Ctx`) so the iterator future stays `'static` and
-/// dodges the lifetime tangle of returning a `Ctx`-bound value (mirrors how
-/// `attach_body`'s closures return owned `JsBytes`/`JsonValue`).
-enum IterStep {
-  Chunk(Vec<u8>),
-  Done,
-}
-
-/// Return type of the iterator's `next()`: a promise resolving to one `IterStep`.
-type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<IterStep>>>>>;
-
-impl<'js> IntoJs<'js> for IterStep {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let value = match self {
-      IterStep::Chunk(bytes) => Some(TypedArray::<u8>::new(ctx.clone(), bytes)?.into_value()),
-      IterStep::Done => None,
-    };
-    Ok(iter_result(ctx, value)?.into_value())
-  }
-}
+/// Return type of the iterator's `next()`: a promise resolving to one step.
+type IterStepFuture = Promised<Pin<Box<dyn Future<Output = JsResult<Step<JsBytes>>>>>>;
 
 /// Build a Rust-backed JS async-iterable over a network byte stream. Each `next()`
 /// pulls one chunk (a Uint8Array) from `stream`, resolving `{ value, done }`;
@@ -204,7 +185,7 @@ pub(crate) fn byte_stream_iterable<'js>(
         // Take the stream out so no RefCell borrow is held across the await. A
         // concurrent (un-awaited) next() finding it gone just reports done.
         let Some(mut stream) = cell.borrow_mut().take() else {
-          return JsResult(Ok(IterStep::Done));
+          return JsResult(Ok(Step(None)));
         };
         pending.hold();
         let item = std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await;
@@ -212,10 +193,10 @@ pub(crate) fn byte_stream_iterable<'js>(
         JsResult(match item {
           Some(Ok(chunk)) => {
             *cell.borrow_mut() = Some(stream);
-            Ok(IterStep::Chunk(chunk.to_vec()))
+            Ok(Step(Some(JsBytes(chunk.to_vec()))))
           }
           Some(Err(e)) => Err(e.to_string()),
-          None => Ok(IterStep::Done),
+          None => Ok(Step(None)),
         })
       })))
     }),

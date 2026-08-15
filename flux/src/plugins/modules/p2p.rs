@@ -32,15 +32,15 @@ use std::rc::Rc;
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg};
-use crate::plugins::standards::body::extract_body_value;
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
+use crate::plugins::standards::body::{extract_body_value, JsBytes};
 use crate::plugins::value::Neutral;
 use forge::p2p::{decode_hex32, run_writer, Endpoint, Stream};
 
@@ -227,9 +227,9 @@ impl P2pStream {
   /// Async-iterator step: resolve `{ value: Uint8Array, done: false }` for the
   /// next chunk, or `{ done: true }` at end-of-stream. Pull-based, so the
   /// transport only advances as JS iterates.
-  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ReadStep>>>> {
+  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(ReadStep) }))
+    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
   }
 
   /// Queue bytes (string or Uint8Array) on the send half.
@@ -257,20 +257,6 @@ impl P2pStream {
   #[qjs(get, rename = "remoteId")]
   pub fn remote_id(&self) -> String {
     self.inner.remote_id()
-  }
-}
-
-/// One async-iterator step over a `P2pStream`: a chunk, or end-of-stream. Built
-/// into the iterator-result object `{ value, done }` by `IntoJs`.
-pub struct ReadStep(Option<Vec<u8>>);
-
-impl<'js> IntoJs<'js> for ReadStep {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let value = match self.0 {
-      Some(buf) => Some(TypedArray::<u8>::new(ctx.clone(), buf)?.into_value()),
-      None => None,
-    };
-    Ok(iter_result(ctx, value)?.into_value())
   }
 }
 

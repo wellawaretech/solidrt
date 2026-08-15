@@ -15,13 +15,14 @@ pub mod standards;
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rquickjs::loader::{BuiltinResolver, ModuleLoader};
-use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, Object, Value};
+use rquickjs::{Array, AsyncContext, AsyncRuntime, Ctx, JsLifetime, Object, Value};
 
 use crate::engine::ShutdownHooks;
-use crate::logger::Logger;
+use crate::logger::{Logger, UncaughtHook};
 use crate::pending::PendingOps;
 
 pub(crate) type PluginFn = Box<dyn for<'js> FnOnce(Ctx<'js>) + Send>;
@@ -31,7 +32,8 @@ pub(crate) type ModuleOverrideFn = Box<dyn FnOnce(&mut BuiltinResolver, &mut Mod
 /// Pending unhandled promise rejections, keyed by promise identity, awaiting the
 /// next microtask checkpoint. The value is the already-formatted message. See
 /// `set_host_promise_rejection_tracker` below and `engine::flush_rejections`.
-pub(crate) type RejectionLog = Arc<Mutex<HashMap<u64, String>>>;
+#[derive(Clone, JsLifetime)]
+pub(crate) struct RejectionLog(#[qjs(skip_trace)] pub Arc<Mutex<HashMap<u64, String>>>);
 
 /// A stable identity for a JS value across tracker calls. `Value`'s `Hash` keys
 /// on tag plus pointer bits, so the same promise object hashes the same on its
@@ -42,18 +44,25 @@ fn value_identity(value: &Value<'_>) -> u64 {
   hasher.finish()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn init_context(
   setups: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
   module_overrides: Vec<ModuleOverrideFn>,
   logger: Logger,
   stack_size: Option<usize>,
+  interrupt: Option<Arc<AtomicBool>>,
+  on_uncaught: Option<UncaughtHook>,
   shutdown_hooks: ShutdownHooks,
 ) -> (AsyncRuntime, AsyncContext, PendingOps, RejectionLog) {
   let runtime = AsyncRuntime::new().expect("failed to create JS runtime");
 
   if let Some(limit) = stack_size {
     runtime.set_max_stack_size(limit).await;
+  }
+
+  if let Some(flag) = interrupt {
+    runtime.set_interrupt_handler(Some(Box::new(move || flag.load(Ordering::Relaxed)))).await;
   }
 
   // Global safety net for promises that reject with no handler attached. Without
@@ -67,14 +76,14 @@ pub(crate) async fn init_context(
   // pending rejections here and let the run loop report whatever is still
   // unhandled once the job queue drains (engine::flush_rejections) -- the
   // microtask-checkpoint semantics the HTML spec uses.
-  let rejections: RejectionLog = Arc::new(Mutex::new(HashMap::new()));
+  let rejections = RejectionLog(Arc::new(Mutex::new(HashMap::new())));
   {
     let rejections = rejections.clone();
     runtime
       .set_host_promise_rejection_tracker(Some(Box::new(
         move |_ctx: Ctx<'_>, promise: Value<'_>, reason: Value<'_>, is_handled: bool| {
           let key = value_identity(&promise);
-          let mut pending = rejections.lock().expect("rejection log poisoned");
+          let mut pending = rejections.0.lock().expect("rejection log poisoned");
           if is_handled {
             pending.remove(&key);
           } else {
@@ -131,6 +140,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:ffi");
   loader.add_module("flux:ffi", modules::ffi::FfiModuleDef);
 
+  resolver.add_module("flux:isolate");
+  loader.add_module("flux:isolate", modules::isolate::IsolateModule);
+
   for f in module_overrides {
     f(&mut resolver, &mut loader);
   }
@@ -145,6 +157,10 @@ pub(crate) async fn init_context(
     .with(|ctx| {
       ctx.store_userdata(pending.clone()).unwrap();
       crate::logger::store_logger(&ctx, logger);
+      if let Some(hook) = on_uncaught {
+        crate::logger::store_uncaught_hook(&ctx, hook);
+      }
+      ctx.store_userdata(rejections.clone()).expect("store rejection log");
       ctx.store_userdata(shutdown_hooks).unwrap();
       for store in userdata {
         store(&ctx);
@@ -180,7 +196,7 @@ pub(crate) async fn init_context(
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
 pub const BASE_CAPABILITIES: &[&str] =
-  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi"];
+  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate"];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");

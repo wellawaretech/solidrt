@@ -75,10 +75,26 @@ where
   })
 }
 
+/// One step of a Rust-backed async iterator, returned owned from `next()`:
+/// `Some(item)` is a value (`done: false`), `None` is the end (`done: true`).
+/// Owned rather than a `Ctx`-bound object so the `next()` future stays
+/// `'static`; the `IntoJs` builds the `{ value, done }` object on the JS thread.
+pub struct Step<T>(pub Option<T>);
+
+impl<'js, T: IntoJs<'js>> IntoJs<'js> for Step<T> {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+    let value = match self.0 {
+      Some(v) => Some(v.into_js(ctx)?),
+      None => None,
+    };
+    Ok(iter_result(ctx, value)?.into_value())
+  }
+}
+
 /// Build an async-iterator result object `{ value, done }`. `Some(v)` is a chunk
 /// (`done: false`); `None` is end-of-stream (`value: undefined, done: true`).
-/// The shape every Rust-backed `next()` returns (fetch/p2p byte streams, the p2p
-/// accept iterator), so callers only decide chunk-vs-end.
+/// `Step` is the owned form for `next()` return types; call this directly only
+/// when the value is already a JS handle.
 pub fn iter_result<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
   match value {

@@ -1,10 +1,12 @@
 use rquickjs::{Ctx, JsLifetime};
 use std::any::Any;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use rquickjs::module::ModuleDef;
 
-use crate::logger::{default_logger, CtxLogger, LogFn, LogLevel, Logger};
+use crate::logger::{default_logger, report_error, CtxLogger, LogLevel, Logger, UncaughtHook};
 use crate::plugins::{self, ModuleOverrideFn, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
@@ -59,15 +61,46 @@ impl ExecHandle {
   }
 }
 
+/// The host-describing part of an engine's configuration: what a runtime
+/// passes on unchanged to the runtimes it spawns (`flux:isolate`). Stored in
+/// context userdata so a child can be built from `FluxEngine::config(&ctx)`.
+/// App-specific setup (plugins, userdata, module overrides) is not part of it.
+#[derive(Clone, JsLifetime)]
+pub struct EngineConfig {
+  #[qjs(skip_trace)]
+  pub logger: Logger,
+  #[qjs(skip_trace)]
+  pub cache_dir: Option<PathBuf>,
+  #[qjs(skip_trace)]
+  pub user_agent: Option<String>,
+  #[qjs(skip_trace)]
+  pub stack_size: Option<usize>,
+}
+
 pub struct FluxEngineBuilder {
   plugins: Vec<PluginFn>,
   userdata: Vec<UserdataFn>,
   module_overrides: Vec<ModuleOverrideFn>,
-  logger: Option<LogFn>,
+  logger: Option<Logger>,
+  cache_dir: Option<PathBuf>,
+  user_agent: Option<String>,
   stack_size: Option<usize>,
+  interrupt: Option<Arc<AtomicBool>>,
+  on_uncaught: Option<UncaughtHook>,
 }
 
 impl FluxEngineBuilder {
+  /// A builder pre-set from a config (see `FluxEngine::config`); the child of
+  /// an isolate starts here.
+  pub fn from_config(config: EngineConfig) -> Self {
+    let mut b = FluxEngine::builder();
+    b.logger = Some(config.logger);
+    b.cache_dir = config.cache_dir;
+    b.user_agent = config.user_agent;
+    b.stack_size = config.stack_size;
+    b
+  }
+
   pub fn plugin<F>(mut self, f: F) -> Self
   where
     F: for<'js> FnOnce(Ctx<'js>) + Send + 'static,
@@ -89,8 +122,13 @@ impl FluxEngineBuilder {
     self
   }
 
-  pub fn logger<F: Fn(LogLevel, &str) + Send + Sync + 'static>(mut self, f: F) -> Self {
-    self.logger = Some(Box::new(f));
+  pub fn logger<F: Fn(LogLevel, &str) + Send + Sync + 'static>(self, f: F) -> Self {
+    self.logger_sink(Logger::new(Box::new(f)))
+  }
+
+  /// An existing log sink (a parent's, a shared one) instead of a closure.
+  pub fn logger_sink(mut self, logger: Logger) -> Self {
+    self.logger = Some(logger);
     self
   }
 
@@ -107,34 +145,75 @@ impl FluxEngineBuilder {
     self
   }
 
+  /// A kill switch: while `flag` is set, running JS is interrupted (an
+  /// uncatchable error unwinds it) so the engine's loop regains control. Used
+  /// by isolates so `terminate()` can stop a busy child; the flag alone does
+  /// not end the loop, the owner drops the engine future once it yields.
+  pub fn interrupt_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+    self.interrupt = Some(flag);
+    self
+  }
+
+  /// Called with every uncaught error this engine reports (a module-level
+  /// throw, an unhandled rejection, a throw out of a fire-and-forget callback),
+  /// after it is logged. Isolates use it to forward the error to the parent's
+  /// port; without a hook, logging is the only report.
+  pub fn on_uncaught<F: Fn(&str) + Send + Sync + 'static>(mut self, f: F) -> Self {
+    self.on_uncaught = Some(UncaughtHook(Arc::new(f)));
+    self
+  }
+
   /// Directory for the fetch disk cache (`fetch(url, { cache: "force-cache" })`).
   /// Created lazily on first cached write. Without it the `cache` option is
   /// accepted but every request goes to the network.
-  pub fn cache_dir(self, dir: std::path::PathBuf) -> Self {
-    self.userdata(crate::plugins::standards::fetch::FetchCacheDir(dir))
+  pub fn cache_dir(mut self, dir: PathBuf) -> Self {
+    self.cache_dir = Some(dir);
+    self
   }
 
   /// The `User-Agent` product token outgoing `fetch` requests carry. An
   /// embedder sets its own identity here (e.g. `SolidRT/<version>`); the
   /// default is the runtime's own, `FluxRT/<version>`.
-  pub fn user_agent(self, agent: String) -> Self {
-    self.userdata(crate::plugins::standards::http::UserAgent(agent))
+  pub fn user_agent(mut self, agent: String) -> Self {
+    self.user_agent = Some(agent);
+    self
   }
 
   pub fn build(self) -> FluxEngine {
-    let logger = match self.logger {
-      Some(f) => Logger::new(f),
-      None => default_logger(),
+    let config = EngineConfig {
+      logger: self.logger.unwrap_or_else(default_logger),
+      cache_dir: self.cache_dir,
+      user_agent: self.user_agent,
+      stack_size: self.stack_size,
     };
+    // The config lands in userdata whole (for children) and split into the
+    // per-plugin userdata fetch/http read.
+    let mut userdata = self.userdata;
+    if let Some(dir) = config.cache_dir.clone() {
+      userdata.push(Box::new(move |ctx| {
+        ctx.store_userdata(crate::plugins::standards::fetch::FetchCacheDir(dir)).expect("store cache dir");
+      }));
+    }
+    if let Some(agent) = config.user_agent.clone() {
+      userdata.push(Box::new(move |ctx| {
+        ctx.store_userdata(crate::plugins::standards::http::UserAgent(agent)).expect("store user agent");
+      }));
+    }
+    let stored = config.clone();
+    userdata.push(Box::new(move |ctx| {
+      ctx.store_userdata(stored).expect("store engine config");
+    }));
     let (exec_tx, exec_rx) = tokio::sync::mpsc::unbounded_channel();
     FluxEngine {
       setups: self.plugins,
-      userdata: self.userdata,
+      userdata,
       module_overrides: self.module_overrides,
       exec_tx,
       exec_rx,
-      logger,
-      stack_size: self.stack_size,
+      logger: config.logger,
+      stack_size: config.stack_size,
+      interrupt: self.interrupt,
+      on_uncaught: self.on_uncaught,
     }
   }
 }
@@ -147,6 +226,8 @@ pub struct FluxEngine {
   exec_rx: tokio::sync::mpsc::UnboundedReceiver<ExecFn>,
   logger: Logger,
   stack_size: Option<usize>,
+  interrupt: Option<Arc<AtomicBool>>,
+  on_uncaught: Option<UncaughtHook>,
 }
 
 impl FluxEngine {
@@ -156,8 +237,17 @@ impl FluxEngine {
       userdata: Vec::new(),
       module_overrides: Vec::new(),
       logger: None,
+      cache_dir: None,
+      user_agent: None,
       stack_size: None,
+      interrupt: None,
+      on_uncaught: None,
     }
+  }
+
+  /// The running engine's host config, for building a child engine.
+  pub fn config(ctx: &Ctx<'_>) -> EngineConfig {
+    ctx.userdata::<EngineConfig>().expect("engine config userdata").clone()
   }
 
   pub fn new() -> Self {
@@ -178,9 +268,9 @@ impl FluxEngine {
         match loaded {
           Ok(module) => match module.eval().map(|(_, promise)| promise).catch(&ctx) {
             Ok(promise) => report_rejection(&ctx, promise),
-            Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
+            Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
           },
-          Err(e) => ctx.logger().error(&format!("bytecode load error: {e}")),
+          Err(e) => report_error(&ctx, &format!("bytecode load error: {e}")),
         }
       })
       .await;
@@ -195,7 +285,7 @@ impl FluxEngine {
         use rquickjs::{CatchResultExt, Module};
         match Module::evaluate(ctx.clone(), "main", code).catch(&ctx) {
           Ok(promise) => report_rejection(&ctx, promise),
-          Err(e) => ctx.logger().error(&format!("module error: {e:?}")),
+          Err(e) => report_error(&ctx, &format!("module error: {e:?}")),
         }
       })
       .await;
@@ -207,6 +297,7 @@ impl FluxEngine {
   {
     let shutdown_hooks = ShutdownHooks::new();
     let logger = self.logger.clone();
+    let on_uncaught = self.on_uncaught.clone();
     let mut exec_rx = self.exec_rx;
 
     let (runtime, context, pending, rejections) = plugins::init_context(
@@ -215,6 +306,8 @@ impl FluxEngine {
       self.module_overrides,
       self.logger,
       self.stack_size,
+      self.interrupt,
+      self.on_uncaught,
       shutdown_hooks.clone(),
     )
     .await;
@@ -230,7 +323,7 @@ impl FluxEngine {
           _ = runtime.idle() => {
               // Job queue drained: this is the microtask checkpoint at which any
               // still-unhandled rejection is genuinely unhandled. Report them.
-              flush_rejections(&rejections, &logger);
+              flush_rejections(&rejections, &logger, on_uncaught.as_ref());
               if pending.is_idle() {
                   break;
               }
@@ -248,10 +341,13 @@ impl FluxEngine {
 /// checkpoint. The tracker (see `plugins::init_context`) cannot report on the
 /// spot because a rejection may be handled a microtask later; once the job queue
 /// drains, whatever remains here is genuinely unhandled.
-fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger) {
-  let mut pending = rejections.lock().expect("rejection log poisoned");
+fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger, on_uncaught: Option<&UncaughtHook>) {
+  let mut pending = rejections.0.lock().expect("rejection log poisoned");
   for (_key, message) in pending.drain() {
     logger.error(&message);
+    if let Some(hook) = on_uncaught {
+      hook.call(&message);
+    }
   }
 }
 
@@ -263,19 +359,27 @@ fn flush_rejections(rejections: &plugins::RejectionLog, logger: &Logger) {
 /// and the process would exit cleanly with no diagnostic. The handler also fires
 /// for an already-rejected promise, since `then` schedules it as a microtask the
 /// run loop drains.
+///
+/// A synchronous top-level throw makes QuickJS reject two promises: the one it
+/// returns (handled here) and an internal one nothing can observe, which the
+/// tracker records as unhandled. The handler drops that duplicate from the log
+/// by message so one error is reported once.
 fn report_rejection<'js>(ctx: &Ctx<'js>, promise: rquickjs::Promise<'js>) {
   use rquickjs::function::{MutFn, This};
   use rquickjs::{Function, Undefined, Value};
 
-  let logger = ctx.logger();
   let on_rejected = match Function::new(
     ctx.clone(),
-    MutFn::from(move |err: Value<'_>| {
-      if let Some(exc) = err.as_exception() {
-        logger.error(&format!("{exc}"));
-      } else {
-        logger.error(&format!("{err:?}"));
+    MutFn::from(move |ctx: Ctx<'_>, err: Value<'_>| {
+      let message = match err.as_exception() {
+        Some(exc) => format!("{exc}"),
+        None => format!("{err:?}"),
+      };
+      let duplicate = format!("Uncaught (in promise) {message}");
+      if let Some(log) = ctx.userdata::<plugins::RejectionLog>() {
+        log.0.lock().expect("rejection log poisoned").retain(|_, m| *m != duplicate);
       }
+      report_error(&ctx, &message);
     }),
   ) {
     Ok(f) => f,

@@ -263,6 +263,44 @@ let png = encodeImage(img)
 let jpg = encodeImage(img, { format: "jpeg", quality: 0.8 })
 ```
 
+### flux:isolate
+
+Run a JS module on another thread and talk to it over a port. Each isolate is
+a second flux runtime: its own heap, its own event loop, the non-gui `flux:*`
+modules and standard globals. Messages are copied across (shared-nothing):
+null, booleans, numbers, strings, byte buffers (any typed-array view arrives
+as a `Uint8Array`), arrays and plain objects; anything else throws a
+`TypeError` at `send`. This is where a long synchronous `flux:ffi` or
+`flux:wasm` call, or a heavy JS computation, goes so it does not stall the
+main loop.
+
+```js
+import { spawn } from "flux:isolate"
+
+let worker = spawn(`
+  import { port } from "flux:isolate"       // the child's end
+  for await (let req of port) port.send(crunch(req))
+`, { args: ["--fast"] })                     // the child's flux:process argv
+
+worker.send({ n: 42 })                       // copy a value to the child
+let result = await worker.recv()             // next message; undefined once the child is closed/exited
+for await (let msg of worker) { ... }        // the same, as a loop
+worker.close()                               // no more sends; the child's loop ends after draining
+worker.terminate()                           // kill now, even mid-computation
+```
+
+An uncaught error in the child (module throw, unhandled rejection, a throw
+out of a timer) is logged and rejects the parent's pending or next `recv()`;
+later calls keep receiving. Children die with their parent runtime, so an
+exit or reload never leaks a background thread. A pending `recv()` holds its
+own runtime alive; two ends both waiting forever is a program bug, like Go's
+"all goroutines are asleep". `Promise.race` over several `recv()`s is not a
+select: the losing calls still consume their messages, so read one port per
+loop.
+
+Not yet: zero-copy `ArrayBuffer` transfer (bytes are copied in and out) and
+spawning from a path or bytecode (read the file and pass its text).
+
 ### flux:process
 
 Process-level surface: arguments, host platform, memory usage, OS signals.

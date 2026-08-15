@@ -54,7 +54,10 @@ is referenced from flux-types `index.d.ts`.
 
 ## Threading model
 
-All JS runs on one thread. JS values (`Function`, `Object`, `Value`, any
+All JS of one runtime runs on one thread; `flux:isolate` spawns further
+runtimes, each on its own thread with its own heap, talking over ports that
+carry `forge::Value` copies (see `modules/isolate.rs`). Within a runtime the
+rules below hold unchanged. JS values (`Function`, `Object`, `Value`, any
 `'js`-bound handle) are `!Send`; a future that touches one must be spawned
 with `ctx.spawn`, which runs it on the JS executor. `tokio::spawn` is only for
 pure native work whose future is `Send`; its results come back to JS by

@@ -4,6 +4,7 @@ pub mod ffi;
 pub mod file;
 pub mod fs;
 pub mod image;
+pub mod isolate;
 pub mod mdns;
 pub mod net;
 pub mod p2p;

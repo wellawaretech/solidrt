@@ -41,8 +41,8 @@ use rquickjs::{Array, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetim
 
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
-use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg};
-use crate::plugins::standards::body::extract_body_value;
+use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
+use crate::plugins::standards::body::{extract_body_value, JsBytes};
 
 // ---- free functions ---------------------------------------------------------
 
@@ -174,9 +174,9 @@ impl NetConn {
 impl NetConn {
   /// Async-iterator step: `{ value: Uint8Array, done: false }` for the next chunk,
   /// `{ done: true }` at EOF. Pull-based, so the socket only advances as JS reads.
-  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<ReadStep>>>> {
+  pub fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Promised<impl Future<Output = JsResult<Step<JsBytes>>>>> {
     let inner = self.inner.clone();
-    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(ReadStep) }))
+    Ok(with_pending(&ctx, async move { inner.read_chunk().await.map(|chunk| Step(chunk.map(JsBytes))) }))
   }
 
   /// Write all of `data` (string or Uint8Array). Resolves once it's handed off.
@@ -358,24 +358,9 @@ impl NetUdp {
 
 // ---- result encodings -------------------------------------------------------
 
-/// One async-iterator step over a `Conn`: a chunk, or end-of-stream. Built into
-/// the iterator-result object `{ value, done }` by `IntoJs`. `pub` only to satisfy
-/// `private_interfaces` (it names the return type of the `pub` `next` method).
-pub struct ReadStep(Option<Vec<u8>>);
-
-impl<'js> IntoJs<'js> for ReadStep {
-  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-    let value = match self.0 {
-      Some(buf) => Some(TypedArray::<u8>::new(ctx.clone(), buf)?.into_value()),
-      None => None,
-    };
-    Ok(iter_result(ctx, value)?.into_value())
-  }
-}
-
 /// An `icmpEcho` outcome, encoded to `{ status: "reply", rttMs, payload }` /
 /// `{ status: "timeout" }` / `{ status: "unsupported" }`. `pub` for the same
-/// `private_interfaces` reason as `ReadStep`.
+/// `private_interfaces` reason as `RecvMsg`.
 pub struct IcmpMsg(forge::net::IcmpEcho);
 
 impl<'js> IntoJs<'js> for IcmpMsg {

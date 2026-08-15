@@ -52,7 +52,8 @@ considered and is now dropped:
 - Ports: `send(value)`, awaitable `recv()`, close/terminate, and error
   propagation (an uncaught error in the isolate surfaces on the parent's
   port, not silently). Copy semantics; `ArrayBuffer` transfer for large
-  payloads so a result buffer does not get copied twice.
+  payloads so a result buffer does not get copied twice (deferred, see
+  stage 2).
 - Isolate lifetime is structured: terminating the parent terminates its
   isolates (no leaked background runtimes; the note's nursery point).
 - Recorded pitfalls hold: `Promise.race` over `recv()` is not `select`
@@ -76,10 +77,36 @@ considered and is now dropped:
    - JS -> Value contract (documented in `plugins/value.rs`): `undefined`
      -> `Null`, buffers and typed-array views -> `Bytes`, plain objects only,
      everything else a `TypeError`, depth cap instead of cycle detection.
-2. **spawn + ports, minimal**: one isolate per `spawn`, one port pair,
-   send/recv/terminate, error propagation, `ArrayBuffer` transfer. Module
-   addressing: a bundled module path in dev; how a packed app carries an
-   isolate module is part of this stage.
+2. **spawn + ports, minimal** (DONE): `flux:isolate` with
+   `spawn(source, { args? }) -> Port` and `port` inside the child;
+   `send` / awaitable `recv` / async iteration / `close` / `terminate`.
+   Decisions taken:
+   - Source text is the addressing primitive: an app is one bundle and flux
+     has no on-disk module loader, so a "module path" had nothing to resolve
+     against. `spawn(await file("assets/w.js").text())` covers a file; CLI
+     multi-entry bundling of isolate modules is a separate item when a
+     project needs it. Bytecode sources likewise later.
+   - Uncaught errors in the child (module throw, unhandled rejection, throw
+     out of a callback) are logged and reject the parent's pending or next
+     `recv()`; the child keeps running unless the error ended its module.
+     `FluxEngineBuilder::on_uncaught` funnels every such site
+     (`logger::report_error`). Fixing this exposed a pre-existing double
+     report of a synchronous top-level throw (QuickJS rejects an internal
+     promise nobody can observe); the entry-promise handler now drops the
+     duplicate from the rejection log.
+   - `terminate()` = interrupt flag (`FluxEngineBuilder::interrupt_flag`,
+     wired to `set_interrupt_handler`) + drop the child's engine future.
+     Children die with the parent context via a userdata registry whose
+     `Drop` fires every kill switch, so reload/exit is covered transitively.
+   - Engine-free half (`forge::isolate`: `Link` pair over tokio mpsc, `Kill`)
+     is separate from the flux thread spawn and `Port` class.
+   - `ArrayBuffer` transfer is NOT in: bytes are copied in and out. Zero-copy
+     needs the buffer allocated with a flux-owned free hook; do it when a
+     payload size makes it show up.
+   - The child is built from the parent's `EngineConfig` (logger, fetch
+     cache dir, user agent, stack size; `FluxEngine::config(&ctx)` +
+     `FluxEngineBuilder::from_config`), so host config is inherited by
+     construction rather than re-derived.
 3. **Ergonomics**: typed ports, request/response helper, and only if
    experience demands it a native multi-recv (`select`).
 
