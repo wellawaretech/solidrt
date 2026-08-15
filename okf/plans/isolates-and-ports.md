@@ -37,8 +37,8 @@ considered and is now dropped:
 - Many C libraries are not thread-safe or keep per-thread state (errno,
   handles, global locks). A pool that runs any call on any thread invites
   races; an isolate is one thread that owns the library handle for its
-  lifetime, serialising calls by construction. Parallelism is N isolates,
-  each with its own handle.
+  lifetime, so two native calls never overlap by construction. Parallelism is
+  N isolates, each with its own handle.
 - The same mechanism unblocks `flux:wasm` and heavy JS, which per-symbol
   async does nothing for.
 
@@ -202,8 +202,15 @@ wanted (pushing to a main that has not subscribed).
      the resolvers), then only while readers are queued; each `next()` pumps
      for itself. A stream that is awaited and never iterated therefore does
      not hold the runtime open; an open, read stream does (like an interval).
-   - Child serves `Next`/`Return` as spawned tasks (a subscription never
-     blocks the loop); plain calls keep the one-at-a-time contract. Async
+   - The child's link reader never awaits: a call is started in order and
+     its settling is a spawned task, `Next`/`Return` are spawned tasks. So
+     calls run concurrently, as the same functions would in-process (sync
+     exports cannot overlap on one thread; async ones interleave at
+     `await`), and a pending call blocks neither stream steps nor `Return`.
+     Stage 3 had serialised calls (an async export awaited before the next
+     call started); dropped because "no other call between my awaits" is a
+     property of a module's state, so the module that needs it serialises
+     itself, and the FFI argument above only needs one thread. Async
      generators queue concurrent `next()`s themselves, so parent-side steps
      just answer in order.
    - TRAP: native closures alive at teardown must capture no JS values (the

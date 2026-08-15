@@ -57,9 +57,11 @@ declare module "flux:isolate" {
    *
    * The child starts on the first call and lives until `terminate()` or the
    * parent's end; module state persists between calls; each `isolate()` call
-   * is its own instance. Plain calls run one at a time in call order; streams
-   * (async generator exports) are served alongside them, so an open
-   * subscription never blocks a call. A throw in the export rejects that
+   * is its own instance. Calls start in call order and run concurrently, as
+   * the same functions would in-process: a sync export runs to completion
+   * before anything else (one thread), an async export lets other calls and
+   * stream steps run at each `await`; an export that must not interleave with
+   * itself serialises inside the module. A throw in the export rejects that
    * call (a throw in a generator rejects the pending step); an uncaught error
    * that ends the child rejects pending and later calls with a message naming
    * it. Awaiting a stream call rejects; iterating a plain call rejects. An

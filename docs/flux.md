@@ -289,15 +289,19 @@ import { isolate } from "flux:isolate"
 let worker = isolate("worker", { args: ["--fast"] })   // args: the child's flux:process argv
 
 let s = await worker.sum(1_000_000)          // first call spawns the child; main stays free
-let out = await worker.decode(bytes)         // same instance, calls run one at a time in order
+let out = await worker.decode(bytes)         // same instance, same module state
 worker.terminate()                           // kill now, even mid-computation
 ```
 
 Arguments and results are copied across (shared-nothing): null, booleans,
 numbers, strings, byte buffers (any typed-array view arrives as a
 `Uint8Array`), arrays and plain objects; anything else throws a `TypeError`
-as an argument and rejects the call as a result. Async exports are awaited
-in the child. A throw in the export rejects that call and the isolate keeps
+as an argument and rejects the call as a result. Calls start in order and run
+concurrently, as the same functions would in-process: the child is one
+thread, so a sync export runs to completion before anything else, while an
+async export lets other calls run at each `await` (an export that must not
+interleave with itself serialises inside the module). A throw in the export
+rejects that call and the isolate keeps
 running; an uncaught error that ends the child (a failed module load) rejects
 pending and later calls with a message naming it. Each `isolate()` call is
 its own instance, so two handles are two runtimes. Children die with their
@@ -308,8 +312,7 @@ TypeScript, `isolate<typeof import("./worker")>("worker")` types the handle
 Streams: an `async function*` export is pulled item by item with `for await`.
 Each step is one round trip (backpressure by construction), `break` runs the
 generator's `finally` in the isolate, a throw in the generator rejects the
-pending step, and a never-ending generator is a subscription. Streams are
-served alongside plain calls, so an open subscription never blocks one. What
+pending step, and a never-ending generator is a subscription. What
 the call returns is still a Promise, but one that is also an async iterator;
 awaiting a stream call rejects, iterating a plain call rejects.
 

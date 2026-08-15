@@ -14,16 +14,17 @@
 //!   or the parent's end (exit, reload: dropping the parent context fires
 //!   every child's kill switch, transitively). Module state in the child
 //!   persists between calls; each `isolate()` call is its own instance.
-//! - Plain calls run one at a time in call order (the child is
-//!   single-threaded); an `async` export is awaited before the next call
-//!   starts.
+//! - Calls start in call order and run concurrently, as the same functions
+//!   would in-process: the child is single-threaded, so a sync export runs to
+//!   completion before anything else, while an `async` export lets other calls
+//!   run at each `await`. An export that must not interleave with itself
+//!   serialises inside the module.
 //! - Streams: an export whose result is async-iterable (an `async function*`)
 //!   is pulled item by item. What the call returns is still a Promise, but one
 //!   that is also an async iterator: `for await (let x of handle.ticks())`
 //!   sends `Next` per item and `Return` on break; awaiting it instead rejects.
 //!   Items are values like results; a never-ending generator is a subscription
-//!   (an open stream keeps both runtimes alive until it is closed). Streams are
-//!   served alongside plain calls, so a subscription never blocks them.
+//!   (an open stream keeps both runtimes alive until it is closed).
 //! - A throw (or rejection) in the called export rejects that call with its
 //!   message. An uncaught error elsewhere in the child (a failed module load,
 //!   a throw out of a timer) is logged; when it ends the child, pending and
@@ -519,12 +520,13 @@ fn spawn_thread(
     .map_err(|e| format!("isolate: failed to start thread: {e}"))
 }
 
-/// The child's dispatcher. Plain calls run one at a time from the link, each
-/// looked up on the module namespace, awaited, and answered. A call whose
+/// The child's dispatcher. Each message from the link is served without the
+/// reader waiting on it: a call is looked up on the module namespace and
+/// started in order, and settling its result (a promise) is its own task, so a
+/// pending call holds up neither later calls nor stream steps. A call whose
 /// result is async-iterable becomes a stream: its iterator is kept by call id
-/// and each `Next`/`Return` is served as its own task, so an open stream never
-/// holds up the loop. Ends when the parent closes the link, after which
-/// nothing holds the child's loop open.
+/// and each `Next`/`Return` is likewise served as its own task. Ends when the
+/// parent closes the link, after which nothing holds the child's loop open.
 fn serve<'js>(ctx: Ctx<'js>, ns: Object<'js>, link: Link) {
   let streams: Rc<RefCell<HashMap<u64, Object<'js>>>> = Rc::default();
   ctx.clone().spawn(async move {
@@ -536,8 +538,11 @@ fn serve<'js>(ctx: Ctx<'js>, ns: Object<'js>, link: Link) {
             let _ = link.send(Msg::Stream { id });
           }
           Ok(Started::Value(returned)) => {
-            let result = settle(&ctx, returned).await;
-            let _ = link.send(Msg::Reply { id, result });
+            let (ctx, link) = (ctx.clone(), link.clone());
+            ctx.clone().spawn(async move {
+              let result = settle(&ctx, returned).await;
+              let _ = link.send(Msg::Reply { id, result });
+            });
           }
           Err(e) => {
             let _ = link.send(Msg::Reply { id, result: Err(e) });
