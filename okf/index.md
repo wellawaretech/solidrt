@@ -391,6 +391,16 @@ Shaped, not started.
   A flux:stdin (or flux:tty) module for cross-platform raw-mode keystroke
   reading, the missing piece for any interactive terminal UI under flux, not
   just the CLI repl.
+- **[Inline styled runs in <text> via <span>](backlog/text-inline-spans.md)** [2026-08-16]
+  A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
+  a word at a time in a wrapping row; Impeller shapes styled runs natively, so
+  expose them as <span> children of <text> plus the paragraph props the API
+  leaves unused.
+- **[Own the text layout, demote drawParagraph to a shaper](backlog/text-layout-owned.md)** [2026-08-16]
+  Impeller's paragraph is a black box for line breaking, so inline elements,
+  exclusions, custom breaking and cheap re-layout are unreachable; experiment
+  with a pretext-style split where every paragraph is a single-line
+  single-style run we measure once and place ourselves.
 - **[Interpolated text may replace the whole text node on update](backlog/text-multi-child-replacement.md)** [2026-08-14]
   Updating one interpolation in a multi-child <text> was observed to replace
   the entire text node rather than the changed part; unverified since the

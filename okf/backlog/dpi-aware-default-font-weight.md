@@ -38,3 +38,7 @@ Two things to settle while doing it:
 - an explicit `fontWeight` prop keeps overriding, unchanged.
 
 Source: root KNOWN_ISSUES.md, migrated 2026-08-14.
+
+Longer term the workaround goes away with an own rasterizer behind the
+shaper trait in [text-layout-owned](text-layout-owned.md), which is where
+gamma or contrast compensation for light-on-dark text can actually be done.

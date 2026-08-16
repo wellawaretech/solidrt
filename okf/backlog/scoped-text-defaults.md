@@ -28,3 +28,7 @@ Whatever lands must stay per-element property writes - see
 for the constraint and for what already works today. Split from that item when
 okf was restructured; the other half is
 [state-variant-selection](state-variant-selection.md).
+
+Not to be confused with the intra-paragraph cascade in
+[text-inline-spans](text-inline-spans.md), which resolves span overrides in
+Rust at shape time and does not inherit across the tree.

@@ -34,3 +34,8 @@ keeping the instancing win are mutually exclusive FOR THE DEFAULT FONTS
 default-font stance whichever lands second.
 
 Status: deferred, discussion not started.
+
+Update 2026-08-16: checked the impellers 0.4.2 C surface while shaping
+[text-inline-spans](text-inline-spans.md): `ParagraphStyle` has no font
+feature or variation-axis setter, so the wdth axis is unreachable regardless
+of API design. Waits on upstream.
