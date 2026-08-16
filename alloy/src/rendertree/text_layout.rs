@@ -62,10 +62,30 @@ impl RunMetrics {
 }
 
 /// A run to lay out: its metrics plus whether a hard break follows it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// `glue` marks a continuation piece of the previous run's wrap unit (a unit
+/// that straddles styled runs): no break is allowed before it, and the unit's
+/// pieces are fitted on a line together.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Run {
   pub metrics: RunMetrics,
   pub hard_break: bool,
+  pub glue: bool,
+}
+
+/// Ink width of the wrap unit starting at `first`: the advances of every
+/// piece but the last, plus the last piece's ink.
+fn unit_ink(runs: &[Run], first: usize) -> f32 {
+  let mut width = 0.0;
+  let mut i = first;
+  loop {
+    let next_glued = runs.get(i + 1).is_some_and(|r| r.glue);
+    if next_glued {
+      width += runs[i].metrics.advance;
+      i += 1;
+    } else {
+      return width + runs[i].metrics.ink_width;
+    }
+  }
 }
 
 /// Horizontal placement of lines within the layout width.
@@ -138,7 +158,7 @@ pub fn layout(runs: &[Run], max_width: f32, align: Align, max_lines: u32) -> Lay
 
   for (index, run) in runs.iter().enumerate() {
     let has_content = line.end > line.first;
-    if has_content && pen + run.metrics.ink_width > max_width {
+    if has_content && !run.glue && pen + unit_ink(runs, index) > max_width {
       close_line(&mut out, &mut line, &mut y);
       if lines_full(&out) {
         break;
@@ -183,7 +203,8 @@ pub fn max_intrinsic_width(runs: &[Run]) -> f32 {
   widest.max(ink)
 }
 
-/// Narrowest width that breaks nowhere inside a run: the widest run's ink.
+/// Narrowest width that breaks nowhere inside a wrap unit: the widest unit's
+/// ink.
 pub fn min_intrinsic_width(runs: &[Run]) -> f32 {
-  runs.iter().fold(0.0f32, |w, r| w.max(r.metrics.ink_width))
+  (0..runs.len()).filter(|&i| !runs[i].glue).fold(0.0f32, |w, i| w.max(unit_ink(runs, i)))
 }

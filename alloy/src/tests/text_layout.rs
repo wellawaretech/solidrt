@@ -3,7 +3,11 @@ use crate::rendertree::text_layout::{
 };
 
 fn word(advance: f32, ink: f32) -> Run {
-  Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false }
+  Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false, glue: false }
+}
+
+fn glued(advance: f32, ink: f32) -> Run {
+  Run { glue: true, ..word(advance, ink) }
 }
 
 fn hard(advance: f32, ink: f32) -> Run {
@@ -60,7 +64,7 @@ fn oversized_run_gets_its_own_line() {
 #[test]
 fn baseline_alignment_and_right_align() {
   let tall =
-    Run { metrics: RunMetrics { advance: 10.0, ink_width: 10.0, ascent: 16.0, descent: 4.0 }, hard_break: false };
+    Run { metrics: RunMetrics { advance: 10.0, ink_width: 10.0, ascent: 16.0, descent: 4.0 }, ..word(0.0, 0.0) };
   let runs = [word(10.0, 10.0), tall];
   let l = layout(&runs, 40.0, Align::Right, 0);
   assert_eq!(l.lines[0].height, 20.0);
@@ -77,4 +81,20 @@ fn intrinsic_widths() {
   assert_eq!(min_intrinsic_width(&runs), 30.0);
   let one_line = [word(12.0, 10.0), word(12.0, 10.0)];
   assert_eq!(max_intrinsic_width(&one_line), 22.0);
+}
+
+#[test]
+fn glued_pieces_break_as_one_unit() {
+  // "foo" + "," (glued) + "bar": the unit foo, is 14 wide; at 20 the second
+  // unit must wrap even though "foo" alone would leave room for "bar"'s ink.
+  let runs = [word(10.0, 10.0), glued(6.0, 4.0), word(10.0, 8.0)];
+  let l = layout(&runs, 20.0, Align::Left, 0);
+  assert_eq!(l.lines.len(), 2);
+  assert_eq!(l.runs[1].x, 10.0);
+  assert_eq!(l.runs[2].y, 10.0);
+  // A glued piece never starts a line, even when its own ink does not fit.
+  let runs = [word(10.0, 10.0), glued(20.0, 20.0)];
+  let l = layout(&runs, 12.0, Align::Left, 0);
+  assert_eq!(l.lines.len(), 1);
+  assert_eq!(min_intrinsic_width(&runs), 30.0);
 }

@@ -545,8 +545,12 @@ export interface PathProps extends PaintProps, PointerProps {
   fillRule?: "nonzero" | "evenodd"
 }
 
-export interface TextProps extends PaintProps, PointerProps {
-  children?: Children
+/**
+ * Per-run text style: the paragraph default on <text>, an override on <span>.
+ * The cascade is intra-paragraph only: a span inherits from its enclosing
+ * span, then from the <text>; nothing inherits across the tree.
+ */
+export interface TextRunProps {
   fontFamily?: "sans" | "serif" | "mono" | (string & {})
   fontSize?: number
   /**
@@ -557,6 +561,19 @@ export interface TextProps extends PaintProps, PointerProps {
   lineHeight?: number
   fontStyle?: "normal" | "italic"
   fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+}
+
+/**
+ * A styled run inside <text>. Inline text only: children are text and other
+ * spans. `color` takes what a text's color takes (solid or gradient).
+ */
+export interface SpanProps extends TextRunProps {
+  children?: Children
+  color?: Color | Gradient
+}
+
+export interface TextProps extends PaintProps, PointerProps, TextRunProps {
+  children?: Children
   textAlign?: "left" | "right" | "center" | "justify"
   maxLines?: number
   /**

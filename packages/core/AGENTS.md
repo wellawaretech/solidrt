@@ -159,6 +159,11 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   expression container preserves it - `<d-text>{"one    two"}</d-text>` - and
   `\n` inside one produces a hard line break.
 
+- Rich text: `<span>` inside `<text>` restyles a run (`color`, `fontFamily`,
+  `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); spans nest and
+  inherit inward from the `<text>`. Never lay a paragraph out word by word in
+  a wrapping row to mix styles - one `<text>` with spans wraps as a whole.
+
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
   onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an

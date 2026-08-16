@@ -193,6 +193,70 @@ fn delete_node_removes_subtree() {
   assert!(tree.try_node(3).is_none());
 }
 
+fn runs_of(tree: &RenderTree, id: u64) -> Vec<TextRun> {
+  match &tree.node(id).kind {
+    ElementKind::Text(t) => t.runs.clone(),
+    _ => panic!("not a text"),
+  }
+}
+
+// Spans nest: a leaf's run carries the overrides layered along its span
+// ancestry, computed_text is the concatenation, and a write anywhere in the
+// span subtree resyncs the owning text.
+#[test]
+fn text_collects_styled_runs_from_nested_spans() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, Text::default().with_layout());
+  tree.create_node(2, Span { text: "Hello, ".into(), ..Default::default() }.no_layout());
+  let mut outer = Span::default();
+  outer.set_font_weight(crate::impellers::FontWeight::Bold);
+  tree.create_node(3, outer.no_layout());
+  let mut inner = Span::default();
+  inner.set_font_size(30.0);
+  tree.create_node(4, inner.no_layout());
+  tree.create_node(5, Span { text: "world".into(), ..Default::default() }.no_layout());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 3, None);
+  tree.insert_node(3, 4, None);
+  tree.insert_node(4, 5, None);
+
+  let runs = runs_of(&tree, 1);
+  assert_eq!(runs.len(), 2);
+  assert_eq!(runs[0].text, "Hello, ");
+  assert_eq!(runs[0].overrides, RunOverrides::default());
+  assert_eq!(runs[1].text, "world");
+  assert_eq!(runs[1].overrides.font_weight, Some(crate::impellers::FontWeight::Bold));
+  assert_eq!(runs[1].overrides.font_size, Some(30.0));
+  match &tree.node(1).kind {
+    ElementKind::Text(t) => assert_eq!(t.computed_text, "Hello, world"),
+    _ => unreachable!(),
+  }
+
+  // A write on the deepest leaf, and one on the outer span, both resync.
+  tree.edit(5, |el| match &mut el.kind {
+    ElementKind::Span(s) => s.set_text("there".into()),
+    _ => unreachable!(),
+  });
+  assert_eq!(runs_of(&tree, 1)[1].text, "there");
+  tree.edit(3, |el| match &mut el.kind {
+    ElementKind::Span(s) => s.set_font_size(12.0),
+    _ => unreachable!(),
+  });
+  // The inner span's own size still wins over the outer's.
+  assert_eq!(runs_of(&tree, 1)[1].overrides.font_size, Some(30.0));
+  tree.edit(4, |el| match &mut el.kind {
+    ElementKind::Span(s) => s.set_font_style(crate::impellers::FontStyle::Italic),
+    _ => unreachable!(),
+  });
+  let run = &runs_of(&tree, 1)[1];
+  assert_eq!(run.overrides.font_style, Some(crate::impellers::FontStyle::Italic));
+  assert_eq!(run.overrides.font_weight, Some(crate::impellers::FontWeight::Bold));
+
+  // Removing the outer span drops its runs.
+  tree.delete_node(1, 3);
+  assert_eq!(runs_of(&tree, 1).len(), 1);
+}
+
 // A text node with laid-out content, for snapshot query matching.
 fn text(content: &str) -> Element {
   let mut t = Text::default();
@@ -667,9 +731,7 @@ fn boundary_shader_input_hit_keeps_the_bake() {
   tree.create_node(0, attached());
   shaded_boundary(&mut tree, 1, 9);
   tree.insert_node(0, 1, None);
-  let dl = || {
-    crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list")
-  };
+  let dl = || crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list");
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
   *tree.node(1).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
   assert!(tree.texture_content_changed(&ids(&[9])));

@@ -27,7 +27,12 @@ pub enum TextLayoutMode {
 
 #[derive(Clone, Debug)]
 pub struct Text {
+  // Concatenation of every span's text; what search and snapshots read.
   pub computed_text: String,
+  // The same text as styled runs, in order: each span leaf's text with the
+  // overrides layered along its span ancestry. Resolved against this Text's
+  // own fields at shape time, so a `<text>` prop change needs no resync.
+  pub runs: Vec<TextRun>,
   pub layout_mode: TextLayoutMode,
   pub font_family: String,
   pub font_size: f32,
@@ -62,6 +67,7 @@ impl Default for Text {
   fn default() -> Self {
     Self {
       computed_text: String::new(),
+      runs: Vec::new(),
       layout_mode: TextLayoutMode::default(),
       font_family: "sans".to_string(),
       font_size: 20.0,
@@ -89,7 +95,7 @@ impl Default for Text {
 // only while the owning Text still matches it.
 #[derive(Clone, Debug, PartialEq)]
 struct ParaKey {
-  text: String,
+  runs: Vec<TextRun>,
   font_family: String,
   font_size: f32,
   font_style: FontStyle,
@@ -102,7 +108,7 @@ struct ParaKey {
 
 impl ParaKey {
   fn matches(&self, t: &Text) -> bool {
-    self.text == t.computed_text
+    self.runs == t.runs
       && self.font_family == t.font_family
       && self.font_size == t.font_size
       && self.font_style == t.font_style
@@ -115,7 +121,7 @@ impl ParaKey {
 
   fn of(t: &Text) -> Self {
     Self {
-      text: t.computed_text.clone(),
+      runs: t.runs.clone(),
       font_family: t.font_family.clone(),
       font_size: t.font_size,
       font_style: t.font_style,
@@ -242,25 +248,27 @@ impl Text {
     }
     crate::rendertree::counters::note_para_shape();
 
-    let mut style = ParagraphStyle::default();
-    let paint = self.paint.to_paint();
-    style.set_foreground(&paint);
-    style.set_font_family(&self.font_family);
-    style.set_font_size(self.font_size);
-    style.set_font_style(self.font_style);
-    style.set_font_weight(self.font_weight);
-    style.set_text_alignment(self.text_alignment);
-    // 0 means no cap: keep txt's unlimited default. Passing 0 through reads as
-    // "the first line is the last" in Skia's line breaker, so every paragraph
-    // would shape single-line.
-    if self.max_lines > 0 {
-      style.set_max_lines(self.max_lines);
-    }
-    style.set_height(self.line_height);
-
+    // Paragraph-level settings are read from the first pushed style, so every
+    // run's style carries them; inner runs' copies are ignored by Impeller.
     let mut para_builder = ParagraphBuilder::new(typography)?;
-    para_builder.push_style(&style);
-    para_builder.add_text(&self.computed_text);
+    let mut pushed = 0;
+    for run in &self.runs {
+      let mut style = self.paragraph_style(&run.overrides.resolve(self));
+      style.set_text_alignment(self.text_alignment);
+      // 0 means no cap: keep txt's unlimited default. Passing 0 through reads
+      // as "the first line is the last" in Skia's line breaker, so every
+      // paragraph would shape single-line.
+      if self.max_lines > 0 {
+        style.set_max_lines(self.max_lines);
+      }
+      para_builder.push_style(&style);
+      para_builder.add_text(&run.text);
+      pushed += 1;
+    }
+    if pushed == 0 {
+      // Empty text still needs a style for its (zero-line) metrics.
+      para_builder.push_style(&self.paragraph_style(&self.run_style()));
+    }
     let paragraph = para_builder.build(width)?;
 
     if cache.entries.len() >= MAX_CACHED_WIDTHS {
@@ -297,39 +305,83 @@ impl Text {
     owned.layouts.clear();
     owned.key = Some(ParaKey::of(self));
 
-    let mut style = ParagraphStyle::default();
-    let paint = self.paint.to_paint();
-    style.set_foreground(&paint);
-    style.set_font_family(&self.font_family);
-    style.set_font_size(self.font_size);
-    style.set_font_style(self.font_style);
-    style.set_font_weight(self.font_weight);
-    style.set_height(self.line_height);
-
+    // A wrap unit may straddle styled runs (a code span and the comma glued
+    // to it). Each (unit, run) intersection is shaped on its own; pieces
+    // after the first are glued so the breaker keeps the unit whole.
+    let styles: Vec<ParagraphStyle> =
+      self.runs.iter().map(|r| self.paragraph_style(&r.overrides.resolve(self))).collect();
+    let mut run_starts = Vec::with_capacity(self.runs.len());
+    let mut offset = 0;
+    for run in &self.runs {
+      run_starts.push(offset);
+      offset += run.text.len();
+    }
+    let mut run_index = 0;
     for segment in text_layout::segments(&self.computed_text) {
-      let raw = &self.computed_text[segment.start..segment.end];
-      // The break characters themselves are not shaped: an empty remainder
-      // (a blank line) still needs a line box, which a space supplies.
-      let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-      let blank = text.is_empty();
-      crate::rendertree::counters::note_para_shape();
-      let Some(mut para_builder) = ParagraphBuilder::new(typography) else {
-        return;
-      };
-      para_builder.push_style(&style);
-      para_builder.add_text(if blank { " " } else { text });
-      let Some(paragraph) = para_builder.build(f32::MAX) else {
-        return;
-      };
-      let height = paragraph.get_height();
-      let ascent = paragraph.get_line_metrics().map(|m| m.get_ascent(0) as f32).unwrap_or(height);
-      let metrics = RunMetrics {
-        advance: if blank { 0.0 } else { paragraph.get_max_intrinsic_width() },
-        ink_width: if blank { 0.0 } else { paragraph.get_longest_line_width().max(0.0) },
-        ascent,
-        descent: (height - ascent).max(0.0),
-      };
-      owned.runs.push(ShapedRun { paragraph, run: Run { metrics, hard_break: segment.hard_break } });
+      let mut piece_start = segment.start;
+      let mut first = true;
+      while piece_start < segment.end {
+        while run_index + 1 < self.runs.len() && run_starts[run_index + 1] <= piece_start {
+          run_index += 1;
+        }
+        let run_end = run_starts[run_index] + self.runs[run_index].text.len();
+        let piece_end = segment.end.min(run_end);
+        let raw = &self.computed_text[piece_start..piece_end];
+        let last_piece = piece_end == segment.end;
+        // The break characters themselves are not shaped: an empty remainder
+        // (a blank line) still needs a line box, which a space supplies.
+        let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
+        let blank = text.is_empty();
+        crate::rendertree::counters::note_para_shape();
+        let Some(mut para_builder) = ParagraphBuilder::new(typography) else {
+          return;
+        };
+        para_builder.push_style(&styles[run_index]);
+        para_builder.add_text(if blank { " " } else { text });
+        let Some(paragraph) = para_builder.build(f32::MAX) else {
+          return;
+        };
+        let height = paragraph.get_height();
+        let ascent = paragraph.get_line_metrics().map(|m| m.get_ascent(0) as f32).unwrap_or(height);
+        let metrics = RunMetrics {
+          advance: if blank { 0.0 } else { paragraph.get_max_intrinsic_width() },
+          ink_width: if blank { 0.0 } else { paragraph.get_longest_line_width().max(0.0) },
+          ascent,
+          descent: (height - ascent).max(0.0),
+        };
+        owned.runs.push(ShapedRun {
+          paragraph,
+          run: Run { metrics, hard_break: segment.hard_break && last_piece, glue: !first },
+        });
+        first = false;
+        piece_start = piece_end;
+      }
+    }
+  }
+
+  // The per-run style resolved against this Text, as an Impeller paragraph
+  // style: foreground and font, without the paragraph-level settings.
+  fn paragraph_style(&self, run: &RunStyle) -> ParagraphStyle {
+    let mut style = ParagraphStyle::default();
+    let paint = run.paint.to_paint();
+    style.set_foreground(&paint);
+    style.set_font_family(&run.font_family);
+    style.set_font_size(run.font_size);
+    style.set_font_style(run.font_style);
+    style.set_font_weight(run.font_weight);
+    style.set_height(run.line_height);
+    style
+  }
+
+  // This Text's own fields as the run style every span layers on.
+  pub fn run_style(&self) -> RunStyle {
+    RunStyle {
+      font_family: self.font_family.clone(),
+      font_size: self.font_size,
+      font_style: self.font_style,
+      font_weight: self.font_weight,
+      line_height: self.line_height,
+      paint: self.paint.clone(),
     }
   }
 
@@ -419,9 +471,69 @@ impl Text {
   }
 }
 
+/// A styled run of a paragraph: a span leaf's text plus the overrides in
+/// effect for it (its own layered over its span ancestors').
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextRun {
+  pub text: String,
+  pub overrides: RunOverrides,
+}
+
+/// A run's fully resolved style.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunStyle {
+  pub font_family: String,
+  pub font_size: f32,
+  pub font_style: FontStyle,
+  pub font_weight: FontWeight,
+  pub line_height: f32,
+  pub paint: PaintState,
+}
+
+/// Per-span style overrides. `None` inherits from the enclosing span or, at
+/// the top, from the `<text>` itself. Cascade is intra-paragraph only.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RunOverrides {
+  pub font_family: Option<String>,
+  pub font_size: Option<f32>,
+  pub font_style: Option<FontStyle>,
+  pub font_weight: Option<FontWeight>,
+  pub line_height: Option<f32>,
+  pub paint: Option<PaintState>,
+}
+
+impl RunOverrides {
+  /// `child` layered over `self`: a child's Some wins.
+  pub fn layer(&self, child: &RunOverrides) -> RunOverrides {
+    RunOverrides {
+      font_family: child.font_family.clone().or_else(|| self.font_family.clone()),
+      font_size: child.font_size.or(self.font_size),
+      font_style: child.font_style.or(self.font_style),
+      font_weight: child.font_weight.or(self.font_weight),
+      line_height: child.line_height.or(self.line_height),
+      paint: child.paint.clone().or_else(|| self.paint.clone()),
+    }
+  }
+
+  pub fn resolve(&self, text: &Text) -> RunStyle {
+    RunStyle {
+      font_family: self.font_family.clone().unwrap_or_else(|| text.font_family.clone()),
+      font_size: self.font_size.unwrap_or(text.font_size),
+      font_style: self.font_style.unwrap_or(text.font_style),
+      font_weight: self.font_weight.unwrap_or(text.font_weight),
+      line_height: self.line_height.unwrap_or(text.line_height),
+      paint: self.paint.clone().unwrap_or_else(|| text.paint.clone()),
+    }
+  }
+}
+
+/// A run of a paragraph: the leaf `d-span` carries text, a `<span>` carries
+/// style overrides for everything under it. One kind serves both, since a
+/// span with text and children is just a run followed by more runs.
 #[derive(Clone, Debug, Default)]
 pub struct Span {
   pub text: String,
+  pub overrides: RunOverrides,
 }
 
 impl Span {
@@ -429,6 +541,34 @@ impl Span {
   pub fn set_text(&mut self, text: String) -> Damage {
     self.text = text;
     Damage::Layout
+  }
+
+  // Metrics-affecting overrides are Layout; the paint alone is Paint. Either
+  // way the owning Text re-collects its runs (RenderTree::sync_span_parent).
+  pub fn set_font_family(&mut self, family: String) -> Damage {
+    self.overrides.font_family = Some(family);
+    Damage::Layout
+  }
+  pub fn set_font_size(&mut self, v: f32) -> Damage {
+    self.overrides.font_size = Some(v);
+    Damage::Layout
+  }
+  pub fn set_line_height(&mut self, v: f32) -> Damage {
+    self.overrides.line_height = Some(v);
+    Damage::Layout
+  }
+  pub fn set_font_weight(&mut self, weight: FontWeight) -> Damage {
+    self.overrides.font_weight = Some(weight);
+    Damage::Layout
+  }
+  pub fn set_font_style(&mut self, style: FontStyle) -> Damage {
+    self.overrides.font_style = Some(style);
+    Damage::Layout
+  }
+  /// The paint override, created from the paragraph default on first write
+  /// so paint setters (color, gradient) have something to write into.
+  pub fn paint_override_mut(&mut self) -> &mut PaintState {
+    self.overrides.paint.get_or_insert_with(PaintState::default)
   }
 
   pub fn no_layout(self) -> Element {

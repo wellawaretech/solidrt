@@ -180,10 +180,21 @@ The primary container element. Supports layout, transform, and pointer event pro
 
 ### `<text>`
 
-Renders text. Children are the text content.
+Renders text. Children are the text content: strings, and `<span>` runs that override the paragraph's style for part of it.
 
 ```jsx
 <text color="#333" fontSize={16}>Hello</text>
+```
+
+### `<span>`
+
+A styled run inside `<text>` (or `<d-text>`). Inline text only: its children are text and other spans, and it never has a layout box, so there is no `d-` form. It takes the per-run props (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); anything not set inherits from the enclosing span, then from the `<text>`. The cascade stops at the paragraph: nothing inherits across the tree. Paragraph-level props (`textAlign`, `maxLines`) belong on `<text>` only.
+
+```jsx
+<text color="#333" fontSize={16}>
+  Hello, <span color="tomato" fontWeight={700}>{name()}</span>!
+  <span fontFamily="mono">code <span fontStyle="italic">nested</span></span>
+</text>
 ```
 
 ### `<rect>`

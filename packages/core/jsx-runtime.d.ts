@@ -7,6 +7,7 @@ import type {
   ViewProps,
   ViewOwnProps,
   TextProps,
+  SpanProps,
   TextureProps,
   LayoutProps,
   PositionProps,
@@ -54,5 +55,8 @@ export namespace JSX {
     "d-path": PathProps & PositionProps & ElementRef
     "d-texture": TextureProps & GeometryProps & ElementRef
     "d-text": TextProps & TextGeometryProps & ElementRef
+    // A styled run inside <text>/<d-text>; never has a layout box, so there is
+    // no d- form.
+    span: SpanProps & ElementRef
   }
 }

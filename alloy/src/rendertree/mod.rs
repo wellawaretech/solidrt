@@ -14,7 +14,7 @@ pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
-  Text, TextLayoutMode, Texture, TextureFit, View, Window,
+  RunOverrides, RunStyle, Text, TextLayoutMode, TextRun, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
@@ -353,7 +353,7 @@ impl Element {
       "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),
       "d-text" => Text::default().no_layout(),
-      "d-span" => Span::default().no_layout(),
+      "span" | "d-span" => Span::default().no_layout(),
       "texture" => Texture::default().with_layout(),
       "d-texture" => Texture::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),

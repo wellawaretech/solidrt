@@ -7,7 +7,7 @@ use taffy::{
 
 use super::super::tree::RenderTree;
 use super::cache::LayoutCache;
-use crate::rendertree::{ElementKind, Measurable, MeasureContext, PlatformContext};
+use crate::rendertree::{Measurable, MeasureContext, PlatformContext};
 
 pub struct LayoutData {
   pub style: Style,
@@ -111,22 +111,9 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
   fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
     compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
       let id = u64::from(node_id);
-      let element = tree.render_tree.node(id);
-
-      // Handle Text: concatenate text from Span children
-      if let ElementKind::Text(_) = &element.kind {
-        let children = element.children.clone();
-        let mut text = String::new();
-        for child_id in children {
-          if let ElementKind::Span(span) = &tree.render_tree.node(child_id).kind {
-            text.push_str(&span.text);
-          }
-        }
-        if let ElementKind::Text(text_el) = &mut tree.render_tree.node_mut(id).kind {
-          text_el.computed_text = text;
-        }
-      }
-
+      // A Text's computed_text and runs are kept current eagerly by
+      // RenderTree::sync_text on every span or structural change, so the
+      // layout pass reads them as-is.
       let element = tree.render_tree.node(id);
       if element.kind.is_measured_leaf() {
         let platform = tree.platform;

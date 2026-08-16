@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::impellers::Matrix;
-use crate::rendertree::{BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, Size};
+use crate::rendertree::{
+  BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun,
+};
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -450,35 +452,55 @@ impl RenderTree {
     self.nodes.remove(&node_id);
   }
 
-  /// Rebuild a Text's computed_text from its Span children; no-op for other
-  /// kinds. The layout pass aggregates spans for attached text on every pass,
-  /// but detached text never enters layout, so structural and span-text
-  /// changes sync eagerly here instead.
-  fn sync_text(&mut self, text_id: u64) {
-    let Some(element) = self.try_node(text_id) else { return };
-    if !matches!(element.kind, ElementKind::Text(_)) {
-      return;
+  /// Rebuild a Text's computed_text and styled runs from its Span subtree.
+  /// `id` may be the Text or any span inside it: spans nest, so the owning
+  /// Text is found by walking up. No-op for other kinds. Detached text never
+  /// enters layout, so structural and span changes sync eagerly here.
+  fn sync_text(&mut self, id: u64) {
+    let mut text_id = id;
+    loop {
+      let Some(element) = self.try_node(text_id) else { return };
+      match element.kind {
+        ElementKind::Text(_) => break,
+        ElementKind::Span(_) => match element.parent {
+          Some(parent) => text_id = parent,
+          None => return,
+        },
+        _ => return,
+      }
     }
     let mut text = String::new();
-    for &child_id in &element.children {
-      if let ElementKind::Span(span) = &self.node(child_id).kind {
-        text.push_str(&span.text);
-      }
+    let mut runs = Vec::new();
+    let children = self.node(text_id).children.clone();
+    for child_id in children {
+      self.collect_runs(child_id, &RunOverrides::default(), &mut text, &mut runs);
     }
     if let ElementKind::Text(t) = &mut self.node_mut(text_id).kind {
       t.computed_text = text;
+      t.runs = runs;
     }
   }
 
-  /// If `node_id` is a Span, resync the parent Text. Called after a property
-  /// write; no-op for every other kind, so callers need not check.
-  pub fn sync_span_parent(&mut self, node_id: u64) {
-    let Some(node) = self.try_node(node_id) else { return };
-    if !matches!(node.kind, ElementKind::Span(_)) {
-      return;
+  /// Depth-first over a span subtree: a span's own text is a run under the
+  /// overrides layered so far, then its children under those plus its own.
+  fn collect_runs(&self, id: u64, inherited: &RunOverrides, text: &mut String, runs: &mut Vec<TextRun>) {
+    let node = self.node(id);
+    let ElementKind::Span(span) = &node.kind else { return };
+    let overrides = inherited.layer(&span.overrides);
+    if !span.text.is_empty() {
+      text.push_str(&span.text);
+      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone() });
     }
-    if let Some(parent_id) = node.parent {
-      self.sync_text(parent_id);
+    for &child_id in &node.children {
+      self.collect_runs(child_id, &overrides, text, runs);
+    }
+  }
+
+  /// If `node_id` is a Span, resync the Text that owns it. Called after a
+  /// property write; no-op for every other kind, so callers need not check.
+  pub fn sync_span_parent(&mut self, node_id: u64) {
+    if matches!(self.try_node(node_id).map(|n| &n.kind), Some(ElementKind::Span(_))) {
+      self.sync_text(node_id);
     }
   }
 
