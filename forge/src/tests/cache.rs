@@ -66,6 +66,18 @@ async fn wait_for_entry(cache: &Cache, key: &str) -> (Vec<u8>, Vec<u8>) {
   panic!("entry for {key} never committed");
 }
 
+/// The writer's temp file is removed by a background task; wait for the
+/// directory to empty out (bounded), then assert nothing was left behind.
+async fn wait_for_empty(dir: &std::path::Path) {
+  for _ in 0..200 {
+    if std::fs::read_dir(dir).map(|rd| rd.count()).unwrap_or(0) == 0 {
+      return;
+    }
+    tokio::time::sleep(Duration::from_millis(10)).await;
+  }
+  panic!("cache dir {} not cleaned up", dir.display());
+}
+
 #[tokio::test]
 async fn scan_lists_committed_entries() {
   let dir = temp_dir("scan");
@@ -111,11 +123,9 @@ async fn no_commit_on_body_error() {
   assert_eq!(passthrough, b"partial");
   assert!(errored);
 
-  tokio::time::sleep(Duration::from_millis(100)).await;
-  assert!(cache.lookup("k").await.is_none());
   // Nothing committed and the temp file is cleaned up.
-  let leftover = std::fs::read_dir(&dir).map(|rd| rd.count()).unwrap_or(0);
-  assert_eq!(leftover, 0);
+  wait_for_empty(&dir).await;
+  assert!(cache.lookup("k").await.is_none());
 }
 
 #[tokio::test]
@@ -127,10 +137,8 @@ async fn no_commit_on_abandoned_stream() {
   assert_eq!(&first[..], b"first");
   drop(tee);
 
-  tokio::time::sleep(Duration::from_millis(100)).await;
+  wait_for_empty(&dir).await;
   assert!(cache.lookup("k").await.is_none());
-  let leftover = std::fs::read_dir(&dir).map(|rd| rd.count()).unwrap_or(0);
-  assert_eq!(leftover, 0);
 }
 
 #[tokio::test]
