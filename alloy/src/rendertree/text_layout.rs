@@ -88,12 +88,15 @@ fn unit_ink(runs: &[Run], first: usize) -> f32 {
   }
 }
 
-/// Horizontal placement of lines within the layout width.
+/// Horizontal placement of lines within the layout width. `Justify` spreads
+/// the slack of every wrapped line over the gaps between its wrap units; the
+/// last line and lines ending in a hard break stay left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
   Left,
   Center,
   Right,
+  Justify,
 }
 
 /// A run's position in the layout: `x`/`y` is the run's top-left, already
@@ -125,65 +128,165 @@ pub struct Layout {
   /// Widest line's ink width.
   pub width: f32,
   pub height: f32,
+  /// Runs were dropped because `max_lines` was reached.
+  pub truncated: bool,
+  /// Where the ellipsis run goes (top-left, baseline-aligned on the last
+  /// line) when truncated and an ellipsis was supplied.
+  pub ellipsis: Option<(f32, f32)>,
+  /// First-piece indices of wrap units whose ink alone exceeds the width;
+  /// they overflow their line. The caller may re-split them finer and lay
+  /// out again (overflowWrap: anywhere).
+  pub overflowing: Vec<usize>,
 }
 
-/// Greedy line breaking: runs go on the current line while their ink fits in
-/// `max_width`; a run that fits nowhere gets a line of its own and overflows.
-/// `max_lines` of 0 means unlimited. Each line is as tall as its tallest run
-/// and every run's baseline sits on the line's baseline.
-pub fn layout(runs: &[Run], max_width: f32, align: Align, max_lines: u32) -> Layout {
-  let mut out = Layout::default();
-  let mut line = Line::default();
-  let mut pen = 0.0f32;
-  let mut y = 0.0f32;
+/// Greedy line breaking: wrap units (a run plus the glued runs after it) go
+/// on the current line while their ink fits in `max_width`; a unit that fits
+/// nowhere gets a line of its own and overflows. `max_lines` of 0 means
+/// unlimited; when it cuts the text short and `ellipsis` gives the metrics of
+/// an ellipsis run, the last line is trimmed until the ellipsis fits and its
+/// position is reported. Each line is as tall as its tallest run and every
+/// run's baseline sits on the line's baseline.
+pub fn layout(runs: &[Run], max_width: f32, align: Align, max_lines: u32, ellipsis: Option<RunMetrics>) -> Layout {
+  let mut b = Breaker { runs, max_width, align, out: Layout::default(), line: Line::default(), pen: 0.0, y: 0.0 };
+  // Whether closing the open line would exceed the cap: the open line counts.
+  let last_line = |b: &Breaker| max_lines > 0 && b.out.lines.len() as u32 + 1 >= max_lines;
 
-  let lines_full = |out: &Layout| max_lines > 0 && out.lines.len() as u32 >= max_lines;
-
-  let close_line = |out: &mut Layout, line: &mut Line, y: &mut f32| {
-    let offset = match align {
-      Align::Left => 0.0,
-      Align::Center => ((max_width - line.width) / 2.0).max(0.0),
-      Align::Right => (max_width - line.width).max(0.0),
-    };
-    for placed in &mut out.runs[line.first..line.end] {
-      placed.x += offset;
-      placed.y = *y + line.ascent - runs[placed.run].metrics.ascent;
-    }
-    line.y = *y;
-    *y += line.height;
-    out.width = out.width.max(line.width);
-    out.lines.push(*line);
-    *line = Line { first: out.runs.len(), end: out.runs.len(), ..Line::default() };
-  };
-
-  for (index, run) in runs.iter().enumerate() {
-    let has_content = line.end > line.first;
-    if has_content && !run.glue && pen + unit_ink(runs, index) > max_width {
-      close_line(&mut out, &mut line, &mut y);
-      if lines_full(&out) {
-        break;
+  let mut index = 0;
+  while index < runs.len() {
+    let run = runs[index];
+    let has_content = b.line.end > b.line.first;
+    if !run.glue {
+      let ink = unit_ink(runs, index);
+      if has_content && b.pen + ink > max_width {
+        if last_line(&b) {
+          b.out.truncated = true;
+          break;
+        }
+        b.close_line(true);
       }
-      pen = 0.0;
+      if ink > max_width {
+        b.out.overflowing.push(index);
+      }
     }
-    out.runs.push(PlacedRun { run: index, x: pen, y: 0.0 });
-    line.end = out.runs.len();
-    line.width = pen + run.metrics.ink_width;
-    line.ascent = line.ascent.max(run.metrics.ascent);
-    line.height = line.height.max(run.metrics.height());
-    pen += run.metrics.advance;
+    b.place(index);
     if run.hard_break {
-      close_line(&mut out, &mut line, &mut y);
-      if lines_full(&out) {
+      let more = index + 1 < runs.len();
+      if more && last_line(&b) {
+        b.out.truncated = true;
         break;
       }
-      pen = 0.0;
+      b.close_line(false);
+    }
+    index += 1;
+  }
+
+  if b.out.truncated {
+    if let Some(ell) = ellipsis {
+      b.trim_for_ellipsis(ell);
     }
   }
-  if line.end > line.first {
-    close_line(&mut out, &mut line, &mut y);
+  if b.line.end > b.line.first || b.out.ellipsis.is_some() {
+    b.close_line(false);
   }
-  out.height = y;
-  out
+  b.out.height = b.y;
+  b.out
+}
+
+struct Breaker<'a> {
+  runs: &'a [Run],
+  max_width: f32,
+  align: Align,
+  out: Layout,
+  // The open line: `first..end` of `out.runs` are on it, `pen` is where the
+  // next run starts, `y` its top.
+  line: Line,
+  pen: f32,
+  y: f32,
+}
+
+impl Breaker<'_> {
+  fn place(&mut self, index: usize) {
+    let run = &self.runs[index];
+    self.out.runs.push(PlacedRun { run: index, x: self.pen, y: 0.0 });
+    self.line.end = self.out.runs.len();
+    self.line.width = self.pen + run.metrics.ink_width;
+    self.line.ascent = self.line.ascent.max(run.metrics.ascent);
+    self.line.height = self.line.height.max(run.metrics.height());
+    self.pen += run.metrics.advance;
+  }
+
+  // Close the open line: align its runs (justify only when the line was
+  // wrapped), settle their y on the baseline, and start the next line.
+  fn close_line(&mut self, wrapped: bool) {
+    let slack = (self.max_width - self.line.width).max(0.0);
+    let offset = match self.align {
+      Align::Left | Align::Justify => 0.0,
+      Align::Center => slack / 2.0,
+      Align::Right => slack,
+    };
+    let (first, end) = (self.line.first, self.line.end);
+    let mut justify_step = 0.0;
+    if self.align == Align::Justify && wrapped {
+      let units = self.out.runs[first..end].iter().filter(|p| !self.runs[p.run].glue).count();
+      if units > 1 {
+        justify_step = slack / (units - 1) as f32;
+      }
+    }
+    let mut unit = 0usize;
+    for (i, placed) in self.out.runs[first..end].iter_mut().enumerate() {
+      let run = &self.runs[placed.run];
+      if i > 0 && !run.glue {
+        unit += 1;
+      }
+      placed.x += offset + justify_step * unit as f32;
+      placed.y = self.y + self.line.ascent - run.metrics.ascent;
+    }
+    if let Some((x, y)) = &mut self.out.ellipsis {
+      // The ellipsis sits on this (last) line: `x` holds its pen and `y` its
+      // ascent until now.
+      let ascent = *y;
+      *x += offset;
+      *y = self.y + self.line.ascent - ascent;
+    }
+    if justify_step > 0.0 {
+      self.line.width = self.max_width;
+    }
+    self.line.y = self.y;
+    self.y += self.line.height;
+    self.out.width = self.out.width.max(self.line.width);
+    self.out.lines.push(self.line);
+    self.line = Line { first: self.out.runs.len(), end: self.out.runs.len(), ..Line::default() };
+    self.pen = 0.0;
+  }
+
+  // Drop runs from the end of the open line until the ellipsis fits after
+  // the last one's ink, then reserve its slot. A line that cannot fit even
+  // the ellipsis alone keeps just the ellipsis.
+  fn trim_for_ellipsis(&mut self, ell: RunMetrics) {
+    let mut ell_x = 0.0;
+    while self.line.end > self.line.first {
+      let placed = self.out.runs[self.line.end - 1];
+      ell_x = placed.x + self.runs[placed.run].metrics.ink_width;
+      if ell_x + ell.ink_width <= self.max_width {
+        break;
+      }
+      self.out.runs.pop();
+      self.line.end -= 1;
+      ell_x = 0.0;
+    }
+    // Recompute the line box from what remains plus the ellipsis.
+    let mut ascent = ell.ascent;
+    let mut height = ell.height();
+    for placed in &self.out.runs[self.line.first..self.line.end] {
+      let m = self.runs[placed.run].metrics;
+      ascent = ascent.max(m.ascent);
+      height = height.max(m.height());
+    }
+    self.line.ascent = ascent;
+    self.line.height = height;
+    self.line.width = ell_x + ell.ink_width;
+    self.out.ellipsis = Some((ell_x, ell.ascent));
+  }
 }
 
 /// Width the runs take with no wrapping at all: the widest hard-broken line.

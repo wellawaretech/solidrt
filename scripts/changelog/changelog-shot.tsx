@@ -15,10 +15,9 @@
 // sandbox before app code runs, so a relative read at runtime would not find
 // the repo file, and the output directory arrives as an absolute path in argv.
 //
-// A bullet is one flowing paragraph, as in the source. Core <text> has no
-// inline runs, so the paragraph is laid out a word at a time in a wrapping row
-// and each word carries its own run's style: that is what makes a bold lead-in
-// or `inline code` sit mid-sentence instead of on a line of its own.
+// A bullet is one flowing paragraph, as in the source: one <text> whose
+// styled runs (a bold lead-in, `inline code`, a [platform] label) are <span>
+// children, wrapped as a whole by the text engine.
 import { createLinearGradient, encodeImage, exit, render } from "@solidrt/core"
 import { captureSnapshot } from "@solidrt/core/gpu"
 import { file } from "flux:fs"
@@ -37,8 +36,8 @@ type Run = {
 
 type Section = {
   title: string
-  // Each bullet is a list of words, each word a list of styled segments.
-  bullets: Run[][][]
+  // Each bullet is a list of styled runs.
+  bullets: Run[][]
 }
 
 // The newest release runs from the first "## " heading to the next one. The
@@ -56,15 +55,13 @@ function newestRelease(text: string): { title: string, lines: string[] } {
 }
 
 // Split a bullet into styled runs: a leading [platform] label, **strong** spans
-// and `code` spans, with everything else as body text. Whitespace is preserved
-// because it is what toWords splits on afterwards.
+// and `code` spans, with everything else as body text. Whitespace stays in the
+// runs; the text engine wraps on it.
 function inlineRuns(text: string): Run[] {
   let runs: Run[] = []
   let push = (kind: RunKind, value: string) => {
     if (value !== "") runs.push({ kind, text: value })
   }
-  // Leave the whitespace after the label in place: consuming it would glue the
-  // label to the next word, since whitespace is what separates words below.
   let label = /^\[([^\]]+)\]/.exec(text)
   if (label) {
     push("label", label[0])
@@ -97,28 +94,6 @@ function inlineRuns(text: string): Run[] {
   return runs
 }
 
-// Regroup runs into words, splitting only where the source had whitespace. The
-// word is the wrap unit and the gap unit, so a code span and the comma glued to
-// it stay one piece: gapping every run instead would space that comma off, and
-// let a line break land between them.
-function toWords(runs: Run[]): Run[][] {
-  let words: Run[][] = []
-  let current: Run[] = []
-  for (let run of runs) {
-    for (let part of run.text.split(/(\s+)/)) {
-      if (part === "") continue
-      if (/^\s+$/.test(part)) {
-        if (current.length > 0) words.push(current)
-        current = []
-      } else {
-        current.push({ kind: run.kind, text: part })
-      }
-    }
-  }
-  if (current.length > 0) words.push(current)
-  return words
-}
-
 // Only the sections named in SECTIONS, in the order the file lists them. A
 // bullet may wrap across lines; continuation lines are indented.
 function parseSections(lines: string[]): Section[] {
@@ -126,7 +101,7 @@ function parseSections(lines: string[]): Section[] {
   let current: Section | null = null
   let pending: string[] = []
   let flushBullet = () => {
-    if (current && pending.length > 0) current.bullets.push(toWords(inlineRuns(pending.join(" "))))
+    if (current && pending.length > 0) current.bullets.push(inlineRuns(pending.join(" ")))
     pending = []
   }
   for (let line of lines) {
@@ -149,21 +124,34 @@ function parseSections(lines: string[]): Section[] {
 }
 
 // Sizes are for a 1:1 canvas: playback pins the display scale to 1, so these
-// are output pixels and do not shift with the host's DPI setting.
-function Word(props: { kind: RunKind, text: string }) {
-  if (props.kind === "strong") {
-    return <text fontSize={17} fontWeight={700} lineHeight={1.45} color="#e8ecf5">{props.text}</text>
+// are output pixels and do not shift with the host's DPI setting. Body text is
+// the paragraph's own style; every other kind is a span override on it.
+function Styled(props: { run: Run }) {
+  let run = props.run
+  if (run.kind === "strong") {
+    return <span fontWeight={700} color="#e8ecf5">{run.text}</span>
   }
-  if (props.kind === "code") {
-    return <text fontFamily="mono" fontSize={16} lineHeight={1.55} color="#9fc0ff">{props.text}</text>
+  if (run.kind === "code") {
+    return <span fontFamily="mono" fontSize={16} lineHeight={1.55} color="#9fc0ff">{run.text}</span>
   }
-  if (props.kind === "strong-code") {
-    return <text fontFamily="mono" fontSize={16} fontWeight={700} lineHeight={1.55} color="#9fc0ff">{props.text}</text>
+  if (run.kind === "strong-code") {
+    return <span fontFamily="mono" fontSize={16} fontWeight={700} lineHeight={1.55} color="#9fc0ff">{run.text}</span>
   }
-  if (props.kind === "label") {
-    return <text fontSize={16} fontWeight={600} lineHeight={1.45} color="#7f9bd8">{props.text}</text>
+  if (run.kind === "label") {
+    return <span fontSize={16} fontWeight={600} color="#7f9bd8">{run.text}</span>
   }
-  return <text fontSize={17} lineHeight={1.45} color="#a3aec7">{props.text}</text>
+  return <>{run.text}</>
+}
+
+function Bullet(props: { runs: Run[] }) {
+  return (
+    <view flexDirection="row" gap={12} alignItems="flex-start">
+      <oval width={6} height={6} color="#4f6bb0" marginTop={10} />
+      <text flex={1} fontSize={17} lineHeight={1.45} color="#a3aec7" textLayout="owned">
+        {props.runs.map(run => <Styled run={run} />)}
+      </text>
+    </view>
+  )
 }
 
 function App() {
@@ -211,22 +199,7 @@ function App() {
               <text fontSize={24} fontWeight={700} color="#e8ecf5">{section.title}</text>
               {/* Bullets run together as a list; only sections get breathing room. */}
               <view flexDirection="column">
-                {section.bullets.map(words => (
-                  <view flexDirection="row" gap={12} alignItems="flex-start">
-                    <oval width={6} height={6} color="#4f6bb0" marginTop={10} />
-                    <view flex={1} flexDirection="row" flexWrap="wrap" columnGap={5} rowGap={0} alignItems="baseline">
-                      {words.map(word =>
-                        word.length === 1
-                          ? <Word kind={word[0]!.kind} text={word[0]!.text} />
-                          : (
-                            <view flexDirection="row" alignItems="baseline">
-                              {word.map(segment => <Word kind={segment.kind} text={segment.text} />)}
-                            </view>
-                          ),
-                      )}
-                    </view>
-                  </view>
-                ))}
+                {section.bullets.map(runs => <Bullet runs={runs} />)}
               </view>
             </view>
           ))}

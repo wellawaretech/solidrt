@@ -92,6 +92,7 @@ dependencies = [
  "svgtypes",
  "taffy",
  "unicode-linebreak",
+ "unicode-segmentation",
  "windows-sys 0.61.2",
 ]
 

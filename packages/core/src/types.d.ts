@@ -577,6 +577,19 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
   textAlign?: "left" | "right" | "center" | "justify"
   maxLines?: number
   /**
+   * What happens to text cut off by maxLines: "clip" (default), "ellipsis"
+   * (a U+2026 at the end of the last line), or any other string to use as
+   * the ellipsis. Drawn in the paragraph's default style.
+   */
+  textOverflow?: "clip" | "ellipsis" | (string & {})
+  /**
+   * A word (wrap unit) wider than the line: "anywhere" (default) splits it
+   * at grapheme boundaries so it stays inside the box, "normal" keeps it
+   * whole and lets it overflow (CSS's default). "normal" needs
+   * textLayout="owned" while that flag exists.
+   */
+  overflowWrap?: "normal" | "anywhere"
+  /**
    * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
    * the whole text to one Impeller paragraph, "owned" shapes each word on its
    * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR only;

@@ -180,10 +180,11 @@ The primary container element. Supports layout, transform, and pointer event pro
 
 ### `<text>`
 
-Renders text. Children are the text content: strings, and `<span>` runs that override the paragraph's style for part of it.
+Renders text. Children are the text content: strings, and `<span>` runs that override the paragraph's style for part of it. Paragraph-level props: `textAlign`, `maxLines` with `textOverflow` (`"clip"`, `"ellipsis"`, or any string to draw as the ellipsis), and `overflowWrap` (`"anywhere"`, the default, splits a word wider than the line at grapheme boundaries; `"normal"` keeps it whole and lets it overflow).
 
 ```jsx
 <text color="#333" fontSize={16}>Hello</text>
+<text maxLines={2} textOverflow="ellipsis">{longText()}</text>
 ```
 
 ### `<span>`

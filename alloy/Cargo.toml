@@ -87,5 +87,7 @@ lyon_path = "1"
 lyon_algorithms = "1"
 # UAX #14 line-break opportunities for the owned text layout
 # (rendertree/text_layout.rs): segments between opportunities are the wrap
-# units the greedy breaker places.
+# units the greedy breaker places. UAX #29 grapheme clusters split a unit
+# wider than its line when overflowWrap is "anywhere".
 unicode-linebreak = "0.1"
+unicode-segmentation = "1"

@@ -14,7 +14,8 @@ pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
-  RunOverrides, RunStyle, Text, TextLayoutMode, TextRun, Texture, TextureFit, View, Window,
+  OverflowWrap, RunOverrides, RunStyle, Text, TextLayoutMode, TextOverflow, TextRun, Texture, TextureFit, View,
+  Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};

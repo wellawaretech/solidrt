@@ -25,6 +25,26 @@ pub enum TextLayoutMode {
   Owned,
 }
 
+/// What happens to text cut off by `max_lines`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum TextOverflow {
+  #[default]
+  Clip,
+  /// The string drawn at the end of the last line in the paragraph's default
+  /// style, the last line trimmed until it fits.
+  Ellipsis(String),
+}
+
+/// What happens to a wrap unit wider than its line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OverflowWrap {
+  /// Keep it whole and let it overflow (CSS's default).
+  Normal,
+  /// Split it at grapheme boundaries, only when it does not fit alone.
+  #[default]
+  Anywhere,
+}
+
 #[derive(Clone, Debug)]
 pub struct Text {
   // Concatenation of every span's text; what search and snapshots read.
@@ -41,6 +61,8 @@ pub struct Text {
   pub text_alignment: TextAlignment,
   // 0 = unlimited.
   pub max_lines: u32,
+  pub text_overflow: TextOverflow,
+  pub overflow_wrap: OverflowWrap,
   pub line_height: f32,
   // Paint-time box overrides, mirroring Rectangle's x/y/w/h. x/y offset the
   // drawn paragraph. w overrides the shaping (wrap) width, which otherwise
@@ -79,6 +101,8 @@ impl Default for Text {
       font_weight: FontWeight::Medium,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
+      text_overflow: TextOverflow::default(),
+      overflow_wrap: OverflowWrap::default(),
       line_height: 0.0,
       x: None,
       y: None,
@@ -102,6 +126,8 @@ struct ParaKey {
   font_weight: FontWeight,
   text_alignment: TextAlignment,
   max_lines: u32,
+  text_overflow: TextOverflow,
+  overflow_wrap: OverflowWrap,
   line_height: f32,
   paint: PaintState,
 }
@@ -115,6 +141,8 @@ impl ParaKey {
       && self.font_weight == t.font_weight
       && self.text_alignment == t.text_alignment
       && self.max_lines == t.max_lines
+      && self.text_overflow == t.text_overflow
+      && self.overflow_wrap == t.overflow_wrap
       && self.line_height == t.line_height
       && self.paint == t.paint
   }
@@ -128,6 +156,8 @@ impl ParaKey {
       font_weight: t.font_weight,
       text_alignment: t.text_alignment,
       max_lines: t.max_lines,
+      text_overflow: t.text_overflow.clone(),
+      overflow_wrap: t.overflow_wrap,
       line_height: t.line_height,
       paint: t.paint.clone(),
     }
@@ -140,19 +170,41 @@ struct ParaCache {
   entries: Vec<(f32, Paragraph)>,
 }
 
-// One wrap unit shaped as a single-line paragraph, plus what the breaker
-// needs to know about it.
+// One piece of a wrap unit shaped as a single-line paragraph, plus what the
+// breaker needs to know about it and what re-splitting it finer needs.
 #[derive(Clone)]
 struct ShapedRun {
   paragraph: Paragraph,
   run: Run,
+  text: String,
+  // Index into the per-run styles the runs were shaped with.
+  style: usize,
+}
+
+// A layout for one width. `runs` is Some when overflowing units were
+// re-split at grapheme boundaries for this width: the layout's run indices
+// then refer to it instead of `OwnedCache::runs`.
+#[derive(Clone)]
+struct OwnedLayout {
+  width: f32,
+  layout: Layout,
+  runs: Option<Vec<ShapedRun>>,
 }
 
 #[derive(Clone, Default)]
 struct OwnedCache {
   key: Option<ParaKey>,
   runs: Vec<ShapedRun>,
-  layouts: Vec<(f32, Layout)>,
+  // Ellipsis run in the paragraph's default style, when text_overflow asks
+  // for one.
+  ellipsis: Option<ShapedRun>,
+  layouts: Vec<OwnedLayout>,
+}
+
+impl OwnedCache {
+  fn runs_for(&self, index: usize) -> &[ShapedRun] {
+    self.layouts[index].runs.as_deref().unwrap_or(&self.runs)
+  }
 }
 
 impl std::fmt::Debug for OwnedCache {
@@ -176,11 +228,16 @@ impl Buildable for Text {
       let typography = ctx.platform.typography();
       let mut owned = self.owned.borrow_mut();
       self.prepare_owned(&typography, &mut owned);
-      let layout = Self::owned_layout(self, &mut owned, width);
+      let index = self.owned_layout(&typography, &mut owned, width);
       let owned = &*owned;
-      for placed in &owned.layouts[layout].1.runs {
-        let paragraph = &owned.runs[placed.run].paragraph;
+      let runs = owned.runs_for(index);
+      let layout = &owned.layouts[index].layout;
+      for placed in &layout.runs {
+        let paragraph = &runs[placed.run].paragraph;
         builder.draw_paragraph(paragraph, Point::new(origin.x + placed.x, origin.y + placed.y));
+      }
+      if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, &owned.ellipsis) {
+        builder.draw_paragraph(&ellipsis.paragraph, Point::new(origin.x + x, origin.y + y));
       }
       return;
     }
@@ -261,6 +318,9 @@ impl Text {
       if self.max_lines > 0 {
         style.set_max_lines(self.max_lines);
       }
+      if let TextOverflow::Ellipsis(s) = &self.text_overflow {
+        style.set_ellipsis(Some(s));
+      }
       para_builder.push_style(&style);
       para_builder.add_text(&run.text);
       pushed += 1;
@@ -289,8 +349,8 @@ impl Text {
       AvailableSpace::MinContent => text_layout::min_intrinsic_width(&runs),
     });
     let height = ctx.known.height.unwrap_or_else(|| {
-      let layout = Self::owned_layout(self, &mut owned, width);
-      owned.layouts[layout].1.height
+      let index = self.owned_layout(&typography, &mut owned, width);
+      owned.layouts[index].layout.height
     });
     Size::new(width, height)
   }
@@ -303,13 +363,13 @@ impl Text {
     }
     owned.runs.clear();
     owned.layouts.clear();
+    owned.ellipsis = None;
     owned.key = Some(ParaKey::of(self));
 
     // A wrap unit may straddle styled runs (a code span and the comma glued
     // to it). Each (unit, run) intersection is shaped on its own; pieces
     // after the first are glued so the breaker keeps the unit whole.
-    let styles: Vec<ParagraphStyle> =
-      self.runs.iter().map(|r| self.paragraph_style(&r.overrides.resolve(self))).collect();
+    let styles = self.run_styles();
     let mut run_starts = Vec::with_capacity(self.runs.len());
     let mut offset = 0;
     for run in &self.runs {
@@ -328,35 +388,107 @@ impl Text {
         let piece_end = segment.end.min(run_end);
         let raw = &self.computed_text[piece_start..piece_end];
         let last_piece = piece_end == segment.end;
-        // The break characters themselves are not shaped: an empty remainder
-        // (a blank line) still needs a line box, which a space supplies.
+        // The break characters themselves are not shaped.
         let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-        let blank = text.is_empty();
-        crate::rendertree::counters::note_para_shape();
-        let Some(mut para_builder) = ParagraphBuilder::new(typography) else {
+        let Some(shaped) =
+          Self::shape_piece(typography, &styles, run_index, text, segment.hard_break && last_piece, !first)
+        else {
           return;
         };
-        para_builder.push_style(&styles[run_index]);
-        para_builder.add_text(if blank { " " } else { text });
-        let Some(paragraph) = para_builder.build(f32::MAX) else {
-          return;
-        };
-        let height = paragraph.get_height();
-        let ascent = paragraph.get_line_metrics().map(|m| m.get_ascent(0) as f32).unwrap_or(height);
-        let metrics = RunMetrics {
-          advance: if blank { 0.0 } else { paragraph.get_max_intrinsic_width() },
-          ink_width: if blank { 0.0 } else { paragraph.get_longest_line_width().max(0.0) },
-          ascent,
-          descent: (height - ascent).max(0.0),
-        };
-        owned.runs.push(ShapedRun {
-          paragraph,
-          run: Run { metrics, hard_break: segment.hard_break && last_piece, glue: !first },
-        });
+        owned.runs.push(shaped);
         first = false;
         piece_start = piece_end;
       }
     }
+    if let TextOverflow::Ellipsis(s) = &self.text_overflow {
+      let styles = [self.paragraph_style(&self.run_style())];
+      owned.ellipsis = Self::shape_piece(typography, &styles, 0, s, false, false);
+    }
+  }
+
+  // One piece of a wrap unit as a single-line paragraph in `styles[style]`.
+  // An empty piece (a blank line) still needs a line box, which a space
+  // supplies at zero advance.
+  fn shape_piece(
+    typography: &TypographyContext,
+    styles: &[ParagraphStyle],
+    style: usize,
+    text: &str,
+    hard_break: bool,
+    glue: bool,
+  ) -> Option<ShapedRun> {
+    let blank = text.is_empty();
+    crate::rendertree::counters::note_para_shape();
+    let mut para_builder = ParagraphBuilder::new(typography)?;
+    para_builder.push_style(&styles[style]);
+    para_builder.add_text(if blank { " " } else { text });
+    let paragraph = para_builder.build(f32::MAX)?;
+    let height = paragraph.get_height();
+    let ascent = paragraph.get_line_metrics().map(|m| m.get_ascent(0) as f32).unwrap_or(height);
+    let metrics = RunMetrics {
+      advance: if blank { 0.0 } else { paragraph.get_max_intrinsic_width() },
+      ink_width: if blank { 0.0 } else { paragraph.get_longest_line_width().max(0.0) },
+      ascent,
+      descent: (height - ascent).max(0.0),
+    };
+    Some(ShapedRun { paragraph, run: Run { metrics, hard_break, glue }, text: text.to_string(), style })
+  }
+
+  // Re-split the wrap units starting at `units` (first-piece indices into
+  // `runs`) at grapheme boundaries: every grapheme becomes its own wrap
+  // unit, trailing whitespace staying with the grapheme before it. Returns
+  // the full run list with those units replaced.
+  fn split_graphemes(
+    typography: &TypographyContext,
+    styles: &[ParagraphStyle],
+    runs: &[ShapedRun],
+    units: &[usize],
+  ) -> Vec<ShapedRun> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut out = Vec::with_capacity(runs.len() + units.len() * 8);
+    let mut i = 0;
+    while i < runs.len() {
+      if !units.contains(&i) {
+        out.push(runs[i].clone());
+        i += 1;
+        continue;
+      }
+      // The unit: this piece plus the glued ones after it.
+      let mut end = i + 1;
+      while end < runs.len() && runs[end].run.glue {
+        end += 1;
+      }
+      for piece in &runs[i..end] {
+        let mut pending = String::new();
+        let flush = |out: &mut Vec<ShapedRun>, pending: &mut String| {
+          if pending.is_empty() {
+            return;
+          }
+          if let Some(shaped) = Self::shape_piece(typography, styles, piece.style, pending, false, false) {
+            out.push(shaped);
+          }
+          pending.clear();
+        };
+        for grapheme in piece.text.graphemes(true) {
+          if !grapheme.chars().all(char::is_whitespace) {
+            flush(&mut out, &mut pending);
+          }
+          pending.push_str(grapheme);
+        }
+        flush(&mut out, &mut pending);
+        if piece.run.hard_break {
+          if let Some(last) = out.last_mut() {
+            last.run.hard_break = true;
+          }
+        }
+      }
+      i = end;
+    }
+    out
+  }
+
+  fn run_styles(&self) -> Vec<ParagraphStyle> {
+    self.runs.iter().map(|r| self.paragraph_style(&r.overrides.resolve(self))).collect()
   }
 
   // The per-run style resolved against this Text, as an Impeller paragraph
@@ -385,30 +517,48 @@ impl Text {
     }
   }
 
-  // Line layout for `width` from the prepared runs; pure arithmetic, cached
-  // per width like the paragraph path. Returns the index into `layouts`.
-  fn owned_layout(&self, owned: &mut OwnedCache, width: f32) -> usize {
-    if let Some(i) = owned.layouts.iter().position(|(w, _)| *w == width) {
+  // Line layout for `width` from the prepared runs, cached per width like the
+  // paragraph path. Pure arithmetic, except that a unit wider than the line
+  // is re-split at grapheme boundaries (overflowWrap: anywhere) and laid out
+  // again, which shapes the new pieces. Returns the index into `layouts`.
+  fn owned_layout(&self, typography: &TypographyContext, owned: &mut OwnedCache, width: f32) -> usize {
+    if let Some(i) = owned.layouts.iter().position(|l| l.width == width) {
       return i;
     }
-    let runs: Vec<Run> = owned.runs.iter().map(|r| r.run).collect();
     let align = match self.text_alignment {
       TextAlignment::Center => Align::Center,
       TextAlignment::Right => Align::Right,
+      TextAlignment::Justify => Align::Justify,
       // LTR only for now, so start is left and end is right.
       TextAlignment::End => Align::Right,
-      TextAlignment::Left | TextAlignment::Start | TextAlignment::Justify => Align::Left,
+      TextAlignment::Left | TextAlignment::Start => Align::Left,
     };
-    let layout = text_layout::layout(&runs, width, align, self.max_lines);
+    let ellipsis = owned.ellipsis.as_ref().map(|e| e.run.metrics);
+    let metrics = |shaped: &[ShapedRun]| shaped.iter().map(|r| r.run).collect::<Vec<Run>>();
+    let mut layout = text_layout::layout(&metrics(&owned.runs), width, align, self.max_lines, ellipsis);
+    let mut runs = None;
+    if self.overflow_wrap == OverflowWrap::Anywhere && !layout.overflowing.is_empty() {
+      let split = Self::split_graphemes(typography, &self.run_styles(), &owned.runs, &layout.overflowing);
+      layout = text_layout::layout(&metrics(&split), width, align, self.max_lines, ellipsis);
+      runs = Some(split);
+    }
     if owned.layouts.len() >= MAX_CACHED_WIDTHS {
       owned.layouts.remove(0);
     }
-    owned.layouts.push((width, layout));
+    owned.layouts.push(OwnedLayout { width, layout, runs });
     owned.layouts.len() - 1
   }
 
   pub fn set_layout_mode(&mut self, mode: TextLayoutMode) -> Damage {
     self.layout_mode = mode;
+    Damage::Layout
+  }
+  pub fn set_text_overflow(&mut self, v: TextOverflow) -> Damage {
+    self.text_overflow = v;
+    Damage::Layout
+  }
+  pub fn set_overflow_wrap(&mut self, v: OverflowWrap) -> Damage {
+    self.overflow_wrap = v;
     Damage::Layout
   }
 
