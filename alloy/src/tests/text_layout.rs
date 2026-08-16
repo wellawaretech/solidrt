@@ -1,6 +1,10 @@
 use crate::rendertree::text_layout::{
-  layout, max_intrinsic_width, min_intrinsic_width, segments, Align, Run, RunMetrics,
+  layout, max_intrinsic_width, min_intrinsic_width, segments, Align, LineCursor, LineExtent, Run, RunMetrics,
 };
+
+fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
+  move |_| vec![LineExtent::full(width)]
+}
 
 fn word(advance: f32, ink: f32) -> Run {
   Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false, glue: false }
@@ -34,7 +38,7 @@ fn greedy_breaks_on_ink_not_advance() {
   // Three words of ink 10 with a 2px gap: two fit in 22 only because the
   // trailing gap of the second hangs past the edge.
   let runs = [word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
-  let l = layout(&runs, 22.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(22.0), Align::Left, 0, None);
   assert_eq!(l.lines.len(), 2);
   assert_eq!(l.runs[1].x, 12.0);
   assert_eq!(l.runs[2].x, 0.0);
@@ -46,10 +50,10 @@ fn greedy_breaks_on_ink_not_advance() {
 #[test]
 fn hard_break_ends_line_and_max_lines_caps() {
   let runs = [hard(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
-  let l = layout(&runs, 100.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(100.0), Align::Left, 0, None);
   assert_eq!(l.lines.len(), 2);
   assert_eq!(l.runs[1].y, 10.0);
-  let capped = layout(&runs, 100.0, Align::Left, 1, None);
+  let capped = layout(&runs, &full(100.0), Align::Left, 1, None);
   assert_eq!(capped.lines.len(), 1);
   assert_eq!(capped.runs.len(), 1);
 }
@@ -57,7 +61,7 @@ fn hard_break_ends_line_and_max_lines_caps() {
 #[test]
 fn oversized_run_gets_its_own_line() {
   let runs = [word(5.0, 4.0), word(50.0, 50.0), word(5.0, 4.0)];
-  let l = layout(&runs, 20.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(20.0), Align::Left, 0, None);
   assert_eq!(l.lines.len(), 3);
 }
 
@@ -66,7 +70,7 @@ fn baseline_alignment_and_right_align() {
   let tall =
     Run { metrics: RunMetrics { advance: 10.0, ink_width: 10.0, ascent: 16.0, descent: 4.0 }, ..word(0.0, 0.0) };
   let runs = [word(10.0, 10.0), tall];
-  let l = layout(&runs, 40.0, Align::Right, 0, None);
+  let l = layout(&runs, &full(40.0), Align::Right, 0, None);
   assert_eq!(l.lines[0].height, 20.0);
   // Small run's top drops so its baseline meets the tall run's.
   assert_eq!(l.runs[0].y, 8.0);
@@ -88,13 +92,13 @@ fn glued_pieces_break_as_one_unit() {
   // "foo" + "," (glued) + "bar": the unit foo, is 14 wide; at 20 the second
   // unit must wrap even though "foo" alone would leave room for "bar"'s ink.
   let runs = [word(10.0, 10.0), glued(6.0, 4.0), word(10.0, 8.0)];
-  let l = layout(&runs, 20.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(20.0), Align::Left, 0, None);
   assert_eq!(l.lines.len(), 2);
   assert_eq!(l.runs[1].x, 10.0);
   assert_eq!(l.runs[2].y, 10.0);
   // A glued piece never starts a line, even when its own ink does not fit.
   let runs = [word(10.0, 10.0), glued(20.0, 20.0)];
-  let l = layout(&runs, 12.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(12.0), Align::Left, 0, None);
   assert_eq!(l.lines.len(), 1);
   assert_eq!(min_intrinsic_width(&runs), 30.0);
 }
@@ -104,16 +108,16 @@ fn justify_spreads_slack_over_wrapped_lines_only() {
   // Two lines of two units each; the first wraps (justified), the second is
   // last (left).
   let runs = [word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
-  let l = layout(&runs, 30.0, Align::Justify, 0, None);
+  let l = layout(&runs, &full(30.0), Align::Justify, 0, None);
   assert_eq!(l.lines.len(), 2);
   assert_eq!(l.runs[0].x, 0.0);
   assert_eq!(l.runs[1].x, 20.0);
-  assert_eq!(l.lines[0].width, 30.0);
+  assert_eq!(l.lines[0].segments[0].ink, 30.0);
   assert_eq!(l.runs[2].x, 0.0);
   assert_eq!(l.runs[3].x, 12.0);
   // A glued piece moves with its unit, it does not open a gap.
   let runs = [word(10.0, 10.0), glued(2.0, 2.0), word(12.0, 10.0), word(12.0, 10.0)];
-  let l = layout(&runs, 30.0, Align::Justify, 0, None);
+  let l = layout(&runs, &full(30.0), Align::Justify, 0, None);
   assert_eq!(l.runs[1].x, 10.0);
   assert_eq!(l.runs[2].x, 20.0);
 }
@@ -123,27 +127,27 @@ fn max_lines_truncates_and_ellipsis_trims_last_line() {
   let ell = RunMetrics { advance: 6.0, ink_width: 6.0, ascent: 8.0, descent: 2.0 };
   let runs = [word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
   // Two units per line at 22; capped at one line, "w w" + ellipsis needs 28.
-  let l = layout(&runs, 22.0, Align::Left, 1, Some(ell));
+  let l = layout(&runs, &full(22.0), Align::Left, 1, Some(ell));
   assert!(l.truncated);
   assert_eq!(l.runs.len(), 1);
   assert_eq!(l.ellipsis, Some((10.0, 0.0)));
-  assert_eq!(l.lines[0].width, 16.0);
+  assert_eq!(l.lines[0].segments[0].ink, 16.0);
   // Right-aligned: the trimmed line plus ellipsis moves as one.
-  let l = layout(&runs, 22.0, Align::Right, 1, Some(ell));
+  let l = layout(&runs, &full(22.0), Align::Right, 1, Some(ell));
   assert_eq!(l.runs[0].x, 6.0);
   assert_eq!(l.ellipsis, Some((16.0, 0.0)));
   // Without an ellipsis the line is simply cut.
-  let l = layout(&runs, 22.0, Align::Left, 1, None);
+  let l = layout(&runs, &full(22.0), Align::Left, 1, None);
   assert!(l.truncated);
   assert_eq!(l.runs.len(), 2);
   assert_eq!(l.ellipsis, None);
   // Everything fits: not truncated, no ellipsis.
-  let l = layout(&runs, 100.0, Align::Left, 1, Some(ell));
+  let l = layout(&runs, &full(100.0), Align::Left, 1, Some(ell));
   assert!(!l.truncated);
   assert_eq!(l.ellipsis, None);
   // A hard break at the cap with more text after it truncates too.
   let runs = [hard(12.0, 10.0), word(12.0, 10.0)];
-  let l = layout(&runs, 100.0, Align::Left, 1, Some(ell));
+  let l = layout(&runs, &full(100.0), Align::Left, 1, Some(ell));
   assert!(l.truncated);
   assert_eq!(l.ellipsis, Some((10.0, 0.0)));
 }
@@ -151,8 +155,83 @@ fn max_lines_truncates_and_ellipsis_trims_last_line() {
 #[test]
 fn oversized_units_are_reported() {
   let runs = [word(5.0, 4.0), word(50.0, 50.0), glued(3.0, 3.0), word(5.0, 4.0)];
-  let l = layout(&runs, 20.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(20.0), Align::Left, 0, None);
   assert_eq!(l.overflowing, vec![1]);
-  let l = layout(&runs, 60.0, Align::Left, 0, None);
+  let l = layout(&runs, &full(60.0), Align::Left, 0, None);
   assert!(l.overflowing.is_empty());
+}
+
+#[test]
+fn per_line_extent_shifts_and_narrows_lines() {
+  // First line indented by 5 (width 25); the rest use the full 34. Ink 10,
+  // gap 2: two units fit the indented line (22 <= 25), three the full one.
+  let runs = [word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
+  let asked = std::cell::RefCell::new(Vec::new());
+  let extent = |c: LineCursor| {
+    asked.borrow_mut().push((c.index, c.y, c.height));
+    if c.index == 0 {
+      vec![LineExtent { x: 5.0, width: 25.0 }]
+    } else {
+      vec![LineExtent::full(34.0)]
+    }
+  };
+  let l = layout(&runs, &extent, Align::Left, 0, None);
+  assert_eq!(l.lines.len(), 2);
+  assert_eq!(l.lines[0].segments[0].x, 5.0);
+  assert_eq!(l.runs[0].x, 5.0);
+  assert_eq!(l.runs[1].x, 17.0);
+  assert_eq!(l.runs[2].x, 0.0);
+  assert_eq!(l.runs[4].x, 24.0);
+  assert_eq!(l.width, 34.0);
+  // Asked once per line, at the line's top, with the opening run's height.
+  assert_eq!(*asked.borrow(), vec![(0, 0.0, 10.0), (1, 10.0, 10.0)]);
+  // Alignment works inside the line's extent: right-aligned, the indented
+  // line's last ink ends at 30 and the full line's at 34.
+  let l = layout(&runs, &extent, Align::Right, 0, None);
+  assert_eq!(l.runs[1].x + 10.0, 30.0);
+  assert_eq!(l.runs[4].x + 10.0, 34.0);
+}
+
+#[test]
+fn segments_split_a_line_around_an_exclusion() {
+  // Line 0 is cut in two around a box at 24..40: segments 0..24 and 40..64.
+  // Line 1 has no room at all (skipped, y advances by the cursor height) and
+  // line 2 is the full 64. Ink 10, gap 2: two units per 24-wide segment.
+  let runs: Vec<Run> = (0..7).map(|_| word(12.0, 10.0)).collect();
+  let extent = |c: LineCursor| match c.index {
+    0 => vec![LineExtent { x: 0.0, width: 24.0 }, LineExtent { x: 40.0, width: 24.0 }],
+    1 if c.y < 20.0 => Vec::new(),
+    _ => vec![LineExtent::full(64.0)],
+  };
+  let l = layout(&runs, &extent, Align::Left, 0, None);
+  assert_eq!(l.lines.len(), 2);
+  assert_eq!(l.lines[0].segments.len(), 2);
+  assert_eq!(l.runs[1].x, 12.0);
+  assert_eq!(l.runs[2].x, 40.0);
+  assert_eq!(l.runs[3].x, 52.0);
+  // Both segments share the line's y; the segments record their runs.
+  assert_eq!(l.runs[3].y, 0.0);
+  assert_eq!(l.lines[0].segments[1].first, 2);
+  assert_eq!(l.lines[0].segments[1].end, 4);
+  // The skipped line: line 1 opens at y 20 after one 10-high skip.
+  assert_eq!(l.lines[1].y, 20.0);
+  assert_eq!(l.runs[4].x, 0.0);
+  assert_eq!(l.runs[6].x, 24.0);
+  assert_eq!(l.height, 30.0);
+  assert_eq!(l.width, 62.0);
+  // Justify works per segment: the first segment (overflowed) spreads its
+  // slack, so does the second when the line wraps after it.
+  let l = layout(&runs, &extent, Align::Justify, 0, None);
+  assert_eq!(l.runs[1].x, 14.0);
+  assert_eq!(l.runs[3].x, 54.0);
+  // A unit too wide for the first segment skips to the second even when the
+  // first is empty; wider than every segment, it overflows the last one.
+  let wide_second = |_: LineCursor| vec![LineExtent { x: 0.0, width: 24.0 }, LineExtent { x: 40.0, width: 30.0 }];
+  let runs = [word(30.0, 30.0), word(70.0, 70.0)];
+  let l = layout(&runs, &wide_second, Align::Left, 0, None);
+  assert_eq!(l.runs[0].x, 40.0);
+  assert_eq!(l.lines[0].segments[0].end, 0);
+  assert_eq!(l.runs[1].x, 40.0);
+  assert_eq!(l.runs[1].y, 10.0);
+  assert_eq!(l.overflowing, vec![1]);
 }

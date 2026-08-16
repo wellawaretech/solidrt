@@ -108,24 +108,68 @@ pub struct PlacedRun {
   pub y: f32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Line {
+/// Where a line is about to open: `index` counts lines from 0, `y` is the
+/// line's top and `height` the height of the run opening it (the line may
+/// still grow taller). Asked once per line, as CSS shapes do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineCursor {
+  pub index: usize,
   pub y: f32,
   pub height: f32,
-  /// Baseline offset from the line's top.
-  pub ascent: f32,
-  /// Ink width: from the first run's start to the last run's last inked glyph.
+}
+
+/// One horizontal span a line may use: its start x within the layout and its
+/// width. The extent hook answers a cursor with the line's spans in left to
+/// right order (one for a plain column, two around an exclusion in the
+/// middle); an empty answer means no room on that line, and the breaker
+/// moves down by the cursor's height and asks again, so a hook must leave
+/// room below every exclusion. Alignment works inside each span; the
+/// intrinsic widths ignore the hook.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineExtent {
+  pub x: f32,
   pub width: f32,
+}
+
+impl LineExtent {
+  /// The whole layout width.
+  pub fn full(width: f32) -> Self {
+    Self { x: 0.0, width }
+  }
+}
+
+/// A filled span of a line: the extent it was given plus what went in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LineSegment {
+  pub x: f32,
+  pub width: f32,
+  /// Ink used from `x`: to the last run's last inked glyph (the full width
+  /// when justified).
+  pub ink: f32,
   /// Range into `Layout::runs`.
   pub first: usize,
   pub end: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct Line {
+  pub y: f32,
+  pub height: f32,
+  /// Baseline offset from the line's top.
+  pub ascent: f32,
+  /// Range into `Layout::runs`: every segment's runs, in order.
+  pub first: usize,
+  pub end: usize,
+  /// The line's spans in left to right order, as the extent hook gave them;
+  /// a segment can be empty when nothing fit in it.
+  pub segments: Vec<LineSegment>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
   pub lines: Vec<Line>,
   pub runs: Vec<PlacedRun>,
-  /// Widest line's ink width.
+  /// Right edge of the widest line's ink, from the layout origin.
   pub width: f32,
   pub height: f32,
   /// Runs were dropped because `max_lines` was reached.
@@ -140,32 +184,63 @@ pub struct Layout {
 }
 
 /// Greedy line breaking: wrap units (a run plus the glued runs after it) go
-/// on the current line while their ink fits in `max_width`; a unit that fits
-/// nowhere gets a line of its own and overflows. `max_lines` of 0 means
-/// unlimited; when it cuts the text short and `ellipsis` gives the metrics of
-/// an ellipsis run, the last line is trimmed until the ellipsis fits and its
-/// position is reported. Each line is as tall as its tallest run and every
-/// run's baseline sits on the line's baseline.
-pub fn layout(runs: &[Run], max_width: f32, align: Align, max_lines: u32, ellipsis: Option<RunMetrics>) -> Layout {
-  let mut b = Breaker { runs, max_width, align, out: Layout::default(), line: Line::default(), pen: 0.0, y: 0.0 };
+/// on the current line while their ink fits in the line's current segment,
+/// then in its next segment, then on the next line; `extent` supplies the
+/// segments per line (`vec![LineExtent::full(w)]` for a plain column). A unit
+/// that fits in no segment of an empty line is placed anyway and overflows.
+/// `max_lines` of 0 means unlimited; when it cuts the text short and
+/// `ellipsis` gives the metrics of an ellipsis run, the last line's last
+/// segment is trimmed until the ellipsis fits and its position is reported.
+/// Each line is as tall as its tallest run and every run's baseline sits on
+/// the line's baseline, across segments.
+pub fn layout(
+  runs: &[Run],
+  extent: &dyn Fn(LineCursor) -> Vec<LineExtent>,
+  align: Align,
+  max_lines: u32,
+  ellipsis: Option<RunMetrics>,
+) -> Layout {
+  let mut b = Breaker {
+    runs,
+    extent,
+    align,
+    out: Layout::default(),
+    line: Line::default(),
+    extents: Vec::new(),
+    seg: 0,
+    seg_first: 0,
+    seg_ink: 0.0,
+    pen: 0.0,
+    y: 0.0,
+  };
   // Whether closing the open line would exceed the cap: the open line counts.
   let last_line = |b: &Breaker| max_lines > 0 && b.out.lines.len() as u32 + 1 >= max_lines;
 
   let mut index = 0;
-  while index < runs.len() {
+  'runs: while index < runs.len() {
     let run = runs[index];
-    let has_content = b.line.end > b.line.first;
     if !run.glue {
       let ink = unit_ink(runs, index);
-      if has_content && b.pen + ink > max_width {
-        if last_line(&b) {
-          b.out.truncated = true;
+      let height = run.metrics.height();
+      loop {
+        let width = b.open(height);
+        if b.pen + ink <= width {
           break;
         }
+        // Does not fit here: try the line's next segment, then the next
+        // line if this one has content; an empty line takes it regardless.
+        if b.next_segment(true) {
+          continue;
+        }
+        if b.line.end == b.line.first {
+          b.out.overflowing.push(index);
+          break;
+        }
+        if last_line(&b) {
+          b.out.truncated = true;
+          break 'runs;
+        }
         b.close_line(true);
-      }
-      if ink > max_width {
-        b.out.overflowing.push(index);
       }
     }
     b.place(index);
@@ -194,37 +269,83 @@ pub fn layout(runs: &[Run], max_width: f32, align: Align, max_lines: u32, ellips
 
 struct Breaker<'a> {
   runs: &'a [Run],
-  max_width: f32,
+  extent: &'a dyn Fn(LineCursor) -> Vec<LineExtent>,
   align: Align,
   out: Layout,
-  // The open line: `first..end` of `out.runs` are on it, `pen` is where the
-  // next run starts, `y` its top.
+  // The open line: `first..end` of `out.runs` are on it, `y` its top. Its
+  // segments are `extents` (empty until the line's first unit arrives) and
+  // `seg` is the one being filled: `seg_first..` of `out.runs` are in it,
+  // `pen` is where the next run starts relative to the segment's x and
+  // `seg_ink` how far the segment's ink reaches.
   line: Line,
+  extents: Vec<LineExtent>,
+  seg: usize,
+  seg_first: usize,
+  seg_ink: f32,
   pen: f32,
   y: f32,
 }
 
 impl Breaker<'_> {
+  // The current segment's width, opening the line first if needed: asks
+  // `extent` with the opening run's `height`, skipping down past lines
+  // with no room.
+  fn open(&mut self, height: f32) -> f32 {
+    if self.extents.is_empty() {
+      let mut extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
+      while extents.is_empty() && height > 0.0 {
+        self.y += height;
+        extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
+      }
+      if extents.is_empty() {
+        extents.push(LineExtent { x: 0.0, width: 0.0 });
+      }
+      self.extents = extents;
+      self.seg = 0;
+      self.seg_first = self.out.runs.len();
+      self.seg_ink = 0.0;
+      self.pen = 0.0;
+    }
+    self.extents[self.seg].width
+  }
+
   fn place(&mut self, index: usize) {
     let run = &self.runs[index];
+    self.open(run.metrics.height());
     self.out.runs.push(PlacedRun { run: index, x: self.pen, y: 0.0 });
     self.line.end = self.out.runs.len();
-    self.line.width = self.pen + run.metrics.ink_width;
+    self.seg_ink = self.pen + run.metrics.ink_width;
     self.line.ascent = self.line.ascent.max(run.metrics.ascent);
     self.line.height = self.line.height.max(run.metrics.height());
     self.pen += run.metrics.advance;
   }
 
-  // Close the open line: align its runs (justify only when the line was
-  // wrapped), settle their y on the baseline, and start the next line.
-  fn close_line(&mut self, wrapped: bool) {
-    let slack = (self.max_width - self.line.width).max(0.0);
+  // Move to the line's next segment, closing the current one; false when
+  // the current segment is the line's last.
+  fn next_segment(&mut self, wrapped: bool) -> bool {
+    if self.seg + 1 >= self.extents.len() {
+      return false;
+    }
+    self.close_segment(wrapped);
+    self.seg += 1;
+    self.seg_first = self.out.runs.len();
+    self.seg_ink = 0.0;
+    self.pen = 0.0;
+    true
+  }
+
+  // Close the current segment: align its runs within its extent (justify
+  // only when text overflowed it), and record it on the line. Run y is the
+  // line's business, settled at close_line.
+  fn close_segment(&mut self, wrapped: bool) {
+    let e = self.extents[self.seg];
+    let slack = (e.width - self.seg_ink).max(0.0);
     let offset = match self.align {
       Align::Left | Align::Justify => 0.0,
       Align::Center => slack / 2.0,
       Align::Right => slack,
     };
-    let (first, end) = (self.line.first, self.line.end);
+    let (first, end) = (self.seg_first, self.out.runs.len());
     let mut justify_step = 0.0;
     if self.align == Align::Justify && wrapped {
       let units = self.out.runs[first..end].iter().filter(|p| !self.runs[p.run].glue).count();
@@ -234,40 +355,50 @@ impl Breaker<'_> {
     }
     let mut unit = 0usize;
     for (i, placed) in self.out.runs[first..end].iter_mut().enumerate() {
-      let run = &self.runs[placed.run];
-      if i > 0 && !run.glue {
+      if i > 0 && !self.runs[placed.run].glue {
         unit += 1;
       }
-      placed.x += offset + justify_step * unit as f32;
-      placed.y = self.y + self.line.ascent - run.metrics.ascent;
+      placed.x += e.x + offset + justify_step * unit as f32;
     }
-    if let Some((x, y)) = &mut self.out.ellipsis {
-      // The ellipsis sits on this (last) line: `x` holds its pen and `y` its
-      // ascent until now.
-      let ascent = *y;
-      *x += offset;
-      *y = self.y + self.line.ascent - ascent;
+    if let Some((x, _)) = &mut self.out.ellipsis {
+      // The ellipsis sits in this (last) segment: `x` holds its pen until now.
+      *x += e.x + offset;
     }
-    if justify_step > 0.0 {
-      self.line.width = self.max_width;
+    let ink = if justify_step > 0.0 { e.width } else { self.seg_ink };
+    self.out.width = self.out.width.max(e.x + ink);
+    self.line.segments.push(LineSegment { x: e.x, width: e.width, ink, first, end });
+  }
+
+  // Close the open line: close its last segment, settle every run's y on the
+  // baseline, and start the next line.
+  fn close_line(&mut self, wrapped: bool) {
+    self.close_segment(wrapped);
+    let (first, end) = (self.line.first, self.line.end);
+    for placed in &mut self.out.runs[first..end] {
+      placed.y = self.y + self.line.ascent - self.runs[placed.run].metrics.ascent;
+    }
+    if let Some((_, y)) = &mut self.out.ellipsis {
+      // `y` held the ellipsis run's ascent until now.
+      *y = self.y + self.line.ascent - *y;
     }
     self.line.y = self.y;
     self.y += self.line.height;
-    self.out.width = self.out.width.max(self.line.width);
-    self.out.lines.push(self.line);
-    self.line = Line { first: self.out.runs.len(), end: self.out.runs.len(), ..Line::default() };
+    let next = Line { first: self.out.runs.len(), end: self.out.runs.len(), ..Line::default() };
+    self.out.lines.push(std::mem::replace(&mut self.line, next));
+    self.extents.clear();
     self.pen = 0.0;
   }
 
-  // Drop runs from the end of the open line until the ellipsis fits after
-  // the last one's ink, then reserve its slot. A line that cannot fit even
-  // the ellipsis alone keeps just the ellipsis.
+  // Drop runs from the end of the open line's current segment until the
+  // ellipsis fits after the last one's ink, then reserve its slot. A segment
+  // that cannot fit even the ellipsis alone keeps just the ellipsis.
   fn trim_for_ellipsis(&mut self, ell: RunMetrics) {
+    let width = self.open(ell.height());
     let mut ell_x = 0.0;
-    while self.line.end > self.line.first {
+    while self.line.end > self.seg_first {
       let placed = self.out.runs[self.line.end - 1];
       ell_x = placed.x + self.runs[placed.run].metrics.ink_width;
-      if ell_x + ell.ink_width <= self.max_width {
+      if ell_x + ell.ink_width <= width {
         break;
       }
       self.out.runs.pop();
@@ -284,7 +415,7 @@ impl Breaker<'_> {
     }
     self.line.ascent = ascent;
     self.line.height = height;
-    self.line.width = ell_x + ell.ink_width;
+    self.seg_ink = ell_x + ell.ink_width;
     self.out.ellipsis = Some((ell_x, ell.ascent));
   }
 }

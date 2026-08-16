@@ -592,6 +592,12 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
    */
   overflowWrap?: "normal" | "anywhere"
   /**
+   * First-line indent in pixels. Negative hangs: the first line starts at 0
+   * and every following line is indented by the magnitude. A hard break does
+   * not start a new first line. Owned layout only.
+   */
+  textIndent?: number
+  /**
    * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
    * the whole text to one Impeller paragraph, "owned" shapes each word on its
    * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR

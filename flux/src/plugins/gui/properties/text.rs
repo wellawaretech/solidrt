@@ -35,6 +35,7 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
       "anywhere" => OverflowWrap::Anywhere,
       v => return Err(format!("Unknown overflowWrap value \"{v}\"; expected normal or anywhere")),
     }),
+    "textIndent" => text.set_text_indent(f32_of(value, "textIndent")?),
     "textLayout" => text.set_layout_mode(match str_of(value, "textLayout")? {
       "paragraph" => TextLayoutMode::Paragraph,
       "owned" => TextLayoutMode::Owned,
