@@ -566,8 +566,10 @@ export interface TextRunProps {
 /**
  * A styled run inside <text>. Inline text only: children are text and other
  * spans. `color` takes what a text's color takes (solid or gradient).
+ * Pointer handlers fire for the boxes of the run's own text on each line it
+ * spans and bubble to the enclosing spans and text; owned layout only.
  */
-export interface SpanProps extends TextRunProps {
+export interface SpanProps extends TextRunProps, PointerProps {
   children?: Children
   color?: Color | Gradient
 }
@@ -592,8 +594,8 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
   /**
    * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
    * the whole text to one Impeller paragraph, "owned" shapes each word on its
-   * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR only;
-   * justify falls back to left.
+   * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR
+   * only. Inline atoms and span hit testing need "owned".
    */
   textLayout?: "paragraph" | "owned"
 }

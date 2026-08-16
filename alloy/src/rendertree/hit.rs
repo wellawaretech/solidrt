@@ -1,6 +1,6 @@
 use taffy::style::Overflow;
 
-use super::{ElementKind, Point, RenderTree, Size, Vector};
+use super::{ElementKind, Point, RenderTree, Size, TextLayoutMode, Vector};
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,10 +236,23 @@ fn hit_recursive(
     _ => Vector::default(),
   };
 
+  // A text's laid-out children are its inline atoms, hit like any child at
+  // their placed location (owned layout only); its spans have no box of their
+  // own and are resolved from the line layout below.
+  let text = match &element.kind {
+    ElementKind::Text(t) => Some(t),
+    _ => None,
+  };
+
   // Children inherit the frame `local` is in - the design size under a viewBox
   // view, matching the paint-time walk in composite.rs.
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
+    if let Some(t) = text {
+      if t.layout_mode != TextLayoutMode::Owned || !child.has_layout() {
+        continue;
+      }
+    }
     let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(local_size);
     let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
     let child_point = local - child_pos.to_vector() + scroll;
@@ -254,6 +267,24 @@ fn hit_recursive(
   if pointer_events == PointerEvents::None {
     path.pop();
     return false;
+  }
+
+  // The span under the point, with its span ancestors: pushed innermost-last
+  // so the leaf span is the target and events bubble span -> span -> text.
+  // Spans have no frame of their own, so they share the text's local point.
+  if let Some(leaf) = text.and_then(|t| t.hit_run(local, size)) {
+    let mut chain = Vec::new();
+    let mut id = leaf;
+    while id != node_id {
+      chain.push(id);
+      match tree.try_node(id).and_then(|n| n.parent) {
+        Some(parent) => id = parent,
+        None => break,
+      }
+    }
+    for &span in chain.iter().rev() {
+      path.push((span, local, local));
+    }
   }
 
   true

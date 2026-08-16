@@ -2,7 +2,8 @@ use taffy::prelude::*;
 use taffy::tree::LayoutInput;
 use taffy::{
   compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
-  CacheTree, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
+  CacheTree, CoreStyle, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, RequestedAxis,
+  ResolveOrZero, RunMode, SizingMode,
 };
 
 use super::super::tree::RenderTree;
@@ -48,6 +49,79 @@ pub struct LayoutContext<'a> {
   pub render_tree: &'a mut RenderTree,
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
+}
+
+impl<'a> LayoutContext<'a> {
+  // Padding and border of a node's style, resolved with no percentage basis:
+  // the layout box's inset (`Layout::padding`/`border`) that composite reads
+  // to derive the content box.
+  fn insets(&self, node_id: NodeId) -> (taffy::Rect<f32>, taffy::Rect<f32>) {
+    let style = &self.render_tree.node(u64::from(node_id)).layout_data().style;
+    let calc = |val, basis| self.resolve_calc_value(val, basis);
+    (style.padding().resolve_or_zero(None, calc), style.border().resolve_or_zero(None, calc))
+  }
+
+  fn margin(&self, node_id: NodeId) -> taffy::Rect<f32> {
+    let style = &self.render_tree.node(u64::from(node_id)).layout_data().style;
+    style.margin().resolve_or_zero(None, |val, basis| self.resolve_calc_value(val, basis))
+  }
+
+  // Lay out one inline atom of `text` as an independent shrink-to-fit root
+  // (like an inline block: max-content in both axes, its own style size and
+  // padding honored) and hand its margin box to the text's run: margins are
+  // how an atom keeps its distance from the words around it.
+  fn measure_atom(&mut self, text: u64, atom: NodeId) {
+    let output = self.compute_child_layout(
+      atom,
+      LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        parent_size: Size::NONE,
+        available_space: Size::MAX_CONTENT,
+        vertical_margins_are_collapsible: Line::FALSE,
+      },
+    );
+    let margin = self.margin(atom);
+    let size = crate::impellers::Size::new(
+      output.size.width + margin.horizontal_axis_sum(),
+      output.size.height + margin.vertical_axis_sum(),
+    );
+    if let crate::rendertree::ElementKind::Text(t) = &mut self.render_tree.node_mut(text).kind {
+      t.set_atom_size(u64::from(atom), size);
+    }
+    // Position comes after the text's own layout (place_atoms); the box is
+    // final now.
+    let (padding, border) = self.insets(atom);
+    let mut layout = self.render_tree.node(u64::from(atom)).layout_data().computed;
+    layout.size = output.size;
+    layout.content_size = output.content_size;
+    layout.padding = padding;
+    layout.border = border;
+    layout.margin = margin;
+    self.set_unrounded_layout(atom, &layout);
+  }
+
+  // Write each atom's location from the text's line layout at its final
+  // (content) width, relative to the text's box.
+  fn place_atoms(&mut self, text: u64, size: Size<f32>) {
+    let (padding, border) = self.insets(NodeId::from(text));
+    let inset = padding + border;
+    let width = size.width - inset.horizontal_axis_sum();
+    let typography = self.platform.typography();
+    let positions = match &self.render_tree.node(text).kind {
+      crate::rendertree::ElementKind::Text(t) => t.atom_positions(&typography, width),
+      _ => return,
+    };
+    for (atom, point) in positions {
+      // `point` is the margin box's top-left; the layout box sits inside it.
+      let mut layout = self.render_tree.node(atom).layout_data().computed;
+      layout.location =
+        taffy::Point { x: inset.left + layout.margin.left + point.x, y: inset.top + layout.margin.top + point.y };
+      self.set_unrounded_layout(NodeId::from(atom), &layout);
+    }
+  }
 }
 
 impl<'a> TraversePartialTree for LayoutContext<'a> {
@@ -116,11 +190,21 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
       // layout pass reads them as-is.
       let element = tree.render_tree.node(id);
       if element.kind.is_measured_leaf() {
+        // A text's laid-out children are its inline atoms: each is measured
+        // as its own shrink-to-fit root and its box handed to the text before
+        // the text measures itself.
+        let atoms = match element.kind {
+          crate::rendertree::ElementKind::Text(_) => element.layout_data().layout_children.clone(),
+          _ => Vec::new(),
+        };
+        for &atom in &atoms {
+          tree.measure_atom(id, atom);
+        }
         let platform = tree.platform;
         let alloy = tree.alloy;
         let style = &tree.render_tree.node(id).layout_data().style;
         let kind = &tree.render_tree.node(id).kind;
-        compute_leaf_layout(
+        let output = compute_leaf_layout(
           inputs,
           style,
           |_, _| 0.0,
@@ -128,7 +212,11 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
             let size = kind.measure(&MeasureContext { platform, alloy, known, available });
             Size { width: size.width, height: size.height }
           },
-        )
+        );
+        if !atoms.is_empty() && inputs.run_mode == RunMode::PerformLayout {
+          tree.place_atoms(id, output.size);
+        }
+        output
       } else {
         match element.layout_data().style.display {
           Display::Flex => compute_flexbox_layout(tree, node_id, inputs),

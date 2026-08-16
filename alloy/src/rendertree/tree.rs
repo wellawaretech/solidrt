@@ -4,7 +4,7 @@ use taffy::NodeId;
 
 use crate::impellers::Matrix;
 use crate::rendertree::{
-  BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun,
+  BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -369,12 +369,8 @@ impl RenderTree {
       }
       if let ElementKind::View(v) = &parent.kind {
         if v.scroll.is_some() {
-          let size = parent
-            .layout
-            .as_ref()
-            .map(|l| l.size())
-            .or_else(|| self.content_fallback(parent_id))
-            .unwrap_or_default();
+          let size =
+            parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           // Scroll means box pixels; these corners are in the parent's child
           // frame (design space under a viewBox fit), so the offset divides
           // by the fit scale, matching the hit descent and the paint order.
@@ -384,12 +380,8 @@ impl RenderTree {
           }
         }
         if v.needs_matrix() {
-          let size = parent
-            .layout
-            .as_ref()
-            .map(|l| l.size())
-            .or_else(|| self.content_fallback(parent_id))
-            .unwrap_or_default();
+          let size =
+            parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           let m = v.paint_matrix(size);
           for p in corners.iter_mut() {
             *p = transform_point(&m, *p);
@@ -476,20 +468,40 @@ impl RenderTree {
       self.collect_runs(child_id, &RunOverrides::default(), &mut text, &mut runs);
     }
     if let ElementKind::Text(t) = &mut self.node_mut(text_id).kind {
+      // An atom's box is the layout pass's to write; a resync keeps the box
+      // it last measured so the paragraph is not re-shaped for nothing.
+      for run in runs.iter_mut().filter(|r| r.atom.is_some()) {
+        if let Some(size) = t.runs.iter().find(|r| r.node == run.node).and_then(|r| r.atom) {
+          run.atom = Some(size);
+        }
+      }
       t.computed_text = text;
       t.runs = runs;
     }
   }
 
   /// Depth-first over a span subtree: a span's own text is a run under the
-  /// overrides layered so far, then its children under those plus its own.
+  /// overrides layered so far, then its children under those plus its own. A
+  /// laid-out element (necessarily a direct child of the text: an attached
+  /// node cannot sit under a span) is an inline atom run.
   fn collect_runs(&self, id: u64, inherited: &RunOverrides, text: &mut String, runs: &mut Vec<TextRun>) {
     let node = self.node(id);
-    let ElementKind::Span(span) = &node.kind else { return };
+    let ElementKind::Span(span) = &node.kind else {
+      if node.has_layout() {
+        text.push_str(ATOM_CHAR);
+        runs.push(TextRun {
+          text: ATOM_CHAR.to_string(),
+          overrides: inherited.clone(),
+          node: id,
+          atom: Some(Size::zero()),
+        });
+      }
+      return;
+    };
     let overrides = inherited.layer(&span.overrides);
     if !span.text.is_empty() {
       text.push_str(&span.text);
-      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone() });
+      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone(), node: id, atom: None });
     }
     for &child_id in &node.children {
       self.collect_runs(child_id, &overrides, text, runs);

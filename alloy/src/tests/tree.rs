@@ -257,6 +257,48 @@ fn text_collects_styled_runs_from_nested_spans() {
   assert_eq!(runs_of(&tree, 1).len(), 1);
 }
 
+// A laid-out element child of a text is an inline atom: one ATOM_CHAR run
+// naming the element, whose box the layout pass writes and a resync keeps.
+#[test]
+fn text_collects_atom_runs_and_keeps_their_size() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, Text::default().with_layout());
+  tree.create_node(2, Span { text: "Rated ".into(), ..Default::default() }.no_layout());
+  tree.create_node(3, View::default().with_layout());
+  tree.create_node(4, Span { text: " stars".into(), ..Default::default() }.no_layout());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 4, None);
+
+  let runs = runs_of(&tree, 1);
+  assert_eq!(runs.len(), 3);
+  assert_eq!(runs[0].node, 2);
+  assert_eq!(runs[1].text, ATOM_CHAR);
+  assert_eq!(runs[1].node, 3);
+  assert_eq!(runs[1].atom, Some(Size::zero()));
+  assert_eq!(runs[2].node, 4);
+  match &tree.node(1).kind {
+    ElementKind::Text(t) => assert_eq!(t.computed_text, format!("Rated {ATOM_CHAR} stars")),
+    _ => unreachable!(),
+  }
+
+  match &mut tree.node_mut(1).kind {
+    ElementKind::Text(t) => {
+      assert!(t.set_atom_size(3, Size::new(16.0, 16.0)));
+      assert!(!t.set_atom_size(3, Size::new(16.0, 16.0)));
+    }
+    _ => unreachable!(),
+  }
+  // A span write resyncs the runs; the atom keeps its measured box.
+  tree.edit(4, |el| match &mut el.kind {
+    ElementKind::Span(s) => s.set_text(" of five".into()),
+    _ => unreachable!(),
+  });
+  let runs = runs_of(&tree, 1);
+  assert_eq!(runs[1].atom, Some(Size::new(16.0, 16.0)));
+  assert_eq!(runs[2].text, " of five");
+}
+
 // A text node with laid-out content, for snapshot query matching.
 fn text(content: &str) -> Element {
   let mut t = Text::default();

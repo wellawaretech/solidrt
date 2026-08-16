@@ -7,7 +7,7 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
-  ShadedCache, SnapshotCache,
+  ShadedCache, SnapshotCache, TextLayoutMode,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -663,8 +663,13 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   let saved_size = ctx.size;
-  let saved_stats =
-    (ctx.boundaries_reused, ctx.boundaries_recorded, ctx.snapshots_reused, ctx.snapshots_rerendered, ctx.snapshots_rasterized);
+  let saved_stats = (
+    ctx.boundaries_reused,
+    ctx.boundaries_recorded,
+    ctx.snapshots_reused,
+    ctx.snapshots_rerendered,
+    ctx.snapshots_rasterized,
+  );
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
   if offset != (0.0, 0.0) {
@@ -687,10 +692,11 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
 
   // Fresh, independent readback per request (design: each caller owns its bytes).
   for done in requests {
-    let result = ctx
-      .alloy
-      .capture_node_pixels(&dl, tex_w, tex_h)
-      .map(|pixels| CaptureInfo { pixels, width: tex_w, height: tex_h });
+    let result = ctx.alloy.capture_node_pixels(&dl, tex_w, tex_h).map(|pixels| CaptureInfo {
+      pixels,
+      width: tex_w,
+      height: tex_h,
+    });
     ctx.alloy.complete_capture(done, result);
   }
 }
@@ -766,16 +772,22 @@ fn record_node<'a>(
     builder.save_layer(&bounds, Some(&paint), None);
   }
 
-  // Text children are Spans - not visual, skip recursion
-  if let ElementKind::Text(_) = &element.kind {
-    if needs_save {
-      builder.restore();
-    }
-    return;
-  }
+  // A text's children are spans (runs of its paragraph, drawn by the text
+  // itself) and inline atoms (laid-out elements the text placed on its lines,
+  // drawn like any child at their location; owned layout only, the paragraph
+  // engine has no placeholders).
+  let text_atoms = match &element.kind {
+    ElementKind::Text(t) => Some(t.layout_mode == TextLayoutMode::Owned),
+    _ => None,
+  };
 
   for &child_id in &element.children {
     let child = scene.node(child_id);
+    if let Some(atoms) = text_atoms {
+      if !atoms || !child.has_layout() {
+        continue;
+      }
+    }
 
     let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
 

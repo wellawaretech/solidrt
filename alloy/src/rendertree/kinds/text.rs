@@ -170,14 +170,17 @@ struct ParaCache {
   entries: Vec<(f32, Paragraph)>,
 }
 
-// One piece of a wrap unit shaped as a single-line paragraph, plus what the
-// breaker needs to know about it and what re-splitting it finer needs.
+// One piece of a wrap unit shaped as a single-line paragraph (or an atom's
+// box), plus what the breaker needs to know about it and what re-splitting it
+// finer needs.
 #[derive(Clone)]
 struct ShapedRun {
-  paragraph: Paragraph,
+  // None for an atom: nothing to draw here, the element paints itself.
+  paragraph: Option<Paragraph>,
   run: Run,
   text: String,
-  // Index into the per-run styles the runs were shaped with.
+  // Index into the per-run styles the runs were shaped with; also the index
+  // of the TextRun the piece came from.
   style: usize,
 }
 
@@ -233,11 +236,12 @@ impl Buildable for Text {
       let runs = owned.runs_for(index);
       let layout = &owned.layouts[index].layout;
       for placed in &layout.runs {
-        let paragraph = &runs[placed.run].paragraph;
-        builder.draw_paragraph(paragraph, Point::new(origin.x + placed.x, origin.y + placed.y));
+        if let Some(paragraph) = &runs[placed.run].paragraph {
+          builder.draw_paragraph(paragraph, Point::new(origin.x + placed.x, origin.y + placed.y));
+        }
       }
-      if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, &owned.ellipsis) {
-        builder.draw_paragraph(&ellipsis.paragraph, Point::new(origin.x + x, origin.y + y));
+      if let (Some((x, y)), Some(Some(paragraph))) = (layout.ellipsis, owned.ellipsis.as_ref().map(|e| &e.paragraph)) {
+        builder.draw_paragraph(paragraph, Point::new(origin.x + x, origin.y + y));
       }
       return;
     }
@@ -309,7 +313,9 @@ impl Text {
     // run's style carries them; inner runs' copies are ignored by Impeller.
     let mut para_builder = ParagraphBuilder::new(typography)?;
     let mut pushed = 0;
-    for run in &self.runs {
+    // Atoms are an owned-path feature; the paragraph engine has no
+    // placeholders, so they are left out here.
+    for run in self.runs.iter().filter(|r| r.atom.is_none()) {
       let mut style = self.paragraph_style(&run.overrides.resolve(self));
       style.set_text_alignment(self.text_alignment);
       // 0 means no cap: keep txt's unlimited default. Passing 0 through reads
@@ -388,12 +394,17 @@ impl Text {
         let piece_end = segment.end.min(run_end);
         let raw = &self.computed_text[piece_start..piece_end];
         let last_piece = piece_end == segment.end;
-        // The break characters themselves are not shaped.
-        let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-        let Some(shaped) =
-          Self::shape_piece(typography, &styles, run_index, text, segment.hard_break && last_piece, !first)
-        else {
-          return;
+        let hard_break = segment.hard_break && last_piece;
+        let shaped = match self.runs[run_index].atom {
+          Some(size) => Self::atom_piece(run_index, size, hard_break, !first),
+          None => {
+            // The break characters themselves are not shaped.
+            let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
+            let Some(shaped) = Self::shape_piece(typography, &styles, run_index, text, hard_break, !first) else {
+              return;
+            };
+            shaped
+          }
         };
         owned.runs.push(shaped);
         first = false;
@@ -431,7 +442,20 @@ impl Text {
       ascent,
       descent: (height - ascent).max(0.0),
     };
-    Some(ShapedRun { paragraph, run: Run { metrics, hard_break, glue }, text: text.to_string(), style })
+    Some(ShapedRun {
+      paragraph: Some(paragraph),
+      run: Run { metrics, hard_break, glue },
+      text: text.to_string(),
+      style,
+    })
+  }
+
+  // An atom's box as a run: as wide as the box on the line, its whole height
+  // above the baseline (bottom on the baseline, HTML's default for inline
+  // blocks), nothing to draw.
+  fn atom_piece(style: usize, size: Size, hard_break: bool, glue: bool) -> ShapedRun {
+    let metrics = RunMetrics { advance: size.width, ink_width: size.width, ascent: size.height, descent: 0.0 };
+    ShapedRun { paragraph: None, run: Run { metrics, hard_break, glue }, text: ATOM_CHAR.to_string(), style }
   }
 
   // Re-split the wrap units starting at `units` (first-piece indices into
@@ -448,7 +472,8 @@ impl Text {
     let mut out = Vec::with_capacity(runs.len() + units.len() * 8);
     let mut i = 0;
     while i < runs.len() {
-      if !units.contains(&i) {
+      // An atom is a box: it overflows whole.
+      if !units.contains(&i) || runs[i].paragraph.is_none() {
         out.push(runs[i].clone());
         i += 1;
         continue;
@@ -459,6 +484,10 @@ impl Text {
         end += 1;
       }
       for piece in &runs[i..end] {
+        if piece.paragraph.is_none() {
+          out.push(piece.clone());
+          continue;
+        }
         let mut pending = String::new();
         let flush = |out: &mut Vec<ShapedRun>, pending: &mut String| {
           if pending.is_empty() {
@@ -549,6 +578,66 @@ impl Text {
     owned.layouts.len() - 1
   }
 
+  /// Record an atom's measured box, from the layout pass. Returns whether it
+  /// changed (a change re-shapes the paragraph via the cache key).
+  pub fn set_atom_size(&mut self, node: u64, size: Size) -> bool {
+    let Some(run) = self.runs.iter_mut().find(|r| r.node == node && r.atom.is_some()) else {
+      return false;
+    };
+    if run.atom == Some(size) {
+      return false;
+    }
+    run.atom = Some(size);
+    true
+  }
+
+  /// Where the atoms sit for a layout at `width` (content width), as (node,
+  /// top-left) relative to the text's box: the layout pass writes these into
+  /// the atoms' computed layouts after the text's own. Owned path only.
+  pub fn atom_positions(&self, typography: &TypographyContext, width: f32) -> Vec<(u64, Point)> {
+    if self.layout_mode != TextLayoutMode::Owned || self.runs.iter().all(|r| r.atom.is_none()) {
+      return Vec::new();
+    }
+    let mut owned = self.owned.borrow_mut();
+    self.prepare_owned(typography, &mut owned);
+    let index = self.owned_layout(typography, &mut owned, width);
+    let runs = owned.runs_for(index);
+    let layout = &owned.layouts[index].layout;
+    layout
+      .runs
+      .iter()
+      .filter(|p| runs[p.run].paragraph.is_none())
+      .map(|p| (self.runs[runs[p.run].style].node, Point::new(p.x, p.y)))
+      .collect()
+  }
+
+  /// The span whose text is under `point` (text-local, box `size`), on the
+  /// owned path, from the layout the last paint used; None on a miss, on the
+  /// paragraph path, or when nothing has been laid out yet. Atoms are hit as
+  /// elements, not through here.
+  pub fn hit_run(&self, point: Point, size: Size) -> Option<u64> {
+    if self.layout_mode != TextLayoutMode::Owned {
+      return None;
+    }
+    let owned = self.owned.borrow();
+    if !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
+      return None;
+    }
+    let width = self.w.unwrap_or(size.width);
+    let index = owned.layouts.iter().position(|l| l.width == width)?;
+    let runs = owned.runs_for(index);
+    let layout = &owned.layouts[index].layout;
+    let local = point - Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)).to_vector();
+    let line = layout.lines.iter().find(|l| local.y >= l.y && local.y < l.y + l.height)?;
+    layout.runs[line.first..line.end]
+      .iter()
+      .find(|p| {
+        let shaped = &runs[p.run];
+        shaped.paragraph.is_some() && local.x >= p.x && local.x < p.x + shaped.run.metrics.advance
+      })
+      .map(|p| self.runs[runs[p.run].style].node)
+  }
+
   pub fn set_layout_mode(&mut self, mode: TextLayoutMode) -> Damage {
     self.layout_mode = mode;
     Damage::Layout
@@ -621,12 +710,25 @@ impl Text {
   }
 }
 
-/// A styled run of a paragraph: a span leaf's text plus the overrides in
-/// effect for it (its own layered over its span ancestors').
+/// The character an inline atom occupies in the paragraph text: U+FFFC OBJECT
+/// REPLACEMENT CHARACTER, whose UAX #14 class allows a break before and after
+/// it, so an atom is its own wrap unit.
+pub const ATOM_CHAR: &str = "\u{FFFC}";
+
+/// A run of a paragraph: a span leaf's text plus the overrides in effect for
+/// it (its own layered over its span ancestors'), or an inline atom - a
+/// laid-out element child of the `<text>` that flows with the words as one
+/// unbreakable unit, `ATOM_CHAR` wide in the text and `atom` (its measured
+/// box) wide on the line, bottom on the baseline.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextRun {
   pub text: String,
   pub overrides: RunOverrides,
+  /// The node this run comes from: the leaf span, or the atom element. What
+  /// a hit on the run resolves to.
+  pub node: u64,
+  /// The atom's margin box, written by the layout pass; None for text.
+  pub atom: Option<Size>,
 }
 
 /// A run's fully resolved style.

@@ -182,19 +182,30 @@ The primary container element. Supports layout, transform, and pointer event pro
 
 Renders text. Children are the text content: strings, and `<span>` runs that override the paragraph's style for part of it. Paragraph-level props: `textAlign`, `maxLines` with `textOverflow` (`"clip"`, `"ellipsis"`, or any string to draw as the ellipsis), and `overflowWrap` (`"anywhere"`, the default, splits a word wider than the line at grapheme boundaries; `"normal"` keeps it whole and lets it overflow).
 
+Any other element child (`<view>`, `<texture>`, `<rect>`, `<path>`, ...) is an inline atom: it flows with the words as one unbreakable unit, sized shrink-to-fit by its own layout (like an inline block), bottom on the line's baseline, and painted and hit-tested where it lands. It is a box, not a run: the paragraph's font props do not cascade into it, and it needs `textLayout="owned"` while that flag exists.
+
 ```jsx
 <text color="#333" fontSize={16}>Hello</text>
 <text maxLines={2} textOverflow="ellipsis">{longText()}</text>
+<text textLayout="owned">
+  Rated <texture width={16} height={16} src={star} /> 4.8 by
+  <view paddingHorizontal={6} borderRadius={8} color="#eef"><text fontSize={12}>1,204 users</text></view>
+</text>
 ```
 
 ### `<span>`
 
 A styled run inside `<text>` (or `<d-text>`). Inline text only: its children are text and other spans, and it never has a layout box, so there is no `d-` form. It takes the per-run props (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); anything not set inherits from the enclosing span, then from the `<text>`. The cascade stops at the paragraph: nothing inherits across the tree. Paragraph-level props (`textAlign`, `maxLines`) belong on `<text>` only.
 
+A span also takes the pointer props (`onPointerDown`, `onPointerUp`, ...): its hit area is the boxes of its own text on every line it spans, and events bubble to the enclosing spans and the `<text>` (needs `textLayout="owned"` while that flag exists; on the paragraph path a hit resolves to the `<text>`).
+
 ```jsx
 <text color="#333" fontSize={16}>
   Hello, <span color="tomato" fontWeight={700}>{name()}</span>!
   <span fontFamily="mono">code <span fontStyle="italic">nested</span></span>
+</text>
+<text textLayout="owned">
+  Read the <span color="royalblue" onPointerDown={() => open(url)}>release notes</span> first.
 </text>
 ```
 
