@@ -200,10 +200,8 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   Also onResize, onLayout, onWindowFocus, onWindowBlur.
 
 - Device/GPU access via subpath imports: @solidrt/core/camera, /microphone,
-  /speech, /gpu, /video. Image flow: `decodeImage(bytes)` ->
-  `createTexture(data,w,h)` -> `<texture src={id} />`. Video: `createVideo`
-  (from /video) streams an MP4 into a texture id - there is no video
-  element; display it with `<texture src={video.texture()} />`.
+  /speech, /gpu. Image flow: `decodeImage(bytes)` ->
+  `createTexture(data,w,h)` -> `<texture src={id} />`.
 
 ## Minimal app, core primitives only (verified to render)
 

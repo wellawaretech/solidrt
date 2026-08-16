@@ -8,6 +8,12 @@ license = "MIT"
 name = "forge"
 path = "src/lib.rs"
 
+[features]
+# forge::video: MP4/H.264 demux + decode (openh264 software, AMediaCodec on
+# Android) and AAC. Incomplete and opt-in; a plain build ships no decoder.
+# See okf/backlog/video-playback.md.
+video = ["dep:mp4", "dep:symphonia", "dep:openh264", "dep:ndk", "dep:ndk-sys"]
+
 [dependencies]
 log = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
@@ -75,21 +81,21 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # the avcC extra data, and the SPS/PPS live only there in MP4. symphonia
 # decodes AAC (pure Rust, patents expired) and later grows into the
 # SDL3_mixer replacement.
-mp4 = "0.14"
-symphonia = { version = "0.5", default-features = false, features = ["aac"] }
+mp4 = { version = "0.14", optional = true }
+symphonia = { version = "0.5", default-features = false, features = ["aac"], optional = true }
 
 # openh264 is the PoC/dev software decoder ONLY (no B-slice support;
 # per-platform hardware decoders are the shipped path). Android already has
 # its hardware decoder, so the C++ openh264 build is skipped there entirely.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-openh264 = "0.9"
+openh264 = { version = "0.9", optional = true }
 
 # forge::video's Android decoder: AMediaCodec in buffer mode. Same ndk crate
 # alloy uses; api-level-26 matches the oldest target (the Philips TV), so no
 # 28+ gated calls. ndk-sys only for the AMEDIACODEC_BUFFER_FLAG_* constants.
 [target.'cfg(target_os = "android")'.dependencies]
-ndk = { version = "0.9", default-features = false, features = ["media", "api-level-26"] }
-ndk-sys = "0.6"
+ndk = { version = "0.9", default-features = false, features = ["media", "api-level-26"], optional = true }
+ndk-sys = { version = "0.6", optional = true }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the

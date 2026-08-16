@@ -53,6 +53,56 @@ Rules:
 
 # Changelog
 
+## 0.0.49 - 2026-08-16
+
+### Fixes
+- **[windows] [macos] self-contained packed executables** - ANGLE libraries embedded.
+- **Text input dropped or reordered characters under burst events.**
+- **An explicit `undefined` for an optional argument was rejected** - it now means "not provided".
+- **`<oval>` never hit-tested.**
+- **A new 3D mesh flashed at the origin for one frame.**
+
+### Features
+- **Isolates** - a `"use isolate"` module runs on its own thread, called through a typed proxy.
+- **FFI: buffers as pointer arguments** - `ArrayBuffer` and views pass as `ptr`.
+- **FFI: typed reads and optional symbols.**
+- **3D: picking and raycasting** - `scene.pick`, `scene.raycast`, `onPointer*` on meshes.
+- **3D: scene background** - a fragment shader inside the scene pass.
+- **Faster texture uploads** - staging buffer.
+- **Steadier presentation on TVs** - pacing policy follows the input modality.
+- **Retained frame re-presents** - changed textures show without a tree change.
+
+### API
+- `flux:isolate`: `isolate`; `Isolated`, `IsolateOptions`, `Sendable`.
+- `flux:ffi`: `FfiArg`, `SymbolDecl.optional`, `readMemory(ptr, count, type?)`.
+- `@solidrt/3d`: `scene.pick`, `scene.raycast`, `scene.setBackground`, `SceneOptions.background`.
+- `@solidrt/3d`: `Hit`, `ScenePointerEvent`, `PointerEventProps` and the `onPointer*` props.
+
+### Developer experience
+- **Parallel dev servers** - `-s, --session <N>`; `srt mcp` finds its project's server.
+- **Dev data under `~/.solidrt/`** - servers and client data trees in one place.
+- **`srt client` picks one server** - `--server` wins over `-s`; neither opens the connect screen.
+- **Isolate modules ride the toolchain** - served, packed to bytecode, typechecked.
+
+### Breaking changes
+- **`-c` now means `--client`** - `--compile` lost its short flag.
+- **Dev client data moved to `~/.solidrt/clients/`.**
+- **`readMemory` counts elements, not bytes.**
+- **REPL `load` is bound to the project root.**
+- **Default text weight is Medium** - was Regular.
+- **SolidJS 2.0.0-rc.0** - bump peer deps.
+
+### Agents
+- **Scaffold `AGENTS.md`** - isolates, sessions, MCP server resolution.
+- **`packages/3d/AGENTS.md`** - pick, raycast, BVH, background.
+- New 3D examples: `pick`, `scene-background`.
+
+### Various
+- Dependencies: SolidJS `2.0.0-rc.0`; `libloading` (win/mac).
+- **Frame driver and surface liveness move into alloy.**
+- **Launcher lives in `apps/launcher`.**
+- OKF restructured; `KNOWN_ISSUES.md` removed.
+
 ## 0.0.48 - 2026-08-11
 
 ### Fixes

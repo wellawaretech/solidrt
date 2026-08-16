@@ -312,6 +312,7 @@ impl UiRuntime for FluxRuntime {
     let paced = self.paced.clone();
     // Display period for video frame scheduling; playback mode has no
     // presentation model, and 0 just disables the selection lookahead.
+    #[cfg(feature = "video")]
     let period_us = self.paced.as_ref().map(|p| (p.period_ms() * 1000.0) as i64).unwrap_or(0);
     let clock_control = self.clock_control.clone();
     let wall_start = self.wall_start;
@@ -389,12 +390,15 @@ impl UiRuntime for FluxRuntime {
         // even though the tree did not.
         platform.request_frame();
       }
-      let video = flux::gui::video::tick(&ctx, period_us);
-      if video.uploaded || video.playing {
-        // Same for a video frame uploaded into its player's texture - and a
-        // mid-playback player is standing demand for the next tick, so video
-        // rides the frame grid instead of free-running on its own uploads.
-        platform.request_frame();
+      #[cfg(feature = "video")]
+      {
+        let video = flux::gui::video::tick(&ctx, period_us);
+        if video.uploaded || video.playing {
+          // Same for a video frame uploaded into its player's texture - and a
+          // mid-playback player is standing demand for the next tick, so video
+          // rides the frame grid instead of free-running on its own uploads.
+          platform.request_frame();
+        }
       }
       // Settle any captureSnapshot promises whose captures alloy rendered on the
       // previous paint pass.

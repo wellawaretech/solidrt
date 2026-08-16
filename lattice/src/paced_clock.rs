@@ -81,6 +81,7 @@ impl PacedClock {
 
   // The presentation period backing the timeline, for consumers scheduling
   // against it (video frame selection's half-period lookahead).
+  #[cfg(feature = "video")]
   pub fn period_ms(&self) -> f64 {
     self.present.period_ms()
   }

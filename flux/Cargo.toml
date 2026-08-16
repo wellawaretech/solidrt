@@ -35,7 +35,9 @@ gui = ["dep:alloy", "dep:taffy"]
 # with demand only on upload. Measured on a 50 Hz TV: missed present slots
 # 11% -> 0.13%, content locked frame-for-frame. Off by default until the
 # residual ~1/s idle-tick hitch is resolved; see okf/backlog/video-playback.md.
-video-timeline-pacing = []
+# flux:video (behind forge/video): opt-in, incomplete; see forge/Cargo.toml.
+video = ["forge/video"]
+video-timeline-pacing = ["video"]
 
 [dependencies]
 forge = { workspace = true }

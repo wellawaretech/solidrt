@@ -14,6 +14,7 @@ pub mod raf;
 pub mod gpu;
 pub mod tree;
 pub mod value;
+#[cfg(feature = "video")]
 pub mod video;
 
 // The read half of the property adapter, for inspection surfaces (the dev
@@ -72,6 +73,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let gpu_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy.clone());
+  #[cfg(feature = "video")]
   let video_atx = AlloyContext(alloy.clone());
   // Stored as standalone userdata (below) so the runner can reach the alloy
   // context off the JS thread's `Ctx` - e.g. to service a dev-server snapshot
@@ -82,7 +84,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   // (registered below); only the web-standard rAF stays a global. The plugins
   // store each module's host state in userdata before any import; the module
   // surfaces read it in their `evaluate`.
-  builder
+  let builder = builder
     .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
     .plugin(move |ctx| {
       ctx.store_userdata(query_atx).expect("store alloy context userdata");
@@ -92,19 +94,25 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(move |ctx| gpu::store_state(&ctx, gpu_atx, gpu_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
-    .plugin(move |ctx| video::store_state(&ctx, video_atx))
     .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
     .module_override("flux:camera", camera::CameraModule)
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:audio", audio::AudioModule)
-    .module_override("flux:gpu", gpu::GpuModule)
-    .module_override("flux:video", video::VideoModule)
+    .module_override("flux:gpu", gpu::GpuModule);
+  #[cfg(feature = "video")]
+  let builder = builder
+    .plugin(move |ctx| video::store_state(&ctx, video_atx))
+    .module_override("flux:video", video::VideoModule);
+  builder
 }
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
+#[cfg(feature = "video")]
 pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "video"];
+#[cfg(not(feature = "video"))]
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu"];
 
 /// Append the gui capability names to `Flux.capabilities` so availability checks
 /// are uniform with the other modules (`Flux.capabilities.includes("camera")`).

@@ -132,7 +132,7 @@ Web reflexes and what replaces them:
    raw host intrinsics and the `d-` (detached, non-layout) primitives like
    `d-rect`/`d-path`/`d-oval` for vector art or perf-sensitive positioned
    drawing, device/GPU subpath imports (@solidrt/core/camera, /microphone,
-   /gpu, /video), gradients (createLinearGradient/createRadialGradient), and
+   /gpu), gradients (createLinearGradient/createRadialGradient), and
    createImage/decodeImage for images below the `Image` component's level.
    Components and core primitives compose freely in the same tree - a
    components-based app can drop to a `<d-path>` for one custom shape without

@@ -27,6 +27,7 @@ go = ["flux/compile", "dep:tokio-websockets", "dep:futures-util", "dep:http", "d
 # Opt-in: not part of `default` so a plain `cargo build` stays voice-free.
 speech = ["dep:whisper-rs", "dep:livekit-wakeword"]
 # Passthrough: video frame scheduling on the paced timeline (see flux).
+video = ["flux/video"]
 video-timeline-pacing = ["flux/video-timeline-pacing"]
 
 [dependencies]

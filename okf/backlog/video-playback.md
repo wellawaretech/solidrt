@@ -9,6 +9,12 @@ created: 2026-08-12
 Designed 2026-08-12 in discussion; decisions below are settled, the module
 internals wait on one on-device probe.
 
+Build gate (2026-08-16): the whole stack is opt-in behind the `video` cargo
+feature (forge owns it, flux and lattice pass through; `video-timeline-pacing`
+implies it). A default build carries no decoder, no `flux:video` module, no
+`video` capability, and `@solidrt/core` exposes no `/video` subpath. Enable
+with `--features video` while the work is incomplete.
+
 ## Goal and scope
 
 Video playback as a SolidRT capability, fluent on ALL devices including the

@@ -27,6 +27,7 @@ pub mod stream;
 pub mod subprocess;
 pub mod svg;
 pub mod value;
+#[cfg(feature = "video")]
 pub mod video;
 pub mod wasm;
 pub mod websocket;
