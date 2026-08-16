@@ -15,7 +15,7 @@ pub use oval::Oval;
 pub use paint::{Gradient, GradientStop, GradientUnits, PaintState};
 pub use path::Path;
 pub use rect::Rectangle;
-pub use text::{Span, Text};
+pub use text::{Span, Text, TextLayoutMode};
 pub use texture::{fit_rects, Texture, TextureFit};
 pub use view::{OriginCoord, View};
 pub use window::Window;

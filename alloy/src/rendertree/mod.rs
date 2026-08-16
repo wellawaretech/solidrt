@@ -6,6 +6,7 @@ pub(crate) mod kinds;
 pub mod layout;
 pub mod platform;
 pub mod router;
+pub mod text_layout;
 mod tree;
 
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
@@ -13,7 +14,7 @@ pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
-  Text, Texture, TextureFit, View, Window,
+  Text, TextLayoutMode, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};

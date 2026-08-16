@@ -559,6 +559,13 @@ export interface TextProps extends PaintProps, PointerProps {
   fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
   textAlign?: "left" | "right" | "center" | "justify"
   maxLines?: number
+  /**
+   * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
+   * the whole text to one Impeller paragraph, "owned" shapes each word on its
+   * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR only;
+   * justify falls back to left.
+   */
+  textLayout?: "paragraph" | "owned"
 }
 
 /**

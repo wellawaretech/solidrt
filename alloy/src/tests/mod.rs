@@ -11,6 +11,7 @@ mod paint;
 mod present;
 mod resample;
 mod router;
+mod text_layout;
 mod texture;
 mod tree;
 mod view;

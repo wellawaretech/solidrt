@@ -3,7 +3,7 @@ use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
 use super::{f32_of, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
-use alloy::rendertree::{Span, Text};
+use alloy::rendertree::{Span, Text, TextLayoutMode};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
@@ -24,6 +24,11 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
     }),
     "lineHeight" => text.set_line_height(f32_of(value, "lineHeight")?),
     "maxLines" => text.set_max_lines(f32_of(value, "maxLines")? as u32),
+    "textLayout" => text.set_layout_mode(match str_of(value, "textLayout")? {
+      "paragraph" => TextLayoutMode::Paragraph,
+      "owned" => TextLayoutMode::Owned,
+      v => return Err(format!("Unknown textLayout value \"{v}\"; expected paragraph or owned")),
+    }),
     "fontStyle" => text.set_font_style(match str_of(value, "fontStyle")? {
       "italic" => FontStyle::Italic,
       "normal" => FontStyle::Normal,

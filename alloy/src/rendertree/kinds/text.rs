@@ -3,6 +3,7 @@ use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, Rect, Size,
   TextAlignment, TypographyContext,
 };
+use crate::rendertree::text_layout::{self, Align, Layout, Run, RunMetrics};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use std::cell::RefCell;
@@ -13,9 +14,21 @@ use taffy::{AvailableSpace, Display, Style};
 // asks for the content width, so a handful covers a frame; oldest is evicted.
 const MAX_CACHED_WIDTHS: usize = 4;
 
+/// Which engine lays the text out. `Paragraph` hands the whole text to one
+/// Impeller paragraph per width; `Owned` shapes each wrap unit as its own
+/// single-line paragraph and breaks/places lines in text_layout (the
+/// experimental path of okf/backlog/text-layout-owned.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextLayoutMode {
+  #[default]
+  Paragraph,
+  Owned,
+}
+
 #[derive(Clone, Debug)]
 pub struct Text {
   pub computed_text: String,
+  pub layout_mode: TextLayoutMode,
   pub font_family: String,
   pub font_size: f32,
   pub font_style: FontStyle,
@@ -40,12 +53,16 @@ pub struct Text {
   // several places, so validity is checked by fingerprint (ParaKey) instead
   // of setter hooks. Interior-mutable: measure and build take &self.
   cache: RefCell<ParaCache>,
+  // Owned-layout counterpart: shaped runs (one paragraph per wrap unit, shaped
+  // once per key) plus the line layouts derived from them, keyed by width.
+  owned: RefCell<OwnedCache>,
 }
 
 impl Default for Text {
   fn default() -> Self {
     Self {
       computed_text: String::new(),
+      layout_mode: TextLayoutMode::default(),
       font_family: "sans".to_string(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
@@ -63,6 +80,7 @@ impl Default for Text {
       h: None,
       paint: PaintState::default(),
       cache: RefCell::new(ParaCache::default()),
+      owned: RefCell::new(OwnedCache::default()),
     }
   }
 }
@@ -116,6 +134,27 @@ struct ParaCache {
   entries: Vec<(f32, Paragraph)>,
 }
 
+// One wrap unit shaped as a single-line paragraph, plus what the breaker
+// needs to know about it.
+#[derive(Clone)]
+struct ShapedRun {
+  paragraph: Paragraph,
+  run: Run,
+}
+
+#[derive(Clone, Default)]
+struct OwnedCache {
+  key: Option<ParaKey>,
+  runs: Vec<ShapedRun>,
+  layouts: Vec<(f32, Layout)>,
+}
+
+impl std::fmt::Debug for OwnedCache {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "OwnedCache({} runs, {} layouts)", self.runs.len(), self.layouts.len())
+  }
+}
+
 // Manual impl: impellers::Paragraph has no Debug.
 impl std::fmt::Debug for ParaCache {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -125,10 +164,24 @@ impl std::fmt::Debug for ParaCache {
 
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let Some(paragraph) = self.shaped(&ctx.platform.typography(), self.w.unwrap_or(ctx.size.width)) else {
+    let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
+    let width = self.w.unwrap_or(ctx.size.width);
+    if self.layout_mode == TextLayoutMode::Owned {
+      let typography = ctx.platform.typography();
+      let mut owned = self.owned.borrow_mut();
+      self.prepare_owned(&typography, &mut owned);
+      let layout = Self::owned_layout(self, &mut owned, width);
+      let owned = &*owned;
+      for placed in &owned.layouts[layout].1.runs {
+        let paragraph = &owned.runs[placed.run].paragraph;
+        builder.draw_paragraph(paragraph, Point::new(origin.x + placed.x, origin.y + placed.y));
+      }
+      return;
+    }
+    let Some(paragraph) = self.shaped(&ctx.platform.typography(), width) else {
       return;
     };
-    builder.draw_paragraph(&paragraph, Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)));
+    builder.draw_paragraph(&paragraph, origin);
   }
 }
 
@@ -137,6 +190,9 @@ impl Measurable for Text {
     crate::rendertree::counters::note_measure_call();
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return Size::new(w, h);
+    }
+    if self.layout_mode == TextLayoutMode::Owned {
+      return self.measure_owned(ctx);
     }
 
     let Some(intrinsic) = self.shaped(&ctx.platform.typography(), f32::MAX) else {
@@ -212,6 +268,96 @@ impl Text {
     }
     cache.entries.push((width, paragraph.clone()));
     Some(paragraph)
+  }
+
+  fn measure_owned(&self, ctx: &MeasureContext) -> Size {
+    let typography = ctx.platform.typography();
+    let mut owned = self.owned.borrow_mut();
+    self.prepare_owned(&typography, &mut owned);
+    let runs: Vec<Run> = owned.runs.iter().map(|r| r.run).collect();
+    let width = ctx.known.width.unwrap_or_else(|| match ctx.available.width {
+      AvailableSpace::Definite(w) => text_layout::max_intrinsic_width(&runs).min(w),
+      AvailableSpace::MaxContent => text_layout::max_intrinsic_width(&runs),
+      AvailableSpace::MinContent => text_layout::min_intrinsic_width(&runs),
+    });
+    let height = ctx.known.height.unwrap_or_else(|| {
+      let layout = Self::owned_layout(self, &mut owned, width);
+      owned.layouts[layout].1.height
+    });
+    Size::new(width, height)
+  }
+
+  // Shape every wrap unit of the current text as its own single-line
+  // paragraph, unless the cache already holds them for the current inputs.
+  fn prepare_owned(&self, typography: &TypographyContext, owned: &mut OwnedCache) {
+    if owned.key.as_ref().is_some_and(|k| k.matches(self)) {
+      return;
+    }
+    owned.runs.clear();
+    owned.layouts.clear();
+    owned.key = Some(ParaKey::of(self));
+
+    let mut style = ParagraphStyle::default();
+    let paint = self.paint.to_paint();
+    style.set_foreground(&paint);
+    style.set_font_family(&self.font_family);
+    style.set_font_size(self.font_size);
+    style.set_font_style(self.font_style);
+    style.set_font_weight(self.font_weight);
+    style.set_height(self.line_height);
+
+    for segment in text_layout::segments(&self.computed_text) {
+      let raw = &self.computed_text[segment.start..segment.end];
+      // The break characters themselves are not shaped: an empty remainder
+      // (a blank line) still needs a line box, which a space supplies.
+      let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
+      let blank = text.is_empty();
+      crate::rendertree::counters::note_para_shape();
+      let Some(mut para_builder) = ParagraphBuilder::new(typography) else {
+        return;
+      };
+      para_builder.push_style(&style);
+      para_builder.add_text(if blank { " " } else { text });
+      let Some(paragraph) = para_builder.build(f32::MAX) else {
+        return;
+      };
+      let height = paragraph.get_height();
+      let ascent = paragraph.get_line_metrics().map(|m| m.get_ascent(0) as f32).unwrap_or(height);
+      let metrics = RunMetrics {
+        advance: if blank { 0.0 } else { paragraph.get_max_intrinsic_width() },
+        ink_width: if blank { 0.0 } else { paragraph.get_longest_line_width().max(0.0) },
+        ascent,
+        descent: (height - ascent).max(0.0),
+      };
+      owned.runs.push(ShapedRun { paragraph, run: Run { metrics, hard_break: segment.hard_break } });
+    }
+  }
+
+  // Line layout for `width` from the prepared runs; pure arithmetic, cached
+  // per width like the paragraph path. Returns the index into `layouts`.
+  fn owned_layout(&self, owned: &mut OwnedCache, width: f32) -> usize {
+    if let Some(i) = owned.layouts.iter().position(|(w, _)| *w == width) {
+      return i;
+    }
+    let runs: Vec<Run> = owned.runs.iter().map(|r| r.run).collect();
+    let align = match self.text_alignment {
+      TextAlignment::Center => Align::Center,
+      TextAlignment::Right => Align::Right,
+      // LTR only for now, so start is left and end is right.
+      TextAlignment::End => Align::Right,
+      TextAlignment::Left | TextAlignment::Start | TextAlignment::Justify => Align::Left,
+    };
+    let layout = text_layout::layout(&runs, width, align, self.max_lines);
+    if owned.layouts.len() >= MAX_CACHED_WIDTHS {
+      owned.layouts.remove(0);
+    }
+    owned.layouts.push((width, layout));
+    owned.layouts.len() - 1
+  }
+
+  pub fn set_layout_mode(&mut self, mode: TextLayoutMode) -> Damage {
+    self.layout_mode = mode;
+    Damage::Layout
   }
 
   // Box overrides paint within (or independent of) the layout box, so none of
