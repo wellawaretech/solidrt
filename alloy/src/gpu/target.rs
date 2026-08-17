@@ -1237,7 +1237,7 @@ impl ShaderTexture {
   /// Draw the resolved inputs over this target's full contents via `program`
   /// (the shared copy program), no clear - the covering triangle writes every
   /// pixel: the copyTexture write. A sampling draw, never a blit (see
-  /// `gl::draw_and_resolve` for why blits are not an option on this stack).
+  /// `gl::draw::draw_and_resolve` for why blits are not an option on this stack).
   pub fn overwrite_with(&self, gl: &glow::Context, program: &ShaderProgram, textures: &[PassInput]) {
     super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, &[], textures);
   }

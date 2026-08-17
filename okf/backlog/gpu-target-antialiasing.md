@@ -11,7 +11,7 @@ option bag (params, textures, attributes, buffer, topology, vertexCount,
 depth, clearColor) asks for multisampling, and there is no post-resolve
 step. The render tree's own geometry gets its AA from the multisampled
 target it draws into (Impeller's GL backend has no analytic path AA - see
-the comment in alloy/src/gl.rs), but a pipeline target is single-sample
+the comment in alloy/src/gl/rig.rs), but a pipeline target is single-sample
 and opaque to all that - whatever the app's fragment shader wrote is what
 gets composited.
 
@@ -67,7 +67,7 @@ Candidate answers, cheapest first:
   reallocated alongside the target in setShaderSize, same as the depth
   buffer.
 
-Do not write the MSAA path from scratch: alloy/src/gl.rs `draw_offscreen`
+Do not write the MSAA path from scratch: alloy/src/gl/draw.rs `draw_offscreen`
 already implements exactly this for snapshot repaint boundaries - a
 multisampled color renderbuffer plus a multisampled DEPTH24_STENCIL8
 renderbuffer, resolved into the single-sample target with `glBlitFramebuffer`,

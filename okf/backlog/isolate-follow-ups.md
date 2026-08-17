@@ -36,6 +36,9 @@ symptom first where there is one:
   `isolate()` calls).
 - **Sync generators.** `function*` exports as streams, same protocol.
 
+Separate item, has a symptom today: okf/backlog/isolate-stack-attribution.md
+(isolate stacks say `main:` and remap against the app's sourcemap).
+
 Not wanted, decided in the plan: `SharedArrayBuffer`/`Atomics`, ports or
 `postMessage`, source-text spawning, structured clone of identity-bearing
 objects (Date/Map/Set), a serial-call option (a module that must not

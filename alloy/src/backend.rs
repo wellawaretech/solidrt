@@ -107,6 +107,6 @@ impl DisplayContext {
         (Box::new(crate::egl_headless::HeadlessEglBinding(egl.clone())), surface_size.clone())
       }
     };
-    gl::run_context(binding, surface_size, closure, tx, wake, capture_frames, stats)
+    crate::threads::run_context(binding, surface_size, closure, tx, wake, capture_frames, stats)
   }
 }

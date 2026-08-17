@@ -168,7 +168,7 @@ pub(crate) struct RasterState {
   // window frame itself plus offscreen rasters (snapshot boundaries, node
   // captures), grown to the largest allocation requested. Retained because
   // a per-call allocate/release cycle is exactly what ANGLE/D3D11 handles
-  // poorly (see the OffscreenRig doc in gl.rs).
+  // poorly (see the OffscreenRig doc in gl/rig.rs).
   offscreen_rig: gl::OffscreenRig,
   // Size of the last drawn frame, so geometry transitions are logged exactly
   // once. Diagnostic only (resize-race visibility).

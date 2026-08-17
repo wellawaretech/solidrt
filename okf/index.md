@@ -268,6 +268,13 @@ Shaped, not started.
   kept in one place so none vanishes with the done record; each is small and
   independent, none has a consumer yet. Zero-copy buffer transfer first when a
   payload size makes copying show up.
+- **[Isolate stack traces are attributed to main](backlog/isolate-stack-attribution.md)** [2026-08-17]
+  A throw inside a "use isolate" module reports as `at boom (main:65:13)`; the
+  module is named main like the app bundle and the position is
+  bundle-relative, so the dev server's remap rewrites it against the app's
+  sourcemap and yields a confidently wrong app file and line. Fix is two
+  halves; the runtime half (declare the module under its isolate id) is a few
+  lines and stops the mis-remap on its own.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back

@@ -24,6 +24,7 @@ pub mod rendertree;
 pub mod resample;
 mod script;
 mod texture;
+mod threads;
 mod vsync;
 pub mod yuv;
 

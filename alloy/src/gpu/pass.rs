@@ -203,7 +203,7 @@ pub fn composite_program_over_window(
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
 /// framebuffer), no clear: the covering triangle writes every pixel. The
 /// in-tile MSAA resolve consumes its resolved texture through this instead of
-/// a blit (see `gl::draw_and_resolve` for why a blit is not an option there);
+/// a blit (see `gl::draw::draw_and_resolve` for why a blit is not an option there);
 /// node shader passes (shaded snapshot boundaries) run through it with their
 /// declared params.
 pub fn render_program_to_fbo(

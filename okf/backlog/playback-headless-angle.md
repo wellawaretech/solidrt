@@ -106,7 +106,7 @@ Stage 2, IMPLEMENTED 2026-08-17, verified on Windows in a desktop session:
   so it cannot test this; a scheduled task set to run whether the user is
   logged on or not can. macOS untested.
 
-Known limitation: `gl.rs` `msrtt()` still asks SDL for extension support and
+Known limitation: `gl/rig.rs` `msrtt()` still asks SDL for extension support and
 proc addresses; under the dummy driver that answers "unsupported", so the
 headless path uses the explicit MSAA resolve. Desktop does that anyway
 (MSRTT is the Android tiled-GPU path).
