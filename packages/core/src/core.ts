@@ -332,3 +332,72 @@ export function getBoundingBoxViewport(node: { id: number }): BoundingBox | null
 export function measureText(text: string, options?: tree.MeasureTextOptions): { width: number, height: number } {
   return tree.measureText(text, options)
 }
+
+/**
+ * Segments `text` into wrap units (words with their trailing whitespace) and
+ * shapes each in the given font, once, for laying lines out in app code with
+ * layoutNextLine or arithmetic of your own over `units`. For the non-standard
+ * case (text into a shape, around a moving obstacle, handed between columns,
+ * fitted by size); regular text of any length is a <text>.
+ */
+export function prepareText(text: string, options?: tree.MeasureTextOptions): tree.PreparedText {
+  return tree.prepareText(text, options)
+}
+
+/** One laid-out line from layoutNextLine. */
+export type TextLine = {
+  /** Unit range [from, to) into prepared.units. */
+  from: number
+  to: number
+  /** Character range into prepared.text: `text.slice(start, end)` is the line's text (break characters included). */
+  start: number
+  end: number
+  /** Ink width: the units' advances plus the last unit's width, without its trailing whitespace. */
+  width: number
+  /** Tallest ascent plus tallest descent on the line. */
+  height: number
+  ascent: number
+  /** The line ended at a hard break rather than by running out of width. */
+  hardBreak: boolean
+  /** Where the next line starts; equal to `to`. */
+  cursor: number
+}
+
+/**
+ * The next line of `prepared` from unit `cursor` that fits `width`, or null
+ * when the text is used up. Greedy: units go on the line while the pen plus
+ * the unit's ink stays within `width`; a hard break ends the line; a unit
+ * wider than `width` on its own goes on the line whole and overflows. Draw a
+ * line as `<d-text x y w={line.width + 1}>{prepared.text.slice(line.start, line.end)}</d-text>`
+ * with the same font options; its words are already shaped, so that is
+ * cheap. Floats, balancing and ellipsis are <text> features, not this.
+ */
+export function layoutNextLine(prepared: tree.PreparedText, cursor: number, width: number): TextLine | null {
+  let units = prepared.units
+  if (cursor >= units.length) return null
+  let pen = 0
+  let ascent = 0
+  let descent = 0
+  let i = cursor
+  while (i < units.length) {
+    let unit = units[i]!
+    if (i > cursor && pen + unit.width > width) break
+    pen += unit.advance
+    if (unit.ascent > ascent) ascent = unit.ascent
+    if (unit.descent > descent) descent = unit.descent
+    i++
+    if (unit.hardBreak) break
+  }
+  let last = units[i - 1]!
+  return {
+    from: cursor,
+    to: i,
+    start: units[cursor]!.start,
+    end: last.end,
+    width: pen - last.advance + last.width,
+    height: ascent + descent,
+    ascent,
+    hardBreak: last.hardBreak,
+    cursor: i,
+  }
+}

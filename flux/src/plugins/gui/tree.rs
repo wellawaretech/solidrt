@@ -10,6 +10,7 @@ use taffy::prelude::*;
 use super::AlloyContext;
 use crate::plugins::gui::value::PropValue;
 use crate::plugins::marshal::OptArg;
+use alloy::rendertree::text::prepare_units;
 use alloy::rendertree::{
   Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, PlatformContext, Rect,
   RenderTree, Text, Window,
@@ -73,6 +74,41 @@ fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
   } else {
     PropValue::Null
   })
+}
+
+// The font options measureText and prepareText share, onto a Text.
+fn apply_font_options(node: &mut Text, opts: &Object<'_>) {
+  if let Ok(v) = opts.get::<_, String>("fontFamily") {
+    node.font_family = v;
+  }
+  if let Ok(v) = opts.get::<_, f64>("fontSize") {
+    node.font_size = v as f32;
+  }
+  if let Ok(v) = opts.get::<_, String>("fontStyle") {
+    node.font_style = match v.as_str() {
+      "italic" => FontStyle::Italic,
+      _ => FontStyle::Normal,
+    };
+  }
+  if let Ok(v) = opts.get::<_, f64>("fontWeight") {
+    node.font_weight = match v as u32 {
+      100 => FontWeight::Thin,
+      200 => FontWeight::ExtraLight,
+      300 => FontWeight::Light,
+      500 => FontWeight::Medium,
+      600 => FontWeight::SemiBold,
+      700 => FontWeight::Bold,
+      800 => FontWeight::ExtraBold,
+      900 => FontWeight::Black,
+      _ => FontWeight::Regular,
+    };
+  }
+  if let Ok(v) = opts.get::<_, f64>("lineHeight") {
+    node.line_height = v as f32;
+  }
+  if let Ok(v) = opts.get::<_, f64>("maxLines") {
+    node.max_lines = v as u32;
+  }
 }
 
 struct TextSize {
@@ -157,6 +193,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("render")?;
     decl.declare("setTextInputActive")?;
     decl.declare("measureText")?;
+    decl.declare("prepareText")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
     Ok(())
@@ -325,36 +362,8 @@ impl ModuleDef for RenderTreeModule {
     let measure_text = Function::new(ctx.clone(), move |text: String, options: OptArg<Object<'_>>| -> TextSize {
       let mut node = Text::default();
       node.computed_text = text;
-
       if let Some(opts) = options.0 {
-        if let Ok(v) = opts.get::<_, String>("fontFamily") {
-          node.font_family = v;
-        }
-        if let Ok(v) = opts.get::<_, f64>("fontSize") {
-          node.font_size = v as f32;
-        }
-        if let Ok(v) = opts.get::<_, String>("fontStyle") {
-          node.font_style = match v.as_str() {
-            "italic" => FontStyle::Italic,
-            _ => FontStyle::Normal,
-          };
-        }
-        if let Ok(v) = opts.get::<_, f64>("fontWeight") {
-          node.font_weight = match v as u32 {
-            100 => FontWeight::Thin,
-            200 => FontWeight::ExtraLight,
-            300 => FontWeight::Light,
-            500 => FontWeight::Medium,
-            600 => FontWeight::SemiBold,
-            700 => FontWeight::Bold,
-            800 => FontWeight::ExtraBold,
-            900 => FontWeight::Black,
-            _ => FontWeight::Regular,
-          };
-        }
-        if let Ok(v) = opts.get::<_, f64>("maxLines") {
-          node.max_lines = v as u32;
-        }
+        apply_font_options(&mut node, &opts);
       }
 
       let size = node.measure(&MeasureContext {
@@ -365,6 +374,43 @@ impl ModuleDef for RenderTreeModule {
       });
       TextSize { width: size.width, height: size.height }
     })?;
+
+    let prepare_platform = platform.clone();
+    let prepare_text = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<Object<'js>> {
+        let mut node = Text::default();
+        if let Some(opts) = options.0 {
+          apply_font_options(&mut node, &opts);
+        }
+        let units = prepare_units(&prepare_platform, &text, &node.run_style());
+        let array = rquickjs::Array::new(ctx.clone())?;
+        // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
+        // the text in order.
+        let (mut byte, mut utf16) = (0usize, 0usize);
+        let mut to_utf16 = |at: usize| {
+          utf16 += text[byte..at].encode_utf16().count();
+          byte = at;
+          utf16
+        };
+        for (i, unit) in units.into_iter().enumerate() {
+          let obj = Object::new(ctx.clone())?;
+          obj.set("start", to_utf16(unit.start) as u32)?;
+          obj.set("end", to_utf16(unit.end) as u32)?;
+          obj.set("text", unit.text)?;
+          obj.set("advance", unit.metrics.advance)?;
+          obj.set("width", unit.metrics.ink_width)?;
+          obj.set("ascent", unit.metrics.ascent)?;
+          obj.set("descent", unit.metrics.descent)?;
+          obj.set("hardBreak", unit.hard_break)?;
+          array.set(i, obj)?;
+        }
+        let prepared = Object::new(ctx.clone())?;
+        prepared.set("text", text)?;
+        prepared.set("units", array)?;
+        Ok(prepared)
+      },
+    )?;
 
     exports.export("createRoot", create_root)?;
     exports.export("createNode", create_node)?;
@@ -377,6 +423,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("render", render)?;
     exports.export("setTextInputActive", set_text_input_active)?;
     exports.export("measureText", measure_text)?;
+    exports.export("prepareText", prepare_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;
     exports.export("getBoundingBoxViewport", get_bounding_box_viewport)?;
     Ok(())

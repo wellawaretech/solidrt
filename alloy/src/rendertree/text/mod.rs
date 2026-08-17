@@ -5,6 +5,7 @@ mod shape;
 mod words;
 
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
+pub use shape::{prepare_units, PreparedUnit};
 pub use words::WordCache;
 
 use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};

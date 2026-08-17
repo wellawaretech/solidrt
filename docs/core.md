@@ -498,7 +498,40 @@ Three limits define the feature. The effect samples only the subtree's own pixel
 measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
 ```
 
-Synchronously measures the rendered size of a text string. Accepts the same font options as `<text>`: `fontFamily`, `fontSize`, `fontStyle`, `fontWeight`, `maxLines`.
+Synchronously measures the rendered size of a text string. Accepts the same font options as `<text>`: `fontFamily`, `fontSize`, `fontStyle`, `fontWeight`, `lineHeight`, `maxLines`.
+
+### prepareText and layoutNextLine
+
+```ts
+prepareText(text: string, options?: MeasureTextOptions): PreparedText
+layoutNextLine(prepared: PreparedText, cursor: number, width: number): TextLine | null
+```
+
+The text layout engine's two building blocks, for the non-standard case: a headline fitted into a shape, prose flowing around something the app moves, text handed from one column to the next, type sized until no word breaks. Regular text of any length is a `<text>`; these are for bespoke layouts written by hand.
+
+`prepareText` segments the text into wrap units (a word with its trailing whitespace, or an empty unit at a blank line) and shapes each once in the given font (single style; `maxLines` is ignored). The result is plain data: `{ text, units }`, each unit `{ text, start, end, advance, width, ascent, descent, hardBreak }` where `start`/`end` index `text` (the ranges tile it), `advance` is the extent with trailing whitespace (what the pen moves by), `width` the ink without it (what the unit needs at the end of a line). Words are shaped through the same cache `<text>` uses, so preparing an edited text again costs only its new words.
+
+`layoutNextLine` is greedy line breaking as arithmetic over the units: from unit `cursor`, units go on the line while pen plus ink stays within `width`; a hard break ends the line; a unit wider than the line on its own goes on whole and overflows. It returns `{ from, to, start, end, width, height, ascent, hardBreak, cursor }` (unit range, character range, ink width, tallest ascent plus descent, and the next cursor) or `null` when the text is used up. Call it in a loop with whatever width and position each line should have; between calls the app decides everything (which column, which side of an obstacle, how far down). Draw a line with the existing detached text, giving it just over its own width so it never re-wraps:
+
+```jsx
+let prepared = prepareText(article, { fontSize: 17, lineHeight: 1.45 })
+let lines = []
+let cursor = 0, y = 0
+while (true) {
+  let line = layoutNextLine(prepared, cursor, columnWidth)
+  if (!line) break
+  lines.push({ y, line })
+  y += line.height
+  cursor = line.cursor
+}
+return lines.map(({ y, line }) => (
+  <d-text x={0} y={y} w={line.width + 1} fontSize={17} lineHeight={1.45}>
+    {prepared.text.slice(line.start, line.end)}
+  </d-text>
+))
+```
+
+Floats, balancing, ellipsis and spans are `<text>` features, not part of these blocks; a power user who wants a different breaker writes it over `units` directly.
 
 ### getBoundingBox
 

@@ -5,13 +5,42 @@
 // module; requestFrame here only schedules a future frame.
 
 declare module "flux:rendertree" {
-  /** Font options for {@link measureText}. */
+  /** Font options for {@link measureText} and {@link prepareText}. */
   export interface MeasureTextOptions {
     fontFamily?: "sans" | "serif" | "mono" | (string & {})
     fontSize?: number
     fontStyle?: "normal" | "italic"
     fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+    lineHeight?: number
+    /** measureText only. */
     maxLines?: number
+  }
+
+  /**
+   * One wrap unit (a word plus its trailing whitespace, or an empty unit at
+   * a blank line) of a {@link prepareText} result: everything the engine
+   * knows about it, for app-side line breaking.
+   */
+  export interface TextUnit {
+    /** The unit's text without its break characters. */
+    text: string
+    /** Offsets into the prepared text (JS string indexing), break characters included: the ranges tile the text. */
+    start: number
+    end: number
+    /** Horizontal extent including trailing whitespace: what the next unit's pen position advances by. */
+    advance: number
+    /** Ink extent without trailing whitespace: what the unit needs at the end of a line. */
+    width: number
+    ascent: number
+    descent: number
+    /** The unit ends at a hard line break (newline). */
+    hardBreak: boolean
+  }
+
+  /** The wrap units of a text in one font, shaped once. Plain data; layout is arithmetic over `units`. */
+  export interface PreparedText {
+    text: string
+    units: TextUnit[]
   }
 
   /** Create the window root node with the given id. */
@@ -73,6 +102,12 @@ declare module "flux:rendertree" {
    * adding it to the tree.
    */
   export function measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
+  /**
+   * Segment `text` into wrap units and shape each in the given font (through
+   * the shared word cache), for laying lines out in app code; see
+   * layoutNextLine in @solidrt/core. Single style; `maxLines` is ignored.
+   */
+  export function prepareText(text: string, options?: MeasureTextOptions): PreparedText
   /**
    * The node's bounding box from the most recent layout, relative to its
    * nearest positioning context (an ancestor with an explicit

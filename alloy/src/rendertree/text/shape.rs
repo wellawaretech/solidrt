@@ -108,6 +108,43 @@ impl std::fmt::Debug for OwnedCache {
   }
 }
 
+/// One wrap unit of a prepared text (see `prepare_units`): everything the
+/// engine knows about it, for app-side line breaking.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedUnit {
+  /// The unit's text without its break characters.
+  pub text: String,
+  /// Byte range in the source text, break characters included, so the
+  /// ranges tile the text.
+  pub start: usize,
+  pub end: usize,
+  pub metrics: RunMetrics,
+  pub hard_break: bool,
+}
+
+/// The wrap units of `text` in one `style`, shaped through the shared word
+/// cache: the power-user counterpart of what a `<text>` does for itself in
+/// `prepare_owned` (single style, no atoms). Stops at the first unit the
+/// paragraph builder refuses.
+pub fn prepare_units(platform: &PlatformContext, text: &str, style: &RunStyle) -> Vec<PreparedUnit> {
+  let mut units = Vec::new();
+  for segment in layout::segments(text) {
+    let raw = &text[segment.start..segment.end];
+    let piece = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
+    let Some(word) = platform.words().get_or_shape(&platform.typography(), piece, style) else {
+      break;
+    };
+    units.push(PreparedUnit {
+      text: piece.to_string(),
+      start: segment.start,
+      end: segment.end,
+      metrics: word.metrics,
+      hard_break: segment.hard_break,
+    });
+  }
+  units
+}
+
 impl Text {
   // Shape every wrap unit of the current text as its own single-line
   // paragraph (through the shared word cache), unless this text's cache

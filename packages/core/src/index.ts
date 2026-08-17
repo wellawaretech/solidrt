@@ -1,6 +1,6 @@
 export * from "./renderer"
-export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, getBoundingBox, getBoundingBoxViewport, onPointerMove } from "./core"
-export type { BoundingBox, GlobalPointerEvent } from "./core"
+export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, prepareText, layoutNextLine, getBoundingBox, getBoundingBoxViewport, onPointerMove } from "./core"
+export type { BoundingBox, GlobalPointerEvent, TextLine } from "./core"
 export { parseColor, mixColors, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, exit } from "./window"
@@ -49,7 +49,7 @@ export type {
   Color,
   Pct,
 } from "./types"
-export type { MeasureTextOptions } from "flux:rendertree"
+export type { MeasureTextOptions, PreparedText, TextUnit } from "flux:rendertree"
 
 // A percentage value for dimensional props (e.g. transformOrigin): `pct(50)` is
 // half the element box. Keeps percentages a first-class branded value rather
