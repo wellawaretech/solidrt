@@ -996,6 +996,7 @@ fn stats_reply(
       "nodes": s.node_count,
       "measureCalls": s.measure_calls,
       "paraShapes": s.para_shapes,
+      "wordHits": s.word_hits,
       "dirtiedNodes": s.dirtied,
       "cacheGets": s.cache_gets,
       "cacheHits": s.cache_hits,

@@ -1,6 +1,7 @@
 use crate::impellers::{Point, Rect, Size, TypographyContext};
+use crate::rendertree::text::WordCache;
 use std::borrow::Cow;
-use std::cell::{Cell, Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -32,6 +33,9 @@ pub struct PlatformContext {
   // switch (see reset_fonts). Borrowed only on the UI thread (text shaping,
   // the HUD overlay), never across a reset.
   typography: RefCell<TypographyContext>,
+  // Shaped words shared by every text (rendertree/text/words.rs); valid for
+  // the fonts in `typography`, so a reset clears it.
+  words: RefCell<WordCache>,
   window_size: Cell<(f32, f32)>,
   window_size_dirty: Cell<bool>,
   display_scale: Cell<f32>,
@@ -60,6 +64,7 @@ impl PlatformContext {
     let typography = build_typography(fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
     Self {
       typography: RefCell::new(typography),
+      words: RefCell::new(WordCache::default()),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
       display_scale: Cell::new(1.0),
@@ -77,6 +82,11 @@ impl PlatformContext {
     self.typography.borrow()
   }
 
+  /// The shared word cache. UI thread only, like `typography`.
+  pub fn words(&self) -> RefMut<'_, WordCache> {
+    self.words.borrow_mut()
+  }
+
   /// Replace the registered font set (an app switch): a fresh context built
   /// from `fonts` alone, dropping everything previously registered. A font
   /// that fails to register is skipped with a warning - its role falls back,
@@ -85,6 +95,7 @@ impl PlatformContext {
   pub fn reset_fonts(&self, fonts: Vec<FontPayload>) {
     let typography = build_typography(fonts, |alias, e| log::warn!("Could not register font '{alias}': {e}"));
     self.typography.replace(typography);
+    self.words.borrow_mut().clear();
     self.request_frame();
   }
 

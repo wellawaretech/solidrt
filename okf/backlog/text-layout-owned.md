@@ -194,12 +194,23 @@ paragraph reports.
       wrapping row and `Word` are gone, `inlineRuns` stays); same size,
       real word spacing instead of a fixed gap. The probe carries styled
       runs, the paragraph options and a live-update sample.
-   d. Shared word cache: one bounded LRU per typography context keyed on
-      (word text, run style) holding the shaped paragraph object, hit/miss
-      counter next to `para_shapes`. Structural win SkParagraph cannot
-      match (its cache is whole-paragraph): first render of new screens
-      pays only for words never shaped in that style. Deliberately after
-      a-c so correctness lands before the enhancement.
+   d. DONE (2026-08-17): shared word cache, `text/words.rs`: one
+      `WordCache` on `PlatformContext` (UI thread, cleared on
+      `reset_fonts`), an `lru::LruCache` of 8192 (word text, resolved
+      `RunStyle`) -> (paragraph, metrics); `RunStyle`/`PaintState` gained
+      Hash/Eq (floats by bits, zero canonicalized) for the key. Every
+      owned-path piece goes through `get_or_shape`; `paragraph_style` is
+      built only on a miss. Counter `word_hits` next to `para_shapes`
+      (`wordHits` in get_stats). Bench (release, 73 units): warm prepare
+      13 us vs 230 us through SkParagraph's own cache; one word edited 32
+      us vs 264 us for the paragraph rebuild; cold unchanged (~1.1 ms,
+      shaping is shaping). Not an LRU of our own: ordering and eviction
+      are the crate's, the wrapper picks key, value and counters. The
+      key carries the whole paint because Impeller bakes the foreground
+      into the paragraph object; a color change therefore re-shapes its
+      words (warm shapes). A metrics tier keyed on font fields only would
+      decouple layout from paint; worth it only once something measures
+      without drawing (the primitives item's `prepare`), so left for then.
 3. DONE (2026-08-16), the first exclusive features, both owned-path only:
    a. Span hit testing: `TextRun` names its leaf span node, `Text::hit_run`
       finds the placed piece under a text-local point (rectangle arithmetic

@@ -109,9 +109,8 @@ impl<'a> LayoutContext<'a> {
     let (padding, border) = self.insets(NodeId::from(text));
     let inset = padding + border;
     let width = size.width - inset.horizontal_axis_sum();
-    let typography = self.platform.typography();
     let positions = match &self.render_tree.node(text).kind {
-      crate::rendertree::ElementKind::Text(t) => t.atom_positions(&typography, width),
+      crate::rendertree::ElementKind::Text(t) => t.atom_positions(self.platform, width),
       _ => return,
     };
     for (atom, point) in positions {

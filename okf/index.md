@@ -62,6 +62,11 @@ Shaped, not started.
   to the launcher, monogram fallback; dev-client window icon via go-gated
   resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns
   packed-app icons on all platforms.
+- **[App-level runtime configuration](backlog/app-runtime-config.md)** [2026-08-17]
+  A start-only `solidrt.runtime` block in package.json for tunables that today
+  are compile-time constants (JS stack size, word cache size, paragraph
+  engine, fetch cache cap, log level), carried by the manifest and applied
+  when an app is activated.
 - **[A shipped app stores its data under its own vendor, not under solidrt](backlog/app-storage-vendor-path.md)** [2026-08-13]
   Packed apps currently land in <pref>/SolidRT/<app-id>/, forcing the engine's
   name into an end user's filesystem - no shipped game files itself under

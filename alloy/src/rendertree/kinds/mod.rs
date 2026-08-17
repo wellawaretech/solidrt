@@ -12,6 +12,7 @@ mod window;
 pub use line::Line;
 pub use oval::Oval;
 pub use paint::{Gradient, GradientStop, GradientUnits, PaintState};
+pub(crate) use paint::hash_f32;
 pub use path::Path;
 pub use rect::Rectangle;
 pub use texture::{fit_rects, Texture, TextureFit};

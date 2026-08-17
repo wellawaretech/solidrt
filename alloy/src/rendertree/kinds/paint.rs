@@ -2,6 +2,7 @@ use crate::impellers::{
   BlendMode, Color, ColorSource, DrawStyle, Matrix, Paint, Point, Rect, StrokeCap, StrokeJoin, TileMode,
 };
 use crate::rendertree::Damage;
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug)]
 pub struct GradientStop {
@@ -12,7 +13,7 @@ pub struct GradientStop {
 // Whether a gradient's coordinates are already in the drawing space (SVG resolves
 // everything to absolute coordinates) or are box-relative 0..1 fractions resolved
 // against the painted element's bounds at paint time (the factory API).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GradientUnits {
   Absolute,
   BoundingBox,
@@ -166,8 +167,9 @@ impl Default for PaintState {
   }
 }
 
-// Manual impl because impellers::Color has no PartialEq. Used as part of the
-// shaped-paragraph cache key in text.rs.
+// Manual impls because impellers::Color has no PartialEq/Hash. Used as part
+// of the shaped-paragraph cache keys in rendertree/text; the floats hash by
+// bits (see hash_f32).
 impl PartialEq for PaintState {
   fn eq(&self, other: &Self) -> bool {
     color_eq(self.color, other.color)
@@ -178,6 +180,75 @@ impl PartialEq for PaintState {
       && self.stroke_cap == other.stroke_cap
       && self.stroke_join == other.stroke_join
       && self.stroke_miter == other.stroke_miter
+  }
+}
+
+impl Eq for PaintState {}
+
+impl Hash for PaintState {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    hash_color(self.color, state);
+    match &self.gradient {
+      None => 0u8.hash(state),
+      Some(Gradient::Linear { start, end, stops, tile, transform, units }) => {
+        1u8.hash(state);
+        hash_point(*start, state);
+        hash_point(*end, state);
+        hash_stops(stops, state);
+        tile.hash(state);
+        hash_matrix(transform, state);
+        units.hash(state);
+      }
+      Some(Gradient::Radial { center, radius, stops, tile, transform, units, circle }) => {
+        2u8.hash(state);
+        hash_point(*center, state);
+        hash_f32(*radius, state);
+        hash_stops(stops, state);
+        tile.hash(state);
+        hash_matrix(transform, state);
+        units.hash(state);
+        circle.hash(state);
+      }
+    }
+    self.draw_style.hash(state);
+    self.blend_mode.hash(state);
+    hash_f32(self.stroke_width, state);
+    self.stroke_cap.hash(state);
+    self.stroke_join.hash(state);
+    hash_f32(self.stroke_miter, state);
+  }
+}
+
+// f32 by bits for cache keys, with zero canonicalized so -0.0 and 0.0
+// (equal under ==) hash alike.
+pub(crate) fn hash_f32<H: Hasher>(v: f32, state: &mut H) {
+  (if v == 0.0 { 0.0f32 } else { v }).to_bits().hash(state);
+}
+
+fn hash_color<H: Hasher>(c: Color, state: &mut H) {
+  hash_f32(c.red, state);
+  hash_f32(c.green, state);
+  hash_f32(c.blue, state);
+  hash_f32(c.alpha, state);
+  c.color_space.hash(state);
+}
+
+fn hash_point<H: Hasher>(p: Point, state: &mut H) {
+  hash_f32(p.x, state);
+  hash_f32(p.y, state);
+}
+
+fn hash_stops<H: Hasher>(stops: &[GradientStop], state: &mut H) {
+  stops.len().hash(state);
+  for s in stops {
+    hash_f32(s.offset, state);
+    hash_color(s.color, state);
+  }
+}
+
+fn hash_matrix<H: Hasher>(m: &Matrix, state: &mut H) {
+  for v in m.to_array() {
+    hash_f32(v, state);
   }
 }
 

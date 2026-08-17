@@ -1,7 +1,9 @@
 use super::Text;
 use crate::impellers::{FontStyle, FontWeight, Size};
 use crate::rendertree::text::layout::{Clear, Side};
+use crate::rendertree::kinds::hash_f32;
 use crate::rendertree::{Damage, Element, ElementKind, PaintState};
+use std::hash::{Hash, Hasher};
 
 /// The character an inline atom occupies in the paragraph text: U+FFFC OBJECT
 /// REPLACEMENT CHARACTER, whose UAX #14 class allows a break before and after
@@ -28,7 +30,8 @@ pub struct TextRun {
   pub clear: Option<Clear>,
 }
 
-/// A run's fully resolved style.
+/// A run's fully resolved style. Also the style half of the word cache key,
+/// hence Hash and Eq (floats by bits, see `hash_f32`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunStyle {
   pub font_family: String,
@@ -37,6 +40,19 @@ pub struct RunStyle {
   pub font_weight: FontWeight,
   pub line_height: f32,
   pub paint: PaintState,
+}
+
+impl Eq for RunStyle {}
+
+impl Hash for RunStyle {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.font_family.hash(state);
+    hash_f32(self.font_size, state);
+    self.font_style.hash(state);
+    self.font_weight.hash(state);
+    hash_f32(self.line_height, state);
+    self.paint.hash(state);
+  }
 }
 
 /// Per-span style overrides. `None` inherits from the enclosing span or, at

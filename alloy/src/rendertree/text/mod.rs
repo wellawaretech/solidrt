@@ -2,13 +2,16 @@ pub mod layout;
 mod paragraph;
 mod runs;
 mod shape;
+mod words;
 
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
+pub use words::WordCache;
 
-use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment, TypographyContext};
+use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};
 use crate::rendertree::text::layout::{Run, Wrap};
 use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
+  PlatformContext,
 };
 use paragraph::ParaCache;
 use shape::OwnedCache;
@@ -125,10 +128,9 @@ impl Buildable for Text {
     let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
     let width = self.w.unwrap_or(ctx.size.width);
     if !self.paragraph_engine {
-      let typography = ctx.platform.typography();
       let mut owned = self.owned.borrow_mut();
-      self.prepare_owned(&typography, &mut owned);
-      let index = self.owned_layout(&typography, &mut owned, width);
+      self.prepare_owned(ctx.platform, &mut owned);
+      let index = self.owned_layout(ctx.platform, &mut owned, width);
       let owned = &*owned;
       let runs = owned.runs_for(index);
       let layout = &owned.layouts[index].layout;
@@ -170,9 +172,8 @@ impl Bounded for Text {
 
 impl Text {
   fn measure_owned(&self, ctx: &MeasureContext) -> Size {
-    let typography = ctx.platform.typography();
     let mut owned = self.owned.borrow_mut();
-    self.prepare_owned(&typography, &mut owned);
+    self.prepare_owned(ctx.platform, &mut owned);
     let runs: Vec<Run> = owned.runs.iter().map(|r| r.run).collect();
     // The intrinsic widths are of the runs alone; an indented line needs its
     // indent on top, else a shrink-to-fit text wraps where it need not.
@@ -183,7 +184,7 @@ impl Text {
       AvailableSpace::MinContent => layout::min_intrinsic_width(&runs) + indent,
     });
     let height = ctx.known.height.unwrap_or_else(|| {
-      let index = self.owned_layout(&typography, &mut owned, width);
+      let index = self.owned_layout(ctx.platform, &mut owned, width);
       owned.layouts[index].layout.height
     });
     Size::new(width, height)
@@ -217,13 +218,13 @@ impl Text {
   /// Where the atoms sit for a layout at `width` (content width), as (node,
   /// top-left) relative to the text's box: the layout pass writes these into
   /// the atoms' computed layouts after the text's own. Owned path only.
-  pub fn atom_positions(&self, typography: &TypographyContext, width: f32) -> Vec<(u64, Point)> {
+  pub fn atom_positions(&self, platform: &PlatformContext, width: f32) -> Vec<(u64, Point)> {
     if self.paragraph_engine || self.runs.iter().all(|r| r.atom.is_none()) {
       return Vec::new();
     }
     let mut owned = self.owned.borrow_mut();
-    self.prepare_owned(typography, &mut owned);
-    let index = self.owned_layout(typography, &mut owned, width);
+    self.prepare_owned(platform, &mut owned);
+    let index = self.owned_layout(platform, &mut owned, width);
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
     layout

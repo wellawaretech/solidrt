@@ -2,6 +2,7 @@
 // width. Kept behind `Text::paragraph_engine` as a reference and fallback;
 // spans' hit testing, atoms, floats, indent and wrap do nothing here.
 use super::shape::ParaKey;
+use super::words::paragraph_style;
 use super::{Text, TextOverflow, MAX_CACHED_WIDTHS};
 use crate::impellers::{DisplayListBuilder, Paragraph, ParagraphBuilder, Point, Size, TypographyContext};
 use crate::rendertree::MeasureContext;
@@ -78,7 +79,7 @@ impl Text {
     // Atoms are an owned-path feature; the paragraph engine has no
     // placeholders, so they are left out here.
     for run in self.runs.iter().filter(|r| r.atom.is_none()) {
-      let mut style = self.paragraph_style(&run.overrides.resolve(self));
+      let mut style = paragraph_style(&run.overrides.resolve(self));
       style.set_text_alignment(self.text_alignment);
       // 0 means no cap: keep txt's unlimited default. Passing 0 through reads
       // as "the first line is the last" in Skia's line breaker, so every
@@ -95,7 +96,7 @@ impl Text {
     }
     if pushed == 0 {
       // Empty text still needs a style for its (zero-line) metrics.
-      para_builder.push_style(&self.paragraph_style(&self.run_style()));
+      para_builder.push_style(&paragraph_style(&self.run_style()));
     }
     let paragraph = para_builder.build(width)?;
 

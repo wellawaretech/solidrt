@@ -17,6 +17,7 @@ use std::cell::Cell;
 thread_local! {
   static MEASURE_CALLS: Cell<u32> = const { Cell::new(0) };
   static PARA_SHAPES: Cell<u32> = const { Cell::new(0) };
+  static WORD_HITS: Cell<u32> = const { Cell::new(0) };
   static DIRTIED: Cell<u32> = const { Cell::new(0) };
   static CACHE_GETS: Cell<u32> = const { Cell::new(0) };
   static CACHE_HITS: Cell<u32> = const { Cell::new(0) };
@@ -27,8 +28,11 @@ thread_local! {
 pub struct LayoutCounters {
   /// Text measure invocations (mostly cache hits; cheap).
   pub measure_calls: u32,
-  /// Paragraphs actually shaped (cache misses; the expensive signal).
+  /// Paragraphs actually shaped (cache misses; the expensive signal). On the
+  /// owned path one per word shaped, i.e. word cache misses.
   pub para_shapes: u32,
+  /// Words answered from the shared word cache (see rendertree/text/words.rs).
+  pub word_hits: u32,
   /// Taffy layout caches cleared by property writes (invalidate_cache walks;
   /// how much of the tree a write burst dirtied).
   pub dirtied: u32,
@@ -45,6 +49,10 @@ pub fn note_measure_call() {
 
 pub fn note_para_shape() {
   PARA_SHAPES.with(|c| c.set(c.get() + 1));
+}
+
+pub fn note_word_hit() {
+  WORD_HITS.with(|c| c.set(c.get() + 1));
 }
 
 pub fn note_dirtied() {
@@ -65,6 +73,7 @@ pub fn take() -> LayoutCounters {
   LayoutCounters {
     measure_calls: MEASURE_CALLS.with(|c| c.replace(0)),
     para_shapes: PARA_SHAPES.with(|c| c.replace(0)),
+    word_hits: WORD_HITS.with(|c| c.replace(0)),
     dirtied: DIRTIED.with(|c| c.replace(0)),
     cache_gets: CACHE_GETS.with(|c| c.replace(0)),
     cache_hits: CACHE_HITS.with(|c| c.replace(0)),

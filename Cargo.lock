@@ -81,6 +81,7 @@ dependencies = [
  "jni 0.22.4",
  "libc",
  "log",
+ "lru",
  "lyon_algorithms",
  "lyon_path",
  "ndk",

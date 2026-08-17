@@ -432,7 +432,7 @@ its tools over guessing at runtime state:
   re-fetch ids and restart cursors
 - get_stats: fps, CPU/memory, frame phase timings, setProperty rate, plus
   layout-activity counters for the last rebuild (nodes, measureCalls,
-  paraShapes, dirtiedNodes, cacheGets/cacheHits) - when layoutMs looks
+  paraShapes/wordHits, dirtiedNodes, cacheGets/cacheHits) - when layoutMs looks
   wrong, these say whether the cost is text shaping, invalidation breadth,
   or a defeated layout cache (healthy incremental rebuilds show a near-100%
   cacheHits rate). reusedPerSec/skippedPerSec are the demand gate's visible
