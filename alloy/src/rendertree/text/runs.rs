@@ -92,7 +92,7 @@ impl RunOverrides {
   }
 }
 
-/// A run of a paragraph: the leaf `d-span` carries text, a `<span>` carries
+/// A run of a paragraph: the `#text` leaf carries text, a `<span>` carries
 /// style overrides for everything under it. One kind serves both, since a
 /// span with text and children is just a run followed by more runs.
 #[derive(Clone, Debug, Default)]

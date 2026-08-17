@@ -233,10 +233,12 @@ export let {
     return proxy
   },
 
+  // A string child of <text> or <span>: a run of its parent's content, with
+  // no element form of its own (the DOM's "#text" node name).
   createTextNode: (value: string): ProxyNode => {
-    let proxy = createProxyNode("d-span")
+    let proxy = createProxyNode("#text")
     // console.debug("[srt] createTextNode", proxy.id, value)
-    tree.createNode(proxy.id, "d-span")
+    tree.createNode(proxy.id, "#text")
     tree.setProperty(proxy.id, "text", "" + value)
     return proxy
   },
@@ -246,7 +248,7 @@ export let {
     tree.setProperty(node.id, "text", "" + value)
   },
 
-  isTextNode: (node: ProxyNode): boolean => node?.elementType === "d-span",
+  isTextNode: (node: ProxyNode): boolean => node?.elementType === "#text",
   setProperty: <T>(node: ProxyNode, name: string, value: T): void => {
     // console.debug("[srt] setProperty", node.id, name, value)
     applyProp(node, name, value)

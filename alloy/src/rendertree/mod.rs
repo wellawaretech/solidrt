@@ -364,7 +364,9 @@ impl Element {
       "d-path" => Path::default().no_layout(),
       "text" => Text::default().with_layout(),
       "d-text" => Text::default().no_layout(),
-      "span" | "d-span" => Span::default().no_layout(),
+      // "#text" is a string child (a text leaf), the same node kind as a
+      // <span> with text and no overrides.
+      "span" | "#text" => Span::default().no_layout(),
       "texture" => Texture::default().with_layout(),
       "d-texture" => Texture::default().no_layout(),
       _ => panic!("unknown node kind: {kind}"),

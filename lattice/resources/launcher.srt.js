@@ -5582,15 +5582,15 @@ var {
     return proxy;
   },
   createTextNode: (value) => {
-    let proxy = createProxyNode("d-span");
-    tree2.createNode(proxy.id, "d-span");
+    let proxy = createProxyNode("#text");
+    tree2.createNode(proxy.id, "#text");
     tree2.setProperty(proxy.id, "text", "" + value);
     return proxy;
   },
   replaceText: (node, value) => {
     tree2.setProperty(node.id, "text", "" + value);
   },
-  isTextNode: (node) => node?.elementType === "d-span",
+  isTextNode: (node) => node?.elementType === "#text",
   setProperty: (node, name, value) => {
     applyProp(node, name, value);
   },

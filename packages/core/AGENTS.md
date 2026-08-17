@@ -163,7 +163,8 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); spans nest and
   inherit inward from the `<text>`. Never lay a paragraph out word by word in
   a wrapping row to mix styles - one `<text>` with spans wraps as a whole.
-  A `<span>` takes
+  A span is content, not a box (no layout or `d-` form, no size, no
+  bounding box; it takes its parent's form). A `<span>` takes
   pointer handlers (a link is a span, hit per line it spans), and any other
   element child of `<text>` (`<view>`, `<texture>`, `<path>`, ...) is an
   inline atom flowing with the words as one unbreakable box on the baseline;

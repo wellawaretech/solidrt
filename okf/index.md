@@ -401,6 +401,12 @@ Shaped, not started.
   treats "start" as left, so RTL rich text spanning styled runs on one line,
   RTL paragraph alignment and mixed-direction line breaks come out wrong; feed
   UAX #9 levels into the breaker and placer.
+- **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
+  Justified narrow columns show lines with huge word gaps when the next word
+  is long, and textWrap="pretty" only rescues a lone last word; TeX solves
+  both with hyphenation plus a whole-paragraph optimal-fit breaker
+  (Knuth-Plass), Safari's text-wrap pretty does the same, and now that the
+  breaker is ours it is bounded engine work.
 - **[Interpolated text may replace the whole text node on update](backlog/text-multi-child-replacement.md)** [2026-08-14]
   Updating one interpolation in a multi-child <text> was observed to replace
   the entire text node rather than the changed part; unverified since the

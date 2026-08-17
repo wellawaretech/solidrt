@@ -195,9 +195,9 @@ Any other element child (`<view>`, `<texture>`, `<rect>`, `<path>`, ...) is an i
 
 ### `<span>`
 
-A styled run inside `<text>` (or `<d-text>`). Inline text only: its children are text and other spans, and it never has a layout box, so there is no `d-` form. It takes the per-run props (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); anything not set inherits from the enclosing span, then from the `<text>`. The cascade stops at the paragraph: nothing inherits across the tree. Paragraph-level props (`textAlign`, `maxLines`) belong on `<text>` only.
+A styled run inside `<text>` (or `<d-text>`). A span is content, not a box: like a string child, it owns no geometry in either space, so it has neither a layout form nor a detached form - it takes the form of the `<text>` or `<d-text>` it lives in, and there is no `d-span`. Its children are text and other spans. It takes the per-run props (`color`, `fontFamily`, `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); anything not set inherits from the enclosing span, then from the `<text>`. The cascade stops at the paragraph: nothing inherits across the tree. Paragraph-level props (`textAlign`, `maxLines`) belong on `<text>` only.
 
-A span also takes the pointer props (`onPointerDown`, `onPointerUp`, ...): its hit area is the boxes of its own text on every line it spans, and events bubble to the enclosing spans and the `<text>`.
+A span also takes the pointer props (`onPointerDown`, `onPointerUp`, ...), which is how a link inside a paragraph is made: its hit area is exactly its own words, one box per line when it wraps (like an HTML `<a>`), and events bubble to the enclosing spans and the `<text>`. What it does not have is a box to read or size: no `width`, no `getBoundingBox`.
 
 ```jsx
 <text color="#333" fontSize={16}>
