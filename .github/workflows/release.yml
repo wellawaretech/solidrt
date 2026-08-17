@@ -136,7 +136,6 @@ jobs:
             packages/darwin-arm64/flux
             packages/darwin-arm64/fluxc
             packages/darwin-arm64/fluxrt
-            packages/darwin-arm64/libimpeller.dylib
             packages/darwin-arm64/libEGL.dylib
             packages/darwin-arm64/libGLESv2.dylib
 

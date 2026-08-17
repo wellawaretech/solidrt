@@ -41,22 +41,13 @@ angle-darwin:
 	unzip -jo $(ANGLE_DARWIN_ZIP) "*/libEGL.dylib" "*/libGLESv2.dylib" -d $(DARWIN_DIST); \
 	echo "$(ELECTRON_VERSION)" > $(DARWIN_DIST)/$(ANGLE_STAMP_FILE)
 
-# Stage binary + dylibs into HOST_DIST.
-# After copying, rewrite libimpeller.dylib's install name and the binary's
-# reference to it so both use @rpath/libimpeller.dylib. Combined with the
-# @executable_path rpath in .cargo/config.toml this lets the binary find
-# dylibs in its own directory regardless of where it was built.
+# Stage the binary into HOST_DIST. Impeller is linked statically on macOS
+# (alloy/Cargo.toml), so the only dylibs next to it are ANGLE's, which the
+# angle-darwin target places there.
 # $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
 define stage-darwin
 	@mkdir -p $(HOST_DIST)
 	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/
-	@cp target/$(1)/$(2)/build/impellers-*/out/libimpeller.dylib $(HOST_DIST)/
-	@install_name_tool -id @rpath/libimpeller.dylib $(HOST_DIST)/libimpeller.dylib
-	@old=$$(otool -L $(HOST_DIST)/$(3) | awk '/libimpeller\.dylib/{print $$1}'); \
-	if [ -n "$$old" ]; then \
-	  install_name_tool -change "$$old" @rpath/libimpeller.dylib $(HOST_DIST)/$(3); \
-	fi
-	@codesign --force --sign - $(HOST_DIST)/libimpeller.dylib
 	@codesign --force --sign - $(HOST_DIST)/$(3)
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
@@ -74,7 +65,7 @@ runtime: angle-darwin
 dist-darwin:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
-	cp $(HOST_DIST)/libimpeller.dylib $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
+	cp $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc
 	$(MAKE) -C $(SRT_HOME)/flux fluxrt PROFILE=release-opt
 	cp $(HOST_DIST)/flux $(PKG_DARWIN)/flux
