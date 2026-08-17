@@ -32,6 +32,7 @@ use taffy::style::Position;
 
 use crate::plugins::gui::value::PropValue;
 use alloy::impellers::Color;
+use alloy::rendertree::text_layout::{Clear, Side};
 use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};
 
 // Returns Ok(damage) on success; Err(message) for an unknown property or a
@@ -85,6 +86,33 @@ pub fn apply_jsx(
       }
     };
     return Ok(Damage::Paint);
+  }
+
+  // Element-level, kind-independent: as an inline atom of a <text>, float out
+  // of the flow to one side (see Element::float). Layout: the owning text's
+  // runs are re-collected by the post-write resync.
+  if name == "float" {
+    el.float = match value {
+      PropValue::Null => None,
+      _ => match str_of(value, "float")? {
+        "left" => Some(Side::Left),
+        "right" => Some(Side::Right),
+        v => return Err(format!("Unknown float value \"{v}\"; expected left or right")),
+      },
+    };
+    return Ok(Damage::Layout);
+  }
+  if name == "clear" {
+    el.clear = match value {
+      PropValue::Null => None,
+      _ => match str_of(value, "clear")? {
+        "left" => Some(Clear::Left),
+        "right" => Some(Clear::Right),
+        "both" => Some(Clear::Both),
+        v => return Err(format!("Unknown clear value \"{v}\"; expected left, right or both")),
+      },
+    };
+    return Ok(Damage::Layout);
   }
 
   // Element-level, kind-independent: controls hit testing (see hit.rs). Paint/hit

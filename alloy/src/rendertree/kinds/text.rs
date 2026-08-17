@@ -3,7 +3,7 @@ use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, Rect, Size,
   TextAlignment, TypographyContext,
 };
-use crate::rendertree::text_layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics};
+use crate::rendertree::text_layout::{self, Align, Clear, Layout, LineCursor, LineExtent, Run, RunMetrics, Side};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use std::cell::RefCell;
@@ -406,7 +406,7 @@ impl Text {
         let last_piece = piece_end == segment.end;
         let hard_break = segment.hard_break && last_piece;
         let shaped = match self.runs[run_index].atom {
-          Some(size) => Self::atom_piece(run_index, size, hard_break, !first),
+          Some(size) => Self::atom_piece(run_index, size, &self.runs[run_index], hard_break, !first),
           None => {
             // The break characters themselves are not shaped.
             let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
@@ -454,7 +454,7 @@ impl Text {
     };
     Some(ShapedRun {
       paragraph: Some(paragraph),
-      run: Run { metrics, hard_break, glue },
+      run: Run { metrics, hard_break, glue, float: None, clear: None },
       text: text.to_string(),
       style,
     })
@@ -463,9 +463,10 @@ impl Text {
   // An atom's box as a run: as wide as the box on the line, its whole height
   // above the baseline (bottom on the baseline, HTML's default for inline
   // blocks), nothing to draw.
-  fn atom_piece(style: usize, size: Size, hard_break: bool, glue: bool) -> ShapedRun {
+  fn atom_piece(style: usize, size: Size, run: &TextRun, hard_break: bool, glue: bool) -> ShapedRun {
     let metrics = RunMetrics { advance: size.width, ink_width: size.width, ascent: size.height, descent: 0.0 };
-    ShapedRun { paragraph: None, run: Run { metrics, hard_break, glue }, text: ATOM_CHAR.to_string(), style }
+    let run = Run { metrics, hard_break, glue, float: run.float, clear: run.clear };
+    ShapedRun { paragraph: None, run, text: ATOM_CHAR.to_string(), style }
   }
 
   // Re-split the wrap units starting at `units` (first-piece indices into
@@ -627,6 +628,7 @@ impl Text {
     layout
       .runs
       .iter()
+      .chain(&layout.floats)
       .filter(|p| runs[p.run].paragraph.is_none())
       .map(|p| (self.runs[runs[p.run].style].node, Point::new(p.x, p.y)))
       .collect()
@@ -754,6 +756,10 @@ pub struct TextRun {
   pub node: u64,
   /// The atom's margin box, written by the layout pass; None for text.
   pub atom: Option<Size>,
+  /// A floated atom: out of the flow, an exclusion for the lines it overlaps.
+  pub float: Option<Side>,
+  /// The atom starts a line below the earlier floats on that side.
+  pub clear: Option<Clear>,
 }
 
 /// A run's fully resolved style.

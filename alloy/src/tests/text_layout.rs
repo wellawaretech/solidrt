@@ -1,5 +1,6 @@
 use crate::rendertree::text_layout::{
-  layout, max_intrinsic_width, min_intrinsic_width, segments, Align, LineCursor, LineExtent, Run, RunMetrics,
+  layout, max_intrinsic_width, min_intrinsic_width, segments, Align, LineCursor, LineExtent, PlacedRun, Run, RunMetrics,
+  Clear, Side,
 };
 
 fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
@@ -7,7 +8,7 @@ fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
 }
 
 fn word(advance: f32, ink: f32) -> Run {
-  Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false, glue: false }
+  Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false, glue: false, float: None, clear: None }
 }
 
 fn glued(advance: f32, ink: f32) -> Run {
@@ -234,4 +235,83 @@ fn segments_split_a_line_around_an_exclusion() {
   assert_eq!(l.runs[1].x, 40.0);
   assert_eq!(l.runs[1].y, 10.0);
   assert_eq!(l.overflowing, vec![1]);
+}
+
+fn floated(width: f32, height: f32, side: Side) -> Run {
+  Run {
+    metrics: RunMetrics { advance: width, ink_width: width, ascent: height, descent: 0.0 },
+    float: Some(side),
+    ..word(0.0, 0.0)
+  }
+}
+
+#[test]
+fn floats_leave_the_flow_and_cut_the_lines_they_overlap() {
+  // A 20x25 left float first, then words of ink 10 (gap 2) in a 64 column:
+  // the float sits at (0,0); lines 0-2 (10 high each) start at 20 and hold
+  // three units (20 + 34 <= 64), line 3 has the full width again.
+  let mut runs = vec![floated(20.0, 25.0, Side::Left)];
+  runs.extend((0..11).map(|_| word(12.0, 10.0)));
+  let l = layout(&runs, &full(64.0), Align::Left, 0, None);
+  assert_eq!(l.floats, vec![PlacedRun { run: 0, x: 0.0, y: 0.0 }]);
+  assert_eq!(l.lines.len(), 4);
+  assert_eq!(l.runs[0].x, 20.0);
+  assert_eq!(l.runs[2].x, 44.0);
+  assert_eq!(l.runs[3].y, 10.0);
+  assert_eq!(l.runs[6].x, 20.0);
+  assert_eq!(l.runs[6].y, 20.0);
+  assert_eq!(l.lines[3].segments[0].x, 0.0);
+  assert_eq!(l.runs[9].x, 0.0);
+  assert_eq!(l.runs[9].y, 30.0);
+  assert_eq!(l.height, 40.0);
+  // The float and a line's runs are not the same list.
+  assert_eq!(l.runs.len(), 11);
+
+  // A right float met mid-line waits for the next line top; the text grows
+  // to its bottom when it hangs below the last line.
+  let runs = [word(12.0, 10.0), floated(20.0, 30.0, Side::Right), word(12.0, 10.0), word(12.0, 10.0), word(12.0, 10.0)];
+  let l = layout(&runs, &full(30.0), Align::Left, 0, None);
+  assert_eq!(l.floats, vec![PlacedRun { run: 1, x: 10.0, y: 10.0 }]);
+  assert_eq!(l.runs[1].x, 12.0);
+  assert_eq!(l.runs[2].x, 0.0);
+  assert_eq!(l.runs[2].y, 10.0);
+  // 10 wide left of the float: one unit per line.
+  assert_eq!(l.runs[3].y, 20.0);
+  assert_eq!(l.height, 40.0);
+
+  // Two left floats on one line top sit beside each other; a line with no
+  // room between them and a right float is skipped past the shorter one.
+  let runs = [floated(20.0, 20.0, Side::Left), floated(20.0, 10.0, Side::Left), floated(30.0, 10.0, Side::Right), word(12.0, 10.0)];
+  let l = layout(&runs, &full(70.0), Align::Left, 0, None);
+  assert_eq!(l.floats[1].x, 20.0);
+  assert_eq!(l.floats[2].x, 40.0);
+  // y 0..10 leaves 40..40: nothing; y 10..20 leaves 20..70.
+  assert_eq!(l.runs[0].x, 20.0);
+  assert_eq!(l.runs[0].y, 10.0);
+}
+
+#[test]
+fn clear_starts_below_earlier_floats() {
+  // A 20x30 left float, one word beside it, then a cleared word: it starts a
+  // new line at the float's bottom, full width. A cleared float goes below
+  // the earlier one instead of beside it.
+  let cleared = Run { clear: Some(Clear::Left), ..word(12.0, 10.0) };
+  let runs = [floated(20.0, 30.0, Side::Left), word(12.0, 10.0), cleared, word(12.0, 10.0)];
+  let l = layout(&runs, &full(64.0), Align::Left, 0, None);
+  assert_eq!(l.runs[0].x, 20.0);
+  assert_eq!(l.runs[1].x, 0.0);
+  assert_eq!(l.runs[1].y, 30.0);
+  assert_eq!(l.runs[2].x, 12.0);
+  // Clearing the other side still starts a new line, just not lower.
+  let other = Run { clear: Some(Clear::Right), ..word(12.0, 10.0) };
+  let runs = [floated(20.0, 30.0, Side::Left), word(12.0, 10.0), other];
+  let l = layout(&runs, &full(64.0), Align::Left, 0, None);
+  assert_eq!(l.runs[1].y, 10.0);
+  assert_eq!(l.runs[1].x, 20.0);
+  let stacked = Run { clear: Some(Clear::Both), ..floated(20.0, 10.0, Side::Left) };
+  let runs = [floated(20.0, 30.0, Side::Left), stacked, word(12.0, 10.0)];
+  let l = layout(&runs, &full(64.0), Align::Left, 0, None);
+  assert_eq!(l.floats[1], PlacedRun { run: 1, x: 0.0, y: 30.0 });
+  assert_eq!(l.runs[0].x, 20.0);
+  assert_eq!(l.runs[0].y, 30.0);
 }

@@ -494,6 +494,8 @@ impl RenderTree {
           overrides: inherited.clone(),
           node: id,
           atom: Some(Size::zero()),
+          float: node.float,
+          clear: node.clear,
         });
       }
       return;
@@ -501,18 +503,26 @@ impl RenderTree {
     let overrides = inherited.layer(&span.overrides);
     if !span.text.is_empty() {
       text.push_str(&span.text);
-      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone(), node: id, atom: None });
+      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone(), node: id, atom: None, float: None, clear: None });
     }
     for &child_id in &node.children {
       self.collect_runs(child_id, &overrides, text, runs);
     }
   }
 
-  /// If `node_id` is a Span, resync the Text that owns it. Called after a
-  /// property write; no-op for every other kind, so callers need not check.
+  /// If `node_id` is a Span, or an inline atom (a laid-out child of a Text),
+  /// resync the Text that owns it. Called after a property write; no-op for
+  /// everything else, so callers need not check.
   pub fn sync_span_parent(&mut self, node_id: u64) {
-    if matches!(self.try_node(node_id).map(|n| &n.kind), Some(ElementKind::Span(_))) {
+    let Some(node) = self.try_node(node_id) else {
+      return;
+    };
+    if matches!(node.kind, ElementKind::Span(_)) {
       self.sync_text(node_id);
+    } else if let (true, Some(parent)) = (node.has_layout(), node.parent) {
+      if matches!(self.try_node(parent).map(|n| &n.kind), Some(ElementKind::Text(_))) {
+        self.sync_text(parent);
+      }
     }
   }
 

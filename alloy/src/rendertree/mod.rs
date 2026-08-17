@@ -300,6 +300,12 @@ pub struct Element {
   // Explicit repaint boundary (Flutter's RepaintBoundary / SnapshotWidget):
   // the subtree's paint result is retained while nothing inside changes.
   pub repaint_boundary: BoundaryMode,
+  // As an inline atom of a `<text>`: out of the flow against this side, an
+  // exclusion for the lines it overlaps. Meaningless anywhere else.
+  pub float: Option<text_layout::Side>,
+  // As an inline atom: start a line below the text's earlier floats on that
+  // side (a floated atom goes below them instead of beside).
+  pub clear: Option<text_layout::Clear>,
   // The boundary's retained paint result. Cleared by
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.
@@ -315,6 +321,8 @@ impl Element {
       layout: Some(LayoutData::new(style)),
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
+      float: None,
+      clear: None,
       paint_cache: RefCell::new(None),
     }
   }
@@ -333,6 +341,8 @@ impl Element {
       layout: None,
       interaction: Some(HitConfig::default()),
       repaint_boundary: BoundaryMode::None,
+      float: None,
+      clear: None,
       paint_cache: RefCell::new(None),
     }
   }

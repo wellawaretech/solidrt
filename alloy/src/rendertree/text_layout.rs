@@ -61,15 +61,37 @@ impl RunMetrics {
   }
 }
 
+/// Which edge a floated run leaves the flow for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+  Left,
+  Right,
+}
+
+/// Which earlier floats a run must start below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clear {
+  Left,
+  Right,
+  Both,
+}
+
 /// A run to lay out: its metrics plus whether a hard break follows it.
 /// `glue` marks a continuation piece of the previous run's wrap unit (a unit
 /// that straddles styled runs): no break is allowed before it, and the unit's
-/// pieces are fitted on a line together.
+/// pieces are fitted on a line together. A `float` run is out of the flow:
+/// placed at the top of the line where it occurs (this line if still empty,
+/// else the next), against that side of the line's extent, its box (advance
+/// by height) excludes itself from every line whose top band overlaps it.
+/// A `clear` run starts a new line below every earlier float on that side
+/// (a floated run with `clear` goes below them instead of beside).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Run {
   pub metrics: RunMetrics,
   pub hard_break: bool,
   pub glue: bool,
+  pub float: Option<Side>,
+  pub clear: Option<Clear>,
 }
 
 /// Ink width of the wrap unit starting at `first`: the advances of every
@@ -169,8 +191,12 @@ pub struct Line {
 pub struct Layout {
   pub lines: Vec<Line>,
   pub runs: Vec<PlacedRun>,
-  /// Right edge of the widest line's ink, from the layout origin.
+  /// Floated runs, out of the flow: top-left of each, in text order.
+  pub floats: Vec<PlacedRun>,
+  /// Right edge of the widest line's ink, from the layout origin; floats
+  /// count.
   pub width: f32,
+  /// Bottom of the last line or the lowest float, whichever is lower.
   pub height: f32,
   /// Runs were dropped because `max_lines` was reached.
   pub truncated: bool,
@@ -212,6 +238,8 @@ pub fn layout(
     seg_ink: 0.0,
     pen: 0.0,
     y: 0.0,
+    pending: Vec::new(),
+    exclusions: Vec::new(),
   };
   // Whether closing the open line would exceed the cap: the open line counts.
   let last_line = |b: &Breaker| max_lines > 0 && b.out.lines.len() as u32 + 1 >= max_lines;
@@ -219,6 +247,30 @@ pub fn layout(
   let mut index = 0;
   'runs: while index < runs.len() {
     let run = runs[index];
+    if let Some(clear) = run.clear {
+      if b.line.end > b.line.first {
+        if last_line(&b) {
+          b.out.truncated = true;
+          break;
+        }
+        b.close_line(false);
+      }
+      b.flush_pending();
+      b.clear(clear);
+    }
+    if run.float.is_some() {
+      // Out of the flow: on this line's top if it is still empty (re-ask its
+      // extents so it lands before the segments are cut), else on the next.
+      if b.line.end == b.line.first {
+        b.extents.clear();
+      }
+      b.pending.push(index);
+      if run.hard_break && b.line.end > b.line.first {
+        b.close_line(false);
+      }
+      index += 1;
+      continue;
+    }
     if !run.glue {
       let ink = unit_ink(runs, index);
       let height = run.metrics.height();
@@ -263,8 +315,23 @@ pub fn layout(
   if b.line.end > b.line.first || b.out.ellipsis.is_some() {
     b.close_line(false);
   }
-  b.out.height = b.y;
+  // Floats after the last text land below it; past a truncation they are cut
+  // with the text.
+  if !b.out.truncated {
+    b.flush_pending();
+  }
+  b.out.height = b.y.max(b.exclusions.iter().map(|e| e.bottom).fold(0.0, f32::max));
   b.out
+}
+
+// A float's box: the lines it overlaps lose `left..right`.
+#[derive(Clone, Copy)]
+struct Exclusion {
+  left: f32,
+  right: f32,
+  top: f32,
+  bottom: f32,
+  side: Side,
 }
 
 struct Breaker<'a> {
@@ -284,29 +351,117 @@ struct Breaker<'a> {
   seg_ink: f32,
   pen: f32,
   y: f32,
+  // Float runs waiting for the next line top, and the boxes of the placed ones.
+  pending: Vec<usize>,
+  exclusions: Vec<Exclusion>,
 }
 
 impl Breaker<'_> {
   // The current segment's width, opening the line first if needed: asks
-  // `extent` with the opening run's `height`, skipping down past lines
+  // `extent` with the opening run's `height`, places the floats waiting for
+  // this line top against the answer's outer edges, cuts the answer around
+  // every float overlapping the line's top band, and skips down past lines
   // with no room.
   fn open(&mut self, height: f32) -> f32 {
     if self.extents.is_empty() {
-      let mut extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
-      while extents.is_empty() && height > 0.0 {
+      let mut segments = loop {
+        let extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
+        self.place_pending(&extents);
+        let segments = self.cut(&extents, height);
+        if !segments.is_empty() || height <= 0.0 {
+          break segments;
+        }
         self.y += height;
-        extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
+      };
+      if segments.is_empty() {
+        segments.push(LineExtent { x: 0.0, width: 0.0 });
       }
-      if extents.is_empty() {
-        extents.push(LineExtent { x: 0.0, width: 0.0 });
-      }
-      self.extents = extents;
+      self.extents = segments;
       self.seg = 0;
       self.seg_first = self.out.runs.len();
       self.seg_ink = 0.0;
       self.pen = 0.0;
     }
     self.extents[self.seg].width
+  }
+
+  // Place the waiting floats at the current y without opening a line: asks
+  // the hook for the edges with the tallest float's height.
+  fn flush_pending(&mut self) {
+    if self.pending.is_empty() {
+      return;
+    }
+    let height = self.pending.iter().map(|&i| self.runs[i].metrics.height()).fold(0.0, f32::max);
+    let extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
+    self.place_pending(&extents);
+    self.extents.clear();
+  }
+
+  // Move the (empty) open line down below every float on the cleared side.
+  fn clear(&mut self, clear: Clear) {
+    let bottom = self
+      .exclusions
+      .iter()
+      .filter(|e| match clear {
+        Clear::Left => e.side == Side::Left,
+        Clear::Right => e.side == Side::Right,
+        Clear::Both => true,
+      })
+      .map(|e| e.bottom)
+      .fold(self.y, f32::max);
+    if bottom > self.y {
+      self.y = bottom;
+      self.extents.clear();
+    }
+  }
+
+  // Place the waiting floats at the current y: a left float against the
+  // first extent's left edge, a right float against the last extent's right
+  // edge, each beside the same-side floats its top band overlaps.
+  fn place_pending(&mut self, extents: &[LineExtent]) {
+    let (Some(first), Some(last)) = (extents.first(), extents.last()) else {
+      return;
+    };
+    let (left_edge, right_edge) = (first.x, last.x + last.width);
+    for index in std::mem::take(&mut self.pending) {
+      let run = self.runs[index];
+      let (width, height) = (run.metrics.advance, run.metrics.height());
+      let (top, bottom) = (self.y, self.y + height);
+      let side = run.float.unwrap_or(Side::Left);
+      let overlapping = self.exclusions.iter().filter(|e| e.side == side && e.top < bottom && e.bottom > top);
+      let x = match side {
+        Side::Left => overlapping.map(|e| e.right).fold(left_edge, f32::max),
+        Side::Right => overlapping.map(|e| e.left).fold(right_edge, f32::min) - width,
+      };
+      self.exclusions.push(Exclusion { left: x, right: x + width, top, bottom, side });
+      self.out.floats.push(PlacedRun { run: index, x, y: top });
+      self.out.width = self.out.width.max(x + width);
+    }
+  }
+
+  // The extents minus every float overlapping the band `y..y+height`.
+  fn cut(&self, extents: &[LineExtent], height: f32) -> Vec<LineExtent> {
+    let (top, bottom) = (self.y, self.y + height);
+    let mut cuts: Vec<(f32, f32)> =
+      self.exclusions.iter().filter(|e| e.top < bottom && e.bottom > top).map(|e| (e.left, e.right)).collect();
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::new();
+    for e in extents {
+      let (mut x, end) = (e.x, e.x + e.width);
+      for &(left, right) in &cuts {
+        if right <= x || left >= end {
+          continue;
+        }
+        if left > x {
+          out.push(LineExtent { x, width: left - x });
+        }
+        x = x.max(right);
+      }
+      if end > x {
+        out.push(LineExtent { x, width: end - x });
+      }
+    }
+    out
   }
 
   fn place(&mut self, index: usize) {

@@ -131,6 +131,22 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   overflow?: "visible" | "clip" | "hidden" | "scroll"
   overflowX?: "visible" | "clip" | "hidden" | "scroll"
   overflowY?: "visible" | "clip" | "hidden" | "scroll"
+
+  /**
+   * As an inline atom (an element child of <text>): leave the flow and sit
+   * against that side of the text, at the top of the line where the atom
+   * occurs; the lines it overlaps wrap around its margin box. Same-side
+   * floats overlapping vertically sit beside each other. The text's height
+   * includes the float. Owned layout only; meaningless outside a <text>.
+   */
+  float?: "left" | "right"
+  /**
+   * As an inline atom: start a new line below the text's earlier floats on
+   * that side (a floated atom goes below them instead of beside). An empty
+   * `<view clear="both" />` is the section break after an image. Owned
+   * layout only.
+   */
+  clear?: "left" | "right" | "both"
 }
 
 /** Colors are CSS color strings, parsed to a packed u32 by `parseColor`. */

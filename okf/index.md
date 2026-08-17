@@ -401,6 +401,11 @@ Shaped, not started.
   exclusions, custom breaking and cheap re-layout are unreachable; experiment
   with a pretext-style split where every paragraph is a single-line
   single-style run we measure once and place ourselves.
+- **[Text layout primitives for apps](backlog/text-layout-primitives.md)** [2026-08-17]
+  Expose the owned text layout's building blocks (prepare, next line for a
+  width from a cursor, draw a laid-out line) to app code, so editorial layouts
+  (column handoff, obstacles, fitted headlines) are app work on a stable
+  foundation instead of ever more <text> props.
 - **[Interpolated text may replace the whole text node on update](backlog/text-multi-child-replacement.md)** [2026-08-14]
   Updating one interpolation in a multi-child <text> was observed to replace
   the entire text node rather than the changed part; unverified since the
