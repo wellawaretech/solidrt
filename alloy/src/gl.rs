@@ -1,4 +1,4 @@
-use crate::backend::FrameOutput;
+use crate::backend::{FrameOutput, GlBinding};
 use crate::raster::{RasterCmd, RasterState};
 use crate::{Context, DisplayContext, GpuTexture};
 use glow::HasContext;
@@ -18,28 +18,77 @@ impl SendablePtr {
   }
 }
 
-/// Load GLES bindings from SDL's GL proc-address. Must be called on the
-/// raster thread with the GL context current; the returned context drives all
-/// of alloy's GL work (texture allocation/upload, offscreen FBOs, readback)
-/// and shares the underlying GL objects with Impeller, which renders on the
-/// same context.
-pub fn create_gl_context() -> glow::Context {
+/// The interactive binding: SDL's window + GLContext pair (see GlBinding).
+pub(crate) struct SdlGlBinding {
+  window: SendablePtr,
+  context: SendablePtr,
+}
+
+impl SdlGlBinding {
+  pub(crate) fn new(window: *mut sdl3::sys::video::SDL_Window, gl_context: &sdl3::video::GLContext) -> Self {
+    SdlGlBinding {
+      window: SendablePtr(window as *mut std::ffi::c_void),
+      context: SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void }),
+    }
+  }
+
+  fn window(&self) -> *mut sdl3::sys::video::SDL_Window {
+    self.window.get() as *mut sdl3::sys::video::SDL_Window
+  }
+}
+
+impl GlBinding for SdlGlBinding {
+  /// The unbind step is load-bearing for the rebind case: SDL_GL_MakeCurrent
+  /// short-circuits when its per-thread bookkeeping says this (window,
+  /// context) pair is already current (SDL_video.c), so a same-pair call never
+  /// reaches eglMakeCurrent - and re-executing eglMakeCurrent against the
+  /// window's new EGL surface (recreated across an Android background/resume)
+  /// is the whole point. SDL's own android_egl_context_restore does the same
+  /// dance.
+  fn bind(&self) -> bool {
+    let context = self.context.get() as sdl3::sys::video::SDL_GLContext;
+    unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(self.window(), std::ptr::null_mut()) };
+    unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(self.window(), context) }
+  }
+
+  fn swap(&self) -> bool {
+    crate::sdl_utils::gl_swap_window_checked(self.window())
+  }
+
+  fn set_swap_interval(&self) -> bool {
+    unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) }
+  }
+
+  fn proc_address(&self, name: &std::ffi::CStr) -> *const std::ffi::c_void {
+    unsafe { sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr()) }
+      .map(|f| f as *const std::ffi::c_void)
+      .unwrap_or(std::ptr::null())
+  }
+
+  fn error(&self) -> String {
+    crate::sdl_utils::sdl_error()
+  }
+}
+
+/// Load GLES bindings through the binding's proc-address. Must be called on
+/// the raster thread with the GL context current; the returned context drives
+/// all of alloy's GL work (texture allocation/upload, offscreen FBOs,
+/// readback) and shares the underlying GL objects with Impeller, which
+/// renders on the same context.
+pub fn create_gl_context(binding: &dyn GlBinding) -> glow::Context {
   unsafe {
     glow::Context::from_loader_function(|name| {
       let cname = std::ffi::CString::new(name).expect("GL proc name contains null byte");
-      sdl3::sys::video::SDL_GL_GetProcAddress(cname.as_ptr())
-        .map(|f| f as *const std::ffi::c_void)
-        .unwrap_or(std::ptr::null())
+      binding.proc_address(&cname)
     })
   }
 }
 
-pub fn create_impeller_context() -> ImpellerContext {
+pub fn create_impeller_context(binding: &dyn GlBinding) -> ImpellerContext {
   unsafe {
     ImpellerContext::new_opengl_es(|name| {
-      sdl3::sys::video::SDL_GL_GetProcAddress(name.as_ptr() as *const _)
-        .map(|f| f as *mut _)
-        .unwrap_or(std::ptr::null_mut())
+      let cname = std::ffi::CString::new(name).expect("GL proc name contains null byte");
+      binding.proc_address(&cname) as *mut _
     })
   }
   .expect("Failed to create Impeller context")
@@ -1017,8 +1066,7 @@ const UI_THREAD_STACK_SIZE: usize = 64 * 1024 * 1024;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_context(
-  window: *mut sdl3::sys::video::SDL_Window,
-  gl_context: &sdl3::video::GLContext,
+  binding: Box<dyn GlBinding>,
   surface_size: Arc<AtomicU64>,
   closure: impl FnOnce(Arc<Context>) + Send + 'static,
   tx: mpsc::Sender<FrameOutput>,
@@ -1026,8 +1074,6 @@ pub fn run_context(
   capture_frames: bool,
   stats: Arc<crate::raster::RasterStats>,
 ) -> crate::raster::RasterSender {
-  let window_ptr = SendablePtr(window as *mut std::ffi::c_void);
-  let context_ptr = SendablePtr(unsafe { gl_context.raw() as *mut std::ffi::c_void });
   let (raster_tx, raster_rx) = mpsc::channel::<RasterCmd>();
   let raster_tx = crate::raster::RasterSender::new(raster_tx, stats.clone());
   // The platform loop's clone, for surface-liveness rebinds (liveness.rs):
@@ -1043,21 +1089,18 @@ pub fn run_context(
     // Display priority so background processes cannot preempt a frame
     // mid-flight; see sdl_utils::frame_thread_priority.
     crate::sdl_utils::frame_thread_priority(true);
-    let window = window_ptr.get() as *mut sdl3::sys::video::SDL_Window;
-    let current =
-      unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context_ptr.get() as sdl3::sys::video::SDL_GLContext) };
-    assert!(current, "SDL_GL_MakeCurrent failed on raster thread: {}", crate::sdl_utils::sdl_error());
+    assert!(binding.bind(), "GL make-current failed on raster thread: {}", binding.error());
     // The swap interval belongs to the current-context binding, so it must be
     // set on this thread, not where the context was created. Blocking this
     // thread in the vsync wait is the point: the UI thread stays free to
     // build the next frame and dispatch input. Playback never swaps, so the
     // setting is inert there.
-    if !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) } {
-      log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+    if !binding.set_swap_interval() {
+      log::warn!("[alloy] set swap interval failed: {}", binding.error());
     }
 
-    let gl = create_gl_context();
-    let impeller_ctx = create_impeller_context();
+    let gl = create_gl_context(&*binding);
+    let impeller_ctx = create_impeller_context(&*binding);
     unsafe {
       log::info!(
         "[alloy] GPU ready: {} | {} | {}",
@@ -1070,7 +1113,7 @@ pub fn run_context(
     let state = RasterState::new(
       gl,
       impeller_ctx,
-      window,
+      binding,
       surface_size,
       capture_frames,
       raster_stats,

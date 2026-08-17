@@ -50,21 +50,30 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
 
   // Playback wants no display at all: SDL's offscreen video driver backs the
   // window with an EGL pbuffer, so `srt render` runs in CI, over SSH, on any
-  // headless box - and its fake display has no scale to inherit. A box whose
-  // SDL/EGL cannot give the driver a working GL ES context falls back to the
-  // interactive path's hidden window on the real display. The failed attempt
-  // dropped its video subsystem handles, so clearing the hint and re-entering
-  // setup_video re-initializes video on the platform's default driver.
+  // headless box - and its fake display has no scale to inherit. Where the
+  // driver fails only because the GL stack lacks EGL device enumeration
+  // (ANGLE never implements it), the same pbuffer is built without SDL's video
+  // subsystem (egl_headless.rs) behind SDL's dummy driver, which still
+  // provides the Window the playback loop sizes from. Anything else falls
+  // back to the interactive path's hidden window on the real display. Each
+  // failed attempt dropped its video subsystem handles, so setting the hint
+  // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
     match setup_video(&sdl_context, title, (width, height), &mode) {
       Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler },
-      Err(e) => {
-        log::warn!("[alloy] offscreen video driver unavailable ({e}); falling back to a hidden window");
-        sdl3::hint::set("SDL_VIDEO_DRIVER", "");
+      Err(e) if e.contains("EXT_device_enumeration") || e.contains("eglQueryDevicesEXT") => {
+        log::info!("[alloy] offscreen video driver needs EGL device enumeration, which this GL stack (ANGLE) does not provide; using a headless EGL context");
+        sdl3::hint::set("SDL_VIDEO_DRIVER", "dummy");
+        match setup_headless(&sdl_context, title, (width, height)) {
+          Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler },
+          Err(e) => log::warn!("[alloy] headless EGL context unavailable ({e}); falling back to a hidden window"),
+        }
       }
+      Err(e) => log::warn!("[alloy] offscreen video driver unavailable ({e}); falling back to a hidden window"),
     }
+    sdl3::hint::set("SDL_VIDEO_DRIVER", "");
   }
 
   let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
@@ -124,6 +133,20 @@ fn setup_video(
   }
 
   let platform = DisplayContext::new_opengl(&window).map_err(|e| format!("GL setup: {e}"))?;
+  Ok((window, platform))
+}
+
+// Playback on SDL's dummy video driver: a windowless Window (no GL flag: the
+// dummy driver loads no GL library) sized like the capture, plus an EGL
+// pbuffer context created outside SDL. See egl_headless.rs.
+fn setup_headless(
+  sdl_context: &sdl3::Sdl,
+  title: &str,
+  (width, height): (u32, u32),
+) -> Result<(sdl3::video::Window, DisplayContext), String> {
+  let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
+  let window = video.window(title, width, height).hidden().build().map_err(|e| format!("window creation: {e}"))?;
+  let platform = DisplayContext::new_egl_pbuffer(width, height)?;
   Ok((window, platform))
 }
 

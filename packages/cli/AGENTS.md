@@ -39,7 +39,8 @@ Two reliable checks that need no GUI:
    renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
    proves the app renders. Combine with `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
-   driver (falling back to a hidden window where EGL cannot go headless).
+   driver, or alloy's own EGL pbuffer where that driver cannot go headless
+   (see the ANGLE gotcha below).
 
 Also headless: the bundled flux runtime runs a plain `.js` file directly -
 `node_modules/@solidrt/<platform>/flux script.js` (e.g.
@@ -53,6 +54,14 @@ behavior in isolation.
 - `--size` is physical output pixels: layout runs at exactly that size
   (display scale is pinned to 1), so frames are identical on every machine.
 - Run from the project directory. There is no `bunx --cwd` flag.
+- On ANGLE stacks (Windows, macOS) SDL's offscreen driver cannot go
+  headless (no EGL device enumeration), so `render` there builds its own
+  EGL pbuffer context behind SDL's dummy video driver instead; the log says
+  "using a headless EGL context". If that also fails it renders into a
+  hidden window, which needs an interactive desktop session (fails under a
+  service, in Session 0, or over SSH-only). Verified headless on Linux
+  (Wayland) and the pbuffer path on Windows from a desktop session; a
+  non-interactive Windows session and macOS are unverified.
 
 ## Sessions (parallel dev servers on one machine)
 

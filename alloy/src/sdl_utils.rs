@@ -476,27 +476,6 @@ pub fn gl_swap_window_checked(window: *mut sdl3::sys::video::SDL_Window) -> bool
   unsafe { sdl3::sys::video::SDL_GL_SwapWindow(window) }
 }
 
-/// Re-run make-current with the calling thread's current GL context, so the
-/// binding picks up the window's current EGL surface (recreated across an
-/// Android background/resume). Only meaningful on the thread the context is
-/// current on; false (with sdl_error set) when there is no current context
-/// or the bind fails.
-///
-/// The unbind step is load-bearing: SDL_GL_MakeCurrent short-circuits when
-/// its per-thread bookkeeping says this (window, context) pair is already
-/// current (SDL_video.c), so a same-pair call never reaches eglMakeCurrent -
-/// and re-executing eglMakeCurrent against the window's new EGL surface is
-/// the whole point. SDL's own android_egl_context_restore does the same
-/// dance.
-pub fn gl_remake_current(window: *mut sdl3::sys::video::SDL_Window) -> bool {
-  let context = unsafe { sdl3::sys::video::SDL_GL_GetCurrentContext() };
-  if context.is_null() {
-    return false;
-  }
-  unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, std::ptr::null_mut()) };
-  unsafe { sdl3::sys::video::SDL_GL_MakeCurrent(window, context) }
-}
-
 pub fn sdl_error() -> String {
   sdl3::get_error().to_string()
 }

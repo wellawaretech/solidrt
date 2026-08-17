@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
 use capture::flip_for_fbo;
-use crate::backend::FrameOutput;
+use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec,
@@ -152,9 +152,9 @@ const PRESENT_FENCE_DEPTH: usize = 2;
 pub(crate) struct RasterState {
   gl: glow::Context,
   impeller_ctx: ImpellerContext,
-  // The window's raw SDL handle, for presenting; the Window itself lives on
-  // the main thread.
-  window: *mut sdl3::sys::video::SDL_Window,
+  // The context binding this thread draws through: bind/rebind, present,
+  // proc-address (see backend::GlBinding).
+  binding: Box<dyn GlBinding>,
   // Physical framebuffer size (see backend::pack_size), published by the main
   // thread on resize and read when wrapping FBO 0.
   surface_size: Arc<AtomicU64>,
@@ -348,7 +348,7 @@ impl RasterState {
   pub(crate) fn new(
     gl: glow::Context,
     impeller_ctx: ImpellerContext,
-    window: *mut sdl3::sys::video::SDL_Window,
+    binding: Box<dyn GlBinding>,
     surface_size: Arc<AtomicU64>,
     capture_frames: bool,
     stats: Arc<RasterStats>,
@@ -360,7 +360,7 @@ impl RasterState {
     RasterState {
       gl,
       impeller_ctx,
-      window,
+      binding,
       surface_size,
       samplers,
       limits,
@@ -1082,8 +1082,8 @@ impl RasterState {
     // Debug, not warn: the first real frame's present judges the surface for
     // real (failure counter, rebind-and-redraw recovery). This one is a
     // courtesy, and a platform that refuses it loses only the empty window.
-    if !crate::sdl_utils::gl_swap_window_checked(self.window) {
-      log::debug!("[alloy] priming swap failed: {}", crate::sdl_utils::sdl_error());
+    if !self.binding.swap() {
+      log::debug!("[alloy] priming swap failed: {}", self.binding.error());
     }
   }
 
@@ -1093,7 +1093,7 @@ impl RasterState {
   /// failed swap gets one rebind-and-redraw recovery attempt (see `frame`);
   /// a confirmed loss exits instead: see okf/backlog/gpu-context-loss.md.
   fn present(&mut self) -> bool {
-    if crate::sdl_utils::gl_swap_window_checked(self.window) {
+    if self.binding.swap() {
       self.present_failures = 0;
       // At most one fence joins per frame (a retried present only follows a
       // failed one, which queued nothing), and `await_present_fence` trimmed
@@ -1115,7 +1115,7 @@ impl RasterState {
     }
     self.present_failures += 1;
     if self.present_failures == 1 {
-      log::error!("[alloy] present failed: {}", crate::sdl_utils::sdl_error());
+      log::error!("[alloy] present failed: {}", self.binding.error());
     }
     if self.present_failures >= PRESENT_FAILURE_EXIT_THRESHOLD {
       log::error!("[alloy] GPU context lost ({} consecutive failed presents), exiting", self.present_failures);
@@ -1132,14 +1132,12 @@ impl RasterState {
   /// in `frame` judges the retry present on its own, and only the
   /// event-driven command resets stale evidence.
   fn rebind_window_surface(&mut self) -> bool {
-    if !crate::sdl_utils::gl_remake_current(self.window) {
-      log::warn!("[alloy] rebind window surface failed: {}", crate::sdl_utils::sdl_error());
+    if !self.binding.bind() {
+      log::warn!("[alloy] rebind window surface failed: {}", self.binding.error());
       return false;
     }
-    if !self.capture_frames
-      && !unsafe { sdl3::sys::video::SDL_GL_SetSwapInterval(crate::sdl_utils::WINDOW_SWAP_INTERVAL) }
-    {
-      log::warn!("[alloy] SDL_GL_SetSwapInterval failed: {}", crate::sdl_utils::sdl_error());
+    if !self.capture_frames && !self.binding.set_swap_interval() {
+      log::warn!("[alloy] set swap interval failed: {}", self.binding.error());
     }
     true
   }

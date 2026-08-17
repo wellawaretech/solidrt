@@ -65,18 +65,51 @@ the one GL context, and with the other platforms where the offscreen driver
 already works: keep the SDL offscreen path first and take this route only
 when it fails for THIS reason, not as a Windows special case.
 
-Two much cheaper mitigations, worth doing regardless and first:
+Two much cheaper mitigations, DONE 2026-08-17 (stage 1):
 
-1. Say the fallback is expected. The line reads like a driver defect on the
-   user's machine ("not supported by the drivers?"). On ANGLE it is a fixed
-   property, identical on every install, so it should be a calm one-liner
-   (or silent below a verbosity flag), not an SDL error surfaced verbatim at
-   warn level.
-2. Document that `srt render` needs a desktop session on Windows today, in
-   `packages/cli/AGENTS.md` next to the other render gotchas
-   ([playback-window-size-zero](playback-window-size-zero.md) carries the
-   first-frame ones). That is the fact a CI author needs, and it is
-   currently discoverable only by the command failing in CI.
+1. Say the fallback is expected. `alloy/src/app.rs` matches the failure
+   text on `EXT_device_enumeration` / `eglQueryDevicesEXT` and logs a calm
+   info one-liner naming ANGLE; any other offscreen failure keeps the warn
+   with the SDL error. Matched on the fact, not on the OS.
+2. `packages/cli/AGENTS.md` render gotchas document the ANGLE behavior
+   (rewritten for stage 2: pbuffer path first, hidden window as the last
+   resort needing a desktop session).
+
+Stage 2, IMPLEMENTED 2026-08-17, verified on Windows in a desktop session:
+
+- `alloy/src/egl_headless.rs`: `HeadlessEgl` loads libEGL at runtime
+  (khronos-egl `dynamic`; exe-dir copy first, then the loader's search),
+  takes `eglGetDisplay(EGL_DEFAULT_DISPLAY)`, an ES 3.0 context and an RGBA8
+  / depth 16 / stencil 8 pbuffer at the capture size. A PBUFFER, not
+  surfaceless: playback draws to FBO 0 and reads it back, so a pbuffer keeps
+  draw_to_window, the MSAA rig, and read_fbo0_pixels untouched. Default
+  display, not `EGL_ANGLE_device_creation`: needs no D3D11 device of our
+  own; device creation stays the escalation if the default display turns out
+  to need a window station.
+- `backend::GlBinding` (bind / swap / set_swap_interval / proc_address /
+  error) is what the raster thread now holds instead of the raw SDL window
+  pointer; `gl::SdlGlBinding` is the interactive impl (same calls as before,
+  incl. the unbind-then-bind rebind dance), `HeadlessEglBinding` the
+  playback one. `DisplayContext::EglPbuffer` is the second variant.
+- `app.rs`: offscreen driver first (unchanged); on the ANGLE-reason failure
+  only, `SDL_VIDEO_DRIVER=dummy` (a Window for the playback loop to size
+  from, no GL flag) + `DisplayContext::new_egl_pbuffer`; if that fails too,
+  the hidden window as before. Wayland never enters it.
+- Verified on Linux/Mesa by temporarily forcing the branch: `srt render`
+  frames through the pbuffer path are byte-identical to the offscreen
+  driver's. Windows (RTX 3070, ANGLE D3D11, shipped libEGL.dll): the branch
+  is taken for real, `headless EGL 1.5 pbuffer context`, frames correct.
+  Still open: the same run from a non-interactive session (service /
+  Session 0 / Windows OpenSSH), which is what decides whether the default
+  display suffices there or `EGL_ANGLE_device_creation` is needed. The WSL
+  interop control channel runs the exe inside the logged-in desktop session,
+  so it cannot test this; a scheduled task set to run whether the user is
+  logged on or not can. macOS untested.
+
+Known limitation: `gl.rs` `msrtt()` still asks SDL for extension support and
+proc addresses; under the dummy driver that answers "unsupported", so the
+headless path uses the explicit MSAA resolve. Desktop does that anyway
+(MSRTT is the Android tiled-GPU path).
 
 Confidence: the ANGLE half is direct evidence from the shipped DLLs and can
 be re-checked in seconds; the alloy half is read from `app.rs`.

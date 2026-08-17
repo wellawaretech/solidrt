@@ -7,6 +7,7 @@ mod backend;
 pub mod barcode;
 pub mod camera;
 mod context;
+mod egl_headless;
 mod event;
 mod gamepad;
 mod gpu;

@@ -93,3 +93,9 @@ unicode-linebreak = "0.1"
 unicode-segmentation = "1"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
 lru = "0.18"
+# Headless playback context (src/egl_headless.rs): a bare EGL pbuffer on a
+# runtime-loaded libEGL, taken only when SDL's offscreen driver cannot go
+# headless (ANGLE). libloading is khronos-egl's loader, reused for the GLES
+# client library fallback.
+khronos-egl = { version = "6", default-features = false, features = ["dynamic", "1_5"] }
+libloading = "0.8"

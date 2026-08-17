@@ -48,6 +48,33 @@ QuickJS especially) is drastically slower, so never quote or record
 performance timings from a debug client - rebuild release first. Counters
 and other behavioral measurements are profile-independent.
 
+# Running an app for verification (dev server + MCP)
+Never use the built-in `run` skill here. Drive the app yourself:
+
+- Start: `(sleep 100000 | bunx srt run <entry.tsx> > <scratchpad>/run.log 2>&1 &)`
+  from repo root. `srt run` starts the dev server AND a local client, and
+  runs a REPL on stdin - a plain `&` background gets EOF on stdin and the
+  server exits (and removes its registry record) within a second, which
+  looks like "no dev server" a moment later. The piped sleep holds stdin
+  open. Give it ~10 s, then check `~/.solidrt/servers/34884/live.json`
+  exists (default port 0x8844; `-s <N>` = port + N).
+- Stop: `pkill -f "srt run <entry.tsx>"; pkill -f "sleep 100000"`. The
+  live.json is removed on exit; a leftover record means a crash.
+- MCP tools (`mcp__solidrt__*`) resolve the server by PROJECT: the bridge's
+  cwd (repo root here) must match the served entry's nearest package.json.
+  An entry under `packages/<pkg>/` or `examples/<x>/` registers THAT
+  directory as projectDir, so the repo-root bridge reports "No dev server"
+  even though one is running. In that case talk to the control API
+  directly with curl on `http://127.0.0.1:<port>/__control__/...`: `/clients`,
+  `/logs`, `/tree?query=<text>`, `/snapshot?node=<id>` (PNG), `/stats`, and
+  POST `/input` with `{"events":[...]}` (same event shape as
+  `mcp__solidrt__send_input`), `/reload`, `/load` `{"entry":...}`. The
+  bridge is a long-lived process: a change to `packages/cli/src/commands/mcp.ts`
+  only takes effect in a re-spawned bridge.
+- Verify through the tree, not by eye: `send_input`/`/input` tap real
+  coordinates from `/tree`, then read state back from the tree, a snapshot,
+  or `/logs`. Snapshot the smallest node, not the window root.
+
 # Notes (okf/)
 Long-lived notes live under `okf/`, one markdown file per item. Write new notes there instead of scattering them across root scratch files, and check `okf/backlog/` before starting speculative or non-trivial work.
 
