@@ -273,6 +273,13 @@ Shaped, not started.
   sourcemap and yields a confidently wrong app file and line. Fix is two
   halves; the runtime half (declare the module under its isolate id) is a few
   lines and stops the mis-remap on its own.
+- **[JS test infrastructure](backlog/js-test-infrastructure.md)** [2026-08-17]
+  The workspace has no JS test story at all - zero test files in core,
+  components, cli, 3d; the only automated checks are ad-hoc self-reporting
+  scripts (packages/3d/checks, flux/examples/*_test.js) with no runner, no
+  discovery, no CI step. Decide the runner (flux, not bun, is the runtime
+  under test), the file convention, and the CI hook, then fold the existing
+  rigs into it.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back

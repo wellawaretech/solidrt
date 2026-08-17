@@ -17,7 +17,8 @@ prints the error and `0`. A shell `a | flux - && next`, a Makefile rule, or
 a CI step therefore treats a failed script as passed. The concrete victim
 today is `packages/3d/checks/*-check.ts` (pick-check, order-check), which
 run headless on flux and had to document "read the output, not the exit
-code".
+code". It is also the prerequisite for any JS test runner
+([js-test-infrastructure](js-test-infrastructure.md)).
 
 Cause: `flux/src/bin/flux.rs` calls `engine.eval_source(&source).await` and
 returns; `eval_source` reports a module error or an entry-promise rejection
