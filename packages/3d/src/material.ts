@@ -12,10 +12,10 @@
 // their pipeline with blend "alpha" and depthWrite off, and the scene draws
 // their meshes after the opaque ones, sorted back-to-front per mesh.
 //
-// Custom looks need no material system: the raw layer (compileShader /
-// createRenderPipeline in @solidrt/core/gpu) is first-class, and a scene
-// draws into an ordinary draw target - a custom-shaded mesh is a future
-// material class here, or the app's own addDraw beside the scene's.
+// Custom looks get the same split through shaderMaterialClass (one
+// program, instance() per parameterisation); shaderMaterial is a class with
+// a single instance. The raw layer (compileShader / createRenderPipeline in
+// @solidrt/core/gpu) stays first-class beneath both.
 
 import {
   compileShader,
@@ -201,7 +201,9 @@ export function backgroundPipeline(fragment: string, label: string): { pipeline:
   return { pipeline, program }
 }
 
-export type ShaderMaterialOptions = {
+/** The class half of a shader material: sources and pipeline state, the
+ * things one compiled program fixes. */
+export type ShaderMaterialClassOptions = {
   /**
    * Vertex stage GLSL. MUST declare and use `uniform mat4 uModel` (the
    * mesh's world matrix, written per entry whenever the mesh moves) and
@@ -224,10 +226,6 @@ export type ShaderMaterialOptions = {
    */
   vertex: string
   fragment: string
-  /** Uniform seeds beyond the standard set; update per mesh later with
-   * setMeshParams. */
-  params?: ShaderParams
-  textures?: Record<string, TextureId>
   /** Blend over what is behind, with the scene sorting this material's
    * meshes back-to-front after the opaque ones (see Material.transparent).
    * Sets the pipeline defaults blend "alpha" and depthWrite false; the
@@ -246,18 +244,41 @@ export type ShaderMaterialOptions = {
   label?: string
 }
 
+/** The instance half of a shader material: uniform seeds and sampler
+ * bindings for one parameterisation of a class's program. */
+export type ShaderMaterialInstanceOptions = {
+  /** Uniform seeds beyond the standard set; update per mesh later with
+   * setMeshParams. */
+  params?: ShaderParams
+  textures?: Record<string, TextureId>
+}
+
+export type ShaderMaterialOptions = ShaderMaterialClassOptions & ShaderMaterialInstanceOptions
+
 /**
- * A material from your own GLSL: the custom-look escape hatch, first-class
- * next to unlit. Sources without a `#version` line get the standard
- * pipeline preamble (`fragColor`, `iResolution`).
- *
- * The INSTANCE is the pipeline handle: two calls with identical sources
- * compile two pipelines - there is no dedupe by source value (a hidden
- * cache keyed by content is the anti-pattern the GPU layer avoids
- * throughout). Create one per look at app scope, share it across meshes,
- * and `dispose()` it if the app is done with the look for good.
+ * One program and pipeline, many parameterisations: the class/instance
+ * split unlit has internally, for your own GLSL. `instance()` returns a
+ * Material sharing the class's pipeline with its own params/textures - the
+ * class compiles once, and dispose() is on the class alone (instances hold
+ * nothing of their own).
  */
-export function shaderMaterial(opts: ShaderMaterialOptions): Material {
+export type ShaderMaterialClass = {
+  instance(opts?: ShaderMaterialInstanceOptions): Material
+  /** Destroy the shared program and pipeline. Instances still in use draw
+   * nothing valid afterwards. */
+  dispose(): void
+}
+
+/**
+ * A material class from your own GLSL: sources without a `#version` line
+ * get the standard pipeline preamble (`fragColor`, `iResolution`). Two
+ * calls with identical sources compile two programs - there is no dedupe by
+ * source value (a hidden cache keyed by content is the anti-pattern the GPU
+ * layer avoids throughout); the class IS the app-owned split. Create one
+ * per program at app scope, `instance()` per look, and `dispose()` the class
+ * when the app is done with the look for good.
+ */
+export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMaterialClass {
   // The standard-set contract, checked where the mistake is made: a vertex
   // stage that never mentions the matrices cannot place meshes, and with
   // shared params skipping undeclared names the omission would otherwise
@@ -274,35 +295,34 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
   // Attributes live in the vertex stage only, so unlike the uNormal scan
   // there is nothing to look for in the fragment source.
   let layout: VertexLayout = /\baColor\b/.test(opts.vertex) ? "colored" : "standard"
+  let normalMatrix = /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
+  let pipelineFor = (): RenderPipelineId => {
+    if (pipeline === undefined) {
+      let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
+      let fs = compileShader("fragment", opts.fragment, { header: needsHeader(opts.fragment) })
+      program = linkProgram(vs, fs, { label: opts.label })
+      destroyShader(vs)
+      destroyShader(fs)
+      pipeline = createRenderPipeline(program, {
+        attributes: VERTEX_LAYOUTS[layout],
+        depth,
+        // depthWrite needs a depth buffer, so the transparent default
+        // only applies when there is one.
+        depthWrite: opts.depthWrite ?? (transparent && depth ? false : undefined),
+        blend: opts.blend ?? (transparent ? "alpha" : undefined),
+        cull: opts.cull ?? "back",
+        topology: opts.topology,
+        label: opts.label,
+      })
+    }
+    return pipeline
+  }
   return {
-    normalMatrix: /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment),
-    layout,
-    transparent,
-    pipeline() {
-      if (pipeline === undefined) {
-        let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
-        let fs = compileShader("fragment", opts.fragment, { header: needsHeader(opts.fragment) })
-        program = linkProgram(vs, fs, { label: opts.label })
-        destroyShader(vs)
-        destroyShader(fs)
-        pipeline = createRenderPipeline(program, {
-          attributes: VERTEX_LAYOUTS[layout],
-          depth,
-          // depthWrite needs a depth buffer, so the transparent default
-          // only applies when there is one.
-          depthWrite: opts.depthWrite ?? (transparent && depth ? false : undefined),
-          blend: opts.blend ?? (transparent ? "alpha" : undefined),
-          cull: opts.cull ?? "back",
-          topology: opts.topology,
-          label: opts.label,
-        })
-      }
-      return pipeline
+    instance(inst = {}) {
+      return { normalMatrix, layout, transparent, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
     },
-    params: opts.params ?? {},
-    textures: opts.textures,
     dispose() {
       if (pipeline !== undefined) {
         destroyRenderPipeline(pipeline)
@@ -314,4 +334,21 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
       }
     },
   }
+}
+
+/**
+ * A material from your own GLSL: the custom-look escape hatch, first-class
+ * next to unlit. A class with a single instance - `shaderMaterialClass()`
+ * is the form for one program with many parameterisations.
+ *
+ * The INSTANCE is the pipeline handle: two calls with identical sources
+ * compile two pipelines - there is no dedupe by source value. Create one
+ * per look at app scope, share it across meshes, and `dispose()` it if the
+ * app is done with the look for good.
+ */
+export function shaderMaterial(opts: ShaderMaterialOptions): Material {
+  let cls = shaderMaterialClass(opts)
+  let material = cls.instance(opts)
+  material.dispose = cls.dispose
+  return material
 }

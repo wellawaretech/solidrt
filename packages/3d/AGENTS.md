@@ -200,7 +200,10 @@ Materials:
   at shaderMaterial() creation. The rest is opt-in by declare-and-use:
   `uniform vec3 uCamPos` (the camera's world position, shared and written
   with uViewProj - the specular/fresnel view vector is
-  `normalize(uCamPos - worldPos)`) and `uniform mat4 uNormal` (the world
+  `normalize(uCamPos - worldPos)`), `uniform vec3 uCamRight` / `uCamUp`
+  (the camera's world-space view axes, shared likewise - a billboard is
+  `center + uCamRight * x + uCamUp * y`; do NOT rebuild them from
+  uViewProj rows, that carries the clip flip) and `uniform mat4 uNormal` (the world
   inverse-transpose, written beside uModel for this material's meshes;
   take `mat3(uNormal)` - correct under non-uniform scale, where
   mat3(uModel) bends normals off the surface). Attributes come from the
@@ -214,6 +217,14 @@ Materials:
   with the `Mesh` `params` prop (same merge semantics - a key that
   disappears from the object keeps its old value; for per-frame values
   prefer `ref` + setMeshParams from onFrame, the setTransform split).
+  Scene-wide values (a clock, a sun direction, fog) go through
+  `scene.setParams({ uTime })` instead - one write for every mesh.
+- `shaderMaterialClass({ vertex, fragment, ...pipeline state })` - the
+  class/instance split for your own GLSL: compiles once, and
+  `cls.instance({ params?, textures? })` returns a Material sharing that
+  pipeline with its own values. `dispose()` lives on the class alone.
+  `shaderMaterial(opts)` is exactly a class with one instance (its
+  `dispose` forwards to the class).
 
 Background: `scene.setBackground(source | null)`, the `background` option
 on createScene, and the reactive `Scene` prop. Fragment GLSL drawn as the
@@ -352,16 +363,17 @@ system.
   camera writes (uEye-style per-mesh params are exactly the O(scene) cost
   the shared channel removed). Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU.
-- SCENE-WIDE uniforms go through that same shared channel, and this is the
-  single highest-leverage pattern in the library. `scene.texture` IS the
-  draw target id, so `setTargetParams(scene.texture, { uTime })` merges an
-  app-owned name in beside uViewProj/uCamPos - names merge, a target
-  tolerates zero coverage, neither side clobbers the other. One write per
-  frame however many meshes read it, with the motion itself in vertex
-  shaders off that one clock. `params`/`setMeshParams` is the PER-MESH
-  answer and is O(meshes) per frame; reach for it only when the value
-  genuinely differs per mesh. (A `scene.setParams` wrapper is backlogged;
-  the channel underneath it is what matters and it is here today.)
+- SCENE-WIDE uniforms go through that same shared channel via
+  `scene.setParams({ uTime })`, and this is the single highest-leverage
+  pattern in the library. It merges an app-owned name in beside
+  uViewProj/uCamPos/uCamRight/uCamUp - names merge, a target tolerates
+  zero coverage, neither side clobbers the other. One write per frame
+  however many meshes read it, with the motion itself in vertex shaders
+  off that one clock. `params`/`setMeshParams` is the PER-MESH answer and
+  is O(meshes) per frame; reach for it only when the value genuinely
+  differs per mesh. (`scene.texture` IS the draw target id, so
+  `setTargetParams(scene.texture, ...)` is the same write - setParams is
+  the sanctioned spelling.)
 - Vec3/Quat arguments are COPIED IN everywhere (`setTransform`, `lookAt`,
   `setCamera`, params), so ONE scratch array reused every frame is safe -
   allocating three arrays per node per frame is pure waste. The node's own
@@ -391,7 +403,14 @@ system.
   compile twice - no dedupe by source value (deliberate; hidden
   content-keyed caches are the anti-pattern the GPU layer avoids). Create
   one per look at app scope, share across meshes, `dispose()` when done
-  for good.
+  for good. Looks that differ only in params/textures are ONE
+  `shaderMaterialClass` and many `instance()`s - the app-owned split, not
+  a cache. A class instance has no `dispose` of its own; disposing the
+  class invalidates every instance.
+- A parameterised class whose variants (mapped/unmapped, ...) are SEPARATE
+  classes must have every variant reference every shared uniform it is
+  seeded with: a declared-but-unused per-entry name compiles out and
+  throws at add(). Open item: `okf/backlog/gpu-inactive-uniform-two-tier.md`.
 - The standard-set contract is checked TEXTUALLY at shaderMaterial()
   creation (uModel and uViewProj must appear in the vertex source) and
   strictly at add() for the per-entry names: a uModel or uNormal that is

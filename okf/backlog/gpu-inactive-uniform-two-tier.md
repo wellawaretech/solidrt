@@ -58,4 +58,4 @@ that already has it, but it is a second source of truth beside the shader
 source, and the scan derives the same fact without being told.
 
 First consumer:
-[3d-material-uniform-plumbing](3d-material-uniform-plumbing.md) section 3.
+[3d-material-uniform-plumbing](../done/3d-material-uniform-plumbing.md) section 3.

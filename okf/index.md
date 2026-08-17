@@ -38,12 +38,6 @@ Shaped, not started.
   static scene authored as data has to become one Mesh node per part;
   transformGeometry and mergeGeometries are pure array math with no runtime
   dependency, and geometryBounds plus rayBoxDistance already exist unexported.
-- **[Scene uniform channel, camera basis, material class/instance split](backlog/3d-material-uniform-plumbing.md)** [2026-08-17]
-  The three ways an app talks to the shared uniform set and to a pipeline all
-  have a gap: a Scene has no app-writable shared params (the workaround goes
-  through scene.texture), the standard set carries no camera basis so
-  billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
-  express one program with many parameterisations.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -487,6 +481,12 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[Scene uniform channel, camera basis, material class/instance split](done/3d-material-uniform-plumbing.md)** [2026-08-17]
+  The three ways an app talks to the shared uniform set and to a pipeline all
+  have a gap: a Scene has no app-writable shared params (the workaround goes
+  through scene.texture), the standard set carries no camera basis so
+  billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
+  express one program with many parameterisations.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a

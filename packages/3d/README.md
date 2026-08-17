@@ -62,9 +62,12 @@ bounding-box accurate in v1. A scene also takes a `background` - fragment
 GLSL drawn inside its own pass behind the meshes, replacing the stacked
 backdrop-texture pattern.
 Custom materials get a standard uniform set - per-mesh `uModel`/`uNormal`,
-shared `uViewProj`/`uCamPos`, each written once per change - plus your own
-uniforms per mesh, declaratively via the `params` prop on `<Mesh>` or
-imperatively via `setMeshParams` - and
+shared `uViewProj`/`uCamPos`/`uCamRight`/`uCamUp`, each written once per
+change - plus your own uniforms: scene-wide via `scene.setParams` (one write
+however many meshes read it), or per mesh, declaratively via the `params`
+prop on `<Mesh>` or imperatively via `setMeshParams`. `shaderMaterialClass`
+compiles one program and hands out `instance()` materials that differ only
+in params/textures. And
 `@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,
 blinn, fresnel, a standard vertex stage) to compose your own lit looks
 from plain template literals.

@@ -3,10 +3,12 @@
 // component boundary (components.tsx). A scene compiles to one draw
 // target: every mesh is one draw entry whose uModel (and, for materials
 // declaring it, uNormal) this module keeps in step with the tree, and the
-// camera is the target's SHARED uViewProj + uCamPos - one setTargetParams
-// per camera move, not one write per mesh. uCamPos rides unconditionally:
-// shared params tolerate zero coverage (stored and skipped until a
-// declaring material arrives), so no bookkeeping tracks who reads it.
+// camera is the target's SHARED uViewProj + uCamPos + uCamRight/uCamUp -
+// one setTargetParams per camera move, not one write per mesh. The
+// non-matrix names ride unconditionally: shared params tolerate zero
+// coverage (stored and skipped until a declaring material arrives), so no
+// bookkeeping tracks who reads them. scene.setParams merges app-owned
+// names into the same set.
 // Mutations batch to a microtask, so a burst of writes (a whole subtree
 // moved, many effects in one flush) syncs once.
 //
@@ -200,6 +202,15 @@ export type Scene = {
   /** Partial camera update; absent keys keep their current value. */
   setCamera(update: CameraUpdate): void
   setSize(width: number, height: number): void
+  /**
+   * Scene-wide uniforms: merge app-owned names into the target's SHARED
+   * params, beside the standard uViewProj/uCamPos/uCamRight/uCamUp the
+   * camera writes. One write per frame however many meshes read the name
+   * (a clock, a sun direction, fog) - the per-mesh channel is
+   * setMeshParams. Merge semantics, no unset; a material that does not
+   * declare a name simply skips it. Frame-rate-safe like setTransform.
+   */
+  setParams(params: ShaderParams): void
   /**
    * Set, replace, or remove (null) the scene's background: fragment GLSL
    * drawn as the FIRST entry of the scene's own pass - one target, no
@@ -675,7 +686,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // holds. Entries are untouched - uModel is camera-independent, and
       // uCamPos is stored even when no current material declares it.
       cameraPending = false
-      setTargetParams(texture, { uViewProj: viewProj, uCamPos: eye })
+      // The camera basis rides along: the view matrix's first two rows are
+      // the camera's world-space right and up (no clip flip - that lives in
+      // the projection), so a billboard needs no reconstruction from uViewProj.
+      setTargetParams(texture, {
+        uViewProj: viewProj,
+        uCamPos: eye,
+        uCamRight: [view[0], view[4], view[8]],
+        uCamUp: [view[1], view[5], view[9]],
+      })
       if (transparentCount > 1) orderDirty = true
     }
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
@@ -940,6 +959,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetSize(texture, w, h)
       cameraDirty = true
       hooks._schedule()
+    },
+    setParams(params) {
+      if (!disposed) setTargetParams(texture, params)
     },
     setBackground(source) {
       if (disposed) return

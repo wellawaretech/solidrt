@@ -2,9 +2,31 @@
 title: Scene uniform channel, camera basis, material class/instance split
 description: The three ways an app talks to the shared uniform set and to a pipeline all have a gap: a Scene has no app-writable shared params (the workaround goes through scene.texture), the standard set carries no camera basis so billboards reconstruct it from uViewProj rows, and shaderMaterial cannot express one program with many parameterisations.
 created: 2026-08-17
+completed: 2026-08-17
 ---
 
 # Scene uniform channel, camera basis, material class/instance split
+
+## Done 2026-08-17
+
+All three landed in `packages/3d`, bare-minimum shape:
+
+1. `scene.setParams(params)` - an immediate `setTargetParams` on the
+   scene's target (no batching: the shared channel is one write anyway).
+2. The camera write carries `uCamRight`/`uCamUp` beside `uViewProj`/
+   `uCamPos`: rows 0 and 1 of the view matrix, world space, no clip flip
+   (chosen over `uView` because the app never has to know the flip).
+3. `shaderMaterialClass({ vertex, fragment, ...pipeline state })` returning
+   `{ instance({ params?, textures? }), dispose() }`; `shaderMaterial` is now
+   literally a class with one instance whose `dispose` forwards to the class,
+   so nothing changed for existing callers. Instances carry no `dispose`.
+
+The interaction with
+[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md)
+stands as recorded there; a `Billboard` node stays with the instanced-mesh
+sugar. Both are open items, not leftovers of this one.
+
+## Original shaping
 
 Three separate gaps in one item because they are one question: what is in a
 scene target's shared uniform set, who may write it, and how a material says
@@ -97,7 +119,7 @@ Explicitly NOT a content-keyed cache. The argument against hidden caches
 stands; this is an app-owned split.
 
 Interacts with
-[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md): a
+[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md): a
 parameterised class wants one uniform set across several source variants, and
 any variant that happens not to reference one of them throws at `add()`. See
 that item for the fix.
