@@ -121,12 +121,14 @@ day one keeps that door open.
 
 ## Stage 1 findings (2026-08-16)
 
-Implemented behind `<text textLayout="owned">` (default stays
-`"paragraph"`; the prop and the paragraph path go away at stage 6, or the
-prop and the owned path go away on no-go). Code: `alloy/src/rendertree/
-text_layout.rs` (segmenter via unicode-linebreak, greedy breaker, baseline
-placement, intrinsic widths; pure, no font or engine types),
-`Text::prepare_owned`/`owned_layout` in `kinds/text.rs`, unit tests in
+Implemented behind `<text textLayout="owned">` (default stayed
+`"paragraph"` until stage 6 made owned the only engine apps see). Code, as
+of the 2026-08-17 reorganization, `alloy/src/rendertree/text/`: `layout.rs`
+(segmenter via unicode-linebreak, breaker, baseline placement, intrinsic
+widths; pure, no font or engine types), `shape.rs` (`Text::prepare_owned`
+/`owned_layout`: one Impeller paragraph per wrap unit, ParaKey cache, the
+grapheme re-split), `paragraph.rs` (the paragraph engine), `runs.rs` (the
+run/span model), `mod.rs` (the `Text` element); unit tests in
 `alloy/src/tests/text_layout.rs`. Probe: `text-layout-probe.tsx` renders
 the newest changelog bullets plus Latin+CJK, hard-break and unbreakable
 samples twice side by side; `alloy/examples/text_layout_bench.rs` times the
@@ -191,8 +193,7 @@ paragraph reports.
       `<text textLayout="owned">` with span children (`toWords`, the
       wrapping row and `Word` are gone, `inlineRuns` stays); same size,
       real word spacing instead of a fixed gap. The probe carries styled
-      runs, the paragraph options and a live-update sample. Drop the
-      `textLayout` prop from the shot when the flag goes (stage 6).
+      runs, the paragraph options and a live-update sample.
    d. Shared word cache: one bounded LRU per typography context keyed on
       (word text, run style) holding the shaped paragraph object, hit/miss
       counter next to `para_shapes`. Structural win SkParagraph cannot
@@ -289,7 +290,15 @@ paragraph reports.
    punctuation, text inside a shape (the hook exists once a. lands).
 5. Bidi (POSTPONED, user decision 2026-08-16): levels into breaker and
    placer, RTL alignment, RTL samples.
-6. Retire the drawParagraph-as-layout path so there is one engine.
+6. DONE (2026-08-17): owned is the engine. The `textLayout` prop, the
+   `TextLayoutMode` enum and every "owned only" caveat in types/docs are
+   gone; the probe and the changelog shot are single-engine. The
+   drawParagraph-as-layout path itself stays in `text/paragraph.rs`
+   (`Text::shaped`, `ParaCache`) behind a Rust-only
+   `Text.paragraph_engine: bool` (default false, no prop): a reference
+   and fallback engine, ~100 lines, worth keeping until the rasterizer
+   (7) lands. Spans, atoms, floats, indent and wrap do nothing on it.
+   Sanity: gallery example and probe render unchanged.
 7. Own rasterizer: second shaper implementation behind the trait with our
    own glyph atlas, aimed first at light-on-dark quality; retire the
    Medium-weight workaround when it lands.

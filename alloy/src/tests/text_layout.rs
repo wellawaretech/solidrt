@@ -1,4 +1,4 @@
-use crate::rendertree::text_layout::{
+use crate::rendertree::text::layout::{
   layout, layout_wrap, max_intrinsic_width, min_intrinsic_width, segments, Align, Clear, LineCursor, LineExtent,
   PlacedRun, Run, RunMetrics, Side, Wrap,
 };

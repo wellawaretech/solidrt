@@ -3,7 +3,7 @@ use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
 use super::{f32_of, paint, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
-use alloy::rendertree::text_layout::Wrap;
+use alloy::rendertree::text::layout::Wrap;
 use alloy::rendertree::{OverflowWrap, Span, Text, TextOverflow};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {

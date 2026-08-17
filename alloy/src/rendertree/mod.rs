@@ -6,17 +6,17 @@ pub(crate) mod kinds;
 pub mod layout;
 pub mod platform;
 pub mod router;
-pub mod text_layout;
+pub mod text;
 mod tree;
 
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
-  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Span,
-  OverflowWrap, RunOverrides, RunStyle, Text, TextOverflow, TextRun, Texture, TextureFit, View, ATOM_CHAR,
-  Window,
+  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Texture,
+  TextureFit, View, Window,
 };
+pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
@@ -302,10 +302,10 @@ pub struct Element {
   pub repaint_boundary: BoundaryMode,
   // As an inline atom of a `<text>`: out of the flow against this side, an
   // exclusion for the lines it overlaps. Meaningless anywhere else.
-  pub float: Option<text_layout::Side>,
+  pub float: Option<text::layout::Side>,
   // As an inline atom: start a line below the text's earlier floats on that
   // side (a floated atom goes below them instead of beside).
-  pub clear: Option<text_layout::Clear>,
+  pub clear: Option<text::layout::Clear>,
   // The boundary's retained paint result. Cleared by
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.

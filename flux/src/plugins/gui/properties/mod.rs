@@ -32,7 +32,7 @@ use taffy::style::Position;
 
 use crate::plugins::gui::value::PropValue;
 use alloy::impellers::Color;
-use alloy::rendertree::text_layout::{Clear, Side};
+use alloy::rendertree::text::layout::{Clear, Side};
 use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};
 
 // Returns Ok(damage) on success; Err(message) for an unknown property or a
