@@ -1,5 +1,11 @@
 // There is no `WebAssembly` global in flux; this module is the entire wasm
-// surface. Imports must be scalar-signature functions only (no imported
+// surface. Modules run in a pure interpreter (wasmi, no JIT), so this is a
+// portability tool - one compiled module runs on every flux target with no
+// native binaries or dlopen - not a speed tool. Tight typed compute runs
+// somewhat faster than the same loop in JavaScript (a small constant
+// factor, nowhere near browser wasm speed), and every host call costs
+// extra marshalling, so call-heavy code can end up slower.
+// Imports must be scalar-signature functions only (no imported
 // memory, globals or tables), which constrains the toolchain on the other
 // side: default emscripten output imports its memory and is rejected, while
 // `emcc -sSTANDALONE_WASM=1 --no-entry` produces a module that fits.

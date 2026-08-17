@@ -280,6 +280,12 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    snapshot instead of re-rasterizing. A window shader's output is invisible
    to get_snapshot and every other MCP tool; `srt render` is the only way to
    see it (Run / verify below).
+7. `flux:wasm` is not the fast lane. It runs a pure interpreter (wasmi, no
+   JIT), so tight typed compute gains a small constant factor over the same
+   loop in JavaScript, nowhere near browser wasm speed, and every host call
+   costs marshalling. Use it to ship one compiled module across every target
+   without native binaries, not to speed up per-frame work; for that, rules
+   1-2 (move it to the GPU, cut property writes) are the leverage.
 
 ### Isolates: heavy work off the JS thread
 

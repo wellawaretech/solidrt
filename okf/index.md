@@ -465,6 +465,11 @@ Shaped, not started.
   livekit-wakeword predict, ~35-40ms a check whether or not anyone is
   speaking; VAD gating cuts idle cost ~30x for ten lines, a streaming detector
   fixes it properly but needs upstream surgery.
+- **[Measure flux:wasm throughput against JavaScript](backlog/wasm-vs-js-throughput.md)** [2026-08-17]
+  flux:wasm runs on the wasmi interpreter and the docs now say "a small
+  constant factor over JavaScript on tight compute", but nobody has measured
+  wasmi against QuickJS in flux; a small benchmark would back that claim with
+  a number.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
