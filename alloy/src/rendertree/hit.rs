@@ -1,6 +1,6 @@
 use taffy::style::Overflow;
 
-use super::{ElementKind, Point, RenderTree, Size, TextLayoutMode, Vector};
+use super::{ElementKind, Point, RenderTree, Size, Vector};
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,7 +249,7 @@ fn hit_recursive(
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
     if let Some(t) = text {
-      if t.layout_mode != TextLayoutMode::Owned || !child.has_layout() {
+      if t.paragraph_engine || !child.has_layout() {
         continue;
       }
     }

@@ -137,14 +137,13 @@ export interface LayoutProps extends FlexboxProps, GridProps {
    * against that side of the text, at the top of the line where the atom
    * occurs; the lines it overlaps wrap around its margin box. Same-side
    * floats overlapping vertically sit beside each other. The text's height
-   * includes the float. Owned layout only; meaningless outside a <text>.
+   * includes the float. Meaningless outside a <text>.
    */
   float?: "left" | "right"
   /**
    * As an inline atom: start a new line below the text's earlier floats on
    * that side (a floated atom goes below them instead of beside). An empty
-   * `<view clear="both" />` is the section break after an image. Owned
-   * layout only.
+   * `<view clear="both" />` is the section break after an image.
    */
   clear?: "left" | "right" | "both"
 }
@@ -583,7 +582,7 @@ export interface TextRunProps {
  * A styled run inside <text>. Inline text only: children are text and other
  * spans. `color` takes what a text's color takes (solid or gradient).
  * Pointer handlers fire for the boxes of the run's own text on each line it
- * spans and bubble to the enclosing spans and text; owned layout only.
+ * spans and bubble to the enclosing spans and text.
  */
 export interface SpanProps extends TextRunProps, PointerProps {
   children?: Children
@@ -603,14 +602,13 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
   /**
    * A word (wrap unit) wider than the line: "anywhere" (default) splits it
    * at grapheme boundaries so it stays inside the box, "normal" keeps it
-   * whole and lets it overflow (CSS's default). "normal" needs
-   * textLayout="owned" while that flag exists.
+   * whole and lets it overflow (CSS's default).
    */
   overflowWrap?: "normal" | "anywhere"
   /**
    * First-line indent in pixels. Negative hangs: the first line starts at 0
    * and every following line is indented by the magnitude. A hard break does
-   * not start a new first line. Owned layout only.
+   * not start a new first line.
    */
   textIndent?: number
   /**
@@ -618,16 +616,9 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
    * (default) is greedy; "balance" evens the line lengths while keeping the
    * line count (headings, captions); "pretty" is greedy except that a lone
    * word on the last line pulls one down from the line above. Neither
-   * applies once maxLines truncates. Owned layout only.
+   * applies once maxLines truncates.
    */
   textWrap?: "wrap" | "balance" | "pretty"
-  /**
-   * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
-   * the whole text to one Impeller paragraph, "owned" shapes each word on its
-   * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR
-   * only. Inline atoms and span hit testing need "owned".
-   */
-  textLayout?: "paragraph" | "owned"
 }
 
 /**

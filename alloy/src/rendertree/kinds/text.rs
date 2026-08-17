@@ -14,17 +14,6 @@ use taffy::{AvailableSpace, Display, Style};
 // asks for the content width, so a handful covers a frame; oldest is evicted.
 const MAX_CACHED_WIDTHS: usize = 4;
 
-/// Which engine lays the text out. `Paragraph` hands the whole text to one
-/// Impeller paragraph per width; `Owned` shapes each wrap unit as its own
-/// single-line paragraph and breaks/places lines in text_layout (the
-/// experimental path of okf/backlog/text-layout-owned.md).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TextLayoutMode {
-  #[default]
-  Paragraph,
-  Owned,
-}
-
 /// What happens to text cut off by `max_lines`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum TextOverflow {
@@ -53,7 +42,10 @@ pub struct Text {
   // overrides layered along its span ancestry. Resolved against this Text's
   // own fields at shape time, so a `<text>` prop change needs no resync.
   pub runs: Vec<TextRun>,
-  pub layout_mode: TextLayoutMode,
+  // Lay the text out with one Impeller paragraph per width instead of the
+  // owned breaker (text_layout). Kept as a reference/fallback engine; not
+  // exposed as a prop. Spans, atoms, floats, indent and wrap are owned-only.
+  pub paragraph_engine: bool,
   pub font_family: String,
   pub font_size: f32,
   pub font_style: FontStyle,
@@ -95,7 +87,7 @@ impl Default for Text {
     Self {
       computed_text: String::new(),
       runs: Vec::new(),
-      layout_mode: TextLayoutMode::default(),
+      paragraph_engine: false,
       font_family: "sans".to_string(),
       font_size: 20.0,
       font_style: FontStyle::Normal,
@@ -240,7 +232,7 @@ impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
     let width = self.w.unwrap_or(ctx.size.width);
-    if self.layout_mode == TextLayoutMode::Owned {
+    if !self.paragraph_engine {
       let typography = ctx.platform.typography();
       let mut owned = self.owned.borrow_mut();
       self.prepare_owned(&typography, &mut owned);
@@ -271,7 +263,7 @@ impl Measurable for Text {
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return Size::new(w, h);
     }
-    if self.layout_mode == TextLayoutMode::Owned {
+    if !self.paragraph_engine {
       return self.measure_owned(ctx);
     }
 
@@ -624,7 +616,7 @@ impl Text {
   /// top-left) relative to the text's box: the layout pass writes these into
   /// the atoms' computed layouts after the text's own. Owned path only.
   pub fn atom_positions(&self, typography: &TypographyContext, width: f32) -> Vec<(u64, Point)> {
-    if self.layout_mode != TextLayoutMode::Owned || self.runs.iter().all(|r| r.atom.is_none()) {
+    if self.paragraph_engine || self.runs.iter().all(|r| r.atom.is_none()) {
       return Vec::new();
     }
     let mut owned = self.owned.borrow_mut();
@@ -646,7 +638,7 @@ impl Text {
   /// paragraph path, or when nothing has been laid out yet. Atoms are hit as
   /// elements, not through here.
   pub fn hit_run(&self, point: Point, size: Size) -> Option<u64> {
-    if self.layout_mode != TextLayoutMode::Owned {
+    if self.paragraph_engine {
       return None;
     }
     let owned = self.owned.borrow();
@@ -668,8 +660,8 @@ impl Text {
       .map(|p| self.runs[runs[p.run].style].node)
   }
 
-  pub fn set_layout_mode(&mut self, mode: TextLayoutMode) -> Damage {
-    self.layout_mode = mode;
+  pub fn set_paragraph_engine(&mut self, on: bool) -> Damage {
+    self.paragraph_engine = on;
     Damage::Layout
   }
   pub fn set_text_overflow(&mut self, v: TextOverflow) -> Damage {

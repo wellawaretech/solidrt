@@ -147,7 +147,7 @@ function Bullet(props: { runs: Run[] }) {
   return (
     <view flexDirection="row" gap={12} alignItems="flex-start">
       <oval width={6} height={6} color="#4f6bb0" marginTop={10} />
-      <text flex={1} fontSize={17} lineHeight={1.45} color="#a3aec7" textLayout="owned">
+      <text flex={1} fontSize={17} lineHeight={1.45} color="#a3aec7">
         {props.runs.map(run => <Styled run={run} />)}
       </text>
     </view>

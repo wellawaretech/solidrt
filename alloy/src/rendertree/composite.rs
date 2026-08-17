@@ -7,7 +7,7 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
-  ShadedCache, SnapshotCache, TextLayoutMode,
+  ShadedCache, SnapshotCache,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -777,7 +777,7 @@ fn record_node<'a>(
   // drawn like any child at their location; owned layout only, the paragraph
   // engine has no placeholders).
   let text_atoms = match &element.kind {
-    ElementKind::Text(t) => Some(t.layout_mode == TextLayoutMode::Owned),
+    ElementKind::Text(t) => Some(!t.paragraph_engine),
     _ => None,
   };
 
