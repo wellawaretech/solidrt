@@ -33,7 +33,7 @@ Order-dependent, the big one:
   trivial; what defers it is correctness: it needs sorted geometry (which the
   pipeline API has no story for) and an answer to straight-vs-premultiplied
   against how Impeller composites the target. Tracked as the remaining
-  blending piece in [gpu-alpha-translucency](gpu-alpha-translucency.md);
+  blending piece in [gpu-alpha-translucency](../done/gpu-alpha-translucency.md);
   do not add the mode without deciding those two. The premultiplied half now
   has a first step that costs nothing: document the target pixel contract
   ([gpu-review](../notes/gpu-review.md) lesson 12 - premultiplied,
@@ -66,7 +66,7 @@ it is order-independent for a single layer, and per the classification above
 it needs none of the sorting or premultiplied answers that defer alpha-over.
 It can land on its own.
 
-Alpha-over stays behind [gpu-alpha-translucency](gpu-alpha-translucency.md)
+Alpha-over stays behind [gpu-alpha-translucency](../done/gpu-alpha-translucency.md)
 and its two prerequisites, which now have a named owner for the sorting half
 (the scene graph) - see that item.
 
@@ -108,5 +108,6 @@ Naming: `"alpha"` (glTF `alphaMode: BLEND`, common usage) rather than the
 tree's Skia `"source-over"`; the pipeline vocabulary already diverged with
 `"add"` vs `"plus"`.
 
-The library half - transparent sort and `renderOrder` in `@solidrt/3d` -
-stays in [gpu-alpha-translucency](gpu-alpha-translucency.md).
+The library half - transparent materials, the scene-owned back-to-front
+sort and `renderOrder` in `@solidrt/3d` - landed the same day; see
+[gpu-alpha-translucency](../done/gpu-alpha-translucency.md).

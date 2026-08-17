@@ -5,7 +5,7 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createGroup, createMesh, createScene, getRotation, lookAt, remove, setGeometry, setMaterial, setMeshParams, setTransform, setVisible, worldPosition } from "./scene.ts"
+export { add, createGroup, createMesh, createScene, getRotation, lookAt, remove, setGeometry, setMaterial, setMeshParams, setRenderOrder, setTransform, setVisible, worldPosition } from "./scene.ts"
 export type { CameraUpdate, Hit, Mesh as MeshNode, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
 export { box, circle, cone, cylinder, disposeGeometry, fillColors, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"

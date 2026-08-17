@@ -149,6 +149,11 @@ Shaped, not started.
   stages reduce it - intern prop names to ids, createNode with a props object,
   and a command buffer whose props land in a shared buffer Rust reads
   directly, drained once per flush.
+- **[flux binary exits 0 on uncaught errors](backlog/flux-bin-exit-code.md)** [2026-08-17]
+  `flux script.js` exits 0 whether the entry module ran clean or threw, so
+  nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from
+  success without parsing output. Surfaced 2026-08-17 by moving the
+  @solidrt/3d check rigs from bun onto flux.
 - **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
   Stage 3 of the focus/key-routing work - move focus across getFocusables()
   candidates from bubbled arrow keys, activate with select/Enter, and fold the
@@ -169,12 +174,6 @@ Shaped, not started.
   hand-count; a bundler pass that injects a #line directive into glsl-tagged
   template literals would make the driver report the .tsx line itself, closing
   the last unmapped diagnostic in the dev loop.
-- **[Alpha translucency (sorted blending)](backlog/gpu-alpha-translucency.md)** [2026-08-11]
-  Engine half DONE 2026-08-17 (blend "alpha", premultiplied over,
-  order-dependent). What remains is the library half in @solidrt/3d, where
-  nothing yet sorts translucent meshes back-to-front or exposes renderOrder,
-  so materials still draw opaque. Split from gpu-pipeline-extensions
-  2026-08-11.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -609,6 +608,11 @@ Finished, kept for the reasoning.
   "The default app becomes the client's compiled-in launcher: version-store
   apps with tap-to-launch and delete, manual address entry, and a boot rule
   that drops the auto-boot."
+- **[Alpha translucency (sorted blending)](done/gpu-alpha-translucency.md)** [2026-08-11]
+  DONE 2026-08-17 both halves - engine blend "alpha" (premultiplied over,
+  order-dependent) and the @solidrt/3d library half (transparent materials,
+  back-to-front per-mesh sort owned by the scene, renderOrder). Split from
+  gpu-pipeline-extensions 2026-08-11.
 - **[Branded GPU id types](done/gpu-branded-ids.md)** [2026-07-30]
   Every GPU handle is a plain number across five id spaces, so cross-space
   slips like destroyBuffer(textureId) typecheck and usually hit a valid id in

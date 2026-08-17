@@ -86,13 +86,11 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    `vWorldPos`, `vNormal` and `wrap: "repeat"`. It is arguably the correct
    default for generated scene geometry, and the alternative is a UV-scale
    parameter on every generator. Ship it as a material option or say why not.
-6. [ ] **Transparency.** Engine: the blend factor vocabulary,
-   [gpu-pipeline-blend-modes](../backlog/gpu-pipeline-blend-modes.md) - the
-   old "sorting plus premultiplied" blocker inverted once the library
-   existed, because the scene graph is the sorter. Library: back-to-front
-   transparent sort over stable DrawIds (recomputed only when the camera
-   moves), fix the entry-rebuild-at-end order trap, settle premultiplied
-   vs straight.
+6. [x] **Transparency.** Done 2026-08-17: engine `blend: "multiply"` and
+   `"alpha"` ([gpu-pipeline-blend-modes](../backlog/gpu-pipeline-blend-modes.md)),
+   library `transparent: true` materials + scene-owned back-to-front sort +
+   `renderOrder` ([gpu-alpha-translucency](../done/gpu-alpha-translucency.md)).
+   Premultiplied settled by the pixel contract.
 7. [ ] **Real models: a glTF subset loader.** Library + CLI; the engine entry
    ticket (index buffers) is paid. Direction per the differentiators note:
    run the mature loaders under Bun in the CLI at build/pack time and ship

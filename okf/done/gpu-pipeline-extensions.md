@@ -19,7 +19,7 @@ destination for unrelated asks:
   data textures (was the float-formats bullet).
 - [gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md) - depth as a sampleable,
   nameable texture (was the sampleable-depth bullet).
-- [gpu-alpha-translucency](../backlog/gpu-alpha-translucency.md) - sorted alpha
+- [gpu-alpha-translucency](gpu-alpha-translucency.md) - sorted alpha
   blending (was the open half of the blending bullet).
 - [gpu-depth-func](../backlog/gpu-depth-func.md) - depthCompare option (was the open
   half of the raster-state bullet).
@@ -100,7 +100,7 @@ The landed extensions, in the order demand arrived:
   NOT imply depth-write off). The clear always writes depth; only the draw
   honors depthWrite. Both reported by get_gpu_resources when off their
   defaults. The open half - true alpha translucency - split to
-  [gpu-alpha-translucency](../backlog/gpu-alpha-translucency.md).
+  [gpu-alpha-translucency](gpu-alpha-translucency.md).
 - **Raster state**: cull mode DONE 2026-08-04 - `cull: "none" | "back" |
   "front"` on createRenderPipeline, per entry in `run_pass` with cull
   face/winding in the save/restore set. The winding rule is deliberately

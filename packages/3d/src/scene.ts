@@ -17,7 +17,7 @@
 // each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createDrawTarget, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
@@ -28,6 +28,7 @@ import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { geometryBounds, geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { backgroundPipeline } from "./material.ts"
+import { orderEntries } from "./order.ts"
 import type { Material } from "./material.ts"
 import { createBvh, rayBoxDistance } from "./bvh.ts"
 
@@ -65,6 +66,7 @@ type SceneHooks = {
   _attach(mesh: Mesh): void
   _detach(mesh: Mesh): void
   _setParams(mesh: Mesh, params: ShaderParams): void
+  _reorder(): void
 }
 
 export type SceneNode = {
@@ -100,7 +102,18 @@ export type Mesh = SceneNode & {
   kind: "mesh"
   geometry: Geometry
   material: Material
+  /** Explicit draw-order key (default 0), Three's name: lower draws first.
+   * Sorts within the opaque group and within the transparent group; the
+   * transparent group always follows the opaque one. Set with setRenderOrder. */
+  renderOrder: number
   _entry: DrawId | null
+  /** material.transparent as of the last attach - the entry's actual
+   * pipeline state, and what _detach counts against (setMaterial swaps
+   * mesh.material before the rebuild). */
+  _transparent: boolean
+  /** World-space center of the geometry bounds, kept by the sync walk
+   * beside the picking leaf: the transparent sort key. */
+  _center: Vec3
   _hidden: boolean
   _fresh: boolean
   _params: ShaderParams | null
@@ -282,7 +295,10 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   let mesh = makeNode("mesh") as Mesh
   mesh.geometry = geometry
   mesh.material = material
+  mesh.renderOrder = 0
   mesh._entry = null
+  mesh._transparent = false
+  mesh._center = [0, 0, 0]
   mesh._hidden = false
   mesh._fresh = false
   mesh._params = null
@@ -507,8 +523,15 @@ export function setVisible(node: SceneNode, visible: boolean): void {
   node._scene?._schedule()
 }
 
-/** Swap a mesh's geometry: its draw entry is rebuilt (appended last -
- * order is irrelevant while every entry is opaque and depth-tested). */
+/** Set a mesh's explicit draw-order key (see Mesh.renderOrder). */
+export function setRenderOrder(mesh: Mesh, order: number): void {
+  if (mesh.renderOrder === order) return
+  mesh.renderOrder = order
+  mesh._scene?._reorder()
+}
+
+/** Swap a mesh's geometry: its draw entry is rebuilt (the scene re-sorts
+ * the list, so the mesh keeps its place). */
 export function setGeometry(mesh: Mesh, geometry: Geometry): void {
   if (mesh.geometry === geometry) return
   mesh.geometry = geometry
@@ -570,11 +593,25 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let capture = new Map<number, Mesh>()
   let hover = new Map<number, Mesh>()
 
-  // Live mesh entries in list (draw) order, so a background set after
-  // meshes exist can insert BEFORE the first one. Mesh entries append;
-  // rebuilds re-append; the background entry never joins this list.
-  let entryOrder: DrawId[] = []
+  // Live meshes (those holding a draw entry) in add order; the background
+  // entry never joins this list. Draw order is derived from it by
+  // orderEntries (order.ts) whenever orderDirty. Camera moves and
+  // transparent-mesh moves only dirty the order when two or more transparent
+  // meshes exist - fewer cannot change relative order.
+  let meshes: Mesh[] = []
+  let transparentCount = 0
+  let orderDirty = false
+  // The order last handed to the engine: a resort that lands on the same
+  // permutation (the common case under a moving camera) issues nothing.
+  let lastOrder: DrawId[] = []
   let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId } | null = null
+  let sortEntries = () => {
+    orderDirty = false
+    let order = orderEntries(meshes, view, background?.entry)
+    if (order.length === lastOrder.length && order.every((id, i) => id === lastOrder[i])) return
+    lastOrder = order
+    setDrawOrder(texture, order)
+  }
 
   // Reinsert or refit a mesh's broadphase leaf from its fresh world matrix:
   // the local box's center/extents carried through the absolute matrix (the
@@ -591,6 +628,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let wx = m[0] * cx + m[4] * cy + m[8] * cz + m[12]
     let wy = m[1] * cx + m[5] * cy + m[9] * cz + m[13]
     let wz = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
+    mesh._center[0] = wx
+    mesh._center[1] = wy
+    mesh._center[2] = wz
     let rx = Math.abs(m[0]) * ex + Math.abs(m[4]) * ey + Math.abs(m[8]) * ez
     let ry = Math.abs(m[1]) * ex + Math.abs(m[5]) * ey + Math.abs(m[9]) * ez
     let rz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez
@@ -636,6 +676,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // uCamPos is stored even when no current material declares it.
       cameraPending = false
       setTargetParams(texture, { uViewProj: viewProj, uCamPos: eye })
+      if (transparentCount > 1) orderDirty = true
     }
     let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
       let changed = parentChanged
@@ -657,6 +698,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             mesh._hidden = !shown
             if (shown) mesh._fresh = true
           }
+          if (changed && mesh._transparent && transparentCount > 1) orderDirty = true
           if (!mesh._hidden && (changed || mesh._fresh)) {
             if (mesh.material.normalMatrix) {
               setDrawParams(texture, mesh._entry, {
@@ -680,6 +722,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let c of node.children) walk(c, changed, shown)
     }
     walk(root, false, true)
+    if (orderDirty) sortEntries()
   }
 
   let hooks: SceneHooks = {
@@ -720,7 +763,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         textures: mesh.material.textures,
         instanceCount: 0,
       })
-      entryOrder.push(mesh._entry)
+      meshes.push(mesh)
+      mesh._transparent = mesh.material.transparent === true
+      if (mesh._transparent) transparentCount++
+      orderDirty = true
       mesh._hidden = true
       mesh._fresh = true
       this._schedule()
@@ -728,8 +774,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _detach(mesh) {
       if (mesh._entry !== null) {
         if (!disposed) removeDraw(texture, mesh._entry)
-        let i = entryOrder.indexOf(mesh._entry)
-        if (i >= 0) entryOrder.splice(i, 1)
+        let i = meshes.indexOf(mesh)
+        if (i >= 0) meshes.splice(i, 1)
+        if (mesh._transparent) transparentCount--
+        orderDirty = true
       }
       mesh._entry = null
       // The leaf goes with the entry: a geometry swap rebuilds the entry,
@@ -741,6 +789,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _setParams(mesh, params) {
       if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
+    },
+    _reorder() {
+      orderDirty = true
+      this._schedule()
     },
   }
 
@@ -899,9 +951,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       if (source === null) return
       let built = backgroundPipeline(source, (opts?.label ?? "scene") + "-background")
-      // First in list order: meshes append behind it forever (rebuilds
-      // re-append too), so pinning happens once, here.
-      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: entryOrder[0] })
+      // First in list order: inserted before the first mesh entry, and every
+      // later sort keeps it there.
+      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: meshes[0]?._entry ?? undefined })
       background = { entry, pipeline: built.pipeline, program: built.program }
     },
     project(point) {

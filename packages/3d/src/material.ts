@@ -7,10 +7,10 @@
 //
 // Colors are straight [r, g, b, a?] 0..1 at the API and premultiplied here
 // once, at the boundary (the engine's pixel contract). An alpha below 1
-// does NOT blend yet: v1 pipelines draw opaque (blend "none"), so a
-// translucent color overwrites what is behind it. The engine's blend "alpha"
-// exists; transparency arrives when the library sorts back-to-front (see
-// okf/backlog/gpu-alpha-translucency.md).
+// blends only on a `transparent: true` material (Three's rule: the flag is
+// explicit, alpha alone still draws opaque). Transparent materials build
+// their pipeline with blend "alpha" and depthWrite off, and the scene draws
+// their meshes after the opaque ones, sorted back-to-front per mesh.
 //
 // Custom looks need no material system: the raw layer (compileShader /
 // createRenderPipeline in @solidrt/core/gpu) is first-class, and a scene
@@ -55,6 +55,10 @@ export type Material = {
    * mesh whose geometry layout differs is rejected at add() - the strides
    * disagree, so a mismatch would render garbage, not just miss a channel. */
   layout?: VertexLayout
+  /** True when the pipeline blends over (blend "alpha", depthWrite off):
+   * the scene draws this material's meshes after every opaque one, sorted
+   * back-to-front by mesh origin, and re-sorts them when the camera moves. */
+  transparent?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -96,23 +100,30 @@ const FRAGMENT_MAP_SRC = glsl`
 `
 
 let sharedVertex: ShaderStageId | undefined
-let pipelines: { color?: RenderPipelineId; map?: RenderPipelineId } = {}
+let pipelines: Partial<Record<UnlitClass, RenderPipelineId>> = {}
 
-function pipelineFor(kind: "color" | "map"): RenderPipelineId {
-  let existing = pipelines[kind]
+// One pipeline per unlit CLASS: fragment kind x transparency, since blend
+// state is pipeline state.
+type UnlitClass = "color" | "map" | "color-transparent" | "map-transparent"
+
+function pipelineFor(cls: UnlitClass): RenderPipelineId {
+  let existing = pipelines[cls]
   if (existing !== undefined) return existing
   if (sharedVertex === undefined) sharedVertex = compileShader("vertex", VERTEX_SRC, { header: true })
-  let fragment = compileShader("fragment", kind === "color" ? FRAGMENT_COLOR_SRC : FRAGMENT_MAP_SRC, {
+  let transparent = cls.endsWith("-transparent")
+  let fragment = compileShader("fragment", cls.startsWith("color") ? FRAGMENT_COLOR_SRC : FRAGMENT_MAP_SRC, {
     header: true,
   })
-  let program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + kind })
+  let program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + cls })
   let pipeline = createRenderPipeline(program, {
     attributes: VERTEX_LAYOUTS.standard,
     depth: true,
+    depthWrite: transparent ? false : undefined,
+    blend: transparent ? "alpha" : undefined,
     cull: "back",
-    label: "scene-unlit-" + kind,
+    label: "scene-unlit-" + cls,
   })
-  pipelines[kind] = pipeline
+  pipelines[cls] = pipeline
   return pipeline
 }
 
@@ -121,6 +132,9 @@ export type UnlitOptions = {
   color?: [number, number, number] | [number, number, number, number]
   /** A texture id to sample (tinted by `color` when both are given). */
   map?: TextureId
+  /** Blend over what is behind (color alpha and map alpha both count).
+   * Without it an alpha below 1 still draws opaque. See Material.transparent. */
+  transparent?: boolean
 }
 
 /**
@@ -132,10 +146,16 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let color = opts.color ?? [1, 1, 1]
   let a = color.length === 4 ? color[3] : 1
   let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let transparent = opts.transparent === true
   if (opts.map !== undefined) {
-    return { pipeline: () => pipelineFor("map"), params: { uColor }, textures: { uMap: opts.map } }
+    return {
+      pipeline: () => pipelineFor(transparent ? "map-transparent" : "map"),
+      params: { uColor },
+      textures: { uMap: opts.map },
+      transparent,
+    }
   }
-  return { pipeline: () => pipelineFor("color"), params: { uColor } }
+  return { pipeline: () => pipelineFor(transparent ? "color-transparent" : "color"), params: { uColor }, transparent }
 }
 
 // Mirrors the engine's own preamble rule: a source carrying its own
@@ -208,7 +228,16 @@ export type ShaderMaterialOptions = {
    * setMeshParams. */
   params?: ShaderParams
   textures?: Record<string, TextureId>
-  /** Pipeline state; defaults match unlit: depth: true, cull: "back". */
+  /** Blend over what is behind, with the scene sorting this material's
+   * meshes back-to-front after the opaque ones (see Material.transparent).
+   * Sets the pipeline defaults blend "alpha" and depthWrite false; the
+   * fragment must write premultiplied output (`vec4(rgb * a, a)`). Defaults
+   * to true whenever `blend` is set to anything but "none": every blended
+   * draw belongs after the opaques so it depth-tests against them, and
+   * back-to-front is harmless for the order-independent modes. */
+  transparent?: boolean
+  /** Pipeline state; defaults match unlit: depth: true, cull: "back",
+   * and for transparent materials blend "alpha", depthWrite: false. */
   depth?: boolean
   depthWrite?: boolean
   blend?: BlendMode
@@ -245,9 +274,12 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
   // Attributes live in the vertex stage only, so unlike the uNormal scan
   // there is nothing to look for in the fragment source.
   let layout: VertexLayout = /\baColor\b/.test(opts.vertex) ? "colored" : "standard"
+  let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
+  let depth = opts.depth ?? true
   return {
     normalMatrix: /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment),
     layout,
+    transparent,
     pipeline() {
       if (pipeline === undefined) {
         let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
@@ -257,9 +289,11 @@ export function shaderMaterial(opts: ShaderMaterialOptions): Material {
         destroyShader(fs)
         pipeline = createRenderPipeline(program, {
           attributes: VERTEX_LAYOUTS[layout],
-          depth: opts.depth ?? true,
-          depthWrite: opts.depthWrite,
-          blend: opts.blend,
+          depth,
+          // depthWrite needs a depth buffer, so the transparent default
+          // only applies when there is one.
+          depthWrite: opts.depthWrite ?? (transparent && depth ? false : undefined),
+          blend: opts.blend ?? (transparent ? "alpha" : undefined),
           cull: opts.cull ?? "back",
           topology: opts.topology,
           label: opts.label,

@@ -12,8 +12,8 @@
 // pays nothing. Storage is flat parallel arrays indexed by node id (no
 // per-node objects, no allocation at steady state past tree growth).
 //
-// Pure module by design: no engine imports, so the differential check rig
-// (checks/pick-check.ts) runs it under plain bun against a linear oracle.
+// Pure module by design: no GUI imports, so the differential check rig
+// (checks/pick-check.ts) runs it headless on flux against a linear oracle.
 
 /** Fat-margin fraction of a leaf's largest extent. Bigger = fewer
  * re-inserts while moving, worse query pruning; 5% is the usual trade. */

@@ -11,7 +11,7 @@ blendMode and pointer events like any element. Design rationale:
 
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
-  `lookAt`, `getRotation`, `setVisible` - plain objects with dirty flags, batched to a
+  `lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects with dirty flags, batched to a
   microtask,
   one `setDrawParams` (uModel, plus uNormal for materials declaring it)
   per changed mesh and ONE `setTargetParams` (the shared uViewProj +
@@ -42,8 +42,14 @@ blendMode and pointer events like any element. Design rationale:
   lazy, shared, and app-lifetime (owner-scoped free would break sharing);
   `disposeGeometry` frees them.
 - Materials dedupe hard: one program + one pipeline per material CLASS
-  (unlit color, unlit map), `depth: true` + `cull: "back"`; an instance is
+  (unlit color, unlit map, each opaque or transparent), `depth: true` +
+  `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
+- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`) have check rigs in
+  `checks/`, run headless on flux from the repo root:
+  `bunx srt bundle -f --stdout packages/3d/checks/<name>-check.ts | target/release/flux - [seed]`.
+  They print PASS or FAIL lines and throw on failure (the flux binary exits
+  0 either way - read the output). Extend the rig when you change the module.
 
 ## Components
 
@@ -250,9 +256,26 @@ system.
   sync() turns it on when it writes uModel - never add one live: it has no
   world matrix yet, and drawn before the sync microtask it flashes at the
   world origin for a frame.
-- Alpha does not blend in v1: pipelines are opaque (`blend: "none"`), a
-  translucent color overwrites. Transparency waits on blend factors +
-  sorting (research note, staging step 4).
+- Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
+  [r, g, b, 0.5] })` still draws opaque; `unlit({ ..., transparent: true })`
+  (or `shaderMaterial({ transparent: true })`) builds the pipeline with
+  `blend: "alpha"` and `depthWrite: false` (depth test stays on, so it hides
+  behind opaques without occluding other translucents). The one inference:
+  a `shaderMaterial` with any `blend` but "none" is transparent unless told
+  `transparent: false` - every blended draw belongs after the opaques, and
+  back-to-front is harmless for add/multiply. The scene owns the
+  order: background, opaque meshes by `renderOrder` then add order,
+  transparent meshes by `renderOrder` then back-to-front by the CENTER of
+  the mesh's world bounds in view space (not the origin: off-origin geometry
+  sorts by where it is; not the nearest bounds point: a big translucent
+  ground plane would cover the small translucents on it) - one `setDrawOrder` from sync() whenever the list changed, a
+  renderOrder changed, or (with two or more transparent meshes) the camera
+  or a transparent mesh moved, and skipped when the resort lands on the
+  permutation already issued. Per-mesh sort only: one non-convex translucent
+  mesh still overlaps itself in vertex order, and two large interpenetrating
+  translucents can sort wrong (center distance, not per-pixel) - that is the
+  engine contract, no OIT. A `shaderMaterial({ transparent: true })`
+  fragment must write PREMULTIPLIED output (`vec4(rgb * a, a)`).
 - Rotation is stored as a QUATERNION (`node.quaternion`, `[x, y, z, w]`,
   always unit). There is exactly one rotation field: no `node.rotation`
   shadowing it, because a second field is a second thing to go stale (an
@@ -354,8 +377,10 @@ system.
   lies flat with the hole on y, discs and cylinder caps get a PLANAR disc
   map inscribed in the unit square) but the doc comment is the source.
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
-  list END. Irrelevant while everything is opaque + depth-tested; revisit
-  when transparency lands.
+  list END and dirty the order, so the next sync() re-sorts and the mesh
+  keeps its place. `_transparent` on the mesh is the flag AS ATTACHED
+  (setMaterial swaps `mesh.material` before the rebuild, so _detach must
+  not read the new material's flag).
 - `lathe` takes a CLOSED profile (a cross-section with thickness, or run
   to the axis at x = 0) - it is a solid of revolution, NOT Three's open
   polyline shell. An "open" outline must be closed by the author;
@@ -404,10 +429,8 @@ system.
   Geometry instead.
 - The background covers the whole target with depth off, drawn first: it
   REPLACES the clearColor visually (the clear still runs; you just never
-  see it), and a translucent mesh does not blend over it in-pass yet: the
-  engine has blend "alpha" (order-dependent), but the library has no
-  transparent sort or renderOrder, so materials still draw opaque - the
-  fade-over-backdrop look needs the two-layer composition until then.
+  see it), and a `transparent: true` mesh blends over it in-pass since the
+  background is always entry zero.
 - The background pipeline/program are SCENE-OWNED (unlike shared
   material pipelines): setBackground(null), replacement, and dispose()
   destroy them. Do not hand the background's pipeline to anything else.

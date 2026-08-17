@@ -17,6 +17,7 @@ import {
   setGeometry,
   setMaterial,
   setMeshParams,
+  setRenderOrder,
   setTransform,
   setVisible,
 } from "./scene.ts"
@@ -179,6 +180,8 @@ export type MeshProps = TransformProps & PointerEventProps & {
    * changing every frame prefer `ref` + setMeshParams from onFrame, the
    * same split as setTransform. */
   params?: ShaderParams
+  /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
+  renderOrder?: number
   ref?: (mesh: MeshNode) => void
 }
 
@@ -202,6 +205,10 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     p => {
       if (p !== undefined) setMeshParams(mesh, p)
     },
+  )
+  createEffect(
+    () => props.renderOrder,
+    o => setRenderOrder(mesh, o ?? 0),
   )
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)
