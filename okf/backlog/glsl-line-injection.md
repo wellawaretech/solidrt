@@ -56,3 +56,21 @@ No ANGLE or device testing needed.
 - Numbering is only guaranteed up to the first interpolation that splices in
   newlines. No current shader interpolates at all; document, do not solve.
 - Untagged sources get no injection: tag adoption is the opt-in.
+
+## Cheaper fallback: print the assembled source (2026-08-17)
+
+`#line` fixes the number for a shader written as one literal. It cannot fix
+the composed case, and composition is the path `@solidrt/3d/glsl` actively
+encourages: exported constants (`LIT_VERTEX`, `HEMISPHERE`, `LAMBERT`, ...)
+concatenated into a source, which is explicit and right, but means a compile
+error's line number refers to an assembled string that exists nowhere the
+author can read. Numbering past the first interpolation is already listed
+above as document-do-not-solve, so this is the same limitation seen from the
+consumer side.
+
+Emitting the assembled source alongside the driver's info log on a compile
+failure costs nothing, needs no bundler pass, works for every source
+regardless of tagging, and is strictly better than a correct line number into
+a string nobody has. Worth doing first, and independently: it is the fallback
+for exactly the cases `#line` is documented not to reach. Line-numbering the
+emitted text makes the driver's number directly usable.

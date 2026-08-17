@@ -47,3 +47,25 @@ honestly different: full Skia set between stacked targets, a small
 factor/equation vocabulary within one draw.
 
 Demand-driven: leave the vocabulary as-is until a field report names a mode.
+
+## Demand recorded 2026-08-17: multiply, then alpha
+
+The gate above is met, and both named modes are on this list.
+
+`"add"` covers glows and does it well, but the two-value vocabulary cannot
+**darken**, so the single most common depth cue in 3D content - a shadow
+under a moving object - has no path, and neither does fading anything out
+(a dissolving surface, a distance fade on a prop). The workaround was a 4x4
+Bayer screen-door: compute coverage, compare against an ordered dither
+threshold from `gl_FragCoord`, `discard` below it. No sorting, no blend
+state, works today, and it reads as a deliberate retro effect rather than as
+breakage - but it is not a soft shadow and it does not fade.
+
+`"multiply"` is the one to take first. It is what a projector shadow wants,
+it is order-independent for a single layer, and per the classification above
+it needs none of the sorting or premultiplied answers that defer alpha-over.
+It can land on its own.
+
+Alpha-over stays behind [gpu-alpha-translucency](gpu-alpha-translucency.md)
+and its two prerequisites, which now have a named owner for the sorting half
+(the scene graph) - see that item.

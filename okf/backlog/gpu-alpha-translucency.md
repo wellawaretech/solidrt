@@ -29,6 +29,30 @@ contract (premultiplied, non-linear RGBA8 -
 [gpu-pixel-contract-docs](../done/gpu-pixel-contract-docs.md)), which answers the
 straight-vs-premultiplied half by declaring it.
 
+## Who owns the sort (recorded 2026-08-17)
+
+Second demand for the non-convex case, and with it the missing half of the
+answer: the scene graph is the sorter, and nothing yet says so.
+
+`setDrawOrder` exists at the GPU layer and is documented as the sorting verb.
+`@solidrt/3d` does not surface it at all, and `setGeometry`/`setMaterial`
+re-append the entry at the list end - harmless while everything is opaque,
+and exactly the thing that breaks the moment this item lands. Entry order is
+add order, which is why an inverted-sphere sky dome has to be added first;
+that works but it is implicit.
+
+Two decisions to take together, and they are cheap to take now:
+
+- **Sorting policy.** A `transparent: true` flag on a material, with the
+  scene graph keeping the transparent set back-to-front over stable DrawIds
+  and recomputing only when the camera moves (roadmap item 6's shape), or the
+  app driving `setDrawOrder` itself. Deciding early is the point: the flag
+  changes what a material is, and retrofitting it after transparency ships is
+  a breaking change.
+- **Explicit ordering.** A `renderOrder` on `Mesh`, Three's name for the same
+  quantity, so add-order dependence becomes intentional rather than
+  discovered.
+
 History: the remaining half of the blending bullet in
 [gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md) (additive half done
 2026-07-29); split out 2026-08-11.

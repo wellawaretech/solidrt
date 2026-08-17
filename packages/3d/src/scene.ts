@@ -23,7 +23,7 @@ import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quatFromEuler, quatFromFrame, quatNormalize, transformPoint, transformVector } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromEuler, quatFromFrame, quatNormalize, transformPoint, transformVector } from "./math.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { geometryBounds, geometryBuffers } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -51,6 +51,9 @@ let upScratch: Vec3 = [0, 0, 0]
 let pickInv = mat4()
 let pickOrigin: Vec4 = [0, 0, 0, 0]
 let pickDir: Vec3 = [0, 0, 0]
+// setTransform's rotation compare happens AFTER conversion, so an euler and
+// the quaternion it produces are the same write. Nothing outlives the call.
+let rotScratch = quat()
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
@@ -340,33 +343,55 @@ export type TransformUpdate = {
  * Values are copied in; absent keys keep their current value. This is also
  * the frame-rate escape hatch: call it from onFrame on a node grabbed via
  * `ref`, bypassing signals entirely.
+ *
+ * A write that changes nothing schedules nothing, so driving every node
+ * unconditionally from onFrame costs only the compare for the nodes that
+ * did not move. Rotation is compared after conversion, so passing an euler
+ * equal to the node's current quaternion is also a no-op.
  */
 export function setTransform(node: SceneNode, update: TransformUpdate): void {
-  let p = update.position
-  if (p) {
-    node.position[0] = p[0]
-    node.position[1] = p[1]
-    node.position[2] = p[2]
-  }
   let r = update.rotation
   let q = update.quaternion
   if (r !== undefined && q !== undefined) {
     throw new Error("Pass rotation or quaternion to setTransform, not both")
   }
-  if (r !== undefined) quatFromEuler(node.quaternion, r)
-  else if (q !== undefined) quatNormalize(node.quaternion, q)
-  let s = update.scale
-  if (s !== undefined) {
-    if (typeof s === "number") {
-      node.scale[0] = s
-      node.scale[1] = s
-      node.scale[2] = s
-    } else {
-      node.scale[0] = s[0]
-      node.scale[1] = s[1]
-      node.scale[2] = s[2]
+  // A no-op write costs nothing: driving every node from onFrame is the
+  // intended shape, and most nodes did not move. Exact compares, like
+  // setVisible - a value that survives a float round trip unchanged is the
+  // same value, and an epsilon would need a scale-dependent one anyway.
+  let changed = false
+  let p = update.position
+  if (p && (p[0] !== node.position[0] || p[1] !== node.position[1] || p[2] !== node.position[2])) {
+    node.position[0] = p[0]
+    node.position[1] = p[1]
+    node.position[2] = p[2]
+    changed = true
+  }
+  if (r !== undefined) quatFromEuler(rotScratch, r)
+  else if (q !== undefined) quatNormalize(rotScratch, q)
+  if (r !== undefined || q !== undefined) {
+    let n = node.quaternion
+    if (rotScratch[0] !== n[0] || rotScratch[1] !== n[1] || rotScratch[2] !== n[2] || rotScratch[3] !== n[3]) {
+      n[0] = rotScratch[0]
+      n[1] = rotScratch[1]
+      n[2] = rotScratch[2]
+      n[3] = rotScratch[3]
+      changed = true
     }
   }
+  let s = update.scale
+  if (s !== undefined) {
+    let sx = typeof s === "number" ? s : s[0]
+    let sy = typeof s === "number" ? s : s[1]
+    let sz = typeof s === "number" ? s : s[2]
+    if (sx !== node.scale[0] || sy !== node.scale[1] || sz !== node.scale[2]) {
+      node.scale[0] = sx
+      node.scale[1] = sy
+      node.scale[2] = sz
+      changed = true
+    }
+  }
+  if (!changed) return
   node._localDirty = true
   node._scene?._schedule()
 }

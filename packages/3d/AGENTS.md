@@ -329,6 +329,30 @@ system.
   camera writes (uEye-style per-mesh params are exactly the O(scene) cost
   the shared channel removed). Scene scale honestly: hundreds to a
   few thousand objects, bounded by the interpreter, not the GPU.
+- SCENE-WIDE uniforms go through that same shared channel, and this is the
+  single highest-leverage pattern in the library. `scene.texture` IS the
+  draw target id, so `setTargetParams(scene.texture, { uTime })` merges an
+  app-owned name in beside uViewProj/uCamPos - names merge, a target
+  tolerates zero coverage, neither side clobbers the other. One write per
+  frame however many meshes read it, with the motion itself in vertex
+  shaders off that one clock. `params`/`setMeshParams` is the PER-MESH
+  answer and is O(meshes) per frame; reach for it only when the value
+  genuinely differs per mesh. (A `scene.setParams` wrapper is backlogged;
+  the channel underneath it is what matters and it is here today.)
+- Vec3/Quat arguments are COPIED IN everywhere (`setTransform`, `lookAt`,
+  `setCamera`, params), so ONE scratch array reused every frame is safe -
+  allocating three arrays per node per frame is pure waste. The node's own
+  `position`/`quaternion`/`scale` are the live arrays: read them, do not
+  hand them out and do not mutate them (that write does not sync).
+- `setTransform` early-outs on an unchanged value (rotation compared AFTER
+  euler conversion), so driving every node unconditionally from `onFrame`
+  costs only the compare for nodes that did not move. Compares are exact,
+  like `setVisible`.
+- Per-generator conventions - orientation, UV mapping, which axis a solid
+  stands on, what a cap looks like - live on each generator's doc comment,
+  not here. They are consistent (`plane`/`circle`/`ring` face +z, `torus`
+  lies flat with the hole on y, discs and cylinder caps get a PLANAR disc
+  map inscribed in the unit square) but the doc comment is the source.
 - Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
   list END. Irrelevant while everything is opaque + depth-tested; revisit
   when transparency lands.
