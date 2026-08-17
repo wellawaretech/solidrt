@@ -187,6 +187,13 @@ pub struct Line {
   pub segments: Vec<LineSegment>,
 }
 
+impl Line {
+  /// Rightmost ink edge over the line's segments, from the layout origin.
+  pub fn right_edge(&self) -> f32 {
+    self.segments.iter().map(|s| s.x + s.ink).fold(0.0, f32::max)
+  }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
   pub lines: Vec<Line>,
@@ -226,10 +233,88 @@ pub fn layout(
   max_lines: u32,
   ellipsis: Option<RunMetrics>,
 ) -> Layout {
+  layout_capped(runs, extent, align, max_lines, ellipsis, None)
+}
+
+/// How lines are chosen beyond greedy fitting (CSS text-wrap). Post-passes
+/// over the greedy result, arithmetic only; both keep the greedy line count
+/// and neither applies once `max_lines` truncates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Wrap {
+  /// Greedy: each line takes as much as fits.
+  #[default]
+  Wrap,
+  /// Even line lengths: the widest line gives up its last unit while the
+  /// line count holds, so a two-line heading does not leave a lone word.
+  Balance,
+  /// Greedy, except a lone word on the last line pulls a unit down from the
+  /// line above when that keeps the count.
+  Pretty,
+}
+
+/// `layout` with a wrapping policy.
+pub fn layout_wrap(
+  runs: &[Run],
+  extent: &dyn Fn(LineCursor) -> Vec<LineExtent>,
+  align: Align,
+  max_lines: u32,
+  ellipsis: Option<RunMetrics>,
+  wrap: Wrap,
+) -> Layout {
+  let mut best = layout(runs, extent, align, max_lines, ellipsis);
+  if best.truncated || best.lines.len() < 2 {
+    return best;
+  }
+  let lines = best.lines.len();
+  let overflowing = best.overflowing.len();
+  // A candidate is acceptable when it changed nothing but where lines break.
+  let same_shape = |l: &Layout| l.lines.len() == lines && l.overflowing.len() == overflowing && !l.truncated;
+  match wrap {
+    Wrap::Wrap => {}
+    Wrap::Balance => loop {
+      // Cap every line just under the widest one's ink edge, so that line
+      // drops its last unit; stop when that costs a line.
+      let cap = best.lines.iter().map(|l| l.right_edge()).fold(0.0, f32::max);
+      let next = layout_capped(runs, extent, align, max_lines, ellipsis, Some((0, cap)));
+      if !same_shape(&next) || next.lines.iter().map(|l| l.right_edge()).fold(0.0, f32::max) >= cap {
+        break;
+      }
+      best = next;
+    },
+    Wrap::Pretty => {
+      let last = &best.lines[lines - 1];
+      let units = |l: &Line, out: &Layout| out.runs[l.first..l.end].iter().filter(|p| !runs[p.run].glue).count();
+      if units(last, &best) == 1 {
+        // Cap the line above (and only it) under its ink edge so its last
+        // unit joins the lone word.
+        let cap = best.lines[lines - 2].right_edge();
+        let next = layout_capped(runs, extent, align, max_lines, ellipsis, Some((lines - 2, cap)));
+        if same_shape(&next) && units(&next.lines[lines - 1], &next) >= 2 {
+          best = next;
+        }
+      }
+    }
+  }
+  best
+}
+
+// `layout` with an optional break cap `(from_line, x)`: on lines with index
+// >= from_line a unit only fits while its ink ends left of `x` (from the
+// layout origin). Fitting only; alignment and justify still use the real
+// extents.
+fn layout_capped(
+  runs: &[Run],
+  extent: &dyn Fn(LineCursor) -> Vec<LineExtent>,
+  align: Align,
+  max_lines: u32,
+  ellipsis: Option<RunMetrics>,
+  cap: Option<(usize, f32)>,
+) -> Layout {
   let mut b = Breaker {
     runs,
     extent,
     align,
+    cap,
     out: Layout::default(),
     line: Line::default(),
     extents: Vec::new(),
@@ -276,7 +361,7 @@ pub fn layout(
       let height = run.metrics.height();
       loop {
         let width = b.open(height);
-        if b.pen + ink <= width {
+        if b.pen + ink <= width && b.under_cap(b.pen + ink) {
           break;
         }
         // Does not fit here: try the line's next segment, then the next
@@ -338,6 +423,7 @@ struct Breaker<'a> {
   runs: &'a [Run],
   extent: &'a dyn Fn(LineCursor) -> Vec<LineExtent>,
   align: Align,
+  cap: Option<(usize, f32)>,
   out: Layout,
   // The open line: `first..end` of `out.runs` are on it, `y` its top. Its
   // segments are `extents` (empty until the line's first unit arrives) and
@@ -383,6 +469,15 @@ impl Breaker<'_> {
       self.pen = 0.0;
     }
     self.extents[self.seg].width
+  }
+
+  // Whether an ink edge at `pen` in the current segment is left of the break
+  // cap, if one applies to the open line.
+  fn under_cap(&self, pen: f32) -> bool {
+    match self.cap {
+      Some((from, x)) if self.out.lines.len() >= from => self.extents[self.seg].x + pen < x,
+      _ => true,
+    }
   }
 
   // Place the waiting floats at the current y without opening a line: asks

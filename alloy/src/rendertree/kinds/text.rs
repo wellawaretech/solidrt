@@ -3,7 +3,7 @@ use crate::impellers::{
   DisplayListBuilder, FontStyle, FontWeight, Paragraph, ParagraphBuilder, ParagraphStyle, Point, Rect, Size,
   TextAlignment, TypographyContext,
 };
-use crate::rendertree::text_layout::{self, Align, Clear, Layout, LineCursor, LineExtent, Run, RunMetrics, Side};
+use crate::rendertree::text_layout::{self, Align, Clear, Layout, LineCursor, LineExtent, Run, RunMetrics, Side, Wrap};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use std::cell::RefCell;
@@ -66,6 +66,8 @@ pub struct Text {
   // First-line indent in pixels; negative hangs: the first line starts at 0
   // and every following line is indented by the magnitude. Owned path only.
   pub text_indent: f32,
+  // Owned path only.
+  pub text_wrap: Wrap,
   pub line_height: f32,
   // Paint-time box overrides, mirroring Rectangle's x/y/w/h. x/y offset the
   // drawn paragraph. w overrides the shaping (wrap) width, which otherwise
@@ -107,6 +109,7 @@ impl Default for Text {
       text_overflow: TextOverflow::default(),
       overflow_wrap: OverflowWrap::default(),
       text_indent: 0.0,
+      text_wrap: Wrap::default(),
       line_height: 0.0,
       x: None,
       y: None,
@@ -133,6 +136,7 @@ struct ParaKey {
   text_overflow: TextOverflow,
   overflow_wrap: OverflowWrap,
   text_indent: f32,
+  text_wrap: Wrap,
   line_height: f32,
   paint: PaintState,
 }
@@ -149,6 +153,7 @@ impl ParaKey {
       && self.text_overflow == t.text_overflow
       && self.overflow_wrap == t.overflow_wrap
       && self.text_indent == t.text_indent
+      && self.text_wrap == t.text_wrap
       && self.line_height == t.line_height
       && self.paint == t.paint
   }
@@ -165,6 +170,7 @@ impl ParaKey {
       text_overflow: t.text_overflow.clone(),
       overflow_wrap: t.overflow_wrap,
       text_indent: t.text_indent,
+      text_wrap: t.text_wrap,
       line_height: t.line_height,
       paint: t.paint.clone(),
     }
@@ -586,11 +592,12 @@ impl Text {
       };
       vec![LineExtent { x, width: (width - x).max(0.0) }]
     };
-    let mut layout = text_layout::layout(&metrics(&owned.runs), &extent, align, self.max_lines, ellipsis);
+    let wrap = self.text_wrap;
+    let mut layout = text_layout::layout_wrap(&metrics(&owned.runs), &extent, align, self.max_lines, ellipsis, wrap);
     let mut runs = None;
     if self.overflow_wrap == OverflowWrap::Anywhere && !layout.overflowing.is_empty() {
       let split = Self::split_graphemes(typography, &self.run_styles(), &owned.runs, &layout.overflowing);
-      layout = text_layout::layout(&metrics(&split), &extent, align, self.max_lines, ellipsis);
+      layout = text_layout::layout_wrap(&metrics(&split), &extent, align, self.max_lines, ellipsis, wrap);
       runs = Some(split);
     }
     if owned.layouts.len() >= MAX_CACHED_WIDTHS {
@@ -675,6 +682,10 @@ impl Text {
   }
   pub fn set_text_indent(&mut self, v: f32) -> Damage {
     self.text_indent = v;
+    Damage::Layout
+  }
+  pub fn set_text_wrap(&mut self, v: Wrap) -> Damage {
+    self.text_wrap = v;
     Damage::Layout
   }
 

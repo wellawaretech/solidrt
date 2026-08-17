@@ -614,6 +614,14 @@ export interface TextProps extends PaintProps, PointerProps, TextRunProps {
    */
   textIndent?: number
   /**
+   * How lines are chosen beyond greedy fitting (CSS text-wrap): "wrap"
+   * (default) is greedy; "balance" evens the line lengths while keeping the
+   * line count (headings, captions); "pretty" is greedy except that a lone
+   * word on the last line pulls one down from the line above. Neither
+   * applies once maxLines truncates. Owned layout only.
+   */
+  textWrap?: "wrap" | "balance" | "pretty"
+  /**
    * EXPERIMENTAL. Which engine lays the text out: "paragraph" (default) hands
    * the whole text to one Impeller paragraph, "owned" shapes each word on its
    * own and breaks lines in alloy (okf/backlog/text-layout-owned.md). LTR

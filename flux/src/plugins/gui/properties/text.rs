@@ -3,6 +3,7 @@ use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
 use super::{f32_of, paint, str_of};
 use crate::plugins::gui::value::PropValue;
 use alloy::rendertree::Damage;
+use alloy::rendertree::text_layout::Wrap;
 use alloy::rendertree::{OverflowWrap, Span, Text, TextLayoutMode, TextOverflow};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
@@ -36,6 +37,12 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
       v => return Err(format!("Unknown overflowWrap value \"{v}\"; expected normal or anywhere")),
     }),
     "textIndent" => text.set_text_indent(f32_of(value, "textIndent")?),
+    "textWrap" => text.set_text_wrap(match str_of(value, "textWrap")? {
+      "wrap" => Wrap::Wrap,
+      "balance" => Wrap::Balance,
+      "pretty" => Wrap::Pretty,
+      v => return Err(format!("Unknown textWrap value \"{v}\"; expected wrap, balance or pretty")),
+    }),
     "textLayout" => text.set_layout_mode(match str_of(value, "textLayout")? {
       "paragraph" => TextLayoutMode::Paragraph,
       "owned" => TextLayoutMode::Owned,

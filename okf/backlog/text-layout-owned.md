@@ -272,11 +272,18 @@ paragraph reports.
       Middle exclusions, obstacle lists and the like are deliberately NOT
       props: `float` is where the shape props stop; anything further is app
       composition on [text-layout-primitives](text-layout-primitives.md).
-   c. `textWrap="wrap" | "balance" | "pretty"` (CSS text-wrap) as
-      post-passes over the greedy core: balance = binary-search the fixed
-      width down to the narrowest that keeps greedy's line count; pretty =
-      pull one unit down when the last line is a lone word and the line
-      above can spare it. Arithmetic only.
+   c. DONE (2026-08-17): `textWrap="wrap" | "balance" | "pretty"`
+      (`text_layout::layout_wrap`, `Wrap`): post-passes over greedy via a
+      break cap `(from_line, x)` that only affects fitting (alignment and
+      justify still use the real extents, so a balanced right-aligned
+      heading still ends at the box edge). Balance: repeatedly cap under
+      the widest line's ink edge while the line count and overflow set
+      hold (exact, terminates at the widest unit). Pretty: when the last
+      line is a lone unit, cap the line above (only) under its ink edge so
+      its last unit drops; accept if the count holds and the last line has
+      two or more units. Neither runs when truncated by maxLines. Under
+      justify, balance changes breaks but lines still fill the width, as in
+      CSS. Owned only. Verified: unit test and the probe's balanced heading.
    Later, as apps ask: hyphenation (`hyphenation` crate, needs re-shaping
    of the halves, fits the overflow re-split machinery), hanging
    punctuation, text inside a shape (the hook exists once a. lands).

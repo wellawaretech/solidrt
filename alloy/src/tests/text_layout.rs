@@ -1,6 +1,6 @@
 use crate::rendertree::text_layout::{
-  layout, max_intrinsic_width, min_intrinsic_width, segments, Align, LineCursor, LineExtent, PlacedRun, Run, RunMetrics,
-  Clear, Side,
+  layout, layout_wrap, max_intrinsic_width, min_intrinsic_width, segments, Align, Clear, LineCursor, LineExtent,
+  PlacedRun, Run, RunMetrics, Side, Wrap,
 };
 
 fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
@@ -314,4 +314,36 @@ fn clear_starts_below_earlier_floats() {
   assert_eq!(l.floats[1], PlacedRun { run: 1, x: 0.0, y: 30.0 });
   assert_eq!(l.runs[0].x, 20.0);
   assert_eq!(l.runs[0].y, 30.0);
+}
+
+#[test]
+fn balance_evens_lines_and_pretty_rescues_a_lone_last_word() {
+  // Seven units of ink 10 (gap 2) at 70: greedy puts 6 on the first line
+  // and leaves one word alone. Balance keeps two lines but evens them to 4
+  // and 3; pretty only pulls one down (5 and 2). Alignment still uses the
+  // full width: right-aligned balanced lines end at 70.
+  let runs: Vec<Run> = (0..7).map(|_| word(12.0, 10.0)).collect();
+  let greedy = layout_wrap(&runs, &full(70.0), Align::Left, 0, None, Wrap::Wrap);
+  assert_eq!(greedy.lines.len(), 2);
+  assert_eq!(greedy.lines[0].end, 6);
+  let balanced = layout_wrap(&runs, &full(70.0), Align::Left, 0, None, Wrap::Balance);
+  assert_eq!(balanced.lines.len(), 2);
+  assert_eq!(balanced.lines[0].end, 4);
+  assert_eq!(balanced.runs[4].y, 10.0);
+  let pretty = layout_wrap(&runs, &full(70.0), Align::Left, 0, None, Wrap::Pretty);
+  assert_eq!(pretty.lines.len(), 2);
+  assert_eq!(pretty.lines[0].end, 5);
+  let right = layout_wrap(&runs, &full(70.0), Align::Right, 0, None, Wrap::Balance);
+  assert_eq!(right.runs[3].x + 10.0, 70.0);
+  assert_eq!(right.runs[6].x + 10.0, 70.0);
+  // Nothing to do: one line, or a last line that is not a lone word.
+  let short: Vec<Run> = (0..3).map(|_| word(12.0, 10.0)).collect();
+  assert_eq!(layout_wrap(&short, &full(70.0), Align::Left, 0, None, Wrap::Balance).lines.len(), 1);
+  let eight: Vec<Run> = (0..8).map(|_| word(12.0, 10.0)).collect();
+  let p = layout_wrap(&eight, &full(70.0), Align::Left, 0, None, Wrap::Pretty);
+  assert_eq!(p.lines[0].end, 6);
+  // Truncated text is left greedy.
+  let t = layout_wrap(&runs, &full(70.0), Align::Left, 1, None, Wrap::Balance);
+  assert!(t.truncated);
+  assert_eq!(t.lines[0].end, 6);
 }
