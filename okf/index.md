@@ -396,25 +396,21 @@ Shaped, not started.
   A flux:stdin (or flux:tty) module for cross-platform raw-mode keystroke
   reading, the missing piece for any interactive terminal UI under flux, not
   just the CLI repl.
-- **[Inline styled runs in <text> via <span>](backlog/text-inline-spans.md)** [2026-08-16]
-  A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
-  a word at a time in a wrapping row; Impeller shapes styled runs natively, so
-  expose them as <span> children of <text> plus the paragraph props the API
-  leaves unused.
-- **[Own the text layout, demote drawParagraph to a shaper](backlog/text-layout-owned.md)** [2026-08-16]
-  Impeller's paragraph is a black box for line breaking, so inline elements,
-  exclusions, custom breaking and cheap re-layout are unreachable; experiment
-  with a pretext-style split where every paragraph is a single-line
-  single-style run we measure once and place ourselves.
-- **[Text layout primitives for apps](backlog/text-layout-primitives.md)** [2026-08-17]
-  Expose the owned text layout's building blocks (prepare, next line for a
-  width from a cursor, draw a laid-out line) to app code, so editorial layouts
-  (column handoff, obstacles, fitted headlines) are app work on a stable
-  foundation instead of ever more <text> props.
+- **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
+  The owned text engine places wrap units on a line in logical order and
+  treats "start" as left, so RTL rich text spanning styled runs on one line,
+  RTL paragraph alignment and mixed-direction line breaks come out wrong; feed
+  UAX #9 levels into the breaker and placer.
 - **[Interpolated text may replace the whole text node on update](backlog/text-multi-child-replacement.md)** [2026-08-14]
   Updating one interpolation in a multi-child <text> was observed to replace
   the entire text node rather than the changed part; unverified since the
   Solid 2.0 bump, so the first step is a repro.
+- **[Own glyph rasterizer behind the shaper seam](backlog/text-own-rasterizer.md)** [2026-08-17]
+  Text quality is capped by what Impeller's paragraph rasterizes (grayscale AA
+  only, no gamma or stem darkening for light-on-dark, no letter spacing or
+  variation axes in the C API); the owned layout reduced the engine's job to
+  shape-one-run and draw-one-run, so a second implementation with its own
+  glyph atlas can replace it where quality matters.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
@@ -815,6 +811,21 @@ Finished, kept for the reasoning.
   prop runs one pass over that texture and composites the result. Plan decided
   2026-08-03; all three stages done and verified 2026-08-04. Android sanity
   run for exact-size storage pending.
+- **[Inline styled runs in <text> via <span>](done/text-inline-spans.md)** [2026-08-16]
+  A paragraph cannot mix styles, so a bold lead-in or inline code is laid out
+  a word at a time in a wrapping row; Impeller shapes styled runs natively, so
+  expose them as <span> children of <text> plus the paragraph props the API
+  leaves unused.
+- **[Own the text layout, demote drawParagraph to a shaper](done/text-layout-owned.md)** [2026-08-16]
+  Impeller's paragraph is a black box for line breaking, so inline elements,
+  exclusions, custom breaking and cheap re-layout are unreachable; experiment
+  with a pretext-style split where every paragraph is a single-line
+  single-style run we measure once and place ourselves.
+- **[Text layout primitives for apps](done/text-layout-primitives.md)** [2026-08-17]
+  Expose the owned text layout's building blocks (prepare, next line for a
+  width from a cursor, draw a laid-out line) to app code, so editorial layouts
+  (column handoff, obstacles, fitted headlines) are app work on a stable
+  foundation instead of ever more <text> props.
 - **[Paint properties on the texture element](done/texture-element-compositing.md)** [2026-07-27]
   texture/d-texture carried no PaintProps, so two GPU layers could not be
   composited additively in the tree; fixed by giving the texture kind the same
@@ -932,6 +943,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   stylesheet question asks, and the constraint on anything more is fixed - no
   cascade, no selectors, or the reactive seam and repaint-boundary model stop
   holding.
+- **[Text shaping and layout costs, measured](notes/text-shaping-costs.md)** [2026-08-17]
+  What one Impeller paragraph per wrap unit costs against one paragraph per
+  width, and what the shared word cache changes; the numbers under the owned
+  text engine's claims (pixel parity, cold shaping a wash, re-layout 14x
+  cheaper, edits re-shape only their words).
 - **[Update mechanism and client storage](notes/update-mechanism.md)** [2026-07-16]
   "Survey and agreed direction: bundle OTA first with a signed manifest, dev
   and production converging on one client binary, a named data dir with a

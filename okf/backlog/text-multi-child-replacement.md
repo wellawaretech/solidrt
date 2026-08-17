@@ -42,5 +42,5 @@ If it does reproduce, the questions to answer before proposing a fix:
 
 Source: root TODO.md, migrated 2026-08-14.
 
-[text-inline-spans](text-inline-spans.md) makes multi-child `<text>` the
+[text-inline-spans](../done/text-inline-spans.md) makes multi-child `<text>` the
 normal case; do this repro as part of (or before) its stage 2.

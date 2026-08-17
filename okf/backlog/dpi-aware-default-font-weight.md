@@ -40,5 +40,6 @@ Two things to settle while doing it:
 Source: root KNOWN_ISSUES.md, migrated 2026-08-14.
 
 Longer term the workaround goes away with an own rasterizer behind the
-shaper trait in [text-layout-owned](text-layout-owned.md), which is where
+shaper trait ([text-own-rasterizer](text-own-rasterizer.md), grown out of
+[text-layout-owned](../done/text-layout-owned.md)), which is where
 gamma or contrast compensation for light-on-dark text can actually be done.

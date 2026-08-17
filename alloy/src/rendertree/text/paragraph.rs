@@ -35,7 +35,6 @@ impl Text {
   }
 
   pub(super) fn measure_paragraph(&self, ctx: &MeasureContext) -> Size {
-
     let Some(intrinsic) = self.shaped(&ctx.platform.typography(), f32::MAX) else {
       return Size::zero();
     };

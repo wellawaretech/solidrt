@@ -90,7 +90,7 @@ text on both sides of moving obstacles, drop cap, fitted headline) from
 core primitives without touching alloy, at animation frame rates on
 prepared text.
 
-## Open questions
+## Deliberately not done (until asked)
 
 - Whether `<text>` itself should be reimplemented on the exposed blocks
   (dogfooding) or keep its private path (it keeps it: the blocks are the
@@ -108,3 +108,5 @@ prepared text.
   cut from; its stages 4c, 6 and 2d landed first (2026-08-17).
 - [text-inline-spans](text-inline-spans.md): the `<span>` API the runs
   carry.
+- [text-bidi](../backlog/text-bidi.md): the cursor stays logical; visual
+  order is the placer's job when bidi lands.

@@ -6,9 +6,12 @@ created: 2026-08-16
 
 # Own the text layout, demote drawParagraph to a shaper
 
-Experimental. If it does not pan out, [text-inline-spans](text-inline-spans.md)
-is the fallback: same `<span>` API on top of Impeller's style stack. The API
-is engine-neutral; this item is about what sits under it.
+Done (2026-08-17): the owned engine is the text engine. Started as an
+experiment with [text-inline-spans](text-inline-spans.md) as the fallback
+(same `<span>` API on Impeller's style stack); the fallback was never
+needed. Open work that came out of it: [text-bidi](../backlog/text-bidi.md)
+and, as a kept idea, [text-own-rasterizer](../backlog/text-own-rasterizer.md).
+Measurements: [text-shaping-costs](../notes/text-shaping-costs.md).
 
 ## Problem
 
@@ -71,41 +74,14 @@ via the run's glyph info plus the run's offset. No glyph math of our own.
 
 ## Shaper is a trait
 
-Under this split the engine's contract collapses to two calls on one run:
-
-- `shape(text, style) -> {width, ascent, descent, glyph positions}`
-- `draw(run, x, y)`
-
-Segmentation, breaking, alignment, ellipsis, spans, inline atoms and
-selection sit above that trait and never see the engine. First
-implementation: single-line SkParagraph via Impeller, as described above.
-Candidate second implementation: cosmic-text (rustybuzz shaping + swash
-rasterization, pure Rust), which also brings variation axes and letter
-spacing that the Impeller C surface will never expose. Caveat: Impeller has
-no draw-glyphs primitive, so a non-Skia shaper must bring its own
-rasterization: a glyph atlas texture drawn with `DrawTextureRect` (or
-outlines as `draw_path`), plus font discovery and fallback (system fonts,
-packaged Noto, emoji), which today ride on the typography context. That is
-where quality lives - AA, gamma-corrected blending or stem darkening for
-light-on-dark, subpixel positioning, optional LCD AA on desktop, hinting
-policy per DPI - and it is why the swap is worth having.
-
-Evidence it renders acceptably: `scripts/changelog/changelog-shot.tsx` is
-this architecture done crudely (per-word paragraphs, flexbox as the breaker)
-and looks fine, so per-segment shaping is not a visible fidelity problem for
-Latin text.
+The engine's contract collapsed to shape-one-run and draw-one-run; the
+reasoning and the candidate second implementation moved to
+[text-own-rasterizer](../backlog/text-own-rasterizer.md).
 
 ## Bidi
 
-Bidirectional text (UAX #9) is deliberately out of the first stages: runs
-are placed on a line in logical order and "start" means left. Because a run
-is a real Impeller paragraph, an RTL or mixed word, or a whole RTL sentence
-in one style, still shapes and reorders correctly inside its run. What
-regresses relative to today is confined to RTL rich text spanning styled runs
-on one line, RTL paragraph alignment, and break positions in mixed-direction
-lines. Adding it later means feeding `unicode-bidi` levels to the breaker
-and the placer; it is an input, not a redesign. Word-level segmentation from
-day one keeps that door open.
+Deliberately out of every stage here; the door was kept open by word-level
+segmentation. Now its own item: [text-bidi](../backlog/text-bidi.md).
 
 ## Costs to measure, not guess
 
@@ -121,40 +97,17 @@ day one keeps that door open.
 
 ## Stage 1 findings (2026-08-16)
 
-Implemented behind `<text textLayout="owned">` (default stayed
-`"paragraph"` until stage 6 made owned the only engine apps see). Code, as
-of the 2026-08-17 reorganization, `alloy/src/rendertree/text/`: `layout.rs`
-(segmenter via unicode-linebreak, breaker, baseline placement, intrinsic
-widths; pure, no font or engine types), `shape.rs` (`Text::prepare_owned`
-/`owned_layout`: one Impeller paragraph per wrap unit, ParaKey cache, the
-grapheme re-split), `paragraph.rs` (the paragraph engine), `runs.rs` (the
+Measurements cut to [text-shaping-costs](../notes/text-shaping-costs.md).
+Code, as of the 2026-08-17 reorganization, `alloy/src/rendertree/text/`:
+`layout.rs` (segmenter via unicode-linebreak, breaker, baseline placement,
+intrinsic widths; pure, no font or engine types), `shape.rs`
+(`Text::prepare_owned`/`owned_layout`: one Impeller paragraph per wrap unit,
+ParaKey cache, the grapheme re-split, `prepare_units` for the app-facing
+primitives), `words.rs` (the shared word cache), `paragraph.rs` (the
+paragraph engine, kept behind `Text.paragraph_engine`), `runs.rs` (the
 run/span model), `mod.rs` (the `Text` element); unit tests in
-`alloy/src/tests/text_layout.rs`. Probe: `text-layout-probe.tsx` renders
-the newest changelog bullets plus Latin+CJK, hard-break and unbreakable
-samples twice side by side; `alloy/examples/text_layout_bench.rs` times the
-two paths; `alloy/examples/para_metrics_probe.rs` shows what a single-line
-paragraph reports.
-
-- Pixels: identical to drawParagraph on every changelog bullet and the mixed
-  Latin/CJK sample (0 differing channels over the compared columns). One
-  paragraph per wrap unit gives advance (`get_max_intrinsic_width`, includes
-  trailing whitespace) and ink width (`get_longest_line_width`, excludes it)
-  in one build, and the summed advances match Impeller's own placement to
-  the sub-pixel.
-- Known difference: a word wider than the wrap width overflows on the owned
-  path; Impeller breaks inside it at grapheme level. Stage 2 work (a
-  grapheme fallback for oversized units).
-- Cost, release, 463-byte paragraph = 73 wrap units. Cold (text SkParagraph
-  has never seen, i.e. first render and every real text change): paragraph
-  0.83 ms vs owned prepare 0.79 ms, a wash, because SkParagraph's cost is
-  per glyph run either way. Re-layout at a new width from prepared runs:
-  0.6 us vs a paragraph rebuild of 8 us (a SkParagraph global-cache hit; a
-  cold rebuild is the 0.83 ms). Owned's warm prepare of unchanged text is
-  ~200 us for the 73 objects; not a text-change number, since a changed
-  string misses SkParagraph's cache on both paths. A per-segment cache
-  (word text + style) would make an edit re-shape one word instead of 73;
-  not built in stage 1, so no claim there. Objects alive per paragraph:
-  one per wrap unit; the number to watch.
+`alloy/src/tests/text_layout.rs`. Probe: `text-layout-probe.tsx`;
+bench: `alloy/examples/text_layout_bench.rs`.
 
 ## Stages
 
@@ -299,27 +252,26 @@ paragraph reports.
    Later, as apps ask: hyphenation (`hyphenation` crate, needs re-shaping
    of the halves, fits the overflow re-split machinery), hanging
    punctuation, text inside a shape (the hook exists once a. lands).
-5. Bidi (POSTPONED, user decision 2026-08-16): levels into breaker and
-   placer, RTL alignment, RTL samples.
+5. Bidi: postponed 2026-08-16, now [text-bidi](../backlog/text-bidi.md).
 6. DONE (2026-08-17): owned is the engine. The `textLayout` prop, the
    `TextLayoutMode` enum and every "owned only" caveat in types/docs are
    gone; the probe and the changelog shot are single-engine. The
    drawParagraph-as-layout path itself stays in `text/paragraph.rs`
    (`Text::shaped`, `ParaCache`) behind a Rust-only
    `Text.paragraph_engine: bool` (default false, no prop): a reference
-   and fallback engine, ~100 lines, worth keeping until the rasterizer
-   (7) lands. Spans, atoms, floats, indent and wrap do nothing on it.
+   and fallback engine, ~100 lines, worth keeping until a second shaper
+   lands (7). Spans, atoms, floats, indent and wrap do nothing on it.
    Sanity: gallery example and probe render unchanged.
-7. Own rasterizer: second shaper implementation behind the trait with our
-   own glyph atlas, aimed first at light-on-dark quality; retire the
-   Medium-weight workaround when it lands.
+7. Own rasterizer: kept as an idea, not scheduled:
+   [text-own-rasterizer](../backlog/text-own-rasterizer.md).
 
 ## Related
 
-- [text-inline-spans](text-inline-spans.md): the fallback and the API.
+- [text-inline-spans](text-inline-spans.md): the fallback and the API
+  (done through this item).
 - [text-layout-primitives](text-layout-primitives.md): the blocks this
-  engine should expose to apps once stages 4c, 6 and 2d have landed.
-- [scoped-text-defaults](scoped-text-defaults.md),
-  [dpi-aware-default-font-weight](dpi-aware-default-font-weight.md): the
-  default paragraph style is the base every run's style key layers on.
-- [app-wide-zoom](app-wide-zoom.md): cheap re-layout at scale.
+  engine exposes to apps (`prepareText`, `layoutNextLine`).
+- [scoped-text-defaults](../backlog/scoped-text-defaults.md),
+  [dpi-aware-default-font-weight](../backlog/dpi-aware-default-font-weight.md):
+  the default paragraph style is the base every run's style key layers on.
+- [app-wide-zoom](../backlog/app-wide-zoom.md): cheap re-layout at scale.

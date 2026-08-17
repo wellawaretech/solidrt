@@ -30,5 +30,5 @@ okf was restructured; the other half is
 [state-variant-selection](state-variant-selection.md).
 
 Not to be confused with the intra-paragraph cascade in
-[text-inline-spans](text-inline-spans.md), which resolves span overrides in
+[text-inline-spans](../done/text-inline-spans.md), which resolves span overrides in
 Rust at shape time and does not inherit across the tree.

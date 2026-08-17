@@ -1,7 +1,7 @@
 use super::Text;
 use crate::impellers::{FontStyle, FontWeight, Size};
-use crate::rendertree::text::layout::{Clear, Side};
 use crate::rendertree::kinds::hash_f32;
+use crate::rendertree::text::layout::{Clear, Side};
 use crate::rendertree::{Damage, Element, ElementKind, PaintState};
 use std::hash::{Hash, Hasher};
 

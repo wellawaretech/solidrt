@@ -114,11 +114,11 @@ strut and height behavior.
 
 - Components-level `Text` and the theme: pass span children through, or
   offer a themed `Span`. Written down only; wait for an app to need it.
-- [dpi-aware-default-font-weight](dpi-aware-default-font-weight.md) touches
+- [dpi-aware-default-font-weight](../backlog/dpi-aware-default-font-weight.md) touches
   the same default-style path; with runs, the default weight is the
   paragraph-level default that spans override. Whichever lands second adapts.
 
-Alternative under evaluation: [text-layout-owned](text-layout-owned.md)
-keeps this API but replaces Impeller's style stack with our own line
-breaker over single-run paragraphs. If that spike fails, this item is the
-path.
+Outcome (2026-08-17): delivered through [text-layout-owned](text-layout-owned.md),
+which keeps this API but replaces Impeller's style stack with our own line
+breaker over single-run paragraphs. The Impeller-style-stack implementation
+described above was never built; this file is the API's design record.
