@@ -60,7 +60,7 @@ pub struct GpuRenderPipelineInfo {
   /// The create's debug label, when one was given.
   pub label: Option<String>,
   pub topology: &'static str,
-  /// "none" or "add".
+  /// "none", "add", "multiply" or "alpha".
   pub blend: &'static str,
   /// "none", "back", or "front".
   pub cull: &'static str,
@@ -90,7 +90,7 @@ pub struct GpuDrawInfo {
   /// instance attributes.
   pub instance_buffer_id: Option<u64>,
   pub topology: &'static str,
-  /// "none" or "add".
+  /// "none", "add", "multiply" or "alpha".
   pub blend: &'static str,
   /// "none", "back", or "front".
   pub cull: &'static str,
@@ -141,7 +141,7 @@ pub struct GpuPipelineInfo {
   pub depth: bool,
   /// Whether the draw writes depth; None on a fragment-only target.
   pub depth_write: Option<bool>,
-  /// "none" or "add"; None on a fragment-only target.
+  /// "none", "add", "multiply" or "alpha"; None on a fragment-only target.
   pub blend: Option<&'static str>,
   /// "none", "back", or "front"; None on a fragment-only target.
   pub cull: Option<&'static str>,

@@ -397,9 +397,25 @@ declare module "flux:gpu" {
    * depth-tested additive pass usually pairs with `depthWrite: false`; with
    * writes on, unsorted geometry depth-rejects its own later fragments and
    * accumulation becomes draw-order-dependent. That pairing is the app's to
-   * state - neither option implies the other.
+   * state - neither option implies the other. "multiply" scales
+   * (glBlendFunc(DST_COLOR, ZERO)): each fragment multiplies what is already
+   * in the target, all four channels, so it darkens where "add" brightens -
+   * a projected shadow, a dust pass. Order-independent like "add", same
+   * `depthWrite: false` pairing. On the premultiplied target a uniform factor
+   * across rgb and alpha fades the existing pixels; alpha 1 with rgb below 1
+   * darkens color only - so a strength-weighted shadow is
+   * `vec4(mix(vec3(1.0), shadowColor, strength), 1.0)`, not alpha =
+   * strength (that fades instead). "alpha" composites OVER
+   * (glBlendFunc(ONE, ONE_MINUS_SRC_ALPHA)): classic translucency, with the
+   * fragment written premultiplied like every target pixel -
+   * `vec4(color * a, a)`, never straight rgb with a loose alpha. It is the
+   * one order-DEPENDENT mode: the result follows draw-list order, so
+   * translucent geometry must land back-to-front - by draw-list ordering
+   * (`before`, `setDrawOrder`) or a sorting layer above - and normally after
+   * the opaque draws with `depthWrite: false`, so it depth-tests against them
+   * without occluding what it only tints. Nothing sorts for you here.
    */
-  export type BlendMode = "none" | "add"
+  export type BlendMode = "none" | "add" | "multiply" | "alpha"
   /**
    * Face culling for a pipeline's draws. "none" (default) rasters both faces
    * - the two-sided fallback open surfaces need. "back" discards faces wound

@@ -1,12 +1,19 @@
 ---
 title: Alpha translucency (sorted blending)
-description: Blending within a draw is additive-only, so non-convex transparent meshes and per-particle-colored accumulation have no path (the convex workaround splits front/back faces into two composited targets). The mode itself is trivial; what defers it is sorted geometry and the straight-vs-premultiplied answer against Impeller's compositing. Split from gpu-pipeline-extensions 2026-08-11.
+description: Engine half DONE 2026-08-17 (blend "alpha", premultiplied over, order-dependent). What remains is the library half in @solidrt/3d, where nothing yet sorts translucent meshes back-to-front or exposes renderOrder, so materials still draw opaque. Split from gpu-pipeline-extensions 2026-08-11.
 created: 2026-08-11
 ---
 
 # Alpha translucency
 
-Symptom: transparent geometry has no general path. Blending within one draw
+Engine half landed 2026-08-17: `blend: "alpha"` (`ONE, ONE_MINUS_SRC_ALPHA`,
+premultiplied output, order-dependent, app orders the list) - see
+[gpu-pipeline-blend-modes](gpu-pipeline-blend-modes.md). What follows is the
+history and the open library half: `@solidrt/3d` still draws every material
+opaque and has no sort or `renderOrder`, so the two decisions under "Who owns
+the sort" are the remaining work.
+
+Symptom (as recorded 2026-08-11): transparent geometry has no general path. Blending within one draw
 is additive-only (`blend: "add"`, landed 2026-07-29); classic alpha
 translucency (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA` or its premultiplied form)
 is not offered. The known workaround is convex-only: front and back faces

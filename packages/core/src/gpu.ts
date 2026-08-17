@@ -21,8 +21,10 @@
 // `<texture>` elements and set their `blendMode` (e.g. `blendMode="plus"` for
 // an additive pass over a base pass) instead of writing a pass that samples
 // both. WITHIN one pipeline draw, `blend: "add"` accumulates overlapping
-// geometry additively (order-independent, no sorting); anything else draws
-// with GL blending disabled and overwrites.
+// geometry additively and `blend: "multiply"` scales it (both
+// order-independent, no sorting); `blend: "alpha"` composites over in
+// draw-list order (order-dependent: the app or a scene layer sorts); anything
+// else draws with GL blending disabled and overwrites.
 //
 // The pixel contract. Three facts hold for every texture and target:
 //
@@ -40,8 +42,8 @@
 //   default transparent black needs no thought.
 // - Values are non-linear RGBA8, with no color-space concept. Every texture
 //   and target holds 8-bit RGBA UNORM exactly as written; nothing converts to
-//   or from linear light. `filter: "linear"` averages and `blend: "add"`
-//   accumulates non-linear values - the usual approximation, stated so
+//   or from linear light. `filter: "linear"` averages and the `blend` modes
+//   accumulate non-linear values - the usual approximation, stated so
 //   shaders written today stay correct if a format vocabulary arrives.
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
@@ -512,10 +514,12 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * `opts.depth` attaches a private depth buffer (cleared + tested per render);
  * `opts.depthWrite: false` (requires depth) keeps the test but stops the
  * draw from writing depth. `opts.blend: "add"` makes the draw accumulate
- * overlapping geometry additively (order-independent, no sorting) instead of
- * overwriting; a depth-tested additive pass is `{ depth: true, blend: "add",
- * depthWrite: false }` - each option only does what it says, neither implies
- * the other. The draw range (`firstVertex`, `vertexCount`, `instanceCount` -
+ * overlapping geometry additively and `"multiply"` makes it scale (darken)
+ * what is already there, both order-independent (no sorting) instead of
+ * overwriting; `"alpha"` composites over in draw-list order (premultiplied
+ * output, back-to-front is the caller's job). A depth-tested blended pass is
+ * `{ depth: true, blend: "add", depthWrite: false }` - each option only does
+ * what it says, neither implies the other. The draw range (`firstVertex`, `vertexCount`, `instanceCount` -
  * see DrawRange) defaults to the whole buffer drawn once and can be changed
  * later with `setDraw`; `instanceCount` is the standard answer to particles
  * and repeated meshes, N copies of the range told apart by `gl_InstanceID`

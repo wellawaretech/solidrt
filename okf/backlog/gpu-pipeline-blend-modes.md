@@ -1,6 +1,6 @@
 ---
 title: More pipeline blend modes
-description: The blend vocabulary on createPipeline stops at "none" and "add"; the rest of GL's fixed-function space (multiply, screen, subtract, min/max, and the order-dependent alpha-over) is unexposed.
+description: The blend vocabulary on createPipeline is "none", "add", "multiply" and "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max) is unexposed, demand-driven.
 created: 2026-07-29
 ---
 
@@ -19,7 +19,7 @@ Order-independent (commutative like "add": no sorting, no depth question
 beyond the existing explicit `depthWrite`):
 
 - `"multiply"` - `(DST_COLOR, ZERO)`: darkening accumulation (shadow or dust
-  passes).
+  passes). LANDED 2026-08-17, see below.
 - `"screen"` - `(ONE, ONE_MINUS_SRC_COLOR)`: inverse of multiply; a softer
   glow that saturates toward white instead of clipping the way add does.
 - `"subtract"` - reverse-subtract equation with `(ONE, ONE)`: additive
@@ -69,3 +69,44 @@ It can land on its own.
 Alpha-over stays behind [gpu-alpha-translucency](gpu-alpha-translucency.md)
 and its two prerequisites, which now have a named owner for the sorting half
 (the scene graph) - see that item.
+
+## Landed 2026-08-17: multiply
+
+`"multiply"` = `glBlendFunc(DST_COLOR, ZERO)` on all four channels (Skia's
+modulate; no separate alpha factor). One `BlendMode::Multiply` arm in
+alloy/src/gpu/vocab.rs, one func call in `run_pass`'s mesh arm, the type
+union in flux-types, docs in core.md / gpu.ts. Verified on Linux via the
+control API: white-cleared target, two overlapping 50% gray triangles read
+back 255 / 128 / 64 with alpha 255, and `/gpu` reports `"blend":"multiply"`.
+
+Deliberate: alpha multiplies too. On the premultiplied target that is the
+useful reading - `vec4(k, k, k, 1)` darkens color only (the shadow), a
+uniform factor across rgb and alpha fades what is already there (the
+dissolve), and neither breaks the rgb <= alpha invariant. It is documented
+as "scales, all four channels", not as an alpha-over substitute.
+
+Screen, subtract, min/max stay demand-driven.
+
+## Landed 2026-08-17: alpha
+
+`"alpha"` = `glBlendFunc(ONE, ONE_MINUS_SRC_ALPHA)`, premultiplied - the
+factor pair was decided by declaration once the pixel contract said targets
+are premultiplied ([gpu-pixel-contract-docs](../done/gpu-pixel-contract-docs.md)),
+and the sorting question was answered by ownership, not by the engine: at
+the GPU layer the app orders the draw list (`before`, `setDrawOrder`), above
+it the scene graph sorts. Same shape as multiply: `BlendMode::Alpha` arm,
+one func call, type union, docs. Documented as the one order-DEPENDENT mode
+with premultiplied output (`vec4(color * a, a)`), normally after the opaques
+with `depthWrite: false`; nothing sorts for you.
+
+Verified on Linux via the control API: opaque green clear, half-alpha red
+and blue quads, two targets in opposite draw order read back exactly the
+over-composite values (overlap 64,63,128 vs 128,63,64) and `/gpu` reports
+`"blend":"alpha"`.
+
+Naming: `"alpha"` (glTF `alphaMode: BLEND`, common usage) rather than the
+tree's Skia `"source-over"`; the pipeline vocabulary already diverged with
+`"add"` vs `"plus"`.
+
+The library half - transparent sort and `renderOrder` in `@solidrt/3d` -
+stays in [gpu-alpha-translucency](gpu-alpha-translucency.md).

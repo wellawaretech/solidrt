@@ -170,11 +170,10 @@ Shaped, not started.
   template literals would make the driver report the .tsx line itself, closing
   the last unmapped diagnostic in the dev loop.
 - **[Alpha translucency (sorted blending)](backlog/gpu-alpha-translucency.md)** [2026-08-11]
-  Blending within a draw is additive-only, so non-convex transparent meshes
-  and per-particle-colored accumulation have no path (the convex workaround
-  splits front/back faces into two composited targets). The mode itself is
-  trivial; what defers it is sorted geometry and the straight-vs-premultiplied
-  answer against Impeller's compositing. Split from gpu-pipeline-extensions
+  Engine half DONE 2026-08-17 (blend "alpha", premultiplied over,
+  order-dependent). What remains is the library half in @solidrt/3d, where
+  nothing yet sorts translucent meshes back-to-front or exposes renderOrder,
+  so materials still draw opaque. Split from gpu-pipeline-extensions
   2026-08-11.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
@@ -237,9 +236,9 @@ Shaped, not started.
   clamped target cannot be tiled by one consumer; a per-binding override costs
   little because the sampler cache is already keyed by state.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
-  The blend vocabulary on createPipeline stops at "none" and "add"; the rest
-  of GL's fixed-function space (multiply, screen, subtract, min/max, and the
-  order-dependent alpha-over) is unexposed.
+  The blend vocabulary on createPipeline is "none", "add", "multiply" and
+  "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
+  is unexposed, demand-driven.
 - **[Sampleable depth](backlog/gpu-sampleable-depth.md)** [2026-08-11]
   A pipeline target's depth is a private renderbuffer, unsampleable by
   construction, so shadow maps, depth-of-field and SSAO have no path; ES 3.0

@@ -380,6 +380,14 @@ pub(super) fn run_pass(
               gl.enable(glow::BLEND);
               gl.blend_func(glow::ONE, glow::ONE);
             }
+            Some(BlendMode::Multiply) => {
+              gl.enable(glow::BLEND);
+              gl.blend_func(glow::DST_COLOR, glow::ZERO);
+            }
+            Some(BlendMode::Alpha) => {
+              gl.enable(glow::BLEND);
+              gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+            }
             None => gl.disable(glow::BLEND),
           }
           // Face culling per entry: winding is pinned (Impeller may have

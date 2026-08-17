@@ -77,13 +77,26 @@ pub enum BlendMode {
   /// target. Order-independent, so geometry needs no sorting - the additive
   /// half of translucency (point splats, glow passes).
   Add,
+  /// glBlendFunc(DST_COLOR, ZERO): every fragment scales what is already in
+  /// the target, all four channels. Order-independent like Add; the darkening
+  /// counterpart (a projected shadow, a dust pass). On the premultiplied
+  /// target a uniform factor across rgb and alpha is a fade of the existing
+  /// pixels; alpha 1 with rgb below 1 darkens color only.
+  Multiply,
+  /// glBlendFunc(ONE, ONE_MINUS_SRC_ALPHA): the fragment composites OVER what
+  /// is in the target, premultiplied like every target pixel. The one
+  /// order-DEPENDENT mode: the result follows draw-list order, so translucent
+  /// geometry must be drawn back-to-front by whoever orders the list.
+  Alpha,
 }
 
 pub fn parse_blend(s: &str) -> Result<Option<BlendMode>, String> {
   Ok(match s {
     "none" => None,
     "add" => Some(BlendMode::Add),
-    _ => return Err(format!("unsupported blend mode '{s}' (expected none|add)")),
+    "multiply" => Some(BlendMode::Multiply),
+    "alpha" => Some(BlendMode::Alpha),
+    _ => return Err(format!("unsupported blend mode '{s}' (expected none|add|multiply|alpha)")),
   })
 }
 
@@ -92,6 +105,8 @@ pub fn blend_name(b: Option<BlendMode>) -> &'static str {
   match b {
     None => "none",
     Some(BlendMode::Add) => "add",
+    Some(BlendMode::Multiply) => "multiply",
+    Some(BlendMode::Alpha) => "alpha",
   }
 }
 

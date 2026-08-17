@@ -8,9 +8,9 @@
 // Colors are straight [r, g, b, a?] 0..1 at the API and premultiplied here
 // once, at the boundary (the engine's pixel contract). An alpha below 1
 // does NOT blend yet: v1 pipelines draw opaque (blend "none"), so a
-// translucent color overwrites what is behind it. Transparency arrives
-// with the blend-factor vocabulary and back-to-front sorting (see
-// okf/research/scene-graph-3d.md, staging step 4).
+// translucent color overwrites what is behind it. The engine's blend "alpha"
+// exists; transparency arrives when the library sorts back-to-front (see
+// okf/backlog/gpu-alpha-translucency.md).
 //
 // Custom looks need no material system: the raw layer (compileShader /
 // createRenderPipeline in @solidrt/core/gpu) is first-class, and a scene

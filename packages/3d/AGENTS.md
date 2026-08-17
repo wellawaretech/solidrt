@@ -404,9 +404,10 @@ system.
   Geometry instead.
 - The background covers the whole target with depth off, drawn first: it
   REPLACES the clearColor visually (the clear still runs; you just never
-  see it), and a translucent mesh does not blend over it in-pass (blend
-  is none|add today - the fade-over-backdrop look still needs the
-  two-layer composition until blend factors land).
+  see it), and a translucent mesh does not blend over it in-pass yet: the
+  engine has blend "alpha" (order-dependent), but the library has no
+  transparent sort or renderOrder, so materials still draw opaque - the
+  fade-over-backdrop look needs the two-layer composition until then.
 - The background pipeline/program are SCENE-OWNED (unlike shared
   material pipelines): setBackground(null), replacement, and dispose()
   destroy them. Do not hand the background's pipeline to anything else.
