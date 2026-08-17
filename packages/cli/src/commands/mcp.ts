@@ -10,8 +10,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { dirname, join, resolve } from "node:path"
-import { existsSync, readdirSync, readFileSync } from "node:fs"
-import { values } from "../args"
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
+import { values, DEFAULT_DEV_PORT } from "../args"
 import { DEV_PORT } from "../dev-server"
 import { devDir } from "../dev-dir"
 
@@ -35,12 +35,30 @@ function findProjectDir(): string | null {
   }
 }
 
+// The two sides of a projectDir comparison come from different processes
+// (the server's entry path, the bridge's cwd) and only agree by construction
+// on the directory, not the spelling: an editor-spawned bridge on Windows
+// keeps its parent's lower-case drive letter while a shell writes it upper
+// case, and 8.3 names, symlinks and subst drives are the same class. Compare
+// the canonical path, so the spelling never decides.
+function sameDir(a: string, b: string): boolean {
+  if (a === b) return true
+  try {
+    return realpathSync.native(a) === realpathSync.native(b)
+  } catch {
+    return false
+  }
+}
+
+// Only ESRCH means the process is gone. EPERM is a live process this bridge
+// may not signal (Windows reports it for other users' processes), and a
+// bare try/catch would drop that healthy server from the registry.
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (e: any) {
+    return e?.code === "EPERM"
   }
 }
 
@@ -80,7 +98,8 @@ async function resolvePort(): Promise<PortResult> {
       message: `No package.json found above ${process.cwd()}, so no dev server can be resolved by project. Pass -s <N> or --port <N> to srt mcp.`,
     }
   }
-  let matches = liveRecords().filter((r) => r.projectDir === project && pidAlive(r.pid))
+  let records = liveRecords()
+  let matches = records.filter((r) => sameDir(r.projectDir, project) && pidAlive(r.pid))
   if (matches.length > 1) {
     let ports = matches
       .map((r) => r.port)
@@ -89,7 +108,25 @@ async function resolvePort(): Promise<PortResult> {
     return { ok: false, message: `${matches.length} dev servers are serving this project (ports ${ports}); pass -s <N> to srt mcp` }
   }
   if (matches.length === 0) {
-    return { ok: false, message: `No dev server for ${project}. Start one with srt run, or pass -s <N> to srt mcp.` }
+    // A lookup by key that fails against a small table prints the table: an
+    // empty registry, a dead pid and a record for another project are three
+    // different problems, and the reader can only tell them apart if the
+    // candidates are listed next to the key that was looked up.
+    let listing =
+      records.length === 0
+        ? `Registry ${devDir("servers")}: no records.`
+        : `Registry ${devDir("servers")}: ${records.length} record(s).\n` +
+          records
+            .map((r) => {
+              let session = r.port - DEFAULT_DEV_PORT
+              let flag = session >= 0 && session < 100 ? `-s ${session}` : `--port ${r.port}`
+              return `  port ${r.port} (${flag})  pid ${r.pid} (${pidAlive(r.pid) ? "alive" : "dead"})  serving ${r.projectDir}`
+            })
+            .join("\n")
+    return {
+      ok: false,
+      message: `No dev server for ${project}.\n${listing}\nStart one with srt run, or pin one of the servers above by passing its flag to srt mcp.`,
+    }
   }
   let port = matches[0]!.port
   // The record is a hint; the server is authoritative. The probe catches a
@@ -97,7 +134,7 @@ async function resolvePort(): Promise<PortResult> {
   try {
     let probe = await fetch(`http://127.0.0.1:${port}/__control__/clients`)
     let body: any = await probe.json().catch(() => null)
-    if (!probe.ok || body?.projectDir !== project) {
+    if (!probe.ok || typeof body?.projectDir !== "string" || !sameDir(body.projectDir, project)) {
       return {
         ok: false,
         message: `The server on port ${port} is not serving ${project}${

@@ -82,12 +82,62 @@ from lattice, the same way `FramePacing` does today
 Every degradation decision is recorded, so a census can say why the cadence
 changed instead of leaving it to be inferred.
 
+## Stage 3: the stretched timeline is invisible to the app (2026-08-17)
+
+A third property of the same contract, from the app side. Under a sustained
+present stall - something else on the machine holding the GPU, the case a
+reboot cures - the paced timeline advances one refresh period PER PRESENT,
+not per second (`lattice/src/paced_clock.rs`), so:
+
+- every frame is a uniform period step and the animation stays smooth BY
+  CONSTRUCTION - the pacing is doing exactly its job;
+- the whole simulation stretches against real time, so input handling,
+  physics and audio all land late IN PROPORTION;
+- to the person holding the device that is indistinguishable from input lag.
+
+The three observations that read as contradictory when it was reported -
+smooth, uniformly late, and audio late WITH the visuals rather than ahead of
+them - are one fact. Worth stating explicitly: "is the sound late too?" is
+the natural discriminator between an input-delivery problem and a
+render-queue problem, and under this clock it does not discriminate at all.
+
+The gap: an app cannot detect it. Every clock it has - the `tick` argument,
+`performance.now()`, timers - rides the paced timeline, so from inside
+nothing looks wrong; the only tell is diffing `Date.now()` against `tick`
+yourself, which requires already knowing the pacing exists. An app that
+wanted to react (drop a supersample factor, shed effects, tell the user
+something else is eating the GPU) has no supported signal.
+
+Wanted, smallest first:
+
+1. Document the stall behaviour next to the pacing note on `onFrame`
+   (`packages/core/src/window.ts`), which today presents pacing purely as a
+   smoothness feature. Same place: the UPPER dt clamp apps are told to
+   write is nearly inert on a GUI runtime, because `tick` is paced so `dt`
+   sits near one period regardless of how long a frame really took -
+   `Math.max(0, ...)` earns its place (the hot-reload negative delta,
+   [onframe-tick-reset-on-reload](onframe-tick-reset-on-reload.md)),
+   `Math.min(cap, ...)` mostly does not, and an author who assumes the
+   opposite reasons wrongly about slow machines.
+2. Expose the pacing error: an accessor (`clockDrift()`, ms the paced
+   timeline is behind wall clock) or a fourth `onFrame` argument. It is a
+   subtraction the runtime already performs to slow-correct; surfacing it
+   turns an invisible failure mode into a two-line adaptive-quality check.
+3. Surface it in `get_stats` too, so the MCP tools can answer "is this
+   client's timeline behind?" without instrumenting the app - see
+   [mcp-interaction-perf-visibility](mcp-interaction-perf-visibility.md).
+
+Stage 2's deadline work is where the number naturally comes from: a frame
+that knows when it was due knows how late the timeline is.
+
 ## Done looks like
 
 - Stage 1: a pacing regression is caught by `cargo test -p alloy`, and a
   proposed pacing rule can be evaluated without an adb session.
 - Stage 2: under a critical path that does not fit the slot, presents stay
   on a fixed grid and the driver reports which grid it chose and why.
+- Stage 3: an app can read how far its timeline is behind wall clock, and
+  the `onFrame` docs say what pacing does under a sustained stall.
 
 ## Not in scope
 

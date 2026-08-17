@@ -1,14 +1,15 @@
 // Sound playback, reactive (SolidJS) layer. `createSound` decodes an encoded
 // clip (Ogg/Vorbis or WAV) once and owns its lifecycle: the decoded clip is
 // released, and any playing voices stopped, when the reactive owner is disposed.
-// Each play() is cheap (no re-decode). `createSoundStream` is the same but reads
-// a large track from a file path on demand instead of decoding it into memory.
+// Each play() is cheap (no re-decode). `createPcmSound` is the same over raw
+// samples the app generated itself; `createSoundStream` reads a large track
+// from a file path on demand instead of decoding it into memory.
 //
 // The imperative primitive lives in the `flux:audio` module; import
 // { play, load, loadPcm, stream } from "flux:audio" for non-reactive use.
 
 import { createSignal, onCleanup } from "@solidjs/signals"
-import { load, stream } from "flux:audio"
+import { load, loadPcm, stream } from "flux:audio"
 import { file } from "flux:fs"
 
 type FluxFile = ReturnType<typeof file>
@@ -32,6 +33,12 @@ export type SoundOptions = {
    * play() cuts off the previous one.
    */
   overlap?: boolean
+}
+
+/** Options for a PCM sound: `SoundOptions` plus the channel count. */
+export type PcmSoundOptions = SoundOptions & {
+  /** Channel count, interleaved samples when 2. Defaults to 1 (mono). */
+  channels?: 1 | 2
 }
 
 /** Options for a streamed sound. Streams are always single-voice. */
@@ -134,6 +141,27 @@ function reactiveSound(
  */
 export function createSound(source: Uint8Array, options: SoundOptions = {}): Sound {
   return reactiveSound(() => load(source), options.overlap ?? true, {
+    loop: options.loop,
+    gain: options.gain,
+    pan: options.pan,
+  })
+}
+
+/**
+ * A sound over raw PCM samples the app generated itself - no decoding, no
+ * container. The typed array is the sample format (Uint8Array = unsigned
+ * 8-bit, Int16Array = signed 16-bit, Float32Array = 32-bit float), interleaved
+ * when `channels` is 2. Same handle and lifecycle as createSound; on a box with
+ * no audio device the clip fails to load, so `error()` is set and play() is a
+ * no-op, exactly like createSound there. For imperative use, call loadPcm()
+ * from "flux:audio".
+ */
+export function createPcmSound(
+  samples: Uint8Array | Int16Array | Float32Array,
+  sampleRate: number,
+  options: PcmSoundOptions = {},
+): Sound {
+  return reactiveSound(() => loadPcm(samples, sampleRate, { channels: options.channels }), options.overlap ?? true, {
     loop: options.loop,
     gain: options.gain,
     pan: options.pan,

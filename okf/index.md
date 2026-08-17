@@ -319,15 +319,24 @@ Shaped, not started.
   fixed 2026-08-08, border box on every path. For non-View kinds the
   divergence is still open, a padded rect paints its content box but hit-tests
   its border box.
+- **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
+  On Windows the offscreen video driver fails every time (SDL's offscreen path
+  needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
+  playback silently falls back to a hidden window, so the one command that
+  exists to run without a display requires an interactive window station
+  there; the ANGLE that ships already advertises the extensions a real
+  headless path needs.
 - **[Intermittent SIGABRT at headless playback shutdown](backlog/playback-shutdown-sigabrt.md)** [2026-08-06]
   One changelog-shot run exited 134 with no stderr and has not reproduced in
   22 runs since; the suspicion is a shutdown race in the
   exit()-during-playback path tearing down while the raster thread still holds
   GL state.
-- **[windowSize() reads 0x0 in headless playback](backlog/playback-window-size-zero.md)** [2026-08-06]
-  Playback synthesises a Resize for layout but never delivers it to JS, so any
-  app sizing off windowSize() renders as though the window were empty -
-  quietly, with a wrong-looking capture rather than an error.
+- **[Playback's first frame does not reflect app state](backlog/playback-window-size-zero.md)** [2026-08-06]
+  Two ways the first headless capture shows something the app never intended -
+  windowSize() reads 0x0 because playback's synthesised Resize never reaches
+  JS, and frame 0 is captured before the app's first frame callback runs, so
+  it shows the mount state, not the simulated one; plus --fps doubling as the
+  simulation step, so a clamped-dt app barely advances at low capture rates.
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element

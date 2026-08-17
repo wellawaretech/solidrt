@@ -48,7 +48,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `window-shader-history.tsx` - the window shader's frame history: `previous` binds last frame as uPrevious, drawn as a one-frame motion echo behind an orbiting square; click toggles the echo term.
 
 ## Sound
-- `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. Points to `createSoundStream` for long tracks streamed from a path.
+- `sound.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. `createPcmSound` for a synthesised clip from raw samples (a generated sine sweep). Points to `createSoundStream` for long tracks streamed from a path.
 
 ## Vector graphics
 - `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `viewBox`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
