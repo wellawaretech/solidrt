@@ -317,6 +317,12 @@ Shaped, not started.
   - which forces any app state a command touches up to module scope; an
   owner-scoped variant auto-cleaned like onFrame lets both live in the
   component they belong to.
+- **[Signable single-file packed executables (macOS Mach-O segment, Windows PE resource)](backlog/packed-exe-signable-container.md)** [2026-08-18]
+  The pack trailer is appended after the runner's code signature, so a packed
+  macOS binary fails codesign strict validation and Gatekeeper, and a signed
+  Windows runner would lose Authenticode the same way; embed the pack inside
+  the executable image (Mach-O segment, PE resource) and re-sign after
+  packing.
 - **[Padding makes paint and hit size against different boxes](backlog/padding-box-divergence.md)** [2026-08-08]
   Paint hands every laid-out element its content box (border box minus its own
   padding) as ctx.size, while hit testing passes the border box. For a View's
