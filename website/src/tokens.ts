@@ -1,4 +1,4 @@
-// tokens.css: the component framework's theme, emitted as CSS custom
+// tokens.css: the components extension's theme, emitted as CSS custom
 // properties so the site and the widgets it documents share one source
 // (packages/components/src/theme.ts). Light is the default, dark follows the
 // OS preference, and data-theme on the root forces either; site.css consumes

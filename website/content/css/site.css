@@ -19,6 +19,7 @@
   --srt-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --srt-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
   --srt-content-width: 46rem;
+  --srt-sidebar-width: 14rem;
   color-scheme: light dark;
 }
 
@@ -49,13 +50,87 @@ main {
 
 main {
   flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--srt-spacing-xl) * 2);
   padding-top: var(--srt-spacing-xl);
   padding-bottom: calc(var(--srt-spacing-xl) * 3);
 }
 
+article {
+  flex: 1;
+  min-width: 0;
+}
+
+/* -- Sidebar ------------------------------------------------------------ */
+
+/* Section pages with more than one page get an in-section sidebar. The
+   content column never moves for it (the header and the logo stay put): with
+   room, the aside hangs in the left gutter; without, it follows the article. */
+main {
+  flex-direction: column;
+}
+
+aside {
+  order: 1;
+  width: 100%;
+}
+
+@media (min-width: 80rem) {
+  main {
+    flex-direction: row;
+  }
+
+  aside {
+    order: 0;
+    flex: 0 0 var(--srt-sidebar-width);
+    width: auto;
+    margin-left: calc(-1 * (var(--srt-sidebar-width) + var(--srt-spacing-xl) * 2));
+    position: sticky;
+    top: var(--srt-spacing-xl);
+    max-height: calc(100vh - var(--srt-spacing-xl) * 2);
+    overflow-y: auto;
+  }
+}
+
+aside ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+aside li {
+  margin: 0;
+}
+
+/* A group: its heading link, then its members indented one step. */
+aside li > ul {
+  margin: var(--srt-spacing-sm) 0 var(--srt-spacing-md);
+  padding-left: var(--srt-spacing-lg);
+}
+
+aside a {
+  display: block;
+  padding: var(--srt-spacing-sm) var(--srt-spacing-md);
+  border-radius: var(--srt-radius-sm);
+  color: var(--srt-text);
+  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-body-weight);
+  line-height: var(--srt-body-line-height);
+}
+
+aside a:hover {
+  background: var(--srt-surface-hover);
+}
+
+aside a[aria-current="page"] {
+  background: var(--srt-surface);
+  font-weight: var(--srt-label-weight);
+}
+
 /* -- Header nav --------------------------------------------------------- */
 
-nav {
+header nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -63,7 +138,7 @@ nav {
   padding: var(--srt-spacing-lg) 0;
 }
 
-nav ul {
+header nav ul {
   display: flex;
   align-items: center;
   gap: var(--srt-spacing-sm);
@@ -72,12 +147,12 @@ nav ul {
   list-style: none;
 }
 
-nav li {
+header nav li {
   margin: 0;
 }
 
 /* Section links as ghost buttons: no fill until hover, like Button ghost. */
-nav a {
+header nav a {
   display: inline-block;
   padding: var(--srt-spacing-md) var(--srt-spacing-lg);
   border-radius: var(--srt-radius-md);
@@ -89,19 +164,19 @@ nav a {
   text-transform: capitalize;
 }
 
-nav a:hover {
+header nav a:hover {
   background: var(--srt-surface-hover);
 }
 
 /* The brand link: title-sized wordmark, no button treatment. */
-nav > ul:first-child a {
+header nav > ul:first-child a {
   padding-left: 0;
   font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
   font-weight: var(--srt-title-weight);
   text-transform: none;
 }
 
-nav > ul:first-child a:hover {
+header nav > ul:first-child a:hover {
   background: transparent;
 }
 
@@ -177,6 +252,10 @@ li {
   margin-bottom: var(--srt-spacing-md);
 }
 
+small {
+  color: var(--srt-text-muted);
+}
+
 li > ul,
 li > ol {
   margin-top: var(--srt-spacing-md);
@@ -234,18 +313,18 @@ button:active {
 /* -- Surfaces ----------------------------------------------------------- */
 
 /* Landing sections are cards: surface fill on the window fill. */
-main > section {
+article > section {
   padding: var(--srt-spacing-xl);
   border-radius: var(--srt-radius-lg);
   background: var(--srt-surface);
   margin-bottom: var(--srt-spacing-lg);
 }
 
-main > section > :last-child {
+article > section > :last-child {
   margin-bottom: 0;
 }
 
-main > section > h2 {
+article > section > h2 {
   margin-top: 0;
 }
 
@@ -345,11 +424,8 @@ img {
     padding-right: var(--srt-spacing-lg);
   }
 
-  nav {
-    flex-wrap: wrap;
-  }
-
-  nav ul {
+  header nav,
+  header nav ul {
     flex-wrap: wrap;
   }
 }

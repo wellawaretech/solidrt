@@ -17,7 +17,7 @@ A picker asks which packages the app takes. [Core](/core/) is always in:
 it is the runtime, the element vocabulary, reactivity, layout, and input that
 every SolidRT app has. On top of it you can tick extensions:
 
-- **@solidrt/components** - the [Components framework](/frameworks/):
+- **@solidrt/components** - the [Components extension](/extensions/):
   widgets, theming, navigation. Selecting it scaffolds the starter app built
   with the component set.
 - **@solidrt/3d** - a general purpose 3D library: scenes, meshes, materials,
@@ -124,7 +124,7 @@ is built on that single idea.
 
 - **Understand the model:** [Core](/core/) covers the element vocabulary,
   how reactive props reach native nodes, layout, and input.
-- **Build faster:** [Frameworks](/frameworks/) are ready-made component sets
+- **Build faster:** [Extensions](/extensions/) are ready-made component sets
   built on Core, for when you want buttons rather than rectangles.
 - **On a device:** the same project runs on a connected Android phone or
   tablet with `bun run android`. See [Tools](/tools/).

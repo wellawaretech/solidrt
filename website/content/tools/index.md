@@ -72,5 +72,5 @@ with no UI.
 
 ## Reference
 
-Every command and flag, generated from the CLI itself, is coming here. Until
-then `srt` with no arguments prints the full usage.
+Every command and flag, generated from the CLI itself: [Reference](/tools/reference/).
+`srt` with no arguments prints the same usage.

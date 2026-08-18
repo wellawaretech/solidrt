@@ -1,18 +1,19 @@
-# Frameworks
+# Extensions
 
-Frameworks are built on top of [Core](/core/): component sets, theming, and
-app structure. They are siblings, not a stack. You pick one, or none, and
-you can always drop down to Core underneath, because a framework component
-is just a component that returns Core elements.
+Extensions are built on top of [Core](/core/): component sets, theming, and
+app structure. They are siblings, not a stack. You pick one, some, or none,
+and you can always drop down to Core underneath, because an extension
+component is just a component that returns Core elements.
 
-Today there is one, written by the SolidRT project. There is room for
-others, including community and commercial ones.
+Today there are two, both written by the SolidRT project: [Components](/extensions/components/)
+and [3D](/extensions/3d/). There is room for others, including community and
+commercial ones.
 
 ## Components
 
 *Maturity: evolving.*
 
-`@solidrt/components` is the official component framework: the widgets you
+`@solidrt/components` is the official component extension: the widgets you
 would otherwise write yourself for every app.
 
 - **Input:** `Button`, `TextInput`, `Checkbox`, `Radio`, `Switch`,
@@ -53,5 +54,26 @@ The APIs still change between releases. Build with it, and expect to move
 with it. Core underneath is the part that holds still, which is why the
 [Start](/start/) walkthrough teaches Core first.
 
-A per-framework page with examples and a generated API reference lands here
-once type extraction covers components.
+The full component list with props and examples is under
+[@solidrt/components](/extensions/components/).
+
+## 3D
+
+*Maturity: experimental.*
+
+`@solidrt/3d` is a retained 3D scene graph above Core's GPU layer: meshes,
+materials, and a camera declared as Solid components, rendered into an
+ordinary texture in your UI tree. A static scene costs zero GPU passes.
+
+```tsx
+import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
+
+<Scene width={720} height={720}>
+  <PerspectiveCamera position={[0, 1.5, 3]} lookAt={[0, 0, 0]} />
+  <Mesh geometry={box()} material={unlit({ color: [0.9, 0.3, 0.3] })} />
+</Scene>
+```
+
+Add it with `--with @solidrt/3d` in the scaffolder. Expect more API churn
+here than in the rest of SolidRT. Overview and the export surface are under
+[@solidrt/3d](/extensions/3d/).

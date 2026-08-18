@@ -38,7 +38,9 @@ standalone experiment at `~/solidrt/docs` gets ported here and retired.
 pages on request via `flux:http`; production renders everything to static
 output instead. Dynamic serving is not needed once source is markdown.
 
-**Nav:** `Start - Core - Frameworks - Tools - Runtime - Architecture`
+**Nav:** `Start - Core - Extensions - Tools - Runtime - Architecture`
+(the section was "Frameworks" until 2026-08-18; renamed to match the
+scaffolder's `srt init --with` vocabulary; URLs are `/extensions/...`)
 
 (News is deferred: blog + changelog get added as a top-level section later,
 not in the initial site.)
@@ -46,14 +48,14 @@ not in the initial site.)
 - **Start** (new since the original nav): the one journey-shaped item in an
   otherwise layer-shaped nav. A single page, not a section: install,
   scaffold, run, change one line, see it update. Five minutes, one scroll.
-  Ends with the fork: go deeper (Core Concepts) or go faster (Frameworks).
+  Ends with the fork: go deeper (Core Concepts) or go faster (Extensions).
   Hold the line at "first successful edit"; everything past that belongs in
   section Guides.
 - **Core**: the stable spine. Sub-structure: Concepts first (mental model),
   then Guides, then Examples, plus Reference. Concept-vs-Guide test: if
   removing the page costs transferable understanding it is a Concept; if it
   costs one specific task it is a Guide.
-- **Frameworks**: things built on Core, siblings not a stack. Plain card
+- **Extensions** (was Frameworks): things built on Core, siblings not a stack. Plain card
   list until a second framework exists. Explicit maturity labels in
   frontmatter (stable / evolving / experimental) so Components can honestly
   read "evolving" without the caveat leaking into every page.
@@ -76,8 +78,8 @@ changelogs would need per-package release tagging - over-engineered now).
 
 **Core-first onboarding** (overturns the earlier Components-first
 assumption). Reasons: the Start page is the most-read page and must not
-break, so it builds on the stable layer; with more frameworks coming, any
-framework in Start reads as an endorsement, and teaching the shared
+break, so it builds on the stable layer; with more extensions coming, any
+extension in Start reads as an endorsement, and teaching the shared
 substrate keeps the fork honest; onboarding that works with Core alone
 demonstrates the "stable spine" story better than prose. Requires the
 five-minute Core experience to be good (signal + View + Text + animation
@@ -138,7 +140,10 @@ section.
    to the styling track, so section indexes link their sub-pages in prose
    until it lands.
 2. **Examples generator**: pages from `examples/` (cheapest generator,
-   highest visibility).
+   highest visibility). PARKED 2026-08-18: the examples corpus is not in a
+   state to generate from, and getting it right is a larger job than the
+   generator. If the generator is built before the corpus is cleaned up,
+   develop it against a fixture example, not `examples/`.
 3. **API reference generation** from types (its own project, especially
    type extraction).
 4. **Screenshot/recording capture** for example pages via playback.
@@ -206,10 +211,63 @@ Stage 2 of this track (Pico replacement) is two things, kept separate:
   Verified in headless Chromium in both schemes. Known limit: `hljs.min.css`
   switches on the OS preference only, so a forced `data-theme` does not
   retint code tokens (the site never forces one today).
-- (b) The in-section sidebar, derived from the directory tree with titles
-  from each page's first h1. This is a generator change (build.ts /
-  markdown.ts plus a template slot), not CSS; it only shares the track
-  because the sheet must lay it out.
+- (b) The in-section sidebar. DONE 2026-08-18, together with the first
+  generated Reference (staging item 3, first cut). `build.ts` now runs two
+  passes: collect every page (content `*.md`/`*.html` plus generated pages)
+  with its URL and h1 title, then render each with `buildSidebar()`
+  (markdown.ts): all pages under the same top-level section, index first,
+  each subdirectory a group headed by its index page. A section with a
+  single page gets no sidebar, so the other sections look unchanged.
+  Templates: `sidebar` / `sidebarItem` / `sidebarGroup` rules in
+  template.json, a `{sidebar}` slot in template.html; the layout is
+  `<main><aside/><article/></main>`, sticky aside at 14rem, content first
+  and the list after it under 40rem.
+  Runtime Reference (`src/reference.ts`): one page per flux-types
+  declaration file in index.d.ts order (`/runtime/reference/<stem>/`, title
+  from `declare module` or the file stem, intro from the file's leading
+  comment, body = the .d.ts highlighted; JSDoc is the documentation), plus a
+  `/runtime/reference/` index. 27 pages today. A real type extractor can
+  replace the bodies later without moving URLs; note the repo's TypeScript
+  is `^7` (the Go port), whose programmatic API is not the classic compiler
+  API, so ts-morph-style extraction is not a given.
+  Core Reference, DONE 2026-08-18, element-centric: `jsx-runtime.d.ts` maps
+  each of the 16 intrinsic elements to a composition of prop interfaces, so
+  `/core/reference/<element>/` shows the composition line and then every
+  interface it composes, transitively through `extends`, each as its own
+  highlighted block with its JSDoc (own props first, then transforms,
+  pointer, layout, flexbox, grid). Declarations reached by no element (the
+  aliases, event types, shader props) go to `/core/reference/types/`. The
+  splitter (`splitDeclarations` in reference.ts) is a line scanner over
+  top-level `interface`/`type` with the comment block directly above; no
+  TypeScript API involved.
+  Tools Reference, DONE 2026-08-18: the CLI has no structured command
+  descriptor; its single source is the usage text in `printUsage()`
+  (`packages/cli/src/args.ts`), so `toolsPages()` reads that template
+  literal, takes the "Commands:" table for `/tools/reference/` and gives
+  each command a page with its table row and every "<a>/<b> options:" block
+  whose heading names it. If the CLI ever grows a command descriptor, the
+  generator should read that instead. Components Reference stays deferred.
+  Extensions, DONE 2026-08-18: two extensions now (`@solidrt/components`,
+  `@solidrt/3d`), each a sidebar group under Extensions. Their source is
+  the package READMEs, not types: `/extensions/components/` is the README
+  head and `/extensions/components/<widget>/` each `### Widget` section
+  (props tables and examples already live there); `/extensions/3d/` is the
+  README, then one page per source module `src/index.ts` re-exports from
+  (scene, geometry, profile, sweep, material, components, orbit, math),
+  showing only the exports index.ts names: JSDoc plus signature for
+  functions, full declaration for types. `splitDeclarations` grew
+  function/const/let support (signature cut at the body's opening brace)
+  for this and is shared with the Core Reference. The Extensions page got a 3D section. Known gap:
+  the components README documents 21 widgets while `index.ts` exports 29
+  (Select, SegmentedControl, ContextMenu, NavShell, SplitView, Modal,
+  Tooltip, Portal are missing from the README), and its relative
+  `./AGENTS.md` link does not resolve on the site. Naming settled the same
+  day: the section is "Extensions", as in the scaffolder.
+  Item 3's first cut is complete: 87 generated pages (Core 18, Extensions
+  31, Runtime 28, Tools 10).
+  Sidebar layout, revised the same day: the content column and header never
+  move for a sidebar; at >= 80rem the aside hangs in the left gutter
+  (negative margin, sticky), below that it follows the article.
 
 ## Findings from stage 1
 

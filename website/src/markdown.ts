@@ -26,7 +26,7 @@ function applyTemplate(
   return template.replace(/\{(\w+)\}/g, (_, key) => String(vars[key] ?? ""));
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -112,8 +112,69 @@ export type Rules = {
     template?: string;
     navItem?: string;
     nav?: { text: string; href: string }[];
+    sidebar?: string;
+    sidebarItem?: string;
+    sidebarGroup?: string;
   };
 } | null;
+
+// A page as the sidebar sees it: its URL path (directory, no trailing slash;
+// "" for the site root) and its title.
+export type PageEntry = { path: string; title: string };
+
+// The in-section sidebar for the page at `current`: every page under the same
+// top-level section, in `pages` order. Pages directly in the section come
+// first (its index leading); each subdirectory becomes a group headed by its
+// index page (or its name), holding the pages beneath it. Empty when the
+// section has one page.
+export function buildSidebar(current: string, pages: PageEntry[], rules: Rules): string {
+  let page = rules?.page;
+  if (!page?.sidebar || !page.sidebarItem || !page.sidebarGroup) return "";
+  let section = current.split("/")[1];
+  if (!section) return "";
+  let prefix = "/" + section;
+  let inSection = pages.filter((p) => p.path === prefix || p.path.startsWith(prefix + "/"));
+  if (inSection.length < 2) return "";
+  let item = (p: PageEntry) =>
+    applyTemplate(page.sidebarItem!, {
+      href: p.path + "/",
+      text: escapeHtml(p.title),
+      current: p.path === current ? ' aria-current="page"' : "",
+    });
+  let top: PageEntry[] = [];
+  let groups = new Map<string, PageEntry[]>();
+  for (let p of inSection) {
+    let rest = p.path.slice(prefix.length + 1);
+    let slash = rest.indexOf("/");
+    if (slash < 0) {
+      if (rest === "") top.unshift(p);
+      else top.push(p);
+    } else {
+      let dir = rest.slice(0, slash);
+      let group = groups.get(dir);
+      if (!group) groups.set(dir, (group = []));
+      group.push(p);
+    }
+  }
+  let out: string[] = [];
+  for (let p of top) {
+    let dir = p.path.slice(prefix.length + 1);
+    if (dir && groups.has(dir)) continue;
+    out.push(item(p));
+  }
+  for (let [dir, members] of groups) {
+    let head = top.find((p) => p.path === `${prefix}/${dir}`);
+    out.push(
+      applyTemplate(page.sidebarGroup, {
+        text: head ? escapeHtml(head.title) : dir,
+        href: head ? head.path + "/" : "",
+        current: head?.path === current ? ' aria-current="page"' : "",
+        items: members.map(item).join("\n"),
+      }),
+    );
+  }
+  return applyTemplate(page.sidebar, { items: out.join("\n") });
+}
 
 function buildNav(
   nav: { text: string; href: string }[] | undefined,
@@ -125,17 +186,15 @@ function buildNav(
     .join("\n          ");
 }
 
+export function highlight(code: string, lang: string | undefined): string {
+  if (lang && hljs.getLanguage(lang))
+    return hljs.highlight(code, { language: lang }).value;
+  return escapeHtml(code);
+}
+
 export function configureMarked(rules: Rules) {
   if (!rules) return;
-  marked.use(
-    markedHighlight({
-      highlight(code, lang) {
-        if (lang && hljs.getLanguage(lang))
-          return hljs.highlight(code, { language: lang }).value;
-        return escapeHtml(code);
-      },
-    }),
-  );
+  marked.use(markedHighlight({ highlight }));
   marked.use({ renderer: buildRenderer(rules.elements) });
 }
 
@@ -147,17 +206,23 @@ async function resolveTemplate(template: string): Promise<string> {
 }
 
 /** Wrap already-rendered page content in the page template (shell + nav). */
-export async function renderPage(content: string, rules: Rules, title?: string): Promise<string> {
+export async function renderPage(content: string, rules: Rules, title?: string, sidebar = ""): Promise<string> {
   if (!rules?.page?.template) return content;
   let template = await resolveTemplate(rules.page.template);
   return applyTemplate(template, {
     content,
-    title: title ?? "",
+    title: escapeHtml(title ?? ""),
     nav: buildNav(rules.page.nav, rules.page.navItem),
+    sidebar,
   });
 }
 
-export async function markdownToHtml(md: string, rules: Rules, title?: string): Promise<string> {
+/** Markdown to an HTML fragment, no page shell. */
+export async function renderMarkdown(md: string): Promise<string> {
+  return marked(md);
+}
+
+export async function markdownToHtml(md: string, rules: Rules, title?: string, sidebar = ""): Promise<string> {
   let content = await marked(md);
-  return renderPage(content, rules, title);
+  return renderPage(content, rules, title, sidebar);
 }

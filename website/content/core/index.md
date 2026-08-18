@@ -4,7 +4,7 @@
 to the native rendertree: an element vocabulary, layout, input, frames, and
 the environment model for adapting to the device you are running on.
 
-If you only learn one layer, learn this one. Frameworks and tools are built
+If you only learn one layer, learn this one. Extensions and tools are built
 on it and are replaceable; Core is the part that holds still.
 
 ## Elements
