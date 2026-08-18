@@ -8,6 +8,7 @@ import {
   setFocus,
   startTextInput,
   textInputActive,
+  untrack,
 } from "@solidrt/core"
 import { createCaretScroll, createTextBuffer } from "@solidrt/core/text-input"
 import type { Color, Gradient, KeyEvent, LayoutProps, TextInputHints } from "@solidrt/core"
@@ -79,7 +80,9 @@ export function TextInput(props: TextInputProps) {
 
   let buffer = createTextBuffer({
     value: () => props.value,
-    defaultValue: props.defaultValue,
+    // A one-shot initial value by contract (see createTextBuffer): read once,
+    // deliberately untracked.
+    defaultValue: untrack(() => props.defaultValue),
     onInput: (v) => props.onInput?.(v),
     maxLength: () => props.maxLength,
   })

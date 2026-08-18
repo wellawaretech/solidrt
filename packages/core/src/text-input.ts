@@ -4,7 +4,7 @@
 // blink, keybindings, placeholder and styling are policy and belong to the
 // component (the "skin") that composes these.
 
-import { createSignal, flush } from "@solidjs/signals"
+import { createSignal, flush, untrack } from "@solidjs/signals"
 import { getBoundingBox, measureText } from "./core"
 import { onLayout } from "./window"
 
@@ -71,8 +71,10 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
   let initial = options.defaultValue ?? ""
   let [internalValue, setInternalValue] = createSignal(initial)
   // The caret starts at the end of the current text: for a controlled buffer
-  // that is the owner's value, which defaultValue does not reflect.
-  let initialCaret = (options.value?.() ?? initial).length
+  // that is the owner's value, which defaultValue does not reflect. A
+  // one-shot read by design, so untracked (the buffer is created in a
+  // component body, where a bare reactive read is flagged).
+  let initialCaret = untrack(() => options.value?.() ?? initial).length
   let [selectionState, setSelectionState] = createSignal<Selection>({
     anchor: initialCaret,
     focus: initialCaret,

@@ -1,9 +1,11 @@
+use crate::frame_history::{FrameHistory, FrameRecord};
 use crate::overlay;
+use crate::stats;
 use alloy::InputState;
 use alloy::rendertree::{self, Commit, FrameDriver, PlatformContext};
 use flux::gui::AlloyContext;
 use flux::{
-  emit_event,
+  emit_event, CtxLogger,
   rquickjs::{
     module::{Declarations, Exports, ModuleDef},
     Ctx as QuickJsContext, Function, JsLifetime,
@@ -12,7 +14,10 @@ use flux::{
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+// Slow-frame warnings are throttled to one per this interval.
+const SLOW_WARN_INTERVAL: Duration = Duration::from_secs(1);
 
 // The host state the `srt:render` module binds, stashed in userdata by
 // `store_state` before any import so the module's `evaluate` can build
@@ -29,8 +34,11 @@ struct RenderInner {
   input_state: Arc<InputState>,
   // Latest stats figures, published every frame for readers outside the draw
   // loop (the dev server's stats query answers from here).
-  stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
-  stats: RefCell<overlay::Stats>,
+  stats_snapshot: Arc<Mutex<stats::StatsSnapshot>>,
+  stats: RefCell<stats::Stats>,
+  // Raw per-rebuild records for the stats query's window summary (worst
+  // frame, percentiles), the figures the smoothed Stats average away.
+  history: Arc<Mutex<FrameHistory>>,
   // The engine-free frame protocol (demand gate, retained-list reuse, the
   // capture/destroy/content interlocks) lives in alloy; this bridge sequences
   // it and runs the JS hooks between the phases.
@@ -39,6 +47,9 @@ struct RenderInner {
   // thread (see Context::set_stats_overlay): drives the enable/disable edges
   // and the teardown clear in Drop.
   overlay_installed: Cell<bool>,
+  // Last slow-frame warning: one line per second at most, so a sustained
+  // storm reads as one warning per second in the logs, not one per frame.
+  last_slow_warn: Cell<Option<Instant>>,
   // The window geometry the installed overlay was placed against: window
   // size, display scale, safe area. The overlay is positioned in window
   // space raster-side, so a geometry change refreshes it immediately rather
@@ -64,7 +75,8 @@ pub fn store_state(
   platform: Arc<PlatformContext>,
   atx: AlloyContext,
   input_state: Arc<InputState>,
-  stats_snapshot: Arc<Mutex<overlay::StatsSnapshot>>,
+  stats_snapshot: Arc<Mutex<stats::StatsSnapshot>>,
+  history: Arc<Mutex<FrameHistory>>,
 ) {
   ctx
     .store_userdata(RenderState(Rc::new(RenderInner {
@@ -72,9 +84,11 @@ pub fn store_state(
       atx,
       input_state,
       stats_snapshot,
-      stats: RefCell::new(overlay::Stats::new()),
+      stats: RefCell::new(stats::Stats::new()),
+      history,
       driver: RefCell::new(FrameDriver::new()),
       overlay_installed: Cell::new(false),
+      last_slow_warn: Cell::new(None),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
     })))
     .expect("store render state");
@@ -135,22 +149,27 @@ impl RenderInner {
     let overlay_refresh = stats_on
       && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
     let overlay_clear = !stats_on && self.overlay_installed.get();
-    {
-      // JS render-handler cost (onFrame + flush), measured natively: time since
-      // the instant stamped before the "render" event, now that the handler has
-      // reached draw(). Plus the FFI prop writes that flush produced. Recorded
-      // for every frame (gated ones too, since flush still ran). Consumed, so a
-      // native call with no render event (the paused path) reads zero instead
-      // of the stale stamp of the last delivered frame.
-      let js_ms =
-        crate::frame::RENDER_START.with(|c| c.replace(None)).map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
-      let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
-      stats.borrow_mut().record_js(js_ms, set_count);
-      // Publish for out-of-loop readers on every frame event, gated or not, so
-      // a query sees current numbers even while the demand gate skips draws.
-      *stats_snapshot.lock().expect("stats snapshot lock poisoned") =
-        stats.borrow().snapshot(platform.fps(), atx.textures.len());
-    }
+    // The frame the runtime stamped for us (see frame::RenderFrame). Its
+    // start is consumed here, so a native call with no render event (the
+    // paused path) reads a zero JS cost instead of the stale stamp of the
+    // last delivered frame; frame index and period stay for the record.
+    let render_frame = crate::frame::RENDER_FRAME.with(|c| {
+      let rf = c.get();
+      c.set(crate::frame::RenderFrame { start: None, ..rf });
+      rf
+    });
+    // JS render-handler cost (onFrame + flush), measured natively: time since
+    // the instant stamped before the "render" event, now that the handler has
+    // reached draw(). Recorded for every frame (gated ones too, since flush
+    // still ran), with the FFI prop writes that flush produced.
+    let js_ms = render_frame.start.map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
+    let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
+    stats.borrow_mut().record_js(js_ms, set_count);
+    // The figures as of this frame: published for out-of-loop readers on every
+    // frame event, gated or not, so a query sees current numbers even while
+    // the demand gate skips draws; and what the HUD below renders.
+    let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
+    *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
 
     // Demand-driven gate: when nothing requested a frame, skip it entirely
     // (layout, paint, submit, hover refresh - elements only move when a frame
@@ -169,13 +188,7 @@ impl RenderInner {
     // frame. Built from the figures record_js just sampled; the raster
     // thread retains the list, so nothing is sent while the figures stand.
     if overlay_refresh {
-      let overlay = stats.borrow_mut().build_overlay(
-        &platform.typography(),
-        platform.safe_area(),
-        platform.display_scale(),
-        platform.fps(),
-        atx.textures.len(),
-      );
+      let overlay = overlay::build(&snap, &platform.typography(), platform.safe_area(), platform.display_scale());
       self.overlay_installed.set(overlay.is_some());
       self.overlay_key.set(overlay_key);
       atx.set_stats_overlay(overlay);
@@ -199,7 +212,7 @@ impl RenderInner {
       Commit::Build(b) => b,
     };
 
-    let mut phases = overlay::FramePhases::default();
+    let mut phases = stats::FramePhases::default();
 
     // Layout phase: the mut borrow is scoped to the call so onLayout handlers
     // (which may call setProperty etc.) don't trip the RefCell.
@@ -230,8 +243,50 @@ impl RenderInner {
       s.record_frame(phases);
       // Taken after paint so the counters cover the whole rebuild (paint
       // shapes paragraphs too), plus the writes that led into it.
-      s.record_layout_activity(tree.0.borrow().node_count(), rendertree::counters::take());
+      let counters = rendertree::counters::take();
+      s.record_layout_activity(tree.0.borrow().node_count(), counters);
       s.record_paint(paint_stats);
+      let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+      let record = FrameRecord {
+        at_ms: crate::frame_history::now_ms(),
+        frame: render_frame.frame,
+        period_ms: render_frame.period_ms,
+        js_ms,
+        layout_ms: ms(phases.layout),
+        post_ms: ms(phases.post),
+        paint_ms: ms(phases.paint),
+        hover_ms: ms(phases.hover),
+        total_ms: js_ms + ms(phases.layout + phases.post + phases.paint + phases.hover),
+        counters,
+        nodes_painted: paint_stats.nodes_painted,
+        raster: atx.raster_counters(),
+      };
+      // A frame over its refresh period is jank a human feels; say so through
+      // the engine logger (the one the dev server forwards, so get_logs sees
+      // it) with the breakdown that names the phase.
+      if record.total_ms > record.period_ms && record.period_ms > 0.0 {
+        let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
+        if due {
+          self.last_slow_warn.set(Some(Instant::now()));
+          qtx.logger().warn(&format!(
+            "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, cacheHits {}/{}, nodesPainted {}",
+            record.total_ms,
+            record.period_ms,
+            record.js_ms,
+            record.layout_ms,
+            record.post_ms,
+            record.paint_ms,
+            record.hover_ms,
+            counters.para_shapes,
+            counters.measure_calls,
+            counters.dirtied,
+            counters.cache_hits,
+            counters.cache_gets,
+            paint_stats.nodes_painted,
+          ));
+        }
+      }
+      self.history.lock().expect("frame history lock poisoned").push(record);
     }
 
     b.finish(&tree.0.borrow(), platform, atx).expect("Failed to submit display list");

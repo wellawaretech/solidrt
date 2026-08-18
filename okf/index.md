@@ -142,12 +142,12 @@ Shaped, not started.
   Ship an app's ffi libraries in an asset folder, packaged into the APK's
   native-lib dir and opened by path automatically, since byte-loading is
   blocked by Android W^X policy.
-- **["FFI write batching: interned keys, batched creation, command buffer"](backlog/ffi-write-batching.md)** [2026-08-05]
+- **["FFI write batching: batched creation, one-call drain, interned keys, command buffer"](backlog/ffi-write-batching.md)** [2026-08-05]
   Every property write is one string-keyed FFI call (mount fans a props object
-  into per-prop calls; update bursts pay per-call overhead N times); three
-  stages reduce it - intern prop names to ids, createNode with a props object,
-  and a command buffer whose props land in a shared buffer Rust reads
-  directly, drained once per flush.
+  into per-prop calls; update bursts pay per-call overhead N times); four
+  stages reduce it - createNode with a props object, a one-call-per-flush
+  drain, interned prop ids with table dispatch, and a command buffer whose
+  props land in a shared buffer Rust reads directly.
 - **[flux binary exits 0 on uncaught errors](backlog/flux-bin-exit-code.md)** [2026-08-17]
   `flux script.js` exits 0 whether the entry module ran clean or threw, so
   nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from

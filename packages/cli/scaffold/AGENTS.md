@@ -349,11 +349,13 @@ not infer it from the desktop number.
   wasted effort.
 - **Per-frame writes are gated on the raster thread, not on vsync**, so a pass
   that costs more than a refresh period does not silently pile up. If
-  `rasterQueue` sits persistently above 0 the raster thread is behind; if
-  `fenceTimeouts` climbs, the GPU is over its pacing budget.
+  `rasterQueue` climbs across queries while fps drops the raster thread is
+  behind; if `fenceTimeoutsPerSec` (in get_stats' window block) is nonzero,
+  the GPU is over its pacing budget right now.
 
 Finding your own numbers: `get_stats` gives fps, frameMs, setPropsPerFrame,
-rasterQueue and fenceTimeouts. When those disagree with what the screen is
+the window summary (worst frame, percentiles, GPU rates), rasterQueue and
+fenceTimeouts. When those disagree with what the screen is
 visibly doing, ground truth on Android is
 `adb shell dumpsys SurfaceFlinger --latency <layer>` for real present
 timestamps - engine-reported phase timings can each be honest and still not add
@@ -437,7 +439,17 @@ its tools over guessing at runtime state:
 - client ids and log cursors die with the dev server: list_clients and
   get_logs responses carry `generation`, and a changed generation means
   re-fetch ids and restart cursors
-- get_stats: fps, CPU/memory, frame phase timings, setProperty rate, plus
+- get_stats: start with `window`, the summary of frames rebuilt in the last
+  window_ms (default 5 s): p50/p95/max of the per-frame JS-thread cost,
+  slowFrames over the refresh period, and `worst` - the single most
+  expensive frame with its phase breakdown and its own layout counters.
+  Jank lives here; the smoothed figures average a one-frame hitch away.
+  Flow: send_input a burst (typing, a drag), then get_stats and read
+  "worst 84 ms: layout 71, paraShapes 3900". `frames: 0` means nothing was
+  rebuilt in the window, not that all was fast. Slow frames also log a
+  throttled "Slow frame: ..." warning with the same breakdown, so get_logs
+  shows them. Then the smoothed figures: fps, CPU/memory, frame phase
+  timings, setProperty rate, plus
   layout-activity counters for the last rebuild (nodes, measureCalls,
   paraShapes/wordHits, dirtiedNodes, cacheGets/cacheHits, nodesPainted) - when
   layoutMs looks wrong, these say whether the cost is text shaping,

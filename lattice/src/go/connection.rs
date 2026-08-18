@@ -52,7 +52,8 @@ pub struct DevFlags {
 /// and a sender on the outbound channel for replies produced on the JS thread.
 #[derive(Clone)]
 pub struct QueryHandles {
-  pub stats: Arc<Mutex<crate::overlay::StatsSnapshot>>,
+  pub stats: Arc<Mutex<crate::stats::StatsSnapshot>>,
+  pub history: Arc<Mutex<crate::frame_history::FrameHistory>>,
   pub exec: Arc<Mutex<Option<flux::ExecHandle>>>,
   pub outbound_tx: UnboundedSender<String>,
 }
@@ -624,6 +625,14 @@ async fn try_serve(
                 // engine runs, so mounted-vs-orphan is exact at query time (an
                 // orphan gap growing at a stable tree shape is an unmount leak).
                 let snap = *queries.stats.lock().expect("stats snapshot lock poisoned");
+                // The window summary reads the frame history at query time
+                // (not on the JS thread: a wedged app must still answer).
+                let window_ms = json
+                  .get("windowMs")
+                  .and_then(|w| w.as_f64())
+                  .unwrap_or(STATS_WINDOW_DEFAULT_MS);
+                let now_ms = crate::frame_history::now_ms();
+                let window = queries.history.lock().expect("frame history lock poisoned").summarize(window_ms, now_ms);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
@@ -636,19 +645,14 @@ async fn try_serve(
                       // Read live, not from the frame-latched snapshot: a
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
-                      let raster = ctx.userdata::<flux::gui::AlloyContext>().map(|atx| RasterCounters {
-                        queue: atx.raster_queue_depth(),
-                        idle_ticks: atx.idle_ticks(),
-                        fence_timeouts: atx.fence_timeouts(),
-                        passes: atx.passes(),
-                        pass_micros: atx.pass_micros(),
-                        cmd_micros: atx.cmd_micros(),
-                      });
-                      let _ = reply_tx.send(stats_reply(id, snap, counts, raster));
+                      let raster = ctx.userdata::<flux::gui::AlloyContext>().map(|atx| atx.raster_counters());
+                      let reply = StatsReply { snap, time_ms: now_ms, window: window.as_ref(), counts, raster };
+                      let _ = reply_tx.send(stats_reply(id, reply));
                     });
                   }
                   None => {
-                    let _ = client.send(tokio_websockets::Message::text(stats_reply(id, snap, None, None))).await;
+                    let reply = StatsReply { snap, time_ms: now_ms, window: window.as_ref(), counts: None, raster: None };
+                    let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;
                   }
                 }
               }
@@ -951,73 +955,127 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
   Ok(out)
 }
 
-/// GPU-side counters read live from the alloy context at query time (never
-/// from the frame-latched snapshot, which goes stale exactly when the raster
-/// thread wedges): a nonzero queue with idle ticks racing is the
-/// idle-tick-runaway signature, climbing fence timeouts mean the GPU is over
-/// budget, and passes racing ahead of presented frames means redundant
-/// shader/pipeline target re-renders (see
-/// okf/backlog/idle-tick-gpu-backlog-runaway.md). All cumulative except
-/// `queue`; consumers diff between queries.
-struct RasterCounters {
-  queue: usize,
-  idle_ticks: u64,
-  fence_timeouts: u64,
-  passes: u64,
-  pass_micros: u64,
-  cmd_micros: u64,
+/// Default window the stats summary covers when the query names none.
+const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
+
+/// Everything a stats reply is built from. `snap` is the draw loop's latched
+/// figures; `clock` the client's own clock at query time (`timeMs` on its
+/// monotonic origin, the latest present index) so two samples can be
+/// differenced; `window` the frame-history summary (None when no frame was
+/// rebuilt inside the window; the reply then says so with `frames: 0`);
+/// `counts` (mounted, total) from the live tree when the query could run on
+/// the JS thread - the reply then carries mountedNodes and orphanNodes
+/// (total - mounted: nodes unreachable from the root, i.e. leaked or
+/// intentionally kept detached); `raster` the live raster counters. Without an
+/// engine the last two are simply absent.
+struct StatsReply<'a> {
+  snap: crate::stats::StatsSnapshot,
+  time_ms: f64,
+  window: Option<&'a crate::frame_history::WindowSummary>,
+  counts: Option<(usize, usize)>,
+  raster: Option<alloy::RasterCounters>,
 }
 
-/// `counts` is (mounted, total) from the live tree when the query could run on
-/// the JS thread; the reply then carries mountedNodes and orphanNodes (total -
-/// mounted: nodes unreachable from the root, i.e. leaked or intentionally kept
-/// detached). Without an engine the counts and raster fields are simply
-/// absent.
-fn stats_reply(
-  id: u64,
-  s: crate::overlay::StatsSnapshot,
-  counts: Option<(usize, usize)>,
-  raster: Option<RasterCounters>,
-) -> String {
-  let mut data = serde_json::json!({
-      "fps": s.fps,
-      "cpuPct": round2(s.cpu_pct),
-      "memBytes": s.mem_bytes,
-      "jsMs": round2(s.js_ms),
-      "frameMs": round2(s.frame_ms),
-      "setPropsPerFrame": round2(s.set_count),
-      "layoutMs": round2(s.layout_ms),
-      "postLayoutMs": round2(s.post_ms),
-      "paintMs": round2(s.paint_ms),
-      "hoverMs": round2(s.hover_ms),
-      "reusedPerSec": s.reused,
-      "skippedPerSec": s.skipped,
-      "textures": s.textures,
-      "nodes": s.node_count,
-      "measureCalls": s.measure_calls,
-      "paraShapes": s.para_shapes,
-      "wordHits": s.word_hits,
-      "dirtiedNodes": s.dirtied,
-      "cacheGets": s.cache_gets,
-      "cacheHits": s.cache_hits,
-      "nodesPainted": s.nodes_painted,
-  });
-  let map = data.as_object_mut().expect("stats data is an object");
-  if let Some((mounted, total)) = counts {
-    map.insert("mountedNodes".into(), mounted.into());
-    map.insert("orphanNodes".into(), total.saturating_sub(mounted).into());
+fn round2_64(v: f64) -> f64 {
+  (v * 100.0).round() / 100.0
+}
+
+fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
+  let s = r.snap;
+  let mut data = serde_json::Map::new();
+  let mut put = |k: &str, v: serde_json::Value| {
+    data.insert(k.into(), v);
+  };
+  put("timeMs", round2_64(r.time_ms).into());
+  put("frame", s.frame.into());
+  put("fps", s.fps.into());
+  put("cpuPct", round2(s.cpu_pct).into());
+  put("memBytes", s.mem_bytes.into());
+  put("jsMs", round2(s.js_ms).into());
+  put("frameMs", round2(s.frame_ms).into());
+  put("setPropsPerFrame", round2(s.set_count).into());
+  put("layoutMs", round2(s.layout_ms).into());
+  put("postLayoutMs", round2(s.post_ms).into());
+  put("paintMs", round2(s.paint_ms).into());
+  put("hoverMs", round2(s.hover_ms).into());
+  put("reusedPerSec", s.reused.into());
+  put("skippedPerSec", s.skipped.into());
+  put("textures", s.textures.into());
+  put("nodes", s.node_count.into());
+  put("measureCalls", s.measure_calls.into());
+  put("paraShapes", s.para_shapes.into());
+  put("wordHits", s.word_hits.into());
+  put("dirtiedNodes", s.dirtied.into());
+  put("cacheGets", s.cache_gets.into());
+  put("cacheHits", s.cache_hits.into());
+  put("nodesPainted", s.paint.nodes_painted.into());
+  put("window", window_json(r.window, r.time_ms));
+  if let Some((mounted, total)) = r.counts {
+    put("mountedNodes", mounted.into());
+    put("orphanNodes", total.saturating_sub(mounted).into());
   }
-  if let Some(r) = raster {
-    map.insert("rasterQueue".into(), r.queue.into());
-    map.insert("idleTicks".into(), r.idle_ticks.into());
-    map.insert("fenceTimeouts".into(), r.fence_timeouts.into());
-    map.insert("gpuPasses".into(), r.passes.into());
+  if let Some(rc) = r.raster {
+    put("rasterQueue", rc.queue.into());
+    put("idleTicks", rc.idle_ticks.into());
+    put("fenceTimeouts", rc.fence_timeouts.into());
+    put("gpuPasses", rc.passes.into());
     // Integer ms: sub-ms increments accumulate in the microsecond counters
     // before this division, so the cumulative rounding loss stays under 1ms.
-    map.insert("gpuPassMs".into(), (r.pass_micros / 1000).into());
-    map.insert("rasterCmdMs".into(), (r.cmd_micros / 1000).into());
+    put("gpuPassMs", (rc.pass_micros / 1000).into());
+    put("rasterCmdMs", (rc.cmd_micros / 1000).into());
   }
   serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
+}
+
+/// The window block: percentiles of the JS-thread critical path over the
+/// rebuilt frames in the window, the count over the refresh period, and the
+/// worst frame with its phase breakdown and layout activity - the frame the
+/// smoothed figures average away. Raster rates ride along when the window
+/// spans two or more frames. `now_ms` is the query instant the worst frame's
+/// age is measured from.
+fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64) -> serde_json::Value {
+  let Some(w) = window else {
+    return serde_json::json!({ "windowMs": STATS_WINDOW_DEFAULT_MS, "frames": 0 });
+  };
+  let worst = &w.worst;
+  let mut data = serde_json::Map::new();
+  let mut put = |k: &str, v: serde_json::Value| {
+    data.insert(k.into(), v);
+  };
+  put("windowMs", w.window_ms.into());
+  put("frames", w.frames.into());
+  put("p50Ms", round2(w.p50_ms).into());
+  put("p95Ms", round2(w.p95_ms).into());
+  put("maxMs", round2(w.max_ms).into());
+  put("slowFrames", w.slow_frames.into());
+  put("periodMs", round2(worst.period_ms).into());
+  put(
+    "worst",
+    serde_json::json!({
+      "ageMs": round2_64(now_ms - worst.at_ms),
+      "frame": worst.frame,
+      "totalMs": round2(worst.total_ms),
+      "jsMs": round2(worst.js_ms),
+      "layoutMs": round2(worst.layout_ms),
+      "postLayoutMs": round2(worst.post_ms),
+      "paintMs": round2(worst.paint_ms),
+      "hoverMs": round2(worst.hover_ms),
+      "measureCalls": worst.counters.measure_calls,
+      "paraShapes": worst.counters.para_shapes,
+      "wordHits": worst.counters.word_hits,
+      "dirtiedNodes": worst.counters.dirtied,
+      "cacheGets": worst.counters.cache_gets,
+      "cacheHits": worst.counters.cache_hits,
+      "nodesPainted": worst.nodes_painted,
+    }),
+  );
+  if let Some(r) = &w.raster_rates {
+    put("fenceTimeoutsPerSec", round2(r.fence_timeouts_per_sec).into());
+    put("gpuPassesPerFrame", round2(r.passes_per_frame).into());
+    put("gpuPassMsPerFrame", round2(r.pass_ms_per_frame).into());
+    put("rasterCmdMsPerSec", round2(r.cmd_ms_per_sec).into());
+  }
+  data.into()
 }
 
 // Search results are for locating nodes, not dumping the app: enough for a

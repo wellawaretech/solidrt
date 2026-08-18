@@ -283,6 +283,19 @@ impl Text {
     Some(Rect::new(origin, Size::new(width.max(layout.width), layout.height)).inflate(slack, slack))
   }
 
+  /// Content for a Text outside a tree (measureText, tests): the plain string
+  /// as computed_text AND as one unstyled run. The two must agree - shaping
+  /// walks the runs to cover the text and indexes them by position, so text
+  /// with no runs is a panic, not an empty paragraph. In-tree Texts get both
+  /// from their span children (RenderTree::sync_text).
+  pub fn set_plain_text(&mut self, text: String) {
+    self.runs.clear();
+    if !text.is_empty() {
+      self.runs.push(TextRun { text: text.clone(), ..TextRun::default() });
+    }
+    self.computed_text = text;
+  }
+
   // This Text's own fields as the run style every span layers on.
   pub fn run_style(&self) -> RunStyle {
     RunStyle {

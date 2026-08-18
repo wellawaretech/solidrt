@@ -302,7 +302,7 @@ fn text_collects_atom_runs_and_keeps_their_size() {
 // A text node with laid-out content, for snapshot query matching.
 fn text(content: &str) -> Element {
   let mut t = Text::default();
-  t.computed_text = content.to_string();
+  t.set_plain_text(content.to_string());
   t.with_layout()
 }
 

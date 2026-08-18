@@ -308,10 +308,16 @@ impl UiRuntime for FluxRuntime {
     }
     let playback_frame = self.playback_frame.clone();
     let paced = self.paced.clone();
-    // Display period for video frame scheduling; playback mode has no
-    // presentation model, and 0 just disables the selection lookahead.
+    // The presentation model's period; None in playback mode, which has no
+    // presentation model.
+    let paced_period_ms = self.paced.as_ref().map(|p| p.period_ms());
+    // Display period for video frame scheduling; 0 in playback just disables
+    // the selection lookahead.
     #[cfg(feature = "video")]
-    let period_us = self.paced.as_ref().map(|p| (p.period_ms() * 1000.0) as i64).unwrap_or(0);
+    let period_us = paced_period_ms.map(|p| (p * 1000.0) as i64).unwrap_or(0);
+    // The refresh period a frame's cost is judged against (frame history):
+    // the presentation model's in run mode, the capture rate's in playback.
+    let judge_period_ms = paced_period_ms.map(|p| p as f32).unwrap_or_else(|| 1000.0 / self.platform.fps().max(1) as f32);
     let clock_control = self.clock_control.clone();
     let wall_start = self.wall_start;
     let platform = self.platform.clone();
@@ -424,9 +430,11 @@ impl UiRuntime for FluxRuntime {
       let obj = flux::rquickjs::Object::new(ctx.clone()).expect("create object");
       obj.set("frame", next_frame).expect("set frame");
       obj.set("time", time).expect("set time");
-      // Stamp the start of the JS render handler so draw() can measure onFrame +
-      // flush without any timing call crossing into JS (see frame::RENDER_START).
-      crate::frame::RENDER_START.with(|c| c.set(Some(std::time::Instant::now())));
+      // Stamp the frame for draw(): the start instant measures onFrame + flush
+      // without any timing call crossing into JS (see frame::RenderFrame).
+      crate::frame::RENDER_FRAME.with(|c| {
+        c.set(crate::frame::RenderFrame { start: Some(std::time::Instant::now()), frame: next_frame, period_ms: judge_period_ms })
+      });
       emit_event(&ctx, "render", obj);
       timing.lock().expect("js timing lock poisoned").record_frame(start.elapsed().as_secs_f32() * 1000.0);
     });

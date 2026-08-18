@@ -90,3 +90,34 @@ Split out of a five-part round-2 agent dev-loop feedback item when okf was
 restructured; the siblings are
 [mcp-multi-client-ergonomics](mcp-multi-client-ergonomics.md) and
 [mcp-detached-node-bounds](mcp-detached-node-bounds.md).
+
+## Landed (2026-08-18, verified on the linux client and the 50 Hz TV)
+
+- Per-frame history (`lattice/src/frame_history.rs`): a 600-frame ring of
+  raw rebuild records (JS-thread critical path and phases, that frame's
+  layout counters, a sample of the raster atomics), written once per rebuild
+  in draw.rs, outliving engine reloads.
+- `get_stats` gained `window` (query `window_ms`, default 5000, max
+  10000): frames, p50/p95/max of the critical path, slowFrames over the
+  refresh period, `worst` with phase breakdown + counters + ageMs, and rates
+  from the raster samples (fenceTimeoutsPerSec, gpuPassesPerFrame per
+  presented frame, gpuPassMsPerFrame, rasterCmdMsPerSec). Payload also
+  carries `timeMs` (client monotonic) and `frame` (present index).
+- Throttled (1/s) "Slow frame: ..." warning through the engine logger when a
+  rebuild exceeds the refresh period, same breakdown inline, so get_logs
+  shows jank.
+- `rasterQueue` doc reworded: instantaneous, 1 while frames flow is normal;
+  the Windows idle-89 reading is unexplained and stated as such.
+
+Not done, on purpose: the single derived verdict (the rates need to prove
+trustworthy first) and the Windows `rasterQueue` verification (needs a
+Windows client). GPU-side pass time is its own item,
+[gpu-timer-query-pass-timing](gpu-timer-query-pass-timing.md).
+
+First TV reading worth keeping: after a wheel burst, window p95 5.6 ms /
+max 13.8 ms against a 20 ms period, zero slow frames - yet fps 48. The
+JS-thread critical path is provably not the bottleneck there; what the
+window cannot show is the raster thread's own frame time (Frame commands are
+excluded from rasterCmdMs by design). A per-frame raster-side duration next
+to the JS-side one is the next measurement gap, and belongs with the pacing
+work in [frame-driver-pacing-contract](frame-driver-pacing-contract.md).

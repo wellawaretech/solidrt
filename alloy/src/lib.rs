@@ -20,6 +20,7 @@ mod mode;
 mod playback;
 mod present;
 mod raster;
+pub use raster::RasterCounters;
 pub mod rendertree;
 pub mod resample;
 mod script;

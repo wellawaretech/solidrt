@@ -1,9 +1,12 @@
 mod frame;
+#[cfg_attr(not(feature = "go"), allow(dead_code))]
+mod frame_history;
 pub mod gl_libs;
 #[cfg(feature = "go")]
 mod go;
 pub mod manifest;
 mod overlay;
+mod stats;
 mod paced_clock;
 mod plugins;
 mod runtime;
@@ -443,7 +446,11 @@ fn ui_thread(
     let dev_connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Latest stats figures, published by the draw loop every frame; the dev
     // connection answers stats queries from here without touching this thread.
-    let stats_snapshot = Arc::new(std::sync::Mutex::new(overlay::StatsSnapshot::default()));
+    let stats_snapshot = Arc::new(std::sync::Mutex::new(stats::StatsSnapshot::default()));
+    // Per-frame history behind the stats query's window summary; written by
+    // the draw loop once per rebuild. Outlives engines so a reload keeps the
+    // recent frames.
+    let frame_history = Arc::new(std::sync::Mutex::new(frame_history::FrameHistory::new()));
     // Send-safe copy of the live engine's exec handle, refreshed on each engine
     // build; the dev connection uses it to snapshot the render tree on the JS
     // thread for tree queries.
@@ -641,7 +648,12 @@ fn ui_thread(
       input_inject_tx,
       resampler.clone(),
       outbound_rx,
-      go::QueryHandles { stats: stats_snapshot.clone(), exec: query_exec.clone(), outbound_tx: outbound_tx.clone() },
+      go::QueryHandles {
+        stats: stats_snapshot.clone(),
+        history: frame_history.clone(),
+        exec: query_exec.clone(),
+        outbound_tx: outbound_tx.clone(),
+      },
       dev_server,
     );
 
@@ -730,9 +742,10 @@ fn ui_thread(
         },
       );
       let draw_stats = stats_snapshot.clone();
+      let draw_history = frame_history.clone();
       let builder = builder
         .plugin(move |ctx| {
-          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, draw_stats)
+          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, draw_stats, draw_history)
         })
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)
@@ -893,6 +906,24 @@ fn ui_thread(
   });
 }
 
+/// A panic on any runtime thread ends the process. Rust's default only
+/// unwinds the panicking thread: a JS-thread panic left the window up, the
+/// dev connection answering, and the process alive - a wedge that looks like
+/// a hang and holds the binary open. Log through the platform logger first
+/// (stderr is lost on Android; logcat is not), then let the default hook print
+/// its report, then exit with the conventional panic status.
+fn install_panic_hook() {
+  let default_hook = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
+    let location = info.location().map(|l| format!(" at {}:{}", l.file(), l.line())).unwrap_or_default();
+    log::error!("[srt] Panic in thread {name}{location}: {}", info.payload_as_str().unwrap_or("<non-string payload>"));
+    default_hook(info);
+    std::process::exit(101);
+  }));
+}
+
 pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
@@ -905,6 +936,7 @@ pub fn start(
   args: Vec<String>,
 ) {
   alloy::install_logger();
+  install_panic_hook();
   log::info!("[srt] SolidRT version {VERSION}");
 
   let handle = rt.handle().clone();

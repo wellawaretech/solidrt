@@ -82,7 +82,40 @@ pub struct RasterStats {
   pub(crate) cmd_micros: AtomicU64,
 }
 
+/// A plain-data reading of `RasterStats`, taken at one instant. What
+/// diagnostics record and report; every field but `queue` is cumulative, so
+/// two readings give a rate over the span between them.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RasterCounters {
+  /// Raster commands sent but not yet executed (queued plus the one in
+  /// hand) at the instant of the reading; 0 means the raster thread is idle.
+  pub queue: usize,
+  /// Idle Ticks the frame loop has emitted.
+  pub idle_ticks: u64,
+  /// Present-fence timeouts: frames where the GPU was over budget.
+  pub fence_timeouts: u64,
+  /// Shader/pipeline target passes executed on the raster thread.
+  pub passes: u64,
+  /// Raster-thread wall time spent executing those passes, microseconds
+  /// (occupancy, not GPU-side duration).
+  pub pass_micros: u64,
+  /// Raster-thread wall time spent executing non-Frame commands,
+  /// microseconds - the work no frame-phase timing sees.
+  pub cmd_micros: u64,
+}
+
 impl RasterStats {
+  pub(crate) fn sample(&self) -> RasterCounters {
+    RasterCounters {
+      queue: self.queue_depth.load(Ordering::Acquire),
+      idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
+      fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
+      passes: self.passes.load(Ordering::Relaxed),
+      pass_micros: self.pass_micros.load(Ordering::Relaxed),
+      cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
+    }
+  }
+
   pub(crate) fn new() -> Self {
     RasterStats {
       queue_depth: AtomicUsize::new(0),

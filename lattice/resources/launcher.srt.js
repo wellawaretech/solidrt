@@ -6897,7 +6897,7 @@ function TextInput(props) {
   });
   let buffer = createTextBuffer({
     value: () => props.value,
-    defaultValue: props.defaultValue,
+    defaultValue: untrack(() => props.defaultValue),
     onInput: (v2) => props.onInput?.(v2),
     maxLength: () => props.maxLength
   });

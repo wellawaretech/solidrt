@@ -361,7 +361,7 @@ impl ModuleDef for RenderTreeModule {
     let measure_atx = atx.clone();
     let measure_text = Function::new(ctx.clone(), move |text: String, options: OptArg<Object<'_>>| -> TextSize {
       let mut node = Text::default();
-      node.computed_text = text;
+      node.set_plain_text(text);
       if let Some(opts) = options.0 {
         apply_font_options(&mut node, &opts);
       }

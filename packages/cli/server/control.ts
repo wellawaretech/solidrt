@@ -225,8 +225,12 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (query.get("props") === "true") extra.props = true
       return handleQuery(query, "tree", extra)
     }
-    case "/__control__/stats":
-      return handleQuery(query, "stats")
+    case "/__control__/stats": {
+      let extra: Record<string, unknown> = {}
+      let windowMs = parseInt(query.get("window") ?? "", 10)
+      if (Number.isFinite(windowMs)) extra.windowMs = windowMs
+      return handleQuery(query, "stats", extra)
+    }
     case "/__control__/snapshot": {
       let nodeId = parseInt(query.get("node") ?? "", 10)
       if (!Number.isFinite(nodeId)) return Response.json({ error: "Snapshot requires ?node=<id>" }, { status: 400 })
