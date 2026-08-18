@@ -111,12 +111,14 @@ export type Rules = {
   page?: {
     template?: string;
     navItem?: string;
-    nav?: { text: string; href: string }[];
     sidebar?: string;
     sidebarItem?: string;
     sidebarGroup?: string;
   };
 } | null;
+
+/** What the page template needs around the content. */
+export type PageShell = { title?: string; nav?: string; sidebar?: string };
 
 // A page as the sidebar sees it: its URL path (directory, no trailing slash;
 // "" for the site root) and its title.
@@ -176,13 +178,12 @@ export function buildSidebar(current: string, pages: PageEntry[], rules: Rules):
   return applyTemplate(page.sidebar, { items: out.join("\n") });
 }
 
-function buildNav(
-  nav: { text: string; href: string }[] | undefined,
-  navItem: string | undefined,
-): string {
-  if (!nav || !navItem) return "";
-  return nav
-    .map((item) => applyTemplate(navItem, item))
+/** The site nav: one item per section, in `sections` order. */
+export function buildNav(sections: PageEntry[], rules: Rules): string {
+  let navItem = rules?.page?.navItem;
+  if (!navItem) return "";
+  return sections
+    .map((s) => applyTemplate(navItem, { href: s.path + "/", text: escapeHtml(s.title) }))
     .join("\n          ");
 }
 
@@ -206,14 +207,14 @@ async function resolveTemplate(template: string): Promise<string> {
 }
 
 /** Wrap already-rendered page content in the page template (shell + nav). */
-export async function renderPage(content: string, rules: Rules, title?: string, sidebar = ""): Promise<string> {
+export async function renderPage(content: string, rules: Rules, page: PageShell = {}): Promise<string> {
   if (!rules?.page?.template) return content;
   let template = await resolveTemplate(rules.page.template);
   return applyTemplate(template, {
     content,
-    title: escapeHtml(title ?? ""),
-    nav: buildNav(rules.page.nav, rules.page.navItem),
-    sidebar,
+    title: escapeHtml(page.title ?? ""),
+    nav: page.nav ?? "",
+    sidebar: page.sidebar ?? "",
   });
 }
 
@@ -222,7 +223,6 @@ export async function renderMarkdown(md: string): Promise<string> {
   return marked(md);
 }
 
-export async function markdownToHtml(md: string, rules: Rules, title?: string, sidebar = ""): Promise<string> {
-  let content = await marked(md);
-  return renderPage(content, rules, title, sidebar);
+export async function markdownToHtml(md: string, rules: Rules, page: PageShell = {}): Promise<string> {
+  return renderPage(await marked(md), rules, page);
 }

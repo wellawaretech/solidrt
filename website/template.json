@@ -4,15 +4,7 @@
     "navItem": "<li><a href=\"{href}\">{text}</a></li>",
     "sidebar": "<aside><nav><ul>\n{items}\n</ul></nav></aside>",
     "sidebarItem": "<li><a href=\"{href}\"{current}>{text}</a></li>",
-    "sidebarGroup": "<li><a href=\"{href}\"{current}>{text}</a><ul>\n{items}\n</ul></li>",
-    "nav": [
-      { "text": "start", "href": "/start/" },
-      { "text": "core", "href": "/core/" },
-      { "text": "extensions", "href": "/extensions/" },
-      { "text": "tools", "href": "/tools/" },
-      { "text": "runtime", "href": "/runtime/" },
-      { "text": "architecture", "href": "/architecture/" }
-    ]
+    "sidebarGroup": "<li><a href=\"{href}\"{current}>{text}</a><ul>\n{items}\n</ul></li>"
   },
   "elements": {
     "heading": "<h{depth} id=\"{slug}\">{text}</h{depth}>\n",

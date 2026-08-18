@@ -1,3 +1,7 @@
+---
+nav: Runtime
+---
+
 # Flux
 
 Flux is the JavaScript runtime underneath SolidRT: QuickJS plus a set of
@@ -75,6 +79,11 @@ Both are described in [Tools](/tools/).
 
 ## Reference
 
-One page per module, generated from the published types, is coming here.
-Until then `@solidrt/flux-types` is the reference: install it and every
-module is typed and documented in your editor.
+One page per declaration file, in three groups:
+[Modules](/runtime/modules/) for the `flux:*` capabilities,
+[Standards](/runtime/standards/) for the web-standard globals, and
+[GUI](/runtime/gui/) for the render tree, the devices and the GPU surface.
+
+The pages show the declarations themselves. `@solidrt/flux-types` is written
+with a doc comment on every member, so the same text your editor shows on
+hover is the reference here.

@@ -136,7 +136,7 @@ The same pattern covers `@solidrt/core/microphone`, `/sound`,
 
 ## Reference
 
-The full API reference is generated from the published types, alongside
-concept and guide pages. Until it lands here, the types themselves are the
-reference: `@solidrt/core` ships its `.d.ts` sources, so every prop and
-primitive is documented in your editor.
+The [reference](/core/reference/) covers the API by subject: the element
+vocabulary, drawing, text, detached elements, layout, transforms, input,
+shaders, and the shared types. It shows the shipped declarations themselves,
+so it says exactly what your editor says.

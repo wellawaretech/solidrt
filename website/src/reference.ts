@@ -1,14 +1,11 @@
-// Generated Reference pages. Bodies are the declaration sources themselves,
-// highlighted: flux-types and core's types.d.ts are hand-written with JSDoc on
-// every member, so they are the documentation. A proper type extractor can
-// replace the bodies later without moving the URLs.
+// Generated Reference pages, for the sections whose page bodies ARE an already
+// hand-written source: a flux-types declaration file (JSDoc on every member) or
+// a package README. Where a page needs to choose what it shows, it is authored
+// markdown in docs/ pulling through the directives instead - that is how the
+// Core and Tools references work.
 //
-//   /runtime/reference/<name>/   one page per flux-types declaration file
-//   /core/reference/<element>/   one page per JSX intrinsic element, showing
-//                                every prop interface it composes
-//   /core/reference/types/       the shared aliases and event types
-//   /tools/reference/<command>/  one page per srt command, from the CLI's
-//                                own usage text
+//   /runtime/<group>/<module>/   one page per flux-types declaration file,
+//                                grouped by its flux-types directory
 //   /extensions/components/...   the components README: its head, then one
 //                                page per "### Widget" section
 //   /extensions/3d/...           the 3d README, plus its export surface
@@ -16,13 +13,11 @@ import { file } from "flux:fs";
 import { escapeHtml, highlight, renderMarkdown } from "./markdown.ts";
 
 const FLUX_TYPES = "../packages/flux-types";
-const CORE = "../packages/core";
-const CLI_ARGS = "../packages/cli/src/args.ts";
 const COMPONENTS = "../packages/components";
 const THREE_D = "../packages/3d";
 
 export type ReferencePage = {
-  // URL path of the page directory, e.g. /runtime/reference/fs
+  // URL path of the page directory, e.g. /runtime/modules/fs
   path: string;
   title: string;
   html: string;
@@ -36,69 +31,28 @@ function declaredIn(rel: string): string {
   return `<p><small>Declared in <code>${escapeHtml(rel)}</code>.</small></p>\n`;
 }
 
-// -- Runtime: flux-types ---------------------------------------------------
+// -- The declaration splitter, shared with the pull directives --------------
 
-// The leading line-comment block of a file, joined into one paragraph.
-function intro(source: string): string {
-  let lines: string[] = [];
-  for (let line of source.split("\n")) {
-    if (line.startsWith("//")) lines.push(line.replace(/^\/\/ ?/, ""));
-    else break;
-  }
-  return lines.join(" ").trim();
-}
-
-async function runtimePages(): Promise<ReferencePage[]> {
-  const BASE = "/runtime/reference";
-  let index = await file(FLUX_TYPES + "/index.d.ts").text();
-  let refs = [...index.matchAll(/\/\/\/ <reference path="\.\/([^"]+)\.d\.ts" \/>/g)].map((m) => m[1]!);
-  let pages: ReferencePage[] = [];
-  for (let rel of refs) {
-    let stem = rel.slice(rel.lastIndexOf("/") + 1);
-    let source = await file(`${FLUX_TYPES}/${rel}.d.ts`).text();
-    let title = source.match(/^declare module "([^"]+)"/m)?.[1] ?? stem;
-    let lead = intro(source);
-    let html =
-      `<h1>${escapeHtml(title)}</h1>\n` +
-      (lead ? `<p>${escapeHtml(lead)}</p>\n` : "") +
-      declaredIn(`packages/flux-types/${rel}.d.ts`) +
-      code(source);
-    pages.push({ path: `${BASE}/${stem}`, title, html });
-  }
-  let list = pages.map((p) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`).join("\n");
-  pages.unshift({
-    path: BASE,
-    title: "Reference",
-    html:
-      "<h1>Reference</h1>\n" +
-      "<p>The typed surface of the runtime: every <code>flux:*</code> module, the web-standard globals, and the GUI capabilities, one page per declaration file.</p>\n" +
-      `<ul>\n${list}\n</ul>\n`,
-  });
-  return pages;
-}
-
-// -- Core: JSX elements from types.d.ts ------------------------------------
-
-type Declaration = { name: string; extends: string[]; source: string };
+export type Declaration = { name: string; exported: boolean; extends: string[]; source: string };
 
 // Top-level declarations of a TypeScript source, each with the comment block
 // directly above it (no blank line between). `interface` / `type` /
 // `class` run to the line that closes their top-level brace (or are a single
 // line); `function` / `const` / `let` contribute their signature only, cut at
 // the body's opening brace.
-function splitDeclarations(source: string): Map<string, Declaration> {
+export function splitDeclarations(source: string): Map<string, Declaration> {
   let out = new Map<string, Declaration>();
   let lines = source.split("\n");
   let i = 0;
   while (i < lines.length) {
     let head = lines[i]!.match(
-      /^(?:export )?(?:declare )?(?:async )?(interface|type|class|function|const|let) ([A-Za-z_][A-Za-z0-9_]*)\b(?: extends ([^{]+))?/,
+      /^(export )?(?:declare )?(?:async )?(interface|type|class|function|const|let) ([A-Za-z_][A-Za-z0-9_]*)\b(?: extends ([^{]+))?/,
     );
     if (!head) {
       i++;
       continue;
     }
-    let kind = head[1]!;
+    let kind = head[2]!;
     let start = i;
     while (start > 0 && /^(\/\/|\/\*| \*)/.test(lines[start - 1]!)) start--;
     let end = i;
@@ -122,9 +76,10 @@ function splitDeclarations(source: string): Map<string, Declaration> {
       body = lines.slice(i, end + 1).join("\n");
     }
     let comment = start < i ? lines.slice(start, i).join("\n") + "\n" : "";
-    out.set(head[2]!, {
-      name: head[2]!,
-      extends: head[3] ? head[3].split(",").map((s) => s.trim()).filter(Boolean) : [],
+    out.set(head[3]!, {
+      name: head[3]!,
+      exported: head[1] !== undefined,
+      extends: head[4] ? head[4].split(",").map((s) => s.trim()).filter(Boolean) : [],
       source: comment + body,
     });
     i = end + 1;
@@ -132,110 +87,72 @@ function splitDeclarations(source: string): Map<string, Declaration> {
   return out;
 }
 
-// The interfaces an element composes, in reading order: each named interface
-// followed by what it extends, depth-first, deduplicated.
-function compose(names: string[], decls: Map<string, Declaration>, seen = new Set<string>()): Declaration[] {
-  let out: Declaration[] = [];
-  for (let name of names) {
-    let d = decls.get(name);
-    if (!d || seen.has(name)) continue;
-    seen.add(name);
-    out.push(d, ...compose(d.extends, decls, seen));
+// -- Runtime: flux-types ---------------------------------------------------
+
+// The leading line-comment block of a file, joined into one paragraph.
+function intro(source: string): string {
+  let lines: string[] = [];
+  for (let line of source.split("\n")) {
+    if (line.startsWith("//")) lines.push(line.replace(/^\/\/ ?/, ""));
+    else break;
   }
-  return out;
+  return lines.join(" ").trim();
 }
 
-async function corePages(): Promise<ReferencePage[]> {
-  const BASE = "/core/reference";
-  let typesRel = "packages/core/src/types.d.ts";
-  let decls = splitDeclarations(await file(`${CORE}/src/types.d.ts`).text());
-  let jsx = await file(`${CORE}/jsx-runtime.d.ts`).text();
-  let elements = [...jsx.matchAll(/^\s+"?([a-z-]+)"?: ([A-Za-z &]+)$/gm)].map((m) => ({
-    name: m[1]!,
-    composition: m[2]!,
-    props: m[2]!.split("&").map((s) => s.trim()).filter((s) => s !== "ElementRef"),
-  }));
-  let used = new Set<string>();
+// The declarations themselves are the reference here, so these pages stay
+// generated: each is 1:1 with a hand-written .d.ts whose JSDoc is the
+// documentation, and flux-types' own directories are the grouping. A group's
+// blurb lives here; anything more to say about a module belongs in its .d.ts
+// header comment, which becomes the page's lead.
+const GROUP_BLURB: Record<string, string> = {
+  modules: "The <code>flux:*</code> capability modules. Capabilities are named imports, never ambient globals.",
+  standards: "The web-standard globals, with the names and shapes you already know.",
+  gui: "The GUI capabilities: the render tree, devices, and the GPU surface.",
+};
+
+function groupTitle(dir: string): string {
+  return dir === "gui" ? "GUI" : dir.charAt(0).toUpperCase() + dir.slice(1);
+}
+
+async function runtimePages(): Promise<ReferencePage[]> {
+  const BASE = "/runtime";
+  let index = await file(FLUX_TYPES + "/index.d.ts").text();
+  let refs = [...index.matchAll(/\/\/\/ <reference path="\.\/([^"]+)\.d\.ts" \/>/g)].map((m) => m[1]!);
+  let groups = new Map<string, ReferencePage[]>();
+  for (let rel of refs) {
+    let slash = rel.indexOf("/");
+    let [dir, stem] = [rel.slice(0, slash), rel.slice(slash + 1)];
+    let source = await file(`${FLUX_TYPES}/${rel}.d.ts`).text();
+    let title = source.match(/^declare module "([^"]+)"/m)?.[1] ?? stem;
+    let lead = intro(source);
+    let group = groups.get(dir);
+    if (!group) groups.set(dir, (group = []));
+    group.push({
+      path: `${BASE}/${dir}/${stem}`,
+      title,
+      html:
+        `<h1>${escapeHtml(title)}</h1>\n` +
+        (lead ? `<p>${escapeHtml(lead)}</p>\n` : "") +
+        declaredIn(`packages/flux-types/${rel}.d.ts`) +
+        code(source),
+    });
+  }
   let pages: ReferencePage[] = [];
-  for (let el of elements) {
-    let parts = compose(el.props, decls);
-    for (let d of parts) used.add(d.name);
-    let html =
-      `<h1>&lt;${escapeHtml(el.name)}&gt;</h1>\n` +
-      `<p>Props: <code>${escapeHtml(el.composition)}</code>. <code>ElementRef</code> is the <code>ref</code> callback every element accepts.</p>\n` +
-      declaredIn(typesRel) +
-      parts.map((d) => `<h2 id="${d.name}">${d.name}</h2>\n` + code(d.source)).join("");
-    pages.push({ path: `${BASE}/${el.name}`, title: `<${el.name}>`, html });
+  for (let [dir, members] of groups) {
+    let list = members.map((p) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`).join("\n");
+    pages.push(
+      {
+        path: `${BASE}/${dir}`,
+        title: groupTitle(dir),
+        html:
+          `<h1>${groupTitle(dir)}</h1>\n` +
+          `<p>${GROUP_BLURB[dir] ?? ""}</p>\n` +
+          "<p>One page per declaration file, showing the declarations themselves: they carry a doc comment on every member, so they are the documentation.</p>\n" +
+          `<ul>\n${list}\n</ul>\n`,
+      },
+      ...members,
+    );
   }
-  // JSX plumbing (ElementChildrenAttribute, Children) is not a reader-facing type.
-  const PLUMBING = new Set(["ElementChildrenAttribute", "Children"]);
-  let rest = [...decls.values()].filter((d) => !used.has(d.name) && !PLUMBING.has(d.name));
-  pages.push({
-    path: `${BASE}/types`,
-    title: "Types",
-    html:
-      "<h1>Types</h1>\n" +
-      "<p>The shared aliases and event types the element props refer to.</p>\n" +
-      declaredIn(typesRel) +
-      rest.map((d) => `<h2 id="${d.name}">${d.name}</h2>\n` + code(d.source)).join(""),
-  });
-  let list = pages.map((p) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`).join("\n");
-  pages.unshift({
-    path: BASE,
-    title: "Reference",
-    html:
-      "<h1>Reference</h1>\n" +
-      "<p>The JSX element vocabulary: one page per intrinsic element with every prop interface it composes, and the shared types.</p>\n" +
-      `<ul>\n${list}\n</ul>\n`,
-  });
-  return pages;
-}
-
-// -- Tools: the srt CLI ----------------------------------------------------
-
-// The CLI keeps its whole usage text in printUsage() (args.ts): a "Commands:"
-// table, then "<name>[/<name>] options:" blocks. That text is the source here:
-// the index page carries the table, each command page its table row and every
-// option block whose heading names it.
-async function toolsPages(): Promise<ReferencePage[]> {
-  const BASE = "/tools/reference";
-  let args = await file(CLI_ARGS).text();
-  let usage = args.match(/console\.error\(`Usage: srt[^`]*`\)/)?.[0].slice("console.error(`".length, -2) ?? "";
-  let [, commandsText = "", optionsText = ""] = usage.match(/Commands:\n([\s\S]*?)\n\n([\s\S]*)/) ?? [];
-  let commands = commandsText
-    .split("\n")
-    .map((line) => line.match(/^\s+(\S+)(.*?)\s{2,}(.+)$/))
-    .filter((m): m is RegExpMatchArray => m !== null)
-    .map((m) => ({ name: m[1]!, args: m[2]!.trim(), summary: m[3]!.trim(), row: m[0]!.trim() }));
-  let blocks = optionsText
-    .split("\n\n")
-    .map((block) => block.match(/^(\S+) options:\n([\s\S]*)$/))
-    .filter((m): m is RegExpMatchArray => m !== null)
-    .map((m) => ({ commands: m[1]!.split("/"), heading: `${m[1]} options`, text: m[2]! }));
-  let pre = (text: string) => `<pre><code>${escapeHtml(text)}</code></pre>\n`;
-  let pages: ReferencePage[] = commands.map((c) => ({
-    path: `${BASE}/${c.name}`,
-    title: `srt ${c.name}`,
-    html:
-      `<h1>srt ${escapeHtml(c.name)}</h1>\n` +
-      `<p>${escapeHtml(c.summary)}.</p>\n` +
-      pre(`srt ${c.name}${c.args ? " " + c.args : ""}`) +
-      blocks
-        .filter((b) => b.commands.includes(c.name))
-        .map((b) => `<h2>${escapeHtml(b.heading)}</h2>\n` + pre(b.text))
-        .join(""),
-  }));
-  let list = commands
-    .map((c) => `<li><a href="${BASE}/${c.name}/"><code>srt ${escapeHtml(c.name)}</code></a> ${escapeHtml(c.summary)}</li>`)
-    .join("\n");
-  pages.unshift({
-    path: BASE,
-    title: "Reference",
-    html:
-      "<h1>Reference</h1>\n" +
-      "<p>Every <code>srt</code> command and its options, from the CLI's own usage text (<code>srt</code> with no arguments prints the same).</p>\n" +
-      `<ul>\n${list}\n</ul>\n`,
-  });
   return pages;
 }
 
@@ -318,10 +235,8 @@ async function threeDPages(): Promise<ReferencePage[]> {
 
 export async function referencePages(): Promise<ReferencePage[]> {
   return [
-    ...(await corePages()),
     ...(await componentsPages()),
     ...(await threeDPages()),
     ...(await runtimePages()),
-    ...(await toolsPages()),
   ];
 }
