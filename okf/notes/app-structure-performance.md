@@ -57,6 +57,14 @@ are already made:
 
 ### a. Per-prop FFI writes with string keys (the structural hot path)
 
+**Partly measured (2026-08-18):** one crossing costs about 0.25 us all
+in and FFI is ~10 ms of a 118 ms 3000-node mount; batching creation into
+one crossing per node saved nothing, so the mount half of this finding
+does not hold (per-component JS is the cost). The update-burst half is
+unmeasured; see okf/notes/ffi-crossing-costs.md and the status in
+okf/backlog/ffi-write-batching.md.
+
+
 Every setProperty marshals the property name as a fresh Rust String, then
 apply_jsx walks chained `match name` string comparisons (element kind module,
 then paint, then layout; an unknown layout prop is compared against every name
@@ -145,8 +153,9 @@ Split by what "SolidJS code" means:
 
 ## Proposed order (candidates for backlog when picked up)
 
-1. Batched node creation + interned property keys (a) - mechanical, helps
-   every app's mount time.
+1. Batched node creation (a) - measured, no gain, dropped; interned keys
+   and the drain wait on an update-burst measurement
+   (okf/notes/ffi-crossing-costs.md).
 2. Native declarative animation riding the existing Damage system (b).
 3. Native scroll physics when momentum is built (c) - build it natively
    first, do not port a JS implementation.

@@ -41,8 +41,11 @@ Most components group props into two objects, plus top-level event handlers:
   props are set.
 - `Text` - text in a layout box; font fields go in `layout`, `color` in `style`.
 - `Image` - fetches/decodes/uploads an image: `src: string | Uint8Array`.
-- `TextInput` - single-line input; `value`/`onInput`/`onSubmit`, controlled or
-  uncontrolled, plus `placeholder`, `maxLength`, `autoFocus`, `disabled`.
+- `TextInput` - text input, `multiline` to wrap and edit across lines;
+  `value`/`onInput`/`onSubmit` (single-line), controlled or uncontrolled, plus
+  `placeholder`, `maxLength`, `autoFocus`, `disabled`. Lines and caret come
+  from core's `createTextEditorLayout` (prepareText + layoutNextLine, one
+  d-text per line).
 - `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
   Wheel + drag (a pan recognizer: activates on slop along the scroll axis and
   steals the pointer from a pressable the drag started on), no momentum yet.

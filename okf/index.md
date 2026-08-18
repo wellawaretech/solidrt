@@ -984,6 +984,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Survey of declarative GPU prior art against the current texture/gpu API;
   conclusion is a Shader component as sugar, subtree effects as the real gap,
   and keeping the manual path imperative.
+- **[FFI crossing costs, measured](notes/ffi-crossing-costs.md)** [2026-08-18]
+  What one JS-to-Rust property write costs on the release runtime (about 0.25
+  us including decode, string dispatch and apply), what share of a 3000-node
+  mount is FFI (about 10 ms of 118), and why batching creation into one
+  crossing per node changed nothing - mount time goes to per-component JS; the
+  per-frame update path is not measured here.
 - **[Flux crate review](notes/flux-crate-review.md)** [2026-07-15]
   Marshalling contract upheld, error model strong; the two biggest 2026-07-15
   gaps - gui prop panics and fetch silently dropping Headers/bodies - are
@@ -1047,6 +1053,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
 
 Bugs in our dependencies. Status here is the dependency's, not ours.
 
+- **[Impeller interop GlyphInfo grapheme bounds are unusable](upstream/impeller-glyph-info-bounds.md)** [2026-08-18]
+  ImpellerGlyphInfoGetGraphemeClusterBounds swaps x and y when building the
+  ImpellerRect, and the rect it returns for glyphs of a single-line paragraph
+  carries no position (per-glyph width in the x slot, zero width), so caret
+  geometry cannot be read from it.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap

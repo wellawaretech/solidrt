@@ -2,7 +2,7 @@
 // scrollable region -- the offset and its clamping against the measured content
 // and viewport sizes -- and nothing with a UI opinion. Wheel/drag input,
 // momentum, scrollbars and styling are policy and belong to the component (the
-// "skin") that composes this, the same way createCaretScroll backs TextInput.
+// "skin") that composes this, the same way createTextEditorLayout backs TextInput.
 
 import { createSignal, flush } from "@solidjs/signals"
 import { getBoundingBox } from "./core"

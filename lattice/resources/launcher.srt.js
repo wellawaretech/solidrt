@@ -4831,6 +4831,43 @@ function getBoundingBoxViewport2(node) {
 function measureText2(text, options) {
   return tree.measureText(text, options);
 }
+function prepareText2(text, options) {
+  return tree.prepareText(text, options);
+}
+function layoutNextLine(prepared, cursor, width) {
+  let units = prepared.units;
+  if (cursor >= units.length)
+    return null;
+  let pen = 0;
+  let ascent = 0;
+  let descent = 0;
+  let i = cursor;
+  while (i < units.length) {
+    let unit = units[i];
+    if (i > cursor && pen + unit.width > width)
+      break;
+    pen += unit.advance;
+    if (unit.ascent > ascent)
+      ascent = unit.ascent;
+    if (unit.descent > descent)
+      descent = unit.descent;
+    i++;
+    if (unit.hardBreak)
+      break;
+  }
+  let last = units[i - 1];
+  return {
+    from: cursor,
+    to: i,
+    start: units[cursor].start,
+    end: last.end,
+    width: pen - last.advance + last.width,
+    height: ascent + descent,
+    ascent,
+    hardBreak: last.hardBreak,
+    cursor: i
+  };
+}
 
 // packages/core/src/window.ts
 var nextFrameId = 1;
@@ -6550,7 +6587,7 @@ function SafeArea(props) {
 function createTextBuffer(options = {}) {
   let initial = options.defaultValue ?? "";
   let [internalValue, setInternalValue] = createSignal(initial);
-  let initialCaret = (options.value?.() ?? initial).length;
+  let initialCaret = untrack(() => options.value?.() ?? initial).length;
   let [selectionState, setSelectionState] = createSignal({
     anchor: initialCaret,
     focus: initialCaret
@@ -6575,6 +6612,11 @@ function createTextBuffer(options = {}) {
     anchor: offset,
     focus: offset
   });
+  let step = (text, offset, direction) => {
+    if (options.step)
+      return Math.max(0, Math.min(options.step(text, offset, direction), text.length));
+    return direction === "left" ? Math.max(0, offset - 1) : Math.min(text.length, offset + 1);
+  };
   let apply = (next, caret) => {
     let max = options.maxLength?.();
     if (max != null && next.length > max)
@@ -6600,8 +6642,10 @@ function createTextBuffer(options = {}) {
       let [start, end] = range();
       if (start !== end)
         apply(v2.slice(0, start) + v2.slice(end), start);
-      else if (start > 0)
-        apply(v2.slice(0, start - 1) + v2.slice(start), start - 1);
+      else if (start > 0) {
+        let from = step(v2, start, "left");
+        apply(v2.slice(0, from) + v2.slice(start), from);
+      }
     },
     deleteForward: () => {
       let v2 = value();
@@ -6609,7 +6653,7 @@ function createTextBuffer(options = {}) {
       if (start !== end)
         apply(v2.slice(0, start) + v2.slice(end), start);
       else if (end < v2.length)
-        apply(v2.slice(0, end) + v2.slice(end + 1), end);
+        apply(v2.slice(0, end) + v2.slice(step(v2, end, "right")), end);
     },
     move: (direction, opts) => {
       let extend = opts?.extend ?? false;
@@ -6625,9 +6669,9 @@ function createTextBuffer(options = {}) {
       }
       let next = focus;
       if (direction === "left")
-        next = Math.max(0, focus - 1);
+        next = step(value(), focus, "left");
       else if (direction === "right")
-        next = Math.min(len, focus + 1);
+        next = step(value(), focus, "right");
       else if (direction === "start")
         next = 0;
       else if (direction === "end")
@@ -6650,43 +6694,250 @@ function createTextBuffer(options = {}) {
     clear: () => apply("", 0)
   };
 }
-function createCaretScroll(viewport, input) {
+function createTextEditorLayout(viewport, input) {
+  let [viewportSize, setViewportSize] = createSignal({
+    width: 0,
+    height: 0
+  }, {
+    equals: (a3, b2) => a3.width === b2.width && a3.height === b2.height
+  });
   let [scrollX, setScrollX] = createSignal(0);
+  let [scrollY, setScrollY] = createSignal(0);
+  let prepared = createMemo(() => {
+    let {
+      text,
+      font
+    } = input();
+    return prepareText2(text, {
+      ...font,
+      carets: true
+    });
+  });
+  let placed = createMemo(() => {
+    let {
+      text,
+      font,
+      wrap: wrap2
+    } = input();
+    let width = wrap2 ? viewportSize().width : Infinity;
+    let units = wrap2 ? splitWide(prepared(), width) : prepared();
+    let out = [];
+    let y2 = 0;
+    let cursor = 0;
+    let line = layoutNextLine(units, cursor, width);
+    let hardBreak = false;
+    while (line) {
+      out.push({
+        start: line.start,
+        end: line.end,
+        y: y2,
+        height: line.height,
+        width: line.width,
+        from: line.from,
+        to: line.to
+      });
+      y2 += line.height;
+      hardBreak = line.hardBreak;
+      line = layoutNextLine(units, line.cursor, width);
+    }
+    if (out.length === 0 || hardBreak) {
+      let height = measureText2(" ", font).height;
+      let n3 = units.units.length;
+      out.push({
+        start: text.length,
+        end: text.length,
+        y: y2,
+        height,
+        width: 0,
+        from: n3,
+        to: n3
+      });
+    }
+    return {
+      units: units.units,
+      lines: out
+    };
+  });
+  let lines = createMemo(() => placed().lines);
+  let lineStops = (index) => {
+    let {
+      units,
+      lines: lines2
+    } = placed();
+    let line = lines2[index];
+    if (!line)
+      return [];
+    let stops = [];
+    let pen = 0;
+    for (let u3 = line.from;u3 < line.to; u3++) {
+      let unit = units[u3];
+      for (let stop of unit.carets ?? []) {
+        let x2 = pen + stop.x;
+        if (stops.length && stops[stops.length - 1].offset === stop.offset)
+          continue;
+        stops.push({
+          offset: stop.offset,
+          x: x2
+        });
+      }
+      pen += unit.advance;
+    }
+    if (stops.length === 0)
+      stops.push({
+        offset: line.start,
+        x: 0
+      });
+    return stops;
+  };
+  let caretLine = createMemo(() => {
+    let caret2 = input().caret;
+    let ls = lines();
+    for (let i3 = 0;i3 < ls.length; i3++) {
+      if (caret2 < ls[i3].end)
+        return i3;
+    }
+    return ls.length - 1;
+  });
+  let caret = createMemo(() => {
+    let offset = input().caret;
+    let index = caretLine();
+    let line = lines()[index];
+    let x2 = 0;
+    for (let stop of lineStops(index)) {
+      if (stop.offset > offset)
+        break;
+      x2 = stop.x;
+    }
+    return {
+      x: x2,
+      y: line.y,
+      height: line.height
+    };
+  });
+  let offsetAtX = (index, x2) => {
+    let best = 0;
+    let bestDistance = Infinity;
+    for (let stop of lineStops(index)) {
+      let d2 = Math.abs(stop.x - x2);
+      if (d2 < bestDistance) {
+        best = stop.offset;
+        bestDistance = d2;
+      }
+    }
+    return best;
+  };
+  let step = (offset, direction) => {
+    let {
+      units
+    } = placed();
+    let text = input().text;
+    if (direction === "right") {
+      for (let unit of units) {
+        if (unit.end <= offset)
+          continue;
+        for (let stop of unit.carets ?? [])
+          if (stop.offset > offset)
+            return stop.offset;
+        return unit.end;
+      }
+      return text.length;
+    }
+    for (let u3 = units.length - 1;u3 >= 0; u3--) {
+      let unit = units[u3];
+      if (unit.start >= offset)
+        continue;
+      let stops = unit.carets ?? [];
+      for (let i3 = stops.length - 1;i3 >= 0; i3--)
+        if (stops[i3].offset < offset)
+          return stops[i3].offset;
+      return unit.start;
+    }
+    return 0;
+  };
   onLayout(() => {
     let node = viewport();
     if (!node)
       return;
-    let vw = getBoundingBox2(node)?.width ?? 0;
+    let box = getBoundingBox2(node);
+    setViewportSize({
+      width: box?.width ?? 0,
+      height: box?.height ?? 0
+    });
+    flush();
     let {
-      text,
-      fontSize,
-      caret,
+      width: vw,
+      height: vh
+    } = viewportSize();
+    let {
       caretWidth = 0
     } = input();
-    let len = text.length;
-    let c3 = caret == null ? len : Math.max(0, Math.min(caret, len));
-    let totalWidth = measureText2(text, {
-      fontSize
-    }).width;
-    let caretX = c3 >= len ? totalWidth : measureText2(text.slice(0, c3), {
-      fontSize
-    }).width;
-    let maxScroll = Math.max(0, totalWidth + caretWidth - vw);
-    let cur = scrollX();
-    let next = cur;
-    if (vw <= 0) {
-      next = 0;
-    } else if (caretX < cur) {
-      next = caretX;
-    } else if (caretX + caretWidth > cur + vw) {
-      next = caretX + caretWidth - vw;
-    }
-    next = Math.max(0, Math.min(next, maxScroll));
-    if (next !== cur)
-      setScrollX(next);
+    let ls = lines();
+    let contentWidth = ls.reduce((w2, l2) => Math.max(w2, l2.width), 0);
+    let last = ls[ls.length - 1];
+    let contentHeight = last.y + last.height;
+    let c3 = caret();
+    setScrollX(follow(scrollX(), c3.x, caretWidth, vw, contentWidth + caretWidth));
+    setScrollY(follow(scrollY(), c3.y, c3.height, vh, contentHeight));
     flush();
   });
-  return scrollX;
+  return {
+    lines,
+    caret,
+    caretLine,
+    offsetAtX,
+    step,
+    scrollX,
+    scrollY
+  };
+}
+function splitWide(prepared, width) {
+  if (!prepared.units.some((u3) => u3.width > width && (u3.carets?.length ?? 0) > 2))
+    return prepared;
+  let units = [];
+  for (let unit of prepared.units) {
+    let stops = unit.carets;
+    if (!(unit.width > width) || !stops || stops.length <= 2) {
+      units.push(unit);
+      continue;
+    }
+    for (let i3 = 1;i3 < stops.length; i3++) {
+      let a3 = stops[i3 - 1];
+      let b2 = stops[i3];
+      let last = i3 === stops.length - 1;
+      let advance = last ? unit.advance - a3.x : b2.x - a3.x;
+      units.push({
+        text: prepared.text.slice(a3.offset, b2.offset),
+        start: a3.offset,
+        end: last ? unit.end : b2.offset,
+        advance,
+        width: Math.max(0, Math.min(b2.x, unit.width) - a3.x),
+        ascent: unit.ascent,
+        descent: unit.descent,
+        hardBreak: last && unit.hardBreak,
+        carets: [{
+          offset: a3.offset,
+          x: 0
+        }, {
+          offset: b2.offset,
+          x: b2.x - a3.x
+        }]
+      });
+    }
+  }
+  return {
+    text: prepared.text,
+    units
+  };
+}
+function follow(current, pos, size, extent, content) {
+  if (extent <= 0)
+    return 0;
+  let next = current;
+  if (pos < current)
+    next = pos;
+  else if (pos + size > current + extent)
+    next = pos + size - extent;
+  return Math.max(0, Math.min(next, Math.max(0, content - extent)));
 }
 
 // packages/components/src/focus-nav.ts
@@ -6885,7 +7136,7 @@ function space(token) {
 
 // packages/components/src/text-input.tsx
 var CARET_WIDTH = 1;
-var TEXT_SHAPE_WIDTH = 1e9;
+var PLACEHOLDER_SHAPE_WIDTH = 1e9;
 function TextInput(props) {
   let [caretOn, setCaretOn] = createSignal(true);
   let node;
@@ -6899,7 +7150,8 @@ function TextInput(props) {
     value: () => props.value,
     defaultValue: untrack(() => props.defaultValue),
     onInput: (v2) => props.onInput?.(v2),
-    maxLength: () => props.maxLength
+    maxLength: () => props.maxLength,
+    step: (_text, offset, direction) => editor.step(offset, direction)
   });
   let value = buffer.value;
   createEffect(() => props.autoFocus, (autoFocus) => {
@@ -6948,6 +7200,13 @@ function TextInput(props) {
     } else if (e3.key === "End") {
       buffer.move("end");
       setCaretOn(true);
+    } else if (props.multiline && (e3.key === "ArrowUp" || e3.key === "ArrowDown")) {
+      moveLine(e3.key === "ArrowUp" ? -1 : 1);
+      setCaretOn(true);
+    } else if (props.multiline && e3.key === "Enter" && textInputActive()) {
+      buffer.insertText(`
+`);
+      setCaretOn(true);
     } else if (e3.key === "Enter" || e3.code === "Select") {
       activateField();
     } else if (e3.key === "Escape") {
@@ -6965,12 +7224,18 @@ function TextInput(props) {
     buffer.insertText(e3.text ?? "");
     setCaretOn(true);
   };
+  let moveLine = (delta) => {
+    let target = editor.caretLine() + delta;
+    let count = editor.lines().length;
+    let offset = target < 0 ? 0 : target >= count ? value().length : editor.offsetAtX(target, editor.caret().x);
+    buffer.setSelection(offset, offset);
+  };
   let activateField = () => {
     if (props.disabled)
       return;
     if (!textInputActive()) {
       startTextInput();
-    } else {
+    } else if (!props.multiline) {
       props.onSubmit?.(value());
       setFocus(null);
     }
@@ -6989,20 +7254,22 @@ function TextInput(props) {
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0;
   let showCaret = () => focused() && caretOn() && !showPlaceholder();
   let fontSize = () => theme.text.body.size * policy.textScale;
+  let font = () => ({
+    fontSize: fontSize(),
+    lineHeight: theme.text.body.lineHeight
+  });
   let rowHeight = () => Math.round(fontSize() * theme.text.body.lineHeight);
-  let caretX = () => measureText2(value().slice(0, buffer.caret()), {
-    fontSize: fontSize()
-  }).width;
-  let scrollX = createCaretScroll(() => viewport, () => ({
+  let editor = createTextEditorLayout(() => viewport, () => ({
     text: value(),
-    fontSize: fontSize(),
+    font: font(),
     caret: buffer.caret(),
-    caretWidth: CARET_WIDTH
+    caretWidth: CARET_WIDTH,
+    wrap: props.multiline ?? false
   }));
-  let textStyle = (color) => ({
-    w: TEXT_SHAPE_WIDTH,
-    fontSize: fontSize(),
-    lineHeight: theme.text.body.lineHeight,
+  let caret = editor.caret;
+  let textStyle = (color, w2) => ({
+    w: w2 + 1,
+    ...font(),
     color,
     maxLines: 1
   });
@@ -7026,7 +7293,10 @@ function TextInput(props) {
   setProp(_el$, "alignItems", "center");
   spread(_el$, mergeProps({
     get textInputHints() {
-      return props.hints;
+      return memo2(() => !!props.multiline)() ? {
+        multiline: true,
+        ...props.hints
+      } : props.hints;
     },
     get paddingLeft() {
       return space("md");
@@ -7067,22 +7337,32 @@ function TextInput(props) {
     var _c$ = memo2(() => !!showPlaceholder());
     return () => _c$() ? (() => {
       var _el$5 = createElement("d-text");
-      spread(_el$5, mergeProps(() => textStyle(theme.color.textMuted)), true);
+      spread(_el$5, mergeProps(() => textStyle(theme.color.textMuted, PLACEHOLDER_SHAPE_WIDTH)), true);
       insert(_el$5, () => props.placeholder ?? "");
       return _el$5;
-    })() : [(() => {
-      var _el$6 = createElement("d-text");
-      spread(_el$6, mergeProps(() => textStyle(textColor())), true);
-      insert(_el$6, value);
-      return _el$6;
-    })(), memo2(() => memo2(() => !!showCaret())() ? (() => {
+    })() : [createComponent2(For, {
+      get each() {
+        return editor.lines();
+      },
+      keyed: false,
+      children: (line) => (() => {
+        var _el$6 = createElement("d-text");
+        spread(_el$6, mergeProps({
+          get y() {
+            return line().y;
+          }
+        }, () => textStyle(textColor(), line().width)), true);
+        insert(_el$6, () => value().slice(line().start, line().end));
+        return _el$6;
+      })()
+    }), memo2(() => memo2(() => !!showCaret())() ? (() => {
       var _el$7 = createElement("d-rect", {
         w: 1
       });
       effect3(() => ({
         e: textColor(),
-        t: caretX(),
-        a: (rowHeight() - fontSize()) / 2,
+        t: caret().x,
+        a: caret().y + (caret().height - fontSize()) / 2,
         o: fontSize()
       }), ({
         e: e3,
@@ -7104,8 +7384,11 @@ function TextInput(props) {
     a: borderColor(),
     o: borderWidth(),
     i: borderRadius(),
-    n: rowHeight(),
-    s: scrollX()
+    n: props.multiline ? undefined : rowHeight(),
+    s: props.multiline ? rowHeight() : undefined,
+    h: props.multiline ? "stretch" : undefined,
+    r: editor.scrollX(),
+    d: editor.scrollY()
   }), ({
     e: e3,
     t: t3,
@@ -7113,7 +7396,10 @@ function TextInput(props) {
     o: o3,
     i: i3,
     n: n3,
-    s: s2
+    s: s2,
+    h: h3,
+    r: r3,
+    d: d2
   }, _p$) => {
     e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
     t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
@@ -7121,7 +7407,10 @@ function TextInput(props) {
     o3 !== _p$?.o && setProp(_el$3, "strokeWidth", o3, _p$?.o);
     i3 !== _p$?.i && setProp(_el$3, "radius", i3, _p$?.i);
     n3 !== _p$?.n && setProp(_el$4, "height", n3, _p$?.n);
-    s2 !== _p$?.s && setProp(_el$4, "scrollX", s2, _p$?.s);
+    s2 !== _p$?.s && setProp(_el$4, "minHeight", s2, _p$?.s);
+    h3 !== _p$?.h && setProp(_el$4, "alignSelf", h3, _p$?.h);
+    r3 !== _p$?.r && setProp(_el$4, "scrollX", r3, _p$?.r);
+    d2 !== _p$?.d && setProp(_el$4, "scrollY", d2, _p$?.d);
   });
   return _el$;
 }

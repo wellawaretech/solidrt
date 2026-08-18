@@ -53,6 +53,10 @@ export function startWatcher() {
   watchers.push(
     watch(watchDir, { recursive: true }, (_event, filename) => {
       if (!filename) return
+      // Dot directories are never sources: .srt-data in particular is this
+      // server's own output (isolate bundles are .js files in there), and
+      // rebuilding on it would rebuild forever.
+      if (filename.split(sep).some((part, i, parts) => i < parts.length - 1 && part.startsWith("."))) return
       if (!/\.(tsx?|jsx?)$/.test(filename) && !(covered && isAsset(filename))) return
       rebuild(filename)
     }),

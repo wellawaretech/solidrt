@@ -4,7 +4,9 @@
 use super::{OverflowWrap, Text, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
 use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
+use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
+use std::rc::Rc;
 use crate::rendertree::{PaintState, PlatformContext};
 
 // Snapshot of every input that feeds paragraph shaping; the cache is valid
@@ -128,26 +130,33 @@ pub struct PreparedUnit {
   pub end: usize,
   pub metrics: RunMetrics,
   pub hard_break: bool,
+  /// Caret stops within the unit's text (offsets relative to the unit's
+  /// start, in UTF-16), when asked for.
+  pub carets: Option<Rc<[CaretStop]>>,
 }
 
 /// The wrap units of `text` in one `style`, shaped through the shared word
 /// cache: the power-user counterpart of what a `<text>` does for itself in
-/// `prepare_owned` (single style, no atoms). Stops at the first unit the
-/// paragraph builder refuses.
-pub fn prepare_units(platform: &PlatformContext, text: &str, style: &RunStyle) -> Vec<PreparedUnit> {
+/// `prepare_owned` (single style, no atoms). With `carets`, each unit also
+/// carries its grapheme caret stops (for editing). Stops at the first unit
+/// the paragraph builder refuses.
+pub fn prepare_units(platform: &PlatformContext, text: &str, style: &RunStyle, carets: bool) -> Vec<PreparedUnit> {
   let mut units = Vec::new();
   for segment in layout::segments(text) {
     let raw = &text[segment.start..segment.end];
     let piece = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-    let Some(word) = platform.words().get_or_shape(&platform.typography(), piece, style) else {
+    let mut words = platform.words();
+    let Some(word) = words.get_or_shape(&platform.typography(), piece, style) else {
       break;
     };
+    let stops = if carets { words.carets(&platform.typography(), piece, style) } else { None };
     units.push(PreparedUnit {
       text: piece.to_string(),
       start: segment.start,
       end: segment.end,
       metrics: word.metrics,
       hard_break: segment.hard_break,
+      carets: stops,
     });
   }
   units

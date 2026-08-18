@@ -6,6 +6,26 @@ created: 2026-08-05
 
 # FFI write batching: batched creation, one-call drain, interned keys, command buffer
 
+## Status (2026-08-18): stage 1 measured and dropped; update path open
+
+Stage 1 (batched createNode) was implemented and A/B measured against HEAD
+on the release runtime (okf/notes/ffi-crossing-costs.md): one crossing is
+about 0.25 us all in, FFI is ~10 ms of a 118 ms 3000-node mount, and
+batching cut crossings 9x with no wall-time change because the filtered
+props object JS has to build costs about the same as the crossings it
+replaces. Stage 1 is dropped and its code reverted.
+
+That measurement says nothing about the update path. A complex app with
+hundreds of live signals spends its frames in effects writing props, not
+in node creation, and the crossing count per frame there is unmeasured.
+Stages 2-4 stay open, gated on a benchmark that pushes the per-frame
+budget (many animated nodes, many effects per frame): read
+`setPropsPerFrame x 0.25 us` against `jsMs` from `/stats` on such an app
+before building anything. Neither the gallery (static) nor a
+fast-enough production app is that benchmark.
+
+The rest of this file is the shaping as it stood before stage 1.
+
 ## Problem
 
 Ranked the top structural cost in the app-structure review
@@ -78,7 +98,8 @@ of which props exist for which kinds, and "Unknown property" /
 Note that `try_edit` (the non-panicking edit a drain needs to skip writes
 to nodes destroyed before the drain) already exists on rendertree.
 
-1. **Batched node creation.** `createNode(id, kind, propsObject)`: one
+1. **Batched node creation (dropped, measured no gain; see Status).**
+   `createNode(id, kind, propsObject)`: one
    crossing per node at mount instead of one per prop. The universal
    renderer already hands static props to `createElement` as a single
    object (renderer.ts); today they are fanned out into per-prop calls.

@@ -380,10 +380,12 @@ impl ModuleDef for RenderTreeModule {
       ctx.clone(),
       move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<Object<'js>> {
         let mut node = Text::default();
+        let mut carets = false;
         if let Some(opts) = options.0 {
           apply_font_options(&mut node, &opts);
+          carets = opts.get::<_, bool>("carets").unwrap_or(false);
         }
-        let units = prepare_units(&prepare_platform, &text, &node.run_style());
+        let units = prepare_units(&prepare_platform, &text, &node.run_style(), carets);
         let array = rquickjs::Array::new(ctx.clone())?;
         // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
         // the text in order.
@@ -395,8 +397,19 @@ impl ModuleDef for RenderTreeModule {
         };
         for (i, unit) in units.into_iter().enumerate() {
           let obj = Object::new(ctx.clone())?;
-          obj.set("start", to_utf16(unit.start) as u32)?;
+          let start = to_utf16(unit.start) as u32;
+          obj.set("start", start)?;
           obj.set("end", to_utf16(unit.end) as u32)?;
+          if let Some(stops) = &unit.carets {
+            let array = rquickjs::Array::new(ctx.clone())?;
+            for (j, stop) in stops.iter().enumerate() {
+              let o = Object::new(ctx.clone())?;
+              o.set("offset", start + stop.offset)?;
+              o.set("x", stop.x)?;
+              array.set(j, o)?;
+            }
+            obj.set("carets", array)?;
+          }
           obj.set("text", unit.text)?;
           obj.set("advance", unit.metrics.advance)?;
           obj.set("width", unit.metrics.ink_width)?;

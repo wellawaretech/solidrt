@@ -14,6 +14,8 @@ declare module "flux:rendertree" {
     lineHeight?: number
     /** measureText only. */
     maxLines?: number
+    /** prepareText only: also report each unit's {@link TextUnit.carets}. */
+    carets?: boolean
   }
 
   /**
@@ -35,6 +37,13 @@ declare module "flux:rendertree" {
     descent: number
     /** The unit ends at a hard line break (newline). */
     hardBreak: boolean
+    /**
+     * With `carets`: the caret positions inside the unit, one per grapheme
+     * cluster boundary from its start (`offset` = start, x 0) to the end of
+     * its shaped text (before any break characters), in order. `offset` is
+     * into the prepared text, `x` from the unit's pen position.
+     */
+    carets?: { offset: number, x: number }[]
   }
 
   /** The wrap units of a text in one font, shaped once. Plain data; layout is arithmetic over `units`. */

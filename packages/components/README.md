@@ -213,7 +213,8 @@ shows); it does not propagate to an outer `<Errored>` boundary.
 
 ### TextInput
 
-Single-line text input.
+Text input, single-line by default; `multiline` wraps at the field's width and
+edits across lines.
 
 ```jsx
 import { TextInput } from "@solidrt/components"
@@ -240,13 +241,15 @@ function NameField() {
 | `value`        | `string`                  | -       | Controlled value. If omitted, the component is uncontrolled. |
 | `defaultValue` | `string`                  | `""`    | Initial value for uncontrolled use.                          |
 | `onInput`      | `(value: string) => void` | -       | Fires on every change.                                       |
-| `onSubmit`     | `(value: string) => void` | -       | Fires on Enter.                                              |
+| `onSubmit`     | `(value: string) => void` | -       | Fires on Enter (single-line only).                           |
 | `onFocus`      | `() => void`              | -       | Fires when the field gains focus.                            |
 | `onBlur`       | `() => void`              | -       | Fires when the field loses focus.                            |
 | `placeholder`  | `string`                  | -       | Shown when value is empty and the field is not focused.      |
 | `maxLength`    | `number`                  | -       | Truncates input to this length.                              |
 | `disabled`     | `boolean`                 | `false` | Ignores pointer and key events when true.                    |
 | `autoFocus`    | `boolean`                 | `false` | Focuses on mount (the on-screen keyboard waits for a tap).   |
+| `multiline`    | `boolean`                 | `false` | Wrap at the field's width; Enter inserts a newline, Up/Down move by line. Grows with content unless `layout.height` fixes the box; scrolls to the caret. |
+| `maxRows`      | `number`                  | -       | Multiline without a height: rows to grow to before scrolling.        |
 | `hints`        | `TextInputHints`          | -       | IME behavior: keyboard type, capitalization, autocorrect.    |
 | `layout`       | `LayoutProps`             | -       | Layout properties (e.g. `width`).                            |
 | `style`        | `StyleProps`              | -       | Overrides theme colors, border, and radius.                  |
