@@ -53,6 +53,42 @@ Rules:
 
 # Changelog
 
+## 0.0.50 - 2026-08-18
+
+### Fixes
+- **[windows] `srt mcp` did not find its dev server** - path spelling and live-pid checks were too strict.
+- **[windows] `srt render` was never headless** - fell back to a hidden window; now runs without a display.
+- **[macos] `srt render` and `srt pack` work** - libimpeller statically linked.
+
+### Features
+- **Pretext-based paragraph rendering** - text layout is SolidRT's own; `<span>` runs, inline atoms, floats, wrap controls, app-side line layout.
+- **GPU/3D: transparent materials** - plus render order, uniform plumbing and material classes.
+- **Audio: PCM sounds** - `createPcmSound` over app-generated samples.
+
+### API
+- JSX: `<span>`; `SpanProps`, `TextRunProps`; `float`, `clear` on layout props.
+- `TextProps.textOverflow`, `overflowWrap`, `textIndent`, `textWrap`.
+- `@solidrt/core`: `prepareText`, `layoutNextLine`, `createPcmSound`; `TextLine`, `PreparedText`, `TextUnit`, `PcmSoundOptions`.
+- `flux:rendertree`: `prepareText`. `flux:audio`: `loadPcm`.
+- `flux:gpu`: `BlendMode` adds `"multiply"` and `"alpha"`.
+- `@solidrt/3d`: `scene.setParams`, `setRenderOrder`, `renderOrder` prop, `shaderMaterialClass`, `Material.transparent`; `ShaderMaterialClass*` types.
+
+### Developer experience
+- **`srt init --with <pkg,pkg>`** - pick extensions to include; the picker multi-selects.
+- **`srt mcp` explains a miss** - lists the registry's servers when none matches the project.
+- **`get_stats` reports `wordHits`** next to `paraShapes`.
+
+### Breaking changes
+- **`srt init -t/--template` removed** - use `--with`.
+
+### Agents
+- **Scaffold `AGENTS.md`** - rich text and inline atoms; `flux:wasm` documented as interpreted, not a fast lane.
+- **`packages/3d/AGENTS.md`** - transparency, render order, uniform plumbing, material classes.
+
+### Various
+- Dependencies: none.
+- Changelog images saved per release.
+
 ## 0.0.49 - 2026-08-16
 
 ### Fixes
