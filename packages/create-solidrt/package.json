@@ -2,6 +2,7 @@
   "name": "create-solidrt",
   "version": "0.0.0",
   "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
   "author": "Antoine van Wel",
   "type": "module",
   "bin": {

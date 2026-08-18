@@ -2,6 +2,7 @@
   "name": "@solidrt/android-arm64-v8a",
   "version": "0.0.0",
   "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
   "description": "SolidRT platform package for Android arm64-v8a",
   "files": [
     "solidrt-go.apk",

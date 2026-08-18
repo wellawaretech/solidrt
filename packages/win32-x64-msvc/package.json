@@ -2,6 +2,7 @@
   "name": "@solidrt/win32-x64-msvc",
   "version": "0.0.0",
   "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
   "description": "SolidRT native binary for Windows x64 (MSVC)",
   "os": ["win32"],
   "cpu": ["x64"],

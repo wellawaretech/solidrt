@@ -2,6 +2,7 @@
   "name": "@solidrt/darwin-arm64",
   "version": "0.0.0",
   "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
   "description": "SolidRT native binary for macOS arm64",
   "os": ["darwin"],
   "cpu": ["arm64"],

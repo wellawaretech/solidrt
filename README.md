@@ -99,6 +99,10 @@ Binaries are staged into `dist/<platform>/` after a successful build.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
+## Sponsoring
+
+SolidRT is free and open source. If it is useful to you or your company, consider [sponsoring the project on GitHub](https://github.com/sponsors/wellawaretech) - it helps keep development going.
+
 ## Acknowledgements
 
 SolidRT stands on a lot of excellent work by other people.
