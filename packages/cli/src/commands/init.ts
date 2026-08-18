@@ -48,24 +48,10 @@ const EXTENSIONS: Extension[] = [
   { pkg: "@solidrt/3d", description: "general purpose 3D library" },
 ]
 
-// Resolve which extensions the app takes: an explicit --with list if valid,
-// an interactive picker on a TTY, else none (core only).
+// Resolve which extensions the app takes: an interactive picker on a TTY,
+// else none (core only). Extensions are ordinary dependencies, so a script
+// adds them afterwards with `bun add`.
 async function resolveExtensions(): Promise<Extension[]> {
-  let raw = values.with
-  if (raw !== undefined) {
-    let names = raw.split(",").map((n) => n.trim()).filter(Boolean)
-    let chosen: Extension[] = []
-    for (let name of names) {
-      let found = EXTENSIONS.find((e) => e.pkg === name)
-      if (!found) {
-        let all = EXTENSIONS.map((e) => e.pkg).join(", ")
-        console.error(`!! Unknown extension "${name}"; choose from: ${all}`)
-        process.exit(1)
-      }
-      if (!chosen.includes(found)) chosen.push(found)
-    }
-    return chosen
-  }
   if (!process.stdin.isTTY) return []
   // Core is the runtime every app has, so it is not a choice.
   note("@solidrt/core is always included", "Packages")

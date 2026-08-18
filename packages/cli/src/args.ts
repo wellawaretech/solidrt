@@ -35,7 +35,6 @@ export let { values, positionals } = parseArgs({
     port: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
-    with: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -157,9 +156,6 @@ Commands:
   render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
   mcp                    MCP server (stdio) exposing the running dev server to coding agents
-
-init options:
-      --with <pkg,pkg>   Extensions to include, e.g. @solidrt/components,@solidrt/3d (skips the picker)
 
 run/server options:
   -s, --session <N>      Session number: dev server on port 34884+N, client slot N (default: 0)

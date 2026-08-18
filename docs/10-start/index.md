@@ -9,7 +9,7 @@ project.
 ## 1. Scaffold a project
 
 ```sh
-bun create solidrt my-app
+bun create solidrt@latest my-app
 cd my-app
 ```
 
@@ -26,12 +26,8 @@ every SolidRT app has. On top of it you can tick extensions:
 Pick nothing extra unless you already know you want it; extensions can be
 added later as ordinary dependencies.
 
-To skip the picker (it only appears on an interactive terminal; a script gets
-core only), name the extension packages, or none for core only:
-
-```sh
-bun create solidrt my-app --with @solidrt/components,@solidrt/3d
-```
+The picker only appears on an interactive terminal; a script gets core only
+and adds extensions afterwards with `bun add`.
 
 Scaffolding installs the dependencies for you, so there is no separate
 install step.

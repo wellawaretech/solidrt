@@ -24,10 +24,10 @@ would otherwise write yourself for every app.
   `ProgressBar`, `Modal`, `Tooltip`, `ContextMenu`, `QrCode`.
 
 Start a project on it by picking `@solidrt/components` in the scaffolder,
-or naming it outright:
+or add it to an existing one:
 
 ```sh
-bun create solidrt my-app --with @solidrt/components
+bun add @solidrt/components
 ```
 
 ### Theming
@@ -79,6 +79,6 @@ import { box, Mesh, PerspectiveCamera, Scene, unlit } from "@solidrt/3d"
 </window>
 ```
 
-Add it with `--with @solidrt/3d` in the scaffolder. Expect more API churn
+Pick it in the scaffolder or `bun add @solidrt/3d`. Expect more API churn
 here than in the rest of SolidRT. Overview and the export surface are under
 [@solidrt/3d](/extensions/3d/).

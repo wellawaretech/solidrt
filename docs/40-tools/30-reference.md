@@ -12,7 +12,7 @@ runtime, not on Bun.
 
 {{ usage init }}
 
-The picker offers extensions when `--with` is absent. The public entry point
+The picker offers extensions on an interactive terminal. The public entry point
 is `bun create solidrt <dir>`, which forwards here and installs dependencies
 for you.
 
