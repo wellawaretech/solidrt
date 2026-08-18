@@ -107,13 +107,17 @@ recording is replayed, the walk never enters), so measure without one.
 
 ## Related
 
-The same document retains ~800 B per character: each text's `OwnedCache`
-holds an Impeller `Paragraph` per word for the node's lifetime, and the
-shared word LRU (8192) does not cover a 200k-word document, so nearly
-every word ends up with its own paragraph object (~4 KB). The fix -
-retain `RunMetrics` only and shape on paint through the word cache -
-depends on this item: without culling, shape-on-paint reshapes the whole
-document every frame. Separate item, after this one.
+The same document retained ~800 B per character: each text's `OwnedCache`
+held an Impeller `Paragraph` per wrap-unit piece for the node's lifetime, a
+private copy next to the shared word LRU (8192 entries) that already
+dedupes shaping. Removed 2026-08-18: `ShapedRun` keeps metrics and the
+piece string only, and paint fetches the paragraph per visible run from the
+word cache (`words.rs` is the one holder; a miss shapes on the spot and
+counts as a paraShape). Measured on the same document: memBytes 2543 ->
+630 MB flat while paging, paintMs unchanged (5-9), paraShapes 0 under
+Home/End/90 pages (a transcript's vocabulary fits the LRU; wordHits
+300-1250 per frame are the visible words). Culling made this viable: paint
+now touches ~50 nodes' words per frame, not the document's.
 
 Today's mitigation without engine work: a Recording repaint boundary on
 the scroller (`Hoist::Full` reuses the recording across scroll writes).

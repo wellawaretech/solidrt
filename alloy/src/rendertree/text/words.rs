@@ -3,6 +3,12 @@
 // text, at any width) is never shaped again while it stays hot. Bounded LRU;
 // the ordering and eviction are the `lru` crate's, this only chooses the key,
 // the value and the counters. Cleared when the registered fonts change.
+//
+// This is the ONLY place shaped paragraphs are kept: a text's own cache holds
+// metrics and piece strings, and paint fetches the paragraph per visible run
+// from here (a miss shapes on the spot and counts as a paraShape). So the
+// paragraph working set is what was recently drawn, bounded by CAPACITY,
+// however long the mounted content is.
 use super::RunStyle;
 use crate::impellers::{Paragraph, ParagraphBuilder, ParagraphStyle, TypographyContext};
 use crate::rendertree::text::layout::RunMetrics;

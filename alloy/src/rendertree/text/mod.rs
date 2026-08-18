@@ -17,7 +17,7 @@ use crate::rendertree::{
   PlatformContext,
 };
 use paragraph::ParaCache;
-use shape::OwnedCache;
+use shape::{OwnedCache, ShapedRun};
 use std::cell::RefCell;
 use taffy::{AvailableSpace, Display, Style};
 
@@ -95,8 +95,10 @@ pub struct Text {
   // several places, so validity is checked by fingerprint (ParaKey) instead
   // of setter hooks. Interior-mutable: measure and build take &self.
   cache: RefCell<ParaCache>,
-  // Owned-layout counterpart: shaped runs (one paragraph per wrap unit, shaped
-  // once per key) plus the line layouts derived from them, keyed by width.
+  // Owned-layout counterpart: the run metrics per wrap-unit piece (measured
+  // once per key through the shared word cache; the shaped paragraphs
+  // themselves live only in that cache) plus the line layouts derived from
+  // them, keyed by width.
   owned: RefCell<OwnedCache>,
 }
 
@@ -146,18 +148,30 @@ impl Buildable for Text {
       let owned = &*owned;
       let runs = owned.runs_for(index);
       let layout = &owned.layouts[index].layout;
-      for placed in &layout.runs {
-        if let Some(paragraph) = &runs[placed.run].paragraph {
-          builder.draw_paragraph(paragraph, Point::new(origin.x + placed.x, origin.y + placed.y));
+      let styles = self.run_styles();
+      // Paragraphs come from the shared word cache per visible run (a miss
+      // shapes on the spot); nothing shaped is retained on the text itself.
+      {
+        let typography = ctx.platform.typography();
+        let mut words = ctx.platform.words();
+        let mut draw = |shaped: &ShapedRun, x: f32, y: f32| {
+          if let Some(word) = words.get_or_shape(&typography, &shaped.text, &styles[shaped.style]) {
+            builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
+          }
+        };
+        for placed in &layout.runs {
+          let shaped = &runs[placed.run];
+          if !shaped.atom {
+            draw(shaped, placed.x, placed.y);
+          }
         }
-      }
-      if let (Some((x, y)), Some(Some(paragraph))) = (layout.ellipsis, owned.ellipsis.as_ref().map(|e| &e.paragraph)) {
-        builder.draw_paragraph(paragraph, Point::new(origin.x + x, origin.y + y));
+        if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
+          draw(ellipsis, x, y);
+        }
       }
       // CSS decorating boxes: the text's underline is one line in its own
       // style under everything (atoms excepted); a span's underline is its
       // own line in the span's style. Both may cover a run.
-      let styles = self.run_styles();
       let font_metrics = ctx.platform.font_metrics();
       let ink_of = |placed: &PlacedRun| runs[placed.run].run.metrics.ink_width;
       if self.underline {
@@ -172,7 +186,7 @@ impl Buildable for Text {
           builder,
           origin,
           layout,
-          |placed| runs[placed.run].paragraph.as_ref().map(|_| (underline, &style.paint)),
+          |placed| (!runs[placed.run].atom).then_some((underline, &style.paint)),
           ink_of,
         );
       }
@@ -183,7 +197,9 @@ impl Buildable for Text {
           layout,
           |placed| {
             let shaped = &runs[placed.run];
-            shaped.paragraph.as_ref()?;
+            if shaped.atom {
+              return None;
+            }
             let overrides = &self.runs[shaped.style].overrides;
             if overrides.underline != Some(true) {
               return None;
@@ -308,7 +324,7 @@ impl Text {
       .runs
       .iter()
       .chain(&layout.floats)
-      .filter(|p| runs[p.run].paragraph.is_none())
+      .filter(|p| runs[p.run].atom)
       .map(|p| (self.runs[runs[p.run].style].node, Point::new(p.x, p.y)))
       .collect()
   }
@@ -335,7 +351,7 @@ impl Text {
       .iter()
       .find(|p| {
         let shaped = &runs[p.run];
-        shaped.paragraph.is_some() && local.x >= p.x && local.x < p.x + shaped.run.metrics.advance
+        !shaped.atom && local.x >= p.x && local.x < p.x + shaped.run.metrics.advance
       })
       .map(|p| self.runs[runs[p.run].style].node)
   }

@@ -2,7 +2,7 @@
 // paragraph, cached per input fingerprint (ParaKey), plus the line layouts
 // derived from them per width. The breaking itself is text::layout.
 use super::{OverflowWrap, Text, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
-use crate::impellers::{FontStyle, FontWeight, Paragraph, Size, TextAlignment};
+use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
 use crate::rendertree::text::RunStyle;
 use crate::rendertree::{PaintState, PlatformContext};
@@ -68,10 +68,15 @@ impl ParaKey {
 // One piece of a wrap unit shaped as a single-line paragraph (or an atom's
 // box), plus what the breaker needs to know about it and what re-splitting it
 // finer needs.
+//
+// No shaped paragraph is kept here: the shared word cache (words.rs) is the
+// one holder of those, and paint asks it per visible run by (text, style) -
+// so a mounted text retains metrics and piece strings, not paragraph objects.
 #[derive(Clone)]
 pub(super) struct ShapedRun {
-  // None for an atom: nothing to draw here, the element paints itself.
-  pub(super) paragraph: Option<Paragraph>,
+  // An atom is a laid-out child's box on the line: nothing to draw here, the
+  // element paints itself.
+  pub(super) atom: bool,
   pub(super) run: Run,
   pub(super) text: String,
   // Index into the per-run styles the runs were shaped with; also the index
@@ -218,7 +223,7 @@ impl Text {
   ) -> Option<ShapedRun> {
     let word = platform.words().get_or_shape(&platform.typography(), text, &styles[style])?;
     Some(ShapedRun {
-      paragraph: Some(word.paragraph),
+      atom: false,
       run: Run { metrics: word.metrics, hard_break, glue, float: None, clear: None },
       text: text.to_string(),
       style,
@@ -231,7 +236,7 @@ impl Text {
   fn atom_piece(style: usize, size: Size, run: &TextRun, hard_break: bool, glue: bool) -> ShapedRun {
     let metrics = RunMetrics { advance: size.width, ink_width: size.width, ascent: size.height, descent: 0.0 };
     let run = Run { metrics, hard_break, glue, float: run.float, clear: run.clear };
-    ShapedRun { paragraph: None, run, text: ATOM_CHAR.to_string(), style }
+    ShapedRun { atom: true, run, text: ATOM_CHAR.to_string(), style }
   }
 
   // Re-split the wrap units starting at `units` (first-piece indices into
@@ -249,7 +254,7 @@ impl Text {
     let mut i = 0;
     while i < runs.len() {
       // An atom is a box: it overflows whole.
-      if !units.contains(&i) || runs[i].paragraph.is_none() {
+      if !units.contains(&i) || runs[i].atom {
         out.push(runs[i].clone());
         i += 1;
         continue;
@@ -260,7 +265,7 @@ impl Text {
         end += 1;
       }
       for piece in &runs[i..end] {
-        if piece.paragraph.is_none() {
+        if piece.atom {
           out.push(piece.clone());
           continue;
         }
