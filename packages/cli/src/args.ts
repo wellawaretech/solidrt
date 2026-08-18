@@ -35,7 +35,7 @@ export let { values, positionals } = parseArgs({
     port: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
-    template: { type: "string", short: "t" },
+    with: { type: "string" },
   },
   allowPositionals: true,
 })
@@ -159,7 +159,7 @@ Commands:
   mcp                    MCP server (stdio) exposing the running dev server to coding agents
 
 init options:
-  -t, --template <name>  Start from a named template (skips the interactive picker)
+      --with <pkg,pkg>   Extensions to include, e.g. @solidrt/components,@solidrt/3d (skips the picker)
 
 run/server options:
   -s, --session <N>      Session number: dev server on port 34884+N, client slot N (default: 0)

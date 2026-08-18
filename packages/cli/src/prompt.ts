@@ -1,18 +1,21 @@
-import { createInterface, emitKeypressEvents } from "node:readline"
+import * as clack from "@clack/prompts"
 
-// Single-line text prompt with an optional default (shown in parentheses, used
-// when the answer is blank). Non-TTY stdin resolves the default rather than
-// blocking on input that will never arrive.
-export function text(message: string, def = ""): Promise<string> {
-  return new Promise<string>((resolve) => {
-    if (!process.stdin.isTTY) return resolve(def)
-    let rl = createInterface({ input: process.stdin, output: process.stdout })
-    let suffix = def ? ` (${def})` : ""
-    rl.question(`? ${message}${suffix}: `, (answer) => {
-      rl.close()
-      resolve(answer.trim() || def)
-    })
-  })
+// Thin wrappers over @clack/prompts. Every prompt guards on a TTY: a non-TTY
+// stdin resolves the default rather than blocking on input that will never
+// arrive. Cancelling (ctrl-c) exits the process.
+
+function unwrap<T>(value: T | symbol): T {
+  if (clack.isCancel(value)) {
+    clack.cancel("Cancelled")
+    process.exit(130)
+  }
+  return value as T
+}
+
+// Single-line text prompt; a blank answer resolves the default.
+export async function text(message: string, def = ""): Promise<string> {
+  if (!process.stdin.isTTY) return def
+  return unwrap(await clack.text({ message, defaultValue: def, placeholder: def }))
 }
 
 export interface SelectOption {
@@ -20,65 +23,36 @@ export interface SelectOption {
   value: string
 }
 
-// Minimal arrow-key single-select prompt, built on node:readline (same
-// dependency-free approach as repl.ts). Renders the option list, moves the
-// highlight on up/down, resolves the chosen value on enter. Options are plain
-// strings or { label, value } pairs when the display text differs from the
-// resolved value. Callers guard on process.stdin.isTTY; a non-TTY stdin here
-// resolves the first option rather than hanging on input that will never
-// arrive.
-export function select(message: string, options: Array<string | SelectOption>): Promise<string> {
+// Arrow-key single-select; non-TTY resolves the first option.
+export async function select(message: string, options: Array<string | SelectOption>): Promise<string> {
   let items = options.map((o) => (typeof o === "string" ? { label: o, value: o } : o))
-  return new Promise((resolve) => {
-    let input = process.stdin
-    let output = process.stdout
-    if (!input.isTTY) return resolve(items[0]!.value)
+  if (!process.stdin.isTTY) return items[0]!.value
+  return unwrap(await clack.select({ message, options: items }))
+}
 
-    let selected = 0
-    emitKeypressEvents(input)
-    let wasRaw = input.isRaw
-    input.setRawMode(true)
+export interface MultiSelectOption {
+  label: string
+  value: string
+  checked?: boolean
+}
 
-    let render = (first = false) => {
-      // After the first paint the cursor sits below the block; move it back up
-      // to the message line so the list redraws in place.
-      if (!first) output.write(`\x1b[${items.length + 1}A`)
-      output.write(`\x1b[K? ${message}\n`)
-      for (let i = 0; i < items.length; i++) {
-        let active = i === selected
-        let pointer = active ? "\x1b[36m> " : "  "
-        let reset = active ? "\x1b[0m" : ""
-        output.write(`\x1b[K${pointer}${items[i]!.label}${reset}\n`)
-      }
-    }
+// Space toggles, enter confirms; resolves the selected values in option
+// order. Non-TTY resolves the preselected values.
+export async function multiselect(message: string, options: MultiSelectOption[]): Promise<string[]> {
+  let preset = options.filter((o) => o.checked).map((o) => o.value)
+  if (!process.stdin.isTTY) return preset
+  let picked = unwrap(
+    await clack.multiselect({
+      message,
+      options: options.map((o) => ({ label: o.label, value: o.value })),
+      initialValues: preset,
+      required: false,
+    }),
+  )
+  return options.filter((o) => picked.includes(o.value)).map((o) => o.value)
+}
 
-    let cleanup = () => {
-      input.off("keypress", onKey)
-      input.setRawMode(wasRaw)
-      input.pause()
-    }
-
-    let onKey = (_str: string, key: { name: string; ctrl: boolean } | undefined) => {
-      if (!key) return
-      if (key.name === "up") {
-        selected = (selected - 1 + items.length) % items.length
-        render()
-      } else if (key.name === "down") {
-        selected = (selected + 1) % items.length
-        render()
-      } else if (key.name === "return" || key.name === "enter") {
-        cleanup()
-        output.write("\n")
-        resolve(items[selected]!.value)
-      } else if (key.ctrl && (key.name === "c" || key.name === "d")) {
-        cleanup()
-        output.write("\n")
-        process.exit(130)
-      }
-    }
-
-    input.on("keypress", onKey)
-    input.resume()
-    render(true)
-  })
+// Boxed informational message; silent on a non-TTY.
+export function note(message: string, title?: string) {
+  if (process.stdin.isTTY) clack.note(message, title)
 }
