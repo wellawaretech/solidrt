@@ -36,8 +36,10 @@ declare let performance: {
    * Milliseconds since a monotonic origin (high-resolution, not wall-clock). Use
    * for measuring durations, not for calendar time. In a GUI runtime this is
    * the paced frame timeline (same clock as the onFrame/requestAnimationFrame
-   * timestamps, frozen while the runtime clock is paused); for real elapsed
-   * wall time use Date.now().
+   * timestamps, frozen while the runtime clock is paused), so it does not
+   * advance across synchronous work within a frame. To time such work use
+   * `hrtime.bigint()` from "flux:process" (nanosecond wall clock); for
+   * calendar time use Date.now().
    */
   now(): number
   /**

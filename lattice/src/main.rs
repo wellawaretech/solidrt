@@ -183,6 +183,7 @@ fn main() {
   let mut dev_server: Option<String> = None;
   let mut data_root: Option<String> = None;
   let mut client: Option<u32> = None;
+  let mut assets: Option<String> = None;
   let mut source_path: Option<String> = None;
   let mut app_args: Vec<String> = Vec::new();
   while let Some(arg) = args.next() {
@@ -198,6 +199,8 @@ fn main() {
           .parse()
           .unwrap_or_else(|_| usage("--client value must be a non-negative integer")),
       );
+    } else if arg == "--assets" {
+      assets = Some(args.next().unwrap_or_else(|| usage("--assets requires a directory path")));
     } else if arg == "--script" {
       script_path = Some(args.next().unwrap_or_else(|| usage("--script requires a file path")));
     } else if arg == "--stats" {
@@ -256,6 +259,17 @@ fn main() {
   }
   #[cfg(feature = "go")]
   let (app, fonts, app_id): (_, _, Option<String>) = (source_path.map(path_app), lattice::embedded_fonts(), None);
+  // `--assets <dir>`: mount the project's assets/ tree (the directory that
+  // CONTAINS assets/, i.e. the project root) so `assets/...` resolves through
+  // it instead of the data-sandbox cwd - what a packed app or a go-installed
+  // version gets from its payload. `srt render` passes the project root.
+  if let Some(dir) = assets {
+    let dir = std::path::absolute(&dir).unwrap_or_else(|e| usage(&format!("--assets path '{dir}' is unusable: {e}")));
+    if !dir.is_dir() {
+      usage(&format!("--assets path '{}' is not a directory", dir.display()));
+    }
+    forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Dir(dir)));
+  }
   let mode = if playback {
     alloy::Mode::Playback(alloy::PlaybackConfig {
       fps,

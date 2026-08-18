@@ -402,7 +402,8 @@ up to the frame period, because work outside the frame call is not in them.
   iterating - `srt bundle` writes output files and reloads connected clients
 - bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2 - headless
   render to PNG frames (proves it renders; see the cli AGENTS.md for where the
-  frames land). It is also the ONLY way to see the output of a window shader
+  frames land). The project's assets/ resolve exactly as under `srt run`, so
+  asset-dependent apps render headlessly too. It is also the ONLY way to see the output of a window shader
   (the `shader` prop on `<window>`): that pass runs on the finished frame on
   its way to the screen, past the point every other capture reads, so `render`
   frames are the only programmatic view of what it produces
@@ -465,7 +466,9 @@ its tools over guessing at runtime state:
   so decide before capturing (e.g. keep a before/after pair to diff)
 - set_time_scale / step_frames: the runtime clock. `set_time_scale 0`
   freezes app time (onFrame, requestAnimationFrame, timers, and
-  performance.now all stop; Date.now stays wall time), so a snapshot can
+  performance.now all stop; Date.now stays wall time, and so does
+  `hrtime.bigint()` from flux:process - the clock to time synchronous work
+  with, since performance.now does not advance within a frame), so a snapshot can
   catch an exact frame of any animation instead of racing it; `step_frames
   n` then advances exactly n frames (one refresh period each). Pause,
   snapshot, step, snapshot again to see precisely what changed. ALWAYS set

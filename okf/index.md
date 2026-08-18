@@ -33,6 +33,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](backlog/3d-geometry-buffer-disposal.md)** [2026-08-18]
+  Swapping <Mesh geometry> reactively leaves every previous generation's
+  vertex/index buffers resident, because geometry buffers are app-lifetime and
+  only disposeGeometry frees them; the declarative layer has no disposal story
+  to pair with the prop.
 - **[Geometry as data - transform, merge, public bounds](backlog/3d-geometry-ops.md)** [2026-08-17]
   The generators build geometry and nothing can move or combine it, so a
   static scene authored as data has to become one Mesh node per part;

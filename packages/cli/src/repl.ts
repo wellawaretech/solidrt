@@ -104,7 +104,13 @@ async function cmdLoad(file: string) {
   // Same rule as /__control__/load (control.ts): a server run serves the
   // project it started in, and an entry outside the project root cannot
   // resolve the project's dependencies anyway.
-  let norm = (p: string) => p.replace(/\\/g, "/")
+  // Windows paths are case-insensitive and the same drive shows up as both
+  // `c:` and `C:` (an editor-spawned bridge keeps its parent's spelling), so a
+  // drive-letter path folds case; a POSIX path stays exact.
+  let norm = (p: string) => {
+    let s = p.replace(/\\/g, "/")
+    return /^[a-zA-Z]:\//.test(s) ? s.toLowerCase() : s
+  }
   let root = norm(state.projectDir).replace(/\/+$/, "") + "/"
   if (!norm(path).startsWith(root)) {
     printErr(`[cli] Entry is outside the project root: ${path} is not under ${state.projectDir}. Restart srt in that project to work on it.`)

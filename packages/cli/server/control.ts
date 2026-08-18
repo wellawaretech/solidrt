@@ -361,7 +361,13 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       // An entry outside the project root cannot resolve the project's
       // dependencies, so the bundler would fail with misleading "bun install"
       // advice; name the real constraint instead.
-      let norm = (p: string) => p.replace(/\\/g, "/")
+      // Windows paths are case-insensitive and the same drive shows up as both
+      // `c:` and `C:` (an editor-spawned bridge keeps its parent's spelling), so a
+      // drive-letter path folds case; a POSIX path stays exact.
+      let norm = (p: string) => {
+        let s = p.replace(/\\/g, "/")
+        return /^[a-zA-Z]:\//.test(s) ? s.toLowerCase() : s
+      }
       let root = norm(state.projectDir).replace(/\/+$/, "") + "/"
       if (!norm(entry).startsWith(root)) {
         return Response.json(

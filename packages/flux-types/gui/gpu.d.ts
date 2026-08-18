@@ -310,7 +310,11 @@ declare module "flux:gpu" {
        * arithmetic. Declaring any makes `instanceBuffer` required on every
        * entry drawn with this pipeline. A mat4 per instance is its four
        * vec4 columns, reassembled in the shader (attributes have no matrix
-       * formats, as in WebGPU).
+       * formats, as in WebGPU). Instance N always reads record N of the
+       * entry's buffer, from record 0 (ES 3.0 has no base instance), so
+       * several independently culled groups cannot share one buffer as
+       * sub-ranges: give each group its own `instanceBuffer` and entry, and
+       * cull it by `instanceCount`.
        */
       instanceAttributes?: VertexAttribute[]
       topology?: Topology
@@ -453,7 +457,9 @@ declare module "flux:gpu" {
    * buffer bound, `instanceCount` is bounds-checked against it like every
    * fetch (instances 0..N-1 each read one record). Two GL facts worth
    * knowing: `gl_VertexID` includes `firstVertex` (as in WebGPU), and
-   * `gl_InstanceID` always counts from 0 - ES 3.0 has no base instance.
+   * `gl_InstanceID` always counts from 0 - ES 3.0 has no base instance, so
+   * instance N reads record N of the entry's `instanceBuffer` and a group
+   * that is culled independently needs its own buffer and entry.
    */
   export type DrawRange = { firstVertex?: number; vertexCount?: number; instanceCount?: number }
   /**

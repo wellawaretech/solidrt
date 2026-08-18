@@ -3,7 +3,7 @@
 //! Names no scripting-engine types. The marshalling layer
 //! (`plugins/flux/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
-//! host metadata (`platform`/`arch`/`rss`) and `SignalStream`, which hides the
+//! host metadata (`platform`/`arch`/`rss`/`hrtime_nanos`) and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -25,6 +25,15 @@ pub fn arch() -> &'static str {
     "x86" => "ia32",
     other => other,
   }
+}
+
+/// Monotonic wall-paced nanoseconds since an arbitrary process-wide origin
+/// (Node's `process.hrtime.bigint()`): for timing synchronous work with
+/// sub-millisecond resolution. Real elapsed time, independent of any paced or
+/// virtual app clock a host installs.
+pub fn hrtime_nanos() -> u128 {
+  static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+  ORIGIN.get_or_init(std::time::Instant::now).elapsed().as_nanos()
 }
 
 /// Resident set size of the current process in bytes (0 if unavailable).
