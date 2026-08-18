@@ -41,8 +41,8 @@ props are replaced by geometry props.
 
 `d-view` is the container case: it composes `ViewOwnProps` directly (see
 [elements](/core/reference/elements/)), so it still transforms, clips and
-takes input, but layout props on it are rejected at runtime rather than
-silently ignored.
+takes input, but a layout prop on it is dropped with a one-time warning
+rather than silently ignored.
 
 `<span>` has no detached form, since an inline run never has a box of its own
 to detach from.
@@ -67,8 +67,9 @@ since a paragraph's height always falls out of the text itself:
 
 {{ decl packages/core/src/types.d.ts TextGeometryProps }}
 
-`d-line` is the exception with no width and height at all. Its geometry is its
-two endpoints, which is what makes it the primitive to reach for when the
+`d-path` takes only a position, since its size is whatever its `d` string
+draws. `d-line` has no width and height either: its geometry is its two
+endpoints, which is what makes it the primitive to reach for when the
 endpoints move:
 
 {{ decl packages/core/src/types.d.ts LineGeometryProps }}

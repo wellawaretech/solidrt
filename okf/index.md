@@ -405,6 +405,12 @@ Shaped, not started.
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
   already gone, where the DOM would have kept it alive.
+- **[Rich text editor](backlog/rich-text-editor.md)** [2026-08-18]
+  There is no way to edit styled text - TextInput edits a string, so
+  bold/italic/links, inline atoms and paragraph attributes cannot be authored
+  in-app; build a separate editor over the same buffer/geometry layers,
+  starting with prepareText over styled runs so caret geometry knows about run
+  boundaries.
 - **[Runtime policies - tracked, app-readable, app-overridable](backlog/runtime-policy-registry.md)** [2026-08-13]
   The runtime is accumulating behavior policies it selects on the app's behalf
   from device facts (frame pacing being the first with real consequences).
@@ -453,6 +459,12 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
+- **[TextInput range selection](backlog/text-input-selection.md)** [2026-08-18]
+  The text buffer already models an anchor/focus selection, but TextInput
+  never grows one - no shift+movement, no drag, no highlight, no select-all,
+  no delete-selection path from the UI - so copying or replacing a stretch of
+  text is impossible; wire the gestures and keys onto the buffer's selection
+  and draw it from the editor layout's line stops.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves

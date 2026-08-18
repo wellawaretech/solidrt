@@ -3,8 +3,10 @@
 Every `srt` command, in the order you meet them. Running `srt` with no
 arguments prints the same text this page is built from.
 
-Invoke it as `bunx srt <command>`. Bun is a development prerequisite only:
-SolidRT apps run on the bundled `flux` runtime, not on Bun.
+Inside a project that depends on `@solidrt/cli`, invoke it as
+`bunx srt <command>` (a scaffolded project's scripts do). Bun is a
+development prerequisite only: SolidRT apps run on the bundled `flux`
+runtime, not on Bun.
 
 ## Starting a project
 
@@ -36,7 +38,7 @@ projects run side by side.
 ## Checking and building
 
 `check` is the gate worth wiring into CI: it builds and typechecks the app
-without writing anything.
+without producing build output.
 
 {{ usage check }}
 

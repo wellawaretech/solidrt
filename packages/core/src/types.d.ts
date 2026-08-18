@@ -462,9 +462,10 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
   repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
   /**
    * Run this view's rasterized subtree through a GPU program and composite
-   * the result in its place. Requires repaintBoundary="snapshot" (the cost
-   * is snapshot semantics, kept explicit; declared without it the shader is
-   * ignored with a warning). The pass is region-sized and split from content
+   * the result in its place. Requires a snapshot boundary
+   * (repaintBoundary="snapshot" or "snapshot-no-aa"; the cost is snapshot
+   * semantics, kept explicit; declared without one the shader is ignored
+   * with a warning). The pass is region-sized and split from content
    * invalidation: a params-only change re-runs just the pass against the
    * cached snapshot, so animating an effect over a static subtree never
    * re-rasterizes it.

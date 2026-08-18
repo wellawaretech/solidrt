@@ -54,8 +54,9 @@ Any change to what JS can see - a `decl.declare`/`exports.export`, a
 describes - updates `packages/flux-types` (the matching `.d.ts` under
 `modules/`/`standards/`/`gui/`) in the same change: those declarations are the
 documentation, since the website generates the Runtime reference from them.
-There is no second prose copy to keep in sync (the old `docs/flux.md`
-retired). Flux
+The only prose page is `docs/50-runtime/index.md`, which lists the modules,
+globals and capabilities by name: touch it when one of those is added or
+removed, and nothing else. Flux
 projects compile with no lib.dom and no Node/Bun types: flux-types is the only
 thing telling TypeScript what exists, and nothing verifies parity
 automatically yet.

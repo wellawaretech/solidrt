@@ -26,7 +26,8 @@ every SolidRT app has. On top of it you can tick extensions:
 Pick nothing extra unless you already know you want it; extensions can be
 added later as ordinary dependencies.
 
-To skip the picker, name the extension packages (or none for core only):
+To skip the picker (it only appears on an interactive terminal; a script gets
+core only), name the extension packages, or none for core only:
 
 ```sh
 bun create solidrt my-app --with @solidrt/components,@solidrt/3d
@@ -81,7 +82,10 @@ render(() => <App />)
 ```
 
 A `<window>` root, a gradient fill behind everything, and a centered column
-that keeps clear of the notch. `src/icon.tsx` holds the animated mark.
+that keeps clear of the notch. `src/icon.tsx` holds the animated mark. Around
+them the scaffold wrote a `tsconfig.json`, an `AGENTS.md` for coding agents,
+the `.mcp.json` that lets one attach to the running app, and `assets/` with
+the app icon.
 
 Change the text and save. The running window updates without restarting.
 

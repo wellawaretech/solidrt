@@ -25,10 +25,11 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 - `bunx srt run src/index.tsx --capture out.script.json` - records keydown/keyup
   from every connected client into one script file (written on client
   disconnect), for replaying later with `render --script`. The file is JSON
-  Lines and hand-authorable - the exact shape (`after` ms, `type`, `key`,
-  `device`) is in `docs/_old/cli.md` under `--capture`. For probing app state
-  without a display, `-- <args...>` reaches the app as `flux:process` argv
-  (also `docs/_old/cli.md`), which is often simpler than scripting input.
+  Lines and hand-authorable: one object per line,
+  `{"after": <ms since previous event>, "type": "keydown" | "keyup",
+  "key": <W3C KeyboardEvent.key>, "device": <client id>}`. For probing app
+  state without a display, `-- <args...>` reaches the app as `flux:process`
+  argv, which is often simpler than scripting input.
 
 ## Verifying without a display (headless / CI / agent box)
 

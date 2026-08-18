@@ -201,16 +201,18 @@ async function threeDPages(): Promise<ReferencePage[]> {
   const BASE = "/extensions/3d";
   let readme = await file(THREE_D + "/README.md").text();
   let index = await file(THREE_D + "/src/index.ts").text();
-  let modules = new Map<string, string[]>();
-  for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z]+)\.tsx?"/gm)) {
+  // Module stem -> its file extension and the names index.ts takes from it.
+  let modules = new Map<string, { ext: string; names: string[] }>();
+  for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]+)\.(tsx?)"/gm)) {
     let names = m[1]!.split(",").map((n) => n.trim().replace(/^type /, "").replace(/ as .*$/, "")).filter(Boolean);
-    let file = m[2]!;
-    modules.set(file, [...(modules.get(file) ?? []), ...names]);
+    let entry = modules.get(m[2]!) ?? { ext: m[3]!, names: [] };
+    entry.names.push(...names);
+    modules.set(m[2]!, entry);
   }
   let pages: ReferencePage[] = [];
-  for (let [stem, names] of modules) {
-    let rel = `packages/3d/src/${stem}.${stem === "components" ? "tsx" : "ts"}`;
-    let source = await file(`${THREE_D}/src/${stem}.${stem === "components" ? "tsx" : "ts"}`).text();
+  for (let [stem, { ext, names }] of modules) {
+    let rel = `packages/3d/src/${stem}.${ext}`;
+    let source = await file(`${THREE_D}/src/${stem}.${ext}`).text();
     let decls = splitDeclarations(source);
     let lead = intro(source);
     let blocks = names

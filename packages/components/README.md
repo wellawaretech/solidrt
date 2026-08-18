@@ -26,7 +26,7 @@ setTheme({ color: { primary: "#ff2d55" } })   // override one token
 
 `setTheme` merges one level deep per category, so a partial only touches the keys you pass.
 
-The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`, `onPrimary`, `danger`, and `scrim` (modal dim). Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (font sizes), shared across presets.
+The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `surfaceHover` (hover tint for surface-colored controls), `text`, `textMuted`, `border`, `primary`, `primaryHover` (hover tint for primary-colored controls), `onPrimary`, `secondary` (lower-emphasis accent), `secondaryHover` (hover tint for secondary-colored controls), `onSecondary`, `danger` (validation/destructive), `dangerHover` (hover tint for danger-colored controls), and `scrim` (modal dim). Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (font sizes), shared across presets.
 
 ## Policies
 
@@ -640,6 +640,215 @@ import House from "lucide-static/icons/house.svg"
 | `size`   | `number`      | `24`               | Square box side in pixels.                                     |
 | `color`  | `string`      | `theme.color.text` | Drives `currentColor`; explicit fills/strokes still win.       |
 | `layout` | `LayoutProps` | -                  | Layout of the box.                                             |
+
+### Portal
+
+Renders its child somewhere other than its lexical position: by default at the window root, so overlays (modals, menus, tooltips) escape the clipping and stacking of their surrounding layout. A thin JSX wrapper over core `createPortal`; the child should be a single element with `position="absolute"`, since it is inserted into the window's flex root. Portals cannot mount during the app's initial render, so gate them behind a signal that starts false.
+
+```jsx
+import { Portal } from "@solidrt/components"
+
+<Show when={open()}>
+  <Portal>
+    <view position="absolute" right={16} bottom={16}>
+      <Card>Saved</Card>
+    </view>
+  </Portal>
+</Show>
+```
+
+**Props**
+
+| Prop       | Type             | Default     | Description                                                       |
+| ---------- | ---------------- | ----------- | ----------------------------------------------------------------- |
+| `children` | `any`            | -           | The element to relocate.                                          |
+| `mount`    | `{ id: number }` | window root | Where to mount, typically a node captured from another `ref`.     |
+
+### Modal
+
+A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`) and centers `children` on top. Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop calls `onClose`, pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
+
+```jsx
+import { Modal, Card, Button } from "@solidrt/components"
+
+<Show when={open()}>
+  <Modal onClose={() => setOpen(false)}>
+    <Card>
+      <Button onPress={() => setOpen(false)}>Close</Button>
+    </Card>
+  </Modal>
+</Show>
+```
+
+**Props**
+
+| Prop            | Type         | Default             | Description                                                    |
+| --------------- | ------------ | ------------------- | -------------------------------------------------------------- |
+| `onClose`       | `() => void` | -                   | Called when the backdrop is pressed (unless not dismissable).   |
+| `children`      | `any`        | -                   | The content, centered over the backdrop.                       |
+| `backdropColor` | `Color`      | `theme.color.scrim` | Backdrop fill; pass `"transparent"` for no dim.                |
+| `dismissable`   | `boolean`    | `true`              | Whether pressing the backdrop calls `onClose`.                 |
+
+### Tooltip
+
+A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after a short delay. Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, and hides on leave and on press. A string/number `content` renders as themed body text; anything else renders as-is.
+
+```jsx
+import { Tooltip, Button } from "@solidrt/components"
+
+<Tooltip content="Save (Ctrl+S)">
+  <Button onPress={save}>Save</Button>
+</Tooltip>
+<Tooltip content="Below" placement="bottom" delay={200}>
+  <Icon src={Info} />
+</Tooltip>
+```
+
+**Props**
+
+| Prop        | Type                  | Default | Description                                            |
+| ----------- | --------------------- | ------- | ------------------------------------------------------ |
+| `content`   | `any`                 | -       | The bubble body: a string/number as themed text, or custom content. |
+| `children`  | `any`                 | -       | The anchor content the tooltip attaches to.            |
+| `delay`     | `number`              | `500`   | Hover delay in milliseconds before showing.            |
+| `placement` | `"top" \| "bottom"`   | `"top"` | Which side of the anchor the bubble appears on.        |
+| `layout`    | `LayoutProps`         | -       | Layout of the anchor wrapper.                          |
+
+### Select
+
+A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same `value`/`onChange` contract either way; pressing outside closes without a change. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. The option list is not scrollable yet, so keep it short.
+
+```jsx
+import { Select } from "@solidrt/components"
+
+let options = [
+  { value: "s", label: "Small" },
+  { value: "m", label: "Medium" },
+  { value: "l", label: "Large" },
+]
+
+<Select options={options} value={size()} onChange={setSize} placeholder="Size" />
+```
+
+**Props**
+
+| Prop           | Type                        | Default | Description                                            |
+| -------------- | --------------------------- | ------- | ------------------------------------------------------ |
+| `options`      | `Option[]`                  | -       | `{ value, label }` entries to choose from.             |
+| `value`        | `unknown`                   | -       | Controlled selected value.                             |
+| `defaultValue` | `unknown`                   | -       | Initial selection for uncontrolled use.                |
+| `onChange`     | `(value: unknown) => void`  | -       | Fires with the newly selected value.                   |
+| `placeholder`  | `string`                    | `""`    | Shown in the trigger while nothing is selected.        |
+| `disabled`     | `boolean`                   | `false` | Ignores presses and mutes the label.                   |
+| `layout`       | `LayoutProps`               | -       | Layout of the trigger.                                 |
+| `style`        | `StyleProps`                | -       | Paint properties of the trigger (fill, border, transform). |
+
+### SegmentedControl
+
+A single-choice row of equal-width segments joined flush: only the control's outermost corners are rounded, hairline dividers separate the segments, and the active segment fills with the theme `primary`. Hover tints inactive segments under non-touch interaction policies. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Override the inactive fill via `style.backgroundColor` and the outer radius via `style.borderRadius`.
+
+```jsx
+import { SegmentedControl } from "@solidrt/components"
+
+<SegmentedControl
+  options={[{ value: "day", label: "Day" }, { value: "week", label: "Week" }]}
+  value={range()}
+  onChange={setRange}
+/>
+```
+
+**Props**
+
+| Prop           | Type                        | Default | Description                                            |
+| -------------- | --------------------------- | ------- | ------------------------------------------------------ |
+| `options`      | `Option[]`                  | -       | `{ value, label }` entries, one segment each.          |
+| `value`        | `unknown`                   | -       | Controlled selected value.                             |
+| `defaultValue` | `unknown`                   | -       | Initial selection for uncontrolled use.                |
+| `onChange`     | `(value: unknown) => void`  | -       | Fires with the newly selected value.                   |
+| `disabled`     | `boolean`                   | `false` | Ignores presses and mutes the fills and labels.        |
+| `layout`       | `LayoutProps`               | -       | Layout of the row.                                     |
+| `style`        | `StyleProps`                | -       | `backgroundColor` (inactive fill), `borderRadius`, plus transform. |
+
+### ContextMenu
+
+Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500 ms, cancelled by finger travel) for touch. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Pressing outside closes without selecting.
+
+```jsx
+import { ContextMenu } from "@solidrt/components"
+
+<ContextMenu
+  items={[
+    { label: "Rename", onSelect: rename },
+    { label: "Delete", onSelect: remove },
+    { label: "Share", disabled: true },
+  ]}
+>
+  <Card>{file.name}</Card>
+</ContextMenu>
+```
+
+**Props**
+
+| Prop       | Type                | Default | Description                                                          |
+| ---------- | ------------------- | ------- | -------------------------------------------------------------------- |
+| `items`    | `ContextMenuItem[]` | -       | `{ label, onSelect?, disabled? }` entries; `onSelect` fires on pick. |
+| `children` | `any`               | -       | The content the menu attaches to.                                    |
+| `layout`   | `LayoutProps`       | -       | Layout of the wrapper.                                               |
+
+### NavShell
+
+An app shell that arranges primary navigation around the content per `policy.navigation`: bottom tabs under it (`bottomTabs`), a narrow rail (`rail`) or a wide sidebar (`sidebar`) beside it. The content is a single stable node; switching arrangement only flips the shell's flex direction and remounts the stateless nav strip, so page state survives a resize across a breakpoint. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Safe areas are the caller's concern: wrap the shell in `SafeArea`.
+
+```jsx
+import { NavShell, Icon } from "@solidrt/components"
+
+let items = [
+  { value: "home", label: "Home", icon: <Icon src={House} /> },
+  { value: "settings", label: "Settings", icon: <Icon src={Cog} /> },
+]
+
+<NavShell items={items} value={page()} onChange={setPage} layout={{ flex: 1 }}>
+  <Show when={page() === "home"} fallback={<Settings />}>
+    <Home />
+  </Show>
+</NavShell>
+```
+
+**Props**
+
+| Prop           | Type                        | Default | Description                                                          |
+| -------------- | --------------------------- | ------- | -------------------------------------------------------------------- |
+| `items`        | `NavItem[]`                 | -       | `{ value, label, icon? }` entries; `icon` renders above (tabs/rail) or beside (sidebar) the label. |
+| `value`        | `unknown`                   | -       | Controlled selected value.                                           |
+| `defaultValue` | `unknown`                   | -       | Initial selection for uncontrolled use.                              |
+| `onChange`     | `(value: unknown) => void`  | -       | Fires with the newly selected value.                                 |
+| `children`     | `any`                       | -       | The page content; keeps its node (and state) across arrangements.    |
+| `layout`       | `LayoutProps`               | -       | Layout of the shell.                                                 |
+
+### SplitView
+
+A list-detail container driven by `policy.layout`: `twoPane` shows the list beside the detail, `singlePane` shows one pane at a time per `showDetail`. Keep pane state (selection, scroll) in the app, not in the panes: crossing a breakpoint re-arranges and can remount them. It draws no chrome and adds no padding; a back affordance in the single-pane detail is the app's to render (fork on `policy.layout`).
+
+```jsx
+import { SplitView } from "@solidrt/components"
+
+<SplitView
+  layout={{ flex: 1 }}
+  list={<Inbox onOpen={setSelected} />}
+  detail={<Message id={selected()} onBack={() => setSelected(null)} />}
+  showDetail={selected() !== null}
+/>
+```
+
+**Props**
+
+| Prop         | Type          | Default | Description                                                          |
+| ------------ | ------------- | ------- | -------------------------------------------------------------------- |
+| `list`       | `any`         | -       | The list (or primary) pane.                                          |
+| `detail`     | `any`         | -       | The detail (or secondary) pane.                                      |
+| `showDetail` | `boolean`     | `false` | Single-pane mode only: show the detail instead of the list.          |
+| `listWidth`  | `number`      | `320`   | Width of the list pane in two-pane mode.                             |
+| `layout`     | `LayoutProps` | -       | Layout of the container.                                             |
 
 ## License
 

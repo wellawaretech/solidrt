@@ -14,6 +14,11 @@ the walk.
 it as an ancestor too, so the `parentX`/`parentY` of an event stay in the frame
 you would expect.
 
+Focus is explicit: `setFocus(node)` moves it, `onFocus`/`onBlur` report it,
+and `focusable` only marks an element as a candidate for `getFocusables()`,
+so a focus-navigation scheme (a component set's, or your own) can enumerate
+targets without the runtime imposing one.
+
 ## Pointer events
 
 Coordinates are logical points, so a handler reads the same numbers on a

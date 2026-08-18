@@ -24,7 +24,9 @@ in topological order), so the example is now simply a chain - bind the plasma
 target as the cube pipeline's sampler input and drive only the plasma's
 uniforms. Unblocked and unwritten as of 2026-07-30 (no gpu-chain example in
 packages/core/examples). Worth writing as the demonstration that sampler
-bindings are live dependencies, the contract documented in docs/core.md.
+bindings are live dependencies, the contract documented in flux-types
+gui/gpu.d.ts (the core prose lives under docs/20-core/, which has no GPU
+page yet).
 
 ## Points topology / particle field
 

@@ -6,22 +6,26 @@ each usable without the ones above it.
 ```
 lattice   application shell: hosts a SolidRT app on desktop and mobile
 flux      JavaScript runtime: QuickJS, plus plugins that marshal to the cores
-alloy     rendering: SDL, Impeller, GL, and the rendertree
-forge     engine-free cores: fs, http, sqlite, subprocess, p2p, events
+alloy     platform and rendering: SDL, Impeller, GL, the rendertree, devices
+forge     engine-free cores: fs, http, sqlite, subprocess, p2p, wasm, ffi, ...
 ```
 
 - **forge** holds domain logic with no scripting engine anywhere in it:
-  filesystem, HTTP, SQLite, subprocesses, peer-to-peer, the event bus. Any
-  embedder can use it, in any language binding.
+  filesystem, HTTP and fetch, SQLite, subprocesses, peer-to-peer, mDNS,
+  sockets, image and SVG decoding, WebAssembly, FFI, isolates, the event
+  bus. Any embedder can use it, in any language binding.
 - **alloy** owns the window and the pixels: SDL for platform windowing and
-  input, Impeller for 2D drawing, GL through glow underneath, and the
-  rendertree that turns a node graph into frames.
+  input, Impeller for 2D drawing, GL through glow underneath, the
+  rendertree that turns a node graph into frames, and the device side
+  (camera, microphone, audio, video playback, gamepads).
 - **flux** embeds QuickJS and exposes the layers below it to JavaScript.
-  Its plugins are split into web standards (`fetch`, `console`, timers),
-  the `flux:*` capability modules, and the GUI bindings.
+  Its plugins are split by what they marshal: `standards_plugins/` for the
+  web standards (`fetch`, `console`, timers), `forge_plugins/` for the
+  `flux:*` capability modules, and `alloy_plugins/` for the GUI bindings.
 - **lattice** combines alloy and flux into the runtime that actually hosts
-  an app, including its window lifecycle, storage, and the dev-server
-  connection.
+  an app: window lifecycle, storage, the dev-server connection, and the
+  `srt:*` modules an app sees on top of Flux (`srt:render`, `srt:events`,
+  `srt:dev`, `srt:app`).
 
 Two rules keep the layering honest, and both are load-bearing rather than
 stylistic. Plugins only marshal: a plugin converts arguments and results
@@ -62,15 +66,17 @@ That choice shapes several pieces:
 ## Threads
 
 All GL work lives on one raster thread; nothing else touches the context.
-The main thread blocks on the SDL event queue and wakes for input or for a
-frame request, rather than polling. JavaScript runs on its own thread with
-the engine it owns.
+The main thread waits on the SDL event queue and wakes for input, for a
+frame request, or for a deadline it set itself (an idle tick, a vsync
+fallback), rather than polling. JavaScript, layout and paint run on their
+own thread with the engine it owns.
 
 ## Platforms
 
-Desktop (Linux, macOS, Windows) and Android, from the same source and the
-same crates. Platform differences surface as named capabilities rather than
-as OS checks, both in the Rust layers and in the JavaScript API.
+Desktop (Linux x64 and arm64, macOS on Apple silicon, Windows x64) and
+Android (arm64 and armv7), from the same source and the same crates.
+Platform differences surface as named capabilities rather than as OS
+checks, both in the Rust layers and in the JavaScript API.
 
 Per-crate pages, and the longer versions of the cross-cutting stories above,
-land here next.
+are not written yet.

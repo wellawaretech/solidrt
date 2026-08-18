@@ -15,8 +15,12 @@ This site is built by a Flux script.
 ## Two kinds of API
 
 Web-standard APIs are global, with the names and shapes you already know:
-`fetch`, `Request`, `Response`, `Headers`, `console`, `setTimeout`,
-`WebSocket`, `TextEncoder`, `URL`.
+`fetch`, `Request`, `Response`, `Headers`, `console`, `setTimeout` and
+`setInterval`, `queueMicrotask`, `performance`, `WebSocket`, `TextEncoder`
+and `TextDecoder`, `atob` and `btoa`. What is not there is as deliberate as
+what is: no `URL`, no `crypto`, no `AbortController`, no `Blob`, `FormData`
+or streams. A single known app rarely needs them, and each is a module away
+when it does.
 
 Everything else is an explicit `flux:*` module import. Capabilities are
 named, not ambient:
@@ -40,16 +44,26 @@ serve({
 | Module | What it does |
 | --- | --- |
 | `flux:fs` | Files and directories. |
-| `flux:path` | Path manipulation. |
+| `flux:path` | Path joining and containment checks. |
 | `flux:http` | HTTP and WebSocket servers, with routing. |
 | `flux:net` | TCP and UDP sockets. |
 | `flux:p2p` | Direct peer-to-peer connections, no server in the middle. |
 | `flux:mdns` | Local network service discovery. |
 | `flux:sqlite` | SQLite, on a dedicated thread. |
 | `flux:subprocess` | Spawn and drive processes. |
-| `flux:process` | Arguments, environment, exit. |
+| `flux:process` | Arguments, platform, memory usage, signal handlers. |
 | `flux:wasm` | Run WebAssembly modules, interpreted. Portable across every target; a small constant factor over JavaScript on tight compute, nowhere near browser wasm speed. |
 | `flux:ffi` | Call into native libraries. |
+| `flux:isolate` | Run a module on its own thread and call it like an object. |
+| `flux:image` | Decode and encode images. |
+| `flux:svg` | Parse an SVG document into draw data. |
+
+A GUI build of Flux, which is what SolidRT runs on, adds the device and
+rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),
+`flux:gpu` (textures, shaders, draw targets), `flux:camera`,
+`flux:microphone`, `flux:audio` and `flux:video`. The `create*` primitives in
+Core wrap them with reactivity; the modules are the imperative layer
+underneath.
 
 Where a standard exists, Flux keeps its vocabulary and simplifies the
 semantics to what a single known application needs, rather than what the
@@ -57,12 +71,12 @@ whole web needs. The simplifications are documented rather than hidden.
 
 ## Capabilities, not platforms
 
-Not every module works everywhere: a phone has no `flux:ffi` with
-executable pages, a headless build machine has no camera. Ask by feature
-name, never by guessing from the OS:
+Not every module works everywhere: a headless Flux build has no camera,
+microphone, audio or GPU. Ask by feature name, never by guessing from the
+OS:
 
 ```js
-if (Flux.capabilities.includes("ffi")) { /* ... */ }
+if (Flux.capabilities.includes("camera")) { /* ... */ }
 ```
 
 ## Running it

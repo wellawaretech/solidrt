@@ -447,7 +447,7 @@ Stage 3a DONE 2026-07-20. Implementation notes:
   app's current version dir on every named reload (mount_assets) and
   at boot-from-store; --proxy-files continues to override the whole
   flux:fs module, and plain flux scripts are unaffected. Documented
-  in docs/flux.md + flux-types fs.d.ts.
+  in flux-types fs.d.ts (the runtime page is docs/50-runtime/index.md).
 - Fonts from the store: boot-from-store loads the manifest's font
   annotations (BootVersion.fonts) and merges them over the embedded
   defaults, REPLACING a role alias a custom font claims (Impeller

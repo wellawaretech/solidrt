@@ -27,9 +27,9 @@ fetched via `gl_VertexID`, defaulting to a single covering triangle.
 
 ## View
 
-A boundary shader requires `repaintBoundary="snapshot"`. The cost is snapshot
-semantics, and it is kept explicit: declared without it, the shader is ignored
-with a warning.
+A boundary shader requires a snapshot boundary (`repaintBoundary="snapshot"`
+or `"snapshot-no-aa"`). The cost is snapshot semantics, and it is kept
+explicit: declared without one, the shader is ignored with a warning.
 
 {{ decl packages/core/src/types.d.ts ViewShaderProps }}
 

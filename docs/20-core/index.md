@@ -1,11 +1,12 @@
 # Core
 
-`@solidrt/core` is the stable spine of SolidRT. It links SolidJS reactivity
+`@solidrt/core` is the spine of SolidRT. It links SolidJS reactivity
 to the native rendertree: an element vocabulary, layout, input, frames, and
 the environment model for adapting to the device you are running on.
 
 If you only learn one layer, learn this one. Extensions and tools are built
-on it and are replaceable; Core is the part that holds still.
+on it and are replaceable; Core is the part that changes least (SolidRT is
+in alpha, so "least" is not "never").
 
 ## Elements
 
@@ -16,9 +17,8 @@ vocabulary is deliberately small:
 | --- | --- |
 | `window` | The app window. One per app, the root of the tree. |
 | `view` | Layout and input. Boxes, flex containers, hit targets. |
-| `text` | A shaped paragraph. |
-| `rect`, `oval`, `path` | Painted shapes. |
-| `svg` | An SVG document, parsed into paths. |
+| `text`, `span` | A shaped paragraph, and a styled run inside it. |
+| `rect`, `oval`, `line`, `path` | Painted shapes. |
 | `texture` | A GPU texture: a decoded image, a camera frame, a shader target. |
 
 Layout and paint are separate jobs, which is the one place the vocabulary
@@ -99,23 +99,27 @@ high-density phone screen as on a desktop monitor.
 
 ## Frames and animation
 
-`onFrame(callback)` runs on every rendered frame with the frame time.
-Rendering is demand-driven: the runtime does not spin a render loop when
-nothing changed, so an idle app is genuinely idle.
+`onFrame(callback)` runs before every painted frame with the frame time in
+ms, the frame count, and the display refresh rate; it returns a disposer and
+cleans itself up with the reactive scope it was called in. Rendering is
+demand-driven: the runtime does not spin a render loop when nothing changed,
+so an idle app is genuinely idle.
 
 ```tsx
 let [t, setT] = createSignal(0)
-onFrame((now) => setT(now))
+onFrame((tick) => setT(tick))
 
 <d-view rotate={t() / 1000}>...</d-view>
 ```
 
 ## Environment and devices
 
-`env` and `capabilities` describe where the app is running: system theme,
-orientation, visibility, input devices, window size class, and which
-features exist on this device. Availability is by capability, never by
-guessing from the OS name.
+`env` and `capabilities` describe where the app is running: `env` is what
+is observed (system theme, text scale, orientation, visibility, connected
+input devices), `capabilities` what follows from it for behavior (hover,
+touch, precise pointer, keyboard navigation, window size class). Which
+runtime features exist on this build is `Flux.capabilities`, by name, never
+by guessing from the OS.
 
 Window-shaped values are reactive too: `windowSize()`, `safeArea()`,
 `displayScale()`, `keyboardHeight()`, `windowFocused()`.
@@ -132,7 +136,7 @@ let camera = createCamera()
 ```
 
 The same pattern covers `@solidrt/core/microphone`, `/sound`,
-`/speech-recognition`, `/text-input`, `/image`, and `/gpu`.
+`/speech-recognition`, `/text-input`, `/image`, `/color`, and `/gpu`.
 
 ## Reference
 
