@@ -2,8 +2,7 @@
 
 mod common;
 
-use common::{run_source, LogSink};
-use flux::{Clock, FluxEngine};
+use common::run_source;
 
 #[tokio::test]
 async fn clear_timeout_on_unknown_id_is_noop() {
@@ -245,7 +244,7 @@ async fn async_await_after_timer() {
   assert_eq!(out.log(), "step1,step2,step3");
 }
 
-// ----- performance.now() / Clock -----
+// ----- performance.now() -----
 
 #[tokio::test]
 async fn performance_now_returns_number() {
@@ -279,11 +278,9 @@ async fn performance_now_advances_after_timeout() {
 }
 
 #[tokio::test]
-async fn injected_clock_drives_performance_now() {
-  // An embedder can inject a Clock via the builder; performance.now() then
-  // reports through it instead of the default monotonic origin.
-  let sink = LogSink::new();
-  let engine = FluxEngine::builder().logger(sink.logger()).userdata(Clock::new(|| 1234.5)).build();
-  engine.eval_source("console.log(performance.now())").await;
-  assert_eq!(sink.captured().log(), "1234.5");
+async fn performance_time_origin_tracks_wall_clock() {
+  // timeOrigin is the wall-clock ms of the process origin, so
+  // timeOrigin + now() tracks Date.now() like the browser.
+  let out = run_source("console.log(Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000)").await;
+  assert_eq!(out.log(), "true");
 }

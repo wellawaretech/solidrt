@@ -356,28 +356,44 @@ fn init_timers(ctx: &Ctx<'_>) {
   globals.set("queueMicrotask", queue_microtask).unwrap();
 }
 
-// ----- Clock: performance.now() -----
+// ----- performance.now() -----
 
-// Process-wide monotonic origin, used when no Clock is injected. Built on
-// tokio's Instant so tokio's test clock (pause / advance) drives the timers
-// above and performance.now() together as one swappable clock.
-static ORIGIN: OnceLock<Instant> = OnceLock::new();
+// The process-wide time origin: performance.now() is elapsed ms since it and
+// performance.timeOrigin is its wall-clock reading, so timeOrigin + now()
+// tracks Date.now() like the browser. Built on tokio's Instant so tokio's
+// test clock (pause / advance) drives it and the wall-clock timers above
+// together. Process-wide, not per context: an embedder that reloads its app
+// keeps one continuous timeline.
+static ORIGIN: OnceLock<(Instant, f64)> = OnceLock::new();
 
-fn default_now_ms() -> f64 {
-  ORIGIN.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
+fn origin() -> &'static (Instant, f64) {
+  ORIGIN.get_or_init(|| {
+    let wall = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_secs_f64() * 1000.0)
+      .unwrap_or(0.0);
+    (Instant::now(), wall)
+  })
 }
 
-// A high-resolution clock an embedder can inject via the engine builder
-// (`.userdata(clock)`), so performance.now() and other time sources (e.g. the
-// requestAnimationFrame timestamp) report on one shared origin. Without one,
-// performance.now() falls back to the process-wide monotonic origin above.
+fn perf_now() -> f64 {
+  origin().0.elapsed().as_secs_f64() * 1000.0
+}
+
+// ----- Timeline: the embedder's frame timeline for native consumers -----
+
+// The app's frame timeline in ms, injected by an embedder that paces frames
+// (`.userdata(timeline)`): the timestamp its rAF/render callbacks and virtual
+// timers march on. For native consumers that must stay in phase with the
+// frames (video frame selection); it deliberately does NOT back
+// performance.now(), which stays real elapsed time.
 #[derive(Clone, JsLifetime)]
-pub struct Clock {
+pub struct Timeline {
   #[qjs(skip_trace)]
   now: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
 
-impl Clock {
+impl Timeline {
   pub fn new(f: impl Fn() -> f64 + Send + Sync + 'static) -> Self {
     Self { now: Arc::new(f) }
   }
@@ -387,33 +403,25 @@ impl Clock {
   }
 }
 
-fn perf_now(ctx: Ctx<'_>) -> f64 {
-  match ctx.userdata::<Clock>() {
-    Some(clock) => clock.now_ms(),
-    None => default_now_ms(),
+// The frame timeline reading for native consumers (video sync): the injected
+// Timeline when present, real elapsed time otherwise (headless flux has no
+// frames to be in phase with).
+#[cfg(feature = "video-timeline-pacing")]
+pub(crate) fn timeline_now_ms(ctx: &Ctx<'_>) -> f64 {
+  match ctx.userdata::<Timeline>() {
+    Some(t) => t.now_ms(),
+    None => perf_now(),
   }
 }
 
-// The engine timeline in ms for native consumers (video sync): the injected
-// Clock when present - the embedder's paced/virtual timeline, immune to
-// jitter in when a frame's JS work executes - the process-wide monotonic
-// origin otherwise. Same reading performance.now() reports to JS.
-#[cfg(feature = "video-timeline-pacing")]
-pub(crate) fn timeline_now_ms(ctx: &Ctx<'_>) -> f64 {
-  perf_now(ctx.clone())
-}
-
 fn init_performance(ctx: &Ctx<'_>) {
-  // The engine's performance object can't be patched in place (its now() is
-  // wall-clock and its properties are non-configurable), so it is replaced
-  // wholesale; timeOrigin - the wall-clock ms when the context started - is
-  // carried over from it.
-  let engine_perf: Object = ctx.globals().get("performance").expect("engine performance object");
-  let time_origin: f64 = engine_perf.get("timeOrigin").expect("engine performance.timeOrigin");
+  // The engine's performance object can't be patched in place (its
+  // properties are non-configurable), so it is replaced wholesale with one
+  // on the process-wide origin.
   let performance = Object::new(ctx.clone()).expect("create performance object");
   let now = Function::new(ctx.clone(), perf_now).expect("create performance.now");
   performance.set("now", now).expect("set performance.now");
-  performance.set("timeOrigin", time_origin).expect("set performance.timeOrigin");
+  performance.set("timeOrigin", origin().1).expect("set performance.timeOrigin");
   ctx.globals().set("performance", performance).expect("set performance global");
 }
 

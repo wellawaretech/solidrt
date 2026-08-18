@@ -1,12 +1,12 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, BigInt, Ctx, Function, JsLifetime, Object};
+use rquickjs::{Array, Ctx, Function, JsLifetime, Object};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use super::events::{emit_event, has_listeners, register_listener};
 use crate::logger::CtxLogger;
-use forge::process::{arch, hrtime_nanos, platform, rss, SignalStream};
+use forge::process::{arch, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -45,16 +45,6 @@ pub struct ProcessArgs(#[qjs(skip_trace)] pub Vec<String>);
 // Node returns { rss, heapTotal, heapUsed, external, arrayBuffers }; we expose
 // rss for now (the headline figure). A companion cpuUsage() is deferred until we
 // settle on a portable user/system CPU-time split (getrusage / GetProcessTimes).
-//
-// And the high-resolution wall clock, Node's shape (the legacy [sec, ns] tuple
-// form is not offered):
-//
-//   import { hrtime } from "flux:process"
-//   let t0 = hrtime.bigint()   // monotonic nanoseconds, bigint
-//
-// This is REAL elapsed time. In a GUI host performance.now() is the paced app
-// timeline (frame-stepped, freezable), which reads as 0 ms across any
-// synchronous work; hrtime is what to time such work with.
 fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
   let obj = Object::new(ctx)?;
   obj.set("rss", rss() as f64)?;
@@ -77,7 +67,6 @@ impl ModuleDef for ProcessModule {
     decl.declare("platform")?;
     decl.declare("arch")?;
     decl.declare("memoryUsage")?;
-    decl.declare("hrtime")?;
     Ok(())
   }
 
@@ -96,16 +85,8 @@ impl ModuleDef for ProcessModule {
     exports.export("platform", platform())?;
     exports.export("arch", arch())?;
     exports.export("memoryUsage", Function::new(ctx.clone(), memory_usage)?)?;
-    let hrtime = Object::new(ctx.clone())?;
-    hrtime.set("bigint", Function::new(ctx.clone(), hrtime_bigint)?)?;
-    exports.export("hrtime", hrtime)?;
     Ok(())
   }
-}
-
-fn hrtime_bigint(ctx: Ctx<'_>) -> rquickjs::Result<BigInt<'_>> {
-  // u64 nanoseconds cover ~584 years of uptime.
-  BigInt::from_u64(ctx, hrtime_nanos() as u64)
 }
 
 fn on_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rquickjs::Result<Function<'js>> {

@@ -8,7 +8,7 @@ use flux::{compile_source, on_shutdown, CtxLogger, FluxEngine, LogLevel};
 
 // Engine-level public API: custom plugins, injected userdata, shutdown hooks,
 // precompiled bytecode, top-level error reporting, and the stack-size limit.
-// (ExecHandle is exercised in events.rs; an injected Clock in time.rs.)
+// (ExecHandle is exercised in events.rs.)
 
 #[derive(Clone, JsLifetime)]
 struct Identity(#[qjs(skip_trace)] String);

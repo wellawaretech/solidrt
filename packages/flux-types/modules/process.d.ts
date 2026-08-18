@@ -17,22 +17,6 @@ declare module "flux:process" {
    */
   export function memoryUsage(): { rss: number }
   /**
-   * High-resolution real-time clock for timing synchronous work (Node's
-   * `process.hrtime`; only the `bigint()` form is offered, not the legacy
-   * `[seconds, nanoseconds]` tuple). Unlike `performance.now()`, which in a
-   * GUI runtime is the paced app timeline and does not advance within a
-   * frame, this is monotonic wall time at nanosecond resolution.
-   *
-   * @example
-   * let t0 = hrtime.bigint()
-   * // ... synchronous work ...
-   * let ms = Number(hrtime.bigint() - t0) / 1e6
-   */
-  export let hrtime: {
-    /** Nanoseconds since an arbitrary fixed origin, as a bigint. */
-    bigint(): bigint
-  }
-  /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.
    *

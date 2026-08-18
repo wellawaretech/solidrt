@@ -101,10 +101,10 @@ them - are one fact. Worth stating explicitly: "is the sound late too?" is
 the natural discriminator between an input-delivery problem and a
 render-queue problem, and under this clock it does not discriminate at all.
 
-The gap: an app cannot detect it. Every clock it has - the `tick` argument,
-`performance.now()`, timers - rides the paced timeline, so from inside
-nothing looks wrong; the only tell is diffing `Date.now()` against `tick`
-yourself, which requires already knowing the pacing exists. An app that
+The gap: an app cannot detect it. The frame clocks it has - the `tick`
+argument, timers - ride the paced timeline, so from inside nothing looks
+wrong; the only tell is diffing `performance.now()` or `Date.now()` against
+`tick` yourself, which requires already knowing the pacing exists. An app that
 wanted to react (drop a supersample factor, shed effects, tell the user
 something else is eating the GPU) has no supported signal.
 

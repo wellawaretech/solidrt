@@ -465,10 +465,10 @@ its tools over guessing at runtime state:
   PNG to a file - the image in the tool result cannot be saved afterwards,
   so decide before capturing (e.g. keep a before/after pair to diff)
 - set_time_scale / step_frames: the runtime clock. `set_time_scale 0`
-  freezes app time (onFrame, requestAnimationFrame, timers, and
-  performance.now all stop; Date.now stays wall time, and so does
-  `hrtime.bigint()` from flux:process - the clock to time synchronous work
-  with, since performance.now does not advance within a frame), so a snapshot can
+  freezes app time (onFrame, requestAnimationFrame and timers all stop;
+  performance.now and Date.now keep running - performance.now is real
+  elapsed time for measuring work, not the frame timeline, so animate off
+  the onFrame tick to be pausable), so a snapshot can
   catch an exact frame of any animation instead of racing it; `step_frames
   n` then advances exactly n frames (one refresh period each). Pause,
   snapshot, step, snapshot again to see precisely what changed. ALWAYS set

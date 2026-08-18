@@ -95,10 +95,8 @@ pub struct FluxRuntime {
   // Dev-tool pause/step/scale state; permanently scale 1 outside a dev
   // session (and in playback mode, which has no dev connection).
   clock_control: ClockControl,
-  // Wall origin for the paced clock's correction target. Read here rather
-  // than from flux::Clock, which reports the paced clock itself in run mode
-  // (performance.now() and the timers live on the frame-stepped timeline).
-  // tokio's Instant so tokio's test clock can drive it.
+  // Wall origin for the paced clock's correction target. tokio's Instant so
+  // tokio's test clock can drive it.
   wall_start: tokio::time::Instant,
   platform: Arc<PlatformContext>,
   // Sampling handle onto the resampler its producers feed (the alloy pump
@@ -357,19 +355,18 @@ impl UiRuntime for FluxRuntime {
       // app time stands still.
       let scale = clock_control.scale();
       let deliver = scale != 0.0 || clock_control.take_step();
-      // rAF, the render event, performance.now() and the virtual timers all
-      // march on one timeline: the paced clock in run mode (which flux::Clock
-      // also reports), the frame-derived virtual clock in playback. Idle
+      // rAF, the render event and the virtual timers all march on one
+      // timeline (the frame timeline flux::Timeline also reports): the paced
+      // clock in run mode, the frame-derived virtual clock in playback.
+      // performance.now() is NOT on it - that stays real elapsed time. Idle
       // Ticks arrive at the refresh cadence, so ticking the paced clock for
       // them preserves its one-period-per-call model. Render event carries
       // seconds; JS scales to ms.
       let ts = match &paced {
         Some(pc) => {
-          // The correction target is wall time, read from the runner's own
-          // origin - flux::Clock reports this very clock now, so reading it
-          // back would be circular. A gated frame ticks at scale 0 (no
-          // advance, accrue the offset); a stepped frame advances one exact
-          // period.
+          // The correction target is wall time. A gated frame ticks at scale
+          // 0 (no advance, accrue the offset); a stepped frame advances one
+          // exact period.
           let raw = wall_start.elapsed().as_secs_f64() * 1000.0;
           pc.tick(
             raw,
@@ -383,7 +380,7 @@ impl UiRuntime for FluxRuntime {
           );
           pc.now_ms()
         }
-        None => ctx.userdata::<flux::Clock>().map(|c| c.now_ms()).unwrap_or(0.0),
+        None => ctx.userdata::<flux::Timeline>().map(|t| t.now_ms()).unwrap_or(0.0),
       };
       if flux::gui::camera::tick(&ctx) {
         // A camera frame landed in its texture; the screen content changed

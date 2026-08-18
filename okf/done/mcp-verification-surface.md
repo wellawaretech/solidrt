@@ -221,11 +221,13 @@ decisions that differ from the proposal above:
   setTimeout/setInterval live on a virtual deadline heap fired from
   advance (one advance = one task-queue turn; intervals collapse missed
   periods), and lattice installs it per engine and advances with the rAF
-  timestamp each frame. performance.now() reports the paced clock (the
-  run-mode flux::Clock is now paced-backed; the wall correction source
-  moved into FluxRuntime). So pause freezes onFrame, rAF, timers and
-  performance.now together; Date.now() is the wall escape hatch (docs
-  updated: window.ts, flux-types time.d.ts, docs/flux.md). Headless flux
+  timestamp each frame. So pause freezes onFrame, rAF and timers
+  together. performance.now() was paced too for a while and reverted
+  (2026-08-18): it is real elapsed time again (frame-quantized it read 0
+  across any synchronous work and "work until N ms" loops never
+  terminated), and the frame timeline is exposed to native consumers as
+  flux::Timeline instead; hrtime.bigint() in flux:process, added as the
+  workaround, is removed with it. Headless flux
   (dev server, scripts) never installs it - tokio timers unchanged. This
   also closes playback's timer hole (timers were wall-time during
   playback) and is the seam automated tests drive later: construct flux

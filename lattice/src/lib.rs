@@ -645,23 +645,24 @@ fn ui_thread(
       dev_server,
     );
 
-    // flux::Clock backs performance.now(). Injected into each engine; persists
-    // across reloads for continuous time. Both modes report the SAME timeline
-    // the rAF/render timestamps and the virtual timers march on - one time
-    // surface, frame-stepped, pausable by the dev clock control. Wall time is
-    // deliberately absent from it; Date.now() is the real-time escape hatch.
-    let clock = match playback_fps {
-      // Playback mode: derive time from the present counter (frame/fps) so the
-      // whole JS time surface is deterministic and recordings reproducible.
+    // flux::Timeline is the frame timeline the rAF/render timestamps and the
+    // virtual timers march on - frame-stepped, pausable by the dev clock
+    // control - for native consumers (video sync) and the timer seed below.
+    // Injected into each engine; persists across reloads for continuous time.
+    // performance.now() is deliberately NOT on it: that is real elapsed time,
+    // for measuring work; Date.now() is calendar time.
+    let timeline = match playback_fps {
+      // Playback mode: derive time from the present counter (frame/fps) so
+      // the frame timeline is deterministic and recordings reproducible.
       Some(rfps) if rfps > 0 => {
         let playback_frame = playback_frame.clone();
-        flux::Clock::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
+        flux::Timeline::new(move || playback_frame.load(Ordering::Relaxed) as f64 * 1000.0 / rfps as f64)
       }
       // Run mode: the paced frame clock (see paced_clock; the frame verb ticks
       // it, correcting toward wall time at normal speed).
       _ => {
         let paced = paced_clock.clone().expect("run mode has a paced clock");
-        flux::Clock::new(move || paced.now_ms())
+        flux::Timeline::new(move || paced.now_ms())
       }
     };
 
@@ -738,7 +739,7 @@ fn ui_thread(
         .module_override("srt:dev", plugins::dev::SrtDevModule)
         .module_override("srt:apps", plugins::apps::SrtAppsModule)
         .module_override("srt:app", plugins::app::SrtAppModule)
-        .userdata(clock.clone())
+        .userdata(timeline.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
       // Timers join the frame-stepped timeline (see flux virtual time): the
       // frame verb advances them with the same timestamp rAF gets, so a
@@ -746,7 +747,7 @@ fn ui_thread(
       // replays them deterministically. Seeded with the current reading so a
       // reload does not replay the timeline from zero.
       let builder = {
-        let seed = clock.now_ms();
+        let seed = timeline.now_ms();
         builder.plugin(move |ctx| flux::install_virtual_time(&ctx, seed))
       };
       // The running app's own surface (exit()), in every build: the
