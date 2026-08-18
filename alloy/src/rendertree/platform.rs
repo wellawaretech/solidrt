@@ -1,5 +1,5 @@
 use crate::impellers::{Point, Rect, Size, TypographyContext};
-use crate::rendertree::text::WordCache;
+use crate::rendertree::text::{FontMetricsTable, WordCache};
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,16 +16,22 @@ pub struct FontPayload {
   pub bytes: Cow<'static, [u8]>,
 }
 
-// Build a context with `fonts` registered in order; `on_error` decides what a
-// font that fails to register costs (panic at startup, a warning mid-session).
-fn build_typography(fonts: Vec<FontPayload>, on_error: impl Fn(&str, &str)) -> TypographyContext {
+// Build a context with `fonts` registered in order, plus the metrics table
+// read from the same bytes; `on_error` decides what a font that fails to
+// register costs (panic at startup, a warning mid-session).
+fn build_typography(
+  fonts: Vec<FontPayload>,
+  on_error: impl Fn(&str, &str),
+) -> (TypographyContext, FontMetricsTable) {
   let mut typography = TypographyContext::default();
+  let mut metrics = FontMetricsTable::default();
   for FontPayload { alias, bytes } in fonts {
+    metrics.register(&bytes, alias.as_deref());
     if let Err(e) = typography.register_font(bytes, alias.as_deref()) {
       on_error(alias.as_deref().unwrap_or("<unaliased>"), e);
     }
   }
-  typography
+  (typography, metrics)
 }
 
 pub struct PlatformContext {
@@ -33,6 +39,8 @@ pub struct PlatformContext {
   // switch (see reset_fonts). Borrowed only on the UI thread (text shaping,
   // the HUD overlay), never across a reset.
   typography: RefCell<TypographyContext>,
+  // Underline metrics of the fonts in `typography`, replaced with it.
+  font_metrics: RefCell<FontMetricsTable>,
   // Shaped words shared by every text (rendertree/text/words.rs); valid for
   // the fonts in `typography`, so a reset clears it.
   words: RefCell<WordCache>,
@@ -61,9 +69,11 @@ impl PlatformContext {
   pub fn new(fonts: Vec<FontPayload>) -> Self {
     // Startup fonts are the client's own (embedded Notos, a packed trailer);
     // one failing to parse is a build defect, so this keeps panicking.
-    let typography = build_typography(fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
+    let (typography, font_metrics) =
+      build_typography(fonts, |alias, e| panic!("Failed to register font '{alias}': {e}"));
     Self {
       typography: RefCell::new(typography),
+      font_metrics: RefCell::new(font_metrics),
       words: RefCell::new(WordCache::default()),
       window_size: Cell::new((0.0, 0.0)),
       window_size_dirty: Cell::new(false),
@@ -87,14 +97,21 @@ impl PlatformContext {
     self.words.borrow_mut()
   }
 
+  /// Underline metrics of the registered fonts (see FontMetricsTable).
+  pub fn font_metrics(&self) -> Ref<'_, FontMetricsTable> {
+    self.font_metrics.borrow()
+  }
+
   /// Replace the registered font set (an app switch): a fresh context built
   /// from `fonts` alone, dropping everything previously registered. A font
   /// that fails to register is skipped with a warning - its role falls back,
   /// same as a missing font file; mid-session this must never panic. Requests
   /// a frame so text reshapes against the new set.
   pub fn reset_fonts(&self, fonts: Vec<FontPayload>) {
-    let typography = build_typography(fonts, |alias, e| log::warn!("Could not register font '{alias}': {e}"));
+    let (typography, font_metrics) =
+      build_typography(fonts, |alias, e| log::warn!("Could not register font '{alias}': {e}"));
     self.typography.replace(typography);
+    self.font_metrics.replace(font_metrics);
     self.words.borrow_mut().clear();
     self.request_frame();
   }

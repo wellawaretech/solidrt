@@ -24,6 +24,7 @@ pub(super) struct ParaKey {
   text_wrap: Wrap,
   line_height: f32,
   paint: PaintState,
+  underline: (bool, Option<f32>, Option<f32>),
 }
 
 impl ParaKey {
@@ -41,6 +42,7 @@ impl ParaKey {
       && self.text_wrap == t.text_wrap
       && self.line_height == t.line_height
       && self.paint == t.paint
+      && self.underline == (t.underline, t.underline_offset, t.underline_thickness)
   }
 
   pub(super) fn of(t: &Text) -> Self {
@@ -58,6 +60,7 @@ impl ParaKey {
       text_wrap: t.text_wrap,
       line_height: t.line_height,
       paint: t.paint.clone(),
+      underline: (t.underline, t.underline_offset, t.underline_thickness),
     }
   }
 }
@@ -290,7 +293,7 @@ impl Text {
   }
 
   // The per-run styles resolved against this Text.
-  fn run_styles(&self) -> Vec<RunStyle> {
+  pub(super) fn run_styles(&self) -> Vec<RunStyle> {
     self.runs.iter().map(|r| r.overrides.resolve(self)).collect()
   }
 

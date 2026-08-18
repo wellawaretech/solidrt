@@ -65,6 +65,9 @@ pub struct RunOverrides {
   pub font_weight: Option<FontWeight>,
   pub line_height: Option<f32>,
   pub paint: Option<PaintState>,
+  pub underline: Option<bool>,
+  pub underline_offset: Option<f32>,
+  pub underline_thickness: Option<f32>,
 }
 
 impl RunOverrides {
@@ -77,6 +80,9 @@ impl RunOverrides {
       font_weight: child.font_weight.or(self.font_weight),
       line_height: child.line_height.or(self.line_height),
       paint: child.paint.clone().or_else(|| self.paint.clone()),
+      underline: child.underline.or(self.underline),
+      underline_offset: child.underline_offset.or(self.underline_offset),
+      underline_thickness: child.underline_thickness.or(self.underline_thickness),
     }
   }
 
@@ -129,6 +135,19 @@ impl Span {
   pub fn set_font_style(&mut self, style: FontStyle) -> Damage {
     self.overrides.font_style = Some(style);
     Damage::Layout
+  }
+  // Underline is paint-only: it neither shapes nor breaks.
+  pub fn set_underline(&mut self, on: bool) -> Damage {
+    self.overrides.underline = Some(on);
+    Damage::Paint
+  }
+  pub fn set_underline_offset(&mut self, v: f32) -> Damage {
+    self.overrides.underline_offset = Some(v);
+    Damage::Paint
+  }
+  pub fn set_underline_thickness(&mut self, v: f32) -> Damage {
+    self.overrides.underline_thickness = Some(v);
+    Damage::Paint
   }
   /// The paint override, created from the paragraph default on first write
   /// so paint setters (color, gradient) have something to write into.

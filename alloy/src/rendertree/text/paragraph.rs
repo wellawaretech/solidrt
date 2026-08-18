@@ -4,8 +4,10 @@
 use super::shape::ParaKey;
 use super::words::paragraph_style;
 use super::{Text, TextOverflow, MAX_CACHED_WIDTHS};
-use crate::impellers::{DisplayListBuilder, Paragraph, ParagraphBuilder, Point, Size, TypographyContext};
-use crate::rendertree::MeasureContext;
+use crate::impellers::{
+  DisplayListBuilder, Paragraph, ParagraphBuilder, Point, Size, TextDecorationStyle, TextDecorationType,
+};
+use crate::rendertree::{MeasureContext, PlatformContext};
 use taffy::AvailableSpace;
 
 #[derive(Clone, Default)]
@@ -24,18 +26,18 @@ impl std::fmt::Debug for ParaCache {
 impl Text {
   pub(super) fn build_paragraph(
     &self,
-    typography: &TypographyContext,
+    platform: &PlatformContext,
     builder: &mut DisplayListBuilder,
     origin: Point,
     width: f32,
   ) {
-    if let Some(paragraph) = self.shaped(typography, width) {
+    if let Some(paragraph) = self.shaped(platform, width) {
       builder.draw_paragraph(&paragraph, origin);
     }
   }
 
   pub(super) fn measure_paragraph(&self, ctx: &MeasureContext) -> Size {
-    let Some(intrinsic) = self.shaped(&ctx.platform.typography(), f32::MAX) else {
+    let Some(intrinsic) = self.shaped(ctx.platform, f32::MAX) else {
       return Size::zero();
     };
 
@@ -48,7 +50,7 @@ impl Text {
       AvailableSpace::MinContent => min_intrinsic_width,
     });
 
-    let Some(paragraph) = self.shaped(&ctx.platform.typography(), width) else {
+    let Some(paragraph) = self.shaped(ctx.platform, width) else {
       return Size::zero();
     };
 
@@ -60,7 +62,8 @@ impl Text {
   // Shape (or fetch the cached) paragraph for `width`. One paragraph serves
   // measure and paint: foreground and alignment are baked in even where
   // measurement does not need them, since they don't change the metrics.
-  fn shaped(&self, typography: &TypographyContext, width: f32) -> Option<Paragraph> {
+  fn shaped(&self, platform: &PlatformContext, width: f32) -> Option<Paragraph> {
+    let typography = platform.typography();
     let mut cache = self.cache.borrow_mut();
     if !cache.key.as_ref().is_some_and(|k| k.matches(self)) {
       cache.entries.clear();
@@ -73,13 +76,28 @@ impl Text {
 
     // Paragraph-level settings are read from the first pushed style, so every
     // run's style carries them; inner runs' copies are ignored by Impeller.
-    let mut para_builder = ParagraphBuilder::new(typography)?;
+    let mut para_builder = ParagraphBuilder::new(&typography)?;
     let mut pushed = 0;
     // Atoms are an owned-path feature; the paragraph engine has no
     // placeholders, so they are left out here.
     for run in self.runs.iter().filter(|r| r.atom.is_none()) {
-      let mut style = paragraph_style(&run.overrides.resolve(self));
+      let run_style = run.overrides.resolve(self);
+      let mut style = paragraph_style(&run_style);
       style.set_text_alignment(self.text_alignment);
+      // Impeller draws the font's own underline per run; its knobs are the
+      // color and a thickness multiplier, so underline_offset does not apply
+      // on this path and underline_thickness scales the font's thickness.
+      if run.overrides.underline.unwrap_or(self.underline) {
+        let thickness = run.overrides.underline_thickness.or(self.underline_thickness);
+        let font_thickness = platform.font_metrics().underline(&run_style.font_family).thickness * run_style.font_size;
+        let multiplier = thickness.map_or(1.0, |t| t / font_thickness);
+        style.set_text_decoration(
+          TextDecorationType::UNDERLINE,
+          &run_style.paint.color,
+          TextDecorationStyle::Solid,
+          multiplier,
+        );
+      }
       // 0 means no cap: keep txt's unlimited default. Passing 0 through reads
       // as "the first line is the last" in Skia's line breaker, so every
       // paragraph would shape single-line.

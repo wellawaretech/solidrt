@@ -45,6 +45,9 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
     }),
     "fontStyle" => text.set_font_style(font_style_of(value)?),
     "fontWeight" => text.set_font_weight(font_weight_of(value)?),
+    "textDecoration" => text.set_underline(underline_of(value)?),
+    "textUnderlineOffset" => text.set_underline_offset(f32_of(value, "textUnderlineOffset")?),
+    "textDecorationThickness" => text.set_underline_thickness(f32_of(value, "textDecorationThickness")?),
     _ => return Ok(None),
   }))
 }
@@ -60,12 +63,23 @@ pub fn apply_span(span: &mut Span, name: &str, value: &PropValue) -> Result<Opti
     "lineHeight" => span.set_line_height(f32_of(value, "lineHeight")?),
     "fontStyle" => span.set_font_style(font_style_of(value)?),
     "fontWeight" => span.set_font_weight(font_weight_of(value)?),
+    "textDecoration" => span.set_underline(underline_of(value)?),
+    "textUnderlineOffset" => span.set_underline_offset(f32_of(value, "textUnderlineOffset")?),
+    "textDecorationThickness" => span.set_underline_thickness(f32_of(value, "textDecorationThickness")?),
     "color" => match paint::apply(span.paint_override_mut(), name, value)? {
       Some(damage) => damage,
       None => return Ok(None),
     },
     _ => return Ok(None),
   }))
+}
+
+fn underline_of(value: &PropValue) -> Result<bool, String> {
+  Ok(match str_of(value, "textDecoration")? {
+    "underline" => true,
+    "none" => false,
+    v => return Err(format!("Unknown textDecoration value \"{v}\"; expected none or underline")),
+  })
 }
 
 fn font_style_of(value: &PropValue) -> Result<FontStyle, String> {

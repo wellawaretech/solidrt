@@ -1,15 +1,17 @@
+mod decoration;
 pub mod layout;
 mod paragraph;
 mod runs;
 mod shape;
 mod words;
 
+pub use decoration::{FontMetricsTable, Underline, UnderlineMetrics};
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
 pub use shape::{prepare_units, PreparedUnit};
 pub use words::WordCache;
 
 use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};
-use crate::rendertree::text::layout::{Run, Wrap};
+use crate::rendertree::text::layout::{PlacedRun, Run, Wrap};
 use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
   PlatformContext,
@@ -71,6 +73,12 @@ pub struct Text {
   // Owned path only.
   pub text_wrap: Wrap,
   pub line_height: f32,
+  // Underline (CSS text-decoration: underline) in the run's paint. Offset
+  // (baseline to the stroke's top) and thickness in pixels; None takes the
+  // font's own metrics (see text::decoration). Paint-only, owned path only.
+  pub underline: bool,
+  pub underline_offset: Option<f32>,
+  pub underline_thickness: Option<f32>,
   // Paint-time box overrides, mirroring Rectangle's x/y/w/h. x/y offset the
   // drawn paragraph. w overrides the shaping (wrap) width, which otherwise
   // falls back to the inherited layout size - detached text has no box of its
@@ -113,6 +121,9 @@ impl Default for Text {
       text_indent: 0.0,
       text_wrap: Wrap::default(),
       line_height: 0.0,
+      underline: false,
+      underline_offset: None,
+      underline_thickness: None,
       x: None,
       y: None,
       w: None,
@@ -143,9 +154,55 @@ impl Buildable for Text {
       if let (Some((x, y)), Some(Some(paragraph))) = (layout.ellipsis, owned.ellipsis.as_ref().map(|e| &e.paragraph)) {
         builder.draw_paragraph(paragraph, Point::new(origin.x + x, origin.y + y));
       }
+      // CSS decorating boxes: the text's underline is one line in its own
+      // style under everything (atoms excepted); a span's underline is its
+      // own line in the span's style. Both may cover a run.
+      let styles = self.run_styles();
+      let font_metrics = ctx.platform.font_metrics();
+      let ink_of = |placed: &PlacedRun| runs[placed.run].run.metrics.ink_width;
+      if self.underline {
+        let style = self.run_style();
+        let underline = Underline::resolve(
+          font_metrics.underline(&style.font_family),
+          style.font_size,
+          self.underline_offset,
+          self.underline_thickness,
+        );
+        decoration::draw_underlines(
+          builder,
+          origin,
+          layout,
+          |placed| runs[placed.run].paragraph.as_ref().map(|_| (underline, &style.paint)),
+          ink_of,
+        );
+      }
+      if self.runs.iter().any(|r| r.overrides.underline == Some(true)) {
+        decoration::draw_underlines(
+          builder,
+          origin,
+          layout,
+          |placed| {
+            let shaped = &runs[placed.run];
+            shaped.paragraph.as_ref()?;
+            let overrides = &self.runs[shaped.style].overrides;
+            if overrides.underline != Some(true) {
+              return None;
+            }
+            let style = &styles[shaped.style];
+            let underline = Underline::resolve(
+              font_metrics.underline(&style.font_family),
+              style.font_size,
+              overrides.underline_offset.or(self.underline_offset),
+              overrides.underline_thickness.or(self.underline_thickness),
+            );
+            Some((underline, &style.paint))
+          },
+          ink_of,
+        );
+      }
       return;
     }
-    self.build_paragraph(&ctx.platform.typography(), builder, origin, width);
+    self.build_paragraph(ctx.platform, builder, origin, width);
   }
 }
 
@@ -262,6 +319,19 @@ impl Text {
         shaped.paragraph.is_some() && local.x >= p.x && local.x < p.x + shaped.run.metrics.advance
       })
       .map(|p| self.runs[runs[p.run].style].node)
+  }
+
+  pub fn set_underline(&mut self, on: bool) -> Damage {
+    self.underline = on;
+    Damage::Paint
+  }
+  pub fn set_underline_offset(&mut self, v: f32) -> Damage {
+    self.underline_offset = Some(v);
+    Damage::Paint
+  }
+  pub fn set_underline_thickness(&mut self, v: f32) -> Damage {
+    self.underline_thickness = Some(v);
+    Damage::Paint
   }
 
   pub fn set_paragraph_engine(&mut self, on: bool) -> Damage {

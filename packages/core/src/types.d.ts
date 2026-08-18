@@ -576,6 +576,17 @@ export interface TextRunProps {
   lineHeight?: number
   fontStyle?: "normal" | "italic"
   fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+  /**
+   * Underline in the run's own color, drawn straight through descenders
+   * (no skip-ink). Position and thickness come from the font's own metrics
+   * unless overridden; a font Impeller resolves through the system fallback
+   * gets the shipped Noto values.
+   */
+  textDecoration?: "none" | "underline"
+  /** Pixels from the baseline to the top of the underline. */
+  textUnderlineOffset?: number
+  /** Underline thickness in pixels. */
+  textDecorationThickness?: number
 }
 
 /**

@@ -120,6 +120,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       if text.line_height != 0.0 {
         out.push(("lineHeight", ReadValue::Num(text.line_height as f64)));
       }
+      if text.underline {
+        out.push(("textDecoration", ReadValue::Str("underline".into())));
+      }
+      num(&mut out, "textUnderlineOffset", text.underline_offset);
+      num(&mut out, "textDecorationThickness", text.underline_thickness);
     }
     ElementKind::Span(_) => {} // its text already rides the snapshot
     ElementKind::Texture(tex) => {

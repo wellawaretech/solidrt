@@ -160,7 +160,8 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `\n` inside one produces a hard line break.
 
 - Rich text: `<span>` inside `<text>` restyles a run (`color`, `fontFamily`,
-  `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`); spans nest and
+  `fontSize`, `fontWeight`, `fontStyle`, `lineHeight`,
+  `textDecoration="underline"`); spans nest and
   inherit inward from the `<text>`. Never lay a paragraph out word by word in
   a wrapping row to mix styles - one `<text>` with spans wraps as a whole.
   A span is content, not a box (no layout or `d-` form, no size, no

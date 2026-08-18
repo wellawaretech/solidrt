@@ -433,6 +433,12 @@ Shaped, not started.
   treats "start" as left, so RTL rich text spanning styled runs on one line,
   RTL paragraph alignment and mixed-direction line breaks come out wrong; feed
   UAX #9 levels into the breaker and placer.
+- **[Line-through, overline, decoration color and styles](backlog/text-decoration-rest.md)** [2026-08-18]
+  A price cannot be struck through and a link cannot get a dashed or colored
+  underline; textDecoration knows only "underline" in the run's own color,
+  solid. Extend it to a CSS-style list with line-through/overline,
+  textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
+  per-line mechanism.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -880,6 +886,12 @@ Finished, kept for the reasoning.
   width from a cursor, draw a laid-out line) to app code, so editorial layouts
   (column handoff, obstacles, fitted headlines) are app work on a stable
   foundation instead of ever more <text> props.
+- **[Underline for <text> and <span>](done/text-underline.md)** [2026-08-18]
+  The owned text engine shapes one paragraph per wrap unit and Impeller's
+  decoration skips trailing whitespace, so a delegated underline is gapped at
+  every space; draw it ourselves per line from the fonts' own post-table
+  metrics (ttf-parser), with CSS names and overrides, and mirror it on the
+  Impeller paragraph path.
 - **[Paint properties on the texture element](done/texture-element-compositing.md)** [2026-07-27]
   texture/d-texture carried no PaintProps, so two GPU layers could not be
   composited additively in the tree; fixed by giving the texture kind the same
@@ -978,6 +990,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Settled direction; one GLES contract over ANGLE on every platform, native
   Vulkan rejected, Metal-native kept only as a mapped contingency; includes
   the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
+- **[Impeller text decoration, measured](notes/impeller-text-decoration.md)** [2026-08-18]
+  What Impeller's paragraph underline does and does not do - trailing
+  whitespace is never underlined, the stroke is the font's post thickness
+  centered on baseline + underlinePosition, and the C API exposes no underline
+  metrics - with the shipped Notos' numbers.
 - **[Why offscreen rasters are multisampled](notes/offscreen-msaa-provenance.md)** [2026-08-13]
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any

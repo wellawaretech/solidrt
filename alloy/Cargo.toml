@@ -67,6 +67,9 @@ log = { workspace = true }
 # remains the renderer. glow is loader-based, so one entry covers all targets.
 glow = "0.17"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Font-table reader for what Impeller does not expose: underline metrics
+# (post table) and family names of registered fonts. Safe Rust, no deps.
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
 # rqrr 3/9. ~3.4ms/frame with a code present, ~0.75ms without (desktop release).
