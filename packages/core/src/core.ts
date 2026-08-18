@@ -370,7 +370,9 @@ export type TextLine = {
  * wider than `width` on its own goes on the line whole and overflows. Draw a
  * line as `<d-text x y w={line.width + 1}>{prepared.text.slice(line.start, line.end)}</d-text>`
  * with the same font options; its words are already shaped, so that is
- * cheap. Floats, balancing and ellipsis are <text> features, not this.
+ * cheap. With `runs`, a unit crossing a run boundary is several glued units
+ * that always land on one line; draw such a line with a <span> per run.
+ * Floats, balancing and ellipsis are <text> features, not this.
  */
 export function layoutNextLine(prepared: tree.PreparedText, cursor: number, width: number): TextLine | null {
   let units = prepared.units
@@ -381,7 +383,17 @@ export function layoutNextLine(prepared: tree.PreparedText, cursor: number, widt
   let i = cursor
   while (i < units.length) {
     let unit = units[i]!
-    if (i > cursor && pen + unit.width > width) break
+    // Glued pieces stay with the unit they continue: the whole wrap unit
+    // (this piece through the last glued one) must fit for any of it to go on.
+    if (i > cursor && !unit.glue) {
+      let ink = unit.width
+      let advance = 0
+      for (let j = i + 1; j < units.length && units[j]!.glue; j++) {
+        advance += units[j - 1]!.advance
+        ink = advance + units[j]!.width
+      }
+      if (pen + ink > width) break
+    }
     pen += unit.advance
     if (unit.ascent > ascent) ascent = unit.ascent
     if (unit.descent > descent) descent = unit.descent

@@ -4844,8 +4844,16 @@ function layoutNextLine(prepared, cursor, width) {
   let i = cursor;
   while (i < units.length) {
     let unit = units[i];
-    if (i > cursor && pen + unit.width > width)
-      break;
+    if (i > cursor && !unit.glue) {
+      let ink = unit.width;
+      let advance = 0;
+      for (let j = i + 1;j < units.length && units[j].glue; j++) {
+        advance += units[j - 1].advance;
+        ink = advance + units[j].width;
+      }
+      if (pen + ink > width)
+        break;
+    }
     pen += unit.advance;
     if (unit.ascent > ascent)
       ascent = unit.ascent;
@@ -6717,9 +6725,10 @@ function createTextEditorLayout(viewport, input) {
     let {
       text,
       font,
-      wrap: wrap2
+      wrap: wrap2,
+      caretWidth = 0
     } = input();
-    let width = wrap2 ? viewportSize().width : Infinity;
+    let width = wrap2 ? Math.max(0, viewportSize().width - caretWidth) : Infinity;
     let units = wrap2 ? splitWide(prepared(), width) : prepared();
     let out = [];
     let y2 = 0;
@@ -6789,15 +6798,15 @@ function createTextEditorLayout(viewport, input) {
       });
     return stops;
   };
-  let caretLine = createMemo(() => {
-    let caret2 = input().caret;
+  let lineOf = (offset) => {
     let ls = lines();
     for (let i3 = 0;i3 < ls.length; i3++) {
-      if (caret2 < ls[i3].end)
+      if (offset < ls[i3].end)
         return i3;
     }
     return ls.length - 1;
-  });
+  };
+  let caretLine = createMemo(() => lineOf(input().caret));
   let caret = createMemo(() => {
     let offset = input().caret;
     let index = caretLine();
@@ -6815,9 +6824,11 @@ function createTextEditorLayout(viewport, input) {
     };
   });
   let offsetAtX = (index, x2) => {
-    let best = 0;
+    let best = lines()[index]?.start ?? 0;
     let bestDistance = Infinity;
     for (let stop of lineStops(index)) {
+      if (lineOf(stop.offset) !== index)
+        continue;
       let d2 = Math.abs(stop.x - x2);
       if (d2 < bestDistance) {
         best = stop.offset;
@@ -6825,6 +6836,13 @@ function createTextEditorLayout(viewport, input) {
       }
     }
     return best;
+  };
+  let lineAtY = (y2) => {
+    let ls = lines();
+    let index = 0;
+    while (index + 1 < ls.length && ls[index + 1].y <= y2)
+      index++;
+    return index;
   };
   let step = (offset, direction) => {
     let {
@@ -6869,14 +6887,15 @@ function createTextEditorLayout(viewport, input) {
       height: vh
     } = viewportSize();
     let {
-      caretWidth = 0
+      caretWidth = 0,
+      wrap: wrap2
     } = input();
     let ls = lines();
     let contentWidth = ls.reduce((w2, l2) => Math.max(w2, l2.width), 0);
     let last = ls[ls.length - 1];
     let contentHeight = last.y + last.height;
     let c3 = caret();
-    setScrollX(follow(scrollX(), c3.x, caretWidth, vw, contentWidth + caretWidth));
+    setScrollX(wrap2 ? 0 : follow(scrollX(), c3.x, caretWidth, vw, contentWidth + caretWidth));
     setScrollY(follow(scrollY(), c3.y, c3.height, vh, contentHeight));
     flush();
   });
@@ -6885,6 +6904,7 @@ function createTextEditorLayout(viewport, input) {
     caret,
     caretLine,
     offsetAtX,
+    lineAtY,
     step,
     scrollX,
     scrollY
@@ -6914,6 +6934,8 @@ function splitWide(prepared, width) {
         ascent: unit.ascent,
         descent: unit.descent,
         hardBreak: last && unit.hardBreak,
+        glue: i3 === 1 && unit.glue,
+        run: unit.run,
         carets: [{
           offset: a3.offset,
           x: 0
@@ -7164,6 +7186,14 @@ function TextInput(props) {
     if (node)
       setFocus(node.id);
   };
+  let handleViewportPointerDown = (e3) => {
+    if (props.disabled)
+      return;
+    let line = editor.lineAtY(e3.localY + editor.scrollY());
+    let offset = editor.offsetAtX(line, e3.localX + editor.scrollX());
+    buffer.setSelection(offset, offset);
+    setCaretOn(true);
+  };
   let handleFocus = () => {
     setCaretOn(true);
     if (blinkId == null) {
@@ -7194,11 +7224,13 @@ function TextInput(props) {
     } else if (e3.key === "ArrowRight") {
       buffer.move("right");
       setCaretOn(true);
-    } else if (e3.key === "Home") {
-      buffer.move("start");
-      setCaretOn(true);
-    } else if (e3.key === "End") {
-      buffer.move("end");
+    } else if (e3.key === "Home" || e3.key === "End") {
+      if (props.multiline) {
+        let offset = editor.offsetAtX(editor.caretLine(), e3.key === "Home" ? 0 : 1e9);
+        buffer.setSelection(offset, offset);
+      } else {
+        buffer.move(e3.key === "Home" ? "start" : "end");
+      }
       setCaretOn(true);
     } else if (props.multiline && (e3.key === "ArrowUp" || e3.key === "ArrowDown")) {
       moveLine(e3.key === "ArrowUp" ? -1 : 1);
@@ -7267,6 +7299,17 @@ function TextInput(props) {
     wrap: props.multiline ?? false
   }));
   let caret = editor.caret;
+  let viewportHeight = () => {
+    if (!props.multiline)
+      return rowHeight();
+    if (props.layout?.height != null)
+      return;
+    let lines = editor.lines();
+    let last = lines[lines.length - 1];
+    let content = Math.ceil(last.y + last.height);
+    let max = props.maxRows != null ? props.maxRows * rowHeight() : Infinity;
+    return Math.max(rowHeight(), Math.min(content, max));
+  };
   let textStyle = (color, w2) => ({
     w: w2 + 1,
     ...font(),
@@ -7277,7 +7320,8 @@ function TextInput(props) {
     drawStyle: "stroke"
   }), _el$4 = createElement("view", {
     flex: 1,
-    overflow: "hidden"
+    overflow: "hidden",
+    onPointerDown: handleViewportPointerDown
   });
   insertNode2(_el$, _el$2);
   insertNode2(_el$, _el$3);
@@ -7384,11 +7428,10 @@ function TextInput(props) {
     a: borderColor(),
     o: borderWidth(),
     i: borderRadius(),
-    n: props.multiline ? undefined : rowHeight(),
-    s: props.multiline ? rowHeight() : undefined,
-    h: props.multiline ? "stretch" : undefined,
-    r: editor.scrollX(),
-    d: editor.scrollY()
+    n: viewportHeight(),
+    s: props.multiline ? "stretch" : undefined,
+    h: editor.scrollX(),
+    r: editor.scrollY()
   }), ({
     e: e3,
     t: t3,
@@ -7398,8 +7441,7 @@ function TextInput(props) {
     n: n3,
     s: s2,
     h: h3,
-    r: r3,
-    d: d2
+    r: r3
   }, _p$) => {
     e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
     t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
@@ -7407,10 +7449,9 @@ function TextInput(props) {
     o3 !== _p$?.o && setProp(_el$3, "strokeWidth", o3, _p$?.o);
     i3 !== _p$?.i && setProp(_el$3, "radius", i3, _p$?.i);
     n3 !== _p$?.n && setProp(_el$4, "height", n3, _p$?.n);
-    s2 !== _p$?.s && setProp(_el$4, "minHeight", s2, _p$?.s);
-    h3 !== _p$?.h && setProp(_el$4, "alignSelf", h3, _p$?.h);
-    r3 !== _p$?.r && setProp(_el$4, "scrollX", r3, _p$?.r);
-    d2 !== _p$?.d && setProp(_el$4, "scrollY", d2, _p$?.d);
+    s2 !== _p$?.s && setProp(_el$4, "alignSelf", s2, _p$?.s);
+    h3 !== _p$?.h && setProp(_el$4, "scrollX", h3, _p$?.h);
+    r3 !== _p$?.r && setProp(_el$4, "scrollY", r3, _p$?.r);
   });
   return _el$;
 }

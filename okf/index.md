@@ -293,6 +293,12 @@ Shaped, not started.
   its nearest layout ancestor - a d-line spanning (10,120)-(200,120) came back
   as 1692x1128 - which is correct per the model and useless for locating
   anything in a d-*-heavy app.
+- **[Hold physical input while the MCP bridge drives the app](backlog/mcp-input-hold.md)** [2026-08-19]
+  A person touching the keyboard or mouse while an agent verifies through
+  send_input corrupts the run (focus moves, text lands in the field under
+  test, snapshots show mixed state); the client should be able to ignore
+  physical input for the duration of a driven session, visibly, and hand it
+  back on request or timeout.
 - **[Jank an agent cannot see or measure](backlog/mcp-interaction-perf-visibility.md)** [2026-07-27]
   A human immediately felt typing jank that the agent could not reproduce or
   measure: get_stats frame times are smoothed so a one-frame 84ms hitch

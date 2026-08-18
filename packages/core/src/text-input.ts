@@ -422,6 +422,8 @@ function splitWide(prepared: PreparedText, width: number): PreparedText {
         ascent: unit.ascent,
         descent: unit.descent,
         hardBreak: last && unit.hardBreak,
+        glue: i === 1 && unit.glue,
+        run: unit.run,
         carets: [
           { offset: a.offset, x: 0 },
           { offset: b.offset, x: b.x - a.x },

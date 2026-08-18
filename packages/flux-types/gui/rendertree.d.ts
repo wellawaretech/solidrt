@@ -16,6 +16,25 @@ declare module "flux:rendertree" {
     maxLines?: number
     /** prepareText only: also report each unit's {@link TextUnit.carets}. */
     carets?: boolean
+    /**
+     * prepareText only: styled ranges over the text, in JS string offsets,
+     * sorted and disjoint (text between them is in the base font). Each
+     * overrides the font options it names. A wrap unit crossing a range
+     * boundary comes back as one {@link TextUnit} per range, the pieces
+     * after the first `glue`d to it. Throws on an invalid range.
+     */
+    runs?: TextRunRange[]
+  }
+
+  /** One styled range for {@link MeasureTextOptions.runs}. */
+  export interface TextRunRange {
+    start: number
+    end: number
+    fontFamily?: "sans" | "serif" | "mono" | (string & {})
+    fontSize?: number
+    fontStyle?: "normal" | "italic"
+    fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+    lineHeight?: number
   }
 
   /**
@@ -37,6 +56,10 @@ declare module "flux:rendertree" {
     descent: number
     /** The unit ends at a hard line break (newline). */
     hardBreak: boolean
+    /** A continuation piece of the previous unit (it crossed a `runs` boundary): a line never breaks before it. */
+    glue: boolean
+    /** Index into `runs` of the range this piece was shaped in; absent for the base font. */
+    run?: number
     /**
      * With `carets`: the caret positions inside the unit, one per grapheme
      * cluster boundary from its start (`offset` = start, x 0) to the end of

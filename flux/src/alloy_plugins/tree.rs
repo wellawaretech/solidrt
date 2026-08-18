@@ -10,7 +10,7 @@ use taffy::prelude::*;
 use super::AlloyContext;
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
-use alloy::rendertree::text::prepare_units;
+use alloy::rendertree::text::{prepare_units, PreparedRun};
 use alloy::rendertree::{
   Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, PlatformContext, Rect,
   RenderTree, Text, Window,
@@ -109,6 +109,46 @@ fn apply_font_options(node: &mut Text, opts: &Object<'_>) {
   if let Ok(v) = opts.get::<_, f64>("maxLines") {
     node.max_lines = v as u32;
   }
+}
+
+// The `runs` option of prepareText: styled ranges in JS (UTF-16) offsets over
+// `text`, each object carrying the font options it overrides on `base`.
+// Returned in byte offsets for alloy; throws on a range that is out of
+// order, overlapping, empty or outside the text.
+fn prepared_runs<'js>(
+  ctx: &Ctx<'js>,
+  text: &str,
+  base: &Text,
+  list: rquickjs::Array<'js>,
+) -> rquickjs::Result<Vec<PreparedRun>> {
+  // UTF-16 offset -> byte offset, rounding up to the next char boundary.
+  let mut bytes = Vec::with_capacity(text.len() + 1);
+  for (at, ch) in text.char_indices() {
+    for _ in 0..ch.len_utf16() {
+      bytes.push(at);
+    }
+  }
+  bytes.push(text.len());
+  let mut runs: Vec<PreparedRun> = Vec::with_capacity(list.len());
+  for entry in list.iter::<Object<'js>>() {
+    let entry = entry?;
+    let start = entry.get::<_, f64>("start").unwrap_or(-1.0);
+    let end = entry.get::<_, f64>("end").unwrap_or(-1.0);
+    let previous_end = runs.last().map_or(0, |r| r.end);
+    let len = (bytes.len() - 1) as f64;
+    let in_text = start >= 0.0 && end > start && end <= len;
+    let (start, end) = if in_text { (bytes[start as usize], bytes[end as usize]) } else { (0, 0) };
+    if !in_text || start >= end || start < previous_end {
+      return Err(rquickjs::Exception::throw_message(
+        ctx,
+        &format!("prepareText: runs must be sorted, disjoint, non-empty ranges within the text (run {})", runs.len()),
+      ));
+    }
+    let mut node = base.clone();
+    apply_font_options(&mut node, &entry);
+    runs.push(PreparedRun { start, end, style: node.run_style() });
+  }
+  Ok(runs)
 }
 
 struct TextSize {
@@ -381,11 +421,15 @@ impl ModuleDef for RenderTreeModule {
       move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<Object<'js>> {
         let mut node = Text::default();
         let mut carets = false;
+        let mut runs = Vec::new();
         if let Some(opts) = options.0 {
           apply_font_options(&mut node, &opts);
           carets = opts.get::<_, bool>("carets").unwrap_or(false);
+          if let Ok(list) = opts.get::<_, rquickjs::Array<'js>>("runs") {
+            runs = prepared_runs(&ctx, &text, &node, list)?;
+          }
         }
-        let units = prepare_units(&prepare_platform, &text, &node.run_style(), carets);
+        let units = prepare_units(&prepare_platform, &text, &node.run_style(), &runs, carets);
         let array = rquickjs::Array::new(ctx.clone())?;
         // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
         // the text in order.
@@ -416,6 +460,10 @@ impl ModuleDef for RenderTreeModule {
           obj.set("ascent", unit.metrics.ascent)?;
           obj.set("descent", unit.metrics.descent)?;
           obj.set("hardBreak", unit.hard_break)?;
+          obj.set("glue", unit.glue)?;
+          if let Some(run) = unit.run {
+            obj.set("run", run as u32)?;
+          }
           array.set(i, obj)?;
         }
         let prepared = Object::new(ctx.clone())?;

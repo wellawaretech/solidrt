@@ -118,8 +118,9 @@ impl std::fmt::Debug for OwnedCache {
   }
 }
 
-/// One wrap unit of a prepared text (see `prepare_units`): everything the
-/// engine knows about it, for app-side line breaking.
+/// One wrap unit of a prepared text (see `prepare_units`), or one piece of
+/// a unit that straddles styled runs: everything the engine knows about it,
+/// for app-side line breaking.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedUnit {
   /// The unit's text without its break characters.
@@ -130,34 +131,89 @@ pub struct PreparedUnit {
   pub end: usize,
   pub metrics: RunMetrics,
   pub hard_break: bool,
+  /// A continuation piece of the previous unit (the wrap unit crossed a run
+  /// boundary): no line break before it.
+  pub glue: bool,
+  /// Index of the styled run this piece was shaped in, `None` for the base
+  /// style.
+  pub run: Option<usize>,
   /// Caret stops within the unit's text (offsets relative to the unit's
   /// start, in UTF-16), when asked for.
   pub carets: Option<Rc<[CaretStop]>>,
 }
 
-/// The wrap units of `text` in one `style`, shaped through the shared word
-/// cache: the power-user counterpart of what a `<text>` does for itself in
-/// `prepare_owned` (single style, no atoms). With `carets`, each unit also
-/// carries its grapheme caret stops (for editing). Stops at the first unit
-/// the paragraph builder refuses.
-pub fn prepare_units(platform: &PlatformContext, text: &str, style: &RunStyle, carets: bool) -> Vec<PreparedUnit> {
-  let mut units = Vec::new();
+/// A styled range of a prepared text: a byte range and the style its text
+/// is shaped in. Ranges are sorted and disjoint; text between them is in
+/// the base style.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedRun {
+  pub start: usize,
+  pub end: usize,
+  pub style: RunStyle,
+}
+
+/// The wrap units of `text` in `style` (and `runs` overriding it per range),
+/// shaped through the shared word cache: the power-user counterpart of what
+/// a `<text>` does for itself in `prepare_owned` (no atoms). A wrap unit that
+/// crosses a run boundary comes back as one piece per run, the pieces after
+/// the first glued. With `carets`, each unit also carries its grapheme caret
+/// stops (for editing). Stops at the first unit the paragraph builder
+/// refuses.
+pub fn prepare_units(
+  platform: &PlatformContext,
+  text: &str,
+  style: &RunStyle,
+  runs: &[PreparedRun],
+  carets: bool,
+) -> Vec<PreparedUnit> {
+  const BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
+  let mut units: Vec<PreparedUnit> = Vec::new();
+  let mut run_index = 0;
   for segment in layout::segments(text) {
-    let raw = &text[segment.start..segment.end];
-    let piece = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-    let mut words = platform.words();
-    let Some(word) = words.get_or_shape(&platform.typography(), piece, style) else {
-      break;
-    };
-    let stops = if carets { words.carets(&platform.typography(), piece, style) } else { None };
-    units.push(PreparedUnit {
-      text: piece.to_string(),
-      start: segment.start,
-      end: segment.end,
-      metrics: word.metrics,
-      hard_break: segment.hard_break,
-      carets: stops,
-    });
+    let mut piece_start = segment.start;
+    let mut first = true;
+    while piece_start < segment.end {
+      // The run covering piece_start, or the gap up to the next run.
+      while run_index < runs.len() && runs[run_index].end <= piece_start {
+        run_index += 1;
+      }
+      let (run, region_end) = match runs.get(run_index) {
+        Some(r) if r.start <= piece_start => (Some(run_index), r.end),
+        Some(r) => (None, r.start),
+        None => (None, text.len()),
+      };
+      let piece_end = segment.end.min(region_end);
+      let last_piece = piece_end == segment.end;
+      let hard_break = segment.hard_break && last_piece;
+      let piece = text[piece_start..piece_end].trim_end_matches(BREAKS);
+      // Only break characters left over after a run boundary: they belong to
+      // the piece before them, nothing to shape.
+      if piece.is_empty() && !first {
+        let prev = units.last_mut().expect("a first piece was pushed");
+        prev.end = piece_end;
+        prev.hard_break = hard_break;
+        piece_start = piece_end;
+        continue;
+      }
+      let style = run.map_or(style, |i| &runs[i].style);
+      let mut words = platform.words();
+      let Some(word) = words.get_or_shape(&platform.typography(), piece, style) else {
+        return units;
+      };
+      let stops = if carets { words.carets(&platform.typography(), piece, style) } else { None };
+      units.push(PreparedUnit {
+        text: piece.to_string(),
+        start: piece_start,
+        end: piece_end,
+        metrics: word.metrics,
+        hard_break,
+        glue: !first,
+        run,
+        carets: stops,
+      });
+      first = false;
+      piece_start = piece_end;
+    }
   }
   units
 }

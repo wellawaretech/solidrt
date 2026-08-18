@@ -7,7 +7,7 @@ mod words;
 
 pub use decoration::{FontMetricsTable, Underline, UnderlineMetrics};
 pub use runs::{RunOverrides, RunStyle, Span, TextRun, ATOM_CHAR};
-pub use shape::{prepare_units, PreparedUnit};
+pub use shape::{prepare_units, PreparedRun, PreparedUnit};
 pub use words::{CaretStop, WordCache};
 
 use crate::impellers::{DisplayListBuilder, FontStyle, FontWeight, Point, Rect, Size, TextAlignment};

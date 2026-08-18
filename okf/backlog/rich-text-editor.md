@@ -36,15 +36,19 @@ attributes (heading level, list); selection, caret and scrolling as
 
 ## Steps
 
-1. **`prepareText` over styled runs** (engine, alloy `prepare_units` + flux
-   marshalling + flux-types). Today `prepareText` is single-style; `<text>`
-   already shapes multi-run text through the same word cache, with a unit
-   straddling two runs as glued pieces. Expose that: input is the plain
-   text plus runs `{ start, end, style }`, output the same units with
-   per-run metrics and caret stops that respect run boundaries (a caret
-   stop at every run seam), line height from the tallest run. Independent
-   of the rest, also what a decorated `TextInput` (display-only styling:
-   mentions, syntax colors) would use.
+1. **`prepareText` over styled runs** - DONE 2026-08-19 (uncommitted).
+   `prepareText(text, { ...font, runs: [{ start, end, fontFamily?,
+   fontSize?, fontStyle?, fontWeight?, lineHeight? }] })`, JS offsets,
+   sorted and disjoint (throws otherwise), gaps in the base font. A wrap
+   unit crossing a run boundary comes back as one `TextUnit` per run with
+   `glue: true` on the continuation pieces and `run` = range index (mirrors
+   alloy's `Run.glue`), so caret stops fall on every seam and `lineHeight`
+   is per unit; `layoutNextLine` never breaks before a glued unit; the
+   editor layout's `splitWide` carries `glue`/`run`. alloy
+   `prepare_units(platform, text, style, runs: &[PreparedRun], carets)`,
+   marshalling in flux `prepared_runs`. Independent of the rest, also
+   what a decorated `TextInput` (display-only styling: mentions, syntax
+   colors) would use.
 2. **Document buffer** (core): Quill-Delta-like flat model, not a tree -
    one text string with `\n` between blocks, marks as attributed ranges
    over offsets, inline atoms as U+FFFC with attributes, block attributes
