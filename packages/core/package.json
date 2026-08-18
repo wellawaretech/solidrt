@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./camera": "./src/camera.ts",
+    "./color": "./src/color.ts",
     "./gpu": "./src/gpu.ts",
     "./image": "./src/image.ts",
     "./microphone": "./src/microphone.ts",

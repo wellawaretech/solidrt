@@ -1,4 +1,5 @@
-import { createStore, mixColors } from "@solidrt/core"
+import { createStore } from "@solidjs/signals"
+import { mixColors } from "@solidrt/core/color"
 
 export type TextStyle = {
   size: number

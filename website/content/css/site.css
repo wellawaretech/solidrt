@@ -1,0 +1,355 @@
+/* SolidRT site stylesheet: classless, over what the markdown converter and
+ * the landing fragment emit (see okf/plans/website.md, styling track).
+ *
+ * The look is that of an app built with @solidrt/components: filled,
+ * borderless surfaces (card fill on window fill; no rules, no underlines),
+ * radius 12 / padding 20 / gap 16, one text color with muted for secondary
+ * text, headings separated by size and weight rather than tone, flat accent
+ * buttons. Every value reads a --srt-* token from tokens.css, which the site
+ * build generates from the framework theme. Sits on modern-normalize
+ * (vendored, MIT) for the cross-browser baseline; this file is look only.
+ *
+ * Prose scale: the framework's type scale is sized for app UI (14px body).
+ * Long-form reading gets a 16px body with the same ratios, applied through
+ * one factor over the emitted sizes.
+ */
+
+:root {
+  --srt-prose-scale: calc(16 / 14);
+  --srt-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --srt-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
+  --srt-content-width: 46rem;
+  color-scheme: light dark;
+}
+
+/* -- Page --------------------------------------------------------------- */
+
+html {
+  font-family: var(--srt-font-sans);
+  font-size: calc(var(--srt-body-size) * var(--srt-prose-scale));
+  line-height: var(--srt-body-line-height);
+  font-weight: var(--srt-body-weight);
+  color: var(--srt-text);
+  background: var(--srt-background);
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header,
+main {
+  width: 100%;
+  max-width: var(--srt-content-width);
+  margin: 0 auto;
+  padding: 0 var(--srt-spacing-xl);
+}
+
+main {
+  flex: 1;
+  padding-top: var(--srt-spacing-xl);
+  padding-bottom: calc(var(--srt-spacing-xl) * 3);
+}
+
+/* -- Header nav --------------------------------------------------------- */
+
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--srt-spacing-lg);
+  padding: var(--srt-spacing-lg) 0;
+}
+
+nav ul {
+  display: flex;
+  align-items: center;
+  gap: var(--srt-spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav li {
+  margin: 0;
+}
+
+/* Section links as ghost buttons: no fill until hover, like Button ghost. */
+nav a {
+  display: inline-block;
+  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
+  border-radius: var(--srt-radius-md);
+  color: var(--srt-text);
+  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-label-weight);
+  line-height: var(--srt-label-line-height);
+  text-decoration: none;
+  text-transform: capitalize;
+}
+
+nav a:hover {
+  background: var(--srt-surface-hover);
+}
+
+/* The brand link: title-sized wordmark, no button treatment. */
+nav > ul:first-child a {
+  padding-left: 0;
+  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-title-weight);
+  text-transform: none;
+}
+
+nav > ul:first-child a:hover {
+  background: transparent;
+}
+
+/* -- Type scale --------------------------------------------------------- */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0 0 var(--srt-spacing-lg);
+  color: var(--srt-text);
+  font-weight: var(--srt-heading-weight);
+  line-height: var(--srt-heading-line-height);
+  scroll-margin-top: var(--srt-spacing-xl);
+}
+
+h1 {
+  font-size: calc(var(--srt-heading-size) * var(--srt-prose-scale) * 1.4);
+}
+
+h2 {
+  font-size: calc(var(--srt-heading-size) * var(--srt-prose-scale));
+  margin-top: calc(var(--srt-spacing-xl) * 2);
+}
+
+h3 {
+  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-title-weight);
+  line-height: var(--srt-title-line-height);
+  margin-top: calc(var(--srt-spacing-xl) * 1.5);
+}
+
+h4,
+h5,
+h6 {
+  font-size: calc(var(--srt-body-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-label-weight);
+  margin-top: var(--srt-spacing-xl);
+}
+
+/* Landing hero: title plus a muted subtitle, no gap between them. */
+hgroup {
+  margin-bottom: var(--srt-spacing-lg);
+}
+
+hgroup > * {
+  margin: 0;
+}
+
+hgroup > p {
+  color: var(--srt-text-muted);
+  font-size: calc(var(--srt-title-size) * var(--srt-prose-scale));
+}
+
+p,
+ul,
+ol,
+blockquote,
+pre,
+table,
+img {
+  margin: 0 0 var(--srt-spacing-lg);
+}
+
+ul,
+ol {
+  padding-left: calc(var(--srt-spacing-xl) + var(--srt-spacing-sm));
+}
+
+li {
+  margin-bottom: var(--srt-spacing-md);
+}
+
+li > ul,
+li > ol {
+  margin-top: var(--srt-spacing-md);
+  margin-bottom: 0;
+}
+
+strong {
+  font-weight: var(--srt-title-weight);
+}
+
+/* -- Links and buttons -------------------------------------------------- */
+
+a {
+  color: var(--srt-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--srt-primary-hover);
+}
+
+/* Button primary: accent fill, on-primary label, hover tint, press scale. */
+a[role="button"],
+button {
+  display: inline-block;
+  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
+  border: 0;
+  border-radius: var(--srt-radius-md);
+  background: var(--srt-primary);
+  color: var(--srt-on-primary);
+  font: inherit;
+  font-weight: var(--srt-label-weight);
+  line-height: var(--srt-label-line-height);
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 80ms ease-out;
+}
+
+a[role="button"]:hover,
+button:hover {
+  background: var(--srt-primary-hover);
+  color: var(--srt-on-primary);
+}
+
+a[role="button"]:active,
+button:active {
+  transform: scale(0.97);
+}
+
+:focus-visible {
+  outline: var(--srt-border-width-sm) solid var(--srt-primary);
+  outline-offset: 2px;
+}
+
+/* -- Surfaces ----------------------------------------------------------- */
+
+/* Landing sections are cards: surface fill on the window fill. */
+main > section {
+  padding: var(--srt-spacing-xl);
+  border-radius: var(--srt-radius-lg);
+  background: var(--srt-surface);
+  margin-bottom: var(--srt-spacing-lg);
+}
+
+main > section > :last-child {
+  margin-bottom: 0;
+}
+
+main > section > h2 {
+  margin-top: 0;
+}
+
+/* Code shares the card surface; a block inside a card steps to surfaceAlt. */
+code {
+  font-family: var(--srt-font-mono);
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: var(--srt-radius-sm);
+  background: var(--srt-surface);
+}
+
+pre {
+  padding: var(--srt-spacing-lg);
+  border-radius: var(--srt-radius-md);
+  background: var(--srt-surface);
+  overflow-x: auto;
+}
+
+pre code,
+pre code.hljs {
+  display: block;
+  padding: 0;
+  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
+  line-height: var(--srt-body-line-height);
+  background: transparent;
+  color: var(--srt-text);
+}
+
+section code,
+section pre {
+  background: var(--srt-surface-alt);
+}
+
+blockquote {
+  padding: var(--srt-spacing-lg) var(--srt-spacing-xl);
+  border-radius: var(--srt-radius-md);
+  background: var(--srt-surface-alt);
+  color: var(--srt-text-muted);
+}
+
+blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* No rules anywhere: a thematic break is spacing only. */
+hr {
+  border: 0;
+  height: var(--srt-spacing-xl);
+  margin: 0;
+}
+
+/* -- Tables ------------------------------------------------------------- */
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--srt-radius-md);
+  overflow: hidden;
+  background: var(--srt-surface);
+}
+
+th,
+td {
+  padding: var(--srt-spacing-md) var(--srt-spacing-lg);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
+  font-weight: var(--srt-label-weight);
+  color: var(--srt-text-muted);
+  background: var(--srt-surface-alt);
+}
+
+/* -- Media -------------------------------------------------------------- */
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--srt-radius-md);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--srt-primary) 25%, transparent);
+}
+
+/* -- Small screens ------------------------------------------------------ */
+
+@media (max-width: 40rem) {
+  header,
+  main {
+    padding-left: var(--srt-spacing-lg);
+    padding-right: var(--srt-spacing-lg);
+  }
+
+  nav {
+    flex-wrap: wrap;
+  }
+
+  nav ul {
+    flex-wrap: wrap;
+  }
+}

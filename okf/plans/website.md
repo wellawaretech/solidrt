@@ -154,30 +154,62 @@ headings separated by size and weight rather than tone, flat accent buttons
 
 Decisions:
 
-- **Pico goes.** Colors mapped onto it cleanly (`--pico-*` overrides are its
+- **Pico goes.** DONE 2026-08-18, see stage 2 (a) below. Colors mapped onto it cleanly (`--pico-*` overrides are its
   documented path, and `content/css/theme.css` does that today), but every
   geometry and typography item above is a Pico default we would override
   rather than use, and we ship 71 KB to use a tenth of it. Replace with our
   own classless stylesheet, roughly 200 lines, over what the markdown
   actually emits.
-- **One token source, no hand-copying.** `theme.css` currently pastes the
-  palette with a keep-in-sync comment, which will drift. Extract the pure
-  token data from `packages/components/src/theme.ts` into a
-  dependency-free `tokens.ts` (both color presets, spacing, radius,
-  borderWidth, type scale); `theme.ts` imports it and keeps the store, and
-  the website build imports it and emits `tokens.css`. The build cannot
-  import `theme.ts` directly: it reaches `@solidrt/core`, whose index pulls
-  `flux:rendertree`, absent on the plain flux binary. `textMuted` is a
-  `mixColors` derivation, so keeping it live wants a `./color` subpath
-  export on `@solidrt/core` (that file only imports colord).
+- **One token source, no hand-copying.** DONE 2026-08-18. `theme.ts` now
+  imports `createStore` from `@solidjs/signals` and `mixColors` from a new
+  `@solidrt/core/color` subpath export (that file only imports colord), so
+  it no longer reaches core's index (which pulls `flux:rendertree`, absent
+  on the plain flux binary) and is importable as `@solidrt/components/theme`
+  from the website build. `website/src/tokens.ts` emits `dist/css/tokens.css`
+  (both color presets, plus spacing, radius, borderWidth and the type scale
+  on `:root`). An earlier idea of extracting a separate `tokens.ts` data
+  file was dropped as unnecessary.
 - **Type scale: structure matched, relative sizes kept, body one step up**
   for long-form reading. The framework's 14px body is right for app UI and
   small for prose; the ratios between caption/label/body/title/heading stay
-  as they are.
+  as they are. Verified 2026-08-18: "one step up" is not the next framework
+  step (title, 18px, is too big for prose); it means a 16px prose body with
+  the ratios preserved (about 12.6/13.7/16/20.6/25). Express it as one
+  visible factor in the stylesheet (`--srt-prose-scale: calc(16 / 14)`)
+  applied over the emitted `--srt-*-size` tokens, so tokens.css stays
+  identical to the framework. Decided 2026-08-18: 16px.
 - **Font parity costs something.** `NotoSans.ttf` is 2 MB, too heavy to
   serve raw. Preferred fix is a self-hosted woff2 subset, which needs
   fonttools installed; alternatives are a Google Fonts link (external
   dependency on a page we otherwise control) or a lookalike system stack.
+  Verified 2026-08-18: fonttools is not installed on the build machine, and
+  the same decision applies to mono (`NotoSansMono.ttf`, 1.7 MB, the
+  runtime's `mono` stack; code blocks are a large share of a docs site).
+  Decision: system stacks first (zero cost, no external dependency), font
+  parity as a follow-up once subset tooling is settled; the stylesheet does
+  not wait for it.
+
+Stage 2 of this track (Pico replacement) is two things, kept separate:
+
+- (a) The classless stylesheet. DONE 2026-08-18: `content/css/site.css`
+  (about 350 lines) over the known element inventory from `template.json`
+  (h1-h6, p, a, img, `pre > code.hljs`, code, blockquote, strong, em), marked
+  defaults for what the rules do not cover (ul/ol/li, table, hr) and the
+  landing fragment (section, hgroup, header/nav/main). It sits on a vendored
+  `modern-normalize` (3 KB, MIT) for the cross-browser baseline and reads
+  only `--srt-*` tokens; the prose factor is `--srt-prose-scale: calc(16 /
+  14)`. Landing sections render as cards (surface fill, radius lg, padding
+  xl), nav links as ghost buttons, `a[role=button]` as Button primary,
+  tables and code on surface fills, hr is spacing only. tokens.css collapsed
+  to plain `:root` / `@media (prefers-color-scheme: dark)` /
+  `[data-theme=dark]` and Pico plus the mapping-only `theme.css` are gone.
+  Verified in headless Chromium in both schemes. Known limit: `hljs.min.css`
+  switches on the OS preference only, so a forced `data-theme` does not
+  retint code tokens (the site never forces one today).
+- (b) The in-section sidebar, derived from the directory tree with titles
+  from each page's first h1. This is a generator change (build.ts /
+  markdown.ts plus a template slot), not CSS; it only shares the track
+  because the sheet must lay it out.
 
 ## Findings from stage 1
 

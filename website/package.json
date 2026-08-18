@@ -8,6 +8,7 @@
     "marked-highlight": "^2.2.4"
   },
   "devDependencies": {
+    "@solidrt/components": "workspace:*",
     "@solidrt/flux-types": "workspace:*",
     "@types/bun": "latest"
   }

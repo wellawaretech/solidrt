@@ -7,6 +7,7 @@
 
 import { file, dir } from "flux:fs";
 import { configureMarked, markdownToHtml, renderPage, type Rules } from "./markdown.ts";
+import { tokensCss } from "./tokens.ts";
 
 const CONTENT_DIR = "content";
 const OUT_DIR = "dist";
@@ -54,4 +55,6 @@ for (let path of await walk("")) {
   }
 }
 
-console.log(`Built ${pages} pages, copied ${assets} assets into ${OUT_DIR}/`);
+await file(OUT_DIR + "/css/tokens.css").write(tokensCss());
+
+console.log(`Built ${pages} pages, copied ${assets} assets and wrote css/tokens.css into ${OUT_DIR}/`);
