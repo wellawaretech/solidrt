@@ -39,6 +39,13 @@ export type TextBufferOptions = {
    * grapheme geometry (createTextEditorLayout.step) supplies the real one.
    */
   step?: (text: string, offset: number, direction: "left" | "right") => number
+  /**
+   * Called before every edit with the range it replaces and the text going
+   * in (already clamped to maxLength), for owners that keep parallel state
+   * over the text (a rich text document's attributed runs). setValue/clear
+   * report a whole-text replace.
+   */
+  onReplace?: (start: number, end: number, text: string) => void
 }
 
 export type TextBuffer = {
@@ -109,18 +116,21 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
     return direction === "left" ? Math.max(0, offset - 1) : Math.min(text.length, offset + 1)
   }
 
-  // Apply a text edit and place the caret, clamping to maxLength. The flush
+  // Every edit is a replace of [start, end) by `text`, caret after it. The
+  // inserted text is clamped to what maxLength leaves room for. The flush
   // commits the writes (including a controlled owner's from onInput) before
   // returning: edits must observe each other within one task, because event
   // bursts can dispatch several handlers with no microtask between them
   // (Android IME input arrives as backspace+commit bursts; see
   // okf/backlog/event-burst-stale-signal-reads.md).
-  let apply = (next: string, caret: number) => {
+  let replace = (start: number, end: number, text: string) => {
+    let v = value()
     let max = options.maxLength?.()
-    if (max != null && next.length > max) next = next.slice(0, max)
-    caret = Math.min(caret, next.length)
+    if (max != null) text = text.slice(0, Math.max(0, max - (v.length - (end - start))))
+    options.onReplace?.(start, end, text)
+    let next = v.slice(0, start) + text + v.slice(end)
     if (options.value?.() == null) setInternalValue(next)
-    setCaret(caret)
+    setCaret(start + text.length)
     options.onInput?.(next)
     flush()
   }
@@ -131,26 +141,21 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
     caret: () => selection().focus,
 
     insertText: (text) => {
-      let v = value()
       let [start, end] = range()
-      apply(v.slice(0, start) + text + v.slice(end), start + text.length)
+      replace(start, end, text)
     },
 
     deleteBackward: () => {
-      let v = value()
       let [start, end] = range()
-      if (start !== end) apply(v.slice(0, start) + v.slice(end), start)
-      else if (start > 0) {
-        let from = step(v, start, "left")
-        apply(v.slice(0, from) + v.slice(start), from)
-      }
+      if (start !== end) replace(start, end, "")
+      else if (start > 0) replace(step(value(), start, "left"), start, "")
     },
 
     deleteForward: () => {
       let v = value()
       let [start, end] = range()
-      if (start !== end) apply(v.slice(0, start) + v.slice(end), start)
-      else if (end < v.length) apply(v.slice(0, end) + v.slice(step(v, end, "right")), end)
+      if (start !== end) replace(start, end, "")
+      else if (end < v.length) replace(end, step(v, end, "right"), "")
     },
 
     move: (direction, opts) => {
@@ -178,8 +183,8 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
       flush()
     },
 
-    setValue: (next) => apply(next, next.length),
-    clear: () => apply("", 0),
+    setValue: (next) => replace(0, value().length, next),
+    clear: () => replace(0, value().length, ""),
   }
 }
 

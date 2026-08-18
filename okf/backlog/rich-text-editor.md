@@ -27,7 +27,7 @@ document model, and the component.
 
 ## Done looks like
 
-A `RichTextEditor` component (own package, not `@solidrt/components`;
+A `RichTextEditor` component (in `@solidrt/components`, next to `TextInput`;
 toolbar-less: the app renders controls and calls `toggleMark`, `setBlock`,
 `insertAtom` on the editor) that edits a document value: styled runs
 (weight, style, color, underline, links as a mark), inline atoms, block
@@ -49,11 +49,20 @@ attributes (heading level, list); selection, caret and scrolling as
    marshalling in flux `prepared_runs`. Independent of the rest, also
    what a decorated `TextInput` (display-only styling: mentions, syntax
    colors) would use.
-2. **Document buffer** (core): Quill-Delta-like flat model, not a tree -
-   one text string with `\n` between blocks, marks as attributed ranges
-   over offsets, inline atoms as U+FFFC with attributes, block attributes
-   per paragraph. Offsets stay string offsets, so `createTextBuffer`'s
-   selection and edits carry over; toggling a mark is range arithmetic.
+2. **Document buffer** (components) - DONE 2026-08-19 (uncommitted).
+   `packages/components/src/rich-text-document.ts` (exported from the package index; core only gains the `onReplace` hook, the mechanism): `Document = { text, runs: {start, end,
+   attributes}[], blocks: Attributes[] }` (Delta-like, flat; block
+   attributes in a parallel per-paragraph array rather than on the `\n`,
+   so `text` needs no trailing newline), attributes opaque key/values.
+   `createDocumentBuffer` = `createTextBuffer` contract (controlled/
+   uncontrolled, selection, `step`, `maxLength`) composed over the text via
+   the new `onReplace` hook (every text-buffer edit is one `replace(start,
+   end, text)`), plus `document()`, `attributes()`, `format(patch)` (range
+   or pending typing attributes), `formatBlock(patch)`, `insertAtom(attrs)`,
+   `setDocument`. Typed text inherits the char before the caret; `\n`
+   splits a paragraph keeping its attributes, deleting one merges. No undo,
+   no compose/transform (additive later). Headless checks: doc-test-probe.ts
+   via multiline-probe.tsx `doctest`.
 3. **Component**: lines from `createTextEditorLayout` fed with the runs,
    each line one `d-text` with `<span>` children for its slice of runs;
    selection highlight from the line stops. Inline atoms are the open

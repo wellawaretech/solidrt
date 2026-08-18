@@ -10,7 +10,7 @@ use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{Damage, Element};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
-  let mut el = Element::from_kind(kind);
+  let mut el = Element::from_kind(kind).expect("known kind");
   apply_el(&mut el, name, value)
 }
 
@@ -109,7 +109,7 @@ fn params_reject_non_numeric_entries() {
   // silently skipped). Value errors surface before the src/target routing,
   // so they read the same with or without src - src is set here because a
   // valid params write needs a target to go to.
-  let mut el = Element::from_kind("texture");
+  let mut el = Element::from_kind("texture").expect("known kind");
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   assert!(apply_el(&mut el, "params", PropValue::Null).is_ok());
   let ok = map(&[("uTime", num(1.0)), ("uVec", PropValue::List(vec![num(1.0), num(2.0)]))]);
@@ -182,7 +182,7 @@ fn overflow_reads_back_including_with_viewbox() {
   // indistinguishable. Lock the round trip, on the exact prop combination
   // the report used.
   use crate::alloy_plugins::properties::{read_jsx, ReadValue};
-  let mut el = Element::from_kind("view");
+  let mut el = Element::from_kind("view").expect("known kind");
   apply_el(&mut el, "overflow", text("hidden")).expect("overflow applies");
   apply_el(&mut el, "viewBox", PropValue::List(vec![num(100.0), num(40.0)])).expect("viewBox applies");
   let props = read_jsx(&el);
@@ -195,7 +195,7 @@ fn overflow_reads_back_including_with_viewbox() {
 #[test]
 fn diverging_overflow_axes_read_back_per_axis() {
   use crate::alloy_plugins::properties::{read_jsx, ReadValue};
-  let mut el = Element::from_kind("view");
+  let mut el = Element::from_kind("view").expect("known kind");
   apply_el(&mut el, "overflowY", text("scroll")).expect("overflowY applies");
   let props = read_jsx(&el);
   assert!(props.iter().any(|(n, v)| *n == "overflowY" && matches!(v, ReadValue::Str(s) if s == "scroll")));
@@ -208,7 +208,7 @@ fn texture_params_route_to_the_gpu_channel() {
   // (production: Context::set_target_params) and produces NO tree damage,
   // so prop-driven shader animation keeps the present-only reuse path.
   use std::cell::RefCell;
-  let mut el = Element::from_kind("texture");
+  let mut el = Element::from_kind("texture").expect("known kind");
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   let (tx, _rx) = channel();
   let seen: RefCell<Option<(u64, usize, String)>> = RefCell::new(None);
@@ -231,7 +231,7 @@ fn texture_params_before_src_name_the_fix() {
 fn texture_params_gpu_error_propagates() {
   // An unknown target/uniform errors at the write (the imperative call's
   // contract), surfacing as a catchable JS throw like every value error.
-  let mut el = Element::from_kind("texture");
+  let mut el = Element::from_kind("texture").expect("known kind");
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   let (tx, _rx) = channel();
   let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| {

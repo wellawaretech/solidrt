@@ -118,6 +118,36 @@ impl std::fmt::Debug for OwnedCache {
   }
 }
 
+// The characters a wrap unit ends on at a hard break; never shaped.
+const BREAK_CHARS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
+
+// One piece of a wrap unit after splitting it at style-region boundaries.
+struct Piece<R> {
+  start: usize,
+  end: usize,
+  region: R,
+  first: bool,
+  last: bool,
+}
+
+// `segment` split at region boundaries: `region_at(offset)` names the
+// region covering `offset` and where it ends (beyond the segment is fine).
+// A wrap unit may straddle styled runs (a code span and the comma glued to
+// it); each (unit, region) intersection becomes a piece, and pieces after
+// the first are glued so the breaker keeps the unit whole.
+fn split_at_regions<R>(segment: layout::Segment, mut region_at: impl FnMut(usize) -> (R, usize)) -> Vec<Piece<R>> {
+  let mut out = Vec::new();
+  let mut start = segment.start;
+  while start < segment.end {
+    let (region, region_end) = region_at(start);
+    debug_assert!(region_end > start, "region ends before the piece it covers");
+    let end = if region_end > start { segment.end.min(region_end) } else { segment.end };
+    out.push(Piece { start, end, region, first: start == segment.start, last: end == segment.end });
+    start = end;
+  }
+  out
+}
+
 /// One wrap unit of a prepared text (see `prepare_units`), or one piece of
 /// a unit that straddles styled runs: everything the engine knows about it,
 /// for app-side line breaking.
@@ -166,53 +196,47 @@ pub fn prepare_units(
   runs: &[PreparedRun],
   carets: bool,
 ) -> Vec<PreparedUnit> {
-  const BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
   let mut units: Vec<PreparedUnit> = Vec::new();
   let mut run_index = 0;
   for segment in layout::segments(text) {
-    let mut piece_start = segment.start;
-    let mut first = true;
-    while piece_start < segment.end {
-      // The run covering piece_start, or the gap up to the next run.
-      while run_index < runs.len() && runs[run_index].end <= piece_start {
+    // The run covering the offset, or the gap up to the next run.
+    let pieces = split_at_regions(segment, |offset| {
+      while run_index < runs.len() && runs[run_index].end <= offset {
         run_index += 1;
       }
-      let (run, region_end) = match runs.get(run_index) {
-        Some(r) if r.start <= piece_start => (Some(run_index), r.end),
+      match runs.get(run_index) {
+        Some(r) if r.start <= offset => (Some(run_index), r.end),
         Some(r) => (None, r.start),
         None => (None, text.len()),
-      };
-      let piece_end = segment.end.min(region_end);
-      let last_piece = piece_end == segment.end;
-      let hard_break = segment.hard_break && last_piece;
-      let piece = text[piece_start..piece_end].trim_end_matches(BREAKS);
+      }
+    });
+    for piece in pieces {
+      let hard_break = segment.hard_break && piece.last;
+      let word_text = text[piece.start..piece.end].trim_end_matches(BREAK_CHARS);
       // Only break characters left over after a run boundary: they belong to
       // the piece before them, nothing to shape.
-      if piece.is_empty() && !first {
+      if word_text.is_empty() && !piece.first {
         let prev = units.last_mut().expect("a first piece was pushed");
-        prev.end = piece_end;
+        prev.end = piece.end;
         prev.hard_break = hard_break;
-        piece_start = piece_end;
         continue;
       }
-      let style = run.map_or(style, |i| &runs[i].style);
+      let style = piece.region.map_or(style, |i| &runs[i].style);
       let mut words = platform.words();
-      let Some(word) = words.get_or_shape(&platform.typography(), piece, style) else {
+      let Some(word) = words.get_or_shape(&platform.typography(), word_text, style) else {
         return units;
       };
-      let stops = if carets { words.carets(&platform.typography(), piece, style) } else { None };
+      let stops = if carets { words.carets(&platform.typography(), word_text, style) } else { None };
       units.push(PreparedUnit {
-        text: piece.to_string(),
-        start: piece_start,
-        end: piece_end,
+        text: word_text.to_string(),
+        start: piece.start,
+        end: piece.end,
         metrics: word.metrics,
         hard_break,
-        glue: !first,
-        run,
+        glue: !piece.first,
+        run: piece.region,
         carets: stops,
       });
-      first = false;
-      piece_start = piece_end;
     }
   }
   units
@@ -231,9 +255,6 @@ impl Text {
     owned.ellipsis = None;
     owned.key = Some(ParaKey::of(self));
 
-    // A wrap unit may straddle styled runs (a code span and the comma glued
-    // to it). Each (unit, run) intersection is shaped on its own; pieces
-    // after the first are glued so the breaker keeps the unit whole.
     let styles = self.run_styles();
     let mut run_starts = Vec::with_capacity(self.runs.len());
     let mut offset = 0;
@@ -243,31 +264,34 @@ impl Text {
     }
     let mut run_index = 0;
     for segment in layout::segments(&self.computed_text) {
-      let mut piece_start = segment.start;
-      let mut first = true;
-      while piece_start < segment.end {
-        while run_index + 1 < self.runs.len() && run_starts[run_index + 1] <= piece_start {
+      let pieces = split_at_regions(segment, |offset| {
+        while run_index + 1 < self.runs.len() && run_starts[run_index + 1] <= offset {
           run_index += 1;
         }
-        let run_end = run_starts[run_index] + self.runs[run_index].text.len();
-        let piece_end = segment.end.min(run_end);
-        let raw = &self.computed_text[piece_start..piece_end];
-        let last_piece = piece_end == segment.end;
-        let hard_break = segment.hard_break && last_piece;
+        (run_index, run_starts[run_index] + self.runs[run_index].text.len())
+      });
+      for piece in pieces {
+        let run_index = piece.region;
+        let hard_break = segment.hard_break && piece.last;
         let shaped = match self.runs[run_index].atom {
-          Some(size) => Self::atom_piece(run_index, size, &self.runs[run_index], hard_break, !first),
+          Some(size) => Self::atom_piece(run_index, size, &self.runs[run_index], hard_break, !piece.first),
           None => {
-            // The break characters themselves are not shaped.
-            let text = raw.trim_end_matches(['\n', '\r', '\u{2028}', '\u{2029}']);
-            let Some(shaped) = Self::shape_piece(platform, &styles, run_index, text, hard_break, !first) else {
+            // The break characters themselves are not shaped; left alone
+            // after a run boundary they belong to the piece before them.
+            let text = self.computed_text[piece.start..piece.end].trim_end_matches(BREAK_CHARS);
+            if text.is_empty() && !piece.first {
+              if let Some(prev) = owned.runs.last_mut() {
+                prev.run.hard_break = hard_break;
+              }
+              continue;
+            }
+            let Some(shaped) = Self::shape_piece(platform, &styles, run_index, text, hard_break, !piece.first) else {
               return;
             };
             shaped
           }
         };
         owned.runs.push(shaped);
-        first = false;
-        piece_start = piece_end;
       }
     }
     if let TextOverflow::Ellipsis(s) = &self.text_overflow {

@@ -359,11 +359,11 @@ impl Element {
     }
   }
 
-  /// Builds an element from its JSX tag name. The root Window is created via
-  /// RenderTree::create_root instead, so "window" is rejected here.
-  pub fn from_kind(kind: &str) -> Element {
-    match kind {
-      "window" => panic!("use createRoot to create the root Window node"),
+  /// Builds an element from its JSX tag name, `None` for a name that is not
+  /// an element. The root Window is created via RenderTree::create_root
+  /// instead, so "window" is not one either.
+  pub fn from_kind(kind: &str) -> Option<Element> {
+    Some(match kind {
       "view" => View::default().with_layout(),
       "d-view" => View::default().no_layout(),
       "rect" => Rectangle::default().with_layout(),
@@ -381,8 +381,8 @@ impl Element {
       "span" | "#text" => Span::default().no_layout(),
       "texture" => Texture::default().with_layout(),
       "d-texture" => Texture::default().no_layout(),
-      _ => panic!("unknown node kind: {kind}"),
-    }
+      _ => return None,
+    })
   }
 
   pub fn has_layout(&self) -> bool {

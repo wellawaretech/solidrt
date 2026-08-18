@@ -6625,14 +6625,16 @@ function createTextBuffer(options = {}) {
       return Math.max(0, Math.min(options.step(text, offset, direction), text.length));
     return direction === "left" ? Math.max(0, offset - 1) : Math.min(text.length, offset + 1);
   };
-  let apply = (next, caret) => {
+  let replace = (start, end, text) => {
+    let v2 = value();
     let max = options.maxLength?.();
-    if (max != null && next.length > max)
-      next = next.slice(0, max);
-    caret = Math.min(caret, next.length);
+    if (max != null)
+      text = text.slice(0, Math.max(0, max - (v2.length - (end - start))));
+    options.onReplace?.(start, end, text);
+    let next = v2.slice(0, start) + text + v2.slice(end);
     if (options.value?.() == null)
       setInternalValue(next);
-    setCaret(caret);
+    setCaret(start + text.length);
     options.onInput?.(next);
     flush();
   };
@@ -6641,27 +6643,23 @@ function createTextBuffer(options = {}) {
     selection,
     caret: () => selection().focus,
     insertText: (text) => {
-      let v2 = value();
       let [start, end] = range();
-      apply(v2.slice(0, start) + text + v2.slice(end), start + text.length);
+      replace(start, end, text);
     },
     deleteBackward: () => {
-      let v2 = value();
       let [start, end] = range();
       if (start !== end)
-        apply(v2.slice(0, start) + v2.slice(end), start);
-      else if (start > 0) {
-        let from = step(v2, start, "left");
-        apply(v2.slice(0, from) + v2.slice(start), from);
-      }
+        replace(start, end, "");
+      else if (start > 0)
+        replace(step(value(), start, "left"), start, "");
     },
     deleteForward: () => {
       let v2 = value();
       let [start, end] = range();
       if (start !== end)
-        apply(v2.slice(0, start) + v2.slice(end), start);
+        replace(start, end, "");
       else if (end < v2.length)
-        apply(v2.slice(0, end) + v2.slice(step(v2, end, "right")), end);
+        replace(end, step(v2, end, "right"), "");
     },
     move: (direction, opts) => {
       let extend = opts?.extend ?? false;
@@ -6698,8 +6696,8 @@ function createTextBuffer(options = {}) {
       });
       flush();
     },
-    setValue: (next) => apply(next, next.length),
-    clear: () => apply("", 0)
+    setValue: (next) => replace(0, value().length, next),
+    clear: () => replace(0, value().length, "")
   };
 }
 function createTextEditorLayout(viewport, input) {

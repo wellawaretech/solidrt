@@ -1,4 +1,3 @@
-use alloy::impellers::{FontStyle, FontWeight};
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
@@ -76,39 +75,19 @@ fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
   })
 }
 
-// The font options measureText and prepareText share, onto a Text.
-fn apply_font_options(node: &mut Text, opts: &Object<'_>) {
-  if let Ok(v) = opts.get::<_, String>("fontFamily") {
-    node.font_family = v;
+// The font options measureText and prepareText share, onto a Text, through
+// the JSX property decoders (one parser for fontWeight and friends). Throws
+// on a value that does not decode.
+fn apply_font_options<'js>(ctx: &Ctx<'js>, node: &mut Text, opts: &Object<'js>) -> rquickjs::Result<()> {
+  for name in ["fontFamily", "fontSize", "fontStyle", "fontWeight", "lineHeight", "maxLines"] {
+    let value: Value<'js> = opts.get(name)?;
+    if value.is_undefined() {
+      continue;
+    }
+    super::properties::apply_font_options(node, name, &to_prop_value(&value)?)
+      .map_err(|msg| rquickjs::Exception::throw_message(ctx, &msg))?;
   }
-  if let Ok(v) = opts.get::<_, f64>("fontSize") {
-    node.font_size = v as f32;
-  }
-  if let Ok(v) = opts.get::<_, String>("fontStyle") {
-    node.font_style = match v.as_str() {
-      "italic" => FontStyle::Italic,
-      _ => FontStyle::Normal,
-    };
-  }
-  if let Ok(v) = opts.get::<_, f64>("fontWeight") {
-    node.font_weight = match v as u32 {
-      100 => FontWeight::Thin,
-      200 => FontWeight::ExtraLight,
-      300 => FontWeight::Light,
-      500 => FontWeight::Medium,
-      600 => FontWeight::SemiBold,
-      700 => FontWeight::Bold,
-      800 => FontWeight::ExtraBold,
-      900 => FontWeight::Black,
-      _ => FontWeight::Regular,
-    };
-  }
-  if let Ok(v) = opts.get::<_, f64>("lineHeight") {
-    node.line_height = v as f32;
-  }
-  if let Ok(v) = opts.get::<_, f64>("maxLines") {
-    node.max_lines = v as u32;
-  }
+  Ok(())
 }
 
 // The `runs` option of prepareText: styled ranges in JS (UTF-16) offsets over
@@ -145,7 +124,7 @@ fn prepared_runs<'js>(
       ));
     }
     let mut node = base.clone();
-    apply_font_options(&mut node, &entry);
+    apply_font_options(ctx, &mut node, &entry)?;
     runs.push(PreparedRun { start, end, style: node.run_style() });
   }
   Ok(runs)
@@ -257,9 +236,13 @@ impl ModuleDef for RenderTreeModule {
 
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();
-    let create_node = Function::new(ctx.clone(), move |id: u64, kind: String| {
-      tree_ref.borrow_mut().create_node(id, Element::from_kind(&kind));
+    let create_node = Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: u64, kind: String| -> rquickjs::Result<()> {
+      let Some(element) = Element::from_kind(&kind) else {
+        return Err(rquickjs::Exception::throw_message(&ctx, &format!("Unknown node kind: <{kind}>")));
+      };
+      tree_ref.borrow_mut().create_node(id, element);
       platform_ref.request_frame();
+      Ok(())
     })?;
 
     let tree_ref = tree.clone();
@@ -399,11 +382,11 @@ impl ModuleDef for RenderTreeModule {
 
     let measure_platform = platform.clone();
     let measure_atx = atx.clone();
-    let measure_text = Function::new(ctx.clone(), move |text: String, options: OptArg<Object<'_>>| -> TextSize {
+    let measure_text = Function::new(ctx.clone(), move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<TextSize> {
       let mut node = Text::default();
       node.set_plain_text(text);
       if let Some(opts) = options.0 {
-        apply_font_options(&mut node, &opts);
+        apply_font_options(&ctx, &mut node, &opts)?;
       }
 
       let size = node.measure(&MeasureContext {
@@ -412,7 +395,7 @@ impl ModuleDef for RenderTreeModule {
         known: Size { width: None, height: None },
         available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
       });
-      TextSize { width: size.width, height: size.height }
+      Ok(TextSize { width: size.width, height: size.height })
     })?;
 
     let prepare_platform = platform.clone();
@@ -423,7 +406,7 @@ impl ModuleDef for RenderTreeModule {
         let mut carets = false;
         let mut runs = Vec::new();
         if let Some(opts) = options.0 {
-          apply_font_options(&mut node, &opts);
+          apply_font_options(&ctx, &mut node, &opts)?;
           carets = opts.get::<_, bool>("carets").unwrap_or(false);
           if let Ok(list) = opts.get::<_, rquickjs::Array<'js>>("runs") {
             runs = prepared_runs(&ctx, &text, &node, list)?;

@@ -25,6 +25,18 @@ mod window;
 
 pub use read::{read_jsx, ReadValue};
 
+/// Font options as measureText/prepareText take them (fontFamily, fontSize,
+/// fontStyle, fontWeight, lineHeight, maxLines), applied to a Text through
+/// the same decoders as the JSX props. Errors are the decoders' messages.
+pub fn apply_font_options(node: &mut alloy::rendertree::Text, name: &str, value: &PropValue) -> Result<(), String> {
+  match name {
+    "fontFamily" | "fontSize" | "fontStyle" | "fontWeight" | "lineHeight" | "maxLines" => {
+      text::apply(node, name, value).map(|_| ())
+    }
+    _ => Ok(()),
+  }
+}
+
 use std::sync::mpsc::Sender;
 
 use alloy::AlloyCommand;

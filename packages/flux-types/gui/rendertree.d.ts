@@ -77,7 +77,7 @@ declare module "flux:rendertree" {
 
   /** Create the window root node with the given id. */
   export function createRoot(id: number): void
-  /** Create a node of `kind` (the primitive element name) with the given id. */
+  /** Create a node of `kind` (the primitive element name) with the given id. Throws an `Error` for a name that is not an element. */
   export function createNode(id: number, kind: string): void
   /** Insert `nodeId` under `parentId`, before `anchorId` if given (else appended). */
   export function insertNode(parentId: number, nodeId: number, anchorId?: number): void

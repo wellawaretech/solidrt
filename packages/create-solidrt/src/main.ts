@@ -18,7 +18,7 @@ if (!dir || dir.startsWith("-")) {
 // unpublished 0.0.0 workspace version, which has no npm release to pin to.
 let cli = pkg.version === "0.0.0" ? "@solidrt/cli@latest" : `@solidrt/cli@${pkg.version}`
 
-// Forward any trailing flags (e.g. --with @solidrt/components) to `srt init` untouched.
+// Forward any trailing flags to `srt init` untouched.
 let extra = process.argv.slice(3)
 let proc = Bun.spawnSync(["bun", "x", cli, "init", dir, ...extra], {
   stdin: "inherit",
