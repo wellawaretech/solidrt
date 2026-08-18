@@ -1,7 +1,7 @@
 use alloy::impellers::FillType;
 
 use super::{f32_of, str_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Path;
 

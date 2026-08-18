@@ -117,6 +117,47 @@ fifteen pages of prose). Generated:
 content; `docs/internals/` may partially survive as the Architecture
 section.
 
+## Content rework (decided 2026-08-18)
+
+The first generation pass came out push-shaped: `referencePages()` walked the
+sources and invented a page tree, so the site's shape was a side effect of how
+the declarations happened to be organised (seven `d-*` intrinsics in
+`jsx-runtime.d.ts` produced seven `d-*` pages nobody asked for). 88 of 94
+pages were generated, and the hand-written Core page is the quality bar none
+of them met. Inverted:
+
+**`docs/` is the content root**, markdown only, and its tree is the site: a
+directory is a section and a sidebar group, a file is a page, an `NN-` name
+prefix sets the order and is stripped from the URL, and a name starting with
+`_` is not published. The top nav is the top-level directories in that same
+order, so nav and sidebar have one definition and there is no sidebar or nav
+config anywhere. Optional `nav:` frontmatter overrides the label a page takes
+in navigation when its h1 is not the right one there (`/runtime/` is the case:
+h1 "Flux", nav "Runtime"). Two levels of sidebar, hard limit: a section
+wanting a third level wants to be its own section (Extensions is the
+precedent). Everything the site needs that is not markdown (css, icon) lives
+in `website/assets/` and is copied byte-for-byte, so `website/content/` is
+gone.
+
+**Pull, not push.** Pages are hand-written and name the generated data they
+want, inline, as `{{ provider path/to/source.ts Symbol }}` on its own line.
+Browsing `docs/` raw then shows a marker that names the exact file and symbol
+(considered and rejected: a fenced block, which renders as a code box and so
+reads as a snippet to copy; a link-wrapped directive, clickable on GitHub but
+paying `../../../` noise). An unresolved directive **fails the build** - the
+directive hard-codes a declaration name, and a rename in the source must not
+silently blank a page. Providers: `props` (a core prop interface), `decl` (any
+declaration from any TS source), `dts` (a whole flux-types declaration file),
+`usage` (one srt command), `source` (a file from `examples/`).
+
+**Reference by topic, not by symbol.** Core Reference becomes Elements,
+Detached elements (one generic page: what detached means, the shared
+positioning contract, when to reach for them, then the prop delta - not one
+page per `d-*`), Layout, Transforms, Input, Types. The Runtime reference is
+the one place a full dump is honest (flux-types is hand-written JSDoc), so
+those pages stay, but as small markdown files holding one `{{ dts ... }}`
+each, visible and reorderable. Expected page count drops from 94 to ~45.
+
 ## Staging
 
 1. **Skeleton**: `website/` with the generator ported from `~/solidrt/docs`
@@ -147,6 +188,77 @@ section.
 3. **API reference generation** from types (its own project, especially
    type extraction).
 4. **Screenshot/recording capture** for example pages via playback.
+
+Content rework, staged on top (2026-08-18):
+
+5. **Move only.** DONE 2026-08-18: `website/content/*/index.md` moved to
+   `docs/NN-<section>/index.md`, the landing HTML fragment to `docs/index.md`
+   (raw HTML blocks pass through marked, so the folder is markdown only and
+   the build's `*.html` page kind is gone), css + icon to `website/assets/`.
+   The build reads `../docs`, strips `NN-` prefixes, skips `_` entries,
+   derives the nav from the tree (the hand-kept `nav` array in
+   `template.json` deleted), and copies `assets/` separately. Output
+   unchanged: 7 pages, 87 generated, same URLs. The stale `docs/*` is staged
+   at `docs/_old/` to be mined by stages 6-7 and deleted with them; the four
+   in-repo pointers into it (cli AGENTS.md, dev-server.ts, server/main.ts)
+   point at `_old` meanwhile, and `flux/CLAUDE.md`'s "update docs/flux.md"
+   rule now says flux-types alone is the documentation.
+6. **Directives + Core Reference.** DONE 2026-08-18: `src/directives.ts`
+   resolves `{{ provider ... }}` before the markdown is parsed, with two
+   providers so far - `decl <path> <Symbol>` (one declaration with its doc
+   comment) and `intrinsics <path>` (the IntrinsicElements map as a table).
+   `splitDeclarations` moved to a shared section of `reference.ts` and gained
+   an `exported` flag; `corePages()` and `compose()` are gone. The Core
+   Reference is now ten authored pages (index, Elements, Drawing, Text,
+   Detached elements, Layout, Transforms, Input, Shaders, Types) against the
+   previous eighteen generated ones, and all 30 exported declarations of
+   `types.d.ts` are pulled by one of them. Two guards, both verified: an
+   unresolved directive throws naming the page and the directive, and the
+   build reports any exported declaration of `types.d.ts` no page pulls
+   (`unpulled()`), which is what keeps "show less" from becoming "silently
+   document less". Site total: 94 pages to 86.
+   Known gap, needs a decision: `flux script.js` exits 0 even on an uncaught
+   top-level throw (verified for sync throw, post-await throw, and an
+   unhandled rejection - `eval_source` returns `()` and only logs through
+   `report_error`/`report_rejection`), so the failing directive prints its
+   error and `make build` still succeeds. The guard is only advisory until
+   the `flux` binary can exit non-zero; parked as
+   okf/backlog/flux-script-exit-code.md.
+7. **The rest.** DONE 2026-08-18, and it revised the stage-6 assumption that
+   every generated page should become authored markdown. The test that
+   emerged: **authored markdown where a page must choose what it shows,
+   generated where the page body IS an already hand-written source.** By that
+   test the sections split rather than converting wholesale.
+   Tools converted: nine command pages plus an index became one authored page,
+   `/tools/reference/`, grouping the commands by purpose (start, develop,
+   check and build, render and agents) with a `{{ usage <command> }}` pull
+   each. A command page was three lines of synopsis, so a page apiece was the
+   `d-*` problem in miniature. `toolsPages()` deleted; a coverage check
+   reports any `srt` command no page pulls (verified).
+   Runtime stayed generated, but grouped. Each page is 1:1 with a flux-types
+   declaration file carrying JSDoc on every member, and those files total 2742
+   lines (gpu.d.ts alone is 834), so per-module pages are right and converting
+   them to 27 stub files holding one pull each would add ceremony plus a drift
+   risk: a new module would need a docs file or vanish silently, where today
+   adding the `.d.ts` is enough. What was wrong was the flat 28-item sidebar,
+   so `runtimePages()` now groups by flux-types' own directories:
+   `/runtime/modules/<name>`, `/runtime/standards/<name>`, `/runtime/gui/<name>`,
+   each group getting an index page and a sidebar group (the URLs lost the
+   `/reference/` level - for Runtime the section IS the reference). Group
+   labels derive from the directory names, so a flux-types reorganization
+   flows through with at most a label-map edit.
+   Extensions stayed generated for the same reason: the package READMEs are
+   hand-written prose that already chooses what it shows, and the widgets are
+   distinct APIs rather than near-duplicates. The recorded README gap (21
+   widgets documented, 29 exported) is a components-package job, not a website
+   one.
+   Site total: 94 pages before the rework, 79 now (18 authored, 61 generated).
+   `docs/_old/` stays for now, by decision - it is still the raw material for
+   the section pages that are not written yet.
+
+Open, not decided here: the three `docs/_old/flux-*-plan.md` documents need an
+okf home, and the directory is their state (dev server and wasm shipped; mdns
+did not), so it is three state calls rather than one move.
 
 ## Styling track (decided 2026-07-26, not yet built)
 

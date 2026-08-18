@@ -7,11 +7,11 @@ use std::pin::Pin;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::OptArg;
-use crate::plugins::standards::body::{
+use crate::standards_plugins::body::{
   collect_array_buffer, collect_bytes, collect_json, collect_text, extract_streaming_body, throw_msg, BodySource,
   ByteStream, JsArrayBuffer, JsBytes, JsonValue, MessageBody,
 };
-use crate::plugins::standards::headers::{headers_from_init, headers_from_pairs, Headers};
+use crate::standards_plugins::headers::{headers_from_init, headers_from_pairs, Headers};
 
 #[derive(JsLifetime)]
 #[rquickjs::class(rename = "Response")]

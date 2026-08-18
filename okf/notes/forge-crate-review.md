@@ -100,7 +100,7 @@ Production level for the current stage. Specifics:
 - **Stale docs**: path.rs, fs.rs, http.rs, p2p.rs, websocket.rs, sqlite.rs,
   subprocess.rs still carry "Destined for the `forge` crate (see REDESIGN.md)"
   and most module docs reference pre-reorganization marshalling paths
-  (`plugins/flux/*.rs`; the real layout is `flux/src/plugins/modules/*.rs`).
+  (`plugins/flux/*.rs`; the real layout is `flux/src/forge_plugins/*.rs`).
   mdns.rs and net.rs show the corrected form to copy.
 
 ## Tests

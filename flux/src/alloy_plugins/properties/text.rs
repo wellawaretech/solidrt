@@ -1,7 +1,7 @@
 use alloy::impellers::{FontStyle, FontWeight, TextAlignment};
 
 use super::{f32_of, paint, str_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::text::layout::Wrap;
 use alloy::rendertree::{OverflowWrap, Span, Text, TextOverflow};

@@ -7,7 +7,7 @@ created: 2026-08-14
 # Decide the shape of the transform props against CSS, all at once
 
 `TransformProps` ([packages/core/src/types.d.ts:165](../../packages/core/src/types.d.ts))
-is decoded in [flux/src/plugins/gui/properties/view.rs](../../flux/src/plugins/gui/properties/view.rs)
+is decoded in [flux/src/alloy_plugins/properties/view.rs](../../flux/src/alloy_plugins/properties/view.rs)
 and composed in [alloy/src/rendertree/kinds/view.rs](../../alloy/src/rendertree/kinds/view.rs).
 Every prop in it was shaped on its own, and the set no longer answers one
 question consistently: what would a CSS author expect to type?

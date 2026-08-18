@@ -53,7 +53,7 @@ Optionally, create a `tsconfig.json` to enable type recognition for SolidRT elem
 
 ## API
 
-See [docs/core.md](https://github.com/wellawaretech/solidrt/blob/main/docs/core.md) for the full API reference.
+See [docs/20-core](https://github.com/wellawaretech/solidrt/blob/main/docs/20-core/index.md) for the full API reference.
 
 ## License
 

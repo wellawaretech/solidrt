@@ -7,14 +7,14 @@
 use rquickjs::{Context, Ctx, Runtime};
 
 use crate::pending::PendingOps;
-use crate::plugins::standards::time::{advance_virtual_time, install_virtual_time};
+use crate::standards_plugins::time::{advance_virtual_time, install_virtual_time};
 
 fn with_virtual_ctx(f: impl FnOnce(&Ctx<'_>)) {
   let rt = Runtime::new().expect("js runtime");
   let context = Context::full(&rt).expect("js context");
   context.with(|ctx| {
     ctx.store_userdata(PendingOps::new()).expect("store pending ops");
-    crate::plugins::standards::time::init(&ctx);
+    crate::standards_plugins::time::init(&ctx);
     install_virtual_time(&ctx, 0.0);
     ctx.eval::<(), _>("globalThis.log = []").expect("init log");
     f(&ctx);

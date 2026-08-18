@@ -13,7 +13,7 @@ use tokio::sync::{watch, Notify};
 use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::OptArg;
-use crate::plugins::standards::body::{extract_body_value, JsBytes};
+use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use forge::http::{Remote, ResBody};
 use forge::websocket::{
   run_reader, run_writer, SocketSink, Topics, WsDispatch, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,

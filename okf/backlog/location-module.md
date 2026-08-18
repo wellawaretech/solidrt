@@ -12,7 +12,7 @@ platform fix.
 
 ## Done looks like
 
-- `flux:location` capability module in flux/src/plugins/modules/, forge
+- `flux:location` capability module in flux/src/forge_plugins/, forge
   core underneath, marshalling only in the plugin. Feature availability by
   name via Flux.capabilities, not by OS.
 - `@solidrt/core/location` alongside camera/microphone/sound/

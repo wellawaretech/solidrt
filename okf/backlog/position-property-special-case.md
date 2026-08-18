@@ -7,9 +7,9 @@ created: 2026-08-14
 # position is the one layout prop handled outside the layout adapter
 
 Every layout prop flows through one uniform path: the style adapter in
-[flux/src/plugins/gui/properties/layout.rs](../../flux/src/plugins/gui/properties/layout.rs)
+[flux/src/alloy_plugins/properties/layout.rs](../../flux/src/alloy_plugins/properties/layout.rs)
 decodes it into the taffy style. Except `position`, which is special-cased at
-the top of `apply_jsx` ([flux/src/plugins/gui/properties/mod.rs:62](../../flux/src/plugins/gui/properties/mod.rs))
+the top of `apply_jsx` ([flux/src/alloy_plugins/properties/mod.rs:62](../../flux/src/alloy_plugins/properties/mod.rs))
 and routed through `Element::set_position`
 ([alloy/src/rendertree/mod.rs:386](../../alloy/src/rendertree/mod.rs)).
 

@@ -148,6 +148,10 @@ Shaped, not started.
   nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from
   success without parsing output. Surfaced 2026-08-17 by moving the
   @solidrt/3d check rigs from bun onto flux.
+- **[flux exits 0 on an uncaught top-level error](backlog/flux-script-exit-code.md)** [2026-08-18]
+  The flux binary always exits 0, so a script that throws still reports
+  success; any flux script used in a Makefile, a build step or CI cannot fail,
+  and callers have to grep output to detect an error.
 - **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
   Stage 3 of the focus/key-routing work - move focus across getFocusables()
   candidates from bubbled arrow keys, activate with select/Enter, and fold the
@@ -331,6 +335,11 @@ Shaped, not started.
   fixed 2026-08-08, border box on every path. For non-View kinds the
   divergence is still open, a padded rect paints its content box but hit-tests
   its border box.
+- **[Paint viewport culling](backlog/paint-viewport-culling.md)** [2026-08-18]
+  The paint walk visits and builds every mounted node whether or not it can be
+  seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
+  nodes; add a cull rect to the walk and a conservative per-subtree paint
+  envelope so off-screen subtrees are skipped before build().
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
@@ -602,6 +611,11 @@ Finished, kept for the reasoning.
 - **[flux:net socket gaps](done/flux-net-socket-gaps.md)** [2026-07-27]
   "Three flux:net gaps surfaced by the linux VM's NAT gateway: Udp.close, TCP
   half-close, and raw ICMP; closed by one cancellation token per socket."
+- **[Name the flux plugin layers after what they marshal](done/flux-plugin-layer-names.md)** [2026-08-18]
+  plugins/modules/ and plugins/gui/ were named for their JS-facing shape while
+  standards/ was named for its contract, so placement was a judgment call; the
+  layers are now crate-level siblings standards_plugins/, forge_plugins/ and
+  alloy_plugins/, which makes it mechanical.
 - **[flux:wasm memory views and named call-mismatch errors](done/flux-wasm-memory-access.md)** [2026-08-03]
   readMemory copies into a fresh Uint8Array per call - 9 MB/s of garbage
   lifting a 32bpp framebuffer whose size never changes - while the pure-JS

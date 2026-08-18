@@ -33,7 +33,7 @@ texture does not contain the pixels behind it).
 - **Where it hangs in the props.** A view-level prop naming a filter, in the
   vocabulary the rest of the API uses (a blur radius in points, not a
   gaussian sigma in pixels). The nearest existing model is the paint
-  properties work in flux/src/plugins/gui/properties/.
+  properties work in flux/src/alloy_plugins/properties/.
 - **Interaction with repaint boundaries.** A save_layer with a backdrop
   reads the current target, so a boundary between the panel and its intended
   backdrop puts them on opposite sides of an offscreen surface. This is the

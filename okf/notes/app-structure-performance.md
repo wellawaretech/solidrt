@@ -10,7 +10,7 @@ Structural review of how a SolidRT app executes, as of 2026-07-15: which layer
 does what, what crosses the JS/native boundary and when, where performance goes
 given a non-JIT interpreter (QuickJS), and whether moving SolidJS itself into
 Rust would help. Grounded in packages/core/src/renderer.ts, core.ts, window.ts,
-scroll.ts; flux/src/plugins/gui/tree.rs, input.rs, raf.rs, properties/;
+scroll.ts; flux/src/alloy_plugins/tree.rs, input.rs, raf.rs, properties/;
 lattice/src/runtime.rs; and the components package (spinner, scroll-view).
 
 ## The execution structure

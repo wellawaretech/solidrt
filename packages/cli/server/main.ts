@@ -2,7 +2,7 @@
 // config argument; bundling, file watching, and the repl stay in srt, which
 // drives this process over the loopback-only /__internal__/ routes. The
 // shutdown-when-empty policy also lives in srt (it polls /__internal__/clients);
-// this process runs until srt kills it. See docs/flux-dev-server-plan.md.
+// this process runs until srt kills it. See docs/_old/flux-dev-server-plan.md.
 
 import { serve } from "flux:http"
 import type { FluxRequest, Server } from "flux:http"
@@ -298,7 +298,7 @@ if (!config.tunnel) {
 }
 console.log(`[cli] WebSocket server on ws://${state.serverUrl}`)
 // mDNS advertise is intentionally not implemented here: the p2p ticket is the
-// cross-device connect story (see docs/flux-dev-server-plan.md).
+// cross-device connect story (see docs/_old/flux-dev-server-plan.md).
 
 // Keepalive
 setInterval(() => {

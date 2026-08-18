@@ -97,7 +97,7 @@ not an invariant we have to maintain by discipline.
 `Bun.*`/`node:*` APIs (`args.ts`, `bundler.ts`, `dev-server.ts`, `repl.ts`,
 `watcher.ts`, `util.ts`, various `commands/*.ts`, etc.). flux already has
 `file`, `fs`, `dir`, `path`, `process`, `subprocess`, `net` modules
-(`flux/src/plugins/modules/`) covering most of what these files actually do.
+(`flux/src/forge_plugins/`) covering most of what these files actually do.
 Mostly grunt work, low technical risk.
 
 **Stays external, exactly once:** bundling. `Bun.build` has no QuickJS
@@ -141,5 +141,5 @@ to happen.
 - `packages/cli/src/repl.ts`, `watcher.ts`, `dev-server.ts`, `bundler.ts`,
   `commands/mcp.ts`
 - `packages/cli/server/main.ts`, `control.ts`, `state.ts`
-- `flux/src/plugins/modules/process.rs`, `subprocess.rs`
+- `flux/src/forge_plugins/process.rs`, `subprocess.rs`
 - `docs/flux-dev-server-plan.md` (prior art on the srt/server split)

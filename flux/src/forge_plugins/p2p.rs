@@ -40,7 +40,7 @@ use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
-use crate::plugins::standards::body::{extract_body_value, JsBytes};
+use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use crate::plugins::value::Neutral;
 use forge::p2p::{decode_hex32, run_writer, Endpoint, Stream};
 

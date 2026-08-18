@@ -15,7 +15,7 @@ Plugins (the `*/plugins/` modules that register `ffi`/global functions) should b
 
 The rendertree must stay engine-independent: no QuickJS/`rquickjs` (or any JavaScript) references. It should be usable from other engines, not even necessarily JavaScript. JS value parsing belongs in the plugin layer; rendertree methods take and return native Rust types only.
 
-`flux/src/plugins/` has three layers: `standards/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers), `modules/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `gui/` (behind the `gui` feature) for the alloy-backed render/capture bindings. Put new flux-specific modules in `modules/`, not at the root. `js_error.rs`/`marshal.rs` at the root are the shared marshalling toolkit.
+`flux/src/` has three plugin layers, named for what they marshal: `standards_plugins/` for web-standard JS APIs (e.g. `fetch`, `Response`, `Headers`, `console`, timers) whatever backs them, `forge_plugins/` for the `flux:*` capability modules (e.g. `serve`, `file`, `sqlite`) that marshal forge cores, and `alloy_plugins/` (behind the `gui` feature, exported as `flux::gui`) for the alloy-backed render/capture bindings. A web standard goes in `standards_plugins/`; otherwise the crate marshalled decides. `flux/src/plugins/` holds only the shared marshalling toolkit (`js_error.rs`/`marshal.rs`/`value.rs`) and context setup.
 
 # API design
 Look at standard (web) functionality through a solidrt lens: solidrt runs a single known application, not the whole internet. Keep the standard names and shapes, but simplify the semantics to what an app needs, and document the simplified contract plainly.

@@ -1,5 +1,5 @@
 use super::f32_of;
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Oval;
 

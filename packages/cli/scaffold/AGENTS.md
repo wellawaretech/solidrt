@@ -438,10 +438,13 @@ its tools over guessing at runtime state:
   re-fetch ids and restart cursors
 - get_stats: fps, CPU/memory, frame phase timings, setProperty rate, plus
   layout-activity counters for the last rebuild (nodes, measureCalls,
-  paraShapes/wordHits, dirtiedNodes, cacheGets/cacheHits) - when layoutMs looks
-  wrong, these say whether the cost is text shaping, invalidation breadth,
-  or a defeated layout cache (healthy incremental rebuilds show a near-100%
-  cacheHits rate). reusedPerSec/skippedPerSec are the demand gate's visible
+  paraShapes/wordHits, dirtiedNodes, cacheGets/cacheHits, nodesPainted) - when
+  layoutMs looks wrong, these say whether the cost is text shaping,
+  invalidation breadth, or a defeated layout cache (healthy incremental
+  rebuilds show a near-100% cacheHits rate); when paintMs looks wrong,
+  nodesPainted against mountedNodes says whether viewport culling is doing
+  its job (a long scroller paints a near-constant node count however long
+  its content). reusedPerSec/skippedPerSec are the demand gate's visible
   signal: frames presented from the cached display list without a rebuild
   (texture content changed, no property writes - expect reusedPerSec near
   fps on texture-driven apps) and frames skipped entirely (nothing
@@ -613,9 +616,12 @@ flag: `"args": [..., "mcp", "--port", "N"]`.
   (a thousand-node tree relays out in well under a millisecond). If layoutMs
   still grows with tree size, read the get_stats counters - a low
   cacheHits/cacheGets ratio means the layout cache is being defeated, high
-  paraShapes means text is actually reshaping. Very long lists still pay
-  for the initial mount and for memory, so windowing stays sensible at the
-  thousands-of-rows scale.
+  paraShapes means text is actually reshaping. Paint is viewport-culled:
+  under an `overflow="hidden"` scroller only the subtrees that can reach the
+  visible box are painted, so paintMs tracks what is on screen, not what is
+  mounted (nodesPainted in get_stats shows the count). Very long lists still
+  pay for the initial mount and for memory, so windowing stays sensible at
+  the thousands-of-rows scale.
 - Remote images: createImage (and Image) dedupes repeated URLs, caches the
   bytes on disk, and the runtime rate-limits concurrent asset fetches per
   host - do not build your own promise cache around it. Images are fetched

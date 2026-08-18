@@ -40,7 +40,7 @@ use super::AlloyContext;
 // `video-timeline-pacing`, a process-monotonic wall origin otherwise.
 #[cfg(feature = "video-timeline-pacing")]
 fn clock_now_us(ctx: &Ctx<'_>) -> i64 {
-  (crate::plugins::standards::time::timeline_now_ms(ctx) * 1000.0) as i64
+  (crate::standards_plugins::time::timeline_now_ms(ctx) * 1000.0) as i64
 }
 
 #[cfg(not(feature = "video-timeline-pacing"))]

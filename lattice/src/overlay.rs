@@ -62,6 +62,9 @@ pub struct StatsSnapshot {
   pub dirtied: u32,
   pub cache_gets: u32,
   pub cache_hits: u32,
+  /// Nodes the last paint walk entered; the mounted count minus this is what
+  /// viewport culling skipped (alloy::rendertree::cull).
+  pub nodes_painted: u32,
 }
 
 // Smoothing time constant (seconds): a value settles to ~63% of a step in this
@@ -273,6 +276,7 @@ impl Stats {
       dirtied: self.layout_counters.dirtied,
       cache_gets: self.layout_counters.cache_gets,
       cache_hits: self.layout_counters.cache_hits,
+      nodes_painted: self.paint_stats.nodes_painted,
     }
   }
 

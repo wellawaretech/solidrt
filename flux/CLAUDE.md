@@ -10,20 +10,29 @@ Plugins are thin FFI layers: marshal arguments and results between JavaScript an
 Rust, nothing more. Domain logic belongs in the owning module (forge / alloy),
 exposed as methods the plugin forwards to.
 
-Three plugin layers under `flux/src/plugins/`:
+Three plugin layers, crate-level siblings under `flux/src/`, named for what
+they marshal:
 
-- `standards/`: web-standard JS APIs installed as globals (`console`, `fetch`,
-  the Fetch types `Headers`/`Request`/`Response`/`Body`, timers, `WebSocket`
-  client, `TextEncoder`/`Decoder`).
-- `modules/`: the `flux:*` capability modules, imported as `flux:http`,
+- `standards_plugins/`: web-standard JS APIs installed as globals (`console`,
+  `fetch`, the Fetch types `Headers`/`Request`/`Response`/`Body`, timers,
+  `WebSocket` client, `TextEncoder`/`Decoder`), whatever backs them.
+- `forge_plugins/`: the `flux:*` capability modules, imported as `flux:http`,
   `flux:sqlite`, `flux:subprocess`, ... - marshalling over the forge capability
-  cores. Put new flux-specific modules here.
-- `gui/` (behind the `gui` feature): the alloy-backed render-tree and capture
-  bindings. The runner (lattice) supplies the host instances via `gui::install`;
-  flux owns which plugins exist and their registration order.
+  cores.
+- `alloy_plugins/` (behind the `gui` feature, and re-exported as `flux::gui`
+  to pair with the feature name): the alloy-backed render-tree, capture, media
+  and input bindings. The runner (lattice) supplies the host instances via
+  `gui::install`; flux owns which plugins exist and their registration order.
 
-`js_error.rs` + `marshal.rs` + `value.rs` at the `plugins/` root are the shared
-marshalling toolkit used across all three layers. `value.rs` is where
+Placement rule: is the JS surface a web standard? `standards_plugins/`,
+regardless of what backs it (`fetch` marshals forge but is a standard).
+Otherwise the crate it marshals decides: `forge_plugins/` or `alloy_plugins/`.
+`packages/flux-types` keeps its own reader-facing `modules/`/`standards/`/`gui/`
+split (import, global, GUI); do not "fix" the asymmetry.
+
+`plugins/` holds what the layers share: `js_error.rs` + `marshal.rs` +
+`value.rs` + `seekable.rs`, the marshalling toolkit, and `mod.rs`, which
+builds the JS context and registers the layers. `value.rs` is where
 `forge::Value` meets JS: a forge result type implements `From<T> for Value` in
 forge and the plugin returns `Neutral(result.into())`; do not hand-write a
 per-type `IntoJs` for plain data results.
@@ -43,7 +52,10 @@ external binary use `which` from `flux:subprocess`, not a platform check.
 Any change to what JS can see - a `decl.declare`/`exports.export`, a
 `globals.set`, a `#[rquickjs::methods]` signature, or behavior a doc comment
 describes - updates `packages/flux-types` (the matching `.d.ts` under
-`modules/`/`standards/`/`gui/`) and `docs/flux.md` in the same change. Flux
+`modules/`/`standards/`/`gui/`) in the same change: those declarations are the
+documentation, since the website generates the Runtime reference from them.
+There is no second prose copy to keep in sync (the old `docs/flux.md`
+retired). Flux
 projects compile with no lib.dom and no Node/Bun types: flux-types is the only
 thing telling TypeScript what exists, and nothing verifies parity
 automatically yet.
@@ -56,7 +68,7 @@ is referenced from flux-types `index.d.ts`.
 
 All JS of one runtime runs on one thread; `flux:isolate` spawns further
 runtimes, each on its own thread with its own heap, reached by calls whose
-arguments and results are `forge::Value` copies (see `modules/isolate.rs`).
+arguments and results are `forge::Value` copies (see `forge_plugins/isolate.rs`).
 Within a runtime the
 rules below hold unchanged. JS values (`Function`, `Object`, `Value`, any
 `'js`-bound handle) are `!Send`; a future that touches one must be spawned
@@ -64,7 +76,7 @@ with `ctx.spawn`, which runs it on the JS executor. `tokio::spawn` is only for
 pure native work whose future is `Send`; its results come back to JS by
 resolving a `Promised` or via a channel a `ctx.spawn` task drains. The one way
 into the engine from another thread is `ExecHandle::exec`, which queues a
-closure the run loop executes with `Ctx` in hand (see `gui/events.rs` for the
+closure the run loop executes with `Ctx` in hand (see `alloy_plugins/events.rs` for the
 pattern at scale).
 
 ## Ctx and the `'js` lifetime
@@ -143,7 +155,7 @@ tracker reports a rejection you are about to handle as if nobody looked at
 it. Attach a real no-op rejection handler (a function) - NOT `undefined`,
 since `.then(_, undefined)` yields a derived promise that re-rejects with the
 same reason and is itself unhandled. See `mark_observed` in
-`modules/serve.rs`.
+`forge_plugins/serve.rs`.
 
 ## Fire-and-forget callbacks
 

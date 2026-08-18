@@ -55,7 +55,7 @@ do-order notes). It had never been filed. Filed 2026-07-31.
    `alloy/src/resample.rs`; the pump feeds it producer-side and moves
    never travel as events since frame-batched-pointer-input landed and
    alloy took over the feeding), and a verb to set the mode.
-4. `flux/src/plugins/gui/input.rs` - marshal the delta fields onto the
+4. `flux/src/alloy_plugins/input.rs` - marshal the delta fields onto the
    dispatched event object.
 5. `packages/core/src/window.ts` + `types.d.ts` - the JS surface, and the
    `PointerEvent` fields.

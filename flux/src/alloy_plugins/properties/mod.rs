@@ -30,7 +30,7 @@ use std::sync::mpsc::Sender;
 use alloy::AlloyCommand;
 use taffy::style::Position;
 
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::impellers::Color;
 use alloy::rendertree::text::layout::{Clear, Side};
 use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};

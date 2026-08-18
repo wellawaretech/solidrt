@@ -26,9 +26,9 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
   from every connected client into one script file (written on client
   disconnect), for replaying later with `render --script`. The file is JSON
   Lines and hand-authorable - the exact shape (`after` ms, `type`, `key`,
-  `device`) is in `docs/cli.md` under `--capture`. For probing app state
+  `device`) is in `docs/_old/cli.md` under `--capture`. For probing app state
   without a display, `-- <args...>` reaches the app as `flux:process` argv
-  (also `docs/cli.md`), which is often simpler than scripting input.
+  (also `docs/_old/cli.md`), which is often simpler than scripting input.
 
 ## Verifying without a display (headless / CI / agent box)
 

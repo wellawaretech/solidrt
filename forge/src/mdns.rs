@@ -3,7 +3,7 @@
 //! The scripting-engine-independent half of `flux:mdns`: zero-config
 //! (Bonjour/Avahi) discovery over the link-local multicast group, built on the
 //! `forge::net` UDP socket plus `hickory-proto` for the DNS wire codec. It names
-//! no scripting-engine types; the marshalling layer (`flux/src/plugins/modules/
+//! no scripting-engine types; the marshalling layer (`flux/src/forge_plugins/
 //! mdns.rs`) decodes JS args into these calls and encodes the results back to JS.
 //!
 //! Why this exists: `.local` names are mDNS, not unicast DNS, so a host with no

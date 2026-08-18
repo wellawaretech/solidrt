@@ -20,7 +20,7 @@ are the ones apps will hit first:
 - `Text.paragraph_engine` (alloy/src/rendertree/text/mod.rs) is a
   Rust-only bool with no way to flip it from an app. It is the escape hatch
   while the owned engine matures (see [text-layout-owned](../done/text-layout-owned.md)).
-- `FETCH_CACHE_MAX_BYTES = 256 MiB` (flux/src/plugins/standards/fetch.rs),
+- `FETCH_CACHE_MAX_BYTES = 256 MiB` (flux/src/standards_plugins/fetch.rs),
   doc comment: "placeholder cap until a real default is decided".
 - Log level exists only as the `SRT_LOG` env var; a packed app cannot ship
   a level.

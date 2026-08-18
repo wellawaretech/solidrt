@@ -42,7 +42,7 @@ use rquickjs::{Array, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetim
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
-use crate::plugins::standards::body::{extract_body_value, JsBytes};
+use crate::standards_plugins::body::{extract_body_value, JsBytes};
 
 // ---- free functions ---------------------------------------------------------
 

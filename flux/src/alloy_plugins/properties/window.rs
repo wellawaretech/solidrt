@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use alloy::AlloyCommand;
 
 use super::{decode_params, decode_texture_bindings, describe, str_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Window;
 use alloy::WindowShader;

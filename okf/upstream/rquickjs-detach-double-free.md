@@ -52,7 +52,7 @@ empty), so a NULL check is exact. Alternatively track detachment and skip.
 
 flux:wasm's `instance.memory` needed a detachable external buffer (detach on
 guest memory growth). Workaround: `array_buffer_over` in
-flux/src/plugins/modules/wasm.rs creates the buffer via raw
+flux/src/forge_plugins/wasm.rs creates the buffer via raw
 `qjs::JS_NewArrayBuffer` with `free_func = NULL` (both invocation sites
 become no-ops) and pins the backing wasm instance from the plugin's handler
 registry instead of from a drop closure.

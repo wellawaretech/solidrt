@@ -26,7 +26,7 @@ means the design attention went where it mattered - and every item below
 sorts cleanly into one side or the other.
 
 Scope: `alloy/src/shader.rs`, `alloy/src/texture.rs`, `alloy/src/context.rs`,
-`alloy/src/raster.rs`, `flux/src/plugins/gui/texture.rs`,
+`alloy/src/raster.rs`, `flux/src/alloy_plugins/texture.rs`,
 `packages/core/src/gpu.ts`, `packages/flux-types/gui/gpu.d.ts`.
 
 ## Where the stack stands (2026-07-30)
@@ -853,7 +853,7 @@ Measured 2026-07-30:
 | `alloy/src/raster.rs` | 1425 | 4 |
 | `alloy/src/gl.rs` | 1143 | (window/MSAA path, not reviewed here) |
 | `alloy/src/context.rs` | 901 | 3 |
-| `flux/src/plugins/gui/texture.rs` | 730 | 5 |
+| `flux/src/alloy_plugins/texture.rs` | 730 | 5 |
 | `packages/core/src/gpu.ts` | 393 | 1 |
 | `packages/flux-types/gui/gpu.d.ts` | 351 | 1 |
 | `alloy/src/texture.rs` | 260 | 4 (small) |
@@ -887,7 +887,7 @@ it. Moving `SamplerState`/`SamplerCache` out of `texture.rs` into
 `gpu/sampler.rs` is optional; it fits, but `texture.rs` is not big enough to
 force it.
 
-**Rename `flux/src/plugins/gui/texture.rs` -> `gpu.rs`** (yes, and cheap). It
+**Rename `flux/src/alloy_plugins/texture.rs` -> `gpu.rs`** (yes, and cheap). It
 registers the `flux:gpu` module and covers textures, the raw shading layer,
 pipelines, buffers, capture and readback - five id spaces under a filename
 that names one of them. The module and its file should agree. Splitting

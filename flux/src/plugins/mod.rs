@@ -1,17 +1,15 @@
-// Plugin layers (see flux/CLAUDE.md): `standards` = web-standard JS APIs
-// (console, fetch, Headers/Request/Response, timers, WebSocket client);
-// `modules` = the `flux:*` capability modules (sqlite, http, p2p, ...) binding
-// forge; `gui` = the alloy-backed render/capture bindings. js_error + marshal
-// are the shared marshalling toolkit used across all three.
+// Shared plugin infrastructure: the marshalling toolkit (js_error, marshal,
+// value, seekable) every plugin layer uses, and `init_context`, which builds the
+// JS context and registers the layers. The layers themselves are crate-level
+// siblings named for what they marshal (see flux/CLAUDE.md):
+// `standards_plugins` = web-standard JS APIs (console, fetch, Headers/Request/
+// Response, timers, WebSocket client), whatever backs them; `forge_plugins` =
+// the `flux:*` capability modules binding forge; `alloy_plugins` = the
+// alloy-backed render/capture bindings (feature `gui`).
 pub mod js_error;
 pub mod marshal;
 pub mod seekable;
 pub mod value;
-
-#[cfg(feature = "gui")]
-pub mod gui;
-pub mod modules;
-pub mod standards;
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -102,46 +100,46 @@ pub(crate) async fn init_context(
   let mut loader = ModuleLoader::default();
 
   resolver.add_module("flux:sqlite");
-  loader.add_module("flux:sqlite", modules::sqlite::SqliteModule);
+  loader.add_module("flux:sqlite", crate::forge_plugins::sqlite::SqliteModule);
 
   resolver.add_module("flux:fs");
-  loader.add_module("flux:fs", modules::fs::FsModule);
+  loader.add_module("flux:fs", crate::forge_plugins::fs::FsModule);
 
   resolver.add_module("flux:http");
-  loader.add_module("flux:http", modules::serve::HttpModule);
+  loader.add_module("flux:http", crate::forge_plugins::serve::HttpModule);
 
   resolver.add_module("flux:p2p");
-  loader.add_module("flux:p2p", modules::p2p::P2pModule);
+  loader.add_module("flux:p2p", crate::forge_plugins::p2p::P2pModule);
 
   resolver.add_module("flux:net");
-  loader.add_module("flux:net", modules::net::NetModule);
+  loader.add_module("flux:net", crate::forge_plugins::net::NetModule);
 
   resolver.add_module("flux:mdns");
-  loader.add_module("flux:mdns", modules::mdns::MdnsModule);
+  loader.add_module("flux:mdns", crate::forge_plugins::mdns::MdnsModule);
 
   resolver.add_module("flux:process");
-  loader.add_module("flux:process", modules::process::ProcessModule);
+  loader.add_module("flux:process", crate::forge_plugins::process::ProcessModule);
 
   resolver.add_module("flux:path");
-  loader.add_module("flux:path", modules::path::PathModule);
+  loader.add_module("flux:path", crate::forge_plugins::path::PathModule);
 
   resolver.add_module("flux:subprocess");
-  loader.add_module("flux:subprocess", modules::subprocess::SubprocessModule);
+  loader.add_module("flux:subprocess", crate::forge_plugins::subprocess::SubprocessModule);
 
   resolver.add_module("flux:svg");
-  loader.add_module("flux:svg", modules::svg::SvgModule);
+  loader.add_module("flux:svg", crate::forge_plugins::svg::SvgModule);
 
   resolver.add_module("flux:image");
-  loader.add_module("flux:image", modules::image::ImageModule);
+  loader.add_module("flux:image", crate::forge_plugins::image::ImageModule);
 
   resolver.add_module("flux:wasm");
-  loader.add_module("flux:wasm", modules::wasm::WasmModuleDef);
+  loader.add_module("flux:wasm", crate::forge_plugins::wasm::WasmModuleDef);
 
   resolver.add_module("flux:ffi");
-  loader.add_module("flux:ffi", modules::ffi::FfiModuleDef);
+  loader.add_module("flux:ffi", crate::forge_plugins::ffi::FfiModuleDef);
 
   resolver.add_module("flux:isolate");
-  loader.add_module("flux:isolate", modules::isolate::IsolateModule);
+  loader.add_module("flux:isolate", crate::forge_plugins::isolate::IsolateModule);
 
   for f in module_overrides {
     f(&mut resolver, &mut loader);
@@ -167,18 +165,18 @@ pub(crate) async fn init_context(
       }
       let flux_obj = Object::new(ctx.clone()).unwrap();
 
-      standards::http::init_http(&ctx);
-      standards::time::init(&ctx);
-      standards::fetch::init_fetch(&ctx);
-      standards::console::init_console(&ctx);
-      modules::events::init(&ctx);
+      crate::standards_plugins::http::init_http(&ctx);
+      crate::standards_plugins::time::init(&ctx);
+      crate::standards_plugins::fetch::init_fetch(&ctx);
+      crate::standards_plugins::console::init_console(&ctx);
+      crate::forge_plugins::events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
-      standards::headers::init_headers(&ctx);
-      standards::request::init_request(&ctx);
-      standards::response::init_response(&ctx);
-      standards::text::init_text(&ctx);
-      standards::websocket::init_websocket(&ctx);
+      crate::standards_plugins::headers::init_headers(&ctx);
+      crate::standards_plugins::request::init_request(&ctx);
+      crate::standards_plugins::response::init_response(&ctx);
+      crate::standards_plugins::text::init_text(&ctx);
+      crate::standards_plugins::websocket::init_websocket(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 

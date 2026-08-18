@@ -15,7 +15,7 @@ use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, Step};
 
-// Re-exported so existing `crate::plugins::standards::body::{ByteStream, to_byte_stream}`
+// Re-exported so existing `crate::standards_plugins::body::{ByteStream, to_byte_stream}`
 // importers (response, request, serve, subprocess) stay unchanged; the
 // engine-free primitive itself now lives in `forge::stream`.
 pub(crate) use forge::stream::{to_byte_stream, ByteStream};

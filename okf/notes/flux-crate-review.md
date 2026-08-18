@@ -11,7 +11,7 @@ created: 2026-07-15
 The top two improvement points landed:
 
 1. **Fail-soft gui property decode (point 1): done.** All value-decode panic
-   sites in `plugins/gui/properties/` (and `to_prop_value`'s UTF-8 expect)
+   sites in `alloy_plugins/properties/` (and `to_prop_value`'s UTF-8 expect)
    return `Err` through apply_jsx's existing channel; a bad JSX value throws
    a catchable JS Error naming property, value, and accepted set. The gui
    layer's first unit tests exist (`flux/src/tests/properties.rs`, 10 tests
@@ -259,7 +259,7 @@ which exercises the full marshalling path. Coverage by area:
 ## Improvement points, ranked
 
 1. **Fail-soft gui property decode**: convert the ~35 value-decode panics in
-   `plugins/gui/properties/` (and the UTF-8 expect in `to_prop_value`) to the
+   `alloy_plugins/properties/` (and the UTF-8 expect in `to_prop_value`) to the
    `Err(String)` path `apply_jsx` already has for unknown names, and add unit
    tests for the decoders (pure functions, no GPU). One bad JSX value must not
    abort the app.

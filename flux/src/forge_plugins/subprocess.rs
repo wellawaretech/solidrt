@@ -7,7 +7,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_pending, OptArg};
-use crate::plugins::standards::body::{byte_stream_iterable, to_byte_stream};
+use crate::standards_plugins::body::{byte_stream_iterable, to_byte_stream};
 use crate::plugins::value::Neutral;
 use forge::subprocess::{self, CommandSpec, Spawned};
 

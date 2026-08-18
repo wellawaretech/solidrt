@@ -9,7 +9,7 @@ use taffy::style::Overflow;
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 use super::{as_pct_fraction, describe, f32_of, str_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 
 pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {

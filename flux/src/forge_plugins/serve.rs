@@ -15,14 +15,14 @@ use std::sync::Arc;
 use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{mark_observed, OptArg};
-use crate::plugins::modules::p2p::P2pEndpoint;
-use crate::plugins::modules::websocket::{
+use crate::forge_plugins::p2p::P2pEndpoint;
+use crate::forge_plugins::websocket::{
   message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
 };
-use crate::plugins::standards::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
-use crate::plugins::standards::headers::headers_from_init;
-use crate::plugins::standards::request::{request_from_parts, Request};
-use crate::plugins::standards::response::Response;
+use crate::standards_plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
+use crate::standards_plugins::headers::headers_from_init;
+use crate::standards_plugins::request::{request_from_parts, Request};
+use crate::standards_plugins::response::Response;
 use forge::http::{
   accept_loop, accept_loop_p2p, bind_listener, build_response, channel_body, full_body, serve_connection,
   text_response, Remote, ResBody, Route, RouteTable, ServerShared,

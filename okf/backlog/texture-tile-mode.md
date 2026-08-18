@@ -41,7 +41,7 @@ pass.
 ## Proposed shape
 
 A `tileMode` prop on the texture element (alloy side plus the binding in
-[flux/src/plugins/gui/properties/texture.rs](../../flux/src/plugins/gui/properties/texture.rs))
+[flux/src/alloy_plugins/properties/texture.rs](../../flux/src/alloy_plugins/properties/texture.rs))
 that, when set, builds a Paint with
 `ColorSource::new_image(entry.impeller, TileMode::Repeat, TileMode::Repeat, ...)`
 and fills the destination rect through that paint instead of calling

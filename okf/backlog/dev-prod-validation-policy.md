@@ -29,12 +29,12 @@ First known site: the fetch `cache` option (unknown string values), see
 
 Update 2026-08-06: the gui property decoders now follow the dev half of the
 convention end to end. All ~70 value-decode panic sites in
-flux/src/plugins/gui/properties/ became `Err` through apply_jsx's existing
+flux/src/alloy_plugins/properties/ became `Err` through apply_jsx's existing
 channel (a bad JSX value throws a catchable JS Error instead of aborting the
 process), and `parseColor` in core throws on invalid color strings instead
 of silently packing opaque black. Relevant for the future sweep: every
 property-decode failure now exits through ONE throw site
-(flux/src/plugins/gui/tree.rs setProperty, `Exception::throw_message`), and
+(flux/src/alloy_plugins/tree.rs setProperty, `Exception::throw_message`), and
 core's renderer (setTreeProperty) already splits name-level rejections
 (warn-and-continue, matched on the "Unknown property"/"Detached-only"
 prefixes) from value errors (rethrow) - so when the runtime signal lands,

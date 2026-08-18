@@ -8,7 +8,7 @@ use std::sync::Arc;
 use taffy::prelude::*;
 
 use super::AlloyContext;
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::text::prepare_units;
 use alloy::rendertree::{

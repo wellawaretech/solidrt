@@ -14,7 +14,7 @@ to its default. Any author who animates a transform or radius and then clears
 it hits this, not only our own components.
 
 Cause: the shared decoders in
-[flux/src/plugins/gui/properties/mod.rs](../../flux/src/plugins/gui/properties/mod.rs) -
+[flux/src/alloy_plugins/properties/mod.rs](../../flux/src/alloy_plugins/properties/mod.rs) -
 `f32_of` (:173, used by `scale`, `x`, `y`, `rotate`, `strokeWidth`, and the
 geometry props), `decode_color` (:242) and `decode_radius` (:256) - accept a
 number and reject everything else, null included.

@@ -1,5 +1,6 @@
 pub mod composite;
 pub mod counters;
+pub mod cull;
 pub mod frame;
 pub mod hit;
 pub(crate) mod kinds;
@@ -39,6 +40,11 @@ pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
   pub size: Size,
+  /// What can still be seen, in the frame the walk is currently in; None
+  /// culls nothing (see cull.rs).
+  pub cull: Option<Rect>,
+  /// Nodes whose subtree the walk entered this frame (culled ones excluded).
+  pub nodes_painted: u32,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
@@ -53,6 +59,8 @@ impl<'a> BuildContext<'a> {
       platform,
       alloy,
       size: Size::default(),
+      cull: None,
+      nodes_painted: 0,
       boundaries_reused: 0,
       boundaries_recorded: 0,
       snapshots_reused: 0,
@@ -310,6 +318,8 @@ pub struct Element {
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.
   pub paint_cache: RefCell<Option<PaintCache>>,
+  // The subtree's paint envelope (see cull.rs), cleared alongside paint_cache.
+  pub envelope: cull::EnvelopeCache,
 }
 
 impl Element {
@@ -324,6 +334,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      envelope: cull::EnvelopeCache::default(),
     }
   }
 
@@ -344,6 +355,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      envelope: cull::EnvelopeCache::default(),
     }
   }
 

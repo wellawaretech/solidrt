@@ -1,7 +1,7 @@
 use alloy::impellers::{BlendMode, DrawStyle, Matrix, Point, StrokeCap, StrokeJoin, TileMode};
 
 use super::{decode_color, f32_of, str_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Gradient, GradientStop, GradientUnits, PaintState};
 

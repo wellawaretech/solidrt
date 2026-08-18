@@ -2,12 +2,16 @@ mod engine;
 mod logger;
 pub(crate) mod pending;
 mod plugins;
+mod standards_plugins;
+mod forge_plugins;
+#[cfg(feature = "gui")]
+pub mod alloy_plugins;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(feature = "gui")]
-pub use plugins::gui;
+pub use alloy_plugins as gui;
 
 pub use engine::{
   on_shutdown, EngineConfig, ExecHandle, FluxEngine, FluxEngineBuilder, IsolateResolver, ModuleCode, ShutdownHooks,
@@ -17,13 +21,13 @@ pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::js_error::JsResult;
-pub use plugins::modules::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
-pub use plugins::modules::process::ProcessArgs;
+pub use forge_plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
+pub use forge_plugins::process::ProcessArgs;
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
-pub use plugins::standards::body::{attach_body, JsBytes, JsonValue};
-pub use plugins::standards::fetch::{request_body_from_value, JsResponseData};
-pub use plugins::standards::headers::header_pairs_from_init;
-pub use plugins::standards::time::{advance_virtual_time, install_virtual_time, Clock};
+pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
+pub use standards_plugins::fetch::{request_body_from_value, JsResponseData};
+pub use standards_plugins::headers::header_pairs_from_init;
+pub use standards_plugins::time::{advance_virtual_time, install_virtual_time, Clock};
 pub use rquickjs;
 
 /// Feature names this build provides, as surfaced to JS via `Flux.capabilities`.
@@ -33,7 +37,7 @@ pub fn capabilities() -> Vec<&'static str> {
   #[allow(unused_mut)]
   let mut caps = plugins::BASE_CAPABILITIES.to_vec();
   #[cfg(feature = "gui")]
-  caps.extend_from_slice(plugins::gui::GUI_CAPABILITIES);
+  caps.extend_from_slice(alloy_plugins::GUI_CAPABILITIES);
   caps
 }
 

@@ -5,8 +5,8 @@
 
 use std::sync::mpsc::channel;
 
-use crate::plugins::gui::properties::apply_jsx;
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::properties::apply_jsx;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{Damage, Element};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
@@ -181,7 +181,7 @@ fn overflow_reads_back_including_with_viewbox() {
   // props read-back omitted it, making "my bug" and "a clip bug"
   // indistinguishable. Lock the round trip, on the exact prop combination
   // the report used.
-  use crate::plugins::gui::properties::{read_jsx, ReadValue};
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
   let mut el = Element::from_kind("view");
   apply_el(&mut el, "overflow", text("hidden")).expect("overflow applies");
   apply_el(&mut el, "viewBox", PropValue::List(vec![num(100.0), num(40.0)])).expect("viewBox applies");
@@ -194,7 +194,7 @@ fn overflow_reads_back_including_with_viewbox() {
 
 #[test]
 fn diverging_overflow_axes_read_back_per_axis() {
-  use crate::plugins::gui::properties::{read_jsx, ReadValue};
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
   let mut el = Element::from_kind("view");
   apply_el(&mut el, "overflowY", text("scroll")).expect("overflowY applies");
   let props = read_jsx(&el);

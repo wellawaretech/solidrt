@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::seekable::SeekableSource;
-use crate::plugins::standards::body::{attach_body, JsBytes};
+use crate::standards_plugins::body::{attach_body, JsBytes};
 use crate::plugins::value::Neutral;
 use forge::fs;
 

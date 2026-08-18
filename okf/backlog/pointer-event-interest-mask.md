@@ -11,7 +11,7 @@ created: 2026-08-01
 The JS handler registry (`handlers` in core's core.ts, fed by `applyProp`'s
 `/^on[A-Z]/` intercept in renderer.ts) is the only place that knows which
 nodes listen to which events. Rust owns the tree but has no interest
-information, so `input.rs` (flux/src/plugins/gui) marshals the FULL
+information, so `input.rs` (flux/src/alloy_plugins) marshals the FULL
 root-to-leaf hit path for every pointer event: five parallel JS arrays
 (targets, localX/Y, parentX/Y) plus a ~13-field object, ~5d+13 rquickjs
 value writes at depth d. The JS side then rest-spreads the object and walks

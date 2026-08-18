@@ -6,10 +6,10 @@ use std::rc::Rc;
 
 use crate::logger::CtxLogger;
 use crate::plugins::marshal::{with_pending, OptArg};
-use crate::plugins::standards::body::{is_async_iterable, pump_async_iterable};
-use crate::plugins::standards::headers::header_pairs_from_init;
-use crate::plugins::standards::http::HttpClient;
-use crate::plugins::standards::response::response_from_parts;
+use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
+use crate::standards_plugins::headers::header_pairs_from_init;
+use crate::standards_plugins::http::HttpClient;
+use crate::standards_plugins::response::response_from_parts;
 use forge::cache::Cache;
 use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, ResponseData};
 

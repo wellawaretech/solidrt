@@ -33,7 +33,8 @@ For a connected Android device, `srt client --android` installs and launches the
 
 ## Documentation
 
-See [docs](docs/index.md) for the full documentation.
+See [docs](docs/) for the full documentation: it is the website content, one
+markdown file per page.
 
 ## Repository structure
 

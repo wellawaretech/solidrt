@@ -1,5 +1,5 @@
 use super::{as_pct_fraction, decode_params, decode_radius, decode_texture_bindings, describe, f32_of};
-use crate::plugins::gui::value::PropValue;
+use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::OriginCoord;
 use alloy::rendertree::View;

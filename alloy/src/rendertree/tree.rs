@@ -198,6 +198,13 @@ impl RenderTree {
       Damage::None | Damage::Present => return,
       _ => self.bump_revision(),
     }
+    // The node's paint envelope (cull.rs) is stated past its own matrix and
+    // scroll, so even the damages below that spare the node's own paint cache
+    // (Compose, Scroll on a Recording boundary) invalidate it; the ancestors'
+    // envelopes go with the invalidate_paint walks.
+    if let Some(element) = self.try_node(node_id) {
+      element.envelope.clear();
+    }
     match damage {
       Damage::None | Damage::Present => {}
       Damage::Compose => {
@@ -261,6 +268,7 @@ impl RenderTree {
           cache.take();
         }
       }
+      element.envelope.clear();
       current = element.parent;
     }
   }

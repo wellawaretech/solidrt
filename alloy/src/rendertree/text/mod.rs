@@ -248,6 +248,25 @@ impl Text {
     Size::new(width, height)
   }
 
+  /// The box the lines and decorations paint into when built in `frame` (the
+  /// frame build() reads its width from), in the text's own frame. None
+  /// under the paragraph engine, whose extent is not read back.
+  pub(crate) fn painted_extent(&self, platform: &PlatformContext, frame: Size) -> Option<Rect> {
+    if self.paragraph_engine {
+      return None;
+    }
+    let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
+    let width = self.w.unwrap_or(frame.width);
+    let mut owned = self.owned.borrow_mut();
+    self.prepare_owned(platform, &mut owned);
+    let index = self.owned_layout(platform, &mut owned, width);
+    let layout = &owned.layouts[index].layout;
+    // Ink overhangs its line box (italics, descenders, an underline pushed
+    // below the last line); a line height of slack on every side covers it.
+    let slack = layout.lines.iter().map(|l| l.height).fold(0.0, f32::max);
+    Some(Rect::new(origin, Size::new(width.max(layout.width), layout.height)).inflate(slack, slack))
+  }
+
   // This Text's own fields as the run style every span layers on.
   pub fn run_style(&self) -> RunStyle {
     RunStyle {

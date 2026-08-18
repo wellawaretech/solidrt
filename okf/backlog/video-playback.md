@@ -83,7 +83,7 @@ No new crate edges: alloy does not depend on forge and still will not.
   path, with color metadata (BT.601/709 matrix, limited/full range) as
   uniforms. Camera could later use the same path and drop its CPU
   conversion. Rendertree untouched.
-- flux `plugins/gui/video.rs` - thin marshal + a per-tick hook (camera
+- flux `alloy_plugins/video.rs` - thin marshal + a per-tick hook (camera
   tick precedent): read the audio clock, call the forge player's
   advance(), hand the due frame's planes to alloy's upload. Sync decisions
   stay in forge, upload mechanics in alloy.
@@ -326,7 +326,7 @@ that outlive video.
    alloy/examples/yuv_texture.rs), forge/src/video/ (demux/h264/aac/player,
    tests in forge/src/tests/video.rs with a B-frame-free fixture clip),
    alloy PCM sink (plain SDL3 stream in audio.rs, sink position = master
-   clock), flux plugins/gui/video.rs (flux:video, tick in lattice
+   clock), flux alloy_plugins/video.rs (flux:video, tick in lattice
    runtime.rs), packages/core/src/video.ts (createVideo), flux-types
    gui/video.d.ts, examples/video/.
 2. Android producer: implement the AMediaCodec buffer-mode decoder (tap

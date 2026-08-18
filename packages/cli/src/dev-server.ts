@@ -29,7 +29,7 @@ export let DEV_PORT = resolveDevPort()
 // The dev server itself is a flux script (packages/cli/server/), spawned by
 // srt: bundling, file watching, and the repl stay here and drive the server
 // process over its loopback-only /__internal__/ routes. See
-// docs/flux-dev-server-plan.md.
+// docs/_old/flux-dev-server-plan.md.
 
 const INTERNAL_BASE = `http://${DEV_HOST}:${DEV_PORT}/__internal__`
 
@@ -291,7 +291,7 @@ export async function startServer() {
   process.on("exit", removeLiveRecord)
 
   // mDNS advertise (dropped, code kept for future use - see
-  // docs/flux-dev-server-plan.md): the p2p ticket is the cross-device connect
+  // docs/_old/flux-dev-server-plan.md): the p2p ticket is the cross-device connect
   // story now. If advertise returns, it belongs next to the server (a flux
   // capability), not here.
   //

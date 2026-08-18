@@ -1000,6 +1000,7 @@ fn stats_reply(
       "dirtiedNodes": s.dirtied,
       "cacheGets": s.cache_gets,
       "cacheHits": s.cache_hits,
+      "nodesPainted": s.nodes_painted,
   });
   let map = data.as_object_mut().expect("stats data is an object");
   if let Some((mounted, total)) = counts {

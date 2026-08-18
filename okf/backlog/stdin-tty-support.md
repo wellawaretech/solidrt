@@ -9,7 +9,7 @@ created: 2026-07-13
 
 Checked directly - there is nothing to reuse anywhere in flux or alloy today:
 
-- `flux:process` (`flux/src/plugins/modules/process.rs`) exposes
+- `flux:process` (`flux/src/forge_plugins/process.rs`) exposes
   argv/platform/arch/memoryUsage/OS signals. No stdin.
 - The `flux`/`fluxc` binaries read stdin, but only as one-shot blocking
   `read_to_string` (piping a whole script in), not interactive raw-mode

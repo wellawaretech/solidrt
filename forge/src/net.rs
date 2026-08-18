@@ -4,7 +4,7 @@
 //! sockets and local-interface enumeration, built on tokio (plus `socket2` for
 //! the bind-time socket options tokio doesn't expose, and `netdev` for interface
 //! listing). It names no scripting-engine types; the marshalling layer
-//! (`flux/src/plugins/modules/net.rs`) decodes JS args into these calls, wraps
+//! (`flux/src/forge_plugins/net.rs`) decodes JS args into these calls, wraps
 //! `Conn` / `Listener` / `Udp` in the host's stream / async-iterable types, and
 //! encodes results back to JS.
 //!

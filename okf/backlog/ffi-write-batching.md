@@ -11,7 +11,7 @@ created: 2026-08-05
 Ranked the top structural cost in the app-structure review
 (okf/notes/app-structure-performance.md, finding a): every `setProperty`
 marshals the property name as a fresh Rust String, then `apply_jsx`
-(flux/src/plugins/gui/properties/mod.rs) walks chained string matches.
+(flux/src/alloy_plugins/properties/mod.rs) walks chained string matches.
 Mounting a node with 10 props is 11 FFI calls; a 200-item list with 5 nodes
 each is thousands, each with string allocation and linear dispatch, landing
 exactly where QuickJS (no JIT) already hurts most. After mount, update

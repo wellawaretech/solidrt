@@ -221,12 +221,12 @@ impl FluxEngineBuilder {
     let mut userdata = self.userdata;
     if let Some(dir) = config.cache_dir.clone() {
       userdata.push(Box::new(move |ctx| {
-        ctx.store_userdata(crate::plugins::standards::fetch::FetchCacheDir(dir)).expect("store cache dir");
+        ctx.store_userdata(crate::standards_plugins::fetch::FetchCacheDir(dir)).expect("store cache dir");
       }));
     }
     if let Some(agent) = config.user_agent.clone() {
       userdata.push(Box::new(move |ctx| {
-        ctx.store_userdata(crate::plugins::standards::http::UserAgent(agent)).expect("store user agent");
+        ctx.store_userdata(crate::standards_plugins::http::UserAgent(agent)).expect("store user agent");
       }));
     }
     let stored = config.clone();

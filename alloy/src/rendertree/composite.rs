@@ -5,6 +5,7 @@ use crate::impellers::{
 use taffy::style::Overflow;
 use taffy::{AvailableSpace, NodeId};
 
+use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
   ShadedCache, SnapshotCache,
@@ -37,6 +38,8 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 /// rasterized into a new allocation.
 #[derive(Clone, Copy, Default)]
 pub struct PaintStats {
+  /// Nodes the walk entered (viewport-culled subtrees excluded, see cull.rs).
+  pub nodes_painted: u32,
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
   pub snapshots_reused: u32,
@@ -58,6 +61,8 @@ pub fn paint_phase(
 
   let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = Size::new(width, height);
+  // Nothing outside the window is visible: the root cull rect is the window.
+  ctx.cull = Some(Rect::new(Point::zero(), ctx.size));
   build_recursive(tree, root_id, &mut ctx, builder);
   // Any capture request whose node the walk never visited targets a node that
   // is not in the live tree; fail it rather than leave its promise pending.
@@ -74,6 +79,7 @@ pub fn paint_phase(
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
   }
   PaintStats {
+    nodes_painted: ctx.nodes_painted,
     boundaries_reused: ctx.boundaries_reused,
     boundaries_recorded: ctx.boundaries_recorded,
     snapshots_reused: ctx.snapshots_reused,
@@ -315,8 +321,12 @@ fn build_recursive<'a>(
         draw_cached_recording(builder, element, own.as_ref(), &dl);
         return;
       }
+      // The recording outlives this frame's viewport (an ancestor scroll
+      // does not invalidate it), so it must hold the whole subtree.
       let mut sub = DisplayListBuilder::new(None);
+      let cull = ctx.cull.take();
       record_node(scene, node_id, ctx, &mut sub, hoist);
+      ctx.cull = cull;
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
         draw_cached_recording(builder, element, own.as_ref(), &dl);
@@ -337,6 +347,20 @@ fn build_recursive<'a>(
 // All storage is exact-size. A declared boundary shader adds one pass over
 // the rasterization and composites its output instead (see View::set_shader).
 fn snapshot_node<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  builder: &mut DisplayListBuilder,
+  aa: bool,
+) {
+  // The texture outlives this frame's viewport (an ancestor scroll does not
+  // invalidate it), so the raster must hold the whole subtree.
+  let cull = ctx.cull.take();
+  snapshot_node_uncalled(scene, node_id, ctx, builder, aa);
+  ctx.cull = cull;
+}
+
+fn snapshot_node_uncalled<'a>(
   scene: &'a RenderTree,
   node_id: u64,
   ctx: &mut BuildContext<'a>,
@@ -663,6 +687,8 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   let saved_size = ctx.size;
+  // A capture holds the whole subtree, not the on-screen part of it.
+  let saved_cull = ctx.cull.take();
   let saved_stats = (
     ctx.boundaries_reused,
     ctx.boundaries_recorded,
@@ -677,6 +703,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   }
   record_node(scene, node_id, ctx, &mut sub, hoist);
   ctx.size = saved_size;
+  ctx.cull = saved_cull;
   ctx.boundaries_reused = saved_stats.0;
   ctx.boundaries_recorded = saved_stats.1;
   ctx.snapshots_reused = saved_stats.2;
@@ -712,6 +739,7 @@ fn record_node<'a>(
   hoist: Hoist,
 ) {
   let element = scene.node(node_id);
+  ctx.nodes_painted += 1;
 
   let (clip_x, clip_y) = overflow_clips(element);
   let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;
@@ -759,6 +787,28 @@ fn record_node<'a>(
     builder.transform(fit);
   }
 
+  // The cull rect follows the same four ops into the child frame. Under a
+  // hoist the caller applied the matrix/clip/scroll itself and reset the cull
+  // (boundaries and captures hold whole subtrees), so only Hoist::None sees a
+  // cull here.
+  let saved_cull = ctx.cull;
+  if ctx.cull.is_some() {
+    if let Some(own) = own_matrix(element, ctx.size) {
+      ctx.cull = ctx.cull.through(&own);
+    }
+    if let Some(l) = &element.layout {
+      ctx.cull = ctx.cull.clipped(l.size(), clip_x, clip_y);
+    }
+    if let ElementKind::View(v) = &element.kind {
+      if let Some(s) = v.scroll {
+        ctx.cull = ctx.cull.scrolled(s);
+      }
+    }
+    if let Some(fit) = &view_fit {
+      ctx.cull = ctx.cull.through(fit);
+    }
+  }
+
   // A non-boundary View's group opacity is baked here as a save_layer (the
   // alpha composites the children as one group at the restore); boundary
   // callers hoist it to composite time instead. The bounds are a formality:
@@ -781,6 +831,10 @@ fn record_node<'a>(
     _ => None,
   };
 
+  // The frame this node's detached children inherit (the else branch below
+  // and cull::child_frame agree on it); read before the loop mutates ctx.size.
+  let child_frame = cull::child_frame(element, ctx.size);
+
   for &child_id in &element.children {
     let child = scene.node(child_id);
     if let Some(atoms) = text_atoms {
@@ -790,6 +844,22 @@ fn record_node<'a>(
     }
 
     let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+
+    // Viewport culling: a child whose envelope cannot reach the cull rect is
+    // skipped whole. The envelope resolves against the frame the child would
+    // inherit (child_frame in cull.rs mirrors the else branch below). Not
+    // while a capture is pending: captures are serviced by the walk reaching
+    // their node, on screen or not.
+    let child_cull = ctx.cull.into_child(pos);
+    if let Some(cull) = &child_cull {
+      if !ctx.alloy.has_pending_captures()
+        && !cull::envelope(scene, child_id, ctx.platform, child_frame).may_intersect(cull)
+      {
+        continue;
+      }
+    }
+    let parent_cull = ctx.cull;
+    ctx.cull = child_cull;
 
     builder.translate(pos.x, pos.y);
 
@@ -819,8 +889,10 @@ fn record_node<'a>(
       build_recursive(scene, child_id, ctx, builder);
     }
 
+    ctx.cull = parent_cull;
     builder.translate(-pos.x, -pos.y);
   }
+  ctx.cull = saved_cull;
 
   if opacity_layer {
     builder.restore();
