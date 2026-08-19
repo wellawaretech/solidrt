@@ -149,15 +149,6 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
-- **[flux binary exits 0 on uncaught errors](backlog/flux-bin-exit-code.md)** [2026-08-17]
-  `flux script.js` exits 0 whether the entry module ran clean or threw, so
-  nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from
-  success without parsing output. Surfaced 2026-08-17 by moving the
-  @solidrt/3d check rigs from bun onto flux.
-- **[flux exits 0 on an uncaught top-level error](backlog/flux-script-exit-code.md)** [2026-08-18]
-  The flux binary always exits 0, so a script that throws still reports
-  success; any flux script used in a Makefile, a build step or CI cannot fail,
-  and callers have to grep output to detect an error.
 - **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
   Stage 3 of the focus/key-routing work - move focus across getFocusables()
   candidates from bubbled arrow keys, activate with select/Enter, and fold the
@@ -662,6 +653,11 @@ Finished, kept for the reasoning.
   time, no finished signal, encoded input only - so a 2D game port cannot
   express positional audio; per-voice setGain/setPan, an ended signal and a
   raw-PCM load close it.
+- **[flux binary exits 0 on uncaught errors](done/flux-bin-exit-code.md)** [2026-08-17]
+  `flux script.js` exits 0 whether the entry module ran clean or threw, so
+  nothing that drives it (a shell `&&`, a check rig, CI) can tell failure from
+  success without parsing output. Surfaced 2026-08-17 by moving the
+  @solidrt/3d check rigs from bun onto flux.
 - **[Move the image codec to a forge core behind a flux:image module](done/flux-image-module.md)** [2026-08-05]
   decodeImage/encodeImage live inline in a lattice-registered global, so
   headless flux has no image codec; the logic belongs in a forge core

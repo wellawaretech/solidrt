@@ -26,8 +26,9 @@ it. Two tiers, cheapest first:
    existing js job.
 2. Full `make -C website build`, which needs the host flux binary - only
    worth it as part of a job that already builds the runtime, and only useful
-   as a gate once flux exits non-zero on error (flux-script-exit-code.md);
-   today the directive and coverage guards are advisory prints.
+   as a gate. Flux exits non-zero on an uncaught error since
+   [flux-bin-exit-code](../done/flux-bin-exit-code.md), so the directive and
+   coverage guards (which throw) now fail the build when run.
 
 Involves: one CI job/step, no product code. The components docs coverage gate
 (`scripts/build-components-docs.ts --check`) already runs in CI and is

@@ -221,9 +221,9 @@ Content rework, staged on top (2026-08-18):
    top-level throw (verified for sync throw, post-await throw, and an
    unhandled rejection - `eval_source` returns `()` and only logs through
    `report_error`/`report_rejection`), so the failing directive prints its
-   error and `make build` still succeeds. The guard is only advisory until
-   the `flux` binary can exit non-zero; parked as
-   okf/backlog/flux-script-exit-code.md.
+   error and `make build` still succeeds. Fixed 2026-08-19 by
+   okf/done/flux-bin-exit-code.md: the `flux` binary exits 1 on any uncaught
+   error, so the guard now fails the build.
 7. **The rest.** DONE 2026-08-18, and it revised the stage-6 assumption that
    every generated page should become authored markdown. The test that
    emerged: **authored markdown where a page must choose what it shows,
@@ -417,6 +417,6 @@ Concepts (theme, policy, types, typography, spacing) then Components; page
 URLs are the module stems. The package README and the AGENTS.md exports list
 are GENERATED from the same doc files by `scripts/build-components-docs.ts`,
 whose coverage check (module without doc, doc without module, staleness via
---check) runs in CI and exits non-zero - the hard gate the flux build cannot
-be (flux-script-exit-code). The previously recorded README gap (21 widgets
+--check) runs in CI and exits non-zero - the hard gate the flux build could not
+be at the time (since fixed, okf/done/flux-bin-exit-code.md). The previously recorded README gap (21 widgets
 documented, 29 exported) is closed structurally by that check.

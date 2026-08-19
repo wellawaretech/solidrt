@@ -6,8 +6,7 @@
 //
 //   bunx srt bundle -f --stdout packages/3d/checks/geometry-check.ts | target/release/flux -
 //
-// A failure prints FAIL lines and throws at the end; the flux binary exits 0
-// regardless, so read the output, not the exit code.
+// A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
 import { box, geometryBounds, mergeGeometries, plane, transformGeometry, withColors, FLOATS_PER_VERTEX } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"

@@ -42,3 +42,19 @@ callback (a timer, an event handler) after the entry finished should also
 fail the run. The hook fires for those too; the simplest reading is yes -
 any uncaught error means the script did not run clean - and it is what
 node/bun do.
+
+## Done 2026-08-19
+
+Exactly the bin-only fix above, in both `flux` and `fluxrt`: `on_uncaught`
+sets an `AtomicBool`, the binary `exit(1)`s after the engine returns when it
+is set. Decided yes on the open question: a late throw from a timer or event
+callback fails the run too, as in node/bun. Verified for a sync top-level
+throw, a throw after a top-level `await`, a bare `Promise.reject`, and a
+`setTimeout` throw (all exit 1) and a clean script (exit 0); `fluxrt` the
+same via an appended-bytecode binary.
+
+A second entry describing the same symptom from the website build
+(`website/src/build.ts` validates documentation pull directives and throws on
+a dangling one; the error printed and `make build` succeeded) was filed a day
+later and folded in here. That guard, and the @solidrt/3d check rigs, now
+fail the step.

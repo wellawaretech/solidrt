@@ -33,9 +33,9 @@ What exists today, none of it structural:
    reviews propose to mock away) is the wrong signal, and dogfooding the
    runtime is the standing rule. Cost: no `bun test` batteries -
    discovery, `describe/it/expect`, reporter, exit code - so a minimal
-   harness has to exist. Prerequisite already filed:
-   [flux-bin-exit-code](flux-bin-exit-code.md) (the flux binary exits 0 on
-   an uncaught error, so no runner can fail a step today).
+   harness has to exist. Prerequisite done:
+   [flux-bin-exit-code](../done/flux-bin-exit-code.md) (the flux binary exits 1
+   on any uncaught error, so a thrown assertion fails the step).
 2. **Shape of the harness.** Minimal first: a `srt test [path]` command that
    discovers test files, bundles each with `-f`, runs it on the flux binary,
    and fails on nonzero exit or a FAIL marker; plus a tiny assertion module

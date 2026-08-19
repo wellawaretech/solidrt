@@ -1,5 +1,8 @@
 // fluxrt - self-contained flux runtime; runs bytecode appended to this binary
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use flux::{FluxEngine, LogLevel, ProcessArgs};
 
 const MAGIC: &[u8; 8] = b"FLUXRT\x88\x44";
@@ -38,6 +41,16 @@ async fn main() {
   // forwarded to JS through flux:process (app arguments only).
   let argv: Vec<String> = std::env::args().skip(1).collect();
 
-  let engine = FluxEngine::builder().logger(log_fn).userdata(ProcessArgs(argv)).build();
+  // Any uncaught error fails the run with a nonzero exit (see bin/flux.rs).
+  let failed = Arc::new(AtomicBool::new(false));
+  let mark_failed = failed.clone();
+  let engine = FluxEngine::builder()
+    .logger(log_fn)
+    .userdata(ProcessArgs(argv))
+    .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
+    .build();
   engine.eval(bytecode).await;
+  if failed.load(Ordering::Relaxed) {
+    std::process::exit(1);
+  }
 }

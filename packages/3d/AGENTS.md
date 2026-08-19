@@ -48,8 +48,8 @@ blendMode and pointer events like any element. Design rationale:
 - The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`) have check rigs in
   `checks/`, run headless on flux from the repo root:
   `bunx srt bundle -f --stdout packages/3d/checks/<name>-check.ts | target/release/flux - [seed]`.
-  They print PASS or FAIL lines and throw on failure (the flux binary exits
-  0 either way - read the output). Extend the rig when you change the module.
+  They print PASS or FAIL lines and throw on failure, which exits nonzero.
+  Extend the rig when you change the module.
 
 ## Components
 

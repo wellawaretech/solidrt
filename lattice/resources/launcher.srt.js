@@ -32,6 +32,12 @@ class NoOwnerError extends Error {
   }
 }
 
+class ContextNotFoundError extends Error {
+  constructor() {
+    super("");
+  }
+}
+
 // node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
@@ -1999,6 +2005,16 @@ function staleValues(e, t = true) {
   }
 }
 // node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/context.js
+function getContext(e, t = getOwner()) {
+  if (!t) {
+    throw new NoOwnerError;
+  }
+  const n = hasContext(e, t) ? t.we[e.id] : e.defaultValue;
+  if (isUndefined(n)) {
+    throw new ContextNotFoundError;
+  }
+  return n;
+}
 function setContext(e, t, n = getOwner()) {
   if (!n) {
     throw new NoOwnerError;
@@ -2007,6 +2023,9 @@ function setContext(e, t, n = getOwner()) {
     ...n.we,
     [e.id]: isUndefined(t) ? e.defaultValue : t
   };
+}
+function hasContext(e, t) {
+  return !isUndefined(t?.we[e.id]);
 }
 function isUndefined(e) {
   return typeof e === "undefined";
@@ -4168,6 +4187,9 @@ function createContext2(defaultValue, options) {
   provider.defaultValue = defaultValue;
   return provider;
 }
+function useContext(context2) {
+  return getContext(context2);
+}
 function children(fn) {
   const c = createMemo(fn, {
     lazy: true
@@ -5426,9 +5448,6 @@ import * as tree3 from "flux:rendertree";
 function parseColor2(color) {
   return tree3.parseColor(color);
 }
-function mixColors2(a, b, t) {
-  return tree3.mixColors(a, b, t);
-}
 function brightness2(color) {
   return tree3.brightness(color);
 }
@@ -6016,34 +6035,6 @@ function View(props) {
   return _el$;
 }
 // packages/components/src/theme.ts
-var TEXT = {
-  fontFamily: "sans",
-  caption: {
-    size: 11,
-    lineHeight: 1.3,
-    weight: 400
-  },
-  label: {
-    size: 12,
-    lineHeight: 1.3,
-    weight: 600
-  },
-  body: {
-    size: 14,
-    lineHeight: 1.5,
-    weight: 400
-  },
-  title: {
-    size: 18,
-    lineHeight: 1.4,
-    weight: 700
-  },
-  heading: {
-    size: 22,
-    lineHeight: 1.3,
-    weight: 700
-  }
-};
 var SPACING = {
   sm: 4,
   md: 8,
@@ -6058,57 +6049,116 @@ var RADIUS = {
 var BORDER_WIDTH = {
   sm: 1
 };
-var darkTheme = {
-  text: TEXT,
+var ROLE_DEFAULTS = {
+  caption: {
+    step: -2,
+    lineHeight: 1.3,
+    weight: 400
+  },
+  label: {
+    step: -1,
+    lineHeight: 1.3,
+    weight: 600
+  },
+  body: {
+    step: 0,
+    lineHeight: 1.5,
+    weight: 400
+  },
+  title: {
+    step: 1,
+    lineHeight: 1.4,
+    weight: 700
+  },
+  heading: {
+    step: 2,
+    lineHeight: 1.3,
+    weight: 700
+  }
+};
+function defineTheme(def, scheme) {
+  let color = {};
+  for (let key in def.color) {
+    let k = key;
+    let value = def.color[k];
+    if (Array.isArray(value)) {
+      if (!scheme)
+        throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`);
+      color[k] = value[scheme === "light" ? 0 : 1];
+    } else
+      color[k] = value;
+  }
+  let base = def.text?.base ?? 14;
+  let ratio = def.text?.ratio ?? 1.26;
+  let role = (name) => {
+    let d = ROLE_DEFAULTS[name];
+    return {
+      size: Math.round(base * ratio ** d.step),
+      lineHeight: d.lineHeight,
+      weight: d.weight,
+      ...def.text?.roles?.[name]
+    };
+  };
+  return {
+    text: {
+      fontFamily: def.text?.fontFamily ?? "sans",
+      caption: role("caption"),
+      label: role("label"),
+      body: role("body"),
+      title: role("title"),
+      heading: role("heading")
+    },
+    color,
+    spacing: {
+      ...SPACING,
+      ...def.spacing
+    },
+    radius: {
+      ...RADIUS,
+      ...def.radius
+    },
+    borderWidth: {
+      ...BORDER_WIDTH,
+      ...def.borderWidth
+    },
+    icons: def.icons ?? {},
+    components: def.components ?? {}
+  };
+}
+var DEFAULT = {
   color: {
-    background: "#0b0f17",
-    surface: "#161b22",
-    surfaceAlt: "#21262d",
-    surfaceHover: "#262c34",
-    text: "#e6edf3",
-    textMuted: mixColors2("#e6edf3", "#0b0f17", 0.4),
-    border: "rgba(255,255,255,0.14)",
+    background: ["#ffffff", "#0b0f17"],
+    surface: ["#f6f8fa", "#161b22"],
+    surfaceAlt: ["#eaeef2", "#21262d"],
+    text: ["#1f2328", "#e6edf3"],
+    textMuted: ["#707376", "#848b92"],
+    border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
     primary: "#547ebf",
-    primaryHover: "#7ea9ea",
     onPrimary: "#ffffff",
     secondary: "#2b5696",
-    secondaryHover: "#3a68ab",
     onSecondary: "#ffffff",
-    danger: "#f85149",
-    dangerHover: "#ff7b72",
-    scrim: "rgba(0,0,0,0.6)"
+    danger: ["#cf222e", "#f85149"],
+    scrim: ["rgba(0,0,0,0.4)", "rgba(0,0,0,0.6)"],
+    overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
+    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"]
   },
-  spacing: SPACING,
-  radius: RADIUS,
-  borderWidth: BORDER_WIDTH
+  text: {
+    roles: {
+      caption: {
+        size: 11
+      },
+      label: {
+        size: 12
+      }
+    }
+  }
 };
-var lightTheme = {
-  text: TEXT,
-  color: {
-    background: "#ffffff",
-    surface: "#f6f8fa",
-    surfaceAlt: "#eaeef2",
-    surfaceHover: "#e0e5eb",
-    text: "#1f2328",
-    textMuted: mixColors2("#1f2328", "#ffffff", 0.4),
-    border: "rgba(0,0,0,0.15)",
-    primary: "#547ebf",
-    primaryHover: "#3f5494",
-    onPrimary: "#ffffff",
-    secondary: "#2b5696",
-    secondaryHover: "#1f4176",
-    onSecondary: "#ffffff",
-    danger: "#cf222e",
-    dangerHover: "#a40e26",
-    scrim: "rgba(0,0,0,0.4)"
-  },
-  spacing: SPACING,
-  radius: RADIUS,
-  borderWidth: BORDER_WIDTH
-};
-var [theme, setThemeStore] = createStore({
+var darkTheme = defineTheme(DEFAULT, "dark");
+var lightTheme = defineTheme(DEFAULT, "light");
+var [themeStore, setThemeStore] = createStore({
   ...darkTheme
 });
+var theme = themeStore;
 function setTheme(partial) {
   setThemeStore((s) => {
     for (let key in partial) {
@@ -6163,14 +6213,6 @@ var policy = {
     return overrides().layout ?? resolved().layout;
   }
 };
-var DENSITY_SCALE = {
-  comfortable: 1,
-  compact: 0.85,
-  dense: 0.7
-};
-function densityScale() {
-  return DENSITY_SCALE[policy.density];
-}
 
 // packages/components/src/typography.ts
 var SMALL_TEXT = 16;
@@ -6906,6 +6948,19 @@ function createFocusNav(options) {
   };
 }
 
+// packages/components/src/density.tsx
+var DensityContext = createContext2(() => {
+  return;
+});
+var DENSITY_SCALE = {
+  comfortable: 1,
+  compact: 0.85,
+  dense: 0.7
+};
+function densityScale() {
+  return DENSITY_SCALE[useContext(DensityContext)() ?? policy.density];
+}
+
 // packages/components/src/spacing.ts
 function space(token) {
   return Math.round(theme.spacing[token] * densityScale());
@@ -7272,7 +7327,10 @@ function TextInput(props) {
       return props.layout;
     },
     get style() {
-      return props.style;
+      return {
+        ...theme.components.textInput,
+        ...props.style
+      };
     }
   });
 }
@@ -7412,6 +7470,21 @@ function createPress(options) {
   let [hovered, setHovered] = createSignal(false);
   let node = null;
   let unregisterNav = null;
+  let [pending, setPending] = createSignal(false);
+  let inflight = false;
+  let activate = () => {
+    if (options.disabled || inflight)
+      return;
+    let result = options.onPress?.();
+    if (result && typeof result.then === "function") {
+      inflight = true;
+      setPending(true);
+      result.finally(() => {
+        inflight = false;
+        setPending(false);
+      });
+    }
+  };
   let focused = createMemo(() => {
     let id2 = focusedNode();
     return id2 != null && id2 === node?.id;
@@ -7427,16 +7500,16 @@ function createPress(options) {
     },
     get focused() {
       return focused();
+    },
+    get pending() {
+      return pending();
     }
   };
   let state = () => live;
   let ref2 = (n) => {
     node = n;
     unregisterNav?.();
-    unregisterNav = registerNavAction(n.id, () => {
-      if (!options.disabled)
-        options.onPress?.();
-    });
+    unregisterNav = registerNavAction(n.id, activate);
   };
   let within = (e) => {
     let b = node && getBoundingBoxViewport2(node);
@@ -7484,7 +7557,7 @@ function createPress(options) {
         let fire = inside;
         cancel();
         if (fire)
-          options.onPress?.();
+          activate();
       }
       options.onPointerUp?.(e);
     },
@@ -7499,7 +7572,7 @@ function createPress(options) {
     onKeyDown: (e) => {
       if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
         e.stopPropagation();
-        options.onPress?.();
+        activate();
       }
       options.onKeyDown?.(e);
     },
@@ -7514,6 +7587,7 @@ function createPress(options) {
     pressed,
     hovered,
     focused,
+    pending,
     state,
     ref: ref2,
     handlers: handlers2,
@@ -7636,6 +7710,79 @@ function Pressable(props) {
   })(), null);
   return _el$;
 }
+// packages/components/src/spinner.tsx
+var SIZE = 24;
+var THICKNESS = 3;
+function Spinner(props) {
+  let size = () => props.size ?? SIZE;
+  let thickness = () => props.thickness ?? THICKNESS;
+  let styled = () => ({
+    ...theme.components.spinner,
+    ...props.style
+  });
+  let color = () => styled().color ?? theme.color.primary;
+  let speed = () => props.speed ?? 1;
+  let [angle, setAngle] = createSignal(0);
+  let Animate = () => {
+    onFrame((tick) => setAngle(tick / 1000 * speed() * (policy.motion === "reduced" ? 0.5 : 1) * Math.PI * 2));
+    return null;
+  };
+  let path = () => {
+    let s = size();
+    let r = (s - thickness()) / 2;
+    let c = s / 2;
+    return `M ${c} ${c - r} A ${r} ${r} 0 1 1 ${c - r} ${c}`;
+  };
+  var _el$ = createElement("view"), _el$2 = createElement("d-path", {
+    drawStyle: "stroke",
+    strokeCap: "round"
+  });
+  insertNode2(_el$, _el$2);
+  spread(_el$, mergeProps({
+    get width() {
+      return size();
+    },
+    get height() {
+      return size();
+    }
+  }, () => props.layout, {
+    get rotate() {
+      return angle();
+    },
+    get x() {
+      return styled().x;
+    },
+    get y() {
+      return styled().y;
+    },
+    get opacity() {
+      return styled().opacity;
+    }
+  }), true);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return policy.motion !== "none";
+    },
+    get children() {
+      return createComponent2(Animate, {});
+    }
+  }), _el$2);
+  effect3(() => ({
+    e: path(),
+    t: color(),
+    a: thickness()
+  }), ({
+    e,
+    t,
+    a
+  }, _p$) => {
+    e !== _p$?.e && setProp(_el$2, "d", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "strokeWidth", a, _p$?.a);
+  });
+  return _el$;
+}
+
 // packages/components/src/button.tsx
 var SIZE_WIDTH = {
   sm: 88,
@@ -7649,49 +7796,51 @@ function Button(props) {
       case "secondary":
         return {
           fill: c.secondary,
-          hover: c.secondaryHover,
           label: c.onSecondary
         };
       case "ghost":
         return {
           fill: "transparent",
-          hover: c.surfaceHover,
           label: c.text
         };
       case "danger":
         return {
           fill: c.danger,
-          hover: c.dangerHover,
           label: c.onPrimary
         };
       default:
         return {
           fill: c.primary,
-          hover: c.primaryHover,
           label: c.onPrimary
         };
     }
   };
+  let styled = () => ({
+    ...theme.components.button,
+    ...props.style
+  });
   let idleFill = () => props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill;
-  let bg = (s) => props.style?.backgroundColor ?? (props.disabled ? idleFill() : s.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
-  let radius = () => props.style?.borderRadius ?? theme.radius.md;
+  let bg = () => styled().backgroundColor ?? idleFill();
+  let overlay = (s) => s.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent";
+  let radius = () => styled().borderRadius ?? theme.radius.md;
   let label = () => props.disabled ? theme.color.textMuted : colors().label;
   let resolved2 = children(() => props.children);
   let isText = () => typeof resolved2() === "string" || typeof resolved2() === "number";
-  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill());
+  let labelOnDark = () => lightOnDark(label(), bg());
   let press = createPress(props);
   let style = () => ({
-    ...props.style,
+    ...styled(),
     ...press.focused() && policy.focusRing ? {
       borderWidth: 2,
       borderColor: theme.color.text
     } : {},
-    backgroundColor: bg(press.state()),
+    backgroundColor: bg(),
     borderRadius: radius(),
-    scale: (props.style?.scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
+    scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
   });
-  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect");
   insertNode2(_el$, _el$2);
+  insertNode2(_el$, _el$3);
   ref(() => (n) => {
     press.ref(n);
     props.ref?.(n);
@@ -7700,6 +7849,7 @@ function Button(props) {
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
   setProp(_el$, "justifyContent", "center");
+  setProp(_el$, "position", "relative");
   spread(_el$, mergeProps({
     get paddingTop() {
       return space("md");
@@ -7749,14 +7899,40 @@ function Button(props) {
       return resolved2();
     },
     get children() {
-      var _el$3 = createElement("text");
-      spread(_el$3, mergeProps({
+      var _el$4 = createElement("text");
+      spread(_el$4, mergeProps({
         get color() {
-          return label();
+          return memo2(() => !!press.pending())() ? "transparent" : label();
         }
       }, () => typeStyle("body", labelOnDark())), true);
-      insert(_el$3, resolved2);
-      return _el$3;
+      insert(_el$4, resolved2);
+      return _el$4;
+    }
+  }), null);
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return press.pending();
+    },
+    get children() {
+      var _el$5 = createElement("view", {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        alignItems: "center",
+        justifyContent: "center"
+      });
+      insert(_el$5, createComponent2(Spinner, {
+        size: 16,
+        thickness: 2,
+        get style() {
+          return {
+            color: label()
+          };
+        }
+      }));
+      return _el$5;
     }
   }), null);
   insert(_el$, createComponent2(Show, {
@@ -7764,7 +7940,7 @@ function Button(props) {
       return (style().borderWidth ?? 0) > 0;
     },
     get children() {
-      var _el$4 = createElement("d-rect", {
+      var _el$6 = createElement("d-rect", {
         drawStyle: "stroke"
       });
       effect3(() => ({
@@ -7776,32 +7952,75 @@ function Button(props) {
         t,
         a
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$4, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$4, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$6, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$6, "radius", a, _p$?.a);
       });
-      return _el$4;
+      return _el$6;
     }
   }), null);
   effect3(() => ({
     e: style().backgroundColor ?? "transparent",
-    t: style().borderRadius
+    t: style().borderRadius,
+    a: overlay(press.state()),
+    o: style().borderRadius
   }), ({
     e,
-    t
+    t,
+    a,
+    o
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$3, "radius", o, _p$?.o);
   });
+  return _el$;
+}
+// packages/components/src/icon.tsx
+var SIZE2 = 24;
+function Icon(props) {
+  let size = () => props.size ?? SIZE2;
+  let doc = createMemo(() => parseSvg(props.src, {
+    color: props.color ?? theme.color.text
+  }));
+  var _el$ = createElement("view");
+  setProp(_el$, "repaintBoundary", true);
+  setProp(_el$, "pointerEvents", "all");
+  spread(_el$, mergeProps({
+    get width() {
+      return size();
+    },
+    get height() {
+      return size();
+    },
+    get viewBox() {
+      return [doc().width, doc().height];
+    }
+  }, () => props.layout), true);
+  insert(_el$, createComponent2(For, {
+    get each() {
+      return doc().draws;
+    },
+    children: (draw) => (() => {
+      var _el$2 = createElement("d-path");
+      spread(_el$2, draw, false);
+      return _el$2;
+    })()
+  }));
   return _el$;
 }
 // packages/components/src/radio.tsx
 var RadioContext = createContext2();
 // packages/components/src/card.tsx
 function Card(props) {
-  let bg = () => props.style?.backgroundColor ?? theme.color.surface;
-  let radius = () => props.style?.borderRadius ?? theme.radius.lg;
-  let hasBorder = () => props.style?.borderWidth != null || props.style?.borderColor != null;
+  let styled = () => ({
+    ...theme.components.card,
+    ...props.style
+  });
+  let bg = () => styled().backgroundColor ?? theme.color.surface;
+  let radius = () => styled().borderRadius ?? theme.radius.lg;
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null;
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
   var _ref$ = props.ref;
@@ -7817,19 +8036,19 @@ function Card(props) {
     }
   }, () => props.layout, {
     get x() {
-      return props.style?.x;
+      return styled().x;
     },
     get y() {
-      return props.style?.y;
+      return styled().y;
     },
     get scale() {
-      return props.style?.scale;
+      return styled().scale;
     },
     get rotate() {
-      return props.style?.rotate;
+      return styled().rotate;
     },
     get opacity() {
-      return props.style?.opacity;
+      return styled().opacity;
     }
   }), true);
   insert(_el$, createComponent2(Show, {
@@ -7857,8 +8076,8 @@ function Card(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: props.style?.borderColor ?? theme.color.border,
-        t: props.style?.borderWidth ?? theme.borderWidth.sm,
+        e: styled().borderColor ?? theme.color.border,
+        t: styled().borderWidth ?? theme.borderWidth.sm,
         a: radius()
       }), ({
         e,
@@ -7881,74 +8100,6 @@ function Card(props) {
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
-  });
-  return _el$;
-}
-// packages/components/src/spinner.tsx
-var SIZE = 24;
-var THICKNESS = 3;
-function Spinner(props) {
-  let size = () => props.size ?? SIZE;
-  let thickness = () => props.thickness ?? THICKNESS;
-  let color = () => props.style?.color ?? theme.color.primary;
-  let speed = () => props.speed ?? 1;
-  let [angle, setAngle] = createSignal(0);
-  let Animate = () => {
-    onFrame((tick) => setAngle(tick / 1000 * speed() * (policy.motion === "reduced" ? 0.5 : 1) * Math.PI * 2));
-    return null;
-  };
-  let path = () => {
-    let s = size();
-    let r = (s - thickness()) / 2;
-    let c = s / 2;
-    return `M ${c} ${c - r} A ${r} ${r} 0 1 1 ${c - r} ${c}`;
-  };
-  var _el$ = createElement("view"), _el$2 = createElement("d-path", {
-    drawStyle: "stroke",
-    strokeCap: "round"
-  });
-  insertNode2(_el$, _el$2);
-  spread(_el$, mergeProps({
-    get width() {
-      return size();
-    },
-    get height() {
-      return size();
-    }
-  }, () => props.layout, {
-    get rotate() {
-      return angle();
-    },
-    get x() {
-      return props.style?.x;
-    },
-    get y() {
-      return props.style?.y;
-    },
-    get opacity() {
-      return props.style?.opacity;
-    }
-  }), true);
-  insert(_el$, createComponent2(Show, {
-    get when() {
-      return policy.motion !== "none";
-    },
-    get children() {
-      return createComponent2(Animate, {});
-    }
-  }), _el$2);
-  effect3(() => ({
-    e: path(),
-    t: color(),
-    a: thickness()
-  }), ({
-    e,
-    t,
-    a
-  }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "d", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
-    a !== _p$?.a && setProp(_el$2, "strokeWidth", a, _p$?.a);
   });
   return _el$;
 }
@@ -7998,7 +8149,14 @@ function SegmentedControl(props) {
       setInternal(() => v);
     props.onChange?.(v);
   };
-  let radius = () => typeof props.style?.borderRadius === "number" ? props.style.borderRadius : theme.radius.md;
+  let styled = () => ({
+    ...theme.components.segmentedControl,
+    ...props.style
+  });
+  let radius = () => {
+    let r = styled().borderRadius;
+    return typeof r === "number" ? r : theme.radius.md;
+  };
   let corners = (i) => {
     let r = radius();
     let last = props.options.length - 1;
@@ -8010,7 +8168,7 @@ function SegmentedControl(props) {
       return [0, r, r, 0];
     return 0;
   };
-  let idleFill = () => props.style?.backgroundColor ?? theme.color.surfaceAlt;
+  let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt;
   let activeFill = () => props.disabled ? theme.color.surface : theme.color.primary;
   let label = (active) => props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text;
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
@@ -8019,19 +8177,19 @@ function SegmentedControl(props) {
   setProp(_el$, "gap", 0);
   spread(_el$, mergeProps(() => props.layout, {
     get x() {
-      return props.style?.x;
+      return styled().x;
     },
     get y() {
-      return props.style?.y;
+      return styled().y;
     },
     get scale() {
-      return props.style?.scale;
+      return styled().scale;
     },
     get rotate() {
-      return props.style?.rotate;
+      return styled().rotate;
     },
     get opacity() {
-      return props.style?.opacity;
+      return styled().opacity;
     }
   }), true);
   insert(_el$, createComponent2(For, {
@@ -8043,10 +8201,12 @@ function SegmentedControl(props) {
       let press = createPress({
         onPress: () => select(opt.value)
       });
-      let fill = () => active() ? activeFill() : press.hovered() && !props.disabled && policy.interaction !== "touch" ? theme.color.surfaceHover : idleFill();
-      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("text");
+      let fill = () => active() ? activeFill() : idleFill();
+      let overlay = () => press.hovered() && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent";
+      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("d-rect"), _el$6 = createElement("text");
       insertNode2(_el$3, _el$4);
       insertNode2(_el$3, _el$5);
+      insertNode2(_el$3, _el$6);
       var _ref$ = press.ref;
       typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$3) : press.ref = _el$3;
       setProp(_el$3, "repaintBoundary", true);
@@ -8071,21 +8231,27 @@ function SegmentedControl(props) {
           return props.disabled ? "none" : undefined;
         }
       }), true);
-      spread(_el$5, mergeProps({
+      spread(_el$6, mergeProps({
         get color() {
           return label(active());
         }
       }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
-      insert(_el$5, () => opt.label);
+      insert(_el$6, () => opt.label);
       effect3(() => ({
         e: fill(),
-        t: corners(i())
+        t: corners(i()),
+        a: overlay(),
+        o: corners(i())
       }), ({
         e,
-        t
+        t,
+        a,
+        o
       }, _p$) => {
         e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
         t !== _p$?.t && setProp(_el$4, "radius", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$5, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$5, "radius", o, _p$?.o);
       });
       return _el$3;
     }
@@ -9741,39 +9907,6 @@ var createDataURL = function(width, height, getPixel) {
   return "data:image/gif;base64," + base64;
 };
 var stringToBytes = qrcode.stringToBytes;
-// packages/components/src/icon.tsx
-var SIZE2 = 24;
-function Icon(props) {
-  let size = () => props.size ?? SIZE2;
-  let doc = createMemo(() => parseSvg(props.src, {
-    color: props.color ?? theme.color.text
-  }));
-  var _el$ = createElement("view");
-  setProp(_el$, "repaintBoundary", true);
-  setProp(_el$, "pointerEvents", "all");
-  spread(_el$, mergeProps({
-    get width() {
-      return size();
-    },
-    get height() {
-      return size();
-    },
-    get viewBox() {
-      return [doc().width, doc().height];
-    }
-  }, () => props.layout), true);
-  insert(_el$, createComponent2(For, {
-    get each() {
-      return doc().draws;
-    },
-    children: (draw) => (() => {
-      var _el$2 = createElement("d-path");
-      spread(_el$2, draw, false);
-      return _el$2;
-    })()
-  }));
-  return _el$;
-}
 // apps/launcher/src/parts/home-screen.tsx
 import { stop } from "srt:dev";
 
@@ -10079,7 +10212,7 @@ function BackButton(props) {
       justifyContent: "center"
     },
     style: (s) => ({
-      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
       borderRadius: theme.radius.md,
       ...focusRing(s.focused)
     }),
@@ -10107,7 +10240,7 @@ function ScanButton(props) {
       justifyContent: "center"
     },
     style: (s) => ({
-      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
       borderRadius: theme.radius.md,
       ...focusRing(s.focused)
     }),
@@ -10213,7 +10346,7 @@ function SettingsPanel(props) {
                       justifyContent: "center"
                     },
                     style: (s) => ({
-                      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+                      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
                       borderRadius: theme.radius.md,
                       ...focusRing(s.focused)
                     }),
@@ -10539,7 +10672,7 @@ function AppCard(props) {
       },
       get style() {
         return {
-          backgroundColor: props.active ? theme.color.surfaceAlt : s.hovered ? theme.color.surfaceHover : theme.color.surface
+          backgroundColor: props.active ? theme.color.surfaceAlt : s.hovered ? theme.color.surfaceAlt : theme.color.surface
         };
       },
       get children() {
@@ -10582,7 +10715,7 @@ function AppCard(props) {
             src: PLAY_SVG,
             size: 20,
             get color() {
-              return memo2(() => !!(ps.pressed || ps.hovered))() ? theme.color.primaryHover : theme.color.primary;
+              return memo2(() => !!(ps.pressed || ps.hovered))() ? theme.color.text : theme.color.primary;
             }
           })
         })];
@@ -11224,7 +11357,7 @@ function HomeScreen(props) {
                               justifyContent: "center"
                             },
                             style: (s) => ({
-                              backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+                              backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
                               borderRadius: theme.radius.md,
                               ...focusRing(s.focused)
                             }),

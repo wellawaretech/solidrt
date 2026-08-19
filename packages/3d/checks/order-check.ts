@@ -6,8 +6,7 @@
 //   bunx srt bundle -f --stdout packages/3d/checks/order-check.ts | target/release/flux - [seed]
 //
 // A seeded PRNG keeps failures reproducible - rerun with the printed seed.
-// A failure prints FAIL lines and throws at the end; the flux binary exits 0
-// regardless, so read the output, not the exit code.
+// A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
 import { argv } from "flux:process"
 import { orderEntries } from "../src/order.ts"

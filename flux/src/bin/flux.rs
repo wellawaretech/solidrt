@@ -1,6 +1,8 @@
 // flux - run a JS source file via FluxEngine
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use flux::{FluxEngine, LogLevel, ModuleCode, ProcessArgs};
 
@@ -38,9 +40,15 @@ async fn main() {
     Some("-") | None => PathBuf::from("."),
     Some(p) => Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
   };
+  // Any uncaught error (module-level throw, unhandled rejection, throw out of
+  // a timer or event callback) fails the run: the engine reports and keeps
+  // going, the binary turns that into a nonzero exit like node and bun do.
+  let failed = Arc::new(AtomicBool::new(false));
+  let mark_failed = failed.clone();
   let engine = FluxEngine::builder()
     .logger(log_fn)
     .userdata(ProcessArgs(argv))
+    .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
     .isolate_resolver(move |id| {
       let file = base.join(format!("{id}.js"));
       std::fs::read_to_string(&file)
@@ -49,4 +57,7 @@ async fn main() {
     })
     .build();
   engine.eval_source(&source).await;
+  if failed.load(Ordering::Relaxed) {
+    std::process::exit(1);
+  }
 }
