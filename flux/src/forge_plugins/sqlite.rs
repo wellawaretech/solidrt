@@ -60,12 +60,25 @@
 //! - Errors surface as a generic `Error` with the SQLite message, not a typed
 //!   SQLite error subclass.
 //! - `close()` is async (returns a promise); Bun's is synchronous.
+//!
+//! SolidRT extensions (not in Bun) - the dependency-tracking pair that lets a
+//! reactive layer (e.g. `@solidrt/data`) invalidate queries automatically:
+//! - `stmt.tables()` resolves to the tables the statement reads (SQLite's
+//!   authorizer, captured during a compile).
+//! - `db.onWrite(cb)` calls back with the sorted table names touched after
+//!   each command that changed rows (SQLite's update hook, so trigger and
+//!   cascade writes are included). Returns an unsubscribe function.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use rquickjs::class::Trace;
+use rquickjs::function::MutFn;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
-use rquickjs::{Array, Class, Ctx, Exception, JsLifetime, Value};
+use rquickjs::{Array, Class, Ctx, Exception, Function, JsLifetime, Value};
 
+use crate::logger::report_uncaught;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{with_pending, OptArg};
 use crate::plugins::value::{self, Neutral};
@@ -95,6 +108,46 @@ impl Database {
     mode: OptArg<String>,
   ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Database>>>> {
     Ok(with_pending(&ctx, async move { SqliteConnection::open(path, mode.0).await.map(|conn| Database { conn }) }))
+  }
+
+  /// Subscribe to writes on this connection. After each command that changed
+  /// rows, `callback` gets one call with the sorted names of the tables
+  /// touched, as reported by SQLite's update hook, so trigger and cascade
+  /// writes are included. Returns an unsubscribe function.
+  ///
+  /// Each listener gets its own forge subscription and dispatch task, which
+  /// holds the callback as a plain `Function` (refcounted, like the serve/
+  /// websocket handlers) and exits when the connection closes. Unsubscribe
+  /// flips a flag: the parked task stops calling immediately and unwinds on
+  /// the next write event or on close. The task does not hold the engine loop
+  /// open: write events only follow commands, and each in-flight command
+  /// already holds via `with_pending`.
+  ///
+  /// Contract (see the type docs for the full list): only this connection's
+  /// writes are seen; WITHOUT ROWID tables do not report; a rolled-back
+  /// transaction may still report (a spurious re-read, never a stale one).
+  #[qjs(rename = "onWrite")]
+  pub fn on_write<'js>(&self, ctx: Ctx<'js>, callback: Function<'js>) -> rquickjs::Result<Function<'js>> {
+    let mut rx = self.conn.subscribe_writes().map_err(|m| Exception::throw_message(&ctx, &m))?;
+    let active = Rc::new(Cell::new(true));
+    let flag = active.clone();
+    let ctx2 = ctx.clone();
+    ctx.spawn(async move {
+      while let Some(tables) = rx.recv().await {
+        if !flag.get() {
+          break;
+        }
+        if let Err(e) = callback.call::<_, ()>((tables,)) {
+          report_uncaught(&ctx2, e, "sqlite onWrite listener");
+        }
+      }
+    });
+    Function::new(
+      ctx.clone(),
+      MutFn::from(move || {
+        active.set(false);
+      }),
+    )
   }
 
   /// Create a reusable prepared statement. Construction is synchronous and
@@ -166,6 +219,19 @@ pub struct Statement {
 
 #[rquickjs::methods]
 impl Statement {
+  /// The tables this statement reads, sorted, as reported by SQLite's
+  /// authorizer during a compile. Includes tables reached through views and
+  /// subqueries; the statement is compiled but never run. Pair with
+  /// `Database.onWrite` to know when a re-read could return different rows.
+  pub fn tables<'js>(
+    &self,
+    ctx: Ctx<'js>,
+  ) -> rquickjs::Result<Promised<impl std::future::Future<Output = JsResult<Vec<String>>>>> {
+    let conn = self.conn.clone();
+    let sql = self.sql.clone();
+    Ok(with_pending(&ctx, async move { conn.read_set(sql).await }))
+  }
+
   /// All matching rows, as an array of plain objects.
   pub fn all<'js>(
     &self,

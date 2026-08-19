@@ -587,6 +587,12 @@ Finished, kept for the reasoning.
   understanding; parseColor/mixColors/brightness become flux:rendertree
   bindings backed by the same oklab math the transitions use, and
   @solidrt/core loses its only runtime npm dependency.
+- **[Reactive SQLite queries](done/data-reactive-sqlite.md)** [2026-08-19]
+  A SQLite query as a reactive value - it re-runs when any table it reads is
+  written on this connection, with SQLite's own authorizer and update hook
+  reporting both sides of the dependency graph; forge/flux carry the
+  framework-neutral primitives and @solidrt/core/data is the thin Solid
+  binding.
 - **[Detached-view transform origin pivots around the inherited box](done/detached-view-transform-origin.md)** [2026-08-03]
   Fixed 2026-08-03 - a d-view's unset transform origin now defaults to its
   local (0,0), the point its children's coordinates are authored against,

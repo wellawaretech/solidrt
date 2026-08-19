@@ -5288,20 +5288,35 @@ function setTreeProperty(node, name, value) {
 ${stack}`);
   }
 }
+var ROUTE_TREE = 0;
+var ROUTE_EVENT = 1;
+var ROUTE_FOCUSABLE = 2;
+var ROUTE_HINTS = 3;
+var propRoutes = new Map;
+function routeFor(name) {
+  let route = propRoutes.get(name);
+  if (route === undefined) {
+    route = /^on[A-Z]/.test(name) ? ROUTE_EVENT : name === "focusable" ? ROUTE_FOCUSABLE : name === "textInputHints" ? ROUTE_HINTS : ROUTE_TREE;
+    propRoutes.set(name, route);
+  }
+  return route;
+}
 function applyProp(node, name, value) {
   if (!node)
     return;
-  if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
-    setEventHandler(node.id, name, value);
-    return;
-  }
-  if (name === "focusable") {
-    setFocusable(node.id, value === true);
-    return;
-  }
-  if (name === "textInputHints") {
-    setTextInputHints(node.id, value);
-    return;
+  switch (routeFor(name)) {
+    case ROUTE_EVENT:
+      if (value == null || typeof value === "function") {
+        setEventHandler(node.id, name, value);
+        return;
+      }
+      break;
+    case ROUTE_FOCUSABLE:
+      setFocusable(node.id, value === true);
+      return;
+    case ROUTE_HINTS:
+      setTextInputHints(node.id, value);
+      return;
   }
   setTreeProperty(node, name, value);
 }

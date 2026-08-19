@@ -17,9 +17,12 @@
 //! BEGIN..COMMIT while other commands wait, which a shared-pool model cannot do
 //! safely across `await` points.
 
+use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, OpenFlags};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::Value;
@@ -135,6 +138,13 @@ enum Command {
     statements: Vec<(String, Vec<SqlValue>)>,
     reply: oneshot::Sender<rusqlite::Result<Vec<RunResult>>>,
   },
+  ReadSet {
+    sql: String,
+    reply: oneshot::Sender<rusqlite::Result<Vec<String>>>,
+  },
+  SubscribeWrites {
+    sender: UnboundedSender<Vec<String>>,
+  },
   Close {
     reply: oneshot::Sender<()>,
   },
@@ -193,6 +203,28 @@ impl SqliteConnection {
     self.call(|reply| Command::Transaction { statements, reply }).await.map(TxResults)
   }
 
+  /// The tables `sql` reads, sorted, as reported by SQLite's authorizer during
+  /// an (uncached) prepare. Includes tables reached through views and
+  /// subqueries. The statement is only compiled, never run.
+  pub async fn read_set(&self, sql: String) -> Result<Vec<String>, String> {
+    self.call(|reply| Command::ReadSet { sql, reply }).await
+  }
+
+  /// Subscribe to write notifications. After each command that changed rows,
+  /// the receiver gets one message: the sorted table names touched (as reported
+  /// by SQLite's update hook, so trigger and cascade writes are included).
+  /// Writes on a rolled-back transaction may still be reported: a false
+  /// invalidation is a spurious re-read, never a stale one. A full-table
+  /// `DELETE FROM t` reports too (the connection disables SQLite's truncate
+  /// optimization, which would otherwise skip the hook, at the cost of
+  /// row-by-row deletion). Limitations: only this connection's writes are
+  /// seen, and SQLite does not fire the update hook for WITHOUT ROWID tables.
+  pub fn subscribe_writes(&self) -> Result<UnboundedReceiver<Vec<String>>, String> {
+    let (sender, rx) = unbounded_channel();
+    self.cmd_tx.send(Command::SubscribeWrites { sender }).map_err(|_| closed_err())?;
+    Ok(rx)
+  }
+
   /// Close the connection, releasing it. Safe to call more than once.
   pub async fn close(&self) {
     let (reply, rx) = oneshot::channel();
@@ -249,6 +281,46 @@ fn actor_main(
     return;
   }
 
+  // Row changes land in this set from the update hook (below); after each
+  // command the set is flushed to write subscribers. Commands run serially on
+  // this thread, so a flush is exactly the writes of the command before it.
+  // Arc<Mutex> only because the hook closures must be Send; there is no
+  // cross-thread access.
+  let written: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+  {
+    let written = written.clone();
+    conn
+      .update_hook(Some(move |_action, _db: &str, table: &str, _rowid: i64| {
+        written.lock().expect("sqlite write-set lock").insert(table.to_string());
+      }))
+      .expect("install sqlite update hook");
+  }
+
+  // A permanent authorizer with two jobs. (1) Returning Ignore for DELETE
+  // disables SQLite's truncate optimization, so a full-table `DELETE FROM t`
+  // deletes row by row and the update hook above sees it (with the
+  // optimization, the hook is silently skipped). (2) When `reading` is armed
+  // (by the ReadSet command), it collects the tables a prepare reads.
+  let reading: Arc<Mutex<Option<HashSet<String>>>> = Arc::new(Mutex::new(None));
+  {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let reading = reading.clone();
+    conn
+      .authorizer(Some(move |auth: AuthContext<'_>| match auth.action {
+        AuthAction::Delete { .. } => Authorization::Ignore,
+        AuthAction::Read { table_name, .. } => {
+          if let Some(set) = reading.lock().expect("sqlite read-set lock").as_mut() {
+            set.insert(table_name.to_string());
+          }
+          Authorization::Allow
+        }
+        _ => Authorization::Allow,
+      }))
+      .expect("install sqlite authorizer");
+  }
+
+  let mut write_subs: Vec<UnboundedSender<Vec<String>>> = Vec::new();
+
   let mut close_reply = None;
   while let Ok(cmd) = cmd_rx.recv() {
     match cmd {
@@ -264,11 +336,18 @@ fn actor_main(
       Command::Transaction { statements, reply } => {
         let _ = reply.send(do_transaction(&mut conn, &statements));
       }
+      Command::ReadSet { sql, reply } => {
+        let _ = reply.send(do_read_set(&conn, &sql, &reading));
+      }
+      Command::SubscribeWrites { sender } => {
+        write_subs.push(sender);
+      }
       Command::Close { reply } => {
         close_reply = Some(reply);
         break;
       }
     }
+    flush_writes(&written, &mut write_subs);
   }
   // Finalize the connection before acking close, so a subsequent open of the
   // same file sees a fully released database.
@@ -276,6 +355,35 @@ fn actor_main(
   if let Some(reply) = close_reply {
     let _ = reply.send(());
   }
+}
+
+/// Compile `sql` (uncached, so the connection's authorizer actually sees a
+/// compile even if the statement is already in the cache) and collect the
+/// tables it reads via the armed `reading` set.
+fn do_read_set(
+  conn: &Connection,
+  sql: &str,
+  reading: &Mutex<Option<HashSet<String>>>,
+) -> rusqlite::Result<Vec<String>> {
+  *reading.lock().expect("sqlite read-set lock") = Some(HashSet::new());
+  let compiled = conn.prepare(sql).map(|_| ());
+  let collected = reading.lock().expect("sqlite read-set lock").take();
+  compiled?;
+  let mut out: Vec<String> = collected.unwrap_or_default().into_iter().collect();
+  out.sort();
+  Ok(out)
+}
+
+/// Send the tables written since the last flush to every subscriber, dropping
+/// subscribers that went away. The set drains even with no subscribers, so a
+/// late subscriber does not receive stale history.
+fn flush_writes(written: &Mutex<HashSet<String>>, subs: &mut Vec<UnboundedSender<Vec<String>>>) {
+  let mut tables: Vec<String> = written.lock().expect("sqlite write-set lock").drain().collect();
+  if tables.is_empty() {
+    return;
+  }
+  tables.sort();
+  subs.retain(|s| s.send(tables.clone()).is_ok());
 }
 
 fn do_query(
