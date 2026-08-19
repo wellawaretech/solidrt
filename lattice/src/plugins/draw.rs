@@ -178,6 +178,13 @@ impl RenderInner {
     // so the frame below paints the interpolated values. Runs before the
     // demand gate: the advance's damage is this frame's reason to rebuild.
     let anim_active = tree.0.borrow_mut().advance_transitions();
+    // Settled tracks report onTransitionEnd now, before the frame below
+    // paints: the handlers' writes latch the next frame like any post-flush
+    // work. The tree borrow is released first - handlers call back in.
+    let settled = tree.0.borrow_mut().take_settled_transitions();
+    if !settled.is_empty() {
+      flux::gui::tree::emit_transition_ends(qtx, &settled);
+    }
 
     // Demand-driven gate: when nothing requested a frame, skip it entirely
     // (layout, paint, submit, hover refresh - elements only move when a frame

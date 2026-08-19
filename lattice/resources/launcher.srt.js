@@ -5000,6 +5000,7 @@ function attachWindow(nodeId) {
   let unsubEnter = null;
   let unsubLeave = null;
   let unsubWheel = null;
+  let unsubTransitionEnd = null;
   let unsubKeyDown = null;
   let unsubKeyUp = null;
   let unsubBack = null;
@@ -5091,6 +5092,15 @@ function attachWindow(nodeId) {
     unsubWheel = on2("wheel", (raw) => {
       bubble(raw, "onWheel");
     });
+    unsubTransitionEnd = on2("transitionEnd", (raw) => {
+      try {
+        getEventHandler(raw.target, "onTransitionEnd")?.({
+          property: raw.property
+        });
+      } catch (err) {
+        console.error("Error in onTransitionEnd handler:", err);
+      }
+    });
     let dispatchKey = (raw, handler) => {
       let target = focusedNode() ?? nodeId;
       let stopped = false;
@@ -5156,6 +5166,8 @@ function attachWindow(nodeId) {
       unsubLeave();
     if (unsubWheel)
       unsubWheel();
+    if (unsubTransitionEnd)
+      unsubTransitionEnd();
     if (unsubKeyDown)
       unsubKeyDown();
     if (unsubKeyUp)

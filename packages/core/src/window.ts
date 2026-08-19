@@ -256,6 +256,7 @@ export function attachWindow(nodeId: number) {
   let unsubEnter: () => void = null!
   let unsubLeave: () => void = null!
   let unsubWheel: () => void = null!
+  let unsubTransitionEnd: () => void = null!
   let unsubKeyDown: () => void = null!
   let unsubKeyUp: () => void = null!
   let unsubBack: () => void = null!
@@ -369,6 +370,17 @@ export function attachWindow(nodeId: number) {
       bubble(raw, "onWheel")
     })
 
+    // A native transition finished (runtime-side animation; see the
+    // `transition` prop). Target-only delivery, no bubbling: the element
+    // that declared the transition is the one interested in its end.
+    unsubTransitionEnd = on("transitionEnd", (raw: { target: number; property: string }) => {
+      try {
+        getEventHandler(raw.target, "onTransitionEnd")?.({ property: raw.property })
+      } catch (err) {
+        console.error("Error in onTransitionEnd handler:", err)
+      }
+    })
+
     // Key events dispatch along the focused node's ancestor chain, leaf->root
     // (the pointer bubbling contract), so a container hears keys from focused
     // descendants and the window root hears everything: <window onKeyDown> is
@@ -443,6 +455,7 @@ export function attachWindow(nodeId: number) {
     if (unsubEnter) unsubEnter()
     if (unsubLeave) unsubLeave()
     if (unsubWheel) unsubWheel()
+    if (unsubTransitionEnd) unsubTransitionEnd()
     if (unsubKeyDown) unsubKeyDown()
     if (unsubKeyUp) unsubKeyUp()
     if (unsubBack) unsubBack()

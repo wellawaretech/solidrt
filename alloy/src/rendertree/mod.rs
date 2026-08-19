@@ -21,7 +21,7 @@ pub use kinds::{
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
-pub use transitions::{AnimProp, Curve, TransitionConfig, TransitionSpec};
+pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};

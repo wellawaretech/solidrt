@@ -289,7 +289,7 @@ fn transition_errors_name_the_problem() {
   let unknown_key = apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("delay", num(5.0))]))]))
     .unwrap_err();
   assert!(unknown_key.contains("unknown key 'delay'"), "{unknown_key}");
-  let bad_prop = apply_el(&mut el, "transition", map(&[("color", map(&[("duration", num(1.0))]))])).unwrap_err();
+  let bad_prop = apply_el(&mut el, "transition", map(&[("blendMode", map(&[("duration", num(1.0))]))])).unwrap_err();
   assert!(bad_prop.contains("not an animatable property"), "{bad_prop}");
   let bad_curve =
     apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("curve", text("zoom"))]))]))

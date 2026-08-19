@@ -29,8 +29,34 @@ pub fn anim_prop(name: &str) -> Option<AnimProp> {
     "scaleY" => AnimProp::ScaleY,
     "strokeWidth" => AnimProp::StrokeWidth,
     "radius" => AnimProp::Radius,
+    "color" => AnimProp::Color,
     _ => return None,
   })
+}
+
+/// The JSX name for an animatable-property id, the reverse of `anim_prop`
+/// (the onTransitionEnd payload speaks JSX names).
+pub fn anim_prop_name(prop: AnimProp) -> &'static str {
+  match prop {
+    AnimProp::X => "x",
+    AnimProp::Y => "y",
+    AnimProp::W => "w",
+    AnimProp::H => "h",
+    AnimProp::X1 => "x1",
+    AnimProp::Y1 => "y1",
+    AnimProp::X2 => "x2",
+    AnimProp::Y2 => "y2",
+    AnimProp::Opacity => "opacity",
+    AnimProp::Rotate => "rotate",
+    AnimProp::RotateX => "rotateX",
+    AnimProp::RotateY => "rotateY",
+    AnimProp::Scale => "scale",
+    AnimProp::ScaleX => "scaleX",
+    AnimProp::ScaleY => "scaleY",
+    AnimProp::StrokeWidth => "strokeWidth",
+    AnimProp::Radius => "radius",
+    AnimProp::Color => "color",
+  }
 }
 
 /// Decodes the `transition` property value: an object keyed by animatable
@@ -69,10 +95,9 @@ fn decode_spec(key: &str, value: &PropValue) -> Result<TransitionSpec, String> {
   let duration = match value.get("duration") {
     None => return Err(format!("transition.{key}: duration (ms) is required")),
     Some(v) => {
-      let n = v
-        .as_f64()
-        .ok_or_else(|| format!("transition.{key}: duration must be a number of ms, got {}", describe(v)))?
-        as f32;
+      let n =
+        v.as_f64().ok_or_else(|| format!("transition.{key}: duration must be a number of ms, got {}", describe(v)))?
+          as f32;
       if !(n > 0.0 && n.is_finite()) {
         return Err(format!("transition.{key}: duration must be a positive number of ms, got {n}"));
       }
@@ -82,9 +107,7 @@ fn decode_spec(key: &str, value: &PropValue) -> Result<TransitionSpec, String> {
   // The kind is inferred: a `curve` makes it a tween, otherwise it is a
   // spring (`bounce` defaults to 0, critically damped). The two never mix.
   match (value.get("curve"), value.get("bounce")) {
-    (Some(_), Some(_)) => {
-      Err(format!("transition.{key}: curve (tween) and bounce (spring) are mutually exclusive"))
-    }
+    (Some(_), Some(_)) => Err(format!("transition.{key}: curve (tween) and bounce (spring) are mutually exclusive")),
     (Some(c), None) => Ok(TransitionSpec::Tween { duration_ms: duration, curve: decode_curve(key, c)? }),
     (None, bounce) => {
       let bounce = match bounce {

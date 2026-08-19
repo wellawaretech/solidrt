@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::impellers::Matrix;
-use crate::rendertree::transitions::Transitions;
+use crate::rendertree::transitions::{AnimValue, Transitions};
 use crate::rendertree::{
   AnimProp, BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun,
   ATOM_CHAR,
@@ -208,7 +208,7 @@ impl RenderTree {
   /// Initial values never animate: a node not yet inserted (no parent) has
   /// never been painted, so its mount-time writes snap. This is what keeps
   /// `transition` listed before other props in JSX from animating the mount.
-  pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<f32>) -> bool {
+  pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<AnimValue>) -> bool {
     let animate = value.and_then(|to| {
       let el = self.nodes.get(&id)?;
       if el.parent.is_none() {
@@ -216,6 +216,11 @@ impl RenderTree {
       }
       let spec = el.transitions.as_ref()?.spec_for(prop)?;
       let current = el.anim_value(prop)?;
+      // A kind mismatch (a scalar arriving for the color prop or vice
+      // versa) is not animatable; the normal path sorts it out.
+      if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
+        return None;
+      }
       Some((current, to, spec))
     });
     match animate {
@@ -228,6 +233,13 @@ impl RenderTree {
         false
       }
     }
+  }
+
+  /// Settled (node, prop) pairs since the last drain, for the embedder's
+  /// onTransitionEnd dispatch. Natural settles only; cancelled or
+  /// destroyed-node tracks never report.
+  pub fn take_settled_transitions(&mut self) -> Vec<(u64, AnimProp)> {
+    std::mem::take(&mut self.transitions.settled)
   }
 
   /// Advance every running track to the stamped animation clock, writing the
@@ -246,17 +258,65 @@ impl RenderTree {
       self.transitions.end_advance(tracks);
       return true;
     }
+    let mut damages: Vec<(u64, Damage)> = Vec::with_capacity(tracks.len());
     tracks.retain_mut(|t| {
       if !self.nodes.contains_key(&t.node) {
         return false;
       }
       let (value, settled) = t.advance(now, dt);
       let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
-      self.apply_damage(t.node, damage);
+      damages.push((t.node, damage));
+      if settled {
+        self.transitions.settled.push((t.node, t.prop));
+      }
       !settled
     });
+    self.apply_damage_batch(&damages);
     self.transitions.end_advance(tracks);
     !self.transitions.is_empty()
+  }
+
+  /// `apply_damage` for a frame's worth of writes at once: one revision
+  /// bump, and the ancestor invalidation walks share a visited set so
+  /// common ancestors are cleared once per batch instead of once per write
+  /// (the per-write walk is O(depth), and a frame of N animated nodes would
+  /// otherwise pay it N times).
+  pub fn apply_damage_batch(&mut self, items: &[(u64, Damage)]) {
+    let mut any = false;
+    let mut visited: HashSet<u64> = HashSet::new();
+    for &(node_id, damage) in items {
+      if matches!(damage, Damage::None | Damage::Present) {
+        continue;
+      }
+      any = true;
+      if let Some(element) = self.try_node(node_id) {
+        element.envelope.clear();
+      }
+      let walk_from = match damage {
+        Damage::None | Damage::Present => None,
+        Damage::Compose => self.try_node(node_id).and_then(|e| e.parent),
+        Damage::Scroll => {
+          let keeps_cache =
+            self.try_node(node_id).map(|e| e.repaint_boundary == BoundaryMode::Recording).unwrap_or(false);
+          if keeps_cache {
+            self.try_node(node_id).and_then(|e| e.parent)
+          } else {
+            Some(node_id)
+          }
+        }
+        Damage::Paint => Some(node_id),
+        Damage::Layout => {
+          self.invalidate_cache(node_id);
+          Some(node_id)
+        }
+      };
+      if let Some(start) = walk_from {
+        self.invalidate_paint_batched(start, &mut visited);
+      }
+    }
+    if any {
+      self.bump_revision();
+    }
   }
 
   pub fn try_edit<E>(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Result<Damage, E>) -> Result<(), E> {
@@ -335,18 +395,38 @@ impl RenderTree {
   pub fn invalidate_paint(&self, node_id: u64) {
     let mut current = Some(node_id);
     while let Some(id) = current {
-      let Some(element) = self.try_node(id) else {
-        break;
-      };
-      let mut cache = element.paint_cache.borrow_mut();
-      match &mut *cache {
-        Some(PaintCache::Snapshot(snap)) => snap.valid = false,
-        _ => {
-          cache.take();
-        }
+      current = self.invalidate_paint_step(id);
+    }
+  }
+
+  // One node of the invalidate_paint walk: clear the node's retained paint
+  // (a snapshot is marked stale, keeping its texture allocation) and its
+  // envelope, and hand back the parent to continue with.
+  fn invalidate_paint_step(&self, id: u64) -> Option<u64> {
+    let element = self.try_node(id)?;
+    let mut cache = element.paint_cache.borrow_mut();
+    match &mut *cache {
+      Some(PaintCache::Snapshot(snap)) => snap.valid = false,
+      _ => {
+        cache.take();
       }
-      element.envelope.clear();
-      current = element.parent;
+    }
+    element.envelope.clear();
+    element.parent
+  }
+
+  /// The invalidate_paint walk for a batch of start nodes sharing one
+  /// `visited` set: an ancestor already cleared by an earlier walk in the
+  /// batch ends the walk, so N animated siblings clear their shared
+  /// ancestors once per frame instead of once per write. Idempotent per
+  /// node, so stopping at a visited ancestor loses nothing.
+  fn invalidate_paint_batched(&self, node_id: u64, visited: &mut HashSet<u64>) {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+      if !visited.insert(id) {
+        return;
+      }
+      current = self.invalidate_paint_step(id);
     }
   }
 

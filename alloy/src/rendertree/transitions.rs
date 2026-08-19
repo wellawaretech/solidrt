@@ -1,3 +1,4 @@
+use crate::impellers::Color;
 use crate::rendertree::{Damage, Element, ElementKind};
 
 // Native transitions (okf/backlog/native-transitions.md): a `transition`
@@ -36,8 +37,19 @@ pub enum AnimProp {
   ScaleY,
   // Shared paint state (kinds with a PaintState).
   StrokeWidth,
+  // Solid paint color, interpolated in oklab. A gradient never animates.
+  Color,
   // Rect corner radius, single-number form only.
   Radius,
+}
+
+/// A value an animatable property carries: the scalar set, plus solid
+/// colors. Colors interpolate in oklab (with alpha as its own linear lane),
+/// so a red-to-blue transition passes through neither gray nor purple mud.
+#[derive(Clone, Copy, Debug)]
+pub enum AnimValue {
+  Scalar(f32),
+  Color(Color),
 }
 
 /// A tween's easing curve. Named CSS curves are decoded to their bezier
@@ -157,17 +169,37 @@ impl TransitionConfig {
   }
 }
 
+// Track values are lane vectors: scalars use one lane, colors four (oklab
+// L/a/b plus alpha). Tween and spring math run per lane; a color spring is
+// four independent oscillators sharing one spec.
+pub type Lanes = [f32; 4];
+
+fn to_lanes(v: AnimValue) -> (Lanes, bool) {
+  match v {
+    AnimValue::Scalar(s) => ([s, 0.0, 0.0, 0.0], false),
+    AnimValue::Color(c) => (color_to_oklab(c), true),
+  }
+}
+
+fn from_lanes(lanes: Lanes, color: bool) -> AnimValue {
+  if color {
+    AnimValue::Color(oklab_to_color(lanes))
+  } else {
+    AnimValue::Scalar(lanes[0])
+  }
+}
+
 /// Interpolation state of one running track.
 #[derive(Clone, Copy, Debug)]
 pub enum TrackState {
   Tween {
-    from: f32,
+    from: Lanes,
     start_ms: f64,
   },
   /// Position and velocity (per second), integrated each frame.
   Spring {
-    pos: f32,
-    vel: f32,
+    pos: Lanes,
+    vel: Lanes,
   },
 }
 
@@ -176,37 +208,64 @@ pub enum TrackState {
 pub struct Track {
   pub node: u64,
   pub prop: AnimProp,
-  pub to: f32,
   pub spec: TransitionSpec,
   pub state: TrackState,
+  to: Lanes,
+  // Lanes encode a color (write back as Color) rather than a scalar.
+  color: bool,
   // Settle threshold, scaled to the animated distance so pixels and
-  // unit-scale values (opacity) both settle promptly.
+  // unit-scale values (opacity, oklab) both settle promptly.
   eps: f32,
 }
 
-fn eps_for(distance: f32) -> f32 {
-  (distance.abs().max(1.0) * 1e-3).max(1e-3)
+fn eps_for(from: Lanes, to: Lanes) -> f32 {
+  let mut d = 0.0f32;
+  for i in 0..4 {
+    d = d.max((to[i] - from[i]).abs());
+  }
+  (d.max(1.0) * 1e-3).max(1e-3)
 }
 
 impl Track {
+  pub fn target(&self) -> AnimValue {
+    from_lanes(self.to, self.color)
+  }
+
   /// Advance to `now_ms` (`dt_ms` since the previous advance, for the
   /// spring). Returns the value to write and whether the track settled; a
   /// settled track reports the target exactly.
-  pub fn advance(&mut self, now_ms: f64, dt_ms: f64) -> (f32, bool) {
+  pub fn advance(&mut self, now_ms: f64, dt_ms: f64) -> (AnimValue, bool) {
+    let color = self.color;
+    let (lanes, settled) = self.advance_lanes(now_ms, dt_ms);
+    (from_lanes(lanes, color), settled)
+  }
+
+  fn advance_lanes(&mut self, now_ms: f64, dt_ms: f64) -> (Lanes, bool) {
     match (&mut self.state, self.spec) {
       (TrackState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
         let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
         if p >= 1.0 {
           return (self.to, true);
         }
-        (*from + (self.to - *from) * curve.eval(p), false)
+        let e = curve.eval(p);
+        let mut out = *from;
+        for i in 0..4 {
+          out[i] += (self.to[i] - out[i]) * e;
+        }
+        (out, false)
       }
       (TrackState::Spring { pos, vel }, TransitionSpec::Spring { omega, zeta }) => {
         let dt = (dt_ms / 1000.0) as f32;
-        let (x, v) = spring_step(*pos - self.to, *vel, omega, zeta, dt);
-        *pos = self.to + x;
-        *vel = v;
-        if x.abs() < self.eps && v.abs() < self.eps * omega {
+        let mut settled = true;
+        for i in 0..4 {
+          let (x, v) = spring_step(pos[i] - self.to[i], vel[i], omega, zeta, dt);
+          pos[i] = self.to[i] + x;
+          vel[i] = v;
+          if x.abs() >= self.eps || v.abs() >= self.eps * omega {
+            settled = false;
+          }
+        }
+        if settled {
           return (self.to, true);
         }
         (*pos, false)
@@ -265,6 +324,9 @@ pub struct Transitions {
   // track list becomes non-empty so an idle gap never enters a spring.
   last_ms: f64,
   tracks: Vec<Track>,
+  // (node, prop) pairs whose track settled, awaiting the embedder's drain
+  // (the onTransitionEnd dispatch). Cancelled tracks never land here.
+  pub settled: Vec<(u64, AnimProp)>,
 }
 
 impl Transitions {
@@ -275,33 +337,36 @@ impl Transitions {
   /// Start or retarget the track for (node, prop). `current` is the
   /// property's present value (the from-value for a fresh or restarted
   /// tween); a running spring keeps its position and velocity and only moves
-  /// its equilibrium.
-  pub fn retarget(&mut self, node: u64, prop: AnimProp, current: f32, to: f32, spec: TransitionSpec) {
+  /// its equilibrium. `current` and `to` must be the same AnimValue kind
+  /// (the caller guarantees it by reading `current` for the same property).
+  pub fn retarget(&mut self, node: u64, prop: AnimProp, current: AnimValue, to: AnimValue, spec: TransitionSpec) {
     let now = self.now_ms;
+    let (cur, color) = to_lanes(current);
+    let (to, _) = to_lanes(to);
     if let Some(t) = self.tracks.iter_mut().find(|t| t.node == node && t.prop == prop) {
       t.to = to;
-      t.eps = eps_for(to - current);
+      t.eps = eps_for(cur, to);
       let keep_spring_state = matches!((&t.state, spec), (TrackState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
         t.state = match spec {
-          TransitionSpec::Tween { .. } => TrackState::Tween { from: current, start_ms: now },
-          TransitionSpec::Spring { .. } => TrackState::Spring { pos: current, vel: 0.0 },
+          TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: now },
+          TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
         };
       }
       return;
     }
-    if to == current {
+    if to == cur {
       return;
     }
     if self.tracks.is_empty() {
       self.last_ms = now;
     }
     let state = match spec {
-      TransitionSpec::Tween { .. } => TrackState::Tween { from: current, start_ms: now },
-      TransitionSpec::Spring { .. } => TrackState::Spring { pos: current, vel: 0.0 },
+      TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: now },
+      TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
     };
-    self.tracks.push(Track { node, prop, to, spec, state, eps: eps_for(to - current) });
+    self.tracks.push(Track { node, prop, spec, state, to, color, eps: eps_for(cur, to) });
   }
 
   /// Drop the track for (node, prop), if any: a non-animated write to the
@@ -332,10 +397,18 @@ impl Element {
   /// this element has a layout box, mirroring the detached-only rule of the
   /// property path). A `None` makes the write fall back to the normal
   /// (snapping) property path, which raises the proper error.
-  pub fn anim_value(&self, prop: AnimProp) -> Option<f32> {
+  pub fn anim_value(&self, prop: AnimProp) -> Option<AnimValue> {
     use AnimProp::*;
     let detached = !self.has_layout();
-    match (&self.kind, prop) {
+    if prop == Color {
+      // A gradient (or a gradient taking over mid-track) never animates.
+      let paint = self.kind.paint()?;
+      if paint.gradient.is_some() {
+        return None;
+      }
+      return Some(AnimValue::Color(paint.color));
+    }
+    let scalar = match (&self.kind, prop) {
       (ElementKind::View(v), X) => Some(v.translate.map(|t| t.x).unwrap_or(0.0)),
       (ElementKind::View(v), Y) => Some(v.translate.map(|t| t.y).unwrap_or(0.0)),
       (ElementKind::View(v), Opacity) => Some(v.opacity.unwrap_or(1.0)),
@@ -385,15 +458,25 @@ impl Element {
       (_, StrokeWidth) => self.kind.paint().map(|p| p.stroke_width),
 
       _ => None,
-    }
+    };
+    scalar.map(AnimValue::Scalar)
   }
 
   /// Write an animatable property through its typed setter, returning the
   /// setter's damage. Must accept exactly the (kind, prop) pairs
   /// `anim_value` answers; anything else is a no-op (`Damage::None`).
-  pub fn set_anim_value(&mut self, prop: AnimProp, v: f32) -> Damage {
+  pub fn set_anim_value(&mut self, prop: AnimProp, value: AnimValue) -> Damage {
     use AnimProp::*;
     let detached = !self.has_layout();
+    if let AnimValue::Color(c) = value {
+      return match (prop, self.kind.paint_mut()) {
+        (Color, Some(p)) => p.set_color(c),
+        _ => Damage::None,
+      };
+    }
+    let AnimValue::Scalar(v) = value else {
+      return Damage::None;
+    };
     match (&mut self.kind, prop) {
       (ElementKind::View(view), X) => view.set_x(v),
       (ElementKind::View(view), Y) => view.set_y(v),
@@ -443,4 +526,64 @@ impl Element {
       _ => Damage::None,
     }
   }
+}
+
+// sRGB <-> oklab (Bjorn Ottosson's reference constants). Interpolating in
+// oklab keeps perceptual lightness moving evenly, so color transitions avoid
+// the desaturated middle a straight sRGB lerp produces. Alpha rides as its
+// own linear lane.
+
+fn srgb_to_linear(c: f32) -> f32 {
+  if c <= 0.04045 {
+    c / 12.92
+  } else {
+    ((c + 0.055) / 1.055).powf(2.4)
+  }
+}
+
+fn linear_to_srgb(c: f32) -> f32 {
+  if c <= 0.0031308 {
+    c * 12.92
+  } else {
+    1.055 * c.powf(1.0 / 2.4) - 0.055
+  }
+}
+
+fn color_to_oklab(c: Color) -> Lanes {
+  let r = srgb_to_linear(c.red);
+  let g = srgb_to_linear(c.green);
+  let b = srgb_to_linear(c.blue);
+  let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
+  let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
+  let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
+  [
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+    c.alpha,
+  ]
+}
+
+fn oklab_to_color(lanes: Lanes) -> Color {
+  let [lightness, a, b, alpha] = lanes;
+  let l = lightness + 0.3963377774 * a + 0.2158037573 * b;
+  let m = lightness - 0.1055613458 * a - 0.0638541728 * b;
+  let s = lightness - 0.0894841775 * a - 1.2914855480 * b;
+  let (l, m, s) = (l * l * l, m * m * m, s * s * s);
+  let r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  let g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  let bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+  // Mid-flight values can leave the sRGB gamut (and springs can overshoot);
+  // clamp per channel at the edge.
+  Color::new_srgba(
+    linear_to_srgb(r).clamp(0.0, 1.0),
+    linear_to_srgb(g).clamp(0.0, 1.0),
+    linear_to_srgb(bl).clamp(0.0, 1.0),
+    alpha.clamp(0.0, 1.0),
+  )
+}
+
+#[cfg(test)]
+pub(crate) fn test_oklab_roundtrip(c: Color) -> Color {
+  oklab_to_color(color_to_oklab(c))
 }

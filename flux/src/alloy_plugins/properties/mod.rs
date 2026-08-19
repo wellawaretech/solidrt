@@ -288,16 +288,20 @@ pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<(String, 
 }
 
 // JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
-pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
-  let rgba = value
-    .as_f64()
-    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA), got {}", describe(value)))? as u32;
-  Ok(Color::new_srgba(
+pub(crate) fn packed_to_color(rgba: u32) -> Color {
+  Color::new_srgba(
     ((rgba >> 24) & 0xFF) as f32 / 255.0,
     ((rgba >> 16) & 0xFF) as f32 / 255.0,
     ((rgba >> 8) & 0xFF) as f32 / 255.0,
     (rgba & 0xFF) as f32 / 255.0,
-  ))
+  )
+}
+
+pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
+  let rgba = value
+    .as_f64()
+    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA), got {}", describe(value)))? as u32;
+  Ok(packed_to_color(rgba))
 }
 
 // A single number applies to all four corners; an array is

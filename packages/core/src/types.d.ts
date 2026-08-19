@@ -421,8 +421,21 @@ export type TransitionPropName =
   | "scaleY"
   | "strokeWidth"
   | "radius"
+  | "color"
+
+/** Payload of onTransitionEnd: which animated property finished. */
+export interface TransitionEndEvent {
+  property: TransitionPropName
+}
 
 export interface TransitionProps {
+  /**
+   * A runtime-side transition of one of this element's properties reached
+   * its target (natural settles only; a cancelled or retargeted animation
+   * does not fire until it finally settles). Delivered to this element
+   * only, no bubbling.
+   */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
   /**
    * Animate later writes of the listed properties instead of snapping:
    * `transition={{ x: { duration: 400, bounce: 0.2 }, opacity: { duration: 200, curve: "ease-out" } }}`.

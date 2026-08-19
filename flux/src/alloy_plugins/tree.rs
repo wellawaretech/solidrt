@@ -11,8 +11,8 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::text::{prepare_units, PreparedRun};
 use alloy::rendertree::{
-  Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, PlatformContext, Rect,
-  RenderTree, Text, Window,
+  AnimProp, AnimValue, Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext,
+  PlatformContext, Rect, RenderTree, Text, Window,
 };
 
 thread_local! {
@@ -160,6 +160,21 @@ impl<'js> IntoJs<'js> for JsBoundingBox {
   }
 }
 
+/// Emit one "transitionEnd" engine event per settled track, payload
+/// `{ target, property }` (JSX property name). The runner calls this right
+/// after the frame's transition advance; the JS side routes each to the
+/// node's onTransitionEnd handler.
+pub fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::rendertree::AnimProp)]) {
+  for &(node, prop) in settled {
+    let obj = Object::new(ctx.clone()).expect("create transitionEnd object");
+    obj.set("target", node).expect("set target");
+    obj
+      .set("property", super::properties::transition::anim_prop_name(prop))
+      .expect("set property");
+    crate::emit_event(ctx, "transitionEnd", obj);
+  }
+}
+
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
@@ -280,7 +295,13 @@ impl ModuleDef for RenderTreeModule {
         // false consumes nothing and has cancelled any running track for
         // the pair, so the normal write below is authoritative.
         if let Some(prop) = super::properties::transition::anim_prop(&property) {
-          let target = value.as_number().map(|n| n as f32);
+          // Colors arrive as packed 0xRRGGBBAA numbers (JS parses the CSS
+          // string); everything else animatable is a plain scalar. A
+          // non-numeric value (null, a gradient object) never animates.
+          let target = value.as_number().map(|n| match prop {
+            AnimProp::Color => AnimValue::Color(super::properties::packed_to_color(n as u32)),
+            _ => AnimValue::Scalar(n as f32),
+          });
           if tree_ref.borrow_mut().transition_write(node_id, prop, target) {
             platform_ref.request_frame();
             return Ok(());

@@ -33,6 +33,39 @@ settled animations produce no frames. Note: a paused clock (scale 0) with
 a mid-flight track keeps producing cheap present-only frames (advance
 writes nothing, Commit::Reused); a stepped frame advances one period.
 
+## Status: stage 2 landed (2026-08-19)
+
+All four stage-2 items, verified on the release client:
+
+- Color transitions: `color` is animatable (solid colors; a gradient never
+  animates and cancels a running color track). Interpolation runs in oklab
+  with alpha as its own linear lane; a color spring is four oscillators
+  sharing one spec. Tracks are lane vectors ([f32; 4]) internally; scalars
+  use one lane. Conversions live in alloy transitions.rs (Ottosson
+  constants), round-trip tested. Colors still arrive as packed u32 from
+  JS parseColor; whether CSS parsing moves to Rust (dropping colord) is a
+  separate open question.
+- onTransitionEnd: per settled track, payload `{ property }` (JSX name),
+  delivered to the declaring element only, no bubbling. Natural settles
+  only - cancels and destroyed nodes never fire; a retarget fires once, at
+  the final settle. Path: advance collects settled pairs on the tree,
+  lattice draw drains and emits "transitionEnd" engine events per pair
+  (flux gui tree.rs emit_transition_ends), window.ts routes to the node's
+  handler.
+- Damage audit: the animated set already rides the right classes - view
+  transform/opacity setters return Compose (caches survive), d-* geometry
+  and paint props return Paint, nothing animatable returns Layout except
+  w/h on detached primitives (which have no layout anyway). No changes
+  needed.
+- Coalesced invalidation: advance applies all track damage through
+  `apply_damage_batch` - one revision bump per frame and the
+  invalidate_paint ancestor walks share a visited set, so N animated
+  siblings clear common ancestors once per frame instead of once per
+  write. Bench: 1000 animated rects hold 60+ fps, jsMs ~0.04, paint
+  ~1.3 ms.
+
+Remaining: stage 3 (shorthand string form, delay, mount-time `from`).
+
 The compositor-side-animation item (finding b in
 notes/app-structure-performance.md), shaped after the update path was
 measured (notes/signal-to-setproperty-path.md): an animated element costs
@@ -118,7 +151,7 @@ Retargeting (a new target while a track runs):
    second instead of every frame: `jsMs` ~0, `setPropsPerFrame` ~0
    between target changes, fps steady, motion visually continuous under
    retargeting (snapshot probes).
-2. **Breadth + per-frame cost.** Color interpolation (oklab);
+2. **Breadth + per-frame cost (done, see Status).** Color interpolation (oklab);
    `onTransitionEnd`; audit damage of the animated set - animated
    transform/opacity must ride `Damage::Compose` (recording kept,
    applied at composite), not Paint; coalesce per-write ancestor
