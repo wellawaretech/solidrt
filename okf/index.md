@@ -1052,6 +1052,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   component face. The structural gap it named (ordered draw lists) landed
   2026-08-04 with index buffers, cull and per-instance attributes, so library
   v1 is unblocked; remaining tiers tracked in the backlog.
+- **[Signal-to-setProperty path, hop by hop](notes/signal-to-setproperty-path.md)** [2026-08-19]
+  What runs between a Solid signal setter in app code and the Rust property
+  setter it feeds - compiled effect shape, Solid 2 write/flush/recompute, the
+  core renderer glue, the flux binding, apply_jsx and damage - and where the
+  time goes, measured on the release runtime with probes/signal-bench.tsx;
+  about 10 us per animated element per frame, three quarters of it Solid
+  (setSignal + recompute + reads), the renderer glue and the FFI crossing
+  about 0.4 us each per write.
 - **[What "something like stylesheets" already means here](notes/style-reuse-without-stylesheets.md)** [2026-08-13]
   A plain object spread into props is the answer to most of what the
   stylesheet question asks, and the constraint on anything more is fixed - no

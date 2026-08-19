@@ -61,13 +61,31 @@ attributes (heading level, list); selection, caret and scrolling as
    or pending typing attributes), `formatBlock(patch)`, `insertAtom(attrs)`,
    `setDocument`. Typed text inherits the char before the caret; `\n`
    splits a paragraph keeping its attributes, deleting one merges. No undo,
-   no compose/transform (additive later). Headless checks: doc-test-probe.ts
-   via multiline-probe.tsx `doctest`.
-3. **Component**: lines from `createTextEditorLayout` fed with the runs,
-   each line one `d-text` with `<span>` children for its slice of runs;
-   selection highlight from the line stops. Inline atoms are the open
-   engine question (atoms need laid-out children, which `d-text` cannot
-   host today).
+   no compose/transform (additive later). Headless checks: probes/doc-test-probe.ts
+   via probes/multiline-probe.tsx `doctest`.
+3a. **Shared shell** - DONE 2026-08-19 (uncommitted). `EditorField`
+   (packages/components/src/editor-field.tsx, internal): everything of
+   `TextInput` that does not know what the value is (focus, blink, nav
+   action, keys, text session, tap-to-position, editor layout, viewport
+   height/scroll, placeholder, caret, border), taking `buffer(step)`,
+   `runs()` and `renderLine`. `TextInput` is the string wrapper. Core:
+   `TextEditorLayoutInput.runs` explicit, `unitInk` (glue-aware, used by
+   `layoutNextLine` and `splitWide`).
+3b. **Component** - DONE 2026-08-19 (uncommitted). `RichTextEditor`
+   (packages/components/src/rich-text-editor.tsx): `Document` value
+   (controlled/uncontrolled), `editorRef` hands the app the document buffer
+   as the formatting API (no toolbar). Lines from the shell fed with
+   geometry runs derived from the document; each line one `d-text` with a
+   `<span>` per style interval (document runs cut at paragraph boundaries).
+   Drawn vocabulary: bold, italic, underline, code (mono), color, link
+   (primary + underline) inline; heading 1-3 block. Other attributes are
+   carried, not drawn. Verified live: styled render, format on a range,
+   typing/caret through mixed sizes (probes/rich-text-probe.tsx).
+
+   Open here: selection highlight (needs the selection item below); inline
+   atoms draw as U+FFFC only - real atoms need laid-out children in
+   detached text, the open engine question; lists (`list` block attribute)
+   need a left-margin marker and indent in the shell.
 
 ## Prerequisite
 

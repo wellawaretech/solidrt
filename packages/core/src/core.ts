@@ -364,6 +364,21 @@ export type TextLine = {
 }
 
 /**
+ * Ink width of the wrap unit starting at unit `index`: its advance through
+ * every glued piece that follows, plus the last piece's ink. What must fit on
+ * the line for the unit to go on it.
+ */
+export function unitInk(units: tree.TextUnit[], index: number): number {
+  let ink = units[index]!.width
+  let advance = 0
+  for (let j = index + 1; j < units.length && units[j]!.glue; j++) {
+    advance += units[j - 1]!.advance
+    ink = advance + units[j]!.width
+  }
+  return ink
+}
+
+/**
  * The next line of `prepared` from unit `cursor` that fits `width`, or null
  * when the text is used up. Greedy: units go on the line while the pen plus
  * the unit's ink stays within `width`; a hard break ends the line; a unit
@@ -385,15 +400,7 @@ export function layoutNextLine(prepared: tree.PreparedText, cursor: number, widt
     let unit = units[i]!
     // Glued pieces stay with the unit they continue: the whole wrap unit
     // (this piece through the last glued one) must fit for any of it to go on.
-    if (i > cursor && !unit.glue) {
-      let ink = unit.width
-      let advance = 0
-      for (let j = i + 1; j < units.length && units[j]!.glue; j++) {
-        advance += units[j - 1]!.advance
-        ink = advance + units[j]!.width
-      }
-      if (pen + ink > width) break
-    }
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width) break
     pen += unit.advance
     if (unit.ascent > ascent) ascent = unit.ascent
     if (unit.descent > descent) descent = unit.descent

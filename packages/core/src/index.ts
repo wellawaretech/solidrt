@@ -1,5 +1,5 @@
 export * from "./renderer"
-export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, prepareText, layoutNextLine, getBoundingBox, getBoundingBoxViewport, onPointerMove } from "./core"
+export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, measureText, prepareText, layoutNextLine, unitInk, getBoundingBox, getBoundingBoxViewport, onPointerMove } from "./core"
 export type { BoundingBox, GlobalPointerEvent, TextLine } from "./core"
 export { parseColor, mixColors, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"

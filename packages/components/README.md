@@ -254,6 +254,57 @@ function NameField() {
 | `layout`       | `LayoutProps`             | -       | Layout properties (e.g. `width`).                            |
 | `style`        | `StyleProps`              | -       | Overrides theme colors, border, and radius.                  |
 
+### RichTextEditor
+
+Edits a rich text document (styled runs, paragraph attributes) in the same
+field as `TextInput`: always multiline, same caret, keys, wrapping and
+scrolling. The value is a `Document` (`{ text, runs, blocks }`, see
+`plainDocument` and `createDocumentBuffer`); formatting is driven through
+`editorRef`, which hands you the document buffer - the component ships no
+toolbar, the app renders its own controls.
+
+```jsx
+import { RichTextEditor, plainDocument } from "@solidrt/components"
+
+function Notes() {
+  let editor
+  return (
+    <>
+      <Button onPress={() => editor.format({ bold: editor.attributes().bold ? null : true })}>B</Button>
+      <RichTextEditor
+        defaultValue={plainDocument("Start typing...")}
+        editorRef={(e) => (editor = e)}
+        layout={{ width: 320 }}
+        maxRows={10}
+      />
+    </>
+  )
+}
+```
+
+Drawn attributes - inline: `bold`, `italic`, `underline`, `code` (mono),
+`color` (a color string), `link` (a URL string: primary color, underlined);
+block: `heading: 1 | 2 | 3`. Other attributes are carried in the document
+and ignored by the drawing. Inline atoms (U+FFFC) render as their
+placeholder character for now.
+
+**Props**
+
+| Prop           | Type                          | Default | Description                                                  |
+| -------------- | ----------------------------- | ------- | ------------------------------------------------------------ |
+| `value`        | `Document`                    | -       | Controlled document. If omitted, the component is uncontrolled. |
+| `defaultValue` | `Document`                    | -       | Initial document for uncontrolled use (`plainDocument("")`).  |
+| `onInput`      | `(value: Document) => void`   | -       | Fires on every edit.                                         |
+| `editorRef`    | `(editor: DocumentBuffer) => void` | -  | The formatting API: `format`, `formatBlock`, `insertAtom`, `attributes`, selection and edits. |
+| `onFocus` / `onBlur` | `() => void`            | -       | Focus callbacks.                                             |
+| `placeholder`  | `string`                      | -       | Shown when the document is empty and the field is not focused. |
+| `disabled`     | `boolean`                     | `false` | Ignores pointer and key events when true.                    |
+| `autoFocus`    | `boolean`                     | `false` | Focuses on mount.                                            |
+| `maxRows`      | `number`                      | -       | Without a `layout.height`: rows to grow to before scrolling. |
+| `hints`        | `TextInputHints`              | -       | IME behavior.                                                |
+| `layout`       | `LayoutProps`                 | -       | Layout properties (e.g. `width`).                            |
+| `style`        | `StyleProps`                  | -       | Overrides theme colors, border, and radius.                  |
+
 ### SafeArea
 
 Wraps its children in a view that applies padding to avoid system UI intrusions (status bars, home indicators, notches, etc.).

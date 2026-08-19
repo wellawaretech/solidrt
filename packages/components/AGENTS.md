@@ -43,9 +43,20 @@ Most components group props into two objects, plus top-level event handlers:
 - `Image` - fetches/decodes/uploads an image: `src: string | Uint8Array`.
 - `TextInput` - text input, `multiline` to wrap and edit across lines;
   `value`/`onInput`/`onSubmit` (single-line), controlled or uncontrolled, plus
-  `placeholder`, `maxLength`, `autoFocus`, `disabled`. Lines and caret come
-  from core's `createTextEditorLayout` (prepareText + layoutNextLine, one
-  d-text per line).
+  `placeholder`, `maxLength`, `autoFocus`, `disabled`. A thin wrapper over
+  the internal `EditorField` shell (editor-field.tsx: focus, keys, text
+  session, tap-to-position, caret, scroll, placeholder), which takes a
+  buffer factory and a `renderLine`; lines and caret come from core's
+  `createTextEditorLayout` (prepareText + layoutNextLine, one d-text per
+  line). The rich text editor shares the shell (rich-text-document.ts is its
+  value model).
+- `RichTextEditor` - edits a rich `Document` (rich-text-document.ts: text +
+  attributed runs + per-paragraph blocks) over the same `EditorField`; always
+  multiline, no toolbar (the app drives `editorRef`, the document buffer).
+  Drawn attributes: bold/italic/underline/code/color/link inline, heading
+  1-3 block; font-affecting ones also feed the geometry via prepareText
+  `runs`, so caret and wrap follow the drawn glyphs. Each line is one d-text
+  with a span per style interval.
 - `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
   Wheel + drag (a pan recognizer: activates on slop along the scroll axis and
   steals the pointer from a pressable the drag started on), no momentum yet.

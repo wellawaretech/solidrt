@@ -5,8 +5,8 @@
 // are policy and belong to the component (the "skin") that composes these.
 
 import { createMemo, createSignal, flush, untrack } from "@solidjs/signals"
-import { getBoundingBox, layoutNextLine, measureText, prepareText } from "./core"
-import type { MeasureTextOptions, PreparedText, TextUnit } from "flux:rendertree"
+import { getBoundingBox, layoutNextLine, measureText, prepareText, unitInk } from "./core"
+import type { MeasureTextOptions, PreparedText, TextRunRange, TextUnit } from "flux:rendertree"
 import { onLayout } from "./window"
 
 /**
@@ -191,6 +191,8 @@ export function createTextBuffer(options: TextBufferOptions = {}): TextBuffer {
 export type TextEditorLayoutInput = {
   text: string
   font: MeasureTextOptions
+  /** Styled ranges over `text` (prepareText `runs`): the geometry then follows per-run fonts. */
+  runs?: TextRunRange[]
   /** Caret offset into `text`. */
   caret: number
   /** Px reserved so the caret stays visible at the viewport edge. Default 0. */
@@ -254,8 +256,8 @@ export function createTextEditorLayout(
   let [scrollY, setScrollY] = createSignal(0)
 
   let prepared = createMemo(() => {
-    let { text, font } = input()
-    return prepareText(text, { ...font, carets: true })
+    let { text, font, runs } = input()
+    return prepareText(text, { ...font, runs, carets: true })
   })
 
   // Lines carry their unit range so the caret math walks only their units.
@@ -401,15 +403,20 @@ export function createTextEditorLayout(
   return { lines, caret, caretLine, offsetAtX, lineAtY, step, scrollX, scrollY }
 }
 
-// Units wider than `width` split into one unit per grapheme (from their caret
-// stops), so the greedy breaker wraps them like `<text>`'s overflowWrap
-// "anywhere". Everything else is passed through as is.
+// Wrap units wider than `width` (through their glued pieces) split into one
+// unit per grapheme (from their caret stops), so the greedy breaker wraps
+// them like `<text>`'s overflowWrap "anywhere". Everything else is passed
+// through as is.
 function splitWide(prepared: PreparedText, width: number): PreparedText {
-  if (!prepared.units.some((u) => u.width > width && (u.carets?.length ?? 0) > 2)) return prepared
+  let all = prepared.units
+  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width)) return prepared
+  let wide = false
   let units: TextUnit[] = []
-  for (let unit of prepared.units) {
+  for (let u = 0; u < all.length; u++) {
+    let unit = all[u]!
+    if (!unit.glue) wide = unitInk(all, u) > width
     let stops = unit.carets
-    if (!(unit.width > width) || !stops || stops.length <= 2) {
+    if (!wide || !stops || stops.length <= 2) {
       units.push(unit)
       continue
     }
