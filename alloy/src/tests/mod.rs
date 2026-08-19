@@ -14,6 +14,7 @@ mod resample;
 mod router;
 mod text_layout;
 mod texture;
+mod transitions;
 mod tree;
 mod view;
 mod yuv;

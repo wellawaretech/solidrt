@@ -274,6 +274,18 @@ impl ModuleDef for RenderTreeModule {
       ctx.clone(),
       move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
         SETPROP_COUNT.with(|c| c.set(c.get() + 1));
+        // Native transitions: a numeric write to an animatable property on
+        // an element declaring a transition for it becomes a track target
+        // (Rust interpolates from the next frame on) instead of a snap. A
+        // false consumes nothing and has cancelled any running track for
+        // the pair, so the normal write below is authoritative.
+        if let Some(prop) = super::properties::transition::anim_prop(&property) {
+          let target = value.as_number().map(|n| n as f32);
+          if tree_ref.borrow_mut().transition_write(node_id, prop, target) {
+            platform_ref.request_frame();
+            return Ok(());
+          }
+        }
         let value = to_prop_value(&value)?;
         tree_ref
           .borrow_mut()

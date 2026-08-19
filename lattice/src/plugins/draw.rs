@@ -171,17 +171,28 @@ impl RenderInner {
     let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
 
+    let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
+
+    // Native transitions: advance every running track to this frame's
+    // animation clock (stamped by the runtime before the frame's JS ran)
+    // so the frame below paints the interpolated values. Runs before the
+    // demand gate: the advance's damage is this frame's reason to rebuild.
+    let anim_active = tree.0.borrow_mut().advance_transitions();
+
     // Demand-driven gate: when nothing requested a frame, skip it entirely
     // (layout, paint, submit, hover refresh - elements only move when a frame
     // is produced, so hover cannot have changed either). The overlay is the
-    // bridge's own demand (see above); playback mode never gates.
+    // bridge's own demand (see above); playback mode never gates. Running
+    // transitions are demand too, and re-request below after `begin`
+    // consumed the latch, so the loop keeps ticking until they settle.
     let mut driver = self.driver.borrow_mut();
-    let Some(frame) = driver.begin(platform, overlay_refresh || overlay_clear) else {
+    let Some(frame) = driver.begin(platform, overlay_refresh || overlay_clear || anim_active) else {
       stats.borrow_mut().note_skipped();
       return;
     };
-
-    let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
+    if anim_active {
+      platform.request_frame();
+    }
 
     // Push the overlay change ahead of this frame's submit (either path
     // below): the ordered raster channel then applies it to exactly this

@@ -4834,6 +4834,15 @@ function measureText2(text, options) {
 function prepareText2(text, options) {
   return tree.prepareText(text, options);
 }
+function unitInk(units, index) {
+  let ink = units[index].width;
+  let advance = 0;
+  for (let j = index + 1;j < units.length && units[j].glue; j++) {
+    advance += units[j - 1].advance;
+    ink = advance + units[j].width;
+  }
+  return ink;
+}
 function layoutNextLine(prepared, cursor, width) {
   let units = prepared.units;
   if (cursor >= units.length)
@@ -4844,16 +4853,8 @@ function layoutNextLine(prepared, cursor, width) {
   let i = cursor;
   while (i < units.length) {
     let unit = units[i];
-    if (i > cursor && !unit.glue) {
-      let ink = unit.width;
-      let advance = 0;
-      for (let j = i + 1;j < units.length && units[j].glue; j++) {
-        advance += units[j - 1].advance;
-        ink = advance + units[j].width;
-      }
-      if (pen + ink > width)
-        break;
-    }
+    if (i > cursor && !unit.glue && pen + unitInk(units, i) > width)
+      break;
     pen += unit.advance;
     if (unit.ascent > ascent)
       ascent = unit.ascent;
@@ -6712,10 +6713,12 @@ function createTextEditorLayout(viewport, input) {
   let prepared = createMemo(() => {
     let {
       text,
-      font
+      font,
+      runs
     } = input();
     return prepareText2(text, {
       ...font,
+      runs,
       carets: true
     });
   });
@@ -6909,12 +6912,17 @@ function createTextEditorLayout(viewport, input) {
   };
 }
 function splitWide(prepared, width) {
-  if (!prepared.units.some((u3) => u3.width > width && (u3.carets?.length ?? 0) > 2))
+  let all = prepared.units;
+  if (!all.some((u3, i3) => !u3.glue && unitInk(all, i3) > width))
     return prepared;
+  let wide = false;
   let units = [];
-  for (let unit of prepared.units) {
+  for (let u3 = 0;u3 < all.length; u3++) {
+    let unit = all[u3];
+    if (!unit.glue)
+      wide = unitInk(all, u3) > width;
     let stops = unit.carets;
-    if (!(unit.width > width) || !stops || stops.length <= 2) {
+    if (!wide || !stops || stops.length <= 2) {
       units.push(unit);
       continue;
     }
@@ -7154,10 +7162,9 @@ function space(token) {
   return Math.round(theme.spacing[token] * densityScale());
 }
 
-// packages/components/src/text-input.tsx
+// packages/components/src/editor-field.tsx
 var CARET_WIDTH = 1;
-var PLACEHOLDER_SHAPE_WIDTH = 1e9;
-function TextInput(props) {
+function EditorField(props) {
   let [caretOn, setCaretOn] = createSignal(true);
   let node;
   let viewport;
@@ -7166,13 +7173,7 @@ function TextInput(props) {
     let id2 = focusedNode();
     return id2 != null && id2 === node?.id;
   });
-  let buffer = createTextBuffer({
-    value: () => props.value,
-    defaultValue: untrack(() => props.defaultValue),
-    onInput: (v2) => props.onInput?.(v2),
-    maxLength: () => props.maxLength,
-    step: (_text, offset, direction) => editor.step(offset, direction)
-  });
+  let buffer = untrack(() => props.buffer)((_text, offset, direction) => editor.step(offset, direction));
   let value = buffer.value;
   createEffect(() => props.autoFocus, (autoFocus) => {
     if (autoFocus && node)
@@ -7292,6 +7293,7 @@ function TextInput(props) {
   let editor = createTextEditorLayout(() => viewport, () => ({
     text: value(),
     font: font(),
+    runs: props.runs?.(),
     caret: buffer.caret(),
     caretWidth: CARET_WIDTH,
     wrap: props.multiline ?? false
@@ -7308,12 +7310,6 @@ function TextInput(props) {
     let max = props.maxRows != null ? props.maxRows * rowHeight() : Infinity;
     return Math.max(rowHeight(), Math.min(content, max));
   };
-  let textStyle = (color, w2) => ({
-    w: w2 + 1,
-    ...font(),
-    color,
-    maxLines: 1
-  });
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect", {
     drawStyle: "stroke"
   }), _el$4 = createElement("view", {
@@ -7379,7 +7375,13 @@ function TextInput(props) {
     var _c$ = memo2(() => !!showPlaceholder());
     return () => _c$() ? (() => {
       var _el$5 = createElement("d-text");
-      spread(_el$5, mergeProps(() => textStyle(theme.color.textMuted, PLACEHOLDER_SHAPE_WIDTH)), true);
+      setProp(_el$5, "w", 1e9);
+      spread(_el$5, mergeProps(font, {
+        get color() {
+          return theme.color.textMuted;
+        },
+        maxLines: 1
+      }), true);
       insert(_el$5, () => props.placeholder ?? "");
       return _el$5;
     })() : [createComponent2(For, {
@@ -7387,18 +7389,13 @@ function TextInput(props) {
         return editor.lines();
       },
       keyed: false,
-      children: (line) => (() => {
-        var _el$6 = createElement("d-text");
-        spread(_el$6, mergeProps({
-          get y() {
-            return line().y;
-          }
-        }, () => textStyle(textColor(), line().width)), true);
-        insert(_el$6, () => value().slice(line().start, line().end));
-        return _el$6;
-      })()
+      children: (line) => props.renderLine({
+        line,
+        font,
+        color: textColor
+      })
     }), memo2(() => memo2(() => !!showCaret())() ? (() => {
-      var _el$7 = createElement("d-rect", {
+      var _el$6 = createElement("d-rect", {
         w: 1
       });
       effect3(() => ({
@@ -7412,12 +7409,12 @@ function TextInput(props) {
         a: a3,
         o: o3
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$7, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$7, "x", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$7, "y", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$7, "h", o3, _p$?.o);
+        e3 !== _p$?.e && setProp(_el$6, "color", e3, _p$?.e);
+        t3 !== _p$?.t && setProp(_el$6, "x", t3, _p$?.t);
+        a3 !== _p$?.a && setProp(_el$6, "y", a3, _p$?.a);
+        o3 !== _p$?.o && setProp(_el$6, "h", o3, _p$?.o);
       });
-      return _el$7;
+      return _el$6;
     })() : null)];
   })());
   effect3(() => ({
@@ -7452,6 +7449,83 @@ function TextInput(props) {
     r3 !== _p$?.r && setProp(_el$4, "scrollY", r3, _p$?.r);
   });
   return _el$;
+}
+
+// packages/components/src/text-input.tsx
+function TextInput(props) {
+  let value = () => "";
+  return createComponent2(EditorField, {
+    buffer: (step) => {
+      let buffer = createTextBuffer({
+        value: () => props.value,
+        defaultValue: untrack(() => props.defaultValue),
+        onInput: (v2) => props.onInput?.(v2),
+        maxLength: () => props.maxLength,
+        step
+      });
+      value = buffer.value;
+      return buffer;
+    },
+    renderLine: ({
+      line,
+      font,
+      color
+    }) => (() => {
+      var _el$ = createElement("d-text");
+      spread(_el$, mergeProps({
+        get y() {
+          return line().y;
+        },
+        get w() {
+          return line().width + 1;
+        }
+      }, font, {
+        get color() {
+          return color();
+        },
+        maxLines: 1
+      }), true);
+      insert(_el$, () => value().slice(line().start, line().end));
+      return _el$;
+    })(),
+    get onSubmit() {
+      return props.onSubmit;
+    },
+    get onFocus() {
+      return props.onFocus;
+    },
+    get onBlur() {
+      return props.onBlur;
+    },
+    get placeholder() {
+      return props.placeholder;
+    },
+    get disabled() {
+      return props.disabled;
+    },
+    get autoFocus() {
+      return props.autoFocus;
+    },
+    get multiline() {
+      return props.multiline;
+    },
+    get maxRows() {
+      return props.maxRows;
+    },
+    get hints() {
+      return props.hints;
+    },
+    ref(r$) {
+      var _ref$ = props.ref;
+      typeof _ref$ === "function" || Array.isArray(_ref$) ? applyRef(_ref$, r$) : props.ref = r$;
+    },
+    get layout() {
+      return props.layout;
+    },
+    get style() {
+      return props.style;
+    }
+  });
 }
 // packages/components/src/scroll-view.tsx
 function ScrollView(props) {

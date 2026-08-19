@@ -15,6 +15,7 @@ import type {
   OvalGeometryProps,
   TextGeometryProps,
   LineGeometryProps,
+  TransitionProps,
   Element as CoreElement,
   ElementChildrenAttribute as CoreElementChildrenAttribute
 } from "./src/types"
@@ -41,20 +42,20 @@ export namespace JSX {
   // layout box; d-* forms compose the paint-space geometry props instead.
   interface IntrinsicElements {
     window: WindowProps & ElementRef
-    view: ViewProps & ElementRef
-    text: TextProps & LayoutProps & ElementRef
-    rect: RectProps & LayoutProps & ElementRef
-    oval: OvalProps & LayoutProps & ElementRef
-    line: LineProps & LayoutProps & ElementRef
-    path: PathProps & LayoutProps & ElementRef
-    texture: TextureProps & LayoutProps & ElementRef
-    "d-view": ViewOwnProps & ElementRef
-    "d-rect": RectProps & GeometryProps & ElementRef
-    "d-oval": OvalProps & OvalGeometryProps & ElementRef
-    "d-line": LineProps & LineGeometryProps & ElementRef
-    "d-path": PathProps & PositionProps & ElementRef
-    "d-texture": TextureProps & GeometryProps & ElementRef
-    "d-text": TextProps & TextGeometryProps & ElementRef
+    view: ViewProps & TransitionProps & ElementRef
+    text: TextProps & LayoutProps & TransitionProps & ElementRef
+    rect: RectProps & LayoutProps & TransitionProps & ElementRef
+    oval: OvalProps & LayoutProps & TransitionProps & ElementRef
+    line: LineProps & LayoutProps & TransitionProps & ElementRef
+    path: PathProps & LayoutProps & TransitionProps & ElementRef
+    texture: TextureProps & LayoutProps & TransitionProps & ElementRef
+    "d-view": ViewOwnProps & TransitionProps & ElementRef
+    "d-rect": RectProps & GeometryProps & TransitionProps & ElementRef
+    "d-oval": OvalProps & OvalGeometryProps & TransitionProps & ElementRef
+    "d-line": LineProps & LineGeometryProps & TransitionProps & ElementRef
+    "d-path": PathProps & PositionProps & TransitionProps & ElementRef
+    "d-texture": TextureProps & GeometryProps & TransitionProps & ElementRef
+    "d-text": TextProps & TextGeometryProps & TransitionProps & ElementRef
     // A styled run inside <text>/<d-text>; never has a layout box, so there is
     // no d- form.
     span: SpanProps & ElementRef

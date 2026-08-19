@@ -315,6 +315,13 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
+- **["Native transitions: Rust-side animation, JS writes only targets"](backlog/native-transitions.md)** [2026-08-19]
+  A transition prop declares per-property motion (tween with CSS curves, or a
+  perceptual spring); the signal path then carries one write per target change
+  and Rust interpolates every frame, taking the measured ~10 us/element/frame
+  JS cost off the frame path entirely. Springs are the retargeting-safe
+  primitive; tweens restart from the current value. Stage 1 covers d-*
+  geometry, opacity and transform components.
 - **[Clearing a numeric or transform prop throws instead of resetting it](backlog/null-resets-numeric-props.md)** [2026-08-14]
   Binding scale/x/y/rotate/radius/strokeWidth to a value that flips back to
   undefined errors out, because the decoders accept only numbers; null should
@@ -386,6 +393,11 @@ Shaped, not started.
 - **[Production diagnostics surface](backlog/production-diagnostics-surface.md)** [2026-07-17]
   Layout counters are latched into Stats but only dev-client queries read
   them; wanted a production consumer so field bug reports carry the numbers.
+- **[A reactive halt wedges the control API queries](backlog/reactive-halt-wedges-control-api.md)** [2026-08-19]
+  After REACTIVITY_HALTED (an uncaught error in the reactive system) the
+  client keeps running but tree/snapshot control queries time out, so the
+  tooling reports "JS thread busy or app wedged" instead of showing the error;
+  queries should keep answering from the last good tree.
 - **[Reactivity halt containment](backlog/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error permanently halts the whole app; verified halt
   mechanics, a failure taxonomy, four candidate directions, and loudness as

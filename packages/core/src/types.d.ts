@@ -366,6 +366,75 @@ export interface LineGeometryProps {
   y2?: number
 }
 
+// Native transitions (okf/backlog/native-transitions.md): declared once on
+// the element, applied by the runtime to every later write of the covered
+// properties. JS hands over targets; Rust interpolates every frame, so a
+// running animation costs no JS per frame.
+
+/** A cubic-bezier timing curve: a CSS name or [x1, y1, x2, y2] control values. */
+export type TransitionCurve = "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
+
+/**
+ * A perceptual spring - the default kind: a bare `{ duration }` is a
+ * critically damped spring. `duration` (ms) is the perceptual settling
+ * time, `bounce` in (-1, 1] the springiness - 0 (the default) settles
+ * without overshoot, positive values overshoot, negative values settle
+ * sluggishly. A new target while the spring runs keeps position and
+ * velocity, so the motion stays continuous - use springs for anything
+ * retargeted while moving.
+ */
+export interface TransitionSpring {
+  duration: number
+  bounce?: number
+}
+
+/**
+ * A duration/curve tween, opted into by naming the curve (a tween is
+ * always a specific curve; without one the spec reads as a spring).
+ * Duration in ms. A new target while the tween runs restarts it from the
+ * current value with the full duration (CSS semantics) - designer-timed,
+ * one-shot motion.
+ */
+export interface TransitionTween {
+  duration: number
+  curve: TransitionCurve
+}
+
+export type Transition = TransitionSpring | TransitionTween
+
+/** The property names a transition can cover (numeric scalars). */
+export type TransitionPropName =
+  | "x"
+  | "y"
+  | "w"
+  | "h"
+  | "x1"
+  | "y1"
+  | "x2"
+  | "y2"
+  | "opacity"
+  | "rotate"
+  | "rotateX"
+  | "rotateY"
+  | "scale"
+  | "scaleX"
+  | "scaleY"
+  | "strokeWidth"
+  | "radius"
+
+export interface TransitionProps {
+  /**
+   * Animate later writes of the listed properties instead of snapping:
+   * `transition={{ x: { duration: 400, bounce: 0.2 }, opacity: { duration: 200, curve: "ease-out" } }}`.
+   * `all` covers every animatable property the element has. Only properties
+   * the element carries animate (a d-rect has x, a view's x is its
+   * transform); the initial value never animates, and a non-numeric write
+   * (e.g. null) cancels the running animation and snaps. `null` clears the
+   * declaration; already-running animations finish.
+   */
+  transition?: Partial<Record<TransitionPropName | "all", Transition>> | null
+}
+
 // Primitives
 
 export interface WindowProps extends LayoutProps, PointerProps {

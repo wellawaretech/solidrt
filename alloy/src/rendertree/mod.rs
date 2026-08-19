@@ -8,6 +8,7 @@ pub mod layout;
 pub mod platform;
 pub mod router;
 pub mod text;
+pub mod transitions;
 mod tree;
 
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
@@ -20,6 +21,7 @@ pub use kinds::{
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
+pub use transitions::{AnimProp, Curve, TransitionConfig, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
@@ -320,6 +322,10 @@ pub struct Element {
   pub paint_cache: RefCell<Option<PaintCache>>,
   // The subtree's paint envelope (see cull.rs), cleared alongside paint_cache.
   pub envelope: cull::EnvelopeCache,
+  // Native transition declaration (see transitions.rs): which properties
+  // animate on write, and how. None (the overwhelmingly common case) makes
+  // every write snap, as ever.
+  pub transitions: Option<Box<TransitionConfig>>,
 }
 
 impl Element {
@@ -335,6 +341,7 @@ impl Element {
       clear: None,
       paint_cache: RefCell::new(None),
       envelope: cull::EnvelopeCache::default(),
+      transitions: None,
     }
   }
 
@@ -356,6 +363,7 @@ impl Element {
       clear: None,
       paint_cache: RefCell::new(None),
       envelope: cull::EnvelopeCache::default(),
+      transitions: None,
     }
   }
 

@@ -7,7 +7,7 @@ use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{Damage, Element};
+use alloy::rendertree::{Damage, Element, TransitionSpec};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -239,4 +239,73 @@ fn texture_params_gpu_error_propagates() {
   })
   .unwrap_err();
   assert!(err.contains("not found"), "{err}");
+}
+
+// The `transition` declaration: kind inference (a curve makes a tween,
+// otherwise it is a spring; bare duration = critically damped spring) and
+// the decode errors.
+
+fn spec_of(el: &Element) -> TransitionSpec {
+  el.transitions.as_ref().expect("config set").props[0].1
+}
+
+#[test]
+fn transition_bare_duration_is_a_spring() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0))]))]);
+  assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+  assert!(matches!(spec_of(&el), TransitionSpec::Spring { .. }));
+}
+
+#[test]
+fn transition_bounce_is_a_spring() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0)), ("bounce", num(0.3))]))]);
+  assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+  assert!(matches!(spec_of(&el), TransitionSpec::Spring { .. }));
+}
+
+#[test]
+fn transition_curve_is_a_tween() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0)), ("curve", text("ease-out"))]))]);
+  assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+  assert!(matches!(spec_of(&el), TransitionSpec::Tween { .. }));
+}
+
+#[test]
+fn transition_curve_and_bounce_conflict() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0)), ("curve", text("ease")), ("bounce", num(0.2))]))]);
+  let err = apply_el(&mut el, "transition", cfg).unwrap_err();
+  assert!(err.contains("mutually exclusive"), "{err}");
+}
+
+#[test]
+fn transition_errors_name_the_problem() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let missing = apply_el(&mut el, "transition", map(&[("x", map(&[]))])).unwrap_err();
+  assert!(missing.contains("duration (ms) is required"), "{missing}");
+  let unknown_key = apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("delay", num(5.0))]))]))
+    .unwrap_err();
+  assert!(unknown_key.contains("unknown key 'delay'"), "{unknown_key}");
+  let bad_prop = apply_el(&mut el, "transition", map(&[("color", map(&[("duration", num(1.0))]))])).unwrap_err();
+  assert!(bad_prop.contains("not an animatable property"), "{bad_prop}");
+  let bad_curve =
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("curve", text("zoom"))]))]))
+      .unwrap_err();
+  assert!(bad_curve.contains("unknown curve"), "{bad_curve}");
+  let bad_bounce =
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("bounce", num(2.0))]))]))
+      .unwrap_err();
+  assert!(bad_bounce.contains("bounce must be in (-1, 1]"), "{bad_bounce}");
+}
+
+#[test]
+fn transition_null_clears() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0))]))]);
+  apply_el(&mut el, "transition", cfg).expect("config applies");
+  assert_eq!(apply_el(&mut el, "transition", PropValue::Null), Ok(Damage::None));
+  assert!(el.transitions.is_none());
 }

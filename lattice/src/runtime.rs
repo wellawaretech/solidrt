@@ -388,6 +388,14 @@ impl UiRuntime for FluxRuntime {
         }
         None => ctx.userdata::<flux::Timeline>().map(|t| t.now_ms()).unwrap_or(0.0),
       };
+      // Stamp the render tree's animation clock with this frame's app-time
+      // before any frame work runs: property writes during the flush start
+      // their transition tracks at this time, and the draw path's advance
+      // reads the same stamp, so a track's first frame paints its from-value
+      // and pause/scale/step semantics ride in with ts.
+      if let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() {
+        tree.0.borrow_mut().set_transition_now(ts);
+      }
       if flux::gui::camera::tick(&ctx) {
         // A camera frame landed in its texture; the screen content changed
         // even though the tree did not.

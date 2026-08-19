@@ -20,6 +20,7 @@ mod read;
 mod rectangle;
 mod text;
 mod texture;
+pub mod transition;
 mod view;
 mod window;
 
@@ -68,6 +69,14 @@ pub fn apply_jsx(
   cmd_tx: &Sender<AlloyCommand>,
   gpu_params: &dyn Fn(u64, &[(String, alloy::ParamValue)]) -> Result<(), String>,
 ) -> Result<Damage, String> {
+  // Element-level, kind-independent: the native-transition declaration
+  // (which properties animate on write, and how; see
+  // alloy/src/rendertree/transitions.rs). Config only - no visual change.
+  if name == "transition" {
+    el.transitions = transition::decode(value)?;
+    return Ok(Damage::None);
+  }
+
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.

@@ -1,0 +1,143 @@
+---
+title: "Native transitions: Rust-side animation, JS writes only targets"
+description: A transition prop declares per-property motion (tween with CSS curves, or a perceptual spring); the signal path then carries one write per target change and Rust interpolates every frame, taking the measured ~10 us/element/frame JS cost off the frame path entirely. Springs are the retargeting-safe primitive; tweens restart from the current value. Stage 1 covers d-* geometry, opacity and transform components.
+created: 2026-08-19
+---
+
+# Native transitions: Rust-side animation, JS writes only targets
+
+## Status (2026-08-19): stage 1 landed; stages 2-3 open
+
+Implemented and verified on the release client: transition config +
+tween/spring math in alloy (rendertree/transitions.rs; tree methods in
+tree.rs; unit tests in src/tests/transitions.rs), `transition` decode and
+the write intercept in flux (properties/transition.rs, tree.rs), animation
+clock stamp + advance in lattice (runtime.rs, plugins/draw.rs), JSX types
+in core types.d.ts / jsx-runtime.d.ts. Durations are ALL in ms (the
+sketch below originally showed a spring in seconds; ms won).
+
+Spec syntax (revised 2026-08-19, flatter than the sketch below): one
+level, kind inferred. `{ duration }` and `{ duration, bounce }` are a
+spring (bare duration = critically damped - the spring is the default
+kind, chosen because it is the retargeting-safe primitive);
+`{ duration, curve }` is a tween - a tween is always a named curve, there
+is no default curve. `curve` and `bounce` together is a decode error.
+The nested `{ spring: {...} }` wrapper shown below was dropped.
+
+Verified with probes/signal-bench.tsx MODE "transition" (1000 d-rects,
+spring on x/y, targets once a second): jsMs 11 -> 0.03-0.06 ms at 60 fps,
+setPropsPerFrame ~2000 -> ~1, total frame p50 1.7 ms (paint only);
+overshoot/retarget continuity visible in /tree samples; with fast-settling
+springs the demand gate skips ~55 frames/s between target bursts, so
+settled animations produce no frames. Note: a paused clock (scale 0) with
+a mid-flight track keeps producing cheap present-only frames (advance
+writes nothing, Commit::Reused); a stepped frame advances one period.
+
+The compositor-side-animation item (finding b in
+notes/app-structure-performance.md), shaped after the update path was
+measured (notes/signal-to-setproperty-path.md): an animated element costs
+about 10 us of JS per frame, ~75% of it Solid's generic reactive machinery,
+and no per-hop optimization changes the scaling term. Moving interpolation
+below the FFI does: the JS cost becomes per target change instead of per
+frame, and during a running animation the signal path does not run at all.
+
+## Shape
+
+One path, not two. The state path stays exactly what it is - signal,
+effect, `setProp`, `setProperty` - and the `transition` prop adds a time
+dimension to it on the Rust side:
+
+```tsx
+<d-rect
+  x={target()}
+  transition={{ x: { duration: 200, curve: "ease-out" }, y: { duration: 400, bounce: 0.2 } }}
+/>
+```
+
+- The transition config is a property OF THE ELEMENT, keyed by property
+  name, with `all` as a catch-all for every animatable property. It
+  applies to every subsequent write of that property.
+- A write to a property with a transition starts (or retargets) a track
+  from the current value; a write without one snaps, as today.
+- The initial value never animates (matches CSS; a `from`/enter story is
+  a later stage).
+- Rejected alternative: animated-value wrappers (`x={spring(target())}`)
+  - per-write configs, allocation per change, and an invitation to move
+  time back into JS.
+
+## Tweens and springs
+
+- **Tween**: `{ duration, curve, delay? }`, curve one of `linear`, `ease`,
+  `ease-in`, `ease-out`, `ease-in-out`, or `[a, b, c, d]` cubic bezier
+  (the named ones are beziers too; one evaluator).
+- **Spring**: `{ spring: { duration, bounce } }` - perceptual parameters
+  only (SwiftUI's model): `duration` (ms) the perceptual settling time,
+  `bounce` in (-1, 1] with 0 critically damped. Physics parameters
+  (stiffness/damping/mass) are deliberately NOT exposed; the perceptual
+  pair maps onto them internally (mass 1, stiffness = (2*pi/duration)^2,
+  damping = 4*pi*(1-bounce)/duration for bounce >= 0, and for bounce < 0
+  the overdamped form damping = 4*pi/((1+bounce)*duration)). If a real
+  need for raw physics tuning ever appears it can be added as an
+  alternative object shape without breaking this one.
+
+Retargeting (a new target while a track runs):
+
+- Spring: state is position + velocity, the new target changes the
+  equilibrium, motion stays continuous. This is why the spring is the
+  primitive for anything interactive.
+- Tween: restart from the current value with the full duration (CSS
+  semantics). Additive/delta composition (Core Animation style) is a
+  possible later stage, noted under out of scope.
+
+## Rust side
+
+- A track list on the rendertree: `(node, property, from, to, spec,
+  start; springs carry velocity)`. The frame driver advances all tracks
+  before layout each frame, writes through the existing typed setters so
+  damage classification stays correct, drops settled tracks, and keeps a
+  frame requested while any track runs - settled animations stop
+  producing frames, so demand-driven rendering stays honest.
+- The transition config is decoded once in the plugin layer
+  (`transition` is a normal property write); the track holds resolved
+  state, so the per-frame advance touches no strings, no `apply_jsx`,
+  no marshalling. Rendertree stays engine-free: tracks are native types,
+  the plugin only decodes the prop.
+- Animatable set, stage 1: numeric scalars - d-* geometry (`x`/`y`/`w`/
+  `h`, line endpoints), `opacity`, transform components (`x`/`y`/
+  `rotate`/`scale`/`scaleX`/`scaleY`/`rotateX`/`rotateY`), `strokeWidth`,
+  `radius` (single-number form). Transforms animate as components, never
+  as a matrix. Colors need an interpolation space (oklab) and are
+  stage 2.
+
+## Stages
+
+1. **Core.** Track list + frame-driver advance; tween evaluator (bezier)
+   and perceptual spring; `transition` prop decode (per-property + `all`);
+   retarget semantics as above; JS types in core `types.d.ts`. Verify
+   with `probes/signal-bench.tsx` reworked to write targets once a
+   second instead of every frame: `jsMs` ~0, `setPropsPerFrame` ~0
+   between target changes, fps steady, motion visually continuous under
+   retargeting (snapshot probes).
+2. **Breadth + per-frame cost.** Color interpolation (oklab);
+   `onTransitionEnd`; audit damage of the animated set - animated
+   transform/opacity must ride `Damage::Compose` (recording kept,
+   applied at composite), not Paint; coalesce per-write ancestor
+   invalidation into a per-frame dirty drain (the `invalidate_paint`
+   walk is O(depth) per write and becomes the dominant per-frame cost
+   once JS is out of the path).
+3. **Conveniences.** Shorthand string form (`transition="200ms
+   ease-out"`), `delay` for springs, mount-time `from` (enter
+   animations).
+
+## Deliberately out of scope
+
+- Keyframe animations (time-driven, CSS `animation`): a different item.
+- Additive tween retargeting (Core Animation): only if CSS-style restart
+  visibly stutters in practice.
+- Physics spring parameters as API (see above; mapping documented so the
+  door stays open).
+- JS-driven per-frame motion (procedural animation, physics from input):
+  stays on the existing path; its cost ceiling is the signal-path work,
+  not this item.
+- Native scroll physics (finding c): separate item, but should reuse the
+  spring/track machinery.

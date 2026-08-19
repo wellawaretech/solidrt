@@ -3,8 +3,10 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::impellers::Matrix;
+use crate::rendertree::transitions::Transitions;
 use crate::rendertree::{
-  BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
+  AnimProp, BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun,
+  ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -16,6 +18,9 @@ pub struct RenderTree {
   // Lets a painter detect "tree unchanged since last build" and reuse its
   // display list.
   revision: u64,
+  // Native transitions (see transitions.rs): the running tracks and the
+  // animation clock.
+  transitions: Transitions,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -25,7 +30,7 @@ unsafe impl Send for RenderTree {}
 
 impl RenderTree {
   pub fn new() -> Self {
-    Self { nodes: HashMap::new(), root: None, revision: 0 }
+    Self { nodes: HashMap::new(), root: None, revision: 0, transitions: Transitions::default() }
   }
 
   pub fn revision(&self) -> u64 {
@@ -182,6 +187,78 @@ impl RenderTree {
   /// `edit` for writes decoded from untrusted input (the FFI property path):
   /// on Err nothing is invalidated and the error returns to the caller to
   /// surface as a script error instead of a process abort.
+  /// Stamp the animation clock: the app-timeline time (ms) of the frame
+  /// about to run, set by the embedder before the frame's script work so
+  /// writes (track starts) and the advance agree on time. The paced clock's
+  /// pause/scale/step semantics ride in through this value.
+  pub fn set_transition_now(&mut self, now_ms: f64) {
+    self.transitions.now_ms = now_ms;
+  }
+
+  /// A property write arriving for an animatable property: consume it as a
+  /// transition target when this element declares a transition covering the
+  /// property, or fall back to the normal (snapping) write path.
+  ///
+  /// `value` is the numeric target; `None` (a null reset, a non-numeric
+  /// value) never animates. Returns true when the write was consumed (a
+  /// track now runs, or the target already holds); false means the caller
+  /// must perform the normal write, and any running track for the pair has
+  /// been cancelled so it cannot overwrite the snap on the next frame.
+  ///
+  /// Initial values never animate: a node not yet inserted (no parent) has
+  /// never been painted, so its mount-time writes snap. This is what keeps
+  /// `transition` listed before other props in JSX from animating the mount.
+  pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<f32>) -> bool {
+    let animate = value.and_then(|to| {
+      let el = self.nodes.get(&id)?;
+      if el.parent.is_none() {
+        return None;
+      }
+      let spec = el.transitions.as_ref()?.spec_for(prop)?;
+      let current = el.anim_value(prop)?;
+      Some((current, to, spec))
+    });
+    match animate {
+      Some((current, to, spec)) => {
+        self.transitions.retarget(id, prop, current, to, spec);
+        true
+      }
+      None => {
+        self.transitions.cancel(id, prop);
+        false
+      }
+    }
+  }
+
+  /// Advance every running track to the stamped animation clock, writing the
+  /// interpolated values through the typed setters (damage applies as for
+  /// any property write) and dropping settled tracks and tracks whose node
+  /// is gone. Returns whether any track is still running - the embedder's
+  /// signal to keep requesting frames. A repeated call at an unchanged clock
+  /// (the paused path) writes nothing.
+  pub fn advance_transitions(&mut self) -> bool {
+    if self.transitions.is_empty() {
+      return false;
+    }
+    let now = self.transitions.now_ms;
+    let (mut tracks, dt) = self.transitions.begin_advance();
+    if dt <= 0.0 {
+      self.transitions.end_advance(tracks);
+      return true;
+    }
+    tracks.retain_mut(|t| {
+      if !self.nodes.contains_key(&t.node) {
+        return false;
+      }
+      let (value, settled) = t.advance(now, dt);
+      let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
+      self.apply_damage(t.node, damage);
+      !settled
+    });
+    self.transitions.end_advance(tracks);
+    !self.transitions.is_empty()
+  }
+
   pub fn try_edit<E>(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Result<Damage, E>) -> Result<(), E> {
     let damage = f(self.node_mut(id))?;
     self.apply_damage(id, damage);
