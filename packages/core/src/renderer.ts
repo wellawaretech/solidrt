@@ -165,24 +165,49 @@ function setTreeProperty(node: ProxyNode, name: string, value: unknown): void {
 // Shared by the renderer's setProperty hook and by createElement, which since
 // the dom-expressions "universal" template passes static props inline as a
 // second argument rather than as separate setProp calls.
+// A property's route is a function of its name alone, so the classifying
+// regex and compares run once per unique name; per write it is one Map get.
+const ROUTE_TREE = 0
+const ROUTE_EVENT = 1
+const ROUTE_FOCUSABLE = 2
+const ROUTE_HINTS = 3
+let propRoutes = new Map<string, number>()
+
+function routeFor(name: string): number {
+  let route = propRoutes.get(name)
+  if (route === undefined) {
+    route = /^on[A-Z]/.test(name)
+      ? ROUTE_EVENT
+      : name === "focusable"
+        ? ROUTE_FOCUSABLE
+        : name === "textInputHints"
+          ? ROUTE_HINTS
+          : ROUTE_TREE
+    propRoutes.set(name, route)
+  }
+  return route
+}
+
 function applyProp<T>(node: ProxyNode, name: string, value: T): void {
   if (!node) return
 
   // console.debug("[srt] applyProp", node.id, name, value)
 
-  if (/^on[A-Z]/.test(name) && (value == null || typeof value === "function")) {
-    setEventHandler(node.id, name, value as Function | null | undefined)
-    return
-  }
-
-  if (name === "focusable") {
-    setFocusable(node.id, value === true)
-    return
-  }
-
-  if (name === "textInputHints") {
-    setTextInputHints(node.id, value as any)
-    return
+  switch (routeFor(name)) {
+    case ROUTE_EVENT:
+      // A non-function, non-null value on an on* name is not a handler;
+      // fall through to the tree so the native side rejects it.
+      if (value == null || typeof value === "function") {
+        setEventHandler(node.id, name, value as Function | null | undefined)
+        return
+      }
+      break
+    case ROUTE_FOCUSABLE:
+      setFocusable(node.id, value === true)
+      return
+    case ROUTE_HINTS:
+      setTextInputHints(node.id, value as any)
+      return
   }
 
   setTreeProperty(node, name, value)

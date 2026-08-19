@@ -84,8 +84,12 @@ Web reflexes and what replaces them:
 - `backdrop-filter` -> no equivalent. A view shader sees only its own
   subtree's pixels, never what is behind it. Frost the whole frame with a
   window shader, or fake the layer with your own content
-- `@keyframes` / transitions -> `onFrame` writing a signal for discrete
-  motion; a `uTime` uniform when the animation is continuous and visual
+- CSS `transition` -> the `transition` prop: declare it on the element and
+  keep writing targets; the runtime animates natively (performance model
+  rule 1)
+- `@keyframes` -> a `transition` prop when the motion is target-shaped;
+  `onFrame` writing a signal for genuinely procedural sequences; a `uTime`
+  uniform when the animation is continuous and visual
 - `<canvas>` 2D -> `d-*` primitives (rebuild one `d-path` string per frame
   rather than animating N elements)
 - `<canvas>` WebGL, three.js -> `createPipelineTexture`, or `@solidrt/3d`
@@ -123,10 +127,12 @@ Web reflexes and what replaces them:
    @solidrt/core) over onResize/onLayout callbacks for reading layout and
    window state. SafeArea (the component) is usually the simpler fix for
    avoiding notches/system UI.
-7. Per-frame animation: onFrame((tick, frame) => {}) is the native hook
-   (runtime-paced, auto-cleans), re-exported from @solidrt/core.
-   requestAnimationFrame(t => {}) exists as a web-standard one-shot but is
-   not the preferred animation driver.
+7. Animation is target-shaped first: declare `transition` on the element
+   and write targets (performance model rule 1); reach for per-frame JS
+   only for genuinely procedural motion. There, onFrame((tick, frame) => {})
+   is the native hook (runtime-paced, auto-cleans), re-exported from
+   @solidrt/core; requestAnimationFrame(t => {}) exists as a web-standard
+   one-shot but is not the preferred driver.
 8. In a components-based app, reach for @solidrt/core directly only for
    what components doesn't wrap:
    raw host intrinsics and the `d-` (detached, non-layout) primitives like
@@ -203,9 +209,34 @@ Web reflexes and what replaces them:
 The JS engine is interpreted and every property write crosses an FFI boundary
 into the runtime, so per-frame JS work is the expensive path while GPU work is
 nearly free. That holds on desktop and on current mobile hardware; "Where GPU
-work stops being free" below is where it does not. Rules, in order of leverage:
+work stops being free" below is where it does not. The design answer is not
+"write less JS" but "keep JS off the per-frame path": the platform animates
+(transitions), caches (repaint boundaries), shades (GPU) and computes
+(isolates, wasm) natively, and JS stays the coordinator that sets targets.
+Rules, in order of leverage:
 
-1. Continuous effects (snow, particles, animated backgrounds) belong in a
+1. Motion between states (position, size, opacity, transform components,
+   solid colors, enter/exit) belongs in a native transition, never in
+   per-frame JS. Declare `transition` on the element and keep writing
+   targets the ordinary way; the runtime interpolates every frame on the
+   Rust side, so JS runs only when a target changes and the running
+   animation costs no JS and no property writes per frame, however many
+   elements move. Flat spec, ms durations, kind inferred:
+   `{ duration }` / `{ duration, bounce }` is a spring (the default kind;
+   springs carry velocity, so a retarget mid-flight stays continuous -
+   use them for anything interactive), `{ duration, curve }` is a tween
+   (`linear | ease | ease-in | ease-out | ease-in-out` or a cubic-bezier
+   array; tweens restart from the current value on retarget, CSS
+   semantics). Keys are property names plus `all` as catch-all; a string
+   is shorthand (`transition="300ms ease-out"`); `delay` holds each
+   write, `from` animates the first attach in (enter), `exit` animates
+   removal out before the node frees, `stagger` on a parent cascades its
+   children's enters/exits, and `onTransitionEnd` fires per settled
+   property. The initial value never animates without `from`; a write to
+   a property without a transition snaps, as always. A JS tween loop or
+   animation library pushing interpolated values through signals pays the
+   whole write path per element per frame - port it to this.
+2. Continuous effects (snow, particles, animated backgrounds) belong in a
    fragment shader: createShaderTexture (from @solidrt/core/gpu) + `<texture
    params={{ uTime }}>` (the shader declares `uniform float uTime;` itself -
    the preamble declares only what the runtime fills). The whole effect then
@@ -235,21 +266,22 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    retro/pixel-art path) and `{ wrap: "repeat" }` to tile outside 0..1 in
    shaders; the defaults are linear and clamp, and the choice applies both
    on screen and to shaders sampling the texture.
-2. Reduce setProperty calls wherever possible: one path string rebuilt per
+3. Reduce setProperty calls wherever possible: one path string rebuilt per
    frame beats N elements with N animated positions; a shader beats the path
    string. get_stats' setPropsPerFrame is the counter to watch. Compiled JSX
    attribute expressions diff before writing, so a per-frame expression that
    returns an unchanged value costs no property write - setPropsPerFrame
    counts values that actually changed, not expressions re-run.
-3. Never leave onFrame registered while nothing animates: a pending onFrame
+4. Never leave onFrame registered while nothing animates: a pending onFrame
    is a standing frame request, so the runtime renders and presents every
    vsync even when the callback body does nothing - an invisible 60fps GPU
-   burn that also drags the OS compositor along with it. For an on-demand
-   animation pump (tweens), use a self-rechaining one-shot
-   requestAnimationFrame that stops re-requesting when its work list
-   empties. (Registering onFrame outside a component body also warns
+   burn that also drags the OS compositor along with it. Tweens and
+   springs need no pump at all - that is rule 1, and the runtime requests
+   frames only while tracks run. For genuinely procedural per-frame motion,
+   use a self-rechaining one-shot requestAnimationFrame that stops
+   re-requesting when its work list empties. (Registering onFrame outside a component body also warns
    NO_OWNER_CLEANUP - it assumes a reactive owner.)
-4. repaintBoundary works like Flutter's: transforms and opacity on the
+5. repaintBoundary works like Flutter's: transforms and opacity on the
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a
    boundary does NOT re-raster it (verified by A/B measurement - the damage
@@ -261,10 +293,20 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    layer (save_layer) for as long as it is below 1. To fade a single
    primitive, put the alpha in its `color` (`rgba(...)`) - paint alpha is
    free; reserve view `opacity` for fading a genuine group as a whole.
-5. "snapshot" boundaries pay first-frame texture allocation + raster:
+   Placement rule for animation-heavy screens: a boundary around a node
+   that animates its own paint (a moving d-*, a changing color) is useless
+   - its interior is damaged every frame, so the cache never survives. The
+   win is a boundary around the static bulk NEXT TO the animators: the
+   frame then re-records only the moving nodes and replays the fenced
+   content as one cached draw, an order-of-magnitude cut when static
+   content dominates the node count. get_stats' nodesPainted shows exactly
+   what the paint walk still enters. The exception where a boundary on the
+   animator itself pays is transform/opacity animation of the boundary
+   node - the hoisting described above.
+6. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
    one-frame hiccup - pool or pre-warm if that moment matters.
-6. Shading pixels the app already drew is a different mechanism from rule 1's
+7. Shading pixels the app already drew is a different mechanism from rule 2's
    generated textures, and both forms are a `shader` prop taking a linked
    program from compileShader/linkProgram (@solidrt/core/gpu), not a
    createShaderTexture source. On `<window>`, `shader={{ program, params }}`
@@ -280,12 +322,27 @@ work stops being free" below is where it does not. Rules, in order of leverage:
    snapshot instead of re-rasterizing. A window shader's output is invisible
    to get_snapshot and every other MCP tool; `srt render` is the only way to
    see it (Run / verify below).
-7. `flux:wasm` is not the fast lane. It runs a pure interpreter (wasmi, no
-   JIT), so tight typed compute gains a small constant factor over the same
-   loop in JavaScript, nowhere near browser wasm speed, and every host call
-   costs marshalling. Use it to ship one compiled module across every target
-   without native binaries, not to speed up per-frame work; for that, rules
-   1-2 (move it to the GPU, cut property writes) are the leverage.
+8. `flux:wasm` runs a pure interpreter (wasmi, no JIT), so temper browser
+   expectations - but do not write it off for compute. A genuinely numeric
+   kernel (typed-array math, tight inner loops, no host calls inside the
+   loop) compiled from a systems language can come out a real multiple
+   faster than the same loop in interpreted JavaScript, and when profiling
+   shows such a kernel is what the app is spending its time on, that
+   multiple is worth having: measure the JS loop, port the kernel, measure
+   again, keep whichever wins. What wasm does not do is speed up
+   render-path work (rules 1-3 are that leverage), and every host call
+   costs marshalling, so batch at the boundary - one call over a byte
+   buffer, not a call per element. It is also the way to ship one compiled
+   module across every target with no native toolchain, and it pairs with
+   an isolate when a call runs long enough to block.
+9. `flux:ffi` (dlopen of a native library) is a binding tool, not a
+   performance tool. It needs a shared library compiled per platform and
+   architecture and shipped under each target's packing rules (Android
+   loads only what arrives inside the APK as a lib*.so), so reaching for
+   it "to make something fast" buys a build-and-packaging problem on every
+   platform the app targets. Use it when the app must call a native
+   library that already exists and already ships for those targets; for
+   speed, everything above comes first.
 
 ### Isolates: heavy work off the JS thread
 
@@ -326,7 +383,7 @@ node_modules/@solidrt/flux-types/modules/isolate.d.ts.
 "GPU work is nearly free" is a property of the hardware, not of the engine, and
 the spread is wide enough to design against rather than discover late. The same
 app - two point-cloud pipelines, 233,600 vertices, one params write each per
-onFrame, i.e. exactly what rule 1 recommends - measured 16.7 ms/frame (60 fps,
+onFrame, i.e. exactly what rule 2 recommends - measured 16.7 ms/frame (60 fps,
 vsync-locked) on both desktop and a mid-range 2020 tablet, and 120 ms/frame
 (8.3 fps) on a 2017 Android TV. Roughly 8x for identical work, with the tablet
 indistinguishable from desktop. Measure on a target device if it matters; do

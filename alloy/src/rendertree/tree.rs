@@ -656,7 +656,8 @@ impl RenderTree {
   }
 
   pub(crate) fn node(&self, id: u64) -> &Element {
-    self.nodes.get(&id).expect(&format!("node {} not found", id))
+    // See node_mut: no eager format! on the hot path.
+    self.nodes.get(&id).unwrap_or_else(|| panic!("node {} not found", id))
   }
 
   /// Read access to a node for inspection surfaces (the dev-server tree
@@ -823,7 +824,9 @@ impl RenderTree {
   }
 
   pub(crate) fn node_mut(&mut self, id: u64) -> &mut Element {
-    self.nodes.get_mut(&id).expect(&format!("node {} not found", id))
+    // unwrap_or_else keeps the hot path allocation-free: expect(&format!(..))
+    // would build the message string on every call, hit or miss.
+    self.nodes.get_mut(&id).unwrap_or_else(|| panic!("node {} not found", id))
   }
 
   fn delete_recursive(&mut self, node_id: u64) {

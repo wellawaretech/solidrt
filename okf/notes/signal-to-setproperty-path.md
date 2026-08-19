@@ -93,14 +93,15 @@ to the renderer's `setProperty` hook.
 
 ## 5. Renderer glue: `applyProp` -> `setTreeProperty` (renderer.ts)
 
-Per write, in order: null check; `/^on[A-Z]/.test(name)` (a regex exec
-per property write, only there to route event handlers); name compares
-for `focusable`, `textInputHints`, `color`; for `color`, `isGradient`
-and `parseColor` (a string parse per write when a color animates); then
+Per write, in order: null check; a route decided by property name (event
+handler, focusable, textInputHints, or plain tree write); then
 `setTreeProperty`'s try/catch around the binding (a try block costs
-nothing until it throws). The regex is the per-write cost that should not
-exist: routing is a function of (element type, name) and can be decided
-once.
+nothing until it throws). As measured (2026-08-19) the classifier was a
+`/^on[A-Z]/` regex exec plus name compares per write, ~0.4 us of the
+per-write cost; routing is a function of the name alone, so it is now
+cached in a per-name Map (routeFor), one Map get per write. Color parsing
+moved to Rust with native transitions (colord removed), so no string
+parse remains here.
 
 ## 6. FFI: `tree.setProperty(id, name, value)` (flux alloy_plugins/tree.rs)
 
@@ -111,9 +112,9 @@ rquickjs `Function::new` closure `(u64, String, Value)`. Per call:
 - `SETPROP_COUNT` bump; `to_prop_value` (numbers free, strings allocate,
   arrays/objects recurse);
 - `RefCell::borrow_mut` + `try_edit`:
-  - `node_mut`: HashMap lookup plus `.expect(&format!("node {} not
-    found", id))` - the `format!` allocates eagerly on EVERY call, hit
-    or miss;
+  - `node_mut`: HashMap lookup (an eager `expect(&format!(..))` used to
+    allocate the message on every call, hit or miss; fixed 2026-08-19 to
+    `unwrap_or_else`, together with the `node()` sibling);
   - `apply_jsx` (properties/mod.rs): about six failed `name ==` compares
     (position, repaintBoundary, float, clear, pointerEvents, ...),
     `detached_only_geometry`, the per-kind `match name`, then
@@ -196,3 +197,33 @@ babel-preset-solid's hands), a leaner effect kind for renderer bindings
 (compositor-side animation / detached primitives written directly:
 `direct` mode is 2.35 ms where signals cost 9.8 ms for the same writes,
 and the Rust side would take them at 0.35 us each).
+
+## After native transitions (2026-08-19)
+
+With transitions declared on the elements, the bench's transition mode
+(targets once a second, spring 700 ms) moves the whole path off the frame:
+jsMs 0.05-0.1, setPropsPerFrame ~1. The frame cost is paint, and it scales
+with nodes PAINTED, not nodes animated:
+
+- N=1000 (all on screen): frame p50 1.8 ms, paint 1.6 ms, nodesPainted
+  1001, 60 fps.
+- N=4000 (grid wider than the window): p50 3.9 ms, paint 3.3 ms,
+  nodesPainted ~2080 (culling drops the off-screen half), 58 fps.
+
+So paint costs ~1.6 us per painted d-rect per frame, linear; layout and
+the Rust tick are noise (layoutMs 0.01). Ceiling at 60 Hz: roughly 10k
+painted animating nodes per frame. The next lever, if ever needed, is
+paint-side (display-list build cost per node, culling, boundary
+placement), not the write path; every animating node repaints by
+definition (Damage::Paint on d-* geometry), so repaint boundaries only
+protect static content around them, and transform/opacity animation on
+views (Damage::Compose) skips even that.
+
+Boundary effect measured (probes/boundary-bench.tsx: 4000 static d-rects
+in one view + 50 continuously animating siblings): without a boundary the
+root rebuild re-records everything - nodesPainted 4052, paint ~4.3 ms;
+with repaintBoundary on the static view the walk replays its cached
+recording - nodesPainted 51, paint 0.07 ms, frame p50 0.11 ms. So the
+rule for animation-heavy screens: animators do not benefit from their own
+boundary (their interior is damaged every frame), the static bulk around
+them does, ~linearly in what the boundary fences off.

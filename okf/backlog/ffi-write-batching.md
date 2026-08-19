@@ -6,6 +6,18 @@ created: 2026-08-05
 
 # FFI write batching: batched creation, one-call drain, interned keys, command buffer
 
+## Status (2026-08-19): gate moved further away by native transitions
+
+Native transitions (okf/done/native-transitions.md) took animation-frequency
+writes off the per-frame path entirely: JS now writes one target per change
+and Rust interpolates, so the update-burst workload stages 2-4 were gated on
+no longer runs per frame (signal-bench in transition mode: setPropsPerFrame
+~2000 -> ~1). What remains per-frame-write-shaped is JS-driven motion
+(procedural animation, physics from input), which is rare and bounded by the
+Solid-side cost (~10 us/element/frame, okf/notes/signal-to-setproperty-path.md),
+not by the ~0.45 us crossing. Do not build the drain/interned keys/command
+buffer unless such a workload shows up and measures FFI-bound.
+
 ## Status (2026-08-18): stage 1 measured and dropped; update path open
 
 Stage 1 (batched createNode) was implemented and A/B measured against HEAD
